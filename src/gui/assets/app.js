@@ -78,12 +78,75 @@
       function (rest) { if (rest) window.location.hash = '#/' + rest.trim().split(/\s+/)[0]; }],
     ['compact', ['fold', 'summarise'], 'fold the conversation now, without waiting for the budget',
       function () {
-        // The flag is the browser's own: the agent reads its forced-fold
-        // once, when the run starts, so arming it here does not fold
-        // anything yet. Saying otherwise would be a command that claims
-        // a result it does not produce.
-        notice('the fold is not wired yet',
-          'the agent reads its forced-fold flag once, when a run starts; arming it mid-run needs a shared flag the agent reads per turn');
+        if (face.running || face.seat) {
+          controlRun({ fold: true }, 'the fold is armed',
+            'the context folds at the next turn boundary', 'the fold was refused');
+          return;
+        }
+        notice('nothing to fold yet',
+          'the context folds between turns; with no run in flight there is nothing assembled to fold');
+      }],
+    ['pin', ['provider', 'model'], 'send the run in flight to a provider, or auto',
+      function (rest) {
+        var asked = rest.trim();
+        if (!asked) {
+          notice('pin needs a provider',
+            '/pin <provider|provider/model|auto> \u00b7 a mid-run pin re-routes the next turn; with no run it sets the next run\u2019s pin');
+          return;
+        }
+        if (face.running || face.seat) {
+          controlRun({ pin: asked },
+            'the route is pinned for the next turn',
+            asked.toLowerCase() === 'auto' ? 'the pin is dropped' : 'the next turn crosses ' + asked,
+            'the pin was refused');
+          return;
+        }
+        // No run in flight: this is the composer's provider pin, the
+        // same choice the select makes, applied to the next run.
+        var match = null;
+        if (el.runProvider) {
+          for (var i = 0; i < el.runProvider.options.length; i++) {
+            if (el.runProvider.options[i].value === asked) { match = asked; break; }
+          }
+        }
+        if (match === null) {
+          notice('no such provider', '/providers lists the roster \u00b7 `auto` drops the pin');
+          return;
+        }
+        face.providerPin = match === 'auto' ? '' : match;
+        paintRunbar();
+        notice('the pin is set for the next run', match === 'auto' ? 'the router decides' : match);
+      }],
+    ['rename', ['name', 'title'], 'name this session in the archive',
+      function (rest) {
+        var title = rest.trim();
+        var path = '/api/session/title' + (face.session ? '?session=' + encodeURIComponent(face.session) : '');
+        post(path, { title: title }).then(function (reply) {
+          if (reply.status === 200) {
+            notice(title ? 'the session is named' : 'the session name is cleared',
+              title || 'the archive falls back to the first message\u2019s line');
+            if (face.panel === 'sessions') readSessions(true).then(paintSessions);
+            return;
+          }
+          notice('the rename was refused', reply.body.error || 'the face said no without a reason');
+        }).catch(function () {
+          notice('the rename did not cross', 'the server did not answer');
+        });
+      }],
+    ['pause', ['freeze', 'hold'], 'freeze the run in flight at its next step',
+      function () {
+        if (!(face.running || face.seat)) {
+          notice('no run to pause', 'a pause holds a run in flight');
+          return;
+        }
+        controlRun({ pause: true }, 'paused by you',
+          'the run holds its place at the next model call \u00b7 /resume continues it',
+          'the pause was refused');
+      }],
+    ['resume', ['continue', 'unpause'], 'let a paused run continue',
+      function () {
+        controlRun({ resume: true }, 'the run resumes',
+          'it continues from where the pause stopped it', 'the resume was refused');
       }],
     ['clear', ['new', 'reset'], 'clear the transcript and start a fresh session view',
       function () { face.session = ''; window.location.hash = '#/chat'; load(true); }],
@@ -92,7 +155,71 @@
     ['help', ['commands', '?'], 'list every command and what it does',
       function () { openDrawer('commands', commandHelp()); }],
     ['review', ['diff', 'changes'], 'review this session’s file changes against a checkpoint',
-      function () { openReview(); }]
+      function () { openReview(); }],
+    ['btw', ['aside', 'ps'], 'ask a question beside the run (one model call)',
+      function (rest) {
+        var question = rest.trim();
+        if (!question) {
+          notice('btw needs a question',
+            '/btw <question> \u00b7 answered beside the run, never inside it');
+          return;
+        }
+        var path = '/api/btw' + (face.session ? '?session=' + encodeURIComponent(face.session) : '');
+        post(path, { text: question }).then(function (reply) {
+          if (reply.status !== 200) {
+            notice('the aside was refused', reply.body.error || 'the face said no without a reason');
+            return;
+          }
+          notice('btw \u00b7 ' + clip(question, 50),
+            reply.body.answer + ' \u00b7 a side ask on ' +
+            (reply.body.provider || 'the route') + '/' + (reply.body.model || '') +
+            ', not part of the run');
+        }).catch(function () {
+          notice('the aside did not cross', 'the server did not answer');
+        });
+      }],
+    ['steer', ['redirect', 'adjust'], 'send an instruction into the run in flight',
+      function (rest) {
+        var text = rest.trim();
+        if (!text) {
+          notice('steer needs an instruction',
+            '/steer <text> \u00b7 the run takes it at its next step');
+          return;
+        }
+        post('/api/steer', { text: text }).then(function (reply) {
+          if (reply.status === 200) {
+            notice('the steer is sent', 'the run takes it at its next step');
+            return;
+          }
+          notice('the steer was refused', reply.body.error || 'the face said no without a reason');
+        }).catch(function () {
+          notice('the steer did not cross', 'the server did not answer');
+        });
+      }],
+    ['goal', ['objective', 'target'], 'set, show or clear this session’s standing objective',
+      function (rest) {
+        var text = rest.trim();
+        if (!text) {
+          notice('this session\u2019s goal', face.goal
+            ? face.goal + ' \u00b7 /goal clear drops it'
+            : 'no goal is set \u00b7 /goal <text> sets one');
+          return;
+        }
+        var clearing = /^(clear|drop|remove|off)$/i.test(text);
+        var path = '/api/goal' + (face.session ? '?session=' + encodeURIComponent(face.session) : '');
+        post(path, { text: clearing ? '' : text }).then(function (reply) {
+          if (reply.status === 200) {
+            face.goal = reply.body.text || null;
+            notice(clearing ? 'the goal is cleared' : 'the goal is set',
+              clearing ? 'every run in this session goes back to the task alone'
+                : 'carried by every run in this session \u00b7 the chip names it');
+            return;
+          }
+          notice('the goal was refused', reply.body.error || 'the face said no without a reason');
+        }).catch(function () {
+          notice('the goal did not cross', 'the server did not answer');
+        });
+      }]
   ];
 
   // A short mark per destination, so the collapsed rail still reads at a
@@ -295,6 +422,11 @@
     task: document.getElementById('task'),
     send: document.getElementById('send'),
     sendLabel: document.getElementById('send-label'),
+    queueChip: document.getElementById('queue-chip'),
+    queueCount: document.getElementById('queue-count'),
+    queueList: document.getElementById('queue-list'),
+    runGoal: document.getElementById('run-goal'),
+    runGoalBtn: document.getElementById('run-goal-btn'),
     plan: document.getElementById('plan'),
     hint: document.getElementById('hint'),
     runPerms: document.getElementById('run-perms'),
@@ -335,6 +467,9 @@
   // the transcript; `events` is the raw log the inspector reads.
   var face = {
     session: '',
+    // The messages typed while a run executes, in the owner's order:
+    // one flushes per run, the head first.
+    queued: [],
     model: '',
     workspace: '',
     // The welcome's one read and its clock. The panels keep their own
@@ -654,6 +789,14 @@
     rewind.type = 'button';
     rewind.title = 'rewind the tree and the conversation to this turn';
     rewind.addEventListener('click', function () { rewindTo(event.turn); });
+    // A rewind is refused while the run is in flight (the bridge's own
+    // guard, and rightly so — the run's state is live). The affordance
+    // waits for the end rather than inviting a click that cannot land:
+    // hidden now, unhidden by the run's end.
+    if (face.running) {
+      rewind.hidden = true;
+      rewind.dataset.live = 'true';
+    }
     el0.appendChild(rewind);
     return row(el0, event);
   }
@@ -783,6 +926,15 @@
       case 'compacted': return (event.turns || '?') + ' turns \u00b7 ' + tokens(event.before) + ' \u2192 ' + tokens(event.after);
       case 'checkpoint': return 'turn ' + event.turn + ' \u00b7 ' + event.files + ' files held';
       case 'folder': return event.note || (event.path ? 'set to ' + event.path : 'cleared');
+      case 'goal': return event.text ? 'goal \u00b7 ' + event.text : 'goal cleared';
+      case 'control':
+        if (event.control === 'fold') return 'fold armed at the next boundary';
+        if (event.control === 'pause') return 'paused by you';
+        if (event.control === 'resume') return 'resumed';
+        if (event.control === 'pin') return 'pinned \u00b7 ' + ((event.body && event.body.pin) || '');
+        if (event.control === 'steer') return 'steer \u00b7 ' + ((event.body && event.body.steer) || '');
+        if (event.control === 'stop') return 'stopped by you';
+        return 'control \u00b7 ' + event.control;
       case 'repair': return 'asked once for the closing report (attempt ' + (event.attempt || 1) + ')';
       case 'rewound': return 'to turn ' + event.turn + ' \u00b7 ' + event.restored + ' restored';
       case 'dropped': return 'the face holds the last 4096; one fell off the front';
@@ -1153,6 +1305,14 @@
       case 'checkpoint':
         stripFold(event);
         break;
+      case 'goal':
+        // The session's standing objective changed: the run strip
+        // records the line, and the run bar's chip names it for the
+        // next run.
+        face.goal = event.text || null;
+        stripFold(event);
+        paintRunbar();
+        break;
       case 'folder':
         // The chat's working folder changed: one line, and the run bar
         // now says where the next run works. The event is the truth in
@@ -1188,6 +1348,14 @@
           face.planned = false;
           finishPlan();
         }
+        // The turns a live run painted hid their rewind; the run is
+        // over, so the affordance they describe is real again.
+        Array.prototype.forEach.call(
+          document.querySelectorAll('.row-rewind[data-live]'),
+          function (button) { button.hidden = false; });
+        // The queued messages drain one per run: the head sends now,
+        // the rest wait for the next end.
+        flushQueue();
         break;
       case 'seat':
         face.running = true;
@@ -1325,6 +1493,7 @@
     paintRules();
     paintSeat();
     paintComposer();
+    paintQueue();
     paintProcess();
     // The router's live decision is the run's own `routed` event, so it
     // is repainted with the stream rather than waiting for the board's
@@ -1420,6 +1589,118 @@
     }
   }
 
+  // The queued messages: an ordered list above the composer, one sent
+  // per run in the owner's order. A row drags to a new position, sends
+  // itself first, or drops; the head is what the next run sends.
+  var dragIndex = null;
+
+  function paintQueue() {
+    if (!el.queueChip || !el.queueList) return;
+    var items = face.queued || [];
+    el.queueChip.hidden = !items.length;
+    if (!items.length) return;
+    el.queueCount.textContent = 'queued \u00b7 ' + items.length;
+    el.queueList.textContent = '';
+    items.forEach(function (text, index) {
+      var row = node('div', 'queue-row');
+      row.draggable = true;
+      row.tabIndex = 0;
+      row.dataset.index = String(index);
+      row.title = 'drag to reorder \u00b7 alt+\u2191\u2193 moves it too';
+      row.appendChild(node('span', 'queue-handle', '\u28ff'));
+      row.appendChild(node('span', 'queue-text', text));
+      var first = node('button', 'queue-first', index === 0 ? 'first' : 'send first');
+      first.type = 'button';
+      first.disabled = index === 0;
+      first.title = index === 0
+        ? 'already first in line'
+        : 'move this message to the head of the queue';
+      first.addEventListener('click', function () { moveQueued(index, 0); });
+      row.appendChild(first);
+      var drop = node('button', 'queue-drop', '\u00d7');
+      drop.type = 'button';
+      drop.title = 'drop the queued message';
+      drop.addEventListener('click', function () {
+        face.queued.splice(index, 1);
+        paintQueue();
+      });
+      row.appendChild(drop);
+      row.addEventListener('dragstart', function (event) {
+        dragIndex = index;
+        row.dataset.dragging = 'true';
+        if (event.dataTransfer) {
+          event.dataTransfer.effectAllowed = 'move';
+          event.dataTransfer.setData('text/plain', String(index));
+        }
+      });
+      row.addEventListener('dragend', function () {
+        row.dataset.dragging = '';
+        dragIndex = null;
+      });
+      row.addEventListener('dragover', function (event) {
+        event.preventDefault();
+        row.dataset.over = 'true';
+      });
+      row.addEventListener('dragleave', function () { row.dataset.over = ''; });
+      row.addEventListener('drop', function (event) {
+        event.preventDefault();
+        row.dataset.over = '';
+        var from = dragIndex;
+        if (from == null && event.dataTransfer) {
+          from = Number(event.dataTransfer.getData('text/plain'));
+        }
+        if (from == null || !isFinite(from)) return;
+        moveQueued(from, index);
+      });
+      row.addEventListener('keydown', function (event) {
+        if (!event.altKey) return;
+        if (event.key === 'ArrowUp' && index > 0) {
+          event.preventDefault();
+          moveQueued(index, index - 1);
+        }
+        if (event.key === 'ArrowDown' && index < items.length - 1) {
+          event.preventDefault();
+          moveQueued(index, index + 1);
+        }
+      });
+      el.queueList.appendChild(row);
+    });
+  }
+
+  function moveQueued(from, to) {
+    var items = face.queued || [];
+    if (from < 0 || from >= items.length || to < 0 || to >= items.length || from === to) return;
+    var moved = items.splice(from, 1)[0];
+    items.splice(to, 0, moved);
+    paintQueue();
+  }
+
+  // The run is over: send the head; the next row follows when that run
+  // ends. A run still in flight declines, so a stray call never
+  // double-sends.
+  function flushQueue() {
+    if (!(face.queued || []).length || face.running || face.seat) return;
+    var text = face.queued.shift();
+    paintQueue();
+    el.task.value = text;
+    send();
+  }
+
+  // One control into the run in flight: the body is written verbatim to
+  // the run's control file, and the agent's own parser is the only
+  // thing that decides what it means.
+  function controlRun(body, okTitle, okNote, refusedTitle) {
+    post('/api/control', body).then(function (reply) {
+      if (reply.status === 200) {
+        notice(okTitle, okNote);
+        return;
+      }
+      notice(refusedTitle, reply.body.error || 'the face said no without a reason');
+    }).catch(function () {
+      notice(refusedTitle, 'the server did not answer');
+    });
+  }
+
   // The one ticker the face runs while something is in flight, so the
   // composer can show how long since the last event — and an idle face
   // has no timer at all.
@@ -1435,6 +1716,9 @@
       el.send.dataset.mode = busy ? 'stop' : 'send';
       el.send.disabled = false;
       el.send.setAttribute('aria-label', busy ? 'stop the run' : 'send the task');
+      el.send.title = busy
+        ? 'stop the run \u00b7 a tool call already running finishes first, then the run ends'
+        : 'send the task';
     }
     if (el.hint) el.hint.classList.toggle('busy', busy);
     if (face.seat) {
@@ -1648,7 +1932,7 @@
       case 'finished':
         if (p.mode === 'plan' && p.stage === 'review') {
           p.last = 'the plan is ready to edit';
-          break;
+        break;
         }
         p.stage = 'verify';
         p.active = false;
@@ -4620,9 +4904,23 @@
   }
 
   function send() {
+    // While a run is in flight the composer queues: one slot, sent the
+    // moment the run ends. The queue is the face's own state — a reload
+    // drops it, and the chip says so.
+    if (face.running || face.seat) {
+      var pending = el.task.value.trim();
+      if (pending) {
+        face.queued.push(pending);
+        el.task.value = '';
+        grow();
+        try { window.localStorage.removeItem('fleet-draft'); } catch (error) { }
+        paintQueue();
+      }
+      return;
+    }
     if (face.planMode) { planSend(); return; }
     var task = el.task.value.trim();
-    if (!task || face.running || face.seat) return;
+    if (!task) return;
     el.task.value = '';
     grow();
     try { window.localStorage.removeItem('fleet-draft'); } catch (error) { }
@@ -5451,6 +5749,19 @@
       }
     }
     paintFolder();
+    paintGoal();
+  }
+
+  // The session's standing objective: the chip names it while one is
+  // set, and the whole text rides the title because the field is one
+  // value wide in a crowded row.
+  function paintGoal() {
+    if (!el.runGoal || !el.runGoalBtn) return;
+    el.runGoal.hidden = !face.goal;
+    if (!face.goal) return;
+    el.runGoalBtn.textContent = clip(face.goal, 28);
+    el.runGoalBtn.title = 'the session\u2019s goal: ' + face.goal +
+      ' \u00b7 /goal clear drops it';
   }
 
   // The working folder: its basename when the chat has one, "no folder"
@@ -5671,6 +5982,13 @@
     chooseFolder(chosen || face.workspace);
   }
 
+  if (el.runGoalBtn) {
+    el.runGoalBtn.addEventListener('click', function () {
+      notice('this session\u2019s goal', face.goal
+        ? face.goal + ' \u00b7 /goal clear drops it'
+        : 'no goal is set \u00b7 /goal <text> sets one');
+    });
+  }
   if (el.runFolder) {
     el.runFolder.addEventListener('click', function (event) {
       event.preventDefault();
@@ -6456,7 +6774,9 @@
     if (face.replayId === row.id) line.setAttribute('aria-selected', 'true');
     var name = node('div', 'session-name');
     var top = node('span', 'session-row-top');
-    top.appendChild(node('b', null, sessionLabel(row.id)));
+    // The owner's title when one is set, else the session's first
+    // message line the archive read carries, else the id.
+    top.appendChild(node('b', null, row.title ? clip(row.title, 48) : sessionLabel(row.id)));
     if (row.current) top.appendChild(badge('this face', 'accent'));
     name.appendChild(top);
     if (row.channel && row.channel.length) {

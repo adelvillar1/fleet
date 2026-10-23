@@ -1,5 +1,5 @@
 ---
-status: active
+status: completed
 created: 2026-10-23
 updated: 2026-10-23
 slug: conversation-control

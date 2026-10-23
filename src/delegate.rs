@@ -2304,6 +2304,29 @@ pub fn write_control(
     Ok(path)
 }
 
+/// Write one control file verbatim: the face's control route passes the
+/// body its command sent — `fold`, `pin`, `pause`, `resume`, or a steer
+/// — and the agent's own parser is the only thing that decides what the
+/// file means, so the two cannot disagree about the vocabulary.
+pub fn write_control_value(
+    home: &Path,
+    session: &str,
+    body: &serde_json::Value,
+) -> Result<std::path::PathBuf, String> {
+    let sessions = crate::home::sessions_dir(home);
+    let log = sessions.join(format!("{session}.jsonl"));
+    if !log.exists() {
+        return Err(format!(
+            "no session named `{session}` under {} — a control rides beside a log that exists",
+            sessions.display()
+        ));
+    }
+    let path = sessions.join(format!("{session}.control"));
+    std::fs::write(&path, format!("{body}\n"))
+        .map_err(|error| format!("the control file could not be written: {error}"))?;
+    Ok(path)
+}
+
 /// The card one control write lands with: the session it steers, the
 /// control's kind, where it rides, and — for a steer — the text's
 /// bounded preview. A control is one-shot by the reader's own

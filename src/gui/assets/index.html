@@ -339,6 +339,17 @@
 
       <form class="composer" id="composer" autocomplete="off">
         <label class="sr-only" for="task">the task</label>
+        <!-- The messages typed while a run executes: an ordered queue,
+             one sent per run in the owner's order. Drag a row to reorder
+             it, or send-first to put it at the head. Client-side state;
+             a reload drops the queue. -->
+        <div class="queue-chip" id="queue-chip" hidden>
+          <div class="queue-head">
+            <span id="queue-count">queued</span>
+            <span class="queue-note">sends when the run ends &middot; a reload drops it</span>
+          </div>
+          <div class="queue-list" id="queue-list"></div>
+        </div>
         <textarea id="task" rows="1" placeholder="Ask fleet for something&hellip;" spellcheck="false"></textarea>
         <div class="attach-chips" id="attach-chips" hidden></div>
         <!-- The folder picker. It browses only inside the launch
@@ -420,6 +431,16 @@
               <button type="button" id="run-folder" aria-haspopup="dialog"
                       aria-expanded="false" aria-controls="folder-pop"
                       title="no working folder: the filesystem tools are unavailable">no folder</button>
+            </span>
+            <!-- The session's standing objective, when one is set: the
+                 folder field's own shape, and the button names it. -->
+            <span class="runbar-field runbar-folder" id="run-goal" hidden>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
+                   stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="7.5"></circle>
+                <circle cx="12" cy="12" r="2.5"></circle>
+              </svg>
+              <button type="button" id="run-goal-btn" title="the session's standing objective"></button>
             </span>
           </span>
           <span class="composer-hint" id="hint">Shift+Enter makes a newline</span>

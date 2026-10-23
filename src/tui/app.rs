@@ -3022,6 +3022,9 @@ fn entry_of(record: &Record) -> Option<Entry> {
         // and a plan rides the assistant message beside it.
         Record::Rewind { .. } => None,
         Record::Plan { .. } => None,
+        // Bookkeeping: the standing goal rides the prompt, and the run
+        // card is where a TUI reads it.
+        Record::Goal { .. } => None,
         // Bookkeeping: the channel a peer arrived on is not a
         // conversation block.
         Record::Channel { .. } => None,
@@ -4340,6 +4343,7 @@ mod tests {
 
     fn summary(id: &str) -> SessionSummary {
         SessionSummary {
+            first_text: None,
             id: id.to_string(),
             model: "deepseek-flash".to_string(),
             created: "2026-10-13T00:00:00Z".to_string(),

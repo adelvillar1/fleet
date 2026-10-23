@@ -137,6 +137,34 @@ store and its diff, and a command palette over every pane and panel
 | the machine checked | `fleet install` (then `fleet doctor`, with `--diagnose <session>` and `--open`) |
 | the context folded now | `fleet compact` |
 
+### In the conversation
+
+The composer's own commands, all reachable as `/` in the chat:
+
+- `/goal <text>` sets the session's standing objective — carried by
+  every run as its own prompt section, `/goal clear` drops it, `/goal`
+  alone shows it. The run bar's chip names it.
+- `/steer <text>` sends an instruction into the run in flight (refused
+  by name when nothing is running — a steer is about the executing run).
+- `/btw <question>` asks beside the run: one tool-less model call, the
+  answer in the transcript, and the run's conversation untouched.
+- `/compact` folds the context at the next boundary while a run is in
+  flight (and says honestly that there is nothing to fold otherwise).
+- `/pin <provider|provider/model|auto>` re-routes the running session's
+  next turn; with no run it sets the next run's pin.
+- `/pause` and `/resume` freeze a run before its next model call and
+  let it continue from the same turn.
+- `/rename <title>` names the session in the archive; a session with no
+  title shows its first message's line.
+- **The queue** — typing while a run executes appends to an ordered
+  queue above the composer: drag a row to reorder it, **send first**
+  puts it at the head, × drops it. The run's end sends the head; the
+  next row follows when that run ends. The queue is the face's own
+  state, so a reload drops it.
+
+`Stop` is the run's termination and it is graceful: a tool call already
+running finishes first, then the run ends.
+
 ## Run behavior
 
 - A pinned provider routes every shape through that provider's own

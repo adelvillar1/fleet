@@ -547,6 +547,7 @@ impl Bridge {
                 "model": self.model,
                 "workspace": self.cwd.display().to_string(),
                 "folder": folder_value(state.workdir_of(session).as_deref(), &self.cwd),
+            "goal": session_goal(&self.home, &key),
                 "budget": crate::compaction::COMPACTION_TOKEN_BUDGET,
                 "turn_budget": crate::route::run_config(&self.home).max_turns,
                 "gate": {
@@ -566,6 +567,7 @@ impl Bridge {
             "model": self.model,
             "workspace": self.cwd.display().to_string(),
             "folder": folder_value(state.workdir_of(session).as_deref(), &self.cwd),
+            "goal": session_goal(&self.home, &key),
             "budget": crate::compaction::COMPACTION_TOKEN_BUDGET,
             "turn_budget": crate::route::run_config(&self.home).max_turns,
             "gate": {
@@ -1880,6 +1882,184 @@ impl Bridge {
     /// folder is a grant, so choosing the launch directory grants it
     /// exactly like any other: the owner's explicit choice is the only
     /// thing that opens access.
+    /// Ask the model a question *beside* the run: one tool-less call
+    /// through a route prepared for the aside itself, so the answer
+    /// costs one model call and never enters the run's conversation.
+    /// The route is prepared with a fixed task text, so the
+    /// route-decision cache serves every aside after the first.
+    pub async fn btw(&self, session: &str, text: &str) -> Result<Value, String> {
+        let text = text.trim().to_string();
+        if text.is_empty() {
+            return Err("a side ask needs a question".to_string());
+        }
+        let home = self.home.clone();
+        let pin = lock(&self.state).provider_pin.clone();
+        let session = session.to_string();
+        // The router's streamed walk holds a `&mut dyn FnMut` across an
+        // await, so its future is not `Send` — the agent thread's own
+        // shape, applied here: a blocking task with a runtime of its own.
+        tokio::task::spawn_blocking(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|error| format!("the side ask needs a runtime: {error}"))?;
+            runtime.block_on(async move {
+                let dotenv = crate::home::read_dotenv(&home);
+                // The route is prepared for the aside itself, with a
+                // fixed task text, so the decision cache serves every ask
+                // after the first.
+                let prepared = crate::route::prepare_with_pin(
+                    &home,
+                    &dotenv,
+                    "a side question about the work in progress",
+                    &std::collections::HashMap::new(),
+                    pin.as_deref(),
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+                let client = Client::routed(prepared.router.clone());
+                let messages = vec![
+                    crate::api::Message::text(
+                        crate::api::Role::System,
+                        "The owner asked a side question while a run is executing. Answer it briefly and directly — this reply is not part of the run's conversation and cannot call tools.",
+                    ),
+                    crate::api::Message::text(crate::api::Role::User, text.clone()),
+                ];
+                let mut streamed = String::new();
+                let answered = client
+                    .chat_stream(
+                        &crate::api::ChatRequest {
+                            model: "",
+                            messages: &messages,
+                            tools: Vec::new(),
+                        },
+                        |event| {
+                            if let crate::api::StreamEvent::Content(chunk) = event {
+                                streamed.push_str(&chunk);
+                            }
+                        },
+                    )
+                    .await
+                    .map_err(|error| format!("the side ask failed: {error}"))?;
+                let answer = if !streamed.trim().is_empty() {
+                    streamed
+                } else {
+                    answered
+                        .choices
+                        .first()
+                        .and_then(|choice| choice.message.content.clone())
+                        .unwrap_or_else(|| "the model answered with no text".to_string())
+                };
+                Ok(json!({
+                    "type": "btw",
+                    "session": session,
+                    "question": text,
+                    "answer": answer,
+                    "model": prepared.decision.model,
+                    "provider": prepared.decision.provider,
+                }))
+            })
+        })
+        .await
+        .map_err(|_| "the side ask did not land".to_string())?
+    }
+
+    /// Name a session: the owner's title for an archive whose rows
+    /// otherwise fall back to the first message's line.
+    pub fn set_title(&self, session: &str, asked: &str) -> Result<Value, String> {
+        let session = if session.is_empty() {
+            self.launch()
+        } else {
+            session.to_string()
+        };
+        if session.is_empty() {
+            return Err("there is no session to name yet".to_string());
+        }
+        let title = asked.trim();
+        let mut titles = load_titles(&self.home);
+        if title.is_empty() {
+            titles.remove(&session);
+        } else {
+            titles.insert(session.clone(), title.to_string());
+        }
+        save_titles(&self.home, &titles);
+        Ok(json!({
+            "type": "title",
+            "session": session,
+            "title": title,
+        }))
+    }
+
+    /// One control into the run in flight, its body written verbatim:
+    /// a fold, a pin, a pause, a resume, or a steer. The guards are the
+    /// stop's own — the run must be in flight, and the driving session
+    /// is the one controlled.
+    pub fn control(&self, body: &serde_json::Value) -> Result<Value, String> {
+        let session = {
+            let state = lock(&self.state);
+            let driving = state.target();
+            let running = state
+                .attached_if(&driving)
+                .map(|attached| attached.running)
+                .unwrap_or(false);
+            if !running {
+                return Err("no run is in flight to control".to_string());
+            }
+            driving
+        };
+        crate::delegate::write_control_value(&self.home, &session, body)?;
+        let text = body
+            .as_object()
+            .and_then(|object| object.keys().next().cloned())
+            .unwrap_or_default();
+        record(
+            &self.state,
+            &self.events,
+            &session,
+            json!({"type": "control", "control": text, "session": session, "body": body}),
+        );
+        Ok(json!({"type": "control", "session": session, "control": text}))
+    }
+
+    /// Set or clear this session's standing objective, and show the
+    /// change where the owner is: one transcript line, carrying what
+    /// every following run will be told.
+    pub fn set_goal(&self, session: &str, asked: Option<&str>) -> Result<Value, String> {
+        // A goal set before the first run rides the pending key, the
+        // workdirs' own shape: the thread names the launch session on the
+        // first task and the goal moves with it.
+        let session = if session.is_empty() {
+            self.launch()
+        } else {
+            session.to_string()
+        };
+        let text = asked
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .map(str::to_string);
+        let mut goals = load_goals(&self.home);
+        match &text {
+            Some(text) => {
+                goals.insert(session.clone(), text.clone());
+            }
+            None => {
+                goals.remove(&session);
+            }
+        }
+        save_goals(&self.home, &goals);
+        record(
+            &self.state,
+            &self.events,
+            &session,
+            json!({"type": "goal", "text": text, "session": session}),
+        );
+        Ok(json!({
+            "type": "goal",
+            "session": session,
+            "text": text,
+        }))
+    }
+
     fn store_folder(&self, session: &str, asked: Option<&str>) -> Result<Option<PathBuf>, String> {
         let asked = asked.map(str::trim).filter(|asked| !asked.is_empty());
         let folder = match asked {
@@ -2770,6 +2950,104 @@ fn folder_name(path: &std::path::Path) -> String {
         .unwrap_or_else(|| path.display().to_string())
 }
 
+/// The sidecar each session's owner-set title is stored in: the
+/// workdirs' pattern, one file beside the other fleet-owned sidecars.
+const TITLES_FILE: &str = "sessions-titles.json";
+
+fn titles_path(home: &std::path::Path) -> PathBuf {
+    home.join(TITLES_FILE)
+}
+
+fn load_titles(home: &std::path::Path) -> std::collections::HashMap<String, String> {
+    let text = match std::fs::read_to_string(titles_path(home)) {
+        Ok(text) => text,
+        Err(_) => return std::collections::HashMap::new(),
+    };
+    let stored: std::collections::HashMap<String, String> =
+        serde_json::from_str(&text).unwrap_or_default();
+    stored
+        .into_iter()
+        .filter(|(id, _)| session::session_path(home, id).exists())
+        .collect()
+}
+
+fn save_titles(home: &std::path::Path, titles: &std::collections::HashMap<String, String>) {
+    let path = titles_path(home);
+    if titles.is_empty() {
+        let _ = std::fs::remove_file(&path);
+        return;
+    }
+    let Ok(text) = serde_json::to_string_pretty(titles) else {
+        return;
+    };
+    let temp = path.with_extension(format!("{}.tmp", std::process::id()));
+    if std::fs::write(&temp, text).is_err() {
+        return;
+    }
+    let _ = std::fs::rename(&temp, &path);
+}
+
+/// The sidecar each session's standing objective is stored in — the
+/// workdirs' pattern, one file beside the other fleet-owned sidecars.
+const GOALS_FILE: &str = "sessions-goals.json";
+
+fn goals_path(home: &std::path::Path) -> PathBuf {
+    home.join(GOALS_FILE)
+}
+
+/// Read the per-session goals. An entry whose session log is gone is
+/// dropped, like the workdirs map.
+fn load_goals(home: &std::path::Path) -> std::collections::HashMap<String, String> {
+    let text = match std::fs::read_to_string(goals_path(home)) {
+        Ok(text) => text,
+        Err(_) => return std::collections::HashMap::new(),
+    };
+    let stored: std::collections::HashMap<String, String> =
+        serde_json::from_str(&text).unwrap_or_default();
+    stored
+        .into_iter()
+        // The pending key never has a log of its own — it IS the goal
+        // waiting for the first run to name the session — so it survives
+        // the prune every real session id meets.
+        .filter(|(id, _)| id.is_empty() || session::session_path(home, id).exists())
+        .collect()
+}
+
+/// Write the per-session goals, atomically and with a writer-unique
+/// temp name, the workdirs' own rules.
+fn save_goals(home: &std::path::Path, goals: &std::collections::HashMap<String, String>) {
+    let path = goals_path(home);
+    if goals.is_empty() {
+        let _ = std::fs::remove_file(&path);
+        return;
+    }
+    let Ok(text) = serde_json::to_string_pretty(goals) else {
+        return;
+    };
+    let temp = path.with_extension(format!("{}.tmp", std::process::id()));
+    if std::fs::write(&temp, text).is_err() {
+        return;
+    }
+    let _ = std::fs::rename(&temp, &path);
+}
+
+/// One session's standing objective, when it has one.
+pub fn session_goal(home: &std::path::Path, session: &str) -> Option<String> {
+    load_goals(home).remove(session)
+}
+
+/// The thread named the launch session: a goal set before the first run
+/// moves from the pending key to the real one, exactly as the folder
+/// does.
+fn move_pending_goal(home: &std::path::Path, id: &str) {
+    let mut goals = load_goals(home);
+    let Some(goal) = goals.remove("") else {
+        return;
+    };
+    goals.insert(id.to_string(), goal);
+    save_goals(home, &goals);
+}
+
 /// The sidecar each chat's folder is stored in. It is a surface
 /// setting, so it lives beside the other fleet-owned sidecars rather
 /// than in the session log's format, which is the conversation.
@@ -3144,6 +3422,11 @@ fn cards_from_records(records: &[session::Record]) -> (Vec<Value>, usize) {
             session::Record::LaneTools { lane, tools } => {
                 cards.push(json!({"type": "lane", "lane": lane, "tools": tools.len()}));
             }
+            session::Record::Goal { text } => {
+                // The standing objective rides the prompt, so the replay
+                // shows the line the run carried.
+                cards.push(json!({"type": "goal", "text": text}));
+            }
             session::Record::Skills { skills } => {
                 // The log pins what the run declared, not what the loader
                 // skipped — a skipped name lives in the loader's own
@@ -3418,6 +3701,7 @@ fn access_read(home: &std::path::Path) -> Value {
 }
 
 fn sessions_read(home: &std::path::Path, current: &str) -> Value {
+    let titles = load_titles(home);
     let entries = match session::list(home) {
         Ok(entries) => entries,
         Err(error) => {
@@ -3433,6 +3717,13 @@ fn sessions_read(home: &std::path::Path, current: &str) -> Value {
         .map(|entry| {
             json!({
                 "id": entry.id,
+                // The owner's title when one is set, else the session's
+                // first message line — the archive reads locally, never a
+                // model call.
+                "title": titles
+                    .get(&entry.id)
+                    .cloned()
+                    .or_else(|| entry.first_text.clone()),
                 // The model that actually served (KI-073's end record),
                 // or null while the run is in flight — never the start
                 // record's pre-route stamp, which is a default, not a
@@ -5084,6 +5375,9 @@ async fn fan_out(
                             let map = lock(&state).workdirs.clone();
                             save_workdirs(&home, &map);
                         }
+                        // Independent of the folder: a goal set before the
+                        // first run moves to the session's own key.
+                        move_pending_goal(&home, id);
                     }
                     // The event belongs to the session the thread is
                     // driving, which is exact because the thread's
@@ -5351,6 +5645,11 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
                                         let id = fresh.id().to_string();
                                         current_session = Some(id.clone());
                                         let _ = ui_tx.send(UiEvent::Session { id: id.clone() });
+                                        // The goal set before this run rides the
+                                        // pending key: move it here, ahead of the
+                                        // options below, so the run declares it
+                                        // (the bridge's own move lags the thread).
+                                        move_pending_goal(&home, &id);
                                         id
                                     }
                                     Err(error) => {
@@ -5449,6 +5748,10 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
                         }
                         lock(&state).turn_budget = 0;
                         let options = AgentOptions {
+                            // The session's standing objective, read per
+                            // run so a change reaches the next run with
+                            // no restart.
+                            goal: session_goal(&home, &driving),
                             model: model.clone(),
                             max_turns: turn_budget,
                             identity: crate::home::read_soul(&home),
@@ -6279,6 +6582,137 @@ mod tests {
     /// face's launch session refused with `NoSeat` while the seat stood
     /// and the run hung behind it; a channel peer's run is where the two
     /// sessions diverge, and its seat shows on every surface.
+    /// One-request chat-completions mock: reads the request to its
+    /// declared length (the KI-280 lesson), then answers with a fixed
+    /// completion.
+    fn mock_chat() -> u16 {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a mock");
+        let port = listener.local_addr().expect("an address").port();
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = Vec::new();
+                let mut chunk = [0u8; 4096];
+                let head_end;
+                loop {
+                    match stream.read(&mut chunk) {
+                        Ok(0) => return,
+                        Ok(n) => buf.extend_from_slice(&chunk[..n]),
+                        Err(_) => return,
+                    }
+                    if let Some(at) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                        head_end = at + 4;
+                        break;
+                    }
+                }
+                let head = String::from_utf8_lossy(&buf[..head_end]).to_ascii_lowercase();
+                let length = head
+                    .lines()
+                    .find_map(|line| line.strip_prefix("content-length:"))
+                    .and_then(|value| value.trim().parse::<usize>().ok())
+                    .unwrap_or(0);
+                while buf.len() < head_end + length {
+                    match stream.read(&mut chunk) {
+                        Ok(0) => break,
+                        Ok(n) => buf.extend_from_slice(&chunk[..n]),
+                        Err(_) => break,
+                    }
+                }
+                // The streamed shape the router's walk parses.
+                let chunk = serde_json::json!({
+                    "choices": [{"delta": {"content": "the row opens the session in the conversation"}}]
+                });
+                let body = format!("data: {chunk}\n\ndata: [DONE]\n\n");
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+            }
+        });
+        port
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_side_ask_answers_and_the_runs_log_gains_nothing() {
+        // C2: /btw is answered beside the run — one tool-less call — and
+        // the session's log gains no message or turn from it.
+        let (bridge, _sources, _door) = bridge().await;
+        let home = bridge.home_path();
+        let port = mock_chat();
+        // Every workload walks the stand-in, so whichever the judgment
+        // names, the aside reaches the mock.
+        std::fs::write(
+            home.join("config.json"),
+            format!(
+                r#"{{"providers":[{{"id":"stand-in","base_url":"http://127.0.0.1:{port}/v1","key_env":"STAND_IN_KEY","models":["auto"],"key_required":false}}]}}"#
+            ),
+        )
+        .unwrap();
+        std::fs::write(
+            home.join("routing.json"),
+            r#"{"workloads":[{"workload":"quick","candidates":["stand-in/auto"]},{"workload":"standard_code","candidates":["stand-in/auto"]},{"workload":"hard","candidates":["stand-in/auto"]},{"workload":"prose","candidates":["stand-in/auto"]},{"workload":"deep_context","candidates":["stand-in/auto"]}],"gates":{"default_workload":"standard_code"}}"#,
+        )
+        .unwrap();
+        let mut session = crate::session::Session::create(&home, "m").expect("a log");
+        let id = session.id().to_string();
+        session
+            .record(&crate::session::Record::End {
+                stop_reason: "completed".to_string(),
+                turns: 1,
+                served_model: None,
+            })
+            .expect("an end");
+        let before = crate::session::replay(session.path())
+            .expect("the log")
+            .len();
+
+        let answered = bridge
+            .btw(&id, "what does the picker's row action do?")
+            .await
+            .expect("the aside is answered");
+        assert!(
+            answered["answer"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("opens the session"),
+            "{answered}"
+        );
+        assert_eq!(answered["provider"], "stand-in", "{answered}");
+        assert_eq!(
+            answered["question"],
+            "what does the picker's row action do?"
+        );
+
+        let after = crate::session::replay(session.path()).expect("the log");
+        assert_eq!(after.len(), before, "the log gained no record");
+        assert!(
+            !after
+                .iter()
+                .any(|record| format!("{record:?}").contains("row action")),
+            "the aside's text is absent from the log"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_steer_with_no_run_writes_no_control_file() {
+        // C1: a steer is about the run that is executing. With none in
+        // flight it is refused by name, and nothing lands in a control
+        // file the next run would read as its own.
+        let (bridge, _sources, _door) = bridge().await;
+        let error = bridge
+            .stop(Some("check the gate first"))
+            .expect_err("a steer with no run in flight");
+        assert!(error.contains("no run is in flight"), "{error}");
+        let session = bridge.launch();
+        if !session.is_empty() {
+            let control =
+                crate::session::session_path(&bridge.home, &session).with_extension("control");
+            assert!(!control.exists(), "no control file was written");
+        }
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn a_session_less_answer_answers_the_seat_being_driven() {
         let (bridge, sources, _door) = bridge().await;

@@ -119,6 +119,15 @@ pub enum Record {
     Skills {
         skills: Vec<crate::skills::SkillRef>,
     },
+    /// The session's standing objective, recorded once per run when one
+    /// is set. The goal rides the system prompt as a `## Goal` section,
+    /// so this record is what makes the prompt the model saw
+    /// reconstructable from the log (hard rule 5), the `skills` and
+    /// `memory` records' precedent. Bookkeeping: it replays to no
+    /// message.
+    Goal {
+        text: String,
+    },
     /// The memory one run's turn context carried, recorded once at run
     /// start. The assembled block is dynamic two ways over — the
     /// corpus's files change between runs and the block depends on the
@@ -408,6 +417,23 @@ pub fn summarize(path: &Path) -> Option<SessionSummary> {
         Ok(Record::End { served_model, .. }) => (true, served_model),
         _ => (false, None),
     };
+    // The first owner message's first line: the archive's fallback
+    // title. The text is already in hand, so this costs one pass.
+    let first_text = text
+        .lines()
+        .find_map(|line| match serde_json::from_str::<Record>(line.trim()) {
+            Ok(Record::User { content }) => Some(content),
+            _ => None,
+        })
+        .map(|content| {
+            content
+                .lines()
+                .next()
+                .unwrap_or_default()
+                .trim()
+                .to_string()
+        })
+        .filter(|text| !text.is_empty());
     let compacted = text.lines().any(|line| {
         matches!(
             serde_json::from_str::<Record>(line.trim()),
@@ -442,6 +468,7 @@ pub fn summarize(path: &Path) -> Option<SessionSummary> {
     Some(SessionSummary {
         id,
         model,
+        first_text,
         created,
         ended,
         kind,
@@ -494,6 +521,11 @@ fn infer_project(text: &str) -> Option<String> {
 pub struct SessionSummary {
     pub id: String,
     pub model: String,
+    /// The session's first owner message, first line, trimmed — the
+    /// fallback title the archive shows when the owner has not renamed
+    /// the session. Read from the log already in hand, never a model
+    /// call.
+    pub first_text: Option<String>,
     pub created: String,
     /// True when the log's last record is `end`.
     pub ended: bool,
@@ -577,6 +609,7 @@ pub fn list(home: &Path) -> io::Result<Vec<SessionSummary>> {
                 entries.push(SessionSummary {
                     id,
                     model: "unreadable".to_string(),
+                    first_text: None,
                     created: String::new(),
                     ended: false,
                     kind: None,
@@ -711,7 +744,8 @@ pub fn conversation(records: &[Record]) -> Conversation {
             | Record::End { .. }
             | Record::LaneTools { .. }
             | Record::Skills { .. }
-            | Record::Memory { .. } => {}
+            | Record::Memory { .. }
+            | Record::Goal { .. } => {}
         }
     }
     let next_turn = turns

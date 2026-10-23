@@ -864,6 +864,13 @@ fn load_facts_matching(root: &Path, stem_is_the_name: bool) -> Vec<Fact> {
 /// overrides it for a machine whose server listens elsewhere.
 pub const DEFAULT_EMBEDDING_ENDPOINT: &str = "http://127.0.0.1:8901/v1/embeddings";
 
+/// The model the embeddings request names. A llama-server built as a
+/// router needs the field: without it the request waits for a default
+/// the server does not have and the probe times out, which degrades
+/// every recall to keyword-only on a machine whose endpoint is healthy
+/// (KI-296). Overridable with `FLEET_EMBEDDING_MODEL`.
+pub const DEFAULT_EMBEDDING_MODEL: &str = "embeddinggemma";
+
 /// The env var that overrides the embedding endpoint — a second model
 /// on another port, or a llama-server bound elsewhere. Resolved the
 /// house way: env → the default constant, an empty value counting as
@@ -988,7 +995,14 @@ impl Embedder for HttpEmbedder {
     }
 
     fn embed(&self, text: &str) -> Option<Vec<f32>> {
-        let body = serde_json::json!({ "input": text }).to_string();
+        let body = serde_json::json!({
+            "model": std::env::var("FLEET_EMBEDDING_MODEL")
+                .ok()
+                .filter(|name| !name.trim().is_empty())
+                .unwrap_or_else(|| DEFAULT_EMBEDDING_MODEL.to_string()),
+            "input": text,
+        })
+        .to_string();
         // The embed server closes an idle keep-alive connection after
         // five seconds (`Keep-Alive: timeout=5`), and a pooled connection
         // that died while idle fails the request in milliseconds — one

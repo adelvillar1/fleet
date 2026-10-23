@@ -584,6 +584,103 @@ async fn serve_connection(
         // Retire a skill from the prompt, or return it: the owner's
         // click on the skills page, written fleet-locally, the library
         // untouched.
+        // The session's standing objective: set it, or clear it with an
+        // empty text. The sidecar persists it and every following run is
+        // told it.
+        // A side question while a run executes: one tool-less call, and
+        // the run's conversation is untouched.
+        // One control into the run in flight: a fold, a pin, a pause, a
+        // resume, or a steer, written verbatim to the run's control file.
+        ("POST", "/api/control") => {
+            let body = match read_body(&mut stream, &request, rest).await {
+                Ok(body) => body,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            let parsed: serde_json::Value = match serde_json::from_str(&body) {
+                Ok(value) => value,
+                Err(error) => {
+                    return write_reply(
+                        &mut stream,
+                        bad_request(&format!("a control's body is not JSON: {error}")),
+                    )
+                    .await
+                }
+            };
+            match bridge.control(&parsed) {
+                Ok(control) => write_reply(&mut stream, api(200, control)).await,
+                Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
+            }
+        }
+        ("POST", "/api/btw") => {
+            let body = match read_body(&mut stream, &request, rest).await {
+                Ok(body) => body,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            let text = match steer_of(&body) {
+                Ok(text) => text,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            let session = asked_session(bridge, &request);
+            match bridge.btw(&session, &text).await {
+                Ok(answer) => write_reply(&mut stream, api(200, answer)).await,
+                Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
+            }
+        }
+        // Name a session: the owner's title for the archive.
+        ("POST", "/api/session/title") => {
+            let body = match read_body(&mut stream, &request, rest).await {
+                Ok(body) => body,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            let parsed: serde_json::Value = match serde_json::from_str(&body) {
+                Ok(value) => value,
+                Err(error) => {
+                    return write_reply(
+                        &mut stream,
+                        bad_request(&format!("a title's body is not JSON: {error}")),
+                    )
+                    .await
+                }
+            };
+            let title = parsed
+                .get("title")
+                .and_then(|value| value.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let session = asked_session(bridge, &request);
+            match bridge.set_title(&session, &title) {
+                Ok(named) => write_reply(&mut stream, api(200, named)).await,
+                Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
+            }
+        }
+        ("POST", "/api/goal") => {
+            let body = match read_body(&mut stream, &request, rest).await {
+                Ok(body) => body,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            // An absent or empty `text` is a clear; malformed JSON is the
+            // caller's error, not a silent clear.
+            let parsed: serde_json::Value = match serde_json::from_str(&body) {
+                Ok(value) => value,
+                Err(error) => {
+                    return write_reply(
+                        &mut stream,
+                        bad_request(&format!("the goal's body is not JSON: {error}")),
+                    )
+                    .await
+                }
+            };
+            let text = parsed
+                .get("text")
+                .and_then(|value| value.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let session = asked_session(bridge, &request);
+            match bridge.set_goal(&session, Some(&text)) {
+                Ok(goal) => write_reply(&mut stream, api(200, goal)).await,
+                Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
+            }
+        }
         ("POST", "/api/skill/retire") => {
             let body = match read_body(&mut stream, &request, rest).await {
                 Ok(body) => body,

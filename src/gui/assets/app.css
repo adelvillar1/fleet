@@ -771,6 +771,90 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
   animation: fleet-spin 0.9s linear infinite;
 }
 
+/* The queued message: one line above the composer, the folder popover's
+   own border language. */
+.queue-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 2px 0;
+  padding: 4px 8px;
+  border: 1px solid var(--dsw-alias-hairline);
+  border-radius: var(--radius-md, 8px);
+  background: color-mix(in srgb, var(--dsw-alias-accent-wash) 50%, transparent);
+  font-size: 11px;
+  color: var(--dsw-alias-ink-secondary);
+}
+.queue-chip .queue-note { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.queue-chip button {
+  border: 0;
+  background: transparent;
+  color: var(--dsw-alias-ink-tertiary);
+  font: inherit;
+  cursor: pointer;
+  padding: 0 2px;
+}
+.queue-chip button:hover { color: var(--dsw-alias-ink); }
+
+/* The queued messages: an ordered list above the composer, the folder
+   popover's own border language. A row drags to reorder; [data-over]
+   marks where it would land. */
+.queue-chip {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 6px 2px 0;
+  padding: 6px 8px;
+  border: 1px solid var(--dsw-alias-hairline);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--dsw-alias-accent-wash) 40%, transparent);
+}
+.queue-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 10px;
+  color: var(--dsw-alias-ink-tertiary);
+}
+.queue-head #queue-count { color: var(--dsw-alias-ink-secondary); }
+.queue-list { display: flex; flex-direction: column; }
+.queue-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 4px;
+  border-radius: 6px;
+  font-size: 11px;
+  color: var(--dsw-alias-ink);
+  cursor: grab;
+}
+.queue-row:hover { background: var(--dsw-alias-accent-wash); }
+.queue-row[data-dragging="true"] { opacity: 0.55; }
+.queue-row[data-over="true"] { outline: 1px dashed var(--dsw-alias-accent); }
+.queue-handle {
+  color: var(--dsw-alias-ink-tertiary);
+  font-size: 10px;
+  user-select: none;
+}
+.queue-text {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.queue-row button {
+  border: 1px solid var(--dsw-alias-hairline);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--dsw-alias-ink-secondary);
+  font: inherit;
+  font-size: 10px;
+  padding: 1px 6px;
+  cursor: pointer;
+}
+.queue-row button:hover { color: var(--dsw-alias-ink); border-color: var(--dsw-alias-hairline-strong); }
+.queue-row button:disabled { opacity: 0.45; cursor: default; }
+
 /* The composer's button is the run's control: Send when idle, Stop
    while a run is in flight — the arrow gives way to a square, drawn in
    CSS rather than shipped as a second icon. */

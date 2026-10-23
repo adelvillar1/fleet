@@ -226,6 +226,12 @@ pub enum FileAccess {
 /// Options for one run.
 #[derive(Debug, Clone)]
 pub struct AgentOptions {
+    /// The session's standing objective when one is set: the owner's
+    /// `/goal`, carried into every run of that session. It rides the
+    /// system prompt as its own section and is pinned in the log as a
+    /// `goal` record, so the prompt the model saw stays reconstructable
+    /// (hard rule 5). `None` is a session with no goal.
+    pub goal: Option<String>,
     pub model: String,
     pub max_turns: usize,
     /// The run's identity base, read from `<FLEET_HOME>/SOUL.md` at the
@@ -329,6 +335,7 @@ pub struct AgentOptions {
 impl Default for AgentOptions {
     fn default() -> AgentOptions {
         AgentOptions {
+            goal: None,
             model: crate::route::AUTO_MODEL.to_string(),
             max_turns: DEFAULT_MAX_TURNS,
             identity: None,
@@ -600,6 +607,18 @@ pub enum Control {
     /// The owner wants this run to end now. The partial result lands
     /// with the typed reason and the run's own log path.
     Stop,
+    /// The owner wants the context folded at the next turn boundary,
+    /// whatever the budget says — the owner's hand on a live run.
+    Fold,
+    /// The owner wants the run re-routed for its next turn: a provider
+    /// id, a `provider/model` pair, or `auto` to drop the pin. The turn
+    /// in flight is not interrupted.
+    Pin(String),
+    /// The owner wants the run frozen before its next model call,
+    /// holding its place until a resume (or a stop) lands.
+    Pause,
+    /// The run continues from where the pause stopped it.
+    Resume,
 }
 
 /// Decides whether one tool call may execute.
@@ -885,6 +904,11 @@ fn vision_roster(client: &crate::api::Client) -> Vec<crate::route::Resolved> {
 /// Runs tasks against the API with the built-in tools.
 pub struct Agent<'a> {
     client: &'a Client,
+    /// The client a mid-run control swapped in: `Control::Pin` prepares
+    /// a route for the running session's next turn and every dialing
+    /// call reads through it, so the turn in flight is never
+    /// interrupted and the next one crosses the owner's new choice.
+    rerouted: Option<Client>,
     options: AgentOptions,
     session: &'a mut Session,
     messages: Vec<Message>,
@@ -1045,6 +1069,7 @@ impl<'a> Agent<'a> {
         } = crate::session::conversation(&records);
         Ok(Agent {
             client,
+            rerouted: None,
             options,
             session,
             messages,
@@ -1106,6 +1131,7 @@ impl<'a> Agent<'a> {
             && memory_block.is_none()
             && self.options.role_overlay.is_none()
             && self.options.gui_prompt.is_none()
+            && self.options.goal.is_none()
             && self.options.file_access == FileAccess::Unrestricted
         {
             return default_prompt();
@@ -1125,6 +1151,16 @@ impl<'a> Agent<'a> {
         // expectation of a report is never the part a `SOUL.md` drops.
         prompt.push_str("\n\n");
         prompt.push_str(REPORTING_CONTRACT);
+        if let Some(goal) = &self.options.goal {
+            // The session's standing objective: what the owner is working
+            // toward across runs. It rides ahead of the task's own context
+            // because every turn serves it, and it is pinned in the log as
+            // a `goal` record so the prompt stays reconstructable.
+            prompt.push_str(
+                "\n\n## Goal\n\nThe owner's standing objective for this session — every turn serves it, and it outlives any one task:\n\n",
+            );
+            prompt.push_str(goal);
+        }
         if !declared.is_empty() {
             prompt.push_str(
                 "\n\n## Skills\n\nSkills are procedural knowledge you can load on demand. Each line says what its skill is for; call `use_skill(name)` when your task matches that trigger, and the skill's body arrives as that call's result.\n",
@@ -1524,6 +1560,9 @@ impl<'a> Agent<'a> {
         // precedent, applied to the skills seam. A run with no skills
         // records nothing and its prompt is the compiled-in constant, so
         // the skill-less run is byte-for-byte the run it has always been.
+        if let Some(goal) = &self.options.goal {
+            self.record(&Record::Goal { text: goal.clone() })?;
+        }
         let declared_refs: Vec<crate::skills::SkillRef> = declared_skills(&self.skills)
             .into_iter()
             .map(crate::skills::SkillRef::from)
@@ -1557,6 +1596,21 @@ impl<'a> Agent<'a> {
             match self.read_control() {
                 Some(Control::Steer(text)) => self.apply_steer(&text)?,
                 Some(Control::Stop) => return self.stop_by_owner(),
+                Some(Control::Fold) => self.compact_now = true,
+                Some(Control::Pin(text)) => self.apply_pin(&text).await?,
+                // A pause holds the run before the next model call. The
+                // wait costs nothing but the wall clock — no request is
+                // in flight — and a stop still lands while it waits.
+                Some(Control::Pause) => loop {
+                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                    match self.read_control() {
+                        Some(Control::Resume) => break,
+                        Some(Control::Stop) => return self.stop_by_owner(),
+                        _ => {}
+                    }
+                },
+                // A resume with nothing paused is a no-op.
+                Some(Control::Resume) => {}
                 None => {}
             }
 
@@ -1585,7 +1639,13 @@ impl<'a> Agent<'a> {
                 messages: &request_messages,
                 tools: self.declarations(),
             };
-            let client = self.client;
+            // A field-level borrow, not a method: the turn holds the
+            // client while lending its progress sink mutably, and only
+            // disjoint fields can be borrowed together.
+            let client: &Client = match self.rerouted.as_ref() {
+                Some(rerouted) => rerouted,
+                None => self.client,
+            };
             let progress = &mut *self.progress;
             let ui_tx = self.ui_tx.clone();
             let response = client
@@ -1837,14 +1897,44 @@ impl<'a> Agent<'a> {
     /// The model that actually served this run, when it was routed:
     /// the committed decision's own. `None` on an unrouted run, whose
     /// nominal model is the one that answered. KI-073.
+    /// The client every dialing call reads: the re-routed one when a
+    /// `Control::Pin` swapped it, else the run's own.
+    fn dialer(&self) -> &Client {
+        self.rerouted.as_ref().unwrap_or(self.client)
+    }
+
+    /// Re-route the running session for its next turn: the owner's pin,
+    /// prepared through the router's own selection. The current turn is
+    /// not interrupted; an unusable pin leaves the run on its route. A
+    /// run with no home has no roster to prepare against and says so by
+    /// doing nothing.
+    async fn apply_pin(&mut self, asked: &str) -> Result<(), AgentError> {
+        let Some(home) = self.options.improve_home.clone() else {
+            return Ok(());
+        };
+        let pin = asked.trim();
+        let pin = (!pin.is_empty() && !pin.eq_ignore_ascii_case("auto")).then_some(pin);
+        let dotenv = crate::home::read_dotenv(&home);
+        let specs = self.options.lane_specs.clone().unwrap_or_default();
+        // A fixed task text: a mid-run switch is about the provider, and
+        // the route-decision cache then serves every re-route after the
+        // first instead of paying a judgment each time.
+        if let Ok(prepared) =
+            crate::route::prepare_with_pin(&home, &dotenv, "a mid-run re-route", &specs, pin).await
+        {
+            self.rerouted = Some(Client::routed(prepared.router.clone()));
+        }
+        Ok(())
+    }
+
     fn served_model(&self) -> Option<String> {
-        self.client
+        self.dialer()
             .route_decision()
             .map(|decision| decision.model.clone())
     }
 
     fn serving_window(&self) -> Option<u64> {
-        self.client
+        self.dialer()
             .route_decision()
             .and_then(|decision| crate::route::context_window(&decision.provider, &decision.model))
     }
@@ -1913,7 +2003,7 @@ impl<'a> Agent<'a> {
         // The deltas are transport, not content: the summary arrives whole
         // in the response, and streaming it to the progress sink would
         // put a second model's prose in the middle of the run's output.
-        let client = self.client;
+        let client = self.dialer();
         let response = match client.chat_stream(&request, |_| {}).await {
             Ok(response) => response,
             Err(error) => {
@@ -2695,7 +2785,10 @@ impl<'a> Agent<'a> {
         // Every borrow the child needs is taken from a disjoint field, so
         // the parent's approver and progress sink can be lent to it while
         // the parent's own session, client, and options stay in hand.
-        let client = self.client;
+        let client: &Client = match self.rerouted.as_ref() {
+            Some(rerouted) => rerouted,
+            None => self.client,
+        };
         let route = client.route_decision();
         let model = self.options.model.clone();
         let calib = self.options.calib.clone();
@@ -3900,8 +3993,21 @@ where
 /// that is not true, a JSON array — is not a control, and the reader
 /// names it rather than guessing.
 fn parse_control(value: &serde_json::Value) -> Option<Control> {
-    if value.get("stop").and_then(|stop| stop.as_bool()) == Some(true) {
+    let flag = |key: &str| value.get(key).and_then(|set| set.as_bool()) == Some(true);
+    if flag("stop") {
         return Some(Control::Stop);
+    }
+    if flag("fold") {
+        return Some(Control::Fold);
+    }
+    if flag("pause") {
+        return Some(Control::Pause);
+    }
+    if flag("resume") {
+        return Some(Control::Resume);
+    }
+    if let Some(pin) = value.get("pin").and_then(|pin| pin.as_str()) {
+        return Some(Control::Pin(pin.trim().to_string()));
     }
     let text = value
         .get("steer")
@@ -4788,6 +4894,7 @@ mod tests {
         let mut session = crate::session::Session::create(&home, "m").unwrap();
         let client = Client::new("http://127.0.0.1:9", "k");
         let options = AgentOptions {
+            goal: None,
             model: "m".to_string(),
             identity: None,
             max_turns: 1,
@@ -5098,6 +5205,7 @@ mod tests {
             Box::new(crate::memory::KeywordOnly),
         ));
         let options = AgentOptions {
+            goal: None,
             model: "m".to_string(),
             identity: None,
             max_turns: 1,
@@ -5171,6 +5279,7 @@ mod tests {
         let mut session = crate::session::Session::create(&home, "m").unwrap();
         let client = Client::new("http://127.0.0.1:9", "k");
         let options = AgentOptions {
+            goal: None,
             model: "m".to_string(),
             identity: None,
             max_turns: 1,
@@ -5235,6 +5344,114 @@ mod tests {
     /// The owner's SOUL.md replaces the identity base; the skills frame
     /// appends beside it as before.
     #[test]
+    fn a_pinned_route_is_read_by_the_dialer_and_leaves_the_runs_client() {
+        // C5's mechanism: a mid-run pin stores a routed client, and
+        // every dialing call reads through it — the run's own client is
+        // the original decision, never replaced.
+        let home = scratch("pin-dialer");
+        let mut session = crate::session::Session::create(&home, "m").unwrap();
+        let run_client = Client::routed(std::sync::Arc::new(crate::route::Router::new(
+            Vec::new(),
+            crate::route::workload_decision("quick").expect("quick"),
+        )));
+        let mut progress = Vec::new();
+        let mut agent = Agent::new(
+            &run_client,
+            AgentOptions {
+                model: "m".to_string(),
+                ..AgentOptions::default()
+            },
+            &mut session,
+            Box::new(ApproveAll),
+            &mut progress,
+        )
+        .unwrap();
+        let before = agent
+            .dialer()
+            .route_decision()
+            .map(|decision| (decision.provider, decision.model));
+        agent.rerouted = Some(Client::routed(std::sync::Arc::new(
+            crate::route::Router::new(
+                Vec::new(),
+                crate::route::workload_decision("hard").expect("hard"),
+            ),
+        )));
+        let after = agent
+            .dialer()
+            .route_decision()
+            .map(|decision| (decision.provider, decision.model));
+        assert_ne!(before, after, "the dialer reads the pinned route");
+        assert_eq!(
+            agent
+                .client
+                .route_decision()
+                .map(|decision| (decision.provider, decision.model)),
+            before,
+            "the run's own client is untouched"
+        );
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn a_goal_rides_the_prompt_and_the_compiled_constant_holds_without_one() {
+        // C0: the standing objective is its own section, ahead of the
+        // task's context, and a run with none is the compiled constant.
+        let home = scratch("goal-prompt");
+        let mut session = crate::session::Session::create(&home, "m").unwrap();
+        let client = Client::new("http://127.0.0.1:9", "k");
+        let none = {
+            let mut progress = Vec::new();
+            let options = AgentOptions {
+                goal: None,
+                model: "m".to_string(),
+                ..AgentOptions::default()
+            };
+            let agent = Agent::new(
+                &client,
+                options,
+                &mut session,
+                Box::new(ApproveAll),
+                &mut progress,
+            )
+            .unwrap();
+            agent.system_prompt(None)
+        };
+        assert_eq!(none, default_prompt(), "no goal is the compiled constant");
+        assert!(!none.contains("## Goal"), "{none}");
+
+        let set = {
+            let mut progress = Vec::new();
+            let options = AgentOptions {
+                goal: Some("ship the picker before Thursday".to_string()),
+                model: "m".to_string(),
+                ..AgentOptions::default()
+            };
+            let agent = Agent::new(
+                &client,
+                options,
+                &mut session,
+                Box::new(ApproveAll),
+                &mut progress,
+            )
+            .unwrap();
+            agent.system_prompt(None)
+        };
+        assert!(
+            set.contains("## Goal\n\nThe owner's standing objective for this session"),
+            "{set}"
+        );
+        assert!(set.contains("ship the picker before Thursday"), "{set}");
+        // The goal rides ahead of the skills section when both are set.
+        let skills_at = set.find("## Skills");
+        let goal_at = set.find("## Goal").expect("the goal section");
+        assert!(
+            skills_at.is_none_or(|at| goal_at < at),
+            "the goal rides first"
+        );
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
     fn an_identity_replaces_the_base_and_the_frames_still_append() {
         let identity = "You are Fleet, in the owner's own words.";
         let build = |skills: Vec<crate::skills::Skill>| {
@@ -5244,6 +5461,7 @@ mod tests {
                 crate::session::Session::create(&home, "m").unwrap(),
             ));
             let options = AgentOptions {
+                goal: None,
                 model: "m".to_string(),
                 identity: Some(identity.to_string()),
                 max_turns: 1,
@@ -5311,6 +5529,7 @@ mod tests {
 You are auditing a change. Read the diff before you judge it.
 [ROLE OVERLAY END]";
         let options = AgentOptions {
+            goal: None,
             model: "m".to_string(),
             identity: None,
             max_turns: 1,
@@ -5344,6 +5563,7 @@ You are auditing a change. Read the diff before you judge it.
         // Without the overlay the same construction is the constant.
         let mut session = crate::session::Session::create(&home, "m").unwrap();
         let options = AgentOptions {
+            goal: None,
             model: "m".to_string(),
             identity: None,
             max_turns: 1,
@@ -5386,6 +5606,7 @@ You are auditing a change. Read the diff before you judge it.
         let client = Client::new("http://127.0.0.1:9", "k");
         let line = crate::gui::prompt_line("http://127.0.0.1:3080");
         let options = AgentOptions {
+            goal: None,
             model: "m".to_string(),
             identity: None,
             max_turns: 1,
@@ -5421,6 +5642,7 @@ You are auditing a change. Read the diff before you judge it.
         // Without the line the same construction is the constant.
         let mut session = crate::session::Session::create(&home, "m").unwrap();
         let options = AgentOptions {
+            goal: None,
             model: "m".to_string(),
             identity: None,
             max_turns: 1,
@@ -5461,6 +5683,7 @@ You are auditing a change. Read the diff before you judge it.
         let mut session = crate::session::Session::create(&home, "m").unwrap();
         let client = Client::new("http://127.0.0.1:9", "k");
         let options = AgentOptions {
+            goal: None,
             model: "m".to_string(),
             identity: None,
             max_turns: 1,
@@ -5510,6 +5733,7 @@ You are auditing a change. Read the diff before you judge it.
         let mut session = crate::session::Session::create(&home, "m").unwrap();
         let client = Client::new("http://127.0.0.1:9", "k");
         let options = AgentOptions {
+            goal: None,
             model: "m".to_string(),
             identity: Some("You are the owner's own voice.".to_string()),
             max_turns: 1,
@@ -5615,6 +5839,7 @@ You are auditing a change. Read the diff before you judge it.
         let id = session.id().to_string();
         let client = Client::new("http://127.0.0.1:9", "k");
         let options = AgentOptions {
+            goal: None,
             model: "m".to_string(),
             identity: None,
             max_turns: 1,
@@ -5682,6 +5907,7 @@ You are auditing a change. Read the diff before you judge it.
         let id = session.id().to_string();
         let client = Client::new("http://127.0.0.1:9", "k");
         let options = AgentOptions {
+            goal: None,
             model: "m".to_string(),
             identity: None,
             max_turns: 1,
@@ -5789,6 +6015,7 @@ You are auditing a change. Read the diff before you judge it.
             Box::new(crate::memory::KeywordOnly),
         ));
         let options = AgentOptions {
+            goal: None,
             model: "m".to_string(),
             identity: None,
             max_turns: 1,
@@ -5923,6 +6150,7 @@ You are auditing a change. Read the diff before you judge it.
             Box::new(crate::memory::KeywordOnly),
         ));
         let options = AgentOptions {
+            goal: None,
             model: "m".to_string(),
             identity: None,
             max_turns: 1,
@@ -6437,6 +6665,7 @@ You are auditing a change. Read the diff before you judge it.
         let mut session = crate::session::Session::create(&home, "m").unwrap();
         let client = Client::new("http://127.0.0.1:9", "k");
         let options = AgentOptions {
+            goal: None,
             model: "m".to_string(),
             identity: None,
             max_turns: 1,
@@ -6493,6 +6722,7 @@ You are auditing a change. Read the diff before you judge it.
         let mut session = crate::session::Session::create(&home, "m").unwrap();
         let client = Client::new("http://127.0.0.1:9", "k");
         let options = AgentOptions {
+            goal: None,
             model: "m".to_string(),
             identity: None,
             max_turns: 1,
@@ -6558,6 +6788,7 @@ You are auditing a change. Read the diff before you judge it.
             resolved, decision,
         )));
         let options = AgentOptions {
+            goal: None,
             model: "step-5-preview".to_string(),
             identity: None,
             max_turns: 1,
@@ -6612,6 +6843,7 @@ You are auditing a change. Read the diff before you judge it.
         // behaviour every run had before windows were declared.
         let plain = Client::new("http://127.0.0.1:9", "k");
         let plain_options = AgentOptions {
+            goal: None,
             model: "m".to_string(),
             identity: None,
             max_turns: 1,
@@ -6770,6 +7002,7 @@ You are auditing a change. Read the diff before you judge it.
         let client = Box::leak(Box::new(Client::new("http://127.0.0.1:9", "k")));
         let session = Box::leak(Box::new(crate::session::Session::open(path).unwrap()));
         let options = AgentOptions {
+            goal: None,
             model: "m".to_string(),
             identity: None,
             max_turns: 1,
@@ -7163,6 +7396,7 @@ You are auditing a change. Read the diff before you judge it.
             crate::session::Session::create(home, "m").unwrap(),
         ));
         let options = AgentOptions {
+            goal: None,
             model: "m".to_string(),
             identity: None,
             max_turns: 1,
@@ -7498,6 +7732,28 @@ You are auditing a change. Read the diff before you judge it.
         assert_eq!(
             parse_control(&serde_json::json!({"steer": "  go left  "})),
             Some(Control::Steer("go left".to_string()))
+        );
+        // The run's other dials: fold, pause, resume, and a pin (a
+        // provider id, a pair, or `auto`).
+        assert_eq!(
+            parse_control(&serde_json::json!({"fold": true})),
+            Some(Control::Fold)
+        );
+        assert_eq!(
+            parse_control(&serde_json::json!({"pause": true})),
+            Some(Control::Pause)
+        );
+        assert_eq!(
+            parse_control(&serde_json::json!({"resume": true})),
+            Some(Control::Resume)
+        );
+        assert_eq!(
+            parse_control(&serde_json::json!({"pin": "stepfun"})),
+            Some(Control::Pin("stepfun".to_string()))
+        );
+        assert_eq!(
+            parse_control(&serde_json::json!({"pin": "auto"})),
+            Some(Control::Pin("auto".to_string()))
         );
         for not_a_control in [
             serde_json::json!({}),
