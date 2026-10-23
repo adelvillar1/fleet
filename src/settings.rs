@@ -3150,6 +3150,48 @@ pub fn record_sweep(home: &Path, stamp: &str) -> Result<(), String> {
     write_atomic(&path, &document.to_string())
 }
 
+/// The workloads the owner (or the sweep) masked, from
+/// `workflows.disabled` in config.json.
+pub fn workflows_disabled(home: &Path) -> Vec<String> {
+    read_json(&home.join("config.json"))
+        .unwrap_or_default()
+        .get("workflows")
+        .and_then(|workflows| workflows.get("disabled"))
+        .and_then(|list| list.as_array())
+        .map(|list| {
+            list.iter()
+                .filter_map(|name| name.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Add or remove one workload name in `workflows.disabled`.
+pub fn set_workflow_disabled(home: &Path, name: &str, disabled: bool) -> Result<(), String> {
+    let path = home.join("config.json");
+    let mut document = read_json(&path)?;
+    let object = document
+        .as_object_mut()
+        .ok_or_else(|| format!("{} is not a JSON object", path.display()))?;
+    let workflows = object
+        .entry("workflows".to_string())
+        .or_insert_with(|| Value::Object(Map::new()));
+    let workflows = workflows
+        .as_object_mut()
+        .ok_or_else(|| "`workflows` is not a JSON object".to_string())?;
+    let list = workflows
+        .entry("disabled".to_string())
+        .or_insert_with(|| Value::Array(Vec::new()));
+    let list = list
+        .as_array_mut()
+        .ok_or_else(|| "`workflows.disabled` is not a list".to_string())?;
+    list.retain(|entry| entry.as_str() != Some(name));
+    if disabled {
+        list.push(Value::String(name.to_string()));
+    }
+    write_atomic(&path, &document.to_string())
+}
+
 /// The last applied sweep's stamp, when there was one.
 pub fn last_sweep(home: &Path) -> Option<String> {
     read_json(&home.join("config.json"))

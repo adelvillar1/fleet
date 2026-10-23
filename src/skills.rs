@@ -712,7 +712,36 @@ pub fn use_skill_result(skills: &[Skill], arguments: &serde_json::Value) -> Stri
     };
     match skills.iter().find(|skill| skill.name == name) {
         Some(skill) => skill.body.clone(),
-        None => format!("error: no skill named `{name}`"),
+        None => {
+            // A name the run never declared may be a retired skill: the
+            // named result tells the model the rule and the reverse,
+            // not a bare "unknown" that reads as a typo.
+            let retired = RETIRED_DISCLOSE
+                .lock()
+                .map(|disclosed| disclosed.iter().any(|held| held == name))
+                .unwrap_or(false);
+            if retired {
+                format!(
+                    "disabled: the skill `{name}` is retired fleet-locally \u{2014} no use over the \
+                     measured window. The owner's `fleet skills` card enables it; nothing loaded."
+                )
+            } else {
+                format!("error: no skill named `{name}`")
+            }
+        }
+    }
+}
+
+/// The retired names a running process has already read, set once at
+/// run start beside the skills list. `use_skill` consults it so a
+/// disabled skill's refusal is the rule, not a typo.
+pub static RETIRED_DISCLOSE: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// Load the retired names once, at run start, so `use_skill` can name
+/// the rule instead of guessing.
+pub fn note_retired(home: &Path) {
+    if let Ok(mut disclosed) = RETIRED_DISCLOSE.lock() {
+        *disclosed = retired(home);
     }
 }
 

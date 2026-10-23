@@ -1259,6 +1259,109 @@ async fn a_disabled_tool_is_undeclared_and_its_call_names_the_rule() {
     std::fs::remove_dir_all(&home).ok();
 }
 
+/// The sweep's dry run changes nothing and names its skip reasons; the
+/// applied run disables a gate candidate, records the calibration row,
+/// and never touches the protected set.
+#[tokio::test]
+async fn the_lifecycle_sweep_disables_only_what_the_gate_names() {
+    let home = temp_home("lifecycle-sweep");
+    // Twelve aged sessions declaring deck and never calling it: a
+    // candidate. bash is declared too, and protected.
+    for index in 0..12 {
+        let mut session = Session::create(&home, "test-model").unwrap();
+        session
+            .record(&Record::Declarations {
+                names: vec!["bash".to_string(), "deck".to_string()],
+                tier: "core".to_string(),
+            })
+            .unwrap();
+        age_session(&home, session, &format!("s{index}"));
+    }
+    // Dry run: nothing is written.
+    let output = sweep_output(&home, false);
+    assert!(output.contains("deck"), "{output}");
+    assert!(fleet::settings::tools_disabled(&home).is_empty());
+    // Apply: deck is disabled, bash is skipped as protected.
+    let output = sweep_output(&home, true);
+    assert!(output.contains("disable  deck"), "{output}");
+    assert_eq!(
+        fleet::settings::tools_disabled(&home),
+        vec!["deck".to_string()]
+    );
+    assert!(output.contains("protected"), "{output}");
+    // The calibration row exists: the sweep's own stream wrote it
+    // beside the config write, so the audit trail is on disk.
+    let user_home = std::env::var("HOME").ok();
+    let root = fleet::calib::resolve_root(&home, user_home.as_deref());
+    fn read_jsonl(dir: &Path, out: &mut String) {
+        for entry in std::fs::read_dir(dir).unwrap().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                read_jsonl(&path, out);
+            } else if path.extension().and_then(|e| e.to_str()) == Some("jsonl") {
+                out.push_str(&std::fs::read_to_string(&path).unwrap_or_default());
+            }
+        }
+    }
+    let mut rows = String::new();
+    read_jsonl(&root, &mut rows);
+    assert!(
+        rows.contains("\"op\":\"lifecycle\"") && rows.contains("\"name\":\"deck\""),
+        "{rows}"
+    );
+    std::fs::remove_dir_all(&home).ok();
+}
+
+fn age_session(home: &Path, session: Session, stamp: &str) {
+    let dir = fleet::home::sessions_dir(home);
+    std::fs::create_dir_all(&dir).unwrap();
+    let target = dir.join(format!("20261001T0000{stamp}Z-test.jsonl"));
+    let text = std::fs::read_to_string(session.path()).unwrap();
+    let aged = text.replacen(r#""created":""#, r#""created":"2026-10-01"#, 1);
+    std::fs::write(&target, aged).unwrap();
+    std::fs::remove_file(session.path()).unwrap();
+}
+
+fn sweep_output(home: &Path, apply: bool) -> String {
+    let thresholds = fleet::settings::lifecycle_thresholds(home);
+    let scan = fleet::tool_advisor::scan(home, thresholds.window);
+    let metrics = fleet::tool_advisor::lifecycle_metrics(&scan);
+    let skill_metrics = fleet::tool_advisor::scan_skills(home, thresholds.window)
+        .into_iter()
+        .map(|skill| fleet::lifecycle::SkillMetrics {
+            name: skill.name,
+            declared_runs: skill.declared_runs,
+            uses: skill.uses,
+            first_seen: skill.first_seen,
+        })
+        .collect::<Vec<_>>();
+    let stream = fleet::calib::Stream::open(fleet::calib::resolve_root(
+        home,
+        std::env::var("HOME").ok().as_deref(),
+    ));
+    let plan = fleet::lifecycle::sweep(
+        home,
+        &thresholds,
+        &metrics,
+        &skill_metrics,
+        apply,
+        Some(&stream),
+    );
+    let mut text = String::new();
+    for (kind, result) in &plan {
+        for candidate in &result.applied {
+            text.push_str(&format!(
+                "disable  {} \u{2014} {}\n",
+                candidate.name, candidate.reason
+            ));
+        }
+        for (name, reason) in &result.skipped {
+            text.push_str(&format!("skip {kind} {name} \u{2014} {reason}\n"));
+        }
+    }
+    text
+}
+
 /// A name that merely starts with `supersede` is not supersede: the
 /// dispatch matches the exact tool name, so a lookalike is an unknown.
 #[tokio::test]

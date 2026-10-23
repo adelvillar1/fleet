@@ -427,6 +427,103 @@ fn shell_shape(command: &str) -> Option<&'static str> {
     })
 }
 
+/// One skill's lifecycle metrics, read from the archive: declared runs
+/// from the `Skills` records, uses from `use_skill` calls whose result
+/// was the body (a denied selection loads nothing).
+pub struct SkillUse {
+    pub name: String,
+    pub declared_runs: usize,
+    pub uses: usize,
+    /// The first `YYYY-MM-DD` a run declared it.
+    pub first_seen: String,
+}
+
+/// Scan the window for the skills' lifecycle metrics.
+pub fn scan_skills(home: &Path, window: usize) -> Vec<SkillUse> {
+    let mut ledger: BTreeMap<String, (usize, usize, Option<String>)> = BTreeMap::new();
+    let Ok(summaries) = crate::session::list(home) else {
+        return Vec::new();
+    };
+    for summary in summaries.iter().rev().take(window.max(1)) {
+        let Ok(records) = crate::session::replay(&summary.path) else {
+            continue;
+        };
+        let mut created = String::new();
+        let mut approved: HashMap<String, String> = HashMap::new();
+        for record in &records {
+            match record {
+                Record::Start { created: stamp, .. } => {
+                    created = stamp.chars().take(10).collect();
+                }
+                Record::ToolResult {
+                    call_id,
+                    output,
+                    approved: ok,
+                    ..
+                } => {
+                    if *ok {
+                        approved.insert(call_id.clone(), output.clone());
+                    }
+                }
+                _ => {}
+            }
+        }
+        for record in &records {
+            match record {
+                Record::Skills { skills } => {
+                    for skill in skills {
+                        let entry = skills_entry(&mut ledger, &skill.name);
+                        entry.0 += 1;
+                        let first = entry.2.get_or_insert_with(|| {
+                            if created.is_empty() {
+                                crate::boards::now_stamp().chars().take(10).collect()
+                            } else {
+                                created.clone()
+                            }
+                        });
+                        if !created.is_empty() && created.as_str() < first.as_str() {
+                            *first = created.clone();
+                        }
+                    }
+                }
+                Record::Assistant { tool_calls, .. } => {
+                    for call in tool_calls {
+                        if call.function.name != crate::tools::USE_SKILL_TOOL {
+                            continue;
+                        }
+                        let name = crate::skills::requested_skill(&call.function.arguments);
+                        let loaded = approved
+                            .get(&call.id)
+                            .map(|output| !output.starts_with("error"))
+                            .unwrap_or(false);
+                        if let (Some(name), true) = (name, loaded) {
+                            skills_entry(&mut ledger, &name).1 += 1;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    ledger
+        .into_iter()
+        .map(|(name, (declared_runs, uses, first_seen))| SkillUse {
+            name,
+            declared_runs,
+            uses,
+            first_seen: first_seen
+                .unwrap_or_else(|| crate::boards::now_stamp().chars().take(10).collect()),
+        })
+        .collect()
+}
+
+fn skills_entry<'a>(
+    skills: &'a mut BTreeMap<String, (usize, usize, Option<String>)>,
+    name: &str,
+) -> &'a mut (usize, usize, Option<String>) {
+    skills.entry(name.to_string()).or_insert((0, 0, None))
+}
+
 /// The scan as a card.
 pub fn render_scan(scan: &ToolScan) -> String {
     let mut out = String::new();

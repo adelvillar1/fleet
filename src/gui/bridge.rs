@@ -4584,6 +4584,12 @@ fn settings_read(home: &std::path::Path) -> Value {
         "disabled": disabled_tools,
         "last_sweep": crate::settings::last_sweep(home),
         "window": thresholds.window,
+        "skills": {
+            "retired": crate::skills::retired(home),
+        },
+        "workflows": {
+            "disabled": crate::settings::workflows_disabled(home),
+        },
     });
     json!({
         "type": "settings",
@@ -6342,7 +6348,10 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
                     std::env::var("FLEET_SKILLS_DIR").ok().as_deref(),
                     std::env::var("HOME").ok().as_deref(),
                 )
-                .map(|dir| crate::skills::load_declared(&dir, &home))
+                .map(|dir| {
+                    crate::skills::note_retired(&home);
+                    crate::skills::load_declared(&dir, &home)
+                })
                 .unwrap_or_default()
             };
             // The route is chosen once per session, on that session's

@@ -483,6 +483,19 @@ impl Default for Gates {
     }
 }
 
+/// The workloads the owner (or the sweep) masked, from
+/// `workflows.disabled` in the fleet home's config. The home is the
+/// one seam the router already reads tiers through, so the mask rides
+/// the same boundary; an unreadable file is an empty list.
+pub fn masked_workloads(home: &Path) -> Vec<String> {
+    crate::settings::workflows_disabled(home)
+}
+
+/// The workloads the sweep never masks: the default, and the two whose
+/// tools route through them (`vision` for the vision tool, `composed`
+/// as the grounded lane's only route).
+pub const PROTECTED_WORKLOADS: &[&str] = &["vision", "composed"];
+
 /// A workload's preference, or `None` for a workload no table names.
 pub fn preference_for<'a>(table: &'a [Preference], workload: &str) -> Option<&'a Preference> {
     table.iter().find(|entry| entry.workload == workload)
@@ -1270,7 +1283,7 @@ pub async fn select(
     gates: Gates,
     cache: Option<&mut crate::route_cache::Cache>,
 ) -> (RouteDecision, u128) {
-    select_walk(
+    select_with_home(
         resolved,
         pin,
         task,
@@ -1279,8 +1292,27 @@ pub async fn select(
         gates,
         cache,
         Walk::Leader,
+        None,
     )
     .await
+}
+
+/// [`select`] with the fleet home, so the workflow mask applies. `None`
+/// is a caller with no home: nothing masks, the route is the router's
+/// own.
+#[allow(clippy::too_many_arguments)]
+pub async fn select_with_home(
+    resolved: &[Resolved],
+    pin: Option<&str>,
+    task: &str,
+    specs: &HashMap<String, ServerSpec>,
+    table: &[Preference],
+    gates: Gates,
+    cache: Option<&mut crate::route_cache::Cache>,
+    walk: Walk,
+    home: Option<&Path>,
+) -> (RouteDecision, u128) {
+    select_walk_with_home(resolved, pin, task, specs, table, gates, cache, walk, home).await
 }
 
 /// [`select`] for either session: the leader walks the orchestrator's
@@ -1296,6 +1328,23 @@ pub async fn select_walk(
     gates: Gates,
     cache: Option<&mut crate::route_cache::Cache>,
     walk: Walk,
+) -> (RouteDecision, u128) {
+    select_walk_with_home(resolved, pin, task, specs, table, gates, cache, walk, None).await
+}
+
+/// [`select_walk`] with the fleet home: the workflow mask applies when
+/// the run carries a home.
+#[allow(clippy::too_many_arguments)]
+pub async fn select_walk_with_home(
+    resolved: &[Resolved],
+    pin: Option<&str>,
+    task: &str,
+    specs: &HashMap<String, ServerSpec>,
+    table: &[Preference],
+    gates: Gates,
+    cache: Option<&mut crate::route_cache::Cache>,
+    walk: Walk,
+    masked_from: Option<&Path>,
 ) -> (RouteDecision, u128) {
     let started = Instant::now();
     let head = head_index(resolved);
@@ -1385,8 +1434,29 @@ pub async fn select_walk(
     } else {
         format!("the orchestrator walks `{ORCHESTRATOR_WORKLOAD}`'s chain; ")
     };
-
-    let decision = match preference_for(table, walked) {
+    // The lifecycle mask, applied after the judgment and before the
+    // walk: a masked workload's label is still judged and recorded, but
+    // the chain that serves is the default's, and the reason says the
+    // mask did it. The default and the two tool-dependent workloads
+    // never mask.
+    let masked = masked_from.is_some_and(|home| {
+        masked_workloads(home).iter().any(|name| {
+            name == walked
+                && !PROTECTED_WORKLOADS.contains(&walked)
+                && walked != gates.default_workload
+        })
+    });
+    let effective = if masked {
+        gates.default_workload
+    } else {
+        walked
+    };
+    let mask_note = if masked {
+        format!("`{walked}` is masked, so the default serves; ")
+    } else {
+        String::new()
+    };
+    let decision = match preference_for(table, effective) {
         Some(preference) => {
             // The walk is the walked workload's own list — a provider
             // pin filters it to that provider, and the router still
@@ -1484,6 +1554,13 @@ pub async fn select_walk(
             judged_from,
         ),
     };
+    // The mask's note rides the reason wherever the walk ended: the
+    // label was judged, the default served, and the owner can read why.
+    let mut decision = decision;
+    if masked {
+        decision.reason = format!("{mask_note}{}", decision.reason);
+        decision.workload = Some(workload.clone());
+    }
     (decision, started.elapsed().as_millis())
 }
 
@@ -2573,7 +2650,7 @@ async fn prepare_walk(
     // through. The cache never blocks a route — every failure path
     // inside it costs a recompute and nothing else.
     let mut decision_cache = crate::route_cache::Cache::load(home);
-    let (mut decision, latency_ms) = select_walk(
+    let (mut decision, latency_ms) = select_walk_with_home(
         &resolved,
         roster.pin.as_deref(),
         task,
@@ -2582,6 +2659,7 @@ async fn prepare_walk(
         roster.gates,
         Some(&mut decision_cache),
         walk,
+        Some(home),
     )
     .await;
     // The calibration stream, and its first read: today's graded rows

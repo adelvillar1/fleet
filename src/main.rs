@@ -951,7 +951,10 @@ fn load_skills(user_home: Option<&str>, home: &std::path::Path) -> Vec<fleet::sk
         // The declared list: the library with the owner's retired
         // filtered out — the skills page is where a retirement happens,
         // and the library is never written by it (KI-215).
-        Some(dir) => fleet::skills::load_declared(&dir, home),
+        Some(dir) => {
+            fleet::skills::note_retired(home);
+            fleet::skills::load_declared(&dir, home)
+        }
         None => {
             eprintln!(
                 "fleet: skills: no skills directory resolvable \u{2014} set FLEET_SKILLS_DIR or HOME"
@@ -1029,48 +1032,6 @@ fn tools_enable(home: &std::path::Path, name: &str) -> ExitCode {
     }
 }
 
-/// `fleet tools sweep [--apply]`: the gate computed over the archive,
-/// dry-run by default. Applies at most `max_disable_per_sweep`, never a
-/// protected, trial, or already-disabled tool, and records every write.
-fn tools_sweep(home: &std::path::Path, apply: bool) -> ExitCode {
-    let thresholds = fleet::settings::lifecycle_thresholds(home);
-    let disabled = fleet::settings::tools_disabled(home);
-    let scan = fleet::tool_advisor::scan(home, thresholds.window);
-    let metrics = fleet::tool_advisor::lifecycle_metrics(&scan);
-    let plan = fleet::lifecycle::sweep_plan(&metrics, &thresholds, &disabled);
-    let label = if apply { "apply" } else { "dry-run" };
-    println!(
-        "fleet tools sweep ({label}) \u{2014} {} session(s), cap {} per sweep",
-        scan.sessions, thresholds.max_disable_per_sweep
-    );
-    for (name, reason) in &plan.disabled {
-        println!("  disable  {name}  \u{2014} {reason}");
-    }
-    for (name, reason) in &plan.skipped {
-        println!("  skip     {name}  \u{2014} {reason}");
-    }
-    if plan.disabled.is_empty() {
-        println!("  nothing to disable");
-    }
-    if !apply {
-        return ExitCode::SUCCESS;
-    }
-    for (name, reason) in &plan.disabled {
-        if let Err(error) = fleet::settings::set_tool_disabled(home, name, true) {
-            eprintln!("fleet: could not disable `{name}`: {error} \u{2014} the sweep stops, nothing else changed");
-            return ExitCode::FAILURE;
-        }
-        lifecycle_row(home, name, "disable", reason);
-    }
-    if let Err(error) = fleet::settings::record_sweep(home, &fleet::boards::now_stamp()) {
-        eprintln!("fleet: could not record the sweep stamp: {error}");
-    }
-    ExitCode::SUCCESS
-}
-
-/// The sem1 lane as a coverage embedder: spawn, initialize, embed in
-/// bounded batches, tear down. A lane that cannot start is a named
-/// refusal \u{2014} the pass never silently answers nothing.
 struct Sem1Embedder {
     spec: fleet::mcp::ServerSpec,
 }
@@ -1148,6 +1109,76 @@ async fn tools_coverage(home: &std::path::Path, sessions: usize) -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// `fleet tools sweep [--apply]`: the gate computed over the archive,
+/// dry-run by default. Applies at most `max_disable_per_sweep`, never a
+/// protected, trial, or already-disabled tool, and records every write.
+fn tools_sweep(home: &std::path::Path, apply: bool) -> ExitCode {
+    let thresholds = fleet::settings::lifecycle_thresholds(home);
+    let scan = fleet::tool_advisor::scan(home, thresholds.window);
+    let metrics = fleet::tool_advisor::lifecycle_metrics(&scan);
+    let skill_metrics = skill_metrics_from(home, thresholds.window);
+    let user_home = std::env::var("HOME").ok();
+    let stream = fleet::calib::Stream::open(fleet::calib::resolve_root(home, user_home.as_deref()));
+    let plan = fleet::lifecycle::sweep(
+        home,
+        &thresholds,
+        &metrics,
+        &skill_metrics,
+        apply,
+        Some(&stream),
+    );
+    // The dry run renders per kind; the applied run also writes the stamp.
+    if apply {
+        let _ = fleet::settings::record_sweep(home, &fleet::boards::now_stamp());
+    }
+    for (kind, result) in &plan {
+        println!(
+            "fleet lifecycle sweep ({}) \u{2014} {kind}: {} disabled, {} skipped",
+            if apply { "apply" } else { "dry-run" },
+            result.applied.len(),
+            result.skipped.len()
+        );
+        for candidate in &result.applied {
+            println!(
+                "  disable  {}  \u{2014} {}",
+                candidate.name, candidate.reason
+            );
+        }
+        for (name, reason) in &result.skipped {
+            println!("  skip     {name}  \u{2014} {reason}");
+        }
+    }
+    for (kind, result) in &plan {
+        for candidate in &result.applied {
+            lifecycle_row(
+                home,
+                &candidate.name,
+                "disable",
+                &format!("{kind}: {}", candidate.reason),
+            );
+        }
+    }
+    ExitCode::SUCCESS
+}
+
+/// The skills' lifecycle metrics from the scan: declared runs and uses.
+/// A skill's first-seen date is the run window's start; the exact
+/// per-skill record arrives with the Skills records' own denominator.
+fn skill_metrics_from(
+    home: &std::path::Path,
+    window: usize,
+) -> Vec<fleet::lifecycle::SkillMetrics> {
+    fleet::tool_advisor::scan_skills(home, window)
+        .into_iter()
+        .map(|skill| fleet::lifecycle::SkillMetrics {
+            name: skill.name,
+            declared_runs: skill.declared_runs,
+            uses: skill.uses,
+            first_seen: skill.first_seen,
+        })
+        .collect()
 }
 
 /// `fleet tools`: the eight built-ins, the usage scan over the session

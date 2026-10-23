@@ -662,6 +662,16 @@ pub struct Job {
     /// How that run ended, or `null`.
     #[serde(default)]
     pub last_outcome: Option<Outcome>,
+    /// How many times the job has run, for the loop lifecycle: a job
+    /// the sweep judges needs a history, not one outcome.
+    #[serde(default)]
+    pub runs: u64,
+    /// How many of those runs completed.
+    #[serde(default)]
+    pub successes: u64,
+    /// The last completed run's stamp, `YYYY-MM-DDTHH:MMZ`.
+    #[serde(default)]
+    pub last_success: Option<String>,
 }
 
 /// The store's document shape: one object listing the jobs. A wrapper
@@ -1070,6 +1080,9 @@ impl Store {
             enabled: true,
             last_run: None,
             last_outcome: None,
+            runs: 0,
+            successes: 0,
+            last_success: None,
         };
         self.jobs.push(job.clone());
         self.save()?;
@@ -1116,6 +1129,11 @@ impl Store {
             .find(|job| job.name == name)
             .ok_or_else(|| CronError::Missing(name.to_string()))?;
         job.last_run = Some(minute.stamp());
+        job.runs += 1;
+        if matches!(outcome, Outcome::Completed) {
+            job.successes += 1;
+            job.last_success = Some(minute.stamp());
+        }
         job.last_outcome = Some(outcome);
         self.save()
     }
@@ -2474,6 +2492,9 @@ mod tests {
             enabled: true,
             last_run: last_run.map(str::to_string),
             last_outcome: None,
+            runs: 0,
+            successes: 0,
+            last_success: None,
         }
     }
 

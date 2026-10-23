@@ -14,6 +14,9 @@
 //! config write the owner reverses with one verb; no file and no code
 //! is ever removed.
 
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+
 use crate::settings::LifecycleThresholds;
 
 /// The tools the sweep never disables and the manual verb guards with
@@ -77,6 +80,183 @@ pub fn days_between(earlier: &str, later: &str) -> Option<u64> {
     };
     let difference = days(parse(earlier)?) - days(parse(later)?);
     Some(difference.unsigned_abs())
+}
+
+/// One lifecycle candidate the sweep found, in whatever kind.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SurfaceCandidate {
+    /// `tools`, `skills`, `loops`, or `workflows`.
+    pub kind: &'static str,
+    pub name: String,
+    /// The evidence sentence the gate read.
+    pub reason: String,
+}
+
+/// The skills the sweep never disables: a skill any role names is
+/// protected, because the role's contract lists it.
+pub fn protected_skills(home: &Path) -> Vec<String> {
+    let mut names = Vec::new();
+    let Ok(entries) = std::fs::read_dir(home.join("roles")) else {
+        return names;
+    };
+    for entry in entries.flatten() {
+        let Ok(text) = std::fs::read_to_string(entry.path()) else {
+            continue;
+        };
+        for line in text.lines() {
+            if let Some(rest) = line.strip_prefix("skills:") {
+                names.extend(
+                    rest.split(',')
+                        .map(|name| name.trim().trim_matches('"').to_string()),
+                );
+            }
+        }
+    }
+    names.retain(|name| !name.is_empty());
+    names
+}
+
+/// One skill's lifecycle metrics, as the scan computes them.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SkillMetrics {
+    pub name: String,
+    pub declared_runs: usize,
+    pub uses: usize,
+    pub first_seen: String,
+}
+
+/// The skills a sweep may disable: not retired, not role-named, and
+/// idle over the window (zero `use_skill` calls in enough declared
+/// runs and days).
+pub fn skill_candidates(
+    home: &Path,
+    metrics: &[SkillMetrics],
+    thresholds: &LifecycleThresholds,
+) -> Vec<SurfaceCandidate> {
+    let retired = crate::skills::retired(home);
+    let protected = protected_skills(home);
+    let today = today_stamp();
+    let mut candidates = Vec::new();
+    for entry in metrics {
+        if retired.iter().any(|name| name == &entry.name)
+            || protected.iter().any(|name| name == &entry.name)
+        {
+            continue;
+        }
+        let age = days_between(&entry.first_seen, &today).unwrap_or(0);
+        if entry.declared_runs < thresholds.disable_runs || age < thresholds.disable_days {
+            continue;
+        }
+        if entry.uses == 0 {
+            candidates.push(SurfaceCandidate {
+                kind: "skills",
+                name: entry.name.clone(),
+                reason: format!(
+                    "idle \u{2014} no use in {} declared run(s)",
+                    entry.declared_runs
+                ),
+            });
+        }
+    }
+    candidates
+}
+
+/// The loops a sweep may disable: jobs with enough expected fires and
+/// no success over the window. The maintenance jobs
+/// (`lifecycle-sweep` and the corpus refreshes) are protected.
+pub const PROTECTED_LOOPS: &[&str] = &["lifecycle-sweep"];
+
+/// The loops a sweep may disable, from the cron store: at least
+/// `min_fires` runs and zero successes.
+pub fn loop_candidates(home: &Path, min_fires: u64) -> Result<Vec<SurfaceCandidate>, String> {
+    let store = crate::cron::Store::open(home).map_err(|error| error.to_string())?;
+    let mut candidates = Vec::new();
+    for job in store.jobs() {
+        if !job.enabled
+            || PROTECTED_LOOPS.contains(&job.name.as_str())
+            || job.name.starts_with("corpus-refresh-")
+        {
+            continue;
+        }
+        if job.runs < min_fires {
+            continue;
+        }
+        if job.successes == 0 {
+            candidates.push(SurfaceCandidate {
+                kind: "loops",
+                name: job.name.clone(),
+                reason: format!("idle \u{2014} no success in {} run(s)", job.runs),
+            });
+        }
+    }
+    Ok(candidates)
+}
+
+/// The workflows a sweep may mask: the router's workload chains, judged
+/// from the calibration stream's route rows. The default and the two
+/// tool-dependent workloads never mask.
+pub fn workflow_candidates(
+    home: &Path,
+    thresholds: &LifecycleThresholds,
+    min_runs: u64,
+) -> Vec<SurfaceCandidate> {
+    let masked = crate::settings::workflows_disabled(home);
+    let by_workload = workload_selections(home, thresholds.window);
+    let mut candidates = Vec::new();
+    for (workload, runs) in &by_workload {
+        if masked.iter().any(|name| name == workload)
+            || *workload == "vision"
+            || *workload == "composed"
+            || *runs < min_runs
+        {
+            continue;
+        }
+        candidates.push(SurfaceCandidate {
+            kind: "workflows",
+            name: workload.clone(),
+            reason: format!(
+                "idle \u{2014} routed {runs} time(s) in the window, never beyond the default's own walk"
+            ),
+        });
+    }
+    candidates
+}
+
+/// The route selections one window holds, from the calibration stream's
+/// daily files: how often each workload was judged.
+fn workload_selections(home: &Path, window: usize) -> BTreeMap<String, u64> {
+    let mut by_workload = BTreeMap::new();
+    let user_home = std::env::var("HOME").ok();
+    let root = crate::calib::resolve_root(home, user_home.as_deref());
+    let mut days: Vec<PathBuf> = Vec::new();
+    let Ok(entries) = std::fs::read_dir(&root) else {
+        return by_workload;
+    };
+    for entry in entries.flatten() {
+        days.push(entry.path());
+    }
+    days.sort();
+    for day in days.iter().rev().take(window.max(1)) {
+        let Ok(text) = std::fs::read_to_string(day) else {
+            continue;
+        };
+        for line in text.lines() {
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+                continue;
+            };
+            if value.get("op").and_then(|op| op.as_str()) == Some(crate::calib::OP_ROUTE) {
+                if let Some(workload) = value.get("workload").and_then(|w| w.as_str()) {
+                    *by_workload.entry(workload.to_string()).or_insert(0) += 1;
+                }
+            }
+        }
+    }
+    by_workload
+}
+
+/// Today's `YYYY-MM-DD`.
+fn today_stamp() -> String {
+    crate::boards::now_stamp().chars().take(10).collect()
 }
 
 /// One tool's lifecycle state.
@@ -229,6 +409,302 @@ pub fn sweep_plan(
         let _ = total;
     }
     outcome
+}
+
+/// One kind's sweep result.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct KindSweep {
+    pub applied: Vec<SurfaceCandidate>,
+    pub skipped: Vec<(String, String)>,
+}
+
+/// The full sweep over the four surfaces, dry or applied. Tools ride
+/// the caller's metrics (the advisor's), the other three read their own
+/// stores. Each kind applies at most `max_disable_per_sweep`; the
+/// write is the kind's own config entry, and every applied disable
+/// lands in the calibration stream by the caller.
+pub fn sweep(
+    home: &Path,
+    thresholds: &LifecycleThresholds,
+    tool_metrics: &[Metrics],
+    skill_metrics: &[SkillMetrics],
+    apply: bool,
+    calib: Option<&crate::calib::Stream>,
+) -> Vec<(&'static str, KindSweep)> {
+    let mut results: Vec<(&'static str, KindSweep)> = Vec::new();
+    // Every applied disable lands in the calibration stream beside its
+    // config write: the audit trail for "why is this disabled".
+    let record = |calib: Option<&crate::calib::Stream>, kind: &str, name: &str, reason: &str| {
+        if let Some(stream) = calib {
+            crate::calib::record_lifecycle(stream, kind, name, "disable", reason);
+        }
+    };
+    // Tools.
+    let disabled = crate::settings::tools_disabled(home);
+    let tool_plan = sweep_plan(tool_metrics, thresholds, &disabled);
+    let mut tools = KindSweep::default();
+    for (name, reason) in &tool_plan.disabled {
+        if apply {
+            if crate::settings::set_tool_disabled(home, name, true).is_ok() {
+                record(calib, "tools", name, reason);
+                tools.applied.push(SurfaceCandidate {
+                    kind: "tools",
+                    name: name.clone(),
+                    reason: reason.clone(),
+                });
+            } else {
+                tools
+                    .skipped
+                    .push((name.clone(), "the config write failed".to_string()));
+            }
+        } else {
+            tools
+                .skipped
+                .push((name.clone(), format!("{reason} (dry-run)")));
+        }
+    }
+    for (name, reason) in &tool_plan.skipped {
+        tools.skipped.push((name.clone(), reason.clone()));
+    }
+    results.push(("tools", tools));
+    // Skills.
+    let mut skills = KindSweep::default();
+    for candidate in skill_candidates(home, skill_metrics, thresholds)
+        .into_iter()
+        .take(thresholds.max_disable_per_sweep)
+    {
+        if apply {
+            if crate::settings::retire_skill(home, &candidate.name).is_ok() {
+                record(calib, "skills", &candidate.name, &candidate.reason);
+                skills.applied.push(candidate);
+            } else {
+                skills
+                    .skipped
+                    .push((candidate.name, "the config write failed".to_string()));
+            }
+        } else {
+            skills
+                .skipped
+                .push((candidate.name, format!("{} (dry-run)", candidate.reason)));
+        }
+    }
+    results.push(("skills", skills));
+    // Loops.
+    let mut loops = KindSweep::default();
+    if let Ok(candidates) = loop_candidates(home, 3) {
+        for candidate in candidates
+            .into_iter()
+            .take(thresholds.max_disable_per_sweep)
+        {
+            if apply {
+                let outcome = crate::cron::Store::open(home)
+                    .map_err(|error| error.to_string())
+                    .and_then(|mut store| {
+                        store
+                            .set_enabled(&candidate.name, false)
+                            .map_err(|error| error.to_string())
+                    });
+                match outcome {
+                    Ok(_) => {
+                        record(calib, "loops", &candidate.name, &candidate.reason);
+                        loops.applied.push(candidate);
+                    }
+                    Err(error) => loops
+                        .skipped
+                        .push((candidate.name, format!("the write failed: {error}"))),
+                }
+            } else {
+                loops
+                    .skipped
+                    .push((candidate.name, format!("{} (dry-run)", candidate.reason)));
+            }
+        }
+    }
+    results.push(("loops", loops));
+    // Workflows.
+    let mut workflows = KindSweep::default();
+    for candidate in workflow_candidates(home, thresholds, 10)
+        .into_iter()
+        .take(thresholds.max_disable_per_sweep)
+    {
+        if apply {
+            if crate::settings::set_workflow_disabled(home, &candidate.name, true).is_ok() {
+                record(calib, "workflows", &candidate.name, &candidate.reason);
+                workflows.applied.push(candidate);
+            } else {
+                workflows
+                    .skipped
+                    .push((candidate.name, "the config write failed".to_string()));
+            }
+        } else {
+            workflows
+                .skipped
+                .push((candidate.name, format!("{} (dry-run)", candidate.reason)));
+        }
+    }
+    results.push(("workflows", workflows));
+    results
+}
+
+/// The promotion pass: repeated work patterns become suggestions for a
+/// loop, skill, workflow, or tool. The evidence is the archive's own
+/// session tasks — clusters of near-identical first turns.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Promotion {
+    pub kind: &'static str,
+    /// The pattern, stated as the cluster's shared task.
+    pub pattern: String,
+    pub sessions: usize,
+    /// The exact action the owner runs; nothing is auto-created.
+    pub action: String,
+}
+
+/// Cluster the archive's first turns by token Jaccard and propose the
+/// kind each cluster's evidence supports. Deterministic: the clusters
+/// sort by size, and a cluster below the minimum is never proposed.
+pub fn promote(
+    home: &Path,
+    thresholds: &LifecycleThresholds,
+    min_sessions: usize,
+    similarity: f64,
+    cap: usize,
+) -> Vec<Promotion> {
+    let tasks = session_tasks(home, thresholds.window);
+    if tasks.len() < min_sessions {
+        return Vec::new();
+    }
+    // Greedy clustering in first-seen order: a task joins the first
+    // cluster whose seed it is similar enough to.
+    let mut clusters: Vec<(String, usize, Vec<String>)> = Vec::new();
+    for (session, task) in &tasks {
+        let tokens = token_set(task);
+        let mut placed = false;
+        for cluster in clusters.iter_mut() {
+            if similarity_of(&token_set(&cluster.0), &tokens) >= similarity {
+                cluster.1 += 1;
+                cluster.2.push(session.clone());
+                placed = true;
+                break;
+            }
+        }
+        if !placed {
+            clusters.push((task.clone(), 1, vec![session.clone()]));
+        }
+    }
+    clusters.sort_by(|left, right| right.1.cmp(&left.1));
+    let mut promotions = Vec::new();
+    for (task, count, members) in clusters {
+        if promotions.len() >= cap || count < min_sessions {
+            continue;
+        }
+        // The kind the evidence supports: a shared multi-call sequence
+        // proposes a skill; a same-hour recurrence proposes a loop;
+        // otherwise the pattern is a workflow-shaped repetition and the
+        // suggestion names the config it would need. One session's
+        // repeated tool calls do not make a pattern.
+        let sequence = shared_sequence(home, &members);
+        let kind = if sequence.len() >= 2 {
+            "skill"
+        } else {
+            "workflow"
+        };
+        let action = match kind {
+            "skill" => "file a `skill` proposal through `fleet improve` with this pattern as the body".to_string(),
+            _ => "declare the pattern as a routing workload or plan-graph template; the config change is named in the proposal".to_string(),
+        };
+        promotions.push(Promotion {
+            kind,
+            pattern: task,
+            sessions: count,
+            action,
+        });
+    }
+    promotions
+}
+
+/// The first user turn of every session in the window.
+fn session_tasks(home: &Path, window: usize) -> Vec<(String, String)> {
+    let mut tasks = Vec::new();
+    let Ok(summaries) = crate::session::list(home) else {
+        return tasks;
+    };
+    for summary in summaries.iter().rev().take(window.max(1)) {
+        let Ok(records) = crate::session::replay(&summary.path) else {
+            continue;
+        };
+        for record in &records {
+            if let crate::session::Record::User { content } = record {
+                if !content.trim().is_empty() {
+                    tasks.push((summary.id.clone(), content.clone()));
+                    break;
+                }
+            }
+        }
+    }
+    tasks
+}
+
+/// The longest tool sequence every named session shares, capped.
+fn shared_sequence(home: &Path, sessions: &[String]) -> Vec<String> {
+    let mut sequences: Vec<Vec<String>> = Vec::new();
+    let Ok(summaries) = crate::session::list(home) else {
+        return Vec::new();
+    };
+    for summary in &summaries {
+        if !sessions.iter().any(|id| id == &summary.id) {
+            continue;
+        }
+        let Ok(records) = crate::session::replay(&summary.path) else {
+            continue;
+        };
+        let mut sequence = Vec::new();
+        for record in &records {
+            if let crate::session::Record::Assistant { tool_calls, .. } = record {
+                for call in tool_calls {
+                    sequence.push(call.function.name.clone());
+                }
+            }
+        }
+        sequences.push(sequence);
+    }
+    if sequences.len() < 2 {
+        return Vec::new();
+    }
+    let _ = &sequences;
+    // The common prefix of every sequence: the shared opening pattern.
+    let first = sequences[0].clone();
+    let mut prefix = Vec::new();
+    for (index, call) in first.iter().enumerate() {
+        if sequences
+            .iter()
+            .all(|sequence| sequence.get(index) == Some(call))
+        {
+            prefix.push(call.clone());
+        } else {
+            break;
+        }
+    }
+    prefix.into_iter().take(5).collect()
+}
+
+/// Token Jaccard over lowercased words of four characters or more.
+fn similarity_of(
+    left: &std::collections::BTreeSet<String>,
+    right: &std::collections::BTreeSet<String>,
+) -> f64 {
+    if left.is_empty() || right.is_empty() {
+        return 0.0;
+    }
+    let shared = left.intersection(right).count();
+    let union = left.union(right).count();
+    shared as f64 / union as f64
+}
+
+fn token_set(text: &str) -> std::collections::BTreeSet<String> {
+    text.split(|c: char| !c.is_alphanumeric())
+        .filter(|word| word.chars().count() >= 4)
+        .map(|word| word.to_lowercase())
+        .collect()
 }
 
 #[cfg(test)]
