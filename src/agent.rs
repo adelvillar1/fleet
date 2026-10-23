@@ -5790,7 +5790,15 @@ impl LaneRoster {
 /// `error:` marker a refusal carries — the same failure vocabulary the
 /// built-ins use, so the model reads one shape either way.
 fn lane_call_output(result: &CallResult) -> String {
-    let text = result.text();
+    // An image block is written to a file and named: the model cannot
+    // read base64, and a lane that returned a picture produced an
+    // artifact. A result with no image never creates the directory.
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_nanos())
+        .unwrap_or(0);
+    let dir = std::env::temp_dir().join(format!("fleet-mcp-{}-{stamp}", std::process::id()));
+    let text = result.text_with_artifacts(&dir);
     if result.is_error {
         format!("error: {text}")
     } else {

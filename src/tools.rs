@@ -12,6 +12,10 @@ use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+/// A process-wide counter for bash output files: a timestamp alone
+/// collides when two calls start in the same clock tick.
+static BASH_FILE_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 /// Hard cap on the output text of any single tool execution.
 pub const MAX_TOOL_OUTPUT: usize = 64 * 1024;
 
@@ -2062,8 +2066,9 @@ fn run_bash_within_root(
         .duration_since(std::time::UNIX_EPOCH)
         .map(|elapsed| elapsed.as_nanos())
         .unwrap_or(0);
-    let out_path = dir.join(format!("{}-{stamp}.out", std::process::id()));
-    let err_path = dir.join(format!("{}-{stamp}.err", std::process::id()));
+    let serial = BASH_FILE_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let out_path = dir.join(format!("{}-{stamp}-{serial}.out", std::process::id()));
+    let err_path = dir.join(format!("{}-{stamp}-{serial}.err", std::process::id()));
     let out_file = fs::File::create(&out_path)
         .map_err(|error| format!("could not create {}: {error}", out_path.display()))?;
     let err_file = fs::File::create(&err_path)

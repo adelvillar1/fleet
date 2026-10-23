@@ -123,10 +123,11 @@ reason names it.
 ## Not built yet
 
 Named here rather than implied by the plan: a live second provider for
-the dispatch policy; MCP annotations and image artifacts; and
-catalog-backed enums where a tool takes a model, provider, or workload
-value. `ALL_TOOLS` is the native registry (an enum plus a spec and a
-validator per tool, not a trait object).
+the dispatch policy; MCP tool annotations; and catalog-backed enums
+where a tool takes a model, provider, or workload value. `ALL_TOOLS` is
+the native registry (an enum plus a spec and a validator per tool, not a
+trait object). An image result is written to a file and named, so
+`vision` can read it.
 
 ## Files
 

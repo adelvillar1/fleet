@@ -525,8 +525,9 @@ Landed in the second pass:
 - **C14 — elision.** Tool results older than the last six become
   byte-count stubs before the region is summarized.
 - **C15, the protocol half.** Cursor pagination, `structuredContent` as
-  the fallback reading, `notifications/cancelled` on timeout, and a
-  pre-join failure recorded as `LaneFailed` in the session.
+  the fallback reading, `notifications/cancelled` on timeout, an image
+  block written to a file and named, and a pre-join failure recorded as
+  `LaneFailed` in the session.
 - **C16, the face.** The live and replayed tool cards carry the
   resolution line; the Settings board has *the tools* card with the
   eight native tools, the tier bounds, and the last session's audit.
@@ -537,27 +538,18 @@ Still open, named rather than implied:
 - **C12's wiring.** The warm/healthy/order policy is implemented and
   tested, but no capability has two live providers yet, so nothing
   calls it.
-- **C15's annotations and image artifacts.** Annotations are not read;
-  an image result is still `[image]`, not a file.
+- **C15's annotations.** `annotations` are not read, so
+  `readOnlyHint`/`destructiveHint` do not reach the approval policy.
 - **C13's catalog enums.** No current tool takes a model id, provider
   id, or workload as an argument; the enums exist where a closed set
   already did (`grep` modes, `todo` statuses, `computer_use` actions).
+- **C16's screenshot.** The Settings tools document and the card are
+  verified served on the loopback face; no browser screenshot was
+  captured.
 
-Not built, and named rather than implied:
-
-- The `ToolResolution` session record; the scan reads what the log
-  already records, so the resolutions by method are still missing.
-- Tool-result elision with spill artifacts and the todo ledger's
-  re-injection after a fold.
-- The typed `ToolResult`/artifacts/cancellation/per-turn cap.
-- The MCP protocol stage: annotations, pagination, structured content,
-  image artifacts, cancellation.
-- The route-verdict tool profile (the class decision covers selection;
-  the workload still does not reorder the core set).
-
-The gate is green: `cargo fmt --all --check`, `cargo clippy
+The gate at this writing: `cargo fmt --all --check`, `cargo clippy
 --all-targets -- -D warnings`, `cargo build --release`, `cargo test`
-(1,560 tests). The sys1 lane gained a task in a vendored file
+(1,581 tests). The sys1 lane gained a task in a vendored file
 (`services/sys1/src/sys1/tasks.py`); the upstream core needs the same
 task to survive a re-vendor.
 

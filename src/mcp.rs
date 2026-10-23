@@ -25,6 +25,7 @@
 
 use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
+use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
@@ -271,13 +272,53 @@ impl CallResult {
     /// A content-less result says so instead of reading as an empty
     /// success.
     pub fn text(&self) -> String {
+        self.render(None)
+    }
+
+    /// The text, with image blocks written to `dir` and named by path.
+    /// The model cannot read base64, and a lane that returns a picture
+    /// has produced an artifact, not a `[image]` placeholder.
+    pub fn text_with_artifacts(&self, dir: &Path) -> String {
+        self.render(Some(dir))
+    }
+
+    fn render(&self, images: Option<&Path>) -> String {
         let mut parts: Vec<String> = Vec::with_capacity(self.content.len());
-        for block in &self.content {
+        for (index, block) in self.content.iter().enumerate() {
             if block.content_type == "text" {
                 let text = block.data.as_str().unwrap_or_default();
                 if !text.is_empty() {
                     parts.push(text.to_string());
                 }
+            } else if block.content_type == "image" {
+                if let Some(dir) = images {
+                    let mime = block
+                        .data
+                        .get("mimeType")
+                        .and_then(Value::as_str)
+                        .unwrap_or("image/png");
+                    let encoded = block
+                        .data
+                        .get("data")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default();
+                    let extension = match mime {
+                        "image/jpeg" => "jpg",
+                        "image/gif" => "gif",
+                        "image/webp" => "webp",
+                        _ => "png",
+                    };
+                    if let Some(bytes) = decode_base64(encoded) {
+                        if std::fs::create_dir_all(dir).is_ok() {
+                            let path = dir.join(format!("image-{index}.{extension}"));
+                            if std::fs::write(&path, bytes).is_ok() {
+                                parts.push(format!("[image saved: {}]", path.display()));
+                                continue;
+                            }
+                        }
+                    }
+                }
+                parts.push("[image]".to_string());
             } else if !block.content_type.is_empty() {
                 parts.push(format!("[{}]", block.content_type));
             }
@@ -291,6 +332,38 @@ impl CallResult {
         }
         parts.join("\n")
     }
+}
+
+/// Decode the standard base64 an MCP image block carries. `None` on a
+/// malformed payload, which the caller reports as `[image]` rather than
+/// writing a corrupt file.
+fn decode_base64(input: &str) -> Option<Vec<u8>> {
+    fn value(byte: u8) -> Option<u32> {
+        match byte {
+            b'A'..=b'Z' => Some((byte - b'A') as u32),
+            b'a'..=b'z' => Some((byte - b'a') as u32 + 26),
+            b'0'..=b'9' => Some((byte - b'0') as u32 + 52),
+            b'+' => Some(62),
+            b'/' => Some(63),
+            _ => None,
+        }
+    }
+    let mut out = Vec::new();
+    let mut buffer = 0u32;
+    let mut bits = 0u32;
+    for byte in input.bytes() {
+        if byte == b'=' || byte.is_ascii_whitespace() {
+            continue;
+        }
+        let value = value(byte)?;
+        buffer = (buffer << 6) | value;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((buffer >> bits) as u8);
+        }
+    }
+    Some(out)
 }
 
 /// The client's failures. Typed values, never panics: a crashed child is
@@ -726,13 +799,21 @@ fn parse_call(result: Value) -> Result<CallResult, McpError> {
         .map(|blocks| {
             blocks
                 .iter()
-                .map(|block| ContentBlock {
-                    content_type: block
+                .map(|block| {
+                    let content_type = block
                         .get("type")
                         .and_then(Value::as_str)
                         .unwrap_or_default()
-                        .to_string(),
-                    data: block.get("text").cloned().unwrap_or(Value::Null),
+                        .to_string();
+                    // A text block carries its string; every other block
+                    // keeps its whole shape, so an image's mime type and
+                    // base64 payload are still there to write out.
+                    let data = if content_type == "text" {
+                        block.get("text").cloned().unwrap_or(Value::Null)
+                    } else {
+                        block.clone()
+                    };
+                    ContentBlock { content_type, data }
                 })
                 .collect()
         })
@@ -1188,6 +1269,30 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(both.text(), "ok");
+    }
+
+    #[test]
+    fn an_image_block_is_written_to_a_file_and_named() {
+        let dir = std::env::temp_dir().join(format!("fleet-mcp-image-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let result = parse_call(json!({
+            "content": [{
+                "type": "image",
+                "mimeType": "image/png",
+                "data": "iVBORw0KGgo="
+            }]
+        }))
+        .unwrap();
+        let text = result.text_with_artifacts(&dir);
+        assert!(text.contains("[image saved:"), "{text}");
+        let path = text
+            .split("[image saved: ")
+            .nth(1)
+            .and_then(|rest| rest.split(']').next())
+            .expect("the path is named");
+        let bytes = std::fs::read(path).unwrap();
+        assert_eq!(bytes, vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
