@@ -161,12 +161,17 @@ carry. The TUI's forms of these surfaces.
 
 ## Verification
 
-The unit, bridge, and face tests named per criterion; the gate
-(`fmt`, `clippy`, `build --release`, `test`); and a live pass on the
-running face in Playwright walking C1, C2, C3, C4, C6 and C7 — the
-groups and counts from a real home, opening an interrupted run with a
-composer, switching without a reload, a second real session, a markdown
-reply with a code block, and the 1600px grid with the dock closed.
+The unit and bridge tests named per criterion; the face's own tests
+(`tests/face/harness.mjs`, run from `cargo test` by `tests/face.rs` over
+a stubbed DOM and the bridge's documents); the gate (`fmt`, `clippy`,
+`build --release`, `test`); and a live pass on a running face against a
+local stand-in provider walking C4, C5, C6 and C7 end to end — New
+writes a session whose log then holds `start, user, assistant, end` for
+the run posted into it, a send in a conversation opened while another
+drives queues with its name and drains when that run ends, a streamed
+markdown reply renders at its boundary, and the grid at 1600px with the
+dock closed. The earlier live pass over a seeded archive covered the
+states, the groups and the folded families.
 
 ## Linked artifacts
 

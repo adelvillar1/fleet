@@ -452,6 +452,20 @@ extraction and a 300-second job budget. A missing lane or tool is a named
 refusal; macros are never executed and embedded objects are never opened.
 The lane's tools and licences are listed in `services/documents/README.md`.
 
+## The face's own tests
+
+`tests/face/harness.mjs` boots the real `src/gui/assets/app.js` against
+a stubbed DOM and the bridge's document shapes, then drives it the way a
+pointer or a keystroke would and asserts on what it built: the work
+list's group order and the server's counts, one open verb across
+completed/working/interrupted rows, the conversation's head with its
+switcher and New, a send beside driving work (queued, named), a run's
+end clearing the way for the next send, and a reply that is text until
+its block boundary and rendered once after. `tests/face.rs` runs it from
+`cargo test` when `node` is on PATH and skips by name where it is not;
+the live passes in the recaps cover what a stub cannot — layout, the
+event stream over the wire, and a real run's records.
+
 ## The reading rules
 
 - Below 900px the shell is one column whatever the rail, dock, or pane
