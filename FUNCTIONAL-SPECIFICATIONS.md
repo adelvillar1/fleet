@@ -183,6 +183,16 @@ running finishes first, then the run ends.
 
 ## Run behavior
 
+- **The transcript is an activity list, one line per thing that
+  happened.** A provider that streams its thinking gets a `Thought ·
+  Ns` row per response, closed by default and opening to the words on a
+  press; the reasoning is logged and shown, and never sent back to the
+  provider. A tool call is one line naming the tool and the command,
+  opening to the full command (or path), the time it took, the output it
+  returned, and a `raw record` button. The run strip's folded lines
+  (route, memory, skills, lane, compaction, checkpoint, folder, control,
+  repair, rewind) each open their own record on a press. Nothing on the
+  transcript is a dead label, and none of it adds height until asked.
 - A pinned provider routes every shape through that provider's own
   models; a bare model id on `--model` resolves to the one provider that
   serves it, refused by name when none or several do.

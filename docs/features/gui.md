@@ -179,6 +179,13 @@ every visible `.tile`, `.badge`, `.rrow`, `.rank-row`, `.cal-cell`,
   markdown when their block closes: streamed text while it arrives, the
   rendered block at the boundary, and the receipt's closing report the
   same way.
+- **The activity rows.** One line per thing the run did, each opening on
+  a press: `Thought · Ns` (the provider's `reasoning_content`, kept in a
+  `reasoning` log record and never sent back), and a tool call, whose
+  expanded detail carries the full command or path from the call's own
+  arguments, the elapsed time, the output preview, and a `raw record`
+  button. The tool card's press opens that detail rather than the raw
+  event. The run strip's folded lines open their records the same way.
 - **Facts** open their detail and edit; their type and tier badges
   filter the corpus.
 - **Every panel has visible filters with counts.** Memory: all, live,
