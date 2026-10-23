@@ -6526,6 +6526,63 @@ body[data-work="collapsed"] .work-list { display: none; }
   body[data-work="collapsed"] .conv-back { display: none; }
 }
 
+/* ------------------------------------------------------- the MCP servers */
+
+/* One configured server's row: the dot, the name with its badges, and
+   the launch line under it. The dot is the probe's outcome. */
+.server-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 9px 2px;
+  border-bottom: 1px solid var(--dsw-alias-hairline);
+}
+.server-row:last-of-type { border-bottom: 0; }
+.server-dot {
+  flex: 0 0 auto;
+  width: 9px;
+  height: 9px;
+  margin-top: 4px;
+  border-radius: 50%;
+  background: var(--dsw-alias-hairline-strong);
+}
+.server-dot[data-state="ok"] { background: var(--dsw-alias-ok); }
+.server-dot[data-state="failed"] { background: var(--dsw-static-warn-on-dark); }
+.server-main { min-width: 0; flex: 1; display: grid; gap: 2px; }
+.server-name-line { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.server-name-line b { font-size: 12.5px; font-weight: 600; }
+.server-source,
+.server-enabled,
+.server-badge {
+  color: var(--dsw-alias-ink-tertiary);
+  font-size: 10.5px;
+}
+.server-badge {
+  padding: 1px 7px;
+  border: 1px solid var(--dsw-alias-hairline);
+  border-radius: 999px;
+  color: var(--dsw-alias-ink-secondary);
+}
+.server-launch,
+.server-env,
+.server-probe-line {
+  color: var(--dsw-alias-ink-tertiary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.server-env { font-family: var(--font-text); }
+.server-probe-line { font-family: var(--font-text); }
+.server-scan-head {
+  margin: 10px 0 2px;
+  color: var(--dsw-alias-ink-tertiary);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
 /* ------------------------------------------------------- activity rows */
 
 /* One thought block: a row that says how long it took, closed, and the

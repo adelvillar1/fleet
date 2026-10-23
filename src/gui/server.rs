@@ -3915,6 +3915,7 @@ mod tests {
         assert!(reply.contains("\"catalog\""), "{reply}");
         assert!(reply.contains("\"models\""), "{reply}");
         assert!(reply.contains("\"lanes\""), "{reply}");
+        assert!(reply.contains("\"servers\""), "{reply}");
         assert!(reply.contains("\"roles\""), "{reply}");
         assert!(reply.contains("\"vault\""), "{reply}");
     }
@@ -4016,6 +4017,41 @@ mod tests {
             "/api/settings",
             &token,
             r#"{"op":"cron-remove","name":"nightly"}"#,
+        );
+        assert!(removed.starts_with("HTTP/1.1 200"), "{removed}");
+
+        // A server write lands in mcp.json through the same writer: an
+        // enable toggle, a remove, and a value-carrying entry refused
+        // with the no-value rule named.
+        let server_write = post(
+            port,
+            "/api/settings",
+            &token,
+            r#"{"op":"server","name":"regtime","config":{"program":"python3","args":["-m","time"],"env_names":["OWM_API_KEY"],"enabled":false}}"#,
+        );
+        assert!(server_write.starts_with("HTTP/1.1 200"), "{server_write}");
+        let registry = std::fs::read_to_string(home.join("mcp.json")).expect("the registry");
+        assert!(registry.contains("OWM_API_KEY"), "{registry}");
+        let enabled = post(
+            port,
+            "/api/settings",
+            &token,
+            r#"{"op":"server","name":"regtime","enabled":true}"#,
+        );
+        assert!(enabled.starts_with("HTTP/1.1 200"), "{enabled}");
+        let value = post(
+            port,
+            "/api/settings",
+            &token,
+            r#"{"op":"server","name":"leaky","config":{"program":"python3","env":{"OWM_API_KEY":"sk-marker"},"enabled":true}}"#,
+        );
+        assert!(value.starts_with("HTTP/1.1 409"), "{value}");
+        assert!(value.contains("env NAMES only"), "{value}");
+        let removed = post(
+            port,
+            "/api/settings",
+            &token,
+            r#"{"op":"server-remove","name":"regtime"}"#,
         );
         assert!(removed.starts_with("HTTP/1.1 200"), "{removed}");
 

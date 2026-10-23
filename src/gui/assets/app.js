@@ -631,6 +631,10 @@
     // next reload the way the dock's is. The conversation takes the width
     // either way.
     workFolded: false,
+    // The MCP scan's last answer, held for the settings card's discovery
+    // half. In memory only: the scan is a point-in-time read of the
+    // machine's other harnesses, and a reload drops it.
+    serversScan: null,
     // The calibration panel's read and its clock.
     calibration: null,
     calibrationAt: 0,
@@ -9541,6 +9545,7 @@
     el.settingsBoard.appendChild(routerCard());
     el.settingsBoard.appendChild(providersCard());
     el.settingsBoard.appendChild(lanesCard());
+    el.settingsBoard.appendChild(serversCard());
     el.settingsBoard.appendChild(rolesCard());
     el.settingsBoard.appendChild(vaultCard());
     el.settingsBoard.appendChild(spendCard());
@@ -10191,6 +10196,191 @@
     });
     form.appendChild(add);
     return form;
+  }
+
+  // ------------------------------------------------------- the MCP servers
+
+  // One settings write over the registry's own ops, with the reply's
+  // document — a scan's rows or a probe's outcome — handed to the
+  // caller before the panel repaints.
+  function serversAction(op, fields, onDone) {
+    var body = Object.assign({ op: op }, fields || {});
+    post('/api/settings', body).then(function (reply) {
+      if (reply.status !== 200) {
+        notice('the registry said no',
+          (reply.body && reply.body.error) || 'the surface said no without a reason');
+        return;
+      }
+      if (reply.body && reply.body.scan) face.serversScan = reply.body.scan;
+      return readSettings(true).then(function () { if (onDone) onDone(reply.body); });
+    }).catch(function () { });
+  }
+
+  function serversCard() {
+    var read = (face.settings && face.settings.servers) || {};
+    var card = boardCard(12, 'the MCP servers', null,
+      'The servers the owner configured beside the vendored lanes, carried by the home\u2019s ' +
+      'own mcp.json. An enabled server\u2019s tools are declared to every run from its first ' +
+      'request. The registry carries env NAMES only \u2014 a value has no field to live in; ' +
+      'each name resolves from the environment at spawn.');
+    card.id = 'settings-servers';
+    if (read.refused && read.refused.length) {
+      card.appendChild(node('p', 'board-empty', read.refused.join(' \u00b7 ')));
+      return card;
+    }
+    var servers = read.servers || [];
+    var actions = node('div', 'bots-acts');
+    actions.appendChild(serversButton('server-scan', 'scan this machine', function () {
+      serversAction('server-scan', {}, function (body) {
+        var rows = (body.scan && body.scan.rows) || [];
+        var skips = (body.scan && body.scan.skips) || [];
+        notice('the scan finished',
+          rows.length + ' entries across the other harnesses' +
+            (skips.length ? ' \u00b7 ' + skips.length + ' file(s) skipped' : ''));
+      });
+    }));
+    card.appendChild(actions);
+    if (!servers.length) {
+      card.appendChild(node('p', 'board-empty',
+        'No MCP servers configured yet \u2014 run a scan to discover the machine\u2019s other ' +
+        'harnesses, or write one by hand.'));
+    }
+    servers.forEach(function (server) {
+      card.appendChild(serverRow(server));
+    });
+    // The discovery half: the last scan's answer, rows the registry does
+    // not carry yet, one import action each. A reload drops it.
+    var scan = face.serversScan;
+    if (scan) {
+      var fresh = (scan.rows || []).filter(function (row) {
+        return row.status === 'available';
+      });
+      var unsupported = (scan.rows || []).filter(function (row) {
+        return row.status === 'unsupported';
+      });
+      var carried = (scan.rows || []).filter(function (row) {
+        return row.status === 'configured';
+      });
+      if (fresh.length) {
+        card.appendChild(node('p', 'server-scan-head',
+          'discovered \u00b7 ' + fresh.length + ' available to import \u00b7 from the last scan'));
+        fresh.forEach(function (row) {
+          card.appendChild(scanRow(row));
+        });
+      }
+      // An unsupported row still shows, with its import disabled and its
+      // reason as the launch line: the scan reported it, so the card
+      // does not make it disappear.
+      unsupported.forEach(function (row) {
+        card.appendChild(scanRow(row));
+      });
+      if (carried.length) {
+        card.appendChild(node('p', 'server-scan-head',
+          carried.length + ' already configured \u00b7 their rows are above'));
+      }
+      (scan.skips || []).forEach(function (skip) {
+        card.appendChild(node('p', 'board-empty', 'skipped \u00b7 ' + skip));
+      });
+    }
+    return card;
+  }
+
+  function serversButton(act, label, onClick, disabled) {
+    var made = node('button', 'bots-act', label);
+    made.type = 'button';
+    made.dataset.act = act;
+    if (disabled) made.disabled = true;
+    made.addEventListener('click', onClick);
+    return made;
+  }
+
+  // One configured server's row: the status dot (probed ok, never
+  // probed, last probe failed), the name, the env names, the launch
+  // line as the display redaction shows it, the source badge when the
+  // server was imported, and the probe line.
+  function serverRow(server) {
+    var row = node('div', 'server-row');
+    var probe = server.last_probe;
+    var state = probe ? (probe.ok ? 'ok' : 'failed') : 'never';
+    var dot = node('span', 'server-dot');
+    dot.dataset.state = state;
+    dot.title = probe
+      ? (probe.ok
+        ? 'probed ok \u00b7 ' + probe.at
+        : 'last probe failed \u00b7 ' + probe.reason)
+      : 'never probed';
+    row.appendChild(dot);
+    var main = node('div', 'server-main');
+    var nameLine = node('div', 'server-name-line');
+    nameLine.appendChild(node('b', null, server.name));
+    if (server.source) {
+      nameLine.appendChild(node('span', 'server-source',
+        'imported from ' + server.source.harness + ', ' + server.source.imported));
+    }
+    nameLine.appendChild(node('span', 'server-enabled',
+      server.enabled ? 'enabled' : 'disabled'));
+    main.appendChild(nameLine);
+    main.appendChild(node('span', 'server-launch',
+      [server.program].concat(server.args || []).join(' ')));
+    if ((server.env_names || []).length) {
+      main.appendChild(node('span', 'server-env',
+        'env ' + server.env_names.join(', ') + ' \u00b7 resolves at spawn'));
+    }
+    if (probe && probe.ok) {
+      main.appendChild(node('span', 'server-probe-line',
+        probe.server_name + ' v' + probe.server_version + ' \u00b7 ' + probe.tools +
+        (probe.tools === 1 ? ' tool' : ' tools') + ' \u00b7 probed ' + probe.at));
+    }
+    row.appendChild(main);
+    var acts = node('div', 'bots-acts');
+    acts.appendChild(serversButton('server-toggle', server.enabled ? 'disable' : 'enable',
+      function () {
+        serversAction('server', { name: server.name, enabled: !server.enabled });
+      }));
+    acts.appendChild(serversButton('server-probe', 'probe', function () {
+      serversAction('server-probe', { name: server.name }, function (body) {
+        notice(body.probe.ok ? 'the probe came back ok' : 'the probe failed',
+          body.probe.ok
+            ? body.probe.server_name + ' v' + body.probe.server_version + ' \u00b7 ' +
+              body.probe.tools + (body.probe.tools === 1 ? ' tool' : ' tools')
+            : body.probe.reason);
+      });
+    }));
+    acts.appendChild(serversButton('server-remove', '\u00d7', function () {
+      serversAction('server-remove', { name: server.name });
+    }));
+    row.appendChild(acts);
+    return row;
+  }
+
+  // One discovered entry: name, harness, badge, the redacted launch
+  // line, and the import \u2014 disabled by shape with its reason when the
+  // entry is not stdio.
+  function scanRow(row) {
+    var line = node('div', 'server-row scan');
+    var main = node('div', 'server-main');
+    var nameLine = node('div', 'server-name-line');
+    nameLine.appendChild(node('b', null, row.name));
+    nameLine.appendChild(node('span', 'server-source', row.harness));
+    nameLine.appendChild(node('span', 'server-badge', row.badge));
+    main.appendChild(nameLine);
+    main.appendChild(node('span', 'server-launch', row.launch));
+    if ((row.env_names || []).length) {
+      main.appendChild(node('span', 'server-env', 'env ' + row.env_names.join(', ')));
+    }
+    line.appendChild(main);
+    var acts = node('div', 'bots-acts');
+    var supported = row.status === 'available';
+    acts.appendChild(serversButton('server-import', 'import', function () {
+      serversAction('server-import', { name: row.name, harness: row.harness }, function () {
+        notice('imported', row.name + ' \u00b7 from ' + row.harness);
+      });
+    }, !supported));
+    if (!supported) {
+      line.title = row.launch;
+    }
+    line.appendChild(acts);
+    return line;
   }
 
   // ------------------------------------------------------------- the lanes

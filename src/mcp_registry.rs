@@ -698,7 +698,7 @@ fn pair_contains_env_value(arg: &str) -> bool {
 /// spawn is what a reader needs. A URL's credential-shaped query
 /// parameter is redacted the same way. One display rule for both
 /// renders.
-fn display_args(args: &[String]) -> Vec<String> {
+pub fn display_args(args: &[String]) -> Vec<String> {
     args.iter()
         .map(|arg| {
             if pair_contains_env_value(arg) {
@@ -1276,6 +1276,14 @@ mod palette {
 /// The card width, in characters — the lanes' card width, so the two
 /// surfaces read as one family.
 const CARD_WIDTH: usize = 72;
+
+/// The launch line as the face shows it: the program and the args
+/// through the display redaction, so no value the file carries reaches
+/// the page.
+pub fn display_entry(entry: &ServerEntry) -> (String, Vec<String>) {
+    let shown = display_args(&entry.args);
+    (entry.program.clone(), shown)
+}
 
 /// Render the configured servers as cards: a status dot, the shape, the
 /// enabled state, the tool count from the last probe (or "never
@@ -1974,8 +1982,8 @@ trust_level = "trusted"
         )
         .unwrap();
         let entry = read_server(&home, "weather").unwrap().unwrap();
-        let error = spec_from_entry(&entry, &std::collections::BTreeMap::new())
-            .expect_err("refused");
+        let error =
+            spec_from_entry(&entry, &std::collections::BTreeMap::new()).expect_err("refused");
         assert!(error.contains("FLEET_TEST_MISSING_KEY"), "{error}");
         assert!(error.contains("resolves to nothing"), "{error}");
         let _ = std::fs::remove_dir_all(&home);

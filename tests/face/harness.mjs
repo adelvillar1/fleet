@@ -122,6 +122,9 @@ class El {
     };
   }
   get lastChild() { return this.children.length ? this.children[this.children.length - 1] : null; }
+  // A select's live options collection, the way the chip editor reads
+  // it (`pick.options.length`).
+  get options() { return this.children.filter((child) => child.name === 'option'); }
   get firstChild() { return this.children.length ? this.children[0] : null; }
   get firstElementChild() { return this.firstChild; }
   appendChild(child) { child.parentNode = this; this.children.push(child); return child; }
@@ -200,6 +203,15 @@ function boot(options) {
     }
     if (pathOnly === '/api/home') {
       return Promise.resolve({ status: 200, json: () => Promise.resolve(documents.home || {}) });
+    }
+    if (pathOnly === '/api/settings') {
+      if (method === 'POST') {
+        return Promise.resolve({ status: 200, json: () => Promise.resolve(opts.reply || {}) });
+      }
+      return Promise.resolve({
+        status: 200,
+        json: () => Promise.resolve(documents.settings || {}),
+      });
     }
     if (pathOnly === '/api/resume') {
       return Promise.resolve({ status: 200, json: () => Promise.resolve({ type: 'resume', agent: true, session: 'x' }) });
@@ -902,6 +914,98 @@ async function theConversationTextSizeIsTheOwners() {
     String(stale.IDS['chat-bigger'].disabled));
 }
 
+// C8 (the servers card): the settings board carries the MCP registry —
+// rows with their dots, toggles and probe lines; the scan's discovery
+// rows with their import buttons; an unsupported row's import disabled
+// with the reason; and a value the face is handed never prints.
+async function theServersCardCarriesTheRegistry() {
+  const page = boot({
+    width: 1440,
+    hash: '#/settings',
+    documents: {
+      settings: {
+        type: 'settings', read_at: 'now',
+        scalars: [], lists: [], rules: [], env: [],
+        cron: [], soul: { present: false, text: '' },
+        router: {}, catalog: {}, roles: { entries: [] }, vault: { names: [] },
+        lanes: [],
+        servers: {
+          servers: [
+            { name: 'github', enabled: true, program: 'docker',
+              args: ['run', '-i', '--rm', '-e', 'GITHUB_PERSONAL_ACCESS_TOKEN', 'ghcr.io/github/github-mcp-server'],
+              env_names: ['GITHUB_PERSONAL_ACCESS_TOKEN'],
+              last_probe: { at: '2026-10-23T16:30Z', ok: true, server_name: 'github-mcp',
+                server_version: '0.9.0', tools: 12, reason: '' },
+              source: { harness: 'claude-desktop', imported: '2026-10-23' } },
+            { name: 'time', enabled: false, program: 'npx', args: ['-y', 'server-time'],
+              env_names: [], last_probe: null, source: null },
+          ],
+        },
+      },
+    },
+    reply: { type: 'settings_write', op: 'server-scan',
+      scan: { rows: [
+        { name: 'weather', harness: 'claude-desktop', file: '/x/config.json',
+          badge: 'bare interpreter', status: 'available',
+          launch: 'python3 -m weather', env_names: ['OWM_API_KEY'] },
+        { name: 'tinyfish', harness: 'cursor', file: '/x/mcp.json',
+          badge: 'remote endpoint', status: 'unsupported',
+          launch: 'remote endpoint: needs a transport', env_names: [] },
+      ], skips: [] } },
+  });
+  await flush();
+  page.open();
+  await flush();
+  await flush();
+  const board = () => page.rows('#settings-servers')[0];
+  // The server rows live under the servers card; the plain query caught
+  // none — the board's own rows sit beneath it, so scope the walk.
+  // The stub's selector engine takes no :not() — the scan rows are
+  // filtered by their own class.
+  const serverRows = () =>
+    board() ? board().all('.server-row').filter((row) => !row.className.includes('scan')) : [];
+  check('C8 the servers card is on the board', !!board(), String(!!board()));
+  check('C8 one row per configured server', serverRows().length === 2,
+    String(serverRows().length));
+  const text = board().textContent;
+  check('C8 the row names its server and its probe', text.includes('github') &&
+      text.includes('github-mcp v0.9.0'), text.slice(0, 200));
+  check('C8 the source badge names the harness',
+    text.includes('imported from claude-desktop'), text.slice(0, 300));
+  check('C8 the env line says it resolves at spawn',
+    text.includes('env GITHUB_PERSONAL_ACCESS_TOKEN') && text.includes('resolves at spawn'),
+    text.slice(0, 300));
+  check('C8 the disabled server says so', text.includes('disabled'), '');
+  // The scan: the discovery rows carry the badge, and the unsupported
+  // import is disabled. Every action repaints the board, so each step
+  // re-queries what it clicks.
+  board().all('.bots-act').find((b) => b.dataset.act === 'server-scan').click();
+  await flush(80);
+  check('C8 the scan\'s discovery rows are on the card',
+    serverRows().length === 2 && board().all('.server-row.scan').length === 2,
+    String(board().all('.server-row.scan').length));
+  check('C8 the badge rides the discovery row',
+    board().textContent.includes('bare interpreter'), '');
+  const importButtons = board().all('.server-row.scan').map((row) =>
+    row.all('.bots-act').find((b) => b.dataset.act === 'server-import'));
+  check('C8 the available entry imports', importButtons[0] && !importButtons[0].disabled, '');
+  check('C8 the unsupported entry\'s import is disabled',
+    importButtons[1] && importButtons[1].disabled, '');
+  // The toggle posts the registry's own op and the read repaints.
+  serverRows()[1].all('.bots-act').find((b) => b.dataset.act === 'server-toggle').click();
+  await flush(80);
+  const posted = page.calls.filter((c) => c.method === 'POST' && c.url === '/api/settings');
+  check('C8 the toggle posts the registry\'s op',
+    posted.some((c) => c.body && c.body.includes('"op":"server"') &&
+      c.body.includes('"name":"time"')),
+    JSON.stringify(posted.map((c) => c.body)));
+  // A probe writes its outcome through the same route.
+  serverRows()[0].all('.bots-act').find((b) => b.dataset.act === 'server-probe').click();
+  await flush(80);
+  check('C8 the probe posts its op',
+    page.calls.some((c) => c.body && c.body.includes('"op":"server-probe"')), '');
+}
+
 // C8: the addresses — `#/chat` is the new-work front door, and a reload
 // at `#/sessions/<id>` reopens that conversation with the list beside it.
 async function theAddressesHold() {
@@ -1153,6 +1257,7 @@ const cases = [
   ['C7 the dock is closed and the work column takes its place', theDockIsClosedAndTheWorkColumnTakesItsPlace],
   ['C7 the work list folds to a strip and follows the rail', theWorkListFoldsToAStrip],
   ['C7 the conversation text size is the owner\'s', theConversationTextSizeIsTheOwners],
+  ['C8 the servers card carries the registry', theServersCardCarriesTheRegistry],
   ['C8 the addresses hold', theAddressesHold],
   ['C4 /clear starts a conversation', theClearCommandStartsAConversation],
   ['C2 a thought row opens on a press', aThoughtRowOpensOnAPress],

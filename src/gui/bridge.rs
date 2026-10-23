@@ -1331,6 +1331,45 @@ impl Bridge {
             .ok_or_else(|| "a settings write names its op".to_string())?
             .to_string();
         let home = self.home.clone();
+        // The two registry ops that need the runtime pre-empt the
+        // blocking writer: the scan reads the machine's foreign configs
+        // and answers with its document, and the probe spawns a child
+        // and awaits its handshake. Everything else is a file write and
+        // runs off the async worker, the way every other op does.
+        if op == "server-scan" {
+            let scan = scan_document(&home);
+            return Ok(json!({
+                "type": "settings_write",
+                "op": op,
+                "scan": scan,
+            }));
+        }
+        if op == "server-probe" {
+            let name = arguments
+                .get("name")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "the probe names its server".to_string())?
+                .to_string();
+            let dotenv: std::collections::BTreeMap<String, String> =
+                crate::home::read_dotenv_with_process_vault(&home)
+                    .into_iter()
+                    .collect();
+            let probe = crate::mcp_registry::probe_server(&home, &name, &dotenv).await?;
+            crate::settings::record_server_probe(&home, &name, probe.clone())?;
+            return Ok(json!({
+                "type": "settings_write",
+                "op": op,
+                "probe": {
+                    "name": name,
+                    "ok": probe.ok,
+                    "server_name": probe.server_name,
+                    "server_version": probe.server_version,
+                    "tools": probe.tools,
+                    "reason": probe.reason,
+                    "at": probe.at,
+                },
+            }));
+        }
         // The write runs off the async worker: every one of these is a
         // file write, and a page request must not hold the runtime
         // while the disk answers.
@@ -4229,6 +4268,7 @@ fn settings_read(home: &std::path::Path) -> Value {
     let router = crate::settings::router_config(home, &dotenv);
     let catalog = crate::settings::catalog(home, &dotenv);
     let lanes = lanes_document(home);
+    let servers = servers_document(home);
     let roles = roles_document(home);
     let vault = crate::settings::vault_state(home);
     let (telegram_present, telegram_source) =
@@ -4248,6 +4288,7 @@ fn settings_read(home: &std::path::Path) -> Value {
         "router": router_document(&router),
         "catalog": catalog_document(&catalog),
         "lanes": lanes,
+        "servers": servers,
         "roles": roles,
         "vault": {
             "names": vault.names,
@@ -4367,6 +4408,49 @@ fn catalog_document(catalog: &crate::settings::Catalog) -> Value {
 /// The lane configuration as the cards read it: the file's own document,
 /// one row per registered lane with its resolved home, and the pickable
 /// values the lane's defaults publish.
+/// The MCP registry's document for the settings read: one row per
+/// configured server — its enabled state, its env NAMES (the registry
+/// has no values), its tool count from the last probe, the probe line,
+/// and the import source. The args ride `display_args`' redaction, so
+/// even a value the file itself carries never reaches the page.
+fn servers_document(home: &std::path::Path) -> Value {
+    let servers = match crate::mcp_registry::read_servers(home) {
+        Ok(servers) => servers,
+        Err(error) => {
+            return json!({
+                "servers": [],
+                "refused": [error],
+            });
+        }
+    };
+    let rows = servers
+        .into_iter()
+        .map(|(name, entry)| {
+            let (program, args) = crate::mcp_registry::display_entry(&entry);
+            json!({
+                "name": name,
+                "enabled": entry.enabled,
+                "program": program,
+                "args": args,
+                "env_names": entry.env_names,
+                "last_probe": entry.last_probe.map(|probe| json!({
+                    "at": probe.at,
+                    "ok": probe.ok,
+                    "server_name": probe.server_name,
+                    "server_version": probe.server_version,
+                    "tools": probe.tools,
+                    "reason": probe.reason,
+                })),
+                "source": entry.source.map(|source| json!({
+                    "harness": source.harness,
+                    "imported": source.imported,
+                })),
+            })
+        })
+        .collect::<Vec<_>>();
+    json!({ "servers": rows })
+}
+
 fn lanes_document(home: &std::path::Path) -> Value {
     let document = match crate::lanes::read_lanes(home) {
         Ok(document) => document,
@@ -4421,6 +4505,52 @@ fn lanes_document(home: &std::path::Path) -> Value {
         "lanes": lanes,
         "refused": [],
     })
+}
+
+/// The scan's document for the settings card's discovery half: the
+/// rows in review order, each with its harness, badge, status, and the
+/// redacted launch line — never a value.
+fn scan_document(home: &std::path::Path) -> Value {
+    let report = crate::mcp_registry::scan(home);
+    let rows = report
+        .rows
+        .iter()
+        .map(|row| {
+            let (status, launch, env_names) = match &row.shape {
+                crate::mcp_registry::ScanShape::Stdio {
+                    program,
+                    args,
+                    env_names,
+                    ..
+                } => (
+                    if row.configured {
+                        "configured".to_string()
+                    } else {
+                        "available".to_string()
+                    },
+                    {
+                        let mut shown = vec![program.clone()];
+                        shown.extend(crate::mcp_registry::display_args(args));
+                        shown.join(" ")
+                    },
+                    env_names.clone(),
+                ),
+                crate::mcp_registry::ScanShape::Unsupported { reason } => {
+                    ("unsupported".to_string(), reason.clone(), Vec::new())
+                }
+            };
+            json!({
+                "name": row.name,
+                "harness": row.harness,
+                "file": row.file,
+                "badge": row.badge.label(),
+                "status": status,
+                "launch": launch,
+                "env_names": env_names,
+            })
+        })
+        .collect::<Vec<_>>();
+    json!({ "rows": rows, "skips": report.skips })
 }
 
 /// One settings write, dispatched to the writer the surface owns. The
@@ -4488,6 +4618,46 @@ fn settings_apply(
             let workload = text("workload")?;
             crate::settings::remove_workload(home, &workload, flag("force").unwrap_or(false))?;
             Ok(workload)
+        }
+        "server" => {
+            let name = text("name")?;
+            match arguments.get("config") {
+                // The full entry: an import-shaped write or a hand edit
+                // through the card. The registry's own validation rules.
+                Some(config) => crate::settings::set_server(home, &name, config),
+                None => {
+                    let enabled = flag("enabled")
+                        .ok_or_else(|| "the write says enable or disable".to_string())?;
+                    crate::settings::set_server_enabled(home, &name, enabled)
+                }
+            }
+        }
+        "server-remove" => {
+            let name = text("name")?;
+            crate::settings::remove_server(home, &name)
+        }
+        "server-import" => {
+            let name = text("name")?;
+            let harness = arguments.get("harness").and_then(Value::as_str);
+            let report = crate::mcp_registry::scan(home);
+            let mut found: Vec<&crate::mcp_registry::ScanRow> =
+                report.rows.iter().filter(|row| row.name == name).collect();
+            if let Some(harness) = harness {
+                found.retain(|row| row.harness == harness);
+            }
+            match found.as_slice() {
+                [one] => crate::mcp_registry::import(home, one, &crate::boards::now_stamp()
+                    .chars()
+                    .take(10)
+                    .collect::<String>()),
+                [] => Err(format!(
+                    "`{name}` is not in the scan's answer; run a scan first"
+                )),
+                many => Err(format!(
+                    "`{name}` is discovered under more than one harness ({}); the import                      names one",
+                    many.iter().map(|row| row.harness).collect::<Vec<_>>().join(", ")
+                )),
+            }
         }
         "lane" => {
             let lane = text("lane")?;
