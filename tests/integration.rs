@@ -8830,3 +8830,158 @@ async fn a_probe_reports_the_server_and_writes_its_outcome() {
     assert!(out.contains("fake v9.9.9"), "{out}");
     std::fs::remove_dir_all(&home).ok();
 }
+
+/// C10 (the context inspector): the reconstruction IS the request. A
+/// scripted two-run conversation is captured body-for-body; the
+/// reconstructor's document — built from the log alone, with the same
+/// identity, goal, gui line, and file access the run carried — must be
+/// byte-equal to the last captured request's messages and tools arrays,
+/// and its system prompt equal to the first message's content.
+#[tokio::test]
+async fn what_the_model_saw_is_the_request_itself() {
+    let mock = MockApi::start(vec![
+        assistant_stream("first answer"),
+        assistant_stream("second answer"),
+    ]);
+    let home = temp_home("context-reconstruct");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let client = Client::new(mock.url(), "test-key");
+    let gui_line = fleet::gui::prompt_line("http://127.0.0.1:3080");
+    let options = AgentOptions {
+        goal: Some("ship the controls this week".to_string()),
+        model: "test-model".to_string(),
+        identity: None,
+        max_turns: 5,
+        ui_tx: None,
+        lane_specs: None,
+        calib: None,
+        skills: Vec::new(),
+        role_overlay: None,
+        memory: None,
+        scope: None,
+        improve_home: None,
+        gui_prompt: Some(gui_line.clone()),
+        compact_now: false,
+        checkpoints: None,
+        file_access: FileAccess::Unrestricted,
+        plan_mode: false,
+    };
+    {
+        let mut progress = Vec::new();
+        let mut agent = Agent::new(
+            &client,
+            options,
+            &mut session,
+            Box::new(ApproveAll),
+            &mut progress,
+        )
+        .unwrap();
+        agent.run("first ask").await.unwrap();
+        // A second run in the same session: the conversation grows.
+        agent.run("second ask").await.unwrap();
+    }
+    let bodies = mock.bodies();
+    assert!(bodies.len() >= 2, "{}", bodies.len());
+    let last = &bodies[bodies.len() - 1];
+    let records = session::replay(session.path()).unwrap();
+    let document = fleet::agent::Agent::reconstruct_document(
+        &records,
+        None,
+        Some(gui_line.as_str()),
+        &FileAccess::Unrestricted,
+    );
+    // The system prompt is the first message's content, byte for byte.
+    assert_eq!(
+        document["system"].as_str().unwrap(),
+        last["messages"][0]["content"].as_str().unwrap(),
+        "the system prompt is the request's own"
+    );
+    // The messages array is byte-equal.
+    assert_eq!(
+        serde_json::to_value(&document["messages"]).unwrap(),
+        serde_json::to_value(&last["messages"]).unwrap(),
+        "the messages are the request's own"
+    );
+    // The tools array is byte-equal.
+    assert_eq!(
+        serde_json::to_value(&document["tools"]).unwrap(),
+        serde_json::to_value(&last["tools"]).unwrap(),
+        "the tools are the request's own"
+    );
+    // The goal the run carried is in the reconstruction — the record is
+    // what made it reconstructable.
+    assert!(
+        document["system"]
+            .as_str()
+            .unwrap()
+            .contains("ship the controls this week"),
+        "the goal record rode the prompt"
+    );
+    std::fs::remove_dir_all(&home).ok();
+}
+
+/// C11 (the re-run): a recorded bash call re-runs through the executor
+/// with its bound and its result never lands in the session log; the
+/// write class is refused by name.
+#[tokio::test]
+async fn a_recorded_call_re_runs_without_touching_the_log() {
+    let home = temp_home("replay-tool");
+    let session = Session::create(&home, "test-model").unwrap();
+    let (bridge, _sources) =
+        fleet::gui::bridge::Bridge::detached(home.clone(), "test-model".to_string(), None);
+    let id = session
+        .path()
+        .file_stem()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    // The ask-mode first press stands the seat the run path would stand.
+    let seat = bridge
+        .replay_tool(&id, "bash", r#"{"command":"echo re-run"}"#)
+        .await
+        .expect("the ask class stands a seat, not a refusal");
+    assert_eq!(seat["seat"].as_bool(), Some(true), "{seat}");
+    assert_eq!(seat["logged"].as_bool(), Some(false));
+    // Under a mode that approves bash without asking, the same press
+    // executes through the executor.
+    let _ = bridge.run_with(
+        &id,
+        "ignored",
+        fleet::approvals::Mode::YesGuarded,
+        None,
+        Some("/tmp"),
+    );
+    let replayed = bridge
+        .replay_tool(&id, "bash", r#"{"command":"echo re-run"}"#)
+        .await
+        .expect("re-runs");
+    let said = replayed["output"].as_str().unwrap_or_default().to_string();
+    assert!(said.contains("re-run"), "{said}");
+    assert_eq!(replayed["logged"].as_bool(), Some(false));
+    // The log gains no record for it.
+    let records = session::replay(session.path()).unwrap();
+    assert!(
+        !records.iter().any(|record| matches!(
+            record,
+            Record::ToolResult { output, .. } if output.contains("re-run")
+        )),
+        "the re-run never entered the model's context"
+    );
+    // The write class is refused by name, with the correction path named.
+    let refused = bridge
+        .replay_tool(
+            session
+                .path()
+                .file_stem()
+                .unwrap()
+                .to_string_lossy()
+                .as_ref(),
+            "write_file",
+            r#"{"path":"x","content":"y"}"#,
+        )
+        .await
+        .expect_err("refused");
+    assert!(refused.contains("no checkpoint"), "{refused}");
+    assert!(refused.contains("edit-and-resend"), "{refused}");
+    std::fs::remove_dir_all(&home).ok();
+}

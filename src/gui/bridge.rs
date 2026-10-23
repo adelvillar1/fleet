@@ -166,6 +166,10 @@ fn epoch_millis() -> u64 {
 /// is serial.
 struct GuiState {
     sessions: std::collections::HashMap<String, SessionState>,
+    /// A re-run waiting on its seat (D11): the ask-class call the owner
+    /// pressed re-run on, standing the seat the run path would stand.
+    /// Executed by `answer` when the decision lands, never logged.
+    pending_replay: Option<(String, String, serde_json::Value)>,
     /// The launch session's id, once the thread has named it. `None`
     /// until then: the log is created on the first task (KI-022), so a
     /// face that is opened and closed without a prompt leaves no empty
@@ -349,6 +353,7 @@ impl Bridge {
         sessions.insert(String::new(), SessionState::new());
         let state = Arc::new(Mutex::new(GuiState {
             sessions,
+            pending_replay: None,
             launch,
             driving: None,
             permissions: crate::approvals::Mode::Ask,
@@ -643,7 +648,7 @@ impl Bridge {
         // The four reads are independent; run them together so the
         // welcome's first paint pays the slowest one, not their sum.
         let (sessions, memory, skills, delegation) = tokio::join!(
-            self.sessions(&launch),
+            self.sessions(&launch, ""),
             self.memory(),
             self.skills(),
             self.delegation(&launch)
@@ -1225,9 +1230,10 @@ impl Bridge {
     /// The sessions panel's document: the archive as the summaries the
     /// log heads carry, newest first, with the session this face
     /// anchors named so the panel can say which row is live.
-    pub async fn sessions(&self, current: &str) -> Value {
+    pub async fn sessions(&self, current: &str, query: &str) -> Value {
         let home = self.home.clone();
         let current = current.to_string();
+        let query = query.to_string();
         // The live facts come from the face's own state, not the log: an
         // approval and a driving run are process truths, and the archive
         // is where the owner looks when they are waiting on one.
@@ -1243,12 +1249,185 @@ impl Bridge {
                     .collect(),
             }
         };
-        match tokio::task::spawn_blocking(move || sessions_read(&home, &current, &live)).await {
+        match tokio::task::spawn_blocking(move || sessions_read(&home, &current, &live, &query))
+            .await
+        {
             Ok(document) => document,
             Err(_) => json!({
                 "type": "sessions",
                 "refused": ["the archive read did not land"],
             }),
+        }
+    }
+
+    /// One recorded call, re-run (D11): through the tools' own executor
+    /// — the same bound, the same approval classes — with the result
+    /// landing in the reply the drawer reads, never in the session log:
+    /// the log is the model's context, and a result the model never
+    /// asked for must not enter it. The write class is refused by name
+    /// (a re-run would rewrite the tree with no checkpoint behind it);
+    /// an ask-class call stands the seat the run path would stand, and
+    /// `answer` executes it when the decision lands.
+    pub async fn replay_tool(
+        &self,
+        session: &str,
+        name: &str,
+        arguments: &str,
+    ) -> Result<Value, String> {
+        if name == "write_file" {
+            return Err(
+                "a re-run of write_file would rewrite the tree with no checkpoint behind it; \
+                 edit-and-resend is the correction path — it rewinds and checkpoints"
+                    .to_string(),
+            );
+        }
+        let parsed: serde_json::Value = serde_json::from_str(arguments)
+            .map_err(|error| format!("the arguments are not a JSON object: {error}"))?;
+        // A lane call re-runs through the roster's one-call seam — the
+        // health probe's own pattern: spawn, handshake, call, close.
+        if let Some(rest) = name.strip_prefix("mcp__") {
+            let (lane, tool) = rest
+                .split_once("__")
+                .ok_or("a lane call is mcp__<lane>__<tool> — the recorded name did not split")?;
+            let lane = lane.to_string();
+            let tool = tool.to_string();
+            let lane_key = lane.clone();
+            let tool_name = tool.clone();
+            let dotenv: std::collections::BTreeMap<String, String> =
+                crate::home::read_dotenv_with_process_vault(&self.home)
+                    .into_iter()
+                    .collect();
+            let mut spec = crate::mcp_registry::enabled_specs(&self.home, &dotenv)
+                .map_err(|reason| format!("the registry refused: {reason}"))?;
+            let spec = match spec.remove(&lane_key) {
+                Some(spec) => spec,
+                None => crate::lanes::spec_for(&lane_key)?,
+            };
+            let outcome = tokio::task::spawn_blocking(move || async move {
+                let server = crate::mcp::McpServer::spawn(&spec)
+                    .map_err(|error| format!("the lane could not start: {error}"))?;
+                server
+                    .initialize()
+                    .await
+                    .map_err(|error| format!("the lane's handshake failed: {error}"))?;
+                let result = server
+                    .call_tool(&tool_name, parsed)
+                    .await
+                    .map_err(|error| format!("the call failed: {error}"))?;
+                let _ = server.close().await;
+                Ok::<_, String>(result)
+            })
+            .await
+            .map_err(|_| "the replay did not land".to_string())?
+            .await;
+            let result = outcome?;
+            let bounded = crate::tools::bound(crate::tools::ToolOutcome {
+                output: result.text(),
+                truncated: false,
+            });
+            return Ok(json!({
+                "type": "replay",
+                "name": name,
+                "output": bounded.output,
+                "truncated": bounded.truncated,
+                "logged": false,
+            }));
+        }
+        // A built-in: the executor's own bound, and the approval gate's
+        // own question. A call the gate would ask about stands the seat.
+        let tool = crate::tools::Tool::from_name(name)
+            .ok_or_else(|| format!("`{name}` is not a tool this face re-runs"))?;
+        if tool == crate::tools::Tool::WriteFile {
+            return Err("the write class is refused by name".to_string());
+        }
+        let call = crate::api::ToolCall {
+            id: "replay".to_string(),
+            kind: "function".to_string(),
+            function: crate::api::FunctionCall {
+                name: name.to_string(),
+                arguments: arguments.to_string(),
+            },
+        };
+        let mode = { lock(&self.state).permissions };
+        let gate = crate::approvals::Gate::new(mode);
+        if !gate.approves_without_asking(&call) {
+            let session_key = if session.is_empty() {
+                {
+                    lock(&self.state).target()
+                }
+            } else {
+                session.to_string()
+            };
+            {
+                let mut state = lock(&self.state);
+                state.pending_replay = Some((session_key.clone(), name.to_string(), parsed));
+                let attached = state.attached(&session_key);
+                attached.seat = Some(ApprovalRequest {
+                    call: call.clone(),
+                    summary: crate::agent::call_summary(&call),
+                    responder: {
+                        let (tx, _rx) = std::sync::mpsc::channel();
+                        tx
+                    },
+                });
+                attached.seat_at = epoch_millis();
+            }
+            let summary = crate::agent::call_summary(&call);
+            record(
+                &self.state,
+                &self.events,
+                &session_key,
+                json!({"type": "seat", "tool": name, "summary": summary,
+                       "label": summary, "allowlistable": false}),
+            );
+            return Ok(json!({
+                "type": "replay",
+                "seat": true,
+                "name": name,
+                "logged": false,
+            }));
+        }
+        let outcome = tool
+            .execute(&parsed)
+            .map_err(|error| format!("the re-run was refused: {error}"))?;
+        Ok(json!({
+            "type": "replay",
+            "name": name,
+            "output": outcome.output,
+            "truncated": outcome.truncated,
+            "logged": false,
+        }))
+    }
+
+    /// What the model saw (D10): one session's log reconstructed into
+    /// the request its run sent — the system prompt, the message list,
+    /// the tool declarations — by the agent's own composer, so there is
+    /// no second implementation to drift. The surface supplies the
+    /// facts the log cannot hold: the identity, the gui line, and the
+    /// file access the run carried.
+    pub async fn context(&self, session: &str, base_url: &str) -> Value {
+        let home = self.home.clone();
+        let session = session.to_string();
+        // The run path composes its line from the serving base URL; the
+        // reconstructor wants the same words the run carried.
+        let gui_prompt = crate::gui::prompt_line(base_url);
+        let gui_context = tokio::task::spawn_blocking(move || {
+            let path = crate::home::sessions_dir(&home).join(format!("{session}.jsonl"));
+            let records = crate::session::replay(&path)
+                .map_err(|error| format!("the log could not be read: {error}"))?;
+            let identity = crate::home::read_soul(&home);
+            Ok::<_, String>(crate::agent::Agent::reconstruct_document(
+                &records,
+                identity.as_deref(),
+                Some(gui_prompt.as_str()),
+                &crate::agent::FileAccess::Unrestricted,
+            ))
+        })
+        .await;
+        match gui_context {
+            Ok(Ok(document)) => document,
+            Ok(Err(error)) => json!({ "type": "context", "refused": [error] }),
+            Err(_) => json!({ "type": "context", "refused": ["the context read did not land"] }),
         }
     }
 
@@ -3908,7 +4087,42 @@ fn paused_by_owner(home: &std::path::Path, id: &str) -> bool {
         == Some(true)
 }
 
-fn sessions_read(home: &std::path::Path, current: &str, live: &LiveFace) -> Value {
+/// The literal content match pass (D9): the newest-first logs' owner and
+/// assistant text, first match wins the row, the matched line rides it.
+/// The bound is named on the document — "no match" always means "no
+/// match in the first SEARCH_BOUND logs", never a lie. Literal, not
+/// semantic: the 2026-10-20 measurement scored this corpus's cached
+/// session vectors 1/81 top-1 with a 0.00 median margin, so a semantic
+/// pass would be a classifier nobody measured against ground truth.
+pub const SEARCH_BOUND: usize = 200;
+
+fn session_match(home: &std::path::Path, id: &str, needle: &str) -> Option<String> {
+    let path = home.join("sessions").join(format!("{id}.jsonl"));
+    let text = std::fs::read_to_string(&path).ok()?;
+    let needle = needle.to_lowercase();
+    for line in text.lines() {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        // The log's record kinds, not the stream's event vocabulary:
+        // `user` and `assistant` are the message records.
+        match value.get("type").and_then(|kind| kind.as_str()) {
+            Some("user") | Some("assistant") => {}
+            _ => continue,
+        }
+        let said = value
+            .get("content")
+            .and_then(|content| content.as_str())
+            .unwrap_or_default();
+        if said.to_lowercase().contains(&needle) {
+            let clipped: String = said.chars().take(160).collect();
+            return Some(clipped);
+        }
+    }
+    None
+}
+
+fn sessions_read(home: &std::path::Path, current: &str, live: &LiveFace, query: &str) -> Value {
     let titles = load_titles(home);
     let entries = match session::list(home) {
         Ok(entries) => entries,
@@ -3919,6 +4133,16 @@ fn sessions_read(home: &std::path::Path, current: &str, live: &LiveFace) -> Valu
             })
         }
     };
+    // The content pass (D9): only when the query asks, and only over
+    // the newest SEARCH_BOUND logs — the bound rides the document so a
+    // miss is honest about what it searched.
+    let needle = if query.trim().is_empty() {
+        None
+    } else {
+        Some(query.trim().to_string())
+    };
+    let entries: Vec<_> = entries.into_iter().take(SEARCH_BOUND).collect();
+    let searched = needle.as_ref().map(|_| entries.len());
     let sessions = entries
         .iter()
         .rev()
@@ -3962,6 +4186,12 @@ fn sessions_read(home: &std::path::Path, current: &str, live: &LiveFace) -> Valu
                 "job": scheduled_job(entry),
                 // The one derived word the list groups by.
                 "state": work_state(entry, live, paused),
+                // The content match's line, when a query asked for one
+                // (D9): the row names why it matched, the whole line
+                // clipped, never a summary a model wrote.
+                "matched": needle
+                    .as_deref()
+                    .and_then(|needle| session_match(home, &entry.id, needle)),
             })
         })
         .collect::<Vec<_>>();
@@ -4000,6 +4230,11 @@ fn sessions_read(home: &std::path::Path, current: &str, live: &LiveFace) -> Valu
         "type": "sessions",
         "read_at": crate::boards::now_stamp(),
         "current": current,
+        "search": searched.map(|searched| json!({
+            "query": query,
+            "bound": SEARCH_BOUND,
+            "searched": searched,
+        })),
         "counts": {
             "needs": needs,
             "working": working,
@@ -6381,6 +6616,97 @@ mod tests {
     use super::*;
     use crate::api::FunctionCall;
 
+    /// A scratch home unique per call.
+    fn scratch(tag: &str) -> std::path::PathBuf {
+        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let serial = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!(
+            "fleet-bridge-{tag}-{}-{serial}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// The content match pass (D9): a query drives the rows from the
+    /// logs' own owner and assistant text, the matched line rides the
+    /// row, and the bound is named — a miss is honest about what it
+    /// searched.
+    #[test]
+    fn a_content_query_names_the_matched_line_and_its_bound() {
+        let home = scratch("sessions-search");
+        std::fs::create_dir_all(home.join("sessions")).unwrap();
+        let write = |id: &str, lines: &str| {
+            std::fs::write(home.join("sessions").join(format!("{id}.jsonl")), lines).unwrap();
+        };
+        write(
+            "alpha",
+            concat!(
+                r#"{"type":"start","v":1,"model":"m","created":"2026-10-23T09:00:00Z"}"#,
+                "\n",
+                r#"{"type":"user","content":"where did I put the deployment notes"}"#,
+                "\n",
+                r#"{"type":"assistant","content":"they are in docs/deploy.md"}"#,
+                "\n",
+            ),
+        );
+        write(
+            "beta",
+            concat!(
+                r#"{"type":"start","v":1,"model":"m","created":"2026-10-23T08:00:00Z"}"#,
+                "\n",
+                r#"{"type":"user","content":"unrelated words"}"#,
+                "\n",
+            ),
+        );
+        let live = LiveFace::default();
+        let document = sessions_read(&home, "", &live, "deployment notes");
+        let rows = document["sessions"].as_array().unwrap();
+        let matched: Vec<&str> = rows
+            .iter()
+            .filter(|row| !row["matched"].is_null())
+            .map(|row| row["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            matched,
+            vec!["alpha"],
+            "only the owner-text hit carries a line"
+        );
+        let hit = rows
+            .iter()
+            .filter_map(|row| row["matched"].as_str())
+            .collect::<Vec<_>>();
+        assert!(
+            hit.iter().any(|line| line.contains("deployment notes")),
+            "the owner's line rides the row: {hit:?}"
+        );
+        let document = sessions_read(&home, "", &live, "deploy.md");
+        let rows = document["sessions"].as_array().unwrap();
+        let hit = rows
+            .iter()
+            .filter_map(|row| row["matched"].as_str())
+            .collect::<Vec<_>>();
+        assert!(
+            hit.iter().any(|line| line.contains("docs/deploy.md")),
+            "the assistant's answer matches: {hit:?}"
+        );
+        assert_eq!(
+            document["search"]["bound"].as_u64(),
+            Some(SEARCH_BOUND as u64)
+        );
+        assert_eq!(document["search"]["searched"].as_u64(), Some(2));
+        let plain = sessions_read(&home, "", &live, "");
+        assert!(plain["search"].is_null(), "no query, no bound named");
+        let document = sessions_read(&home, "", &live, "nothing says this");
+        assert!(document["sessions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|row| row["matched"].is_null()));
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
     fn call(tool: &str, arguments: &str) -> ToolCall {
         ToolCall {
             id: "call_1".to_string(),
@@ -8014,7 +8340,7 @@ mod tests {
             driving: Some(working_id.clone()),
             seats: Default::default(),
         };
-        let document = sessions_read(&home, "", &live);
+        let document = sessions_read(&home, "", &live, "");
         let rows = document["sessions"].as_array().expect("rows");
         let row = |id: &str| {
             rows.iter()
@@ -8094,7 +8420,7 @@ mod tests {
         }
         // The archive shows both as conversations (one now carrying its
         // first message).
-        let document = bridge.sessions("").await;
+        let document = bridge.sessions("", "").await;
         let rows = document["sessions"].as_array().expect("rows");
         for id in [&first, &second] {
             let row = rows
@@ -8177,6 +8503,7 @@ mod tests {
     #[test]
     fn every_recorded_event_names_its_session() {
         let state = Mutex::new(GuiState {
+            pending_replay: None,
             sessions: Default::default(),
             launch: Some("s".to_string()),
             driving: Some("s".to_string()),
@@ -8200,6 +8527,7 @@ mod tests {
         assert_eq!(streamed["session"], "s", "{streamed}");
         // A face whose launch log does not exist yet has no id to name.
         let empty = Mutex::new(GuiState {
+            pending_replay: None,
             sessions: Default::default(),
             launch: None,
             driving: None,

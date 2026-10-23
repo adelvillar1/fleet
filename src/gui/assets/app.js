@@ -1160,6 +1160,40 @@
       ]);
     });
     detail.appendChild(raw);
+    // The re-run (D11): one press through the executor — the same bound,
+    // the same approval classes — with the answer in the drawer, never
+    // in the conversation the model reads. The write class is refused
+    // by name on the server; the arguments are the recorded ones.
+    var rerun = node('button', 'tool-raw', 're-run');
+    rerun.type = 'button';
+    rerun.title = 'run this call again through the tools\u2019 own executor; the answer stays in the drawer';
+    rerun.addEventListener('click', function (stop) {
+      if (stop && stop.stopPropagation) stop.stopPropagation();
+      var args = event.arguments && event.arguments.trim()
+        ? event.arguments : '{}';
+      post('/api/replay', { name: event.tool, arguments: args })
+        .then(function (reply) {
+          if (reply.status !== 200) {
+            notice('the re-run was refused',
+              (reply.body && reply.body.error) || 'the face said no without a reason');
+            return;
+          }
+          if (reply.body.seat) {
+            notice('the seat above is the re-run',
+              'answer it and the call runs; the answer stays in the drawer');
+            return;
+          }
+          var out = node('pre', 'raw',
+            (reply.body.output || '') + (reply.body.truncated ? '\n(cut at the bound)' : ''));
+          openDrawer('re-run \u00b7 ' + event.tool, [
+            ['the output', out],
+            ['never logged', node('p', 'derivation',
+              'this result did not enter the conversation the model reads')]
+          ]);
+        })
+        .catch(function () { });
+    });
+    detail.appendChild(rerun);
     el0.appendChild(detail);
     el0.querySelector('.card-open').addEventListener('click', function () {
       detail.hidden = !detail.hidden;
@@ -1507,6 +1541,64 @@
 
   // The artifacts' diff in the drawer: the run's whole diff against the
   // checkpoint, the review's own painter.
+  // The context inspector (D10): the session's log reconstructed into
+  // the request its run sent — the system prompt, the message list, and
+  // the tool declarations — read-only, in the drawer.
+  function openContext() {
+    if (!face.session) return;
+    fetch('/api/context?session=' + encodeURIComponent(face.session),
+      { headers: { accept: 'application/json' } })
+      .then(function (reply) { return reply.json(); })
+      .then(function (doc) {
+        if (doc.refused && doc.refused.length) {
+          notice('the context did not read', doc.refused.join(' \u00b7 '));
+          return;
+        }
+        var sections = [];
+        var systemHead = node('p', 'derivation',
+          (doc.system || '').length + ' characters \u00b7 the system prompt the model received');
+        sections.push(['the system prompt', function () {
+          var box = node('div', 'context-system');
+          box.appendChild(systemHead);
+          var text = node('pre', 'context-pre', doc.system || '');
+          text.hidden = true;
+          var toggle = node('button', 'receipt-toggle', 'show the prompt');
+          toggle.type = 'button';
+          toggle.addEventListener('click', function () {
+            text.hidden = !text.hidden;
+            toggle.textContent = text.hidden ? 'show the prompt' : 'hide the prompt';
+          });
+          var wrap = node('div');
+          wrap.appendChild(toggle);
+          wrap.appendChild(text);
+          box.appendChild(wrap);
+          return box;
+        }()]);
+        sections.push(['the messages', function () {
+          var list = node('div', 'context-messages');
+          (doc.messages || []).forEach(function (message) {
+            var line = node('div', 'context-message');
+            line.appendChild(node('span', 'context-role', String(message.role || '')));
+            var content = typeof message.content === 'string'
+              ? message.content : JSON.stringify(message.content);
+            line.appendChild(node('span', 'context-text', content));
+            list.appendChild(line);
+          });
+          return list;
+        }()]);
+        sections.push(['the tools', function () {
+          var list = node('div', 'context-tools');
+          (doc.tools || []).forEach(function (tool) {
+            var name = tool && tool.function && tool.function.name;
+            list.appendChild(node('span', 'context-tool', String(name || '')));
+          });
+          return list;
+        }()]);
+        openDrawer('what the model saw', sections);
+      })
+      .catch(function () { });
+  }
+
   function openArtifactsDiff(turn) {
     fetch('/api/diff?turn=' + turn, { headers: { accept: 'application/json' } })
       .then(function (reply) { return reply.json(); })
@@ -1546,6 +1638,13 @@
       body.appendChild(node('p', 'receipt-line',
         'evidence \u00b7 ' + evidence.join(' \u00b7 ')));
     }
+    // What the model saw (D10): the run's request reconstructed from
+    // the log, in the drawer. The receipt is where the audit begins.
+    var saw = node('button', 'receipt-toggle', 'what the model saw');
+    saw.type = 'button';
+    saw.title = 'the exact request the run sent: system, messages, tools';
+    saw.addEventListener('click', openContext);
+    body.appendChild(saw);
     // The audit pass's one press (D8): every folded turn unfolds.
     if (Object.keys(face.turnFolded).some(function (turn) { return face.turnFolded[turn]; })) {
       var expand = node('button', 'receipt-toggle', 'expand this run');
@@ -7553,6 +7652,12 @@
     button.appendChild(node('span', 'work-bar'));
     var body = node('span', 'work-body');
     body.appendChild(node('span', 'work-name', row.title || sessionLabel(row.id)));
+    // The content match's line, when a query drove the row (D9): the
+    // row names why it matched, the whole line clipped — never a
+    // summary a model wrote.
+    if (row.matched) {
+      body.appendChild(node('span', 'work-matched', row.matched));
+    }
     var meta = node('span', 'work-meta');
     var state = node('span', 'work-state', workStateWord(row.state));
     state.dataset.state = row.state || '';

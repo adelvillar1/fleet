@@ -1,5 +1,5 @@
 ---
-status: draft
+status: completed
 created: 2026-10-23
 updated: 2026-10-23
 slug: chat-composer-excellence
@@ -57,6 +57,21 @@ The seams this plan rides, verified 2026-10-23:
   tab waits silently; the phone PWA is installed.
 
 ## What we should do
+
+**State — completed 2026-10-23**, in three landed groups: the goal in
+the run bar (`c204791`); the composer and stream packs — drafts,
+edit-and-resend, paste, the @ typeahead, the return anchors, artifacts
+with diff peeks, clickable paths, turn navigation (`ee5b305`); and the
+audit legs — content search, what-the-model-saw with the byte-equality
+pin, and the single-tool re-run (the closing commit). One honest
+correction mid-build: D4's paste rides the machine-file picker's own
+client-side pipeline (text files, five-file and 256 KB bounds), not the
+workspace-document `/api/attach` route the plan first named — one
+pipeline, one set of bounds, and a pasted image names its path rather
+than vanishing. The reconstruction notes one hold-back: `improve`'s
+declaration carries the lesson store's live records, a fact the log
+cannot hold, so a run with a home shows it and the reconstruction
+names its absence.
 
 Five moves, each landing green and reviewable on its own — the composer
 first, because it is the surface touched most:
@@ -263,50 +278,50 @@ code read on the cargo invocation itself — with a harness case pinned in
 
 ## Acceptance criteria
 
-- [ ] C1 — the goal field is present in the run bar on every visit:
+- [x] C1 — the goal field is present in the run bar on every visit:
   unset shows a set affordance in tertiary ink; set shows the goal on
   one line with the full text on hover; a press opens a popover whose
   Set/Replace/Clear actions ride `/api/goal` and repaint the chip; `/goal`
   still works and the two agree. Pinned by a harness case.
-- [ ] C2 — each conversation's draft is its own: typing in one,
+- [x] C2 — each conversation's draft is its own: typing in one,
   switching to another, and returning restores the first conversation's
   text and leaves the second's untouched; a reload restores both; the
   legacy single-key draft migrates into the visiting conversation on
   first read. Pinned by a harness case.
-- [ ] C3 — an owner message offers edit on hover; editing fills the
+- [x] C3 — an owner message offers edit on hover; editing fills the
   composer, and sending rewinds to the turn before the message and posts
   the edited text as a new run, so the log gains a `Rewind` record and
   keeps the original message; while a run drives, the edit queues with
   the queue's own named reason. Pinned by a harness case and a live
   pass.
-- [ ] C4 — pasting a file into the composer produces an attach chip
+- [x] C4 — pasting a file into the composer produces an attach chip
   through `/api/attach` and the five-file bound still refuses the sixth;
   pasting text inserts text. Pinned by a harness case over a stubbed
   clipboard event.
-- [ ] C5 — `@` opens the same listbox as `/` over the four families,
+- [x] C5 — `@` opens the same listbox as `/` over the four families,
   each row sourced from the read the face already makes; Enter inserts
   or sends the highlighted row per KI-245; a `@file` reference opens the
   pane preview and a `@session` reference opens that conversation.
   Pinned by a harness case over stubbed documents.
-- [ ] C6 — a divider marks the first event after the owner's last
+- [x] C6 — a divider marks the first event after the owner's last
   at-the-bottom visit, per conversation; while scrolled up, arriving
   events show a back-to-live control with the unread count that clears
   on return to the bottom; with the document hidden, a seat or a
   finish fires one Notification, and none fires while visible. Pinned by
   harness cases (a Notification stub included).
-- [ ] C7 — a finished run's receipt lists the files its checkpoint
+- [x] C7 — a finished run's receipt lists the files its checkpoint
   window names, each row opening the diff that checkpoint holds; paths
   inside rendered replies open the pane at that file. Pinned by a
   harness case and a live pass on a run that edits files.
-- [ ] C8 — a turn collapses to its mark line and expands again; next/prev
+- [x] C8 — a turn collapses to its mark line and expands again; next/prev
   turn jumps turn-to-turn; one control expands the whole run; nothing
   auto-collapses. Pinned by a harness case.
-- [ ] C9 — a content query drives the work list from the server's match
+- [x] C9 — a content query drives the work list from the server's match
   pass over the logs' owner/assistant text: the matched line rides the
   row, a row opens the conversation, the pass names its bound (first N
   logs, newest-first), and the row metadata fields keep their current
   matches. Pinned by a server test over fixture logs and a harness case.
-- [ ] C10 — for any turn of a logged run, "what the model saw" returns
+- [x] C10 — for any turn of a logged run, "what the model saw" returns
   the exact request: the assembled system prompt, the message list, and
   the declarations — and the document is byte-equal (messages and tools
   arrays) to the body the provider received for that turn, verified by
@@ -314,14 +329,14 @@ code read on the cargo invocation itself — with a harness case pinned in
   and compares. A compacted session's pre-compaction turns show the
   compacted context the loop sent. Pinned by that test and a harness
   case for the drawer.
-- [ ] C11 — a recorded call's card offers re-run: with edited arguments
+- [x] C11 — a recorded call's card offers re-run: with edited arguments
   it executes through the same executor and bound and the result renders
   in the drawer; the session log gains no record for it (the model's
   context is untouched); an approval-class call stands a seat first; a
   write-class call is refused by name; a lane call re-runs through the
   roster's one-call seam. Pinned by integration tests and a harness
   case.
-- [ ] C12 — the gate is green: `cargo fmt --all --check`, `cargo clippy
+- [x] C12 — the gate is green: `cargo fmt --all --check`, `cargo clippy
   --all-targets -- -D warnings`, `cargo build --release`, `cargo test`,
   each exit code read on the cargo invocation itself.
 

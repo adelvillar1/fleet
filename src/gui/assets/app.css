@@ -6644,6 +6644,52 @@ body[data-work="collapsed"] .work-list { display: none; }
   cursor: pointer;
 }
 .to-live:hover { border-color: var(--dsw-alias-accent); }
+/* The context inspector (D10): read-only, dense, and quiet — the audit
+   view of one run's request. */
+.context-pre {
+  max-height: 40vh;
+  overflow: auto;
+  margin: 8px 0 0;
+  padding: 10px;
+  border: var(--card-hairline);
+  border-radius: 8px;
+  background: var(--dsw-alias-page);
+  color: var(--dsw-alias-ink-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+.context-messages { display: grid; gap: 6px; }
+.context-message {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 10px;
+  align-items: baseline;
+}
+.context-role {
+  color: var(--dsw-alias-ink-tertiary);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.context-text {
+  color: var(--dsw-alias-ink-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.context-tools { display: flex; flex-wrap: wrap; gap: 5px; }
+.context-tool {
+  padding: 2px 7px;
+  border: 1px solid var(--dsw-alias-hairline);
+  border-radius: 999px;
+  color: var(--dsw-alias-ink-secondary);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+}
+
 .since-divider {
   display: flex;
   align-items: center;
@@ -6663,6 +6709,16 @@ body[data-work="collapsed"] .work-list { display: none; }
 .conv-head { flex: 0 0 auto; }
 .empty, .log { flex: 1 1 auto; min-height: 0; }
 .process-strip, .seat, .actions, .commands, .composer { flex: 0 0 auto; }
+
+.work-matched {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dsw-alias-ink-tertiary);
+  font-size: 11px;
+  font-style: italic;
+}
 
 .work-body { min-width: 0; }
 .work-family-wrap + .work-family-wrap { margin-top: 5px; }

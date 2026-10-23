@@ -204,6 +204,26 @@ function boot(options) {
     if (pathOnly === '/api/home') {
       return Promise.resolve({ status: 200, json: () => Promise.resolve(documents.home || {}) });
     }
+    if (pathOnly === '/api/context') {
+      return Promise.resolve({
+        status: 200,
+        json: () => Promise.resolve(documents.context || {
+          type: 'context',
+          system: 'You are Fleet... ## Goal\n\nship the controls',
+          messages: [
+            { role: 'system', content: 'You are Fleet...' },
+            { role: 'user', content: 'first ask' },
+            { role: 'assistant', content: 'first answer' },
+            { role: 'user', content: 'second ask' },
+          ],
+          tools: [
+            { function: { name: 'bash' } },
+            { function: { name: 'read_file' } },
+            { function: { name: 'subagent' } },
+          ],
+        }),
+      });
+    }
     if (pathOnly === '/api/checkpoints') {
       return Promise.resolve({
         status: 200,
@@ -1565,6 +1585,92 @@ async function theTurnIsANavigationalUnit() {
   }
 }
 
+// C9 (content search): a query drives the work list from the server's
+// match pass — the row carries the matched line, opening the row jumps
+// to the conversation, and the bound is the document's own.
+async function aContentQueryDrivesTheWorkList() {
+  const page = boot({
+    width: 1440, hash: '#/sessions',
+    documents: {
+      sessions: {
+        type: 'sessions', read_at: 'now', current: '',
+        counts: { needs: 0, working: 0, background: 0, earlier: 1, total: 1 },
+        search: { query: 'deployment notes', bound: 200, searched: 2 },
+        sessions: [row('hit-1', 'completed',
+          { title: 'the conversation that said it', matched: 'where did I put the deployment notes' })],
+      },
+      state: (asked) => ({ ...emptyState(asked), session: asked }),
+    },
+  });
+  await flush();
+  page.open();
+  await flush();
+  const box = page.IDS['work-head'].querySelector('.work-search input') ||
+    page.rows('.work-search input')[0];
+  box.value = 'deployment notes';
+  page.fireOn(box.id || 'task', 'input', {});
+  // The stub re-fetches with the query; the document's matched line
+  // rides the row.
+  await flush(60);
+  const matched = page.rows('.work-matched');
+  check('C9 the row carries the matched line',
+    matched.length === 1 && matched[0].textContent.includes('deployment notes'),
+    matched.map((one) => one.textContent).join(';'));
+  // Opening the row jumps to the conversation, as every row does.
+  page.rows('.work-row')[0].click();
+  await flush(80);
+  check('C9 the matched row opens its conversation',
+    page.window.location.hash.includes('hit-1'), page.window.location.hash);
+}
+
+// C10 (the context inspector): the receipt's audit door opens the exact
+// request the run sent — the system prompt behind its own toggle, the
+// message list role by role, and the tool declarations by name.
+async function whatTheModelSawOpensFromTheReceipt() {
+  const doc = {
+    sessions: {
+      type: 'sessions', read_at: 'now', current: '',
+      counts: { needs: 0, working: 0, background: 0, earlier: 1, total: 1 },
+      sessions: [row('ctx-1', 'completed', { title: 'a conversation to audit' })],
+    },
+    state: (asked) => ({ ...emptyState(asked), session: asked }),
+  };
+  const page = boot({ width: 1440, hash: '#/sessions/ctx-1', documents: doc });
+  await flush();
+  page.open();
+  await flush();
+  page.push({ type: 'message', role: 'owner', text: 'audit me' });
+  page.push({ type: 'turn', turn: 1 });
+  await flush(40);
+  page.push({ type: 'finished', stop_reason: 'completed' });
+  await flush(120);
+  const door = page.rows('.receipt-toggle')
+    .filter((one) => one.textContent.includes('what the model saw'))[0];
+  check('C10 the receipt carries the audit door', !!door, '');
+  door.click();
+  await flush(80);
+  const dockTitle = page.text('dock-object-title');
+  check('C10 the dock opened at width',
+    dockTitle.includes('what the model saw') || page.text('drawer-title').includes('what the model saw'),
+    dockTitle + ' | ' + page.text('drawer-title'));
+  const body = page.text('dock-object-body') || page.text('drawer-body');
+  check('C10 the message list is role by role',
+    body.includes('first ask') && body.includes('second ask'), body.slice(0, 160));
+  check('C10 the tools are named',
+    body.includes('bash') && body.includes('subagent'), '');
+  const pre = page.rows('.context-pre')[0];
+  check('C10 the system prompt is behind its toggle', pre && pre.hidden === true,
+    String(pre && pre.hidden));
+  const toggle = page.rows('.receipt-toggle')
+    .filter((one) => one.textContent.includes('show the prompt'))[0];
+  check('C10 the prompt offers its toggle', !!toggle, '');
+  if (toggle) {
+    toggle.click();
+    await flush(20);
+    check('C10 the toggle reveals the prompt', pre.hidden === false, String(pre.hidden));
+  }
+}
+
 // C8: the addresses — `#/chat` is the new-work front door, and a reload
 // at `#/sessions/<id>` reopens that conversation with the list beside it.
 async function theAddressesHold() {
@@ -1824,6 +1930,8 @@ const cases = [
   ['C6 returning is anchored', returningIsAnchored],
   ['C7 the receipt hands over the work', theReceiptHandsOverTheWork],
   ['C8 the turn is a navigational unit', theTurnIsANavigationalUnit],
+  ['C9 a content query drives the work list', aContentQueryDrivesTheWorkList],
+  ['C10 what the model saw opens from the receipt', whatTheModelSawOpensFromTheReceipt],
   ['C8 the addresses hold', theAddressesHold],
   ['C4 /clear starts a conversation', theClearCommandStartsAConversation],
   ['C2 a thought row opens on a press', aThoughtRowOpensOnAPress],

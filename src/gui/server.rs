@@ -746,9 +746,64 @@ async fn serve_connection(
         // replay, and the resume that re-anchors this face to that log.
         // The id rides the query like the pane's `path` and is refused
         // for its shape before the disk is touched, for the same reason.
+        // What the model saw (D10): the session's log reconstructed into
+        // the request its run sent. Loopback-only like the settings.
+        // One recorded call, re-run (D11): the tools' own executor and
+        // bound, the result to the drawer, never the log. The write class
+        // is refused by name; an ask-class call stands the seat.
+        ("POST", "/api/replay") => {
+            let body = match read_body(&mut stream, &request, rest).await {
+                Ok(body) => body,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            let parsed: serde_json::Value = match serde_json::from_str(&body) {
+                Ok(parsed) => parsed,
+                Err(error) => {
+                    return write_reply(
+                        &mut stream,
+                        bad_request(&format!("the replay is not JSON: {error}")),
+                    )
+                    .await
+                }
+            };
+            let name = parsed
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
+            let arguments = parsed
+                .get("arguments")
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "{}".to_string());
+            let session = asked_session(bridge, &request);
+            match bridge.replay_tool(&session, name, &arguments).await {
+                Ok(reply) => write_reply(&mut stream, api(200, reply)).await,
+                Err(error) => write_reply(&mut stream, api(409, json!({ "error": error }))).await,
+            }
+        }
+        ("GET", "/api/context") => {
+            let session = asked_session(bridge, &request);
+            let base_url = format!(
+                "http://{}",
+                request.header("host").unwrap_or("127.0.0.1:3080")
+            );
+            write_reply(
+                &mut stream,
+                api(200, bridge.context(&session, &base_url).await),
+            )
+            .await
+        }
         ("GET", "/api/sessions") => {
             let session = asked_session(bridge, &request);
-            write_reply(&mut stream, api(200, bridge.sessions(&session).await)).await
+            // The content-match query (D9): literal, server-side, and
+            // bounded — the row carries the matched line.
+            let query = query_value(&request.query, "q")
+                .unwrap_or_default()
+                .to_string();
+            write_reply(
+                &mut stream,
+                api(200, bridge.sessions(&session, &query).await),
+            )
+            .await
         }
         // Who may reach this face, and the revocation that forgets one.
         // A loopback read and write only: the remote face's allowlist
