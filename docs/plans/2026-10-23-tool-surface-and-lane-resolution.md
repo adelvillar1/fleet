@@ -503,8 +503,10 @@ Landed in the second pass:
   schema-valid share, error classes, p95 result bytes, truncation,
   redundancy, recovery after a failure, and resolutions by method and
   tier.
-- **C6, the spill half.** A cut result writes its full text to
-  `<session>/calls/<id>.out` and names the path.
+- **C6 — spill and promotion.** A cut result writes its full text to
+  `<session>/calls/<id>.out` and names the path; a foreground command
+  that blows its deadline is left running with its pid and output files
+  named, not killed.
 - **C7 — the todo ledger.** The last full list is stored and
   re-injected into a fold's summary.
 - **C8, the limits half.** At most 40 calls run in one turn; calls past
@@ -529,9 +531,6 @@ Landed in the second pass:
 
 Still open, named rather than implied:
 
-- **C6's promotion-on-timeout.** A foreground timeout still kills the
-  child; the message points at `run_in_background`. The command is not
-  promoted.
 - **C8's registry and cancellation.** Dispatch is still the branch
   chain; there is no `trait Tool` registry, and a `Stop` mid-`bash`
   waits for the child.

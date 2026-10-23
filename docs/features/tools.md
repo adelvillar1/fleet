@@ -10,7 +10,7 @@ and `docs/plans/2026-10-23-tool-surface-and-lane-resolution.md`.
 
 | Tool | What it does | The guarantee |
 |---|---|---|
-| `bash` | runs a shell command | `timeout_ms` (1s–600s, default 120s); `run_in_background` returns an output file; over 64 KiB is cut with the head/tail kept |
+| `bash` | runs a shell command | `timeout_ms` (1s–600s, default 120s); `run_in_background` returns an output file; a timeout promotes the command instead of killing it; output over 64 KiB spills to an artifact |
 | `read_file` | reads a text file | line numbers, a `path (N lines)` header, `offset`/`limit` (default 2,000 lines), a continuation line, and named empty/past-end/binary notices |
 | `write_file` | creates or replaces a file | atomic temp+rename; the parent must exist |
 | `list_dir` | lists a directory | `depth` (1–8), directories marked `/`, capped at 1,000 |
@@ -122,11 +122,10 @@ reason names it.
 
 ## Not built yet
 
-Named here rather than implied by the plan: promotion of a timed-out
-foreground command to the background; the `trait Tool` registry and
-mid-`bash` cancellation; a live second provider for the dispatch policy;
-MCP annotations and image artifacts; and catalog-backed enums where a
-tool takes a model, provider, or workload value.
+Named here rather than implied by the plan: the `trait Tool` registry
+and mid-`bash` cancellation; a live second provider for the dispatch
+policy; MCP annotations and image artifacts; and catalog-backed enums
+where a tool takes a model, provider, or workload value.
 
 ## Files
 
