@@ -20,6 +20,16 @@ __pycache__/
 # so a lock never enters recall.
 /memories/*.lock
 
+# The corpus-refresh jobs' state-sync facts: one snapshot per project per
+# scheduled window, written through `remember` by the cron lane and
+# superseded by the next window's. Runtime state like the index above —
+# the run is the record and the fact is its stamp — so they stay on disk
+# (recall reads them) but out of the tree. Both rules key on the shape
+# the writer stamps, a date or an item count, never on the word: a
+# durable fact about the corpus is named for its claim and stays tracked.
+/memories/*-corpus*-20[0-9][0-9]-*.md
+/memories/*-corpus-*-items*.md
+
 # Claude local env reference — env var names and URLs only, not credential values
 CLAUDE.local.md
 
