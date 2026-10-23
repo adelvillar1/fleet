@@ -421,6 +421,24 @@
             <button type="button" id="doc-consent-cancel" hidden>cancel</button>
           </div>
         </div>
+        <!-- The goal popover (D1): the full text, and the three actions
+             riding /api/goal — the same route /goal rides, so the
+             command and the chip can never disagree. -->
+        <div class="goal-pop" id="goal-pop" role="dialog" aria-modal="false"
+             aria-label="the session's standing objective" hidden>
+          <div class="folder-pop-head">
+            <span class="folder-pop-label">the goal</span>
+            <code id="goal-pop-state">not set</code>
+          </div>
+          <textarea id="goal-pop-input" rows="2"
+                    placeholder="one sentence — what is this conversation for?"
+                    aria-label="the session's goal"></textarea>
+          <div class="folder-pop-actions">
+            <button type="button" id="goal-pop-set">set the goal</button>
+            <button type="button" id="goal-pop-clear" hidden>clear it</button>
+            <button type="button" id="goal-pop-close">close</button>
+          </div>
+        </div>
         <footer class="composer-foot">
           <!-- The run's standing choices on one line: how far a tool call
                may go, which provider serves it, and where it works. Each
@@ -464,15 +482,21 @@
                       aria-expanded="false" aria-controls="folder-pop"
                       title="no working folder: the filesystem tools are unavailable">no folder</button>
             </span>
-            <!-- The session's standing objective, when one is set: the
-                 folder field's own shape, and the button names it. -->
-            <span class="runbar-field runbar-folder" id="run-goal" hidden>
+            <!-- The session's standing objective, always present (the
+                 plan's D1): unset it is the quiet affordance that
+                 teaches goals exist; set it names the goal on one line,
+                 the full text on hover, and the press opens the popover
+                 that sets, replaces, and clears it. The goal rides every
+                 run's prompt — an objective that cannot be seen is an
+                 objective nobody remembers to drop. -->
+            <span class="runbar-field runbar-goal" id="run-goal">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
                    stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <circle cx="12" cy="12" r="7.5"></circle>
                 <circle cx="12" cy="12" r="2.5"></circle>
               </svg>
-              <button type="button" id="run-goal-btn" title="the session's standing objective"></button>
+              <button type="button" id="run-goal-btn" aria-haspopup="dialog"
+                      aria-expanded="false" aria-controls="goal-pop"></button>
             </span>
           </span>
           <span class="composer-hint" id="hint">Shift+Enter makes a newline</span>

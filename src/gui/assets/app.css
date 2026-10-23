@@ -2064,6 +2064,52 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
   cursor: pointer;
 }
 .runbar-folder button[data-state="set"] { font-weight: 600; }
+/* The goal field, always present (D1): set, it is one ellipsized line
+   with the whole text on hover; unset, the quiet affordance that
+   teaches goals exist. The popover mirrors the folder picker's. */
+.runbar-goal button {
+  max-width: 22ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dsw-alias-ink-secondary);
+}
+.runbar-goal button.unset { color: var(--dsw-alias-ink-tertiary); }
+.runbar-goal button.unset::before { content: '+ '; }
+
+.goal-pop {
+  position: absolute;
+  right: 12px;
+  left: auto;
+  bottom: calc(100% - 34px);
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 460px;
+  padding: 10px;
+  border: 1px solid var(--dsw-alias-hairline);
+  border-radius: 10px;
+  background: var(--dsw-alias-surface);
+  box-shadow: var(--shadow-1);
+}
+.goal-pop textarea {
+  width: 100%;
+  min-height: 54px;
+  padding: 7px 9px;
+  border: 1px solid var(--dsw-alias-hairline);
+  border-radius: 8px;
+  background: var(--dsw-alias-page);
+  color: var(--dsw-alias-ink);
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 1.5;
+  resize: vertical;
+  outline: none;
+}
+.goal-pop textarea:focus { border-color: var(--dsw-alias-accent); }
+.goal-pop .folder-pop-actions { justify-content: flex-end; }
+
 .folder-pop {
   position: absolute;
   left: 12px;

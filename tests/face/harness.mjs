@@ -204,6 +204,14 @@ function boot(options) {
     if (pathOnly === '/api/home') {
       return Promise.resolve({ status: 200, json: () => Promise.resolve(documents.home || {}) });
     }
+    if (pathOnly === '/api/goal') {
+      const body = {};
+      try { Object.assign(body, JSON.parse(init.body || '{}')); } catch (e) {}
+      return Promise.resolve({
+        status: 200,
+        json: () => Promise.resolve({ type: 'goal', text: body.text || '' }),
+      });
+    }
     if (pathOnly === '/api/settings') {
       if (method === 'POST') {
         return Promise.resolve({ status: 200, json: () => Promise.resolve(opts.reply || {}) });
@@ -1006,6 +1014,76 @@ async function theServersCardCarriesTheRegistry() {
     page.calls.some((c) => c.body && c.body.includes('"op":"server-probe"')), '');
 }
 
+// C1 (the goal): the run bar carries the goal field on every visit —
+// unset is the set affordance, set is one line with the whole text on
+// hover — and the popover's Set/Replace/Clear ride /api/goal, the same
+// route /goal rides, so the command and the chip agree.
+async function theGoalFieldIsAlwaysPresentAndWritable() {
+  const doc = (goal) => ({
+    sessions: {
+      type: 'sessions', read_at: 'now', current: '',
+      counts: { needs: 0, working: 0, background: 0, earlier: 1, total: 1 },
+      sessions: [row('goal-1', 'completed', { title: 'a conversation' })],
+    },
+    state: (asked) => ({ ...emptyState(asked), session: asked, goal }),
+  });
+  const page = boot({ width: 1440, hash: '#/sessions/goal-1', documents: doc(null) });
+  await flush();
+  page.open();
+  await flush();
+  check('C1 the field is present with no goal',
+    page.IDS['run-goal'].hidden === false && page.IDS['run-goal-btn'].classList.contains('unset'),
+    String(page.IDS['run-goal'].hidden));
+  check('C1 the unset affordance names itself',
+    page.text('run-goal-btn') === 'goal', page.text('run-goal-btn'));
+  // The popover: open, set, write-through.
+  page.fireOn('run-goal-btn', 'click');
+  check('C1 the popover opens', page.IDS['goal-pop'].hidden === false, 'hidden');
+  check('C1 the popover says not set and hides clear',
+    page.text('goal-pop-state') === 'not set' && page.IDS['goal-pop-clear'].hidden === true,
+    page.text('goal-pop-state'));
+  page.IDS['goal-pop-input'].value = 'ship the controls this week';
+  page.fireOn('goal-pop-set', 'click');
+  await flush(40);
+  const posted = page.calls.filter((c) => c.url.startsWith('/api/goal'));
+  check('C1 set rides /api/goal with the text',
+    posted.length === 1 && posted[0].body.includes('ship the controls this week'),
+    JSON.stringify(posted.map((c) => c.body)));
+  check('C1 the chip reads the goal back', page.text('run-goal-btn') === 'ship the controls this week',
+    page.text('run-goal-btn'));
+  check('C1 the chip carries the whole text on hover',
+    (page.IDS['run-goal-btn'].title || '').includes('ship the controls this week'),
+    page.IDS['run-goal-btn'].title || '');
+  // Set state: one line, replace and clear offered. The goal arrives
+  // the way a resumed log delivers it — the goal event.
+  const set = boot({ width: 1440, hash: '#/sessions/goal-1', documents: doc(null) });
+  await flush();
+  set.open();
+  await flush();
+  set.push({ type: 'goal', text: 'ship the controls this week' });
+  await flush(40);
+  check('C1 a set goal shows on the line',
+    set.text('run-goal-btn') === 'ship the controls this week', set.text('run-goal-btn'));
+  check('C1 the unset affordance is gone',
+    !set.IDS['run-goal-btn'].classList.contains('unset'), '');
+  set.fireOn('run-goal-btn', 'click');
+  check('C1 the popover prefills and offers replace and clear',
+    set.IDS['goal-pop'].hidden === false &&
+      set.IDS['goal-pop-input'].value === 'ship the controls this week' &&
+      set.IDS['goal-pop-clear'].hidden === false &&
+      set.text('goal-pop-set') === 'replace it',
+    set.text('goal-pop-set'));
+  set.fireOn('goal-pop-clear', 'click');
+  await flush(40);
+  check('C1 clear rides the same route with an empty text',
+    set.calls.filter((c) => c.url.startsWith('/api/goal')).length === 1 &&
+      set.calls[set.calls.length - 1].body.includes('""'),
+    JSON.stringify(set.calls.filter((c) => c.url.startsWith('/api/goal')).map((c) => c.body)));
+  check('C1 the chip returns to the unset affordance',
+    set.text('run-goal-btn') === 'goal' && set.IDS['run-goal-btn'].classList.contains('unset'),
+    set.text('run-goal-btn'));
+}
+
 // C8: the addresses — `#/chat` is the new-work front door, and a reload
 // at `#/sessions/<id>` reopens that conversation with the list beside it.
 async function theAddressesHold() {
@@ -1258,6 +1336,7 @@ const cases = [
   ['C7 the work list folds to a strip and follows the rail', theWorkListFoldsToAStrip],
   ['C7 the conversation text size is the owner\'s', theConversationTextSizeIsTheOwners],
   ['C8 the servers card carries the registry', theServersCardCarriesTheRegistry],
+  ['C1 the goal field is always present and writable', theGoalFieldIsAlwaysPresentAndWritable],
   ['C8 the addresses hold', theAddressesHold],
   ['C4 /clear starts a conversation', theClearCommandStartsAConversation],
   ['C2 a thought row opens on a press', aThoughtRowOpensOnAPress],

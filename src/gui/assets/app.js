@@ -210,6 +210,7 @@
         post(path, { text: clearing ? '' : text }).then(function (reply) {
           if (reply.status === 200) {
             face.goal = reply.body.text || null;
+            paintGoal();
             notice(clearing ? 'the goal is cleared' : 'the goal is set',
               clearing ? 'every run in this session goes back to the task alone'
                 : 'carried by every run in this session \u00b7 the chip names it');
@@ -439,6 +440,12 @@
     queueList: document.getElementById('queue-list'),
     runGoal: document.getElementById('run-goal'),
     runGoalBtn: document.getElementById('run-goal-btn'),
+    goalPop: document.getElementById('goal-pop'),
+    goalPopState: document.getElementById('goal-pop-state'),
+    goalPopInput: document.getElementById('goal-pop-input'),
+    goalPopSet: document.getElementById('goal-pop-set'),
+    goalPopClear: document.getElementById('goal-pop-clear'),
+    goalPopClose: document.getElementById('goal-pop-close'),
     plan: document.getElementById('plan'),
     hint: document.getElementById('hint'),
     runPerms: document.getElementById('run-perms'),
@@ -5981,6 +5988,9 @@
     });
   });
 
+  wireGoalPop();
+  setGoalPop(false);
+
   el.composer.addEventListener('submit', function (event) {
     event.preventDefault();
     // Enter while a run is in flight is not a stop: the task is empty
@@ -6069,16 +6079,87 @@
     paintGoal();
   }
 
-  // The session's standing objective: the chip names it while one is
-  // set, and the whole text rides the title because the field is one
-  // value wide in a crowded row.
+  // The session's standing objective, always present (D1): unset is the
+  // quiet affordance that teaches goals exist; set is one ellipsized
+  // line with the whole text on hover. The popover carries the write.
   function paintGoal() {
     if (!el.runGoal || !el.runGoalBtn) return;
-    el.runGoal.hidden = !face.goal;
-    if (!face.goal) return;
-    el.runGoalBtn.textContent = clip(face.goal, 28);
+    el.runGoal.hidden = false;
+    if (!face.goal) {
+      el.runGoalBtn.textContent = 'goal';
+      el.runGoalBtn.classList.add('unset');
+      el.runGoalBtn.title = 'set this conversation\u2019s goal \u2014 it rides every run';
+      return;
+    }
+    el.runGoalBtn.classList.remove('unset');
+    el.runGoalBtn.textContent = face.goal;
     el.runGoalBtn.title = 'the session\u2019s goal: ' + face.goal +
       ' \u00b7 /goal clear drops it';
+  }
+
+  // The goal popover (D1): the full text, and Set/Replace/Clear riding
+  // /api/goal — the same route /goal rides, so the command and the chip
+  // agree because they write through one seam.
+  function goalPost(text, onDone) {
+    var path = '/api/goal' + (face.session ? '?session=' + encodeURIComponent(face.session) : '');
+    post(path, { text: text }).then(function (reply) {
+      if (reply.status === 200) {
+        face.goal = reply.body.text || null;
+        paintGoal();
+        if (onDone) onDone();
+        return;
+      }
+      notice('the goal was refused',
+        (reply.body && reply.body.error) || 'the face said no without a reason');
+    }).catch(function () {
+      notice('the goal did not cross', 'the server did not answer');
+    });
+  }
+
+  function setGoalPop(open) {
+    if (!el.goalPop) return;
+    el.goalPop.hidden = !open;
+    if (el.runGoalBtn) {
+      el.runGoalBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    }
+    if (!open) return;
+    if (el.goalPopState) {
+      el.goalPopState.textContent = face.goal ? 'set' : 'not set';
+    }
+    if (el.goalPopInput) {
+      el.goalPopInput.value = face.goal || '';
+    }
+    if (el.goalPopClear) el.goalPopClear.hidden = !face.goal;
+    if (el.goalPopSet) {
+      el.goalPopSet.textContent = face.goal ? 'replace it' : 'set the goal';
+    }
+    if (el.goalPopInput && el.goalPopInput.focus) el.goalPopInput.focus();
+  }
+
+  function wireGoalPop() {
+    if (el.runGoalBtn) {
+      el.runGoalBtn.addEventListener('click', function () {
+        setGoalPop(el.goalPop && el.goalPop.hidden);
+      });
+    }
+    if (el.goalPopSet) {
+      el.goalPopSet.addEventListener('click', function () {
+        var text = (el.goalPopInput.value || '').trim();
+        if (!text) {
+          notice('the goal is a sentence', 'one line \u2014 what is this conversation for?');
+          return;
+        }
+        goalPost(text, function () { setGoalPop(false); });
+      });
+    }
+    if (el.goalPopClear) {
+      el.goalPopClear.addEventListener('click', function () {
+        goalPost('', function () { setGoalPop(false); });
+      });
+    }
+    if (el.goalPopClose) {
+      el.goalPopClose.addEventListener('click', function () { setGoalPop(false); });
+    }
   }
 
   // The working folder: its basename when the chat has one, "no folder"
@@ -12637,6 +12718,7 @@
       return;
     }
     if (event.key !== 'Escape') return;
+    if (el.goalPop && !el.goalPop.hidden) { setGoalPop(false); return; }
     if (!el.palette.hidden) { closePalette(); return; }
     if (!el.pane.hidden && !face.file) { closePane(); return; }
     var which = (window.location.hash || '').replace(/^#\/?/, '');
