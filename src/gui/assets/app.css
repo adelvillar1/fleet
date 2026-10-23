@@ -6258,7 +6258,7 @@ body[data-work="open"] .stage { margin-left: var(--work-width); }
   font-size: 9.5px;
 }
 
-.work-family {
+.work-family, .work-background {
   display: flex;
   align-items: center;
   gap: 7px;
@@ -6273,7 +6273,8 @@ body[data-work="open"] .stage { margin-left: var(--work-width); }
   text-align: left;
 }
 
-.work-family b { color: var(--dsw-alias-ink); font-weight: 500; }
+.work-family b, .work-background b { color: var(--dsw-alias-ink); font-weight: 500; }
+.work-background { margin-top: 4px; }
 
 /* The conversation's head: the way out, the way to another, and New. */
 .conv-head {

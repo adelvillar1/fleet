@@ -380,7 +380,7 @@ const flush = async (turns = 40) => { for (let i = 0; i < turns; i += 1) await P
 async function theListGroupsByAttentionAndCountsWhatTheServerCounted() {
   const sessions = {
     type: 'sessions', read_at: 'now', current: '',
-    counts: { needs: 3, working: 1, background: 2, earlier: 1, total: 7 },
+    counts: { needs: 3, working: 1, background: 2, earlier: 1, yours: 4, total: 7 },
     sessions: [
       row('paused-1', 'paused', { title: 'corpus-refresh-fleet — paused', class: 'background', job: 'corpus-refresh-fleet' }),
       row('needs-1', 'needs-approval', { title: 'the ledger writer' }),
@@ -404,14 +404,33 @@ async function theListGroupsByAttentionAndCountsWhatTheServerCounted() {
   const groups = page.rows('.work-group').map((g) => g.textContent.trim());
   check('C1 group order', groups[0] && groups[0].startsWith('needs you'), groups.join(' | '));
   check('C1 working follows', groups[1] && groups[1].startsWith('working'), groups.join(' | '));
-  check('C1 background follows', groups[2] && groups[2].startsWith('background'), groups.join(' | '));
-  check('C1 earlier follows', groups[3] && groups[3].startsWith('earlier'), groups.join(' | '));
+  check('C1 earlier follows working', groups[2] && groups[2].startsWith('earlier'), groups.join(' | '));
   check('C1 the head prints the server count', /3 need you/.test(page.text('work-head')), page.text('work-head'));
   check('C1 the needs header prints the server count', /needs you3/.test(groups[0] || ''), groups[0]);
-  check('C1 the background is one line per family', page.rows('.work-family').length === 1,
+  // The app's own work is one quiet line, closed by default: no family
+  // and no scheduled row is in the list until the owner asks for them.
+  const background = page.rows('.work-background');
+  check('C1 the background is one line', background.length === 1, String(background.length));
+  check('C1 the background says how much is hidden', /background/.test(background[0] ? background[0].textContent : '') &&
+    /2 runs/.test(background[0] ? background[0].textContent : '') &&
+    /hidden/.test(background[0] ? background[0].textContent : ''),
+    background[0] ? background[0].textContent : 'none');
+  check('C1 no family is shown until asked', page.rows('.work-family').length === 0,
+    String(page.rows('.work-family').length));
+  const backgroundAt = page.IDS['work-list'].children.indexOf(background[0]);
+  const workingAt = page.IDS['work-list'].children.findIndex((kid) => /^working/.test(kid.textContent));
+  const earlierHeaderAt = page.IDS['work-list'].children.findIndex((kid) => /^earlier/.test(kid.textContent));
+  check('C1 the background sits between working and earlier',
+    backgroundAt > workingAt && backgroundAt < earlierHeaderAt,
+    backgroundAt + ' vs ' + workingAt + '/' + earlierHeaderAt);
+  if (background[0]) background[0].click();
+  await flush();
+  check('C1 expanding shows the families', page.rows('.work-family').length === 1,
     String(page.rows('.work-family').length));
   check('C1 the family names the job and its runs', /corpus-refresh-fleet/.test(page.text('work-list')),
     page.text('work-list').slice(0, 200));
+  if (page.rows('.work-background')[0]) page.rows('.work-background')[0].click();
+  await flush();
   check('C8 no id opens a conversation first', /#\/sessions\/.+/.test(page.window.location.hash), page.window.location.hash);
   check('C8 the opened one is the first row that needs the owner', page.window.location.hash.includes('paused-1'), page.window.location.hash);
 

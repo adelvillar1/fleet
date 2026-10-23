@@ -3908,6 +3908,10 @@ fn sessions_read(home: &std::path::Path, current: &str, live: &LiveFace) -> Valu
         .count();
     let total = sessions.len();
     let earlier = total.saturating_sub(needs + working + background);
+    // The owner's own conversations: what the work list shows by default.
+    // The app's background work is counted separately so the head can
+    // name the owner's work without the page subtracting anything itself.
+    let yours = needs + working + earlier;
     json!({
         "type": "sessions",
         "read_at": crate::boards::now_stamp(),
@@ -3917,6 +3921,7 @@ fn sessions_read(home: &std::path::Path, current: &str, live: &LiveFace) -> Valu
             "working": working,
             "background": background,
             "earlier": earlier,
+            "yours": yours,
             "total": total,
         },
         "sessions": sessions,

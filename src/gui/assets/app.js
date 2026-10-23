@@ -609,6 +609,11 @@
     sessionQuery: '',
     sessionFolded: {},
     workExpanded: {},
+    // The app's own background runs — scheduled jobs, delegated children,
+    // peer conversations — are hidden by default: they keep the home
+    // alive but they are not the owner's work. One line names them and
+    // opens them on request.
+    showBackground: false,
     // The calibration panel's read and its clock.
     calibration: null,
     calibrationAt: 0,
@@ -6627,9 +6632,10 @@
     head.appendChild(title);
     var countText = 'reading\u2026';
     if (counts) {
+      var mine = counts.yours == null ? counts.total : counts.yours;
       countText = counts.needs
         ? counts.needs + (counts.needs === 1 ? ' needs you' : ' need you')
-        : counts.total + (counts.total === 1 ? ' run' : ' runs');
+        : mine + (mine === 1 ? ' conversation' : ' conversations');
     }
     head.appendChild(node('span', 'work-count', countText));
     var fresh = node('button', 'work-new');
@@ -6692,10 +6698,30 @@
       groups.working.forEach(function (row) { el.workList.appendChild(workRow(row)); });
     }
     if (groups.background.length) {
-      el.workList.appendChild(workGroupHead('background', groupCount('background', groups.background)));
-      familyLines(groups.background).forEach(function (family) {
-        el.workList.appendChild(workFamily(family));
+      // One quiet line, closed by default: the app's own work is a fact
+      // about the home, not a row the owner has to read past.
+      var backgroundCount = groupCount('background', groups.background);
+      var opened = !!face.showBackground;
+      var toggle = node('button', 'work-background');
+      toggle.type = 'button';
+      toggle.setAttribute('aria-expanded', opened ? 'true' : 'false');
+      toggle.title = opened ? 'hide the app\u2019s own runs' : 'show the app\u2019s own runs';
+      toggle.appendChild(node('span', null, opened ? '\u25be' : '\u25b8'));
+      var label = node('span');
+      label.appendChild(node('b', null, 'background'));
+      label.appendChild(document.createTextNode(' \u00b7 ' + backgroundCount +
+        (backgroundCount === 1 ? ' run' : ' runs') + (opened ? '' : ' \u00b7 hidden')));
+      toggle.appendChild(label);
+      toggle.addEventListener('click', function () {
+        face.showBackground = !face.showBackground;
+        paintWork();
       });
+      el.workList.appendChild(toggle);
+      if (opened) {
+        familyLines(groups.background).forEach(function (family) {
+          el.workList.appendChild(workFamily(family));
+        });
+      }
     }
     if (groups.earlier.length) {
       el.workList.appendChild(workGroupHead('earlier', groupCount('earlier', groups.earlier)));
