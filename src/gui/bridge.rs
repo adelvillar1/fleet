@@ -7902,6 +7902,19 @@ mod tests {
     }
 
     #[test]
+    fn a_reasoning_record_replays_as_a_thought_card() {
+        let records = vec![session::Record::Reasoning {
+            text: "count the rows".to_string(),
+            seconds: 5,
+        }];
+        let (cards, omitted) = cards_from_records(&records);
+        assert_eq!(omitted, 0, "{cards:?}");
+        assert_eq!(cards[0]["type"], "reasoning", "{cards:?}");
+        assert_eq!(cards[0]["text"], "count the rows");
+        assert_eq!(cards[0]["seconds"], 5);
+    }
+
+    #[test]
     fn a_replayed_call_carries_the_command_it_ran() {
         let records = vec![session::Record::Assistant {
             content: Some("running it".to_string()),

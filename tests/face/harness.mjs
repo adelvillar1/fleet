@@ -876,6 +876,12 @@ async function aThoughtRowOpensOnAPress() {
   const body = thoughts[0] && thoughts[0].querySelector('.thought-body');
   check('C2 closed by default', !!body && body.hidden === true, body ? String(body.hidden) : 'no body');
   check('C2 the row names the duration', /Thought · 5s/.test(page.text('log')), page.text('log').slice(0, 120));
+  check('C5 the closed row is one line', ruleBlock('.thought-head').includes('display: flex'),
+    ruleBlock('.thought-head'));
+  check('C5 the detail is hidden until asked',
+    page.rows('.thought-body').every((body) => body.hidden) &&
+      page.rows('.tool-detail').every((detail) => detail.hidden),
+    String(page.rows('.thought-body').length) + '/' + String(page.rows('.tool-detail').length));
   const head = thoughts[0] && thoughts[0].querySelector('.thought-head');
   if (head) head.click();
   await flush();

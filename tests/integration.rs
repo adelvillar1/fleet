@@ -247,6 +247,12 @@ fn content_delta(text: &str) -> String {
     frame(serde_json::json!({ "choices": [{ "delta": { "content": text } }] }))
 }
 
+/// A reasoning delta frame: the model's thinking, on the providers that
+/// stream it beside the answer.
+fn reasoning_delta(text: &str) -> String {
+    frame(serde_json::json!({ "choices": [{ "delta": { "reasoning_content": text } }] }))
+}
+
 /// A tool-call delta frame: the fragment at `index` of one call.
 fn tool_call_delta(index: usize, id: &str, name: &str, arguments: &str) -> String {
     frame(serde_json::json!({
@@ -1112,6 +1118,96 @@ async fn tools_execute_against_the_real_filesystem() {
 
 /// One run with a `ui_tx` attached: the events a TUI renders, in the order
 /// the loop emits them, beside the unchanged log and report.
+#[tokio::test]
+async fn a_runs_thinking_is_logged_once_and_heard_before_the_answer() {
+    let mock = MockApi::start(vec![stream(vec![
+        reasoning_delta("count the rows"),
+        reasoning_delta(", then answer"),
+        content_delta("done"),
+        finish_frame("stop"),
+        "data: [DONE]".to_string(),
+    ])]);
+    let home = temp_home("reasoning-run");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let log_path = session.path().to_path_buf();
+    let (ui_tx, mut ui_rx) = tokio::sync::mpsc::unbounded_channel::<UiEvent>();
+    let options = AgentOptions {
+        goal: None,
+        model: "test-model".to_string(),
+        identity: None,
+        max_turns: 3,
+        ui_tx: Some(ui_tx.clone()),
+        lane_specs: None,
+        calib: None,
+        skills: Vec::new(),
+        role_overlay: None,
+        memory: None,
+        scope: None,
+        improve_home: None,
+        gui_prompt: None,
+        compact_now: false,
+        checkpoints: None,
+        file_access: FileAccess::Unrestricted,
+        plan_mode: false,
+    };
+    let client = Client::new(mock.url(), "test-key");
+    let mut progress = Vec::new();
+    {
+        let mut agent = Agent::new(
+            &client,
+            options,
+            &mut session,
+            Box::new(ApproveAll),
+            &mut progress,
+        )
+        .unwrap();
+        agent.run("count them").await.unwrap();
+    }
+    drop(ui_tx);
+
+    let mut events = Vec::new();
+    while let Some(event) = ui_rx.recv().await {
+        events.push(event);
+    }
+    let heard: Vec<(String, u64)> = events
+        .iter()
+        .filter_map(|event| match event {
+            UiEvent::Reasoning { text, seconds } => Some((text.clone(), *seconds)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(heard, vec![("count the rows, then answer".to_string(), 0)]);
+    // One block per response, and it lands before the answer it preceded.
+    let reasoning_at = events
+        .iter()
+        .position(|event| matches!(event, UiEvent::Reasoning { .. }))
+        .expect("a reasoning event");
+    let token_at = events
+        .iter()
+        .position(|event| matches!(event, UiEvent::Token(_)))
+        .expect("a token event");
+    assert!(reasoning_at < token_at, "{events:?}");
+
+    // The log keeps the thinking; the conversation never sends it back.
+    let records = fleet::session::replay(&log_path).unwrap();
+    let kept: Vec<(String, u64)> = records
+        .iter()
+        .filter_map(|record| match record {
+            Record::Reasoning { text, seconds } => Some((text.clone(), *seconds)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(kept, vec![("count the rows, then answer".to_string(), 0)]);
+    let sent = fleet::session::conversation(&records);
+    assert!(
+        sent.messages
+            .iter()
+            .all(|message| message.content.as_deref() != Some("count the rows, then answer")),
+        "{:?}",
+        sent.messages
+    );
+}
+
 #[tokio::test]
 async fn ui_events_arrive_in_order_and_beside_the_log() {
     let mock = MockApi::start(vec![
