@@ -338,10 +338,36 @@ impl CallResult {
     }
 }
 
+/// Encode bytes as standard base64, the shape `gen1_imagine` answers
+/// with and the test fixtures build.
+pub fn encode_base64(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = chunk.get(1).copied().unwrap_or(0) as u32;
+        let b2 = chunk.get(2).copied().unwrap_or(0) as u32;
+        let triple = (b0 << 16) | (b1 << 8) | b2;
+        out.push(ALPHABET[(triple >> 18) as usize & 0x3F] as char);
+        out.push(ALPHABET[(triple >> 12) as usize & 0x3F] as char);
+        if chunk.len() > 1 {
+            out.push(ALPHABET[(triple >> 6) as usize & 0x3F] as char);
+        } else {
+            out.push('=');
+        }
+        if chunk.len() > 2 {
+            out.push(ALPHABET[triple as usize & 0x3F] as char);
+        } else {
+            out.push('=');
+        }
+    }
+    out
+}
+
 /// Decode the standard base64 an MCP image block carries. `None` on a
 /// malformed payload, which the caller reports as `[image]` rather than
 /// writing a corrupt file.
-fn decode_base64(input: &str) -> Option<Vec<u8>> {
+pub fn decode_base64(input: &str) -> Option<Vec<u8>> {
     fn value(byte: u8) -> Option<u32> {
         match byte {
             b'A'..=b'Z' => Some((byte - b'A') as u32),

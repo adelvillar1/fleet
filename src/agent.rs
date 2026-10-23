@@ -1495,6 +1495,9 @@ impl<'a> Agent<'a> {
     fn base_declarations(skills: &[crate::skills::SkillRef]) -> Vec<crate::api::ToolSpec> {
         let mut specs: Vec<crate::api::ToolSpec> =
             tools::ALL_TOOLS.iter().map(|tool| tool.spec()).collect();
+        // The capability tools, in the live path's position: right after
+        // the built-ins, so the reconstruction and the request agree.
+        specs.extend(crate::capabilities::specs());
         if !skills.is_empty() {
             specs.push(tools::use_skill_spec());
         }
@@ -1517,11 +1520,17 @@ impl<'a> Agent<'a> {
                 .collect(),
             // The built-ins alone; the tiering below appends the lanes'
             // tools exactly once, in join order.
-            None => crate::tools::ALL_TOOLS
-                .iter()
-                .filter(|tool| !self.disabled.contains(tool.name()))
-                .map(|tool| tool.spec())
-                .collect(),
+            None => {
+                let mut specs: Vec<crate::api::ToolSpec> = crate::tools::ALL_TOOLS
+                    .iter()
+                    .filter(|tool| !self.disabled.contains(tool.name()))
+                    .map(|tool| tool.spec())
+                    .collect();
+                // The capability tools: three vendored lanes the model
+                // could not otherwise name, declared as what they do.
+                specs.extend(crate::capabilities::specs());
+                specs
+            }
         };
         // A scope that admits nothing admits the beside-the-four tools
         // either; the check is one place, not one per tool. A disabled
@@ -3172,6 +3181,42 @@ impl<'a> Agent<'a> {
         if name == tools::TOOL_SEARCH_TOOL {
             return Ok(Prepared::Serial { call: call.clone() });
         }
+        // A capability tool translates into the lane call that serves
+        // it, then rides the roster's own serial path: lazy join,
+        // bounded output, and the lane's named failures for free. The
+        // validation happens here so a bad shape never spawns a lane.
+        if crate::capabilities::is_capability(name) {
+            return Ok(match serde_json::from_str(&call.function.arguments) {
+                Err(error) => settled(format!(
+                    "error[validation]: arguments were not valid JSON: {error}"
+                )),
+                Ok(arguments) => match crate::capabilities::validate(name, &arguments) {
+                    Err(reason) => settled(format!("error[validation]: {reason}")),
+                    Ok(()) => match crate::capabilities::translate(name, &arguments) {
+                        None => settled(format!("error: `{name}` has no lane mapping")),
+                        Some((lane, lane_tool, lane_arguments)) => {
+                            // The namespace strips the lane's own prefix:
+                            // `gen1_imagine` is declared as
+                            // `mcp__gen1__imagine`, so the rewritten call
+                            // carries the short name.
+                            let short = lane_tool
+                                .strip_prefix(&format!("{lane}_"))
+                                .unwrap_or(&lane_tool);
+                            Prepared::Serial {
+                                call: ToolCall {
+                                    id: call.id.clone(),
+                                    kind: call.kind.clone(),
+                                    function: crate::api::FunctionCall {
+                                        name: format!("{}{lane}__{short}", tools::MCP_NAMESPACE),
+                                        arguments: lane_arguments.to_string(),
+                                    },
+                                },
+                            }
+                        }
+                    },
+                },
+            });
+        }
         if tools::lane_of(name).is_some() {
             return Ok(Prepared::Serial { call: call.clone() });
         }
@@ -3333,6 +3378,20 @@ impl<'a> Agent<'a> {
         }
         if call.function.name == tools::TOOL_SEARCH_TOOL {
             return self.run_tool_search(call).await;
+        }
+        // An imagine call shapes the lane's base64 answer into files
+        // before the text reaches the model: the bytes never ride the
+        // conversation.
+        if call.function.name == format!("{}gen1__imagine", tools::MCP_NAMESPACE) {
+            // The short name: the roster's lookup strips the lane's own
+            // prefix, so `gen1_imagine` is called as `imagine`.
+            let (outcome_text, truncated) = self.call_lane(call, "gen1", "imagine").await?;
+            let shaped =
+                crate::capabilities::write_images(std::path::Path::new("generated"), &outcome_text);
+            return Ok(match shaped {
+                Ok(text) => (text, truncated),
+                Err(reason) => (format!("error: {reason}"), truncated),
+            });
         }
         let (lane, lane_tool) = tools::lane_of(&call.function.name)
             .expect("a serial call is a delegation or a lane call");
@@ -6522,6 +6581,9 @@ mod tests {
                 "grep",
                 "glob",
                 "todo",
+                "measure",
+                "imagine",
+                "browse",
                 "remember",
                 "supersede",
                 "subagent",
@@ -6580,7 +6642,7 @@ mod tests {
         // computation over a value the model writes, and neither touches
         // anything outside itself. So does `plan`: it drafts a plan
         // document's declaration, which is the repo's own state.
-        assert_eq!(plain.declarations().len(), 15);
+        assert_eq!(plain.declarations().len(), 18);
         assert_eq!(plain.system_prompt(None), default_prompt());
         let _ = std::fs::remove_dir_all(&home);
         let _ = std::fs::remove_dir_all(&root);

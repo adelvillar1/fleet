@@ -1362,6 +1362,120 @@ fn sweep_output(home: &Path, apply: bool) -> String {
     text
 }
 
+/// The capability tools are declared on every ordinary run, translate
+/// into their lane's call, and a bad shape never spawns the lane.
+#[tokio::test]
+async fn capability_tools_declare_translate_and_validate() {
+    let home = temp_home("capabilities");
+    // Declared from the first request.
+    let mock = MockApi::start(vec![assistant_stream(TOOL_REPORT)]);
+    let mut session = Session::create(&home, "test-model").unwrap();
+    run_on(&mock, &mut session, Box::new(ApproveAll), 5, "hello")
+        .await
+        .unwrap();
+    let declared = declared_tools(&mock.bodies()[0]);
+    for name in ["measure", "imagine", "browse"] {
+        assert!(declared.contains(&name.to_string()), "{declared:?}");
+    }
+    // A bad shape is refused by name without a lane spawn.
+    let mock = MockApi::start(vec![
+        tool_call_stream("c1", "browse", r#"{"action":"open"}"#),
+        tool_call_stream("c2", "measure", r#"{"target":"x"}"#),
+        assistant_stream(TOOL_REPORT),
+    ]);
+    let mut session = Session::create(&home, "test-model").unwrap();
+    run_on(&mock, &mut session, Box::new(ApproveAll), 5, "try it")
+        .await
+        .unwrap();
+    let records = session::replay(session.path()).unwrap();
+    let outputs: Vec<&String> = records
+        .iter()
+        .filter_map(|record| match record {
+            Record::ToolResult { output, .. } => Some(output),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        outputs[0].contains("field `url` is required"),
+        "{}",
+        outputs[0]
+    );
+    assert!(
+        outputs[1].contains("field `table` expects an array"),
+        "{}",
+        outputs[1]
+    );
+    std::fs::remove_dir_all(&home).ok();
+}
+
+/// The imagine tool writes the lane's base64 answer as files and names
+/// them, never carrying the bytes back to the model.
+#[tokio::test]
+async fn imagine_writes_files_instead_of_base64() {
+    let home = temp_home("imagine-files");
+    let png: &[u8] = &[
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44,
+        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00, 0x00, 0x90,
+        0x77, 0x53, 0xDE,
+    ];
+    let encoded = fleet::mcp::encode_base64(png);
+    let fake = FakeMcp::start(vec![
+        serde_json::json!({ "reply": initialize_reply() }),
+        serde_json::json!({ "reply": tools_list_reply(serde_json::json!([
+            { "name": "gen1_imagine", "description": "render", "inputSchema": { "type": "object" } }
+        ])) }),
+        serde_json::json!({ "reply": call_reply(
+            &serde_json::json!({
+                "provider": "qwen",
+                "model": "qwen-image",
+                "images": [format!("data:image/png;base64,{encoded}")],
+            })
+            .to_string()
+        ) }),
+    ]);
+    let mock = MockApi::start(vec![
+        tool_call_stream("c1", "imagine", r#"{"prompt":"a graphite icon"}"#),
+        assistant_stream(TOOL_REPORT),
+    ]);
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let mut specs = std::collections::HashMap::new();
+    specs.insert("gen1".to_string(), fake.spec());
+    let mut progress = Vec::new();
+    std::env::set_current_dir(&home).unwrap();
+    run_with_lanes(
+        &mock,
+        &mut session,
+        Box::new(ApproveAll),
+        Some(specs),
+        &mut progress,
+        "render it",
+    )
+    .await
+    .unwrap();
+    let output = session::replay(session.path())
+        .unwrap()
+        .iter()
+        .find_map(|record| match record {
+            Record::ToolResult { name, output, .. } if name == "imagine" => Some(output.clone()),
+            _ => None,
+        })
+        .expect("the imagine result");
+    assert!(output.contains("provider qwen"), "{output}");
+    assert!(!output.contains("base64"), "{output}");
+    assert!(home
+        .join("generated")
+        .read_dir()
+        .map(|mut d| d.next().is_some())
+        .unwrap_or(false));
+    let restore = std::env::current_dir()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    let _ = std::env::set_current_dir(restore);
+    std::fs::remove_dir_all(&home).ok();
+}
+
 /// A name that merely starts with `supersede` is not supersede: the
 /// dispatch matches the exact tool name, so a lookalike is an unknown.
 #[tokio::test]
@@ -2957,6 +3071,9 @@ async fn a_full_run_calls_the_real_sem1_lane_through_the_mock_api() {
             "grep",
             "glob",
             "todo",
+            "measure",
+            "imagine",
+            "browse",
             "subagent",
             "convention",
             "plan",
@@ -2967,13 +3084,13 @@ async fn a_full_run_calls_the_real_sem1_lane_through_the_mock_api() {
         ]
     );
     let second = declared_tools(&bodies[1]);
-    assert_eq!(second.len(), 19, "{second:?}");
+    assert_eq!(second.len(), 22, "{second:?}");
     assert_eq!(
         &second[..4],
         &["bash", "read_file", "write_file", "list_dir"]
     );
     assert_eq!(
-        &second[15..19],
+        &second[18..22],
         &[
             "mcp__sem1__embed",
             "mcp__sem1__probe",
@@ -2984,8 +3101,11 @@ async fn a_full_run_calls_the_real_sem1_lane_through_the_mock_api() {
     // The native tools ride before the joined lane's, and the lane's
     // tools are the deferred tail of the declaration list.
     assert_eq!(
-        &second[8..15],
+        &second[8..18],
         &[
+            "measure",
+            "imagine",
+            "browse",
             "subagent",
             "convention",
             "plan",
@@ -3147,8 +3267,8 @@ async fn a_dead_lane_child_degrades_the_run_without_killing_it() {
     // model can still see them, and calling one is a typed failure.
     let bodies = mock.bodies();
     assert_eq!(bodies.len(), 3);
-    assert_eq!(declared_tools(&bodies[1]).len(), 16);
-    assert_eq!(declared_tools(&bodies[2]).len(), 16);
+    assert_eq!(declared_tools(&bodies[1]).len(), 19);
+    assert_eq!(declared_tools(&bodies[2]).len(), 19);
     assert!(declared_tools(&bodies[1]).contains(&"mcp__sem1__probe".to_string()));
 
     std::fs::remove_dir_all(&home).ok();
@@ -3520,7 +3640,7 @@ async fn a_denied_lane_call_never_spawns_the_lane() {
     // No lane joined, so the second request still declares only the
     // built-ins and the delegation tool.
     let bodies = mock.bodies();
-    assert_eq!(declared_tools(&bodies[1]).len(), 15);
+    assert_eq!(declared_tools(&bodies[1]).len(), 18);
 
     std::fs::remove_dir_all(&home).ok();
 }
@@ -3590,7 +3710,7 @@ async fn a_lane_that_cannot_launch_fails_its_call_and_the_run_answers() {
     assert!(records
         .iter()
         .all(|record| !matches!(record, Record::LaneTools { .. })));
-    assert_eq!(declared_tools(&mock.bodies()[1]).len(), 15);
+    assert_eq!(declared_tools(&mock.bodies()[1]).len(), 18);
 
     std::fs::remove_dir_all(&home).ok();
 }
@@ -5253,7 +5373,7 @@ async fn a_selected_skills_body_rides_the_tool_result_path() {
     // The declarations carry `use_skill` beside the four built-ins, the
     // delegation tool beside that, and the convention lookup after it.
     let declared = declared_tools(&bodies[0]);
-    assert_eq!(declared.len(), 16, "{declared:?}");
+    assert_eq!(declared.len(), 19, "{declared:?}");
     assert!(declared.contains(&"use_skill".to_string()), "{declared:?}");
     assert!(declared.contains(&"subagent".to_string()), "{declared:?}");
     assert!(declared.contains(&"convention".to_string()), "{declared:?}");
@@ -6119,6 +6239,9 @@ async fn a_runs_request_carries_the_assembled_memory_block() {
             "grep",
             "glob",
             "todo",
+            "measure",
+            "imagine",
+            "browse",
             "remember",
             "supersede",
             "subagent",
@@ -6262,6 +6385,9 @@ async fn a_memory_less_run_is_byte_for_byte_unchanged() {
             "grep",
             "glob",
             "todo",
+            "measure",
+            "imagine",
+            "browse",
             "subagent",
             "convention",
             "plan",
@@ -6315,6 +6441,9 @@ async fn a_memory_less_run_is_byte_for_byte_unchanged() {
             "grep",
             "glob",
             "todo",
+            "measure",
+            "imagine",
+            "browse",
             "remember",
             "supersede",
             "subagent",
@@ -6604,6 +6733,9 @@ async fn the_improve_tool_files_a_proposal_inside_a_run_and_never_applies_one() 
             "grep",
             "glob",
             "todo",
+            "measure",
+            "imagine",
+            "browse",
             "subagent",
             "improve",
             "convention",
@@ -6670,6 +6802,9 @@ async fn a_run_without_a_home_does_not_declare_the_improve_tool() {
             "grep",
             "glob",
             "todo",
+            "measure",
+            "imagine",
+            "browse",
             "subagent",
             "convention",
             "plan",
