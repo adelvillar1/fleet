@@ -414,6 +414,26 @@ async function theListGroupsByAttentionAndCountsWhatTheServerCounted() {
     page.text('work-list').slice(0, 200));
   check('C8 no id opens a conversation first', /#\/sessions\/.+/.test(page.window.location.hash), page.window.location.hash);
   check('C8 the opened one is the first row that needs the owner', page.window.location.hash.includes('paused-1'), page.window.location.hash);
+
+  // Earlier is the ended owner work: no scheduled run, no child, no peer,
+  // and exactly the rows the fixture puts there.
+  const kids = page.IDS['work-list'].children;
+  const isGroup = (kid) => kid.className.split(/\s+/).includes('work-group');
+  const earlierAt = kids.findIndex((kid) => isGroup(kid) && /^earlier/.test(kid.textContent));
+  check('C1 the earlier group exists', earlierAt >= 0, String(earlierAt));
+  const earlierRows = earlierAt < 0
+    ? []
+    : kids.slice(earlierAt + 1).filter((kid) => kid.className.split(/\s+/).includes('work-row'));
+  check('C1 earlier holds the fixture\'s one ended owner run', earlierRows.length === 1, String(earlierRows.length));
+  check('C1 no background work among earlier',
+    earlierRows.every((row) => !['background', 'delegated', 'channel'].includes(row.dataset.class)),
+    earlierRows.map((row) => row.dataset.class).join(','));
+  check('C1 the earlier row is the fixture\'s completed one',
+    earlierRows.length === 1 && earlierRows[0].dataset.state === 'completed',
+    earlierRows.length ? earlierRows[0].dataset.state : 'none');
+  check('C1 the earlier header prints the server count',
+    earlierAt >= 0 && /earlier1/.test(kids[earlierAt].textContent),
+    earlierAt >= 0 ? kids[earlierAt].textContent : 'no header');
 }
 
 // C2: one verb — every state opens the same way, through a resume, with
@@ -455,8 +475,11 @@ async function theHeadCarriesTheWayOutAndTheSwitcher() {
     documents: {
       sessions: {
         type: 'sessions', read_at: 'now', current: '',
-        counts: { needs: 0, working: 0, background: 0, earlier: 1, total: 1 },
-        sessions: [row('open-1', 'completed', { title: 'the ledger writer' })],
+        counts: { needs: 0, working: 1, background: 0, earlier: 1, total: 2 },
+        sessions: [
+          row('open-1', 'completed', { title: 'the ledger writer' }),
+          row('other-1', 'working', { title: 'skills the model can reach' }),
+        ],
       },
       state: (asked) => ({ ...emptyState(asked), session: asked, events: [{ type: 'message', role: 'owner', text: 'the task' }] }),
     },
@@ -483,6 +506,20 @@ async function theHeadCarriesTheWayOutAndTheSwitcher() {
   check('C3 the title opens the sheet', page.body.dataset.work === 'open', String(page.body.dataset.work));
   page.fireOn('conv-back', 'click');
   check('C3 back closes the sheet', page.body.dataset.work !== 'open', String(page.body.dataset.work));
+  // Pick a second row in the open sheet: the head's name and the address
+  // move together, and the list survives the switch.
+  page.fireOn('conv-title', 'click');
+  const second = page.rows('.work-row').find((r) => r.dataset.state === 'working');
+  check('C3 a second row stands in the sheet', !!second, String(page.rows('.work-row').length));
+  if (second) second.click();
+  await flush(80);
+  check('C3 the head names the picked conversation',
+    page.text('conv-name') === 'skills the model can reach', page.text('conv-name'));
+  check('C3 the address moved to its id',
+    page.window.location.hash === '#/sessions/other-1', page.window.location.hash);
+  check('C3 the list survives the switch', page.rows('.work-row').length === 2,
+    String(page.rows('.work-row').length));
+
   page.fireOn('conv-new', 'click');
   await flush();
   const news = page.calls.filter((c) => c.url.startsWith('/api/session/new'));

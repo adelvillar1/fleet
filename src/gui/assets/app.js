@@ -6739,6 +6739,10 @@
     var button = node('button', 'work-row');
     button.type = 'button';
     button.dataset.state = row.state || '';
+    // Whose work the row is, in the DOM: the list groups by it, so a
+    // test (and an audit) can read the grouping rather than infer it
+    // from a title.
+    button.dataset.class = row.class || 'yours';
     if (workNeeds(row.state)) button.dataset.attention = 'true';
     if (face.session === row.id) button.setAttribute('aria-current', 'true');
     button.appendChild(node('span', 'work-bar'));
