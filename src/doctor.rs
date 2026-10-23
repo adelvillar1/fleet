@@ -529,7 +529,16 @@ fn render_ki_row(
 /// The caller decides the file — a test points it at a scratch ledger,
 /// production names the repo's `docs/known-issues.md`. This function
 /// writes wherever it is pointed and nowhere else.
+///
+/// The whole read-decide-write cycle holds the ledger's sibling lock
+/// ([`crate::filelock::FileLock`], the same primitive the recall-count
+/// bump and the fact substrate use). The next id is derived from the
+/// table, so two filings that both read the old maximum would both
+/// append it — the lost-update shape KI-235 fixed for recall counts and
+/// KI-285 recorded for this ledger, where it surfaced as two rows
+/// carrying one id.
 pub fn file_ledger_row(path: &Path, entry: &LedgerEntry) -> Result<Filed, String> {
+    let _lock = crate::filelock::FileLock::take(&crate::filelock::FileLock::beside(path));
     let sig = signature(&entry.diagnosis);
     let marker = format!("[sig:{sig}]");
     let text = fs::read_to_string(path)
@@ -1190,6 +1199,54 @@ mod tests {
             after_third.contains("| KI-001 | defect | a human row | evidence | open | keep |"),
             "{after_third}"
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn two_concurrent_filings_never_share_an_id() {
+        let dir = scratch("ledger-race");
+        let ledger = dir.join("known-issues.md");
+        std::fs::write(
+            &ledger,
+            "# Known issues\n\n| ID | Severity | Issue | Evidence | Status | Next action |\n|---|---|---|---|---|---|\n| KI-001 | defect | a human row | evidence | open | keep |\n",
+        )
+        .unwrap();
+
+        // Eight filings released together: without the lock every one
+        // reads the same maximum and appends the same id.
+        let filers = 8;
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(filers));
+        let handles: Vec<_> = (0..filers)
+            .map(|n| {
+                let ledger = ledger.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    let summary = format!("tool failure number {n}");
+                    let entry = LedgerEntry {
+                        severity: "defect",
+                        diagnosis: diagnosis(FailureClass::Tool, "bash", &summary),
+                    };
+                    barrier.wait();
+                    match file_ledger_row(&ledger, &entry).unwrap() {
+                        Filed::Appended { id } | Filed::Updated { id } => id,
+                    }
+                })
+            })
+            .collect();
+        let mut ids: Vec<String> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+        ids.sort();
+        let mut unique = ids.clone();
+        unique.dedup();
+        assert_eq!(unique.len(), filers, "filings shared an id: {ids:?}");
+        assert_eq!(
+            unique,
+            (2..=filers + 1)
+                .map(|n| format!("KI-{n:03}"))
+                .collect::<Vec<_>>(),
+            "the ids are the table's next run, not a process counter"
+        );
+        let text = std::fs::read_to_string(&ledger).unwrap();
+        assert_eq!(text.matches("| KI-").count(), filers + 1, "{text}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
