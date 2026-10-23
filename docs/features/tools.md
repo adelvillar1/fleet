@@ -105,6 +105,31 @@ redundant calls, recovery after a failure, and resolutions by method and
 tier. The transcript's tool card shows the method; the detail shows the
 whole reason.
 
+## Calibration
+
+Measured on 2026-10-23 with `scripts/tool-floor-calibration.py` against
+the local llama-server that backs sem1 (embeddinggemma-2, 768-dim).
+
+- **The plan's corpus** (40 tools, 24 queries, one distinctive token
+  each): top-1 24/24, top-3 24/24. The expected tool scored
+  0.832–0.853, the best non-match at most 0.826, and the top-two margin
+  0.005–0.045 (median 0.035).
+- **A realistic catalog** (the native and special tools plus two MCP
+  tools, 16 true queries and 6 requests no tool should answer): true
+  intents scored 0.691–0.802 (median 0.753); the no-tool requests scored
+  0.602–0.668. Near-duplicate read tools (`read_file` and an MCP
+  `read_text_file`) sat 0.009–0.010 apart. With the class text folded in,
+  true intents scored 0.755–0.891.
+- **The constants that data sets:** `FLOOR = 0.68` keeps all sixteen
+  true matches and abstains on all six no-tool requests; `MARGIN = 0.02`
+  marks the near-duplicate read tools ambiguous while leaving clear
+  winners (0.024 and up) decisive; `LEXICAL_FLOOR = 0.30` because the
+  lexical fallback's token-overlap scores are on another scale.
+
+The realistic set is sixteen queries, so the exact boundary is
+indicative, not a law: re-run the script when the catalog or the
+embedding model changes, and move the constants with the data.
+
 ## The limits
 
 At most 40 calls run in one turn; the rest are refused by name. A result

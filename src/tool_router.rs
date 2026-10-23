@@ -6,10 +6,21 @@
 //! the whole selection can be tested without a lane, a network, or a
 //! model call.
 
-/// The cosine below which no candidate is trusted.
-pub const FLOOR: f64 = 0.35;
+/// The cosine below which no candidate is trusted, measured on this
+/// machine's embeddinggemma against a realistic tool catalog: real
+/// intents scored 0.691–0.802, no-tool requests 0.602–0.668. 0.68 keeps
+/// all sixteen true matches and abstains on all six no-tool ones.
+pub const FLOOR: f64 = 0.68;
 
-/// How close the top two may be before the call is ambiguous.
+/// The lexical ranker's floor. Its scores are token-overlap fractions on
+/// a different scale (a good match lands near 0.5–0.7), so it cannot
+/// share the cosine floor; this is the degraded path, not the calibrated
+/// one.
+pub const LEXICAL_FLOOR: f64 = 0.30;
+
+/// How close the top two may be before the call is ambiguous. The
+/// near-duplicate read tools measured 0.009–0.010 apart, and clear
+/// winners 0.024 and up.
 pub const MARGIN: f64 = 0.02;
 
 /// How many candidates one search activates.
@@ -190,13 +201,13 @@ pub fn lexical_rank(query: &str, candidates: &[Candidate]) -> Vec<Ranked> {
 }
 
 /// Apply the floor and the margin to a ranking.
-pub fn select(ranked: Vec<Ranked>) -> Selection {
+pub fn select(ranked: Vec<Ranked>, floor: f64) -> Selection {
     // Only candidates above the floor are eligible; the nearest two ride
     // along only when nothing clears it.
     let nearest: Vec<Ranked> = ranked.iter().take(2).cloned().collect();
     let above: Vec<Ranked> = ranked
         .into_iter()
-        .filter(|rank| rank.score >= FLOOR)
+        .filter(|rank| rank.score >= floor)
         .take(ACTIVATE_MAX)
         .collect();
     if above.is_empty() {
@@ -390,40 +401,66 @@ mod tests {
 
     #[test]
     fn the_floor_and_margin_decide() {
-        let clear = select(vec![
-            Ranked {
-                name: "a".into(),
-                score: 0.9,
-            },
-            Ranked {
-                name: "b".into(),
-                score: 0.4,
-            },
-        ]);
+        let clear = select(
+            vec![
+                Ranked {
+                    name: "a".into(),
+                    score: 0.9,
+                },
+                Ranked {
+                    name: "b".into(),
+                    score: 0.4,
+                },
+            ],
+            FLOOR,
+        );
         assert!(matches!(clear, Selection::Confident(_)));
-        let close = select(vec![
-            Ranked {
-                name: "a".into(),
-                score: 0.9,
-            },
-            Ranked {
-                name: "b".into(),
-                score: 0.89,
-            },
-        ]);
+        let close = select(
+            vec![
+                Ranked {
+                    name: "a".into(),
+                    score: 0.9,
+                },
+                Ranked {
+                    name: "b".into(),
+                    score: 0.89,
+                },
+            ],
+            FLOOR,
+        );
         assert!(matches!(close, Selection::Ambiguous(_)));
-        let nothing = select(vec![
-            Ranked {
-                name: "a".into(),
-                score: 0.1,
-            },
-            Ranked {
-                name: "b".into(),
-                score: 0.05,
-            },
-        ]);
+        let nothing = select(
+            vec![
+                Ranked {
+                    name: "a".into(),
+                    score: 0.1,
+                },
+                Ranked {
+                    name: "b".into(),
+                    score: 0.05,
+                },
+            ],
+            FLOOR,
+        );
         assert!(matches!(nothing, Selection::None(_)));
         assert!(nothing.activate().is_empty());
+        // The lexical floor is its own scale: a lexical winner that
+        // would fail the cosine floor still activates.
+        let lexical = select(
+            vec![
+                Ranked {
+                    name: "a".into(),
+                    score: 0.55,
+                },
+                Ranked {
+                    name: "b".into(),
+                    score: 0.20,
+                },
+            ],
+            LEXICAL_FLOOR,
+        );
+        assert!(matches!(lexical, Selection::Confident(_)));
+        assert_eq!(lexical.activate(), vec!["a".to_string()]);
     }
 
     #[test]

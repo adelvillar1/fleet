@@ -1135,6 +1135,14 @@ async fn tool_search_asks_sys1_and_ranks_with_sem1_end_to_end() {
         output.contains("activated for the next request: mcp__sys1__classify"),
         "{output}"
     );
+    // The resolution added no model request: the mock saw the turn that
+    // asked for the search and the final report, and nothing between
+    // them. Selection is sys1's class, sem1's vectors, and a rule.
+    assert_eq!(
+        mock.bodies().len(),
+        2,
+        "tool_search made a model request of its own"
+    );
     std::fs::remove_dir_all(&home).ok();
 }
 

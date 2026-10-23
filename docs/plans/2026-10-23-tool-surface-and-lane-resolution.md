@@ -515,8 +515,13 @@ Landed in the second pass:
   checks every schema, and proves the validator agrees. A stop written
   during `bash` kills the child within the second: a watcher reads the
   control file, and the shell polls the flag.
-- **C10 — the corpus.** Twenty-four queries over forty candidates, the
-  expected tool in the top three for at least twenty.
+- **C10 — the corpus, calibrated live.** Twenty-four queries over forty
+  candidates, the expected tool in the top three for at least twenty
+  (24/24). Run 2026-10-23 against the local sem1 embedding server:
+  true intents 0.691–0.802, no-tool requests 0.602–0.668, giving
+  `FLOOR = 0.68`, `MARGIN = 0.02`, and a separate `LEXICAL_FLOOR = 0.30`.
+  Numbers and the reproducible script are in `docs/features/tools.md`
+  and `scripts/tool-floor-calibration.py`.
 - **C11 — the profile.** The route verdict reorders the native tools;
   the resolution's reason names the profile.
 - **C12 — the dispatch, wired.** Content search has two providers,

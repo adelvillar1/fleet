@@ -3461,7 +3461,12 @@ impl<'a> Agent<'a> {
                 }
             }
         };
-        let selection = crate::tool_router::select(ranked);
+        let floor = if ranker.starts_with("sem1") {
+            crate::tool_router::FLOOR
+        } else {
+            crate::tool_router::LEXICAL_FLOOR
+        };
+        let selection = crate::tool_router::select(ranked, floor);
         let descriptions: std::collections::BTreeMap<&str, &str> = candidates
             .iter()
             .map(|candidate| (candidate.name.as_str(), candidate.description.as_str()))
