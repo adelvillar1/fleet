@@ -771,6 +771,18 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
   animation: fleet-spin 0.9s linear infinite;
 }
 
+/* The composer's button is the run's control: Send when idle, Stop
+   while a run is in flight — the arrow gives way to a square, drawn in
+   CSS rather than shipped as a second icon. */
+.foot-btn.send[data-mode="stop"] svg { display: none; }
+.foot-btn.send[data-mode="stop"]::before {
+  content: "";
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  background: currentColor;
+}
+
 .composer-hint.busy::before {
   content: "";
   display: inline-block;

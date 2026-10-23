@@ -294,6 +294,7 @@
     composer: document.getElementById('composer'),
     task: document.getElementById('task'),
     send: document.getElementById('send'),
+    sendLabel: document.getElementById('send-label'),
     plan: document.getElementById('plan'),
     hint: document.getElementById('hint'),
     runPerms: document.getElementById('run-perms'),
@@ -1069,6 +1070,15 @@
   function apply(event) {
     face.events.push(event);
     switch (event.type) {
+      case 'session':
+        // The live session the run created: the face's reads, its answers
+        // and its runs all name it, so the reducer has to learn it as it
+        // happens. Without this the face kept whatever session the last
+        // state load anchored — and the answered check compared the
+        // seat's session against that stale value, leaving the card
+        // standing (KI-283's regression).
+        if (event.id) face.session = event.id;
+        break;
       case 'message':
         if (event.role === 'owner') {
           face.running = true;
@@ -1194,24 +1204,33 @@
       // a word reads as a bug. Either way the seat closes — and a seat
       // for the next call opens as a new card, so the popup reads as
       // closing rather than as never closing (KI-283).
-      case 'answered':
-        if (!event.session || event.session === face.session) {
-          var mine = !!face.seat;
-          if (mine) {
-            face.seat = null;
-            face.answeredElsewhere = event.by || 'another surface';
-          }
+      case 'answered': {
+        // Match the answer to the SEAT this face is showing, not to the
+        // loaded session: the seat carries its own session, the answer
+        // names the session whose seat it was, and those two agree even
+        // when a run created its log after the last state load.
+        var standing = face.seat;
+        var seatSession = standing && standing.session;
+        var mineSeat = !!standing && (!event.session || !seatSession || event.session === seatSession);
+        if (mineSeat) {
+          face.seat = null;
+          face.answeredElsewhere = event.by || 'another surface';
           approvalRow(event);
           // A seat this face did not answer says who took it; a button
           // that vanishes without a word reads as a bug. This surface's
           // own answer is acknowledged by the line above instead.
-          if (mine && (event.by || '') !== 'this browser') {
+          if ((event.by || '') !== 'this browser') {
             notice('the seat was answered elsewhere',
               (event.by || 'another surface') + ' answered it ' +
               (event.decision === 'deny' ? 'no' : 'yes') + '.');
           }
+        } else if (!standing && (!event.session || event.session === face.session)) {
+          // No standing seat: another surface took one this face had
+          // already painted past. The transcript still records it.
+          approvalRow(event);
         }
         break;
+      }
       case 'rules':
         face.rules = event.rules || [];
         break;
@@ -1408,7 +1427,15 @@
 
   function paintComposer() {
     var busy = face.running || !!face.seat;
-    el.send.disabled = busy;
+    // The button is the run's own control: Send when idle, Stop while a
+    // run is in flight or a seat waits — the composer is never a dead
+    // grey square the owner cannot use to end the work.
+    if (el.sendLabel) el.sendLabel.textContent = busy ? 'Stop' : 'Send';
+    if (el.send) {
+      el.send.dataset.mode = busy ? 'stop' : 'send';
+      el.send.disabled = false;
+      el.send.setAttribute('aria-label', busy ? 'stop the run' : 'send the task');
+    }
     if (el.hint) el.hint.classList.toggle('busy', busy);
     if (face.seat) {
       // How long the owner has kept the run waiting is the number that
@@ -5362,8 +5389,21 @@
 
   el.composer.addEventListener('submit', function (event) {
     event.preventDefault();
+    // Enter while a run is in flight is not a stop: the task is empty
+    // and the intent is unclear, so send() declines. The button is the
+    // explicit control.
     send();
   });
+  if (el.send) {
+    el.send.addEventListener('click', function (event) {
+      event.preventDefault();
+      if (face.running || !!face.seat) {
+        stopRun();
+        return;
+      }
+      send();
+    });
+  }
 
   // The composer's run policy: the permissions control and the route
   // picker. A chat's choices live on the face and ride its next run;
