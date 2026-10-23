@@ -1603,7 +1603,32 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
 
 /* C3: the rewind affordance rides the turn row on hover, and the
    strip's expanded checkpoint lines carry the same button. */
-.turn-mark { position: relative; }
+.turn-mark { position: relative; display: flex; align-items: center; gap: 6px; }
+.turn-fold {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.turn-fold::before { content: '\25be '; color: var(--dsw-alias-ink-tertiary); }
+.turn-fold[aria-expanded="false"]::before { content: '\25b8 '; }
+.turn-fold:hover { color: var(--dsw-alias-ink); }
+.turn-jumps { display: none; gap: 2px; }
+.turn-mark:hover .turn-jumps { display: inline-flex; }
+.turn-jump {
+  border: 1px solid var(--dsw-alias-hairline);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--dsw-alias-ink-tertiary);
+  font: inherit;
+  font-size: 9.5px;
+  line-height: 1;
+  padding: 2px 5px;
+  cursor: pointer;
+}
+.turn-jump:hover { color: var(--dsw-alias-accent); border-color: var(--dsw-alias-accent); }
 .row-rewind {
   margin-left: auto;
   padding: 2px 8px;
@@ -1619,6 +1644,31 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
 }
 .turn-mark:hover .row-rewind,
 .row-rewind:focus-visible { opacity: 1; }
+/* The edit affordance on the owner's own bubble (D3): the same quiet
+   until hovered, one press to fill the composer with the correctable
+   words. It floats at the bubble's shoulder, not inside it — the
+   bubble's text is the owner's, unedited. */
+.owner { position: relative; }
+.owner-session-ref {
+  border: 0;
+  padding: 0 1px;
+  background: transparent;
+  color: var(--dsw-alias-accent);
+  font: inherit;
+  font-size: inherit;
+  cursor: pointer;
+  text-decoration: underline dotted;
+}
+.command.reference .command-name { color: var(--dsw-alias-ink-tertiary); }
+
+.owner-edit {
+  position: absolute;
+  right: 100%;
+  top: 0;
+  margin-right: 8px;
+}
+.owner:hover .owner-edit,
+.owner-edit:focus-visible { opacity: 1; }
 .row-rewind:hover {
   color: var(--dsw-alias-accent);
   border-color: var(--dsw-alias-accent);
@@ -6530,6 +6580,28 @@ body[data-work="collapsed"] .work-list { display: none; }
 .assistant .md h6 { font-size: calc(14.5px * var(--chat-scale, 1)); }
 .assistant .md-code { font-size: calc(12px * var(--chat-scale, 1)); line-height: 1.6; padding: 11px 13px; }
 .assistant .md-inline-code { font-size: calc(12.5px * var(--chat-scale, 1)); }
+.md-path {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--dsw-alias-accent);
+  font: inherit;
+  font-size: inherit;
+  font-family: var(--font-mono);
+  cursor: pointer;
+  text-decoration: underline dotted;
+}
+.receipt-file {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--dsw-alias-accent);
+  font: inherit;
+  font-size: inherit;
+  font-family: var(--font-mono);
+  cursor: pointer;
+  text-decoration: underline dotted;
+}
 
 /* The work column is a sheet where there is no column to be, and a strip
    of the same overlay when it is folded. */
@@ -6552,6 +6624,42 @@ body[data-work="collapsed"] .work-list { display: none; }
    a definite row for the content, the auto-placed footer items were
    packed from row 1, so a hidden head left the composer above the
    transcript (KI-302). Order in the DOM is the layout here. */
+/* The return anchors (D6): the back-to-live control floats at the
+   transcript's foot while the owner reads backwards, and the divider
+   marks where the new work began. */
+.to-live {
+  position: sticky;
+  bottom: 10px;
+  z-index: 6;
+  display: block;
+  margin: 0 auto;
+  padding: 5px 12px;
+  border: 1px solid var(--dsw-alias-hairline);
+  border-radius: 999px;
+  background: var(--dsw-alias-surface-overlay);
+  box-shadow: var(--shadow-1);
+  color: var(--dsw-alias-ink);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.to-live:hover { border-color: var(--dsw-alias-accent); }
+.since-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 14px 0;
+  color: var(--dsw-alias-ink-tertiary);
+  font-size: 10.5px;
+  letter-spacing: 0.05em;
+}
+.since-divider::before,
+.since-divider::after {
+  content: "";
+  flex: 1;
+  border-top: 1px dashed var(--dsw-alias-hairline);
+}
+
 .conv-head { flex: 0 0 auto; }
 .empty, .log { flex: 1 1 auto; min-height: 0; }
 .process-strip, .seat, .actions, .commands, .composer { flex: 0 0 auto; }

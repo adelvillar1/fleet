@@ -407,6 +407,7 @@
     contextMeter: document.getElementById('context-meter'),
     contextFill: document.getElementById('context-fill'),
     log: document.getElementById('log'),
+    toLive: document.getElementById('to-live'),
     empty: document.getElementById('empty'),
     emptyEyebrow: document.getElementById('empty-eyebrow'),
     emptyTitle: document.getElementById('empty-title'),
@@ -514,6 +515,14 @@
     // The archive groups by project; a folded group and a query are the
     // two ways to narrow 147 rows without losing the grouping.
     sessionFolded: {},
+    // The return anchors (D6): events counted while reading backwards,
+    // the seen stamp per conversation, and the divider's replay state.
+    unread: 0,
+    eventSeq: 0,
+    dividerAt: null,
+    dividerShown: false,
+    // Turn navigation (D8): which turns are folded.
+    turnFolded: {},
     sessionQuery: '',
     memoryFilter: 'live',
     skillsFilter: 'all',
@@ -790,7 +799,76 @@
   }
 
   function settle() {
-    if (face.stick) el.log.scrollTop = el.log.scrollHeight;
+    if (face.stick) {
+      el.log.scrollTop = el.log.scrollHeight;
+      clearUnread();
+    }
+  }
+
+  // The return anchors (D6): while the owner reads backwards, arriving
+  // events count instead of yanking; the back-to-live control names the
+  // count and returns on a press. The since-you-were-here divider marks
+  // the first event after the last one the owner actually saw at the
+  // bottom — per conversation, kept across visits.
+  function clearUnread() {
+    face.unread = 0;
+    if (el.toLive) {
+      el.toLive.hidden = true;
+      el.toLive.textContent = '';
+    }
+    markSeen();
+  }
+
+  function paintToLive() {
+    if (!el.toLive) return;
+    el.toLive.hidden = !(face.unread > 0);
+    el.toLive.textContent = '\u2193 ' + face.unread + ' new';
+  }
+
+  // One notification when the tab is hidden and the work needs the
+  // owner (D6): a seat waits, or the run ended. Permission is asked
+  // lazily on the first need and the feature degrades silently.
+  function notifyIfHidden(title, body) {
+    if (!document.hidden) return;
+    try {
+      if (typeof Notification === 'undefined') return;
+      if (Notification.permission === 'default') {
+        Notification.requestPermission();
+        return;
+      }
+      if (Notification.permission === 'granted') {
+        new Notification(title, { body: body });
+      }
+    } catch (error) { }
+  }
+
+  function markSeen() {
+    if (!face.stick) return;
+    if (!face.events.length) return;
+    var last = face.events[face.events.length - 1];
+    var stamp = last.ts || last.at || String(face.events.length);
+    try {
+      window.localStorage.setItem('fleet-seen-' + face.session, stamp);
+    } catch (error) { }
+  }
+
+  // The divider's stamp for this conversation: the last event seen at
+  // the bottom, or null when the owner never read this one live.
+  function seenStamp() {
+    try {
+      return window.localStorage.getItem('fleet-seen-' + face.session);
+    } catch (error) { return null; }
+  }
+
+  // Whether an event is the first after the seen stamp. The stamp rides
+  // a sequence number when the event carries no clock: the count is
+  // monotonic within a visit, which is all the divider needs.
+  function pastSeen(event) {
+    var stamp = face.dividerAt;
+    if (stamp == null) return false;
+    var seq = event.ts || event.at || null;
+    if (seq != null) return String(seq) > String(stamp);
+    return false;
   }
 
   // A card row: the one shape every non-prose thing on the face takes.
@@ -816,7 +894,8 @@
   }
 
   function row(el0, event, update) {
-    var made = { el: el0, event: event, update: update || null };
+    var made = { el: el0, event: event, update: update || null,
+      turn: face.lastTurn || null };
     face.rows.push(made);
     face.stream.appendChild(el0);
     return made;
@@ -826,11 +905,97 @@
     var el0 = node('div', 'owner');
     el0.appendChild(node('span', 'owner-tag', 'you'));
     el0.appendChild(node('span', 'owner-text', event.text));
+    // The owner's own words are correctable in place (D3): the edit
+    // affordance rides the bubble on hover, the rewind button's grammar.
+    // Pressing it fills the composer; sending rewinds to the turn before
+    // the run those words launched and posts the edit as a new run —
+    // the log keeps both, append-only.
+    var text = event.text || '';
+    var refs = face.sessionRefs || {};
+    var tokens = Object.keys(refs).filter(function (token) { return text.indexOf(token) !== -1; });
+    if (tokens.length) {
+      var parts = text.split(tokens[0]);
+      el0.appendChild(node('span', 'owner-text', parts[0]));
+      var link = node('button', 'owner-session-ref', tokens[0]);
+      link.type = 'button';
+      link.title = 'open ' + refs[tokens[0]];
+      link.addEventListener('click', function () { openWork(refs[tokens[0]]); });
+      el0.appendChild(link);
+      el0.appendChild(node('span', 'owner-text', parts.slice(1).join(tokens[0])));
+    } else {
+      el0.appendChild(node('span', 'owner-text', text));
+    }
+    var edit = node('button', 'row-rewind owner-edit', '\u270e edit');
+    edit.type = 'button';
+    edit.title = 'edit this message and re-run from before its run';
+    edit.addEventListener('click', function () { startEdit(event); });
+    el0.appendChild(edit);
     return row(el0, event);
   }
 
+  // Begin an edit (D3). While a run drives, the edit queues with the
+  // queue's own named reason rather than competing with the composer;
+  // otherwise the composer fills with the message, and the send path
+  // rewinds to the turn before the run the message launched.
+  function startEdit(event) {
+    var text = event.text || '';
+    if (face.running || face.seat ||
+        (face.driving && face.driving !== face.session)) {
+      if (text.trim()) {
+        face.queued.push(text);
+        paintQueue();
+      }
+      return;
+    }
+    face.editing = { turn: turnAfter(event) };
+    el.task.value = text;
+    saveDraft();
+    grow();
+    el.task.focus();
+    el.task.setSelectionRange(text.length, text.length);
+  }
+
+  // The first turn of the run this message launched, minus one: the
+  // checkpoint that run started from. No turn after it — the message
+  // never ran — and a first-ever turn both mean no rewind is needed;
+  // the edit is simply the next run.
+  function turnAfter(event) {
+    var index = face.events.indexOf(event);
+    if (index < 0) return null;
+    for (var i = index + 1; i < face.events.length; i += 1) {
+      if (face.events[i].type === 'turn') {
+        var target = face.events[i].turn - 1;
+        return target >= 1 ? target : null;
+      }
+    }
+    return null;
+  }
+
   function turnRow(event) {
-    var el0 = node('div', 'turn-mark', 'turn ' + event.turn);
+    var el0 = node('div', 'turn-mark');
+    el0.dataset.turn = String(event.turn);
+    // The turn is a navigational unit (D8): the mark's own label is a
+    // press that folds the turn's rows to the mark line, and the next
+    // and previous marks are one press away from every mark. Nothing
+    // auto-collapses — quiet by default is the rule the owner set.
+    var fold = node('button', 'turn-fold', 'turn ' + event.turn);
+    fold.type = 'button';
+    fold.title = 'fold or unfold this turn\u2019s rows';
+    fold.setAttribute('aria-expanded', 'true');
+    fold.addEventListener('click', function () { toggleTurn(event.turn); });
+    el0.appendChild(fold);
+    var jumps = node('span', 'turn-jumps');
+    var prev = node('button', 'turn-jump', '\u2191');
+    prev.type = 'button';
+    prev.title = 'the previous turn';
+    prev.addEventListener('click', function () { jumpTurn(event.turn, -1); });
+    var next = node('button', 'turn-jump', '\u2193');
+    next.type = 'button';
+    next.title = 'the next turn';
+    next.addEventListener('click', function () { jumpTurn(event.turn, 1); });
+    jumps.appendChild(prev);
+    jumps.appendChild(next);
+    el0.appendChild(jumps);
     // Checkpoints are per-turn (the agent captures after every tool
     // wave), so every turn mark is a rewind point: the affordance
     // rides the row on hover instead of a checkpoint card per N turns
@@ -850,6 +1015,53 @@
     }
     el0.appendChild(rewind);
     return row(el0, event);
+  }
+
+  // Fold one turn (D8): the rows between this mark and the next hide,
+  // the mark stays. Rows are tagged with their turn as they are made.
+  function toggleTurn(turn) {
+    var folded = !face.turnFolded[turn];
+    face.turnFolded[turn] = folded;
+    paintTurnFold(turn);
+  }
+
+  function paintTurnFold(turn) {
+    var folded = !!face.turnFolded[turn];
+    face.rows.forEach(function (one) {
+      if (one.turn === turn && one.el &&
+          !one.el.className.includes('turn-mark')) {
+        one.el.hidden = folded;
+      }
+    });
+    var mark = face.rows.filter(function (one) {
+      return one.turn === turn && one.el && one.el.className.includes('turn-mark');
+    })[0];
+    if (mark) {
+      var fold = mark.el.querySelector('.turn-fold');
+      if (fold) fold.setAttribute('aria-expanded', folded ? 'false' : 'true');
+    }
+  }
+
+  // Jump to the next or previous turn mark from `turn`.
+  function jumpTurn(turn, step) {
+    var marks = face.rows
+      .filter(function (one) { return one.el && one.el.className.includes('turn-mark'); })
+      .map(function (one) { return one.turn; })
+      .sort(function (a, b) { return a - b; });
+    var at = marks.indexOf(turn);
+    var to = marks[Math.min(marks.length - 1, Math.max(0, at + step))];
+    if (to == null) return;
+    var target = face.rows.filter(function (one) { return one.turn === to && one.el; })[0];
+    if (target && target.el.scrollIntoView) target.el.scrollIntoView({ block: 'start' });
+  }
+
+  // Expand this run: every folded turn of the current run unfolds at
+  // once — the audit pass's one press.
+  function expandRun() {
+    Object.keys(face.turnFolded).forEach(function (turn) {
+      face.turnFolded[turn] = false;
+      paintTurnFold(Number(turn));
+    });
   }
 
   // One thought block, closed: a row that says how long it took and opens
@@ -1247,6 +1459,61 @@
   // it is the assistant message event instead. A finish with no report
   // got the repair beat's ask already (the strip names it); what the
   // model answered to that ask is this same tail.
+  // The receipt's artifacts (D7): the diff against the checkpoint
+  // before this run's first turn names the files the run touched; each
+  // row opens that diff in the drawer. No prior checkpoint (a first
+  // run) measures against the run's own last checkpoint, which names
+  // everything the session changed — the honest answer for a session
+  // with no before.
+  function appendArtifacts(body) {
+    if (!face.session) return;
+    var session = face.session;
+    fetch('/api/checkpoints', { headers: { accept: 'application/json' } })
+      .then(function (reply) { return reply.json(); })
+      .then(function (doc) {
+        var snapshots = doc.snapshots || [];
+        if (!snapshots.length) return;
+        var turns = snapshots.map(function (one) { return one.turn; }).sort(function (a, b) { return a - b; });
+        var first = face.runFirstTurn || 0;
+        var before = null;
+        for (var i = 0; i < turns.length; i += 1) {
+          if (turns[i] < first) before = turns[i];
+        }
+        var turn = before != null ? before : turns[turns.length - 1];
+        return fetch('/api/diff?turn=' + turn, { headers: { accept: 'application/json' } })
+          .then(function (reply) { return reply.json(); })
+          .then(function (diff) {
+            var files = (diff.files || []).map(function (one) { return one.path; });
+            if (!files.length) return;
+            var line = node('p', 'receipt-line');
+            line.appendChild(document.createTextNode('artifacts \u00b7 ' + files.length +
+              (files.length === 1 ? ' file' : ' files') + ' \u00b7 '));
+            files.slice(0, 5).forEach(function (path, at) {
+              if (at) line.appendChild(document.createTextNode(', '));
+              var open = node('button', 'receipt-file', path);
+              open.type = 'button';
+              open.title = 'the diff for ' + path;
+              open.addEventListener('click', function () { openArtifactsDiff(turn); });
+              line.appendChild(open);
+            });
+            if (files.length > 5) {
+              line.appendChild(document.createTextNode(' \u00b7 ' + (files.length - 5) + ' more'));
+            }
+            body.appendChild(line);
+          });
+      })
+      .catch(function () { });
+  }
+
+  // The artifacts' diff in the drawer: the run's whole diff against the
+  // checkpoint, the review's own painter.
+  function openArtifactsDiff(turn) {
+    fetch('/api/diff?turn=' + turn, { headers: { accept: 'application/json' } })
+      .then(function (reply) { return reply.json(); })
+      .then(function (diff) { paintDiff(diff, turn); })
+      .catch(function () { });
+  }
+
   function paintReceipt(el0, event) {
     var events = face.events;
     var calls = {};
@@ -1279,6 +1546,17 @@
       body.appendChild(node('p', 'receipt-line',
         'evidence \u00b7 ' + evidence.join(' \u00b7 ')));
     }
+    // The audit pass's one press (D8): every folded turn unfolds.
+    if (Object.keys(face.turnFolded).some(function (turn) { return face.turnFolded[turn]; })) {
+      var expand = node('button', 'receipt-toggle', 'expand this run');
+      expand.type = 'button';
+      expand.addEventListener('click', expandRun);
+      body.appendChild(expand);
+    }
+    // The artifacts (D7): the files this run's checkpoint window holds,
+    // each opening the diff that checkpoint names. The read is the
+    // checkpoints' own; a run that touched nothing shows nothing.
+    appendArtifacts(body);
     // The closing report: the tokens after the last tool result, or
     // the replayed assistant message when there are no tokens.
     var said = '';
@@ -1399,7 +1677,21 @@
       }
       return;
     }
+    face.eventSeq = (face.eventSeq || 0) + 1;
+    // The divider lands before the first event past the seen stamp
+    // (D6), once per replay.
+    if (face.dividerAt != null && !face.dividerShown &&
+        face.eventSeq === face.dividerAt + 1) {
+      face.dividerShown = true;
+      var divider = node('div', 'since-divider', '\u2014 since you were here \u2014');
+      face.stream.appendChild(divider);
+    }
     face.events.push(event);
+    // Reading backwards: count instead of yank (D6).
+    if (!face.stick && face.unread != null) {
+      face.unread += 1;
+      paintToLive();
+    }
     switch (event.type) {
       case 'session':
         // The live session the run created: the face's reads, its answers
@@ -1438,6 +1730,7 @@
         break;
       case 'turn':
         face.running = true;
+        if (!face.runFirstTurn) face.runFirstTurn = event.turn;
         if (event.turn !== face.lastTurn) {
           face.lastTurn = event.turn;
           face.turn = event.turn;
@@ -1519,6 +1812,9 @@
         break;
       case 'finished':
       case 'failed':
+        face.runFirstTurn = 0;
+        notifyIfHidden('fleet \u00b7 the run ' + (event.type === 'finished' ? 'finished' : 'failed'),
+          event.stop_reason || 'the outcome is in the conversation');
         closeAssistant();
         face.running = false;
         // The run this face was executing is over: no conversation is
@@ -1546,6 +1842,8 @@
         flushQueue();
         break;
       case 'seat':
+        notifyIfHidden('fleet \u00b7 a seat is waiting',
+          (event.label || event.tool || 'a tool call') + ' needs an answer');
         face.running = true;
         face.seat = event;
         face.seatSince = event.since || Date.now();
@@ -5134,10 +5432,57 @@
   // One way for any surface to hand the agent a task: open the
   // conversation, put the instruction in the composer, and leave the
   // send to the owner. The UI never speaks for the owner.
+  // The draft is the conversation's, not the face's (D2): one key per
+  // session, swapped on every conversation change, so two conversations
+  // never share the sentence being typed. The legacy single-key draft
+  // migrates into the visiting conversation on first read.
+  function draftKey(session) {
+    return 'fleet-draft-' + (session || '');
+  }
+
+  function saveDraft() {
+    try {
+      window.localStorage.setItem(draftKey(face.session), el.task.value);
+    } catch (error) { }
+  }
+
+  function clearDraft() {
+    try { window.localStorage.removeItem(draftKey(face.session)); } catch (error) { }
+  }
+
+  function loadDraft() {
+    try {
+      var key = draftKey(face.session);
+      var legacy = window.localStorage.getItem('fleet-draft');
+      if (legacy != null && window.localStorage.getItem(key) == null) {
+        window.localStorage.setItem(key, legacy);
+        window.localStorage.removeItem('fleet-draft');
+      }
+      var draft = window.localStorage.getItem(key);
+      el.task.value = draft || '';
+      grow();
+    } catch (error) { }
+  }
+
+  // Swap on a conversation change: the outgoing conversation keeps its
+  // sentence, the incoming one gets its own back.
+  function swapDraft(fromSession, toSession) {
+    if (fromSession === toSession) return;
+    try {
+      if (el.task.value) {
+        window.localStorage.setItem(draftKey(fromSession), el.task.value);
+      } else {
+        window.localStorage.removeItem(draftKey(fromSession));
+      }
+    } catch (error) { }
+    face.session = toSession;
+    loadDraft();
+  }
+
   function ask(text) {
     if (window.location.hash !== '#/chat') window.location.hash = '#/chat';
     el.task.value = text;
-    try { window.localStorage.setItem('fleet-draft', text); } catch (error) { }
+    saveDraft();
     grow();
     el.task.focus();
     el.task.setSelectionRange(text.length, text.length);
@@ -5154,17 +5499,52 @@
         face.queued.push(pending);
         el.task.value = '';
         grow();
-        try { window.localStorage.removeItem('fleet-draft'); } catch (error) { }
+        clearDraft();
         paintQueue();
       }
       return;
     }
     if (face.planMode) { planSend(); return; }
+    // An edit in flight (D3): rewind to the turn before the original
+    // run, then post the edit as the next run. The confirm is the
+    // rewind's own grammar — the tree's files go back with it.
+    var edit = face.editing || null;
+    face.editing = null;
+    if (edit && edit.turn != null) {
+      var edited = el.task.value.trim();
+      if (!edited) return;
+      if (!window.confirm('rewind to turn ' + edit.turn +
+        ' and re-run with your edit? The files the runs after it changed go back, ' +
+        'and the original message stays in the log.')) {
+        return;
+      }
+      post('/api/rewind', { turn: edit.turn }).then(function (reply) {
+        if (reply.status !== 200) {
+          notice('the rewind was refused',
+            (reply.body && reply.body.error) || 'the face said no without a reason');
+          el.task.value = edited;
+          saveDraft();
+          return;
+        }
+        dispatchTask();
+      }).catch(function () {
+        el.task.value = edited;
+        saveDraft();
+      });
+      return;
+    }
+    dispatchTask();
+  }
+
+  // The run dispatch itself — the composer's text to /api/run, with the
+  // face's standing choices. Split from send() so the edit path can
+  // rewind first and land here unchanged.
+  function dispatchTask() {
     var task = el.task.value.trim();
     if (!task) return;
     el.task.value = '';
     grow();
-    try { window.localStorage.removeItem('fleet-draft'); } catch (error) { }
+    clearDraft();
     el.empty.hidden = true;
     el.log.hidden = false;
     var before = face.events.length;
@@ -5638,7 +6018,22 @@
   // a refresh replays, a stream appends, and neither has a number the
   // other does not.
   function replay(state) {
-    face.session = state.session || '';
+    // The draft swaps when the replay anchors a different conversation
+    // (the boot's launch session, or a resume): same session is a no-op.
+    swapDraft(face.session, state.session || '');
+    // The return anchor's divider (D6): the first event after the last
+    // one the owner saw at the bottom, marked while the history paints.
+    face.eventSeq = 0;
+    // The stamp is seeded ONCE per conversation per visit: the stream's
+    // onopen re-load replays a second time, after the boot's own
+    // scroll-to-bottom has already marked everything seen — a fresh
+    // seed on that pass would erase the divider the first one drew.
+    if (face.seedSession !== face.session) {
+      face.seedSession = face.session;
+      var seen = seenStamp();
+      face.dividerAt = seen != null && !isNaN(Number(seen)) ? Number(seen) : null;
+    }
+    face.dividerShown = false;
     face.model = state.model || '';
     face.workspace = state.workspace || '';
     face.folder = state.folder || null;
@@ -5675,6 +6070,9 @@
     el.log.textContent = '';
     face.stream = node('div', 'stream');
     el.log.appendChild(face.stream);
+    // The back-to-live control lives in the log and must survive its
+    // own clearing — sticky at the foot, always the last child.
+    if (el.toLive) el.log.appendChild(el.toLive);
     // The empty state is the home when nothing has been said yet. A
     // boot-time skills event is not a conversation, so it must not push
     // the owner into a transcript with no words in it. The shapes are
@@ -5844,12 +6242,10 @@
     } catch (error) { }
   }).catch(function () { });
 
-  // The draft survives a reload. A twelve-hour desk should not lose the
-  // sentence being typed because the face was refreshed.
-  try {
-    var draft = window.localStorage.getItem('fleet-draft');
-    if (draft) { el.task.value = draft; grow(); }
-  } catch (error) { }
+  // The draft survives a reload, per conversation (D2). A twelve-hour
+  // desk should not lose the sentence being typed because the face was
+  // refreshed, and two conversations should never share one.
+  loadDraft();
 
   // The conversation's text size survives a reload like the draft does.
   // The stored value is a step index, clamped to the scale in case an
@@ -6664,11 +7060,43 @@
       el.attachInput.value = '';
     });
   }
+  // A paste carrying files is an attach (D4): the same pipeline the
+  // machine-file picker rides — one pipeline, one set of bounds (five
+  // files, 256 KB, text). A paste carrying text inserts text, as
+  // always; an image names its path honestly rather than vanishing.
+  if (el.task) {
+    el.task.addEventListener('paste', function (event) {
+      var clipboard = event.clipboardData;
+      if (!clipboard) return;
+      var files = clipboard.files;
+      if (files && files.length) {
+        var carried = 0;
+        Array.prototype.forEach.call(files, function (file) { carried += 1; });
+        if (carried) {
+          event.preventDefault();
+          attachFiles(files);
+        }
+        return;
+      }
+      var items = clipboard.items;
+      if (items) {
+        var image = Array.prototype.filter.call(items, function (item) {
+          return item.kind === 'file' && /^image\//.test(item.type);
+        })[0];
+        if (image) {
+          event.preventDefault();
+          notice('an image cannot ride the composer yet',
+            'paste attaches text files through the same bounds as the picker; an image goes \
+             through the document surface, which escalates it to Perception');
+        }
+      }
+    });
+  }
   paintAttachments();
 
   el.task.addEventListener('input', function () {
     grow();
-    try { window.localStorage.setItem('fleet-draft', el.task.value); } catch (error) { }
+    saveDraft();
     typeAhead();
   });
   el.task.addEventListener('keydown', function (event) {
@@ -6677,6 +7105,16 @@
     // screen is highlighting — the owner's ruling on KI-245: the selected
     // row is what Enter sends, whether the owner typed a command's name
     // or the intent that ranked it. Shift+Enter stays a newline.
+    if (face.referenceOpen) {
+      if (event.key === 'ArrowDown') { event.preventDefault(); moveReference(1); return; }
+      if (event.key === 'ArrowUp') { event.preventDefault(); moveReference(-1); return; }
+      if ((event.key === 'Enter' || event.key === 'Tab') && !event.shiftKey) {
+        event.preventDefault();
+        insertReference(face.referenceAt);
+        return;
+      }
+      if (event.key === 'Escape') { event.preventDefault(); closeReferences(); el.commands.hidden = true; return; }
+    }
     if (face.commandOpen) {
       if (event.key === 'ArrowDown') { event.preventDefault(); moveCommand(1); return; }
       if (event.key === 'ArrowUp') { event.preventDefault(); moveCommand(-1); return; }
@@ -6712,7 +7150,17 @@
   // the slash closes it too.
   function typeAhead() {
     var value = el.task.value;
-    if (value.charAt(0) !== '/') { closeCommands(); return; }
+    if (value.charAt(0) !== '/') {
+      // The second sigil (D5): a trailing @token opens the reference
+      // listbox over the reads the face already makes. Anything else
+      // closes both listboxes.
+      var at = value.match(/(^|\s)@([^\s@]*)$/);
+      if (at) { openReferences(at[2]); return; }
+      closeReferences();
+      closeCommands();
+      return;
+    }
+    closeReferences();
     // The semantic pass re-arms on every keystroke: the owner is typing a
     // sentence of intent, and the rank owes the finished sentence an
     // answer, not the fragment that happened to be in the box when the
@@ -6771,7 +7219,15 @@
   // the scroll position decides, not the code.
   el.log.addEventListener('scroll', function () {
     face.stick = stick();
+    if (face.stick) clearUnread();
   });
+  if (el.toLive) {
+    el.toLive.addEventListener('click', function () {
+      face.stick = true;
+      el.log.scrollTop = el.log.scrollHeight;
+      clearUnread();
+    });
+  }
 
   // ------------------------------------------------- the hash addresses
 
@@ -7241,7 +7697,9 @@
     if (!id) return Promise.resolve();
     var options = opts || {};
     var same = face.session === id;
-    face.session = id;
+    // The draft swaps with the conversation (D2): the outgoing one keeps
+    // its sentence, the incoming one restores its own.
+    swapDraft(face.session, id);
     face.focus = { panel: 'sessions', id: id };
     if (!options.keepHash) {
       try {
@@ -11466,7 +11924,7 @@
     if (!task || face.running || face.seat) return;
     el.task.value = '';
     grow();
-    try { window.localStorage.removeItem('fleet-draft'); } catch (error) { }
+    clearDraft();
     el.empty.hidden = true;
     el.log.hidden = false;
     face.planned = true;
@@ -12061,6 +12519,39 @@
 
   // Inline markdown: code, bold, italic, links. Text is built as nodes
   // rather than innerHTML, so a document can never inject markup.
+  // A path the reply names opens the pane at that file (D7, KI-289's
+  // transcript half): one linkifier for the prose spans, applied after
+  // the markdown shapes so a code span stays code.
+  function linkifyPaths(text) {
+    var out = node('span');
+    var rest = String(text);
+    var pattern = /(`[^`]+`)|([\w./-]+\/[\w./-]+)/g;
+    var at = 0;
+    var match;
+    while ((match = pattern.exec(rest)) !== null) {
+      if (match.index > at) out.appendChild(document.createTextNode(rest.slice(at, match.index)));
+      if (match[1]) {
+        out.appendChild(node('code', 'md-inline-code', match[1].slice(1, -1)));
+      } else {
+        var path = match[2];
+        if (/\.(rs|js|ts|css|html|md|json|toml|py|sh|yaml|yml|txt)$/i.test(path) || /^src\//.test(path)) {
+          var open = node('button', 'md-path', path);
+          open.type = 'button';
+          open.title = 'open ' + path + ' in the pane';
+          open.addEventListener('click', function (here) {
+            return function () { openPane(); openFile(here); };
+          }(path));
+          out.appendChild(open);
+        } else {
+          out.appendChild(document.createTextNode(path));
+        }
+      }
+      at = match.index + match[0].length;
+    }
+    if (at < rest.length) out.appendChild(document.createTextNode(rest.slice(at)));
+    return out;
+  }
+
   function inline(text) {
     var span = node('span');
     var rest = String(text);
@@ -12068,7 +12559,7 @@
     var at = 0;
     var match;
     while ((match = pattern.exec(rest)) !== null) {
-      if (match.index > at) span.appendChild(document.createTextNode(rest.slice(at, match.index)));
+      if (match.index > at) span.appendChild(linkifyPaths(rest.slice(at, match.index)));
       if (match[1]) {
         span.appendChild(node('code', 'md-inline-code', match[1].slice(1, -1)));
       } else if (match[2]) {
@@ -12081,7 +12572,7 @@
       }
       at = match.index + match[0].length;
     }
-    if (at < rest.length) span.appendChild(document.createTextNode(rest.slice(at)));
+    if (at < rest.length) span.appendChild(linkifyPaths(rest.slice(at)));
     return span;
   }
 
@@ -12161,6 +12652,130 @@
       face.commandAt = 0;
       paintCommands();
     }).catch(function () { });
+  }
+
+  // The reference listbox (D5): the same box, grammar, and keys as the
+  // command surface, over four families sourced from reads the face
+  // already makes — files from the pane's tree, sessions from the work
+  // rows, skills and memory from their own reads. Enter inserts; the
+  // file reference opens its pane preview, and the session reference
+  // leaves a link in the sent message that opens that conversation.
+  function referenceRows(asked) {
+    var query = (asked || '').toLowerCase();
+    var rows = [];
+    var read = face.tree;
+    if (read && !read.refused) {
+      var base = read.path ? read.path.replace(/\/$/, '') + '/' : '';
+      (read.entries || []).forEach(function (entry) {
+        if (entry.kind !== 'dir') {
+          rows.push({ kind: 'file', label: base + entry.name,
+            insert: base + entry.name, follow: 'file', value: base + entry.name });
+        }
+      });
+    } else if (!face.tree) {
+      readTree('', true);
+    }
+    workRows().forEach(function (one) {
+      if (one.id !== face.session) {
+        rows.push({ kind: 'session', label: one.title || one.id,
+          insert: '@' + (one.title || one.id), follow: 'session', value: one.id });
+      }
+    });
+    ((face.skills && face.skills.skills) || []).forEach(function (skill) {
+      rows.push({ kind: 'skill', label: skill.name,
+        insert: 'use the skill "' + skill.name + '"', follow: null });
+    });
+    ((face.memory && face.memory.facts) || []).forEach(function (fact) {
+      if (fact && fact.name && !fact.retired) {
+        rows.push({ kind: 'memory', label: fact.name,
+          insert: 'recall the fact "' + fact.name + '"', follow: null });
+      }
+    });
+    if (query) {
+      rows = rows.filter(function (one) {
+        return one.label.toLowerCase().indexOf(query) !== -1 ||
+          one.kind.indexOf(query) === 0;
+      });
+    }
+    return rows.slice(0, 12);
+  }
+
+  function openReferences(asked) {
+    face.referenceOpen = true;
+    face.referenceAt = 0;
+    closeCommands();
+    // The tree read may still be in flight on the first @: the box
+    // paints what it has now and re-ranks when the read lands, so the
+    // files family never silently misses.
+    if (!face.tree) {
+      var wanted = asked;
+      Promise.resolve(readTree('', true)).then(function () {
+        if (face.referenceOpen) openReferences(wanted);
+      });
+    }
+    face.references = referenceRows(asked);
+    paintReferences();
+  }
+
+  function closeReferences() {
+    face.referenceOpen = false;
+    face.references = [];
+    if (!face.commandOpen) el.commands.hidden = true;
+  }
+
+  function moveReference(step) {
+    if (!face.references.length) return;
+    face.referenceAt = (face.referenceAt + step + face.references.length) % face.references.length;
+    paintReferences();
+  }
+
+  function paintReferences() {
+    if (!el.commands) return;
+    el.commands.textContent = '';
+    if (!face.references.length) {
+      el.commands.hidden = true;
+      return;
+    }
+    el.commands.hidden = false;
+    face.references.forEach(function (one, at) {
+      var row = node('button', 'command reference');
+      row.type = 'button';
+      row.setAttribute('role', 'option');
+      row.dataset.kind = one.kind;
+      if (at === face.referenceAt) row.setAttribute('aria-selected', 'true');
+      row.appendChild(node('span', 'command-name', '@' + one.kind));
+      row.appendChild(node('span', 'command-said', one.label));
+      row.addEventListener('click', function () { insertReference(at); });
+      el.commands.appendChild(row);
+    });
+  }
+
+  // Insert the highlighted reference: the trailing @token is replaced by
+  // the reference's text, and the kind's follow-on fires — a file opens
+  // its pane preview, a session records the link the sent message
+  // carries. The composer keeps focus: the owner is mid-sentence.
+  function insertReference(at) {
+    var one = face.references[at];
+    if (!one) return;
+    var value = el.task.value;
+    var atMatch = value.match(/(^|\s)(@[^\s@]*)$/);
+    if (atMatch) {
+      value = value.slice(0, value.length - atMatch[2].length) + one.insert + ' ';
+    } else {
+      value += one.insert + ' ';
+    }
+    el.task.value = value;
+    saveDraft();
+    grow();
+    closeReferences();
+    if (one.follow === 'file') {
+      openPane();
+      openFile(one.value);
+    } else if (one.follow === 'session') {
+      face.sessionRefs = face.sessionRefs || {};
+      face.sessionRefs[one.insert] = one.value;
+    }
+    el.task.focus();
   }
 
   function paintCommands() {

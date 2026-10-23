@@ -338,7 +338,12 @@
         </p>
       </div>
 
-      <div class="log" id="log" aria-live="polite" aria-relevant="text"></div>
+      <div class="log" id="log" aria-live="polite" aria-relevant="text">
+        <!-- The return anchor (D6): while the owner reads backwards,
+             arriving events count instead of yanking them down; this
+             control names the count and returns on a press. -->
+        <button type="button" class="to-live" id="to-live" hidden></button>
+      </div>
 
       <!-- The process, compact: the same live card's state in one line
            when the aside is closed or the screen is narrow. Clicking it
