@@ -38,7 +38,13 @@ you want, which provider serves it and which folder the work happens
 in. Attach a document from the workspace or a file from the machine.
 Plan instead of build. The run renders as cards in the same
 conversation: the route it took and why, the facts recalled, the skill
-loaded, the child spawned, the approval awaited. While a run works, the
+loaded, the child spawned, the approval awaited. Replies render as
+markdown — headings, lists, code, links — and the closing report in the
+run's receipt reads the same way. The conversation's own head names it:
+the way back to the work list, the title (press it for the switcher,
+press the pencil to rename), the state in words, and **New**. A
+conversation is a place with a way out and a way to another, never a
+one-way door. While a run works, the
 composer says so and says how: the turn, and how long since the last
 event — a live run shows a small number, a long tool call shows it climb,
 and the state pill turns with it. A standing seat counts the owner's own
@@ -48,10 +54,20 @@ method in three words — plan, delegate, verify — and where a run's work
 goes: local to the machine, turns to the providers that serve them, a
 document escalated to Perception to Nace.
 
-**Work — sessions.** Every run under this home, grouped by the project
-it was born in, with its replay readable beside the list. Search by id,
-project, model or channel; filter by state; open, resume, or copy.
-Scheduled runs land here as ordinary logs.
+**Work — the work list.** Every conversation and background run under
+this home, grouped by what needs the owner rather than by project:
+*needs you* (an approval waiting, a run you paused), *working*, the
+*background* (scheduled jobs, delegated children, and peer
+conversations, folded to one line per family with its last state and
+how many are active), then *earlier*, grouped by the project each run
+was born in. A row says its state in words — *completed*, *capped*,
+*stopped by you*, *interrupted*, *active* — with its age, its project,
+and, for background work, the job's name. One verb: opening a row loads
+that conversation in place, beside the list, with its composer, so
+reading and continuing are the same act. **New** writes a real
+conversation. Search reads the title, id, project, model, job and
+state; the list folds into a sheet where there is no room for a
+column.
 
 **Intelligence — router.** Where this run's work went, what it tried
 first, and what the day has served: the live decision, the declared

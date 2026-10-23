@@ -77,6 +77,10 @@ serves it and which folder it works in. Attach a document from the
 workspace or a file from the machine. Plan instead of build. Send, and
 watch the run happen as cards: the route it took, what it recalled, the
 skill it loaded, the child it spawned, the approval it is waiting for.
+The head names the conversation — its title (the switcher), its state in
+words, the way back to the work list, and New — so the conversation is
+a place you can leave and another you can choose. Replies read as
+markdown, at the block boundary where the whole answer is in hand.
 
 **Why.** Because the valuable things a harness does were, everywhere
 else, hidden in panes and logs. Here they are the transcript.
@@ -84,24 +88,34 @@ else, hidden in panes and logs. Here they are the transcript.
 **State.** The core surface; complete. The working-folder picker now
 browses the whole disk and takes a typed path.
 
-### Sessions — *work*
+### Work — *work*
 
-**What it is.** Every run under this home, grouped by the project it was
-born in, with its replay readable beside the list. Counts: logs, open,
-delegated, compacted, via a channel, projects.
+**What it is.** Every conversation and every run under this home, as one
+list grouped by what needs the owner rather than by where it was born:
+*needs you* (an approval waiting, a run the owner paused), *working*,
+the *background* (scheduled jobs, delegated children, peer
+conversations — folded to one line per family with its last state and
+its active count), and *earlier*, grouped by project.
 
-**What you do.** Search by id, project, model or channel; filter by
-state; open a run to read it, resume it, or copy its id. Ask the archive
-a question in plain language.
+**What you do.** Read the state in words — *completed*, *capped*,
+*stopped by you*, *interrupted*, *active*, *new* — with each row's age,
+project, and, for background work, its job. Open a row: it loads in
+place with its composer. Search the title, id, project, model, job and
+state. Or press New.
 
 **Why.** A session log is the system of record — if it is not in the log,
-the model never saw it — so the archive is where accountability lives,
-and grouping by project is how one home serving many repositories stays
-legible.
+the model never saw it — so the list is where accountability lives. But
+accountability is not the owner's first question: "what needs me" is.
+Background work exists to keep the home alive; it should not crowd out
+the work the owner started, and an unfinished log should not pose as a
+live run.
 
-**State.** Complete. Today the newest rows are the fourteen nightly
-corpus-refresh jobs, which is what an archive looks like when the owner
-is away: scheduled work keeps the home alive.
+**State.** The archive's rows now carry their ending, their turns, and
+the log's write time, and the bridge derives the state from them plus
+the live face (the seat, the driving session, a pause's control file,
+and a write-time window for a run on another process — a bound the
+surface says rather than a heartbeat the log does not have). The
+separate read-only replay retired: the conversation is the replay.
 
 ### Router — *intelligence*
 

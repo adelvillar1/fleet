@@ -159,11 +159,25 @@ every visible `.tile`, `.badge`, `.rrow`, `.rank-row`, `.cal-cell`,
 `.stream-line`, `.cand`, `.chart-col`, and `.related-row` carries a
 `data-act`, a button role, or a title.
 
-- **Sessions** select in place. The list and the selected replay stand
-  side by side; arrow keys move the selection, Enter/click reads it,
-  Escape returns to the list, and `#/sessions/<id>` makes the selection
-  a link. Below a 1000px content track the replay becomes the dock's
-  object card instead of a fourth column.
+- **The work list** opens in place. Every row — whoever its state — runs
+  one verb: it resumes that log into the conversation beside the list,
+  with its composer, so reading and continuing are the same act and
+  there is no separate read-only replay. `#/sessions/<id>` is the
+  address of the open row and survives a reload; `#/chat` is the
+  new-work front door. Rows are grouped by what needs the owner
+  (*needs you*, *working*, *background* folded per family, *earlier*
+  per project), and the state words come from the bridge's derivation:
+  `needs-approval`, `paused`, `working`, `active`, `completed`,
+  `capped`, `stopped`, `interrupted`, `new`. Where there is no room for
+  the column it overlays as a sheet, opened from the conversation's
+  title or back control and closed by picking a row.
+- **The conversation's head** carries the way back to the work list, the
+  title (press for the switcher, the pencil to rename), the state in
+  words, and **New** — which writes a real session (`POST
+  /api/session/new`), so the next run lands in it. Replies render as
+  markdown when their block closes: streamed text while it arrives, the
+  rendered block at the boundary, and the receipt's closing report the
+  same way.
 - **Facts** open their detail and edit; their type and tier badges
   filter the corpus.
 - **Every panel has visible filters with counts.** Memory: all, live,
@@ -202,7 +216,7 @@ Escape clears the object, never the dock.
 
 | Route | What it does |
 |---|---|
-| `GET /api/state` | the session, model, gate, budget, ordered log, seat, and remembered rules |
+| `GET /api/state` | the session, model, gate, budget, ordered log, seat, the session this face is *driving*, and remembered rules |
 | `GET /api/home` | the welcome's bounded read, cached 30s |
 | `GET /events` | the live half of the same ordered log (SSE) |
 | `POST /api/run`, `/api/plan` | hand a task to the agent thread; the body may carry `folder`, which is validated and stored for the chat before dispatch |
@@ -217,6 +231,7 @@ Escape clears the object, never the dock.
 | `GET /api/channels` | the channel control plane: the service's status (and whether its heartbeat still beats), every channel's paired and pending peers, and the newest fifty activity lines with the bound named |
 | `POST /api/channels/{start,stop,pair,capability,revoke,forget}` | the control plane's writes. `pair` answers with the token exactly once; there is no read that returns it again |
 | `GET /api/access`, `POST /api/access/revoke` | the paired devices and channel peers, by name and digest only, and the revocation that forgets one |
+| `POST /api/session/new` | create a conversation: the log exists before its first message, and the next run posted with its id lands in it |
 | `POST /api/fact`, `/api/skill`, `/api/resume`, `/api/rewind`, `/api/diff/reject`, `/api/settings`, `/api/deck/render` | the writes, each through the writer the substrate already owns |
 
 The channel control plane's routes are **not** on the remote face's
