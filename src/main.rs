@@ -2587,12 +2587,29 @@ async fn drive(
     // whole cost — one probe round trip plus the cached index — and a
     // load that cannot complete leaves the run memory-less rather than
     // failing it.
+    // KI-249's measurement: the load is the embed path's whole cost on a
+    // run, so its wall clock and the fact count it produced land as one
+    // redacted row — the tail these rows accumulate is what the embed
+    // bounds should be set from, not a guess.
+    let load_started = std::time::Instant::now();
     let memory = tokio::task::spawn_blocking(|| {
         let root = fleet::memory::resolve_root(&std::env::current_dir().unwrap_or_default());
         std::sync::Arc::new(fleet::memory::Memory::load(&root))
     })
     .await
     .ok();
+    if let Some(memory) = memory.as_ref() {
+        let stream = fleet::calib::Stream::open(fleet::calib::resolve_root(
+            home,
+            std::env::var("HOME").ok().as_deref(),
+        ));
+        fleet::calib::record_embed_timing(
+            &stream,
+            "corpus-load",
+            load_started.elapsed().as_millis(),
+            Some(memory.fact_count()),
+        );
+    }
     // The registry's enabled servers seed the run's lane specs, so the
     // run pre-joins them before its first request (D2). A name the env
     // chain cannot resolve is a named refusal before anything spawns.

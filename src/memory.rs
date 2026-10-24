@@ -2065,6 +2065,15 @@ pub struct Memory {
     graph: crate::recall_graph::Graph,
 }
 
+impl Memory {
+    /// How many facts the corpus loaded — the denominator of an
+    /// embed-timing measurement (KI-249: milliseconds per load over this
+    /// many facts is the tail the embed bounds should come from).
+    pub fn fact_count(&self) -> usize {
+        lock_facts(&self.facts).len()
+    }
+}
+
 /// The mutex, recovered from poison: the only critical sections are
 /// reads and a bounded count update, neither of which can panic, so a
 /// poisoned lock means some unrelated panic tripped the flag and the

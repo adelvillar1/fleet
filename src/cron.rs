@@ -1458,12 +1458,23 @@ pub async fn execute(
     // the caller resolved — exactly the way `fleet run` wires it: the
     // files can change between runs, and a load that cannot complete
     // leaves the run memory-less rather than failing it.
+    // KI-249's measurement: the load's wall clock and its fact count,
+    // one redacted row, so the embed bounds come from a tail.
+    let load_started = std::time::Instant::now();
     let memory = tokio::task::spawn_blocking({
         let root = memory_root.to_path_buf();
         move || std::sync::Arc::new(crate::memory::Memory::load(&root))
     })
     .await
     .ok();
+    if let (Some(memory), Some(calib)) = (memory.as_ref(), calib.as_ref()) {
+        crate::calib::record_embed_timing(
+            calib,
+            "corpus-load",
+            load_started.elapsed().as_millis(),
+            Some(memory.fact_count()),
+        );
+    }
     let options = AgentOptions {
         goal: None,
         model: model.clone(),

@@ -551,6 +551,7 @@ pub enum Row {
     Explain(ExplainRow),
     RouteJudged(RouteJudgedRow),
     Delegation(DelegatedRunRow),
+    EmbedTiming(EmbedTimingRow),
 }
 
 impl Row {
@@ -569,6 +570,7 @@ impl Row {
             Row::Explain(_) => OP_EXPLAIN,
             Row::RouteJudged(_) => OP_ROUTE_JUDGED,
             Row::Delegation(_) => OP_DELEGATION,
+            Row::EmbedTiming(_) => OP_EMBED_TIMING,
         }
     }
 
@@ -587,6 +589,7 @@ impl Row {
             Row::Explain(row) => &row.ts,
             Row::RouteJudged(row) => &row.ts,
             Row::Delegation(row) => &row.ts,
+            Row::EmbedTiming(row) => &row.ts,
         }
     }
 }
@@ -616,6 +619,36 @@ pub fn record_lifecycle(stream: &Stream, kind: &str, name: &str, action: &str, r
         name: name.to_string(),
         action: action.to_string(),
         reason: reason.to_string(),
+    }));
+}
+
+/// The embed-timing op: how long an embedder operation actually took
+/// (KI-249's measurement before any bound moves). Redacted by
+/// construction — a duration, a count, and a kind; never text, never a
+/// path.
+pub const OP_EMBED_TIMING: &str = "embed_timing";
+
+/// One embedder operation's measured duration: the corpus load's whole
+/// embed set over `facts` facts, or the probe's single round trip. The
+/// tail of these rows is what the embed bounds should be set from,
+/// rather than a guess.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct EmbedTimingRow {
+    pub ts: String,
+    /// `corpus-load` or `probe`.
+    pub kind: String,
+    pub ms: u128,
+    /// The fact count for a corpus load; `None` for a probe.
+    pub facts: Option<usize>,
+}
+
+/// Record one embed-timing measurement on the stream, when there is one.
+pub fn record_embed_timing(stream: &Stream, kind: &str, ms: u128, facts: Option<usize>) {
+    stream.record(Row::EmbedTiming(EmbedTimingRow {
+        ts: stamp(),
+        kind: kind.to_string(),
+        ms,
+        facts,
     }));
 }
 
@@ -3138,6 +3171,34 @@ pub fn render_calibration(root: &Path, day: &str, informs_failover: bool) -> Str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_embed_timing_row_rides_the_vocabulary_redacted() {
+        // KI-249's measurement: the row carries a duration, a kind, and a
+        // count — never text, never a path — and reads back through the
+        // day reader with its op named.
+        let root = scratch("embed-timing");
+        let stream = Stream::open(&root);
+        record_embed_timing(&stream, "corpus-load", 1_234, Some(42));
+        drop(stream);
+        // The day file is the system of record: the row is read back raw,
+        // because the reader's own shape has no embed fields yet — the
+        // bounds-setting pass that consumes these rows will read the file
+        // or grow the reader when it exists.
+        let day = today();
+        let text = std::fs::read_to_string(day_path(&root, &day)).expect("the day file");
+        let line: serde_json::Value = serde_json::from_str(
+            text.lines()
+                .find(|line| line.contains("embed_timing"))
+                .expect("the embed_timing row"),
+        )
+        .expect("a JSON row");
+        assert_eq!(line["op"], "embed_timing", "{line}");
+        assert_eq!(line["kind"], "corpus-load", "{line}");
+        assert_eq!(line["ms"], 1_234, "{line}");
+        assert_eq!(line["facts"], 42, "{line}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     /// A scratch root, unique per call.
     fn scratch(tag: &str) -> PathBuf {
