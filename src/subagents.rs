@@ -1633,13 +1633,19 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
         ),
         _ => tools,
     };
-    // The role's skills ride beside the parent's, loaded from the same
-    // home; a role naming a skill that is not there is named on one
+    // The role's skills ride beside the parent's, resolved the way a
+    // foreground run resolves the library — the fleet home is not a
+    // skills library, and loading it directly declared nothing
+    // (KI-294); a role naming a skill that is not there is named on one
     // line and skipped, the skills loader's own forgiving shape.
     let skills = match (&role, home.as_deref()) {
         (Some(role), Some(home)) if !role.skills.is_empty() => {
             let mut skills = skills;
-            let live = crate::skills::load(home);
+            let live = crate::skills::load_unattended(
+                std::env::var("FLEET_SKILLS_DIR").ok().as_deref(),
+                std::env::var("HOME").ok().as_deref(),
+                home,
+            );
             for name in &role.skills {
                 match live.iter().find(|skill| &skill.name == name) {
                     Some(skill) if !skills.iter().any(|carried| carried.name == skill.name) => {

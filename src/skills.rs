@@ -494,6 +494,27 @@ pub fn load_declared(canonical: &Path, home: &Path) -> Vec<Skill> {
         .collect()
 }
 
+/// The skills an unattended run declares: the same canonical library the
+/// interactive paths load — `$FLEET_SKILLS_DIR` or the user home's
+/// `.agents/skills` — falling back to the fleet home's own `skills/`
+/// directory when the library is unresolvable (an isolated test home, a
+/// container). A scheduled run and a delegation ride the declared list a
+/// foreground run sees, instead of reading FLEET_HOME itself as a
+/// library and finding none (KI-294). Both environment inputs are
+/// parameters (the `fleet_home` pattern): the caller's boundary reads
+/// its own environment.
+pub fn load_unattended(env_dir: Option<&str>, user_home: Option<&str>, home: &Path) -> Vec<Skill> {
+    if let Some(dir) = resolve_skills_dir(env_dir, user_home) {
+        return load_declared(&dir, home);
+    }
+    let fallback = home.join(SKILLS_DIR);
+    if fallback.is_dir() {
+        load_declared(&fallback, home)
+    } else {
+        Vec::new()
+    }
+}
+
 /// The canonical skills library: `$FLEET_SKILLS_DIR` when set and
 /// non-empty, else `<user home>/.agents/skills` — the owner's
 /// cross-harness library, so a skill is authored once and every harness
@@ -1850,6 +1871,47 @@ mod tests {
         assert_eq!(
             skill_names(&load_declared(&canonical, &home)),
             vec!["alpha"]
+        );
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn an_unattended_run_declares_the_same_library_a_foreground_run_does() {
+        // KI-294: the scheduled and delegated sites read FLEET_HOME as
+        // the library and declared nothing. The unattended loader
+        // prefers the canonical library and falls back to the fleet
+        // home's own skills/ when the library is unresolvable, so an
+        // isolated home still declares its skills.
+        let home = scratch("unattended-declares");
+        let library = home.join("library");
+        std::fs::create_dir_all(library.join("alpha")).unwrap();
+        std::fs::write(
+            library.join("alpha").join(SKILL_FILE),
+            good_skill("alpha", "use when x", "b"),
+        )
+        .unwrap();
+        std::fs::create_dir_all(home.join(SKILLS_DIR).join("beta")).unwrap();
+        std::fs::write(
+            home.join(SKILLS_DIR).join("beta").join(SKILL_FILE),
+            good_skill("beta", "use when y", "b"),
+        )
+        .unwrap();
+
+        // The canonical library wins when it resolves, and the fleet
+        // home's own skills/ is not read beside it.
+        assert_eq!(
+            skill_names(&load_unattended(
+                Some(library.to_str().unwrap()),
+                None,
+                &home
+            )),
+            vec!["alpha"]
+        );
+
+        // Library unresolvable: the fleet home's own skills/ serves.
+        assert_eq!(
+            skill_names(&load_unattended(None, None, &home)),
+            vec!["beta"]
         );
         let _ = std::fs::remove_dir_all(&home);
     }

@@ -1309,7 +1309,14 @@ pub async fn execute(
     // it as real work in a real session, and the marker is what says a
     // job started it rather than the owner.
     let mut session = Session::create_scheduled(home, &model).map_err(AgentError::Io)?;
-    let skills = crate::skills::load(home);
+    // The declared library, resolved the way a foreground run resolves
+    // it — FLEET_HOME is not a skills library, and loading it directly
+    // declared nothing (KI-294).
+    let skills = crate::skills::load_unattended(
+        std::env::var("FLEET_SKILLS_DIR").ok().as_deref(),
+        std::env::var("HOME").ok().as_deref(),
+        home,
+    );
     // The corpus is loaded per run, off the async worker, from the root
     // the caller resolved — exactly the way `fleet run` wires it: the
     // files can change between runs, and a load that cannot complete
