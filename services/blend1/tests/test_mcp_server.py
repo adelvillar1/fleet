@@ -18,6 +18,8 @@ Run: python3 -m pytest services/blend1/tests/test_mcp_server.py
 import json
 import os
 import subprocess
+
+import pytest
 import sys
 from pathlib import Path
 
@@ -165,3 +167,44 @@ def test_web_rejects_malformed_arguments(tmp_path):
     assert "query" in replies[0]["error"]["message"]
     assert "fetch" in replies[1]["error"]["message"]
     assert "max_urls" in replies[2]["error"]["message"]
+
+
+def test_refresh_without_the_sibling_wiring_names_the_variable(tmp_path):
+    """KI-310: refresh imports the sem1 core at call time, so a client
+    that launched the server with only blend1's own path gets the missing
+    variable NAMED — "refresh needs the sem1 core: set
+    BLEND1_SEM1_PYTHONPATH to services/sem1/src" — not a bare
+    ModuleNotFoundError wearing a -32603."""
+    # The row's precondition, enforced rather than assumed: the child's
+    # interpreter must not carry sem1 (a project venv that installed it
+    # makes the refusal unreachable and a plain refresh legitimate —
+    # skip there and name why).
+    probe = subprocess.run(
+        [sys.executable, "-c", "import sem1"],
+        capture_output=True,
+        env={k: v for k, v in _child_env(tmp_path).items() if k != "BLEND1_PYTHONPATH"},
+    )
+    if probe.returncode == 0:
+        pytest.skip("the child's interpreter imports sem1; no missing variable to name")
+    # A source that exists, so the refresh reaches the embed leg — the
+    # only leg that imports the sem1 core (a no-source refresh returns
+    # before the import and would answer success).
+    source = tmp_path / "doc.md"
+    source.write_text("## Notes\n\nbody\n", encoding="utf-8")
+    replies = _drive(
+        [
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+            _call(
+                "refresh",
+                {"project": "some-project", "sources": [str(source)]},
+            ),
+        ],
+        tmp_path,
+    )
+    reply = replies[-1]
+    assert "error" in reply, reply
+    assert reply["error"]["code"] == -32603, reply
+    message = reply["error"]["message"]
+    assert "refresh needs the sem1 core" in message, message
+    assert "BLEND1_SEM1_PYTHONPATH" in message, message
+    assert "services/sem1/src" in message, message
