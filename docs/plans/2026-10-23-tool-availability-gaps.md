@@ -1,5 +1,5 @@
 ---
-status: draft
+status: completed
 created: 2026-10-23
 updated: 2026-10-23
 slug: tool-availability-gaps
@@ -497,12 +497,12 @@ the surface adapter, skills, loops, workflows, and promotion are
 increment 2 (C22–C26); the capability criteria (C7–C20) follow; C27 is
 the gate.
 
-- [ ] **C0 — every run records what it declared.** One `Declarations`
+- [x] **C0 — every run records what it declared.** One `Declarations`
   record (names, count, tier) is written before the first request; a
   replay reconstructs the list; a run with a disabled tool does not
   carry it. Pinned by an integration test that compares the first
   request's declarations with the log record.
-- [ ] **C1 — the scan measures economics, and the archive bootstraps
+- [x] **C1 — the scan measures economics, and the archive bootstraps
   it.** `fleet tools scan` shows per tool: declared runs, calls,
   successes, errors, denials, tokens per call, declaration tokens,
   age, and state. A fixture with known calls, declarations, and sizes
@@ -515,115 +515,115 @@ the gate.
   every estimate. Disabled tools are included: a disabled tool whose
   owner turns clear the floor is a **reactivation** suggestion, with
   `fleet tools enable` as the action.
-- [ ] **C2 — trial is a window.** A tool declared in fewer than
+- [x] **C2 — trial is a window.** A tool declared in fewer than
   `tools.trial_runs` runs, or younger than `tools.trial_days`, is
   marked trial and never appears as a disable candidate, whatever its
   calls. The fixture pins both boundaries.
-- [ ] **C3 — the candidate gate holds.** A non-protected tool with
+- [x] **C3 — the candidate gate holds.** A non-protected tool with
   zero successes over at least ten declared runs and fourteen days is
   a candidate; a tool with one success is not; a protected tool is
   flagged for review but not proposed; a tool with ten calls and an
   80% error rate is a "broken" candidate. Each boundary is a test.
-- [ ] **C4 — disabling works and reverses.** `fleet tools disable
+- [x] **C4 — disabling works and reverses.** `fleet tools disable
   <name>` persists the name, the next run does not declare it,
   `tool_search` does not return it, and a call to it answers "disabled"
   with the reason and the enable command rather than "unknown".
   `fleet tools enable <name>` puts it back, and the next run declares it
   again. A protected tool needs `--force`, and the refusal names the
   protection.
-- [ ] **C5 — disabling is the only retirement.** No tool's
+- [x] **C5 — disabling is the only retirement.** No tool's
   implementation is removed by this plan; a disabled tool stays in
   `fleet tools` with its metrics and code, and the disable is a config
   entry, not a source change. Re-enabling it needs no rebuild and no
   re-install.
-- [ ] **C6 — the card shows the lifecycle.** The Settings tools card
+- [x] **C6 — the card shows the lifecycle.** The Settings tools card
   shows each tool's state, trial progress, candidate evidence, and a
   and an enable action for disabled tools; a live capture refreshes
   `docs/images/settings-tools.png`.
-- [ ] **C7 — the three lanes are reachable.** `measure`, `imagine`, and
+- [x] **C7 — the three lanes are reachable.** `measure`, `imagine`, and
   `browse` are declared on every ordinary run; a call lazy-joins only
   its lane; a run that never calls them spawns nothing; a missing key
   or browser is the lane's named reason, not a silent empty result.
   Pinned by a test that asserts the declaration names and a zero-spawn
   run.
-- [ ] **C8 — `measure` mirrors the lane.** Its schema is the table +
+- [x] **C8 — `measure` mirrors the lane.** Its schema is the table +
   target + task-type shape; the result carries predictions, confidence,
   verdict, and the provider; the lane's `verdict=error` arrives as an
   `error` result.
-- [ ] **C9 — `imagine` writes files.** The lane's data URIs are decoded
+- [x] **C9 — `imagine` writes files.** The lane's data URIs are decoded
   and written inside the run folder (a default `generated/` directory or
   the requested destination); the result names each path, its size, the
   provider, and the model, and never carries base64 back to the model.
   The count and each image's bytes are bounded.
-- [ ] **C10 — `browse` is one tool over three lane calls.** `open` and
+- [x] **C10 — `browse` is one tool over three lane calls.** `open` and
   `read` in sequence see the same page; `screenshot` writes a PNG and
   returns its path; an unknown action is `error[validation]`.
-- [ ] **C11 — background processes are controllable.** A background
+- [x] **C11 — background processes are controllable.** A background
   `bash` returns an id; `process output` returns only bytes since the
   last read; `process wait` honors its timeout and says "still running";
   `process kill` reaps and reports the exit; the registry is empty at
   run end and a surviving child is named in the report.
-- [ ] **C12 — `apply_patch` is atomic per file.** A multi-file patch
+- [x] **C12 — `apply_patch` is atomic per file.** A multi-file patch
   applies; a file whose hunk does not match is refused with the hunk
   and the nearest line, and no file is partially written; the test
   fixture covers add, update, delete, and a mismatch.
-- [ ] **C13 — `repo_map` is budgeted and deterministic.** Two runs over
+- [x] **C13 — `repo_map` is budgeted and deterministic.** Two runs over
   the same tree produce the same text; the output stays within the
   token budget; definitions and reference counts are present; the
   result says it is heuristic.
-- [ ] **C14 — documents are local-first.** `read_document` returns
+- [x] **C14 — documents are local-first.** `read_document` returns
   markdown with the parser named for a DOCX/XLSX/PDF fixture;
   `Escalate` is a named refusal that mentions the owner's Documents
   surface and performs no network call; an unsupported extension is
   refused by name.
-- [ ] **C15 — a URL is read through the guard.** `web` with `url`
+- [x] **C15 — a URL is read through the guard.** `web` with `url`
   returns the final URL, status, and text; a private-network URL is
   refused by the SSRF guard at the first hop and after a redirect;
   `web` without `url` is unchanged.
-- [ ] **C16 — an artifact reaches the owner.** `send_file` emits one
+- [x] **C16 — an artifact reaches the owner.** `send_file` emits one
   `Artifact` event and returns the path and size; a path outside the
   run folder is refused; the face renders the card with the name and
   size.
-- [ ] **C17 — recall is read-only and bounded.** `recall` returns
+- [x] **C17 — recall is read-only and bounded.** `recall` returns
   ranked facts and skills with scores and sources; a cold session
   index is a named "not warmed" answer; the call makes no model request
   (the mock request count is unchanged).
-- [ ] **C18 — MCP resources and prompts are spoken.** `resources/list`
+- [x] **C18 — MCP resources and prompts are spoken.** `resources/list`
   and `prompts/list` follow cursors; `mcp_resource read` and
   `mcp_prompt get` return bounded content; a server without the
   capability names it; a fixture server drives the test.
-- [ ] **C19 — search is guarded.** `grep` context, type, and multiline
+- [x] **C19 — search is guarded.** `grep` context, type, and multiline
   behave as declared (the fallback names what it cannot do); `glob`
   output honors `.gitignore` when rg is present and says when it fell
   back.
-- [ ] **C20 — file operations are classified.** `file_change` moves,
+- [x] **C20 — file operations are classified.** `file_change` moves,
   copies, deletes, and creates directories; `delete` and `move` ask in
   every mode; `.git`, the fleet home, and the session store are
   refused; a failed same-filesystem rename is a named copy+remove.
-- [ ] **C21 — the sweep disables on its own.** `fleet tools sweep
+- [x] **C21 — the sweep disables on its own.** `fleet tools sweep
   --dry-run` prints the candidates and changes nothing; `--apply` and
   the daily `lifecycle-sweep` job disable at most
   `tools.max_disable_per_sweep` gate candidates, skip protected, trial,
   and already-disabled tools, and record each disable in the
   calibration stream beside the config write. A config write that fails
   disables nothing and names the error.
-- [ ] **C22 — one adapter, four surfaces.** The sweep, coverage, and
+- [x] **C22 — one adapter, four surfaces.** The sweep, coverage, and
   card read a `Surface` adapter; tools, skills, and loops each
   implement declared/used/disable/enable; the workflow entry reads the
   router's workload chains from the calibration rows.
-- [ ] **C23 — skills have the same lifecycle.** A skill's declared runs
+- [x] **C23 — skills have the same lifecycle.** A skill's declared runs
   come from `Skills`, uses from `use_skill`; a gate candidate is
   removed from the prompt and refused by `use_skill` as disabled, while
   its file is untouched; `fleet skills enable` restores it; a
   role-named skill is protected; a fixture pins the metrics and the
   refusal.
-- [ ] **C24 — loops have the same lifecycle.** The cron store records
+- [x] **C24 — loops have the same lifecycle.** The cron store records
   runs, successes, and last success; a job with at least three expected
   fires and no success over the window is disabled by the sweep
   (`enabled: false`), `lifecycle-sweep` and the corpus-refresh jobs are
   protected, and `fleet cron enable` restores it; a schedule-aware
   fixture pins the expected-fire gate.
-- [ ] **C25 — workflows have the same lifecycle.** The router's
+- [x] **C25 — workflows have the same lifecycle.** The router's
   workloads are measured from the calibration rows (selected versus
   routed); a workload below the idle rate after the window is masked, a
   verdict naming it falls back to the default and records `masked`, and
@@ -631,7 +631,7 @@ the gate.
   `composed` are protected; a fixture pins the mask, the fallback, and
   the restore. The execution topologies are named as the next unit and
   are not measured until the judgment plan reads them.
-- [ ] **C26 — promotion is the mirror.** `fleet lifecycle promote`
+- [x] **C26 — promotion is the mirror.** `fleet lifecycle promote`
   clusters the archive's session tasks, and for each cluster with
   enough members suggests the kind its evidence supports: a cadence
   cluster prints a `fleet cron add` line; a shared call sequence files
@@ -640,10 +640,62 @@ the gate.
   native tool files a `source` proposal. Nothing is auto-created; a
   fixture with repeated tasks, a repeated call sequence, and a cadence
   pins each suggestion, and a promoted artifact starts on trial.
-- [ ] **C27 — the gate is green.** `cargo fmt --all --check`,
+- [x] **C27 — the gate is green.** `cargo fmt --all --check`,
   `cargo clippy --all-targets -- -D warnings`, `cargo build
   --release`, `cargo test`; the new tools appear in `fleet tools` and
   the Settings count; the screenshot of the tools card is refreshed.
+
+## Close-out
+
+Eight increments, one commit each, in the plan's own order. The gate
+closed at **1488 lib + 144 integration tests green**, with `cargo fmt
+--all --check`, `cargo clippy --all-targets -- -D warnings`, and
+`cargo build --release` clean.
+
+Where the audit changed the plan:
+
+- **The definition-token bound moved 8,000 → 9,000.** The native
+  surface with memory measures 8,034 tokens across 28 declarations, so
+  it crossed the old bound and every run would have been tiered behind
+  `tool_search`. The count bound moved for the same reason the plan
+  gives for `MAX_VISIBLE_TOOLS`; the token bound had not been revisited
+  since the surface was nineteen declarations. A test now pins the
+  surface against both bounds, so a silent crossing is a red gate.
+- **The descriptions lost their repetition.** `remember`, `subagent`,
+  `improve`, `deck`, `supersede` and the new tools were rewritten
+  shorter, and the two phrases a test pins ("basis is required on every
+  write", "name those companions in missing") were restored verbatim
+  when the trim dropped them.
+- **C14's fixture is a real DOCX**, built in the test by hand (a stored
+  zip with `word/document.xml`) so it depends on no `zip` binary.
+- **C17's session channel has no index to read.** The harness keeps no
+  searchable session index, and `recall` will not embed one inside a
+  call, so the channel reports `NotWarmed` by name — "the session index
+  is not warmed on this machine, so past sessions were not checked" —
+  and a warm-but-empty index is a different sentence. The day an index
+  lands, the probe reads it.
+- **C26's command exists.** `fleet lifecycle promote` was library code
+  with no entry point; it is a command now, with the similarity carried
+  in thousandths because the command enum derives `Eq`.
+
+Bugs the audit found and fixed, each one a case of a claim that passed
+its unit test and failed in use:
+
+- `fleet tools coverage` panicked on every machine: the embedder called
+  `block_in_place` on the current-thread runtime every headless command
+  builds (KI-023), and asked the sem1 lane for `embed` when the wire
+  name is `sem1_embed`.
+- A folder reached through a symlink (macOS `/var` → `/private/var`)
+  never prefix-stripped in `grep`, so a scoped search answered with
+  absolute temp paths; and with `context`, the neighbourhood was
+  counted as matches.
+- `file_change`'s move and copy resolved their destination as a *read*,
+  so the common case — a destination that does not exist yet — failed
+  with "no such file or directory".
+
+Open, deliberately: there is no session index for `recall` to search,
+`repo_map` remains a heuristic rather than a parser, and the LSP is
+still deferred behind `apply_patch` as D4 says.
 
 ## Files to be touched
 
