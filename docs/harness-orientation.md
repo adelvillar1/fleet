@@ -150,6 +150,12 @@ defect; a plan names the ones it fixes.
 - **CI never dispatches** — the Actions budget is exhausted
   (KI-006, owner decision). The gate is local-only. A Gitea-on-Railway
   idea is recorded and undecided.
+- **A scripted smoke never goes unattended against the live roster.**
+  Before any `--yes` run that is supposed to ride the mock, assert the
+  mock's port file exists and fail closed otherwise — and pinning the
+  candidate is not enough by itself (a pinned name whose mock is down
+  has already fallen through). The guard belongs to the smoke pattern
+  itself, written where the smoke is (KI-066's recurrence).
 - **The router is in-process.** `route::select` in this crate is the
   router; there is no router process or port to find. The roster's keys
   live in `<FLEET_HOME>/.env`. The orchestrator — the first model a run
