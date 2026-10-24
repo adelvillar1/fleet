@@ -600,6 +600,73 @@ impl McpServer {
         Ok(roster)
     }
 
+    /// One paged list, bounded: the method's own entries and whether a
+    /// cursor still had pages when the bound was reached.
+    async fn paged(
+        &self,
+        method: &str,
+        params: Value,
+        key: &str,
+    ) -> Result<(Vec<Value>, bool), McpError> {
+        let mut entries: Vec<Value> = Vec::new();
+        let mut cursor: Option<String> = None;
+        for _ in 0..10 {
+            let mut params = params.clone();
+            if let Some(cursor) = &cursor {
+                params["cursor"] = json!(cursor);
+            }
+            let result = self.request(method, params, self.timeouts.list).await?;
+            // MCP wraps a page in its own key (`{"resources": [...]}`);
+            // a server that answers with a bare array is followed too.
+            let page = result
+                .get(key)
+                .and_then(Value::as_array)
+                .cloned()
+                .or_else(|| result.as_array().cloned())
+                .unwrap_or_default();
+            entries.extend(page);
+            cursor = result
+                .get("nextCursor")
+                .and_then(Value::as_str)
+                .filter(|cursor| !cursor.is_empty())
+                .map(str::to_string);
+            if cursor.is_none() {
+                return Ok((entries, false));
+            }
+        }
+        Ok((entries, true))
+    }
+
+    /// `resources/list`, following cursors. The entries are the server's
+    /// own JSON: a resource's shape varies by server, and flattening it
+    /// here would drop the fields the model needs.
+    pub async fn list_resources(&self) -> Result<(Vec<Value>, bool), McpError> {
+        let (entries, cut) = self.paged("resources/list", json!({}), "resources").await?;
+        Ok((entries, cut))
+    }
+
+    /// `resources/read`: the contents of one URI.
+    pub async fn read_resource(&self, uri: &str) -> Result<Value, McpError> {
+        self.request("resources/read", json!({ "uri": uri }), self.timeouts.call)
+            .await
+    }
+
+    /// `prompts/list`, following cursors.
+    pub async fn list_prompts(&self) -> Result<(Vec<Value>, bool), McpError> {
+        let (entries, cut) = self.paged("prompts/list", json!({}), "prompts").await?;
+        Ok((entries, cut))
+    }
+
+    /// `prompts/get`: one prompt's messages, with its arguments.
+    pub async fn get_prompt(&self, name: &str, arguments: Value) -> Result<Value, McpError> {
+        self.request(
+            "prompts/get",
+            json!({ "name": name, "arguments": arguments }),
+            self.timeouts.call,
+        )
+        .await
+    }
+
     /// The last `STDERR_TAIL_BYTES` the child wrote to stderr, as text.
     fn stderr_tail(&self) -> String {
         lock(&self.stderr).text()

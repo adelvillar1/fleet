@@ -139,7 +139,15 @@ pub const DELEGATION_CONCURRENCY: usize = 3;
 pub const MAX_VISIBLE_TOOLS: usize = 32;
 
 /// The most definition tokens one request should carry.
-pub const MAX_DEFINITION_TOKENS: usize = 8_000;
+///
+/// The native surface — ten built-ins and the specials declared on every
+/// run — measures ~6,500 tokens; the runs that also carry memory add
+/// ~1,550 for `remember` and `supersede`, whose descriptions hold rules
+/// a reader cannot infer from their schemas. 8,000 was the bound when the
+/// surface was nineteen declarations and it crossed on the way to
+/// twenty-eight, so it moves with the count bound and for the same
+/// reason: the ceiling is a degradation guard, not a prose budget.
+pub const MAX_DEFINITION_TOKENS: usize = 9_000;
 
 /// The most tool calls one turn may run. A model that returns a hundred
 /// calls is looping, not planning; the calls past this line are refused
@@ -1516,6 +1524,11 @@ impl<'a> Agent<'a> {
         if !skills.is_empty() {
             specs.push(tools::use_skill_spec());
         }
+        // The read half of memory and the MCP meta tools sit where the
+        // live path puts them: before delegation, after the capabilities.
+        specs.push(tools::recall_spec());
+        specs.push(tools::mcp_resource_spec());
+        specs.push(tools::mcp_prompt_spec());
         specs.push(tools::subagent_spec());
         specs.push(tools::convention_spec());
         specs.push(tools::plan_spec());
@@ -1560,6 +1573,21 @@ impl<'a> Agent<'a> {
         };
         if !self.skills.is_empty() && admitted(tools::USE_SKILL_TOOL) {
             specs.push(tools::use_skill_spec());
+        }
+        // The read half rides beside the write half, and rides even when
+        // there is no memory: a run with a skill library still has
+        // something to recall.
+        if admitted(tools::RECALL_TOOL) {
+            specs.push(tools::recall_spec());
+        }
+        // A server's resources and prompts are reachable only by naming
+        // it, so the two tools name it: declared on every run, beside
+        // the tools whose roster they read.
+        if admitted(tools::MCP_RESOURCE_TOOL) {
+            specs.push(tools::mcp_resource_spec());
+        }
+        if admitted(tools::MCP_PROMPT_TOOL) {
+            specs.push(tools::mcp_prompt_spec());
         }
         if self.memory.is_some() && admitted(tools::REMEMBER_TOOL) {
             specs.push(tools::remember_spec());
@@ -3263,6 +3291,74 @@ impl<'a> Agent<'a> {
                 },
             });
         }
+        if name == tools::MCP_RESOURCE_TOOL || name == tools::MCP_PROMPT_TOOL {
+            // A resources or prompts read joins the lane exactly as a
+            // tool call does, so the server's tools are declared either
+            // way. The action is validated here, before a child spawns:
+            // a malformed call must not cost a process.
+            return Ok(
+                match serde_json::from_str::<serde_json::Value>(&call.function.arguments) {
+                    Err(error) => settled(format!(
+                        "error[validation]: arguments were not valid JSON: {error}"
+                    )),
+                    Ok(arguments) => {
+                        let Some(_lane) = arguments
+                            .get("server")
+                            .and_then(|server| server.as_str())
+                            .filter(|server| !server.is_empty())
+                        else {
+                            return Ok(settled(
+                            "error[validation]: field `server` is required and names the MCP server"
+                                .to_string(),
+                        ));
+                        };
+                        match crate::mcp_meta::action_of(name, &arguments) {
+                            Err(reason) => settled(format!("error[validation]: {reason}")),
+                            // It needs the roster, which is the loop's own:
+                            // the serial path is where a lane call already
+                            // lives.
+                            Ok(_) => Prepared::Serial { call: call.clone() },
+                        }
+                    }
+                },
+            );
+        }
+
+        if name == tools::RECALL_TOOL {
+            // A read of what the harness already holds: no model call,
+            // no write, no hit recorded. The ranking is the memory's
+            // own, so this cannot drift from what the assembly chose.
+            return Ok(match serde_json::from_str::<serde_json::Value>(&call.function.arguments) {
+                Err(error) => settled(format!(
+                    "error[validation]: arguments were not valid JSON: {error}"
+                )),
+                Ok(arguments) => match arguments
+                    .get("instruction")
+                    .and_then(|instruction| instruction.as_str())
+                {
+                    None => settled(
+                        "error[validation]: field `instruction` is required and must be a string"
+                            .to_string(),
+                    ),
+                    Some(instruction) => {
+                        let (facts, facts_found) =
+                            crate::recall::facts(self.memory.as_deref(), instruction);
+                        let refs: Vec<crate::skills::SkillRef> =
+                            self.skills.iter().map(crate::skills::SkillRef::from).collect();
+                        let (skills, skills_found) =
+                            crate::recall::skills(&refs, instruction);
+                        let recall = crate::recall::Recall {
+                            facts,
+                            skills,
+                            facts_found,
+                            skills_found,
+                        };
+                        settled(crate::recall::render(instruction, &recall))
+                    }
+                },
+            });
+        }
+
         if name == tools::READ_DOCUMENT_TOOL || name == tools::SEND_FILE_TOOL {
             let read = name == tools::READ_DOCUMENT_TOOL;
             return Ok(match serde_json::from_str(&call.function.arguments) {
@@ -3498,6 +3594,11 @@ impl<'a> Agent<'a> {
                 Err(reason) => (format!("error: {reason}"), truncated),
             });
         }
+        if call.function.name == tools::MCP_RESOURCE_TOOL
+            || call.function.name == tools::MCP_PROMPT_TOOL
+        {
+            return self.run_mcp_meta(call).await;
+        }
         let (lane, lane_tool) = tools::lane_of(&call.function.name)
             .expect("a serial call is a delegation or a lane call");
         self.call_lane(call, lane, lane_tool).await
@@ -3604,6 +3705,39 @@ impl<'a> Agent<'a> {
     /// and one UI event for the user, one `lane_tools` record for the
     /// log — the record is what keeps the model's now-dynamic tool set
     /// reconstructable.
+    /// One resources or prompts call, through the roster and its record.
+    async fn run_mcp_meta(&mut self, call: &ToolCall) -> Result<(String, bool), AgentError> {
+        let arguments = parse_arguments(&call.function.arguments);
+        let lane = arguments
+            .get("server")
+            .and_then(|server| server.as_str())
+            .unwrap_or_default()
+            .to_string();
+        let action = match crate::mcp_meta::action_of(&call.function.name, &arguments) {
+            Ok(action) => action,
+            Err(reason) => return Ok((format!("error[validation]: {reason}"), false)),
+        };
+        let outcome = self.lanes.meta(&lane, action).await;
+        if let Some(tools) = outcome.joined {
+            let count = tools.len();
+            let _ = writeln!(
+                self.progress,
+                "\u{2192} lane {lane} joined \u{2014} {count} tool{}",
+                if count == 1 { "" } else { "s" },
+            );
+            let _ = self.progress.flush();
+            self.emit(UiEvent::LaneJoined {
+                lane: lane.clone(),
+                tool_count: count,
+            });
+            self.record(&Record::LaneTools {
+                lane: lane.clone(),
+                tools,
+            })?;
+        }
+        Ok((outcome.text, outcome.truncated))
+    }
+
     async fn call_lane(
         &mut self,
         call: &ToolCall,
@@ -6185,6 +6319,78 @@ impl LaneRoster {
         }
     }
 
+    /// A resources or prompts operation against one server.
+    ///
+    /// It joins the lane the same way a tool call does — the same lazy
+    /// spawn, the same dead-lane memory — so asking a server for its
+    /// resources declares its tools exactly as calling one would. A
+    /// server that does not implement the capability says so by name:
+    /// MCP answers an unknown method with a JSON-RPC error, and the
+    /// error's text is what the model reads.
+    async fn meta(&mut self, lane: &str, action: crate::mcp_meta::Action) -> LaneOutcome {
+        let mut joined: Option<Vec<LaneTool>> = None;
+        if !self.children.contains_key(lane) {
+            match self.join(lane).await {
+                Ok((server, listed)) => {
+                    let tools = tools::namespaced(lane, &listed);
+                    self.record_hints(&listed, &tools);
+                    joined = Some(tools.clone());
+                    self.order.push(lane.to_string());
+                    self.children.insert(
+                        lane.to_string(),
+                        LaneChild::Live {
+                            server: Box::new(server),
+                            tools,
+                        },
+                    );
+                }
+                Err(reason) => {
+                    let text = format!("error: lane `{lane}` could not start: {reason}");
+                    self.children.insert(
+                        lane.to_string(),
+                        LaneChild::Dead {
+                            reason,
+                            tools: Vec::new(),
+                        },
+                    );
+                    return LaneOutcome {
+                        text,
+                        truncated: false,
+                        joined: None,
+                    };
+                }
+            }
+        }
+        let Some(child) = self.children.get_mut(lane) else {
+            return LaneOutcome {
+                text: format!("error: lane `{lane}` has no child to call"),
+                truncated: false,
+                joined,
+            };
+        };
+        let text = match child {
+            LaneChild::Dead { reason, .. } => format!(
+                "error: lane `{lane}` is dead for this run: {reason}. It is not respawned; call a different lane, or report the failure."
+            ),
+            LaneChild::Live { server, .. } => {
+                let outcome = crate::mcp_meta::run(server, action).await;
+                match outcome {
+                    Ok(text) => text,
+                    Err(reason) => format!("error: {reason}"),
+                }
+            }
+        };
+        let bounded = tools::bound(ToolOutcome {
+            output: text,
+            truncated: false,
+        });
+        LaneOutcome {
+            text: bounded.output,
+            truncated: bounded.truncated,
+            joined,
+        }
+    }
+
     /// The lane call itself, before the output cap. Everything the lane
     /// path does — the lazy join, the dead-lane fail-fast, the call and
     /// its typed failures — and nothing about how much text came back.
@@ -6903,6 +7109,28 @@ mod tests {
         .unwrap()
     }
 
+    /// The native surface, memory included, must fit inside the two
+    /// bounds that decide whether it is declared whole or tiered behind
+    /// `tool_search`. A surface that silently crosses a bound changes
+    /// what every run declares, so the crossing is a test failure rather
+    /// than a number nobody read.
+    #[test]
+    fn the_native_surface_fits_its_own_bounds() {
+        let mut specs = Agent::base_declarations(&[]);
+        specs.push(crate::tools::remember_spec());
+        specs.push(crate::tools::supersede_spec());
+        assert!(
+            specs.len() <= MAX_VISIBLE_TOOLS,
+            "{} declarations against a bound of {MAX_VISIBLE_TOOLS}",
+            specs.len()
+        );
+        let tokens = declaration_tokens(&specs);
+        assert!(
+            tokens <= MAX_DEFINITION_TOKENS,
+            "{tokens} definition tokens against a bound of {MAX_DEFINITION_TOKENS}"
+        );
+    }
+
     #[test]
     fn a_run_with_memory_declares_the_write_path_and_one_without_it_does_not() {
         let home = scratch("memory-declarations");
@@ -6934,6 +7162,9 @@ mod tests {
                 "measure",
                 "imagine",
                 "browse",
+                "recall",
+                "mcp_resource",
+                "mcp_prompt",
                 "remember",
                 "supersede",
                 "subagent",
@@ -6997,7 +7228,7 @@ mod tests {
         // computation over a value the model writes, and neither touches
         // anything outside itself. So does `plan`: it drafts a plan
         // document's declaration, which is the repo's own state.
-        assert_eq!(plain.declarations().len(), 23);
+        assert_eq!(plain.declarations().len(), 26);
         assert_eq!(plain.system_prompt(None), default_prompt());
         let _ = std::fs::remove_dir_all(&home);
         let _ = std::fs::remove_dir_all(&root);

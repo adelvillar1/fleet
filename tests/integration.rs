@@ -1535,6 +1535,188 @@ async fn repo_map_is_deterministic_budgeted_and_names_its_heuristic() {
     std::fs::remove_dir_all(&folder).ok();
 }
 
+/// C17: `recall` reads the harness's own holdings, ranked, and makes no
+/// model request at all.
+#[tokio::test]
+async fn recall_returns_ranked_facts_and_skills_without_a_model_call() {
+    let root = memory_corpus(
+        "recall",
+        &[(
+            "deploy",
+            fact_file(
+                "deploy",
+                "the railway deploy is failing per branch",
+                "inferred",
+                "project",
+                "deploy",
+            ),
+        )],
+    );
+    let memory = std::sync::Arc::new(fleet::memory::Memory::load_with(
+        &root,
+        Box::new(fleet::memory::KeywordOnly),
+    ));
+    let mock = MockApi::start(vec![
+        tool_call_stream(
+            "c1",
+            "recall",
+            r#"{"instruction":"the railway deploy is failing per branch"}"#,
+        ),
+        assistant_stream(TOOL_REPORT),
+    ]);
+    let home = temp_home("recall-tool");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    run_with_memory(
+        &mock,
+        &mut session,
+        Box::new(ApproveAll),
+        Some(memory),
+        None,
+        "what do I know",
+    )
+    .await
+    .unwrap();
+    let (output, _) = tool_result(&session::replay(session.path()).unwrap(), "recall");
+    assert!(output.contains("facts ("), "{output}");
+    assert!(output.contains("deploy"), "{output}");
+    // The numbers and the sources are on the line, not implied.
+    assert!(output.contains("[0."), "a score on each fact: {output}");
+    assert!(output.contains("inferred"), "the basis: {output}");
+    assert!(output.contains("deploy"), "the kind: {output}");
+    // One request per turn and no more: the tool itself called no model.
+    assert_eq!(mock.bodies().len(), 2, "the run's own two requests");
+    std::fs::remove_dir_all(&home).ok();
+    std::fs::remove_dir_all(&root).ok();
+}
+
+/// C17: a query with no match says so, rather than returning an empty
+/// string the model reads as a failure.
+#[tokio::test]
+async fn recall_with_nothing_matching_says_so_by_name() {
+    let mock = MockApi::start(vec![
+        tool_call_stream(
+            "c1",
+            "recall",
+            r#"{"instruction":"who owns the billing service"}"#,
+        ),
+        assistant_stream(TOOL_REPORT),
+    ]);
+    let home = temp_home("recall-empty");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    run_on(&mock, &mut session, Box::new(ApproveAll), 4, "ask")
+        .await
+        .unwrap();
+    let (output, _) = tool_result(&session::replay(session.path()).unwrap(), "recall");
+    assert!(
+        output.contains("nothing in this harness's memory"),
+        "{output}"
+    );
+    std::fs::remove_dir_all(&home).ok();
+}
+
+/// C18: resources and prompts are spoken over the wire, with cursors
+/// followed; a server without the capability is named.
+#[tokio::test]
+async fn mcp_resources_and_prompts_are_listed_and_read() {
+    let fake = FakeMcp::start(vec![
+        serde_json::json!({ "reply": initialize_reply() }),
+        serde_json::json!({ "reply": tools_list_reply(serde_json::json!([])) }),
+        // Page one of resources, with a cursor; page two ends it.
+        serde_json::json!({ "reply": {
+            "jsonrpc": "2.0", "id": "$echo",
+            "result": {
+                "resources": [{"name": "notes", "uri": "file:///notes.md", "mimeType": "text/markdown"}],
+                "nextCursor": "page-2"
+            }
+        } }),
+        serde_json::json!({ "reply": {
+            "jsonrpc": "2.0", "id": "$echo",
+            "result": {
+                "resources": [{"name": "guide", "uri": "file:///guide.md", "mimeType": "text/markdown"}]
+            }
+        } }),
+        serde_json::json!({ "reply": {
+            "jsonrpc": "2.0", "id": "$echo",
+            "result": {"contents": [{"uri": "file:///notes.md", "mimeType": "text/markdown", "text": "# Notes\nthe notes body"}]}
+        } }),
+        serde_json::json!({ "reply": {
+            "jsonrpc": "2.0", "id": "$echo",
+            "error": {"code": -32601, "message": "Method not found"}
+        } }),
+    ]);
+    let mock = MockApi::start(vec![
+        tool_call_stream("c1", "mcp_resource", r#"{"server":"sem1","action":"list"}"#),
+        tool_call_stream(
+            "c2",
+            "mcp_resource",
+            r#"{"server":"sem1","action":"read","uri":"file:///notes.md"}"#,
+        ),
+        tool_call_stream("c3", "mcp_prompt", r#"{"server":"sem1","action":"list"}"#),
+        assistant_stream(TOOL_REPORT),
+    ]);
+    let home = temp_home("mcp-meta");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let client = Client::new(mock.url(), "test-key");
+    let options = AgentOptions {
+        goal: None,
+        model: "test-model".to_string(),
+        identity: None,
+        max_turns: 6,
+        ui_tx: None,
+        lane_specs: Some(lane_specs(&fake)),
+        calib: None,
+        skills: Vec::new(),
+        role_overlay: None,
+        memory: None,
+        scope: None,
+        improve_home: None,
+        gui_prompt: None,
+        compact_now: false,
+        checkpoints: None,
+        file_access: FileAccess::Unrestricted,
+        plan_mode: false,
+    };
+    let mut progress = Vec::new();
+    {
+        let mut agent = Agent::new(
+            &client,
+            options,
+            &mut session,
+            Box::new(ApproveAll),
+            &mut progress,
+        )
+        .unwrap();
+        agent.run("read its resources").await.unwrap();
+    }
+
+    let records = session::replay(session.path()).unwrap();
+    let results: Vec<(String, String)> = records
+        .iter()
+        .filter_map(|record| match record {
+            Record::ToolResult { name, output, .. } => Some((name.clone(), output.clone())),
+            _ => None,
+        })
+        .collect();
+    let listed = &results[0].1;
+    assert!(listed.contains("- notes"), "{listed}");
+    // The cursor was followed: page two's entry is there too.
+    assert!(listed.contains("- guide"), "{listed}");
+    let read = &results[1].1;
+    assert!(read.contains("the notes body"), "{read}");
+    assert!(read.contains("(text/markdown)"), "{read}");
+    // A capability the server does not implement is named, not echoed.
+    let prompts = &results[2].1;
+    assert!(prompts.contains("does not implement prompts"), "{prompts}");
+    // Asking for its resources joined the lane, with its tools declared.
+    assert!(
+        records
+            .iter()
+            .any(|record| matches!(record, Record::LaneTools { .. })),
+        "{records:?}"
+    );
+    std::fs::remove_dir_all(&home).ok();
+}
+
 /// C14: a document is read locally and the parser is named; a format the
 /// local parsers do not handle is refused by name, never shipped.
 #[tokio::test]
@@ -3513,6 +3695,9 @@ async fn a_full_run_calls_the_real_sem1_lane_through_the_mock_api() {
             "measure",
             "imagine",
             "browse",
+            "recall",
+            "mcp_resource",
+            "mcp_prompt",
             "subagent",
             "convention",
             "plan",
@@ -3529,7 +3714,7 @@ async fn a_full_run_calls_the_real_sem1_lane_through_the_mock_api() {
         ]
     );
     let second = declared_tools(&bodies[1]);
-    assert_eq!(second.len(), 27, "{second:?}");
+    assert_eq!(second.len(), 30, "{second:?}");
     assert_eq!(
         &second[..4],
         &["bash", "read_file", "write_file", "list_dir"]
@@ -3548,11 +3733,14 @@ async fn a_full_run_calls_the_real_sem1_lane_through_the_mock_api() {
     // The native tools ride before the joined lane's, and the lane's
     // tools are the deferred tail of the declaration list.
     assert_eq!(
-        &second[10..23],
+        &second[10..26],
         &[
             "measure",
             "imagine",
             "browse",
+            "recall",
+            "mcp_resource",
+            "mcp_prompt",
             "subagent",
             "convention",
             "plan",
@@ -3720,8 +3908,8 @@ async fn a_dead_lane_child_degrades_the_run_without_killing_it() {
     // model can still see them, and calling one is a typed failure.
     let bodies = mock.bodies();
     assert_eq!(bodies.len(), 3);
-    assert_eq!(declared_tools(&bodies[1]).len(), 24);
-    assert_eq!(declared_tools(&bodies[2]).len(), 24);
+    assert_eq!(declared_tools(&bodies[1]).len(), 27);
+    assert_eq!(declared_tools(&bodies[2]).len(), 27);
     assert!(declared_tools(&bodies[1]).contains(&"mcp__sem1__probe".to_string()));
 
     std::fs::remove_dir_all(&home).ok();
@@ -4093,7 +4281,7 @@ async fn a_denied_lane_call_never_spawns_the_lane() {
     // No lane joined, so the second request still declares only the
     // built-ins and the delegation tool.
     let bodies = mock.bodies();
-    assert_eq!(declared_tools(&bodies[1]).len(), 23);
+    assert_eq!(declared_tools(&bodies[1]).len(), 26);
 
     std::fs::remove_dir_all(&home).ok();
 }
@@ -4163,7 +4351,7 @@ async fn a_lane_that_cannot_launch_fails_its_call_and_the_run_answers() {
     assert!(records
         .iter()
         .all(|record| !matches!(record, Record::LaneTools { .. })));
-    assert_eq!(declared_tools(&mock.bodies()[1]).len(), 23);
+    assert_eq!(declared_tools(&mock.bodies()[1]).len(), 26);
 
     std::fs::remove_dir_all(&home).ok();
 }
@@ -5826,7 +6014,7 @@ async fn a_selected_skills_body_rides_the_tool_result_path() {
     // The declarations carry `use_skill` beside the four built-ins, the
     // delegation tool beside that, and the convention lookup after it.
     let declared = declared_tools(&bodies[0]);
-    assert_eq!(declared.len(), 24, "{declared:?}");
+    assert_eq!(declared.len(), 27, "{declared:?}");
     assert!(declared.contains(&"use_skill".to_string()), "{declared:?}");
     assert!(declared.contains(&"subagent".to_string()), "{declared:?}");
     assert!(declared.contains(&"convention".to_string()), "{declared:?}");
@@ -6697,6 +6885,9 @@ async fn a_runs_request_carries_the_assembled_memory_block() {
             "measure",
             "imagine",
             "browse",
+            "recall",
+            "mcp_resource",
+            "mcp_prompt",
             "remember",
             "supersede",
             "subagent",
@@ -6851,6 +7042,9 @@ async fn a_memory_less_run_is_byte_for_byte_unchanged() {
             "measure",
             "imagine",
             "browse",
+            "recall",
+            "mcp_resource",
+            "mcp_prompt",
             "subagent",
             "convention",
             "plan",
@@ -6915,6 +7109,9 @@ async fn a_memory_less_run_is_byte_for_byte_unchanged() {
             "measure",
             "imagine",
             "browse",
+            "recall",
+            "mcp_resource",
+            "mcp_prompt",
             "remember",
             "supersede",
             "subagent",
@@ -7215,6 +7412,9 @@ async fn the_improve_tool_files_a_proposal_inside_a_run_and_never_applies_one() 
             "measure",
             "imagine",
             "browse",
+            "recall",
+            "mcp_resource",
+            "mcp_prompt",
             "subagent",
             "improve",
             "convention",
@@ -7292,6 +7492,9 @@ async fn a_run_without_a_home_does_not_declare_the_improve_tool() {
             "measure",
             "imagine",
             "browse",
+            "recall",
+            "mcp_resource",
+            "mcp_prompt",
             "subagent",
             "convention",
             "plan",
