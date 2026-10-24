@@ -1276,6 +1276,19 @@
     return row(el0, event);
   }
 
+  // One file handed to the owner. The card is the delivery: the name and
+  // size are on it, and opening it puts the file in the pane the way any
+  // other path does.
+  function artifactRow(event) {
+    var el0 = card('artifact', '\u25c7', event.path,
+      (event.note ? event.note + ' \u00b7 ' : '') + bytes(event.size || 0),
+      null, 'open');
+    el0.querySelector('.card-open').addEventListener('click', function () {
+      openFile(event.path);
+    });
+    return row(el0, event);
+  }
+
   var STRIP_LABEL = {
     routed: 'route', memory: 'memory', skills: 'skills', lane: 'lane',
     cron: 'cron', compacted: 'compaction', checkpoint: 'checkpoint',
@@ -1866,6 +1879,10 @@
         break;
       case 'deck':
         deckRow(event);
+        break;
+      case 'artifact':
+        closeAssistant();
+        artifactRow(event);
         break;
       case 'delegation':
         applyDelegation(event);
@@ -2463,7 +2480,7 @@
       // A replayed session can begin at any point. The first run-shaped
       // event creates the card; a cron or a skills boot event does not.
       if (['turn', 'routed', 'tool_call', 'tool_result', 'seat', 'memory',
-        'lane', 'delegation', 'control', 'plan', 'finished', 'failed'].indexOf(event.type) === -1) {
+        'lane', 'delegation', 'control', 'plan', 'artifact', 'finished', 'failed'].indexOf(event.type) === -1) {
         return;
       }
       resetProcess(face.planMode ? 'plan' : 'run', true);
@@ -2514,6 +2531,10 @@
         p.stage = 'act';
         p.lanes += 1;
         p.last = 'lane ' + (event.lane || '') + ' \u00b7 ' + (event.tools || 0) + ' tools';
+        break;
+      case 'artifact':
+        p.stage = 'act';
+        p.last = 'handed over ' + (event.path || '');
         break;
       case 'delegation':
         p.stage = 'act';

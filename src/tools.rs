@@ -105,6 +105,10 @@ pub const COMPUTER_USE_TOOL: &str = "computer_use";
 /// tree's own as its vocabulary — a fact the model cannot check is a
 /// fact it will guess at.
 pub const WEB_TOOL: &str = "web";
+/// Read a document the local parsers handle, naming the parser.
+pub const READ_DOCUMENT_TOOL: &str = "read_document";
+/// Hand a file to the owner: an artifact card in the face.
+pub const SEND_FILE_TOOL: &str = "send_file";
 
 /// The arrow a forwarded subagent call's name carries. A subagent's own
 /// tool calls reach the owner's Approver through the parent's gate, and
@@ -680,7 +684,11 @@ pub fn web_spec() -> ToolSpec {
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "The search query.",
+                    "description": "The search query. Required unless `url` is given.",
+                },
+                "url": {
+                    "type": "string",
+                    "description": "Read this page directly instead of searching: returns the final URL after redirects, the status, the content type, and the readable text. Refused for a private or loopback address."
                 },
                 "fetch": {
                     "type": "boolean",
@@ -691,7 +699,43 @@ pub fn web_spec() -> ToolSpec {
                     "description": "How many pages to fetch at most. Clamped by the lane's own bound; a larger number is not an error, it is just capped.",
                 },
             },
-            "required": [ "query" ],
+            "required": [],
+        }),
+    )
+}
+
+/// The `read_document` declaration.
+pub fn read_document_spec() -> ToolSpec {
+    ToolSpec::function(
+        READ_DOCUMENT_TOOL,
+        "Read a document (DOCX, XLSX, PPTX, PDF, HTML, CSV, and the text formats) as markdown. The local parsers run on this machine and the result names which one read it, so nothing is sent to a third party. When the local parsers cannot read a format, the refusal names it and points at the owner's Documents surface rather than shipping the file anywhere. Use this instead of read_file for anything that is not plain text.",
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path": { "type": "string", "description": "The document's path." },
+                "max_chars": {
+                    "type": "integer", "minimum": 1000, "maximum": 200000,
+                    "description": "How much of the extracted text to return. Default 30000."
+                },
+            },
+            "required": ["path"],
+        }),
+    )
+}
+
+/// The `send_file` declaration: the one tool whose result is for the
+/// owner rather than for the model.
+pub fn send_file_spec() -> ToolSpec {
+    ToolSpec::function(
+        SEND_FILE_TOOL,
+        "Hand a file to the owner. The face shows a card with the file's name and size that opens or downloads it. Use it when the deliverable is the file itself — a report, an image, a rendered document — rather than text you can paste. The path must be inside the chat's folder.",
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path": { "type": "string", "description": "The file to hand over, inside the run's folder." },
+                "note": { "type": "string", "description": "One line for the card: what this file is." },
+            },
+            "required": ["path"],
         }),
     )
 }
@@ -1223,6 +1267,8 @@ pub fn known_tool_names() -> Vec<&'static str> {
         DECK_TOOL,
         VISION_TOOL,
         WEB_TOOL,
+        READ_DOCUMENT_TOOL,
+        SEND_FILE_TOOL,
         COMPUTER_USE_TOOL,
         TOOL_SEARCH_TOOL,
     ]);
@@ -2097,6 +2143,119 @@ fn run_repo_map(arguments: &serde_json::Value, root: Option<&Path>) -> Result<To
         output: map.text,
         truncated: map.shown < map.files,
     })
+}
+
+/// `read_document`: the local parsers, with the parser named.
+///
+/// No egress, ever. A format the local parsers cannot read is refused by
+/// name and pointed at the owner's Documents surface; a model tool that
+/// silently shipped a document to a parser vendor would be an exfiltration
+/// channel the owner never approved.
+pub fn run_read_document(
+    arguments: &serde_json::Value,
+    root: Option<&Path>,
+) -> Result<ToolOutcome, String> {
+    let path = string_arg(arguments, "path")?;
+    let max_chars = arguments
+        .get("max_chars")
+        .and_then(|value| value.as_u64())
+        .unwrap_or(30_000) as usize;
+    let resolved = match root {
+        Some(root) => resolve_in_root(root, &path)?,
+        None => PathBuf::from(&path),
+    };
+    if !resolved.is_file() {
+        return Err(missing_path(&path, &resolved));
+    }
+    match crate::documents::route(&resolved) {
+        crate::documents::Route::Local | crate::documents::Route::Pdf => {}
+        crate::documents::Route::Escalate => {
+            return Err(format!(
+                "`{path}`: the local parsers do not read this format, and this tool never sends a document off this machine. The owner's Documents surface is the escalation path for it."
+            ))
+        }
+        crate::documents::Route::Unsupported => {
+            return Err(format!(
+                "`{path}`: no parser handles this extension. read_file reads plain text; this tool reads documents."
+            ))
+        }
+    }
+    let services = match crate::lanes::services_root() {
+        Ok(services) => services,
+        Err(error) => {
+            return Err(format!(
+                "`{path}`: the documents lane is not installed ({error}). The owner's Documents surface can read it."
+            ))
+        }
+    };
+    match crate::documents::extract(&resolved, &services) {
+        crate::documents::Outcome::Extracted(text) => {
+            let total = text.markdown.chars().count();
+            let (body, cut) = if total > max_chars {
+                (
+                    text.markdown.chars().take(max_chars).collect::<String>(),
+                    true,
+                )
+            } else {
+                (text.markdown.clone(), false)
+            };
+            let pages = match text.pages {
+                Some(pages) => format!(", {pages} page(s)"),
+                None => String::new(),
+            };
+            Ok(ToolOutcome {
+                output: format!(
+                    "read by {}{pages}; {total} char(s){}\n\n{body}",
+                    text.parser,
+                    if cut {
+                        format!(", showing the first {max_chars}")
+                    } else {
+                        String::new()
+                    }
+                ),
+                truncated: cut,
+            })
+        }
+        crate::documents::Outcome::Escalate { reason } => Err(format!(
+            "`{path}`: the local extraction could not read it ({reason}). This tool never sends a document off this machine; the owner's Documents surface is the escalation path."
+        )),
+        crate::documents::Outcome::Refused { code, reason } => {
+            Err(format!("`{path}`: the local extractor refused it ({code}): {reason}"))
+        }
+    }
+}
+
+/// `send_file`'s check: the file exists, and it is inside the run's
+/// folder when the run has one.
+///
+/// The check lives here, and the card lives in the agent's own event
+/// path: the tool decides whether the file may be handed over, the run
+/// decides what the face draws.
+pub fn check_send_file(
+    arguments: &serde_json::Value,
+    root: Option<&Path>,
+) -> Result<(String, PathBuf, u64, Option<String>), String> {
+    let path = string_arg(arguments, "path")?;
+    let note = arguments
+        .get("note")
+        .and_then(|value| value.as_str())
+        .map(|note| note.to_string());
+    let resolved = match root {
+        Some(root) => resolve_in_root(root, &path)?,
+        None => {
+            return Err(
+                "`send_file` needs the chat's folder: a file handed over with no boundary is a path the owner did not choose"
+                    .to_string(),
+            )
+        }
+    };
+    if !resolved.is_file() {
+        return Err(missing_path(&path, &resolved));
+    }
+    let size = std::fs::metadata(&resolved)
+        .map(|meta| meta.len())
+        .unwrap_or(0);
+    Ok((path, resolved, size, note))
 }
 
 /// The declaration of the deferred-tool search, built when the catalog

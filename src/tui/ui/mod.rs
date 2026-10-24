@@ -2295,6 +2295,34 @@ fn entry_lines(entry: &Entry, width: usize) -> Vec<Line<'static>> {
             }
             lines
         }
+        Entry::Artifact(card) => {
+            // The same family as the deck card: a settled verb, then the
+            // fact under it. The file itself is the deliverable and a
+            // terminal cannot open it, so the path is what matters.
+            let mut lines = vec![Line::from(vec![
+                Span::styled(" \u{25c7} ", Style::new().fg(palette::ACCENT)),
+                Span::styled(
+                    "handed over",
+                    Style::new()
+                        .fg(palette::ACCENT)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled("  ", Style::new()),
+                Span::styled(
+                    format!("{} ({} bytes)", card.path, card.size),
+                    Style::new().fg(palette::TEXT),
+                ),
+            ])];
+            if let Some(note) = &card.note {
+                for chunk in wrap(note, width.saturating_sub(4).max(8)) {
+                    lines.push(Line::from(vec![
+                        Span::styled("   \u{2514} ", Style::new().fg(palette::DIM)),
+                        Span::styled(chunk, Style::new().fg(palette::DIM)),
+                    ]));
+                }
+            }
+            lines
+        }
         Entry::Cron(card) => {
             // A scheduled fire is the same family again, in the same
             // two-line shape as the compaction card: a short settled

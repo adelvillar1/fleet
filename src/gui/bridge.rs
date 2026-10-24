@@ -5957,6 +5957,14 @@ fn describe(event: &UiEvent) -> Value {
         UiEvent::LaneJoined { lane, tool_count } => {
             json!({"type": "lane", "lane": lane, "tools": tool_count})
         }
+        // A file handed to the owner: the card is the delivery, and the
+        // path is what the owner opens.
+        UiEvent::Artifact { path, size, note } => json!({
+            "type": "artifact",
+            "path": path,
+            "size": size,
+            "note": note,
+        }),
         UiEvent::Routed {
             provider,
             model,

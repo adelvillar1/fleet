@@ -183,6 +183,52 @@ pub struct Page {
     pub body: String,
 }
 
+impl Readable {
+    /// The page as plain text, block by block, for a caller that shows
+    /// prose rather than rendering it.
+    ///
+    /// The shape is markdown-ish on purpose: a heading keeps its level as
+    /// `#`s, an item keeps its `-`, code keeps its fence. A model reading
+    /// this gets the page's structure without a second renderer, and the
+    /// text stays quotable — which is what a citation needs.
+    pub fn plain_text(&self) -> String {
+        let mut text = String::new();
+        for block in &self.blocks {
+            match block {
+                Block::Heading {
+                    level,
+                    text: heading,
+                } => {
+                    text.push_str(&"#".repeat((*level).min(6) as usize));
+                    text.push(' ');
+                    text.push_str(heading);
+                    text.push_str("\n\n");
+                }
+                Block::Paragraph(text_) => {
+                    text.push_str(text_);
+                    text.push_str("\n\n");
+                }
+                Block::Item(item) => {
+                    text.push_str("- ");
+                    text.push_str(item);
+                    text.push('\n');
+                }
+                Block::Code(code) => {
+                    text.push_str("```\n");
+                    text.push_str(code);
+                    text.push_str("\n```\n\n");
+                }
+                Block::Quote(quote) => {
+                    text.push_str("> ");
+                    text.push_str(quote);
+                    text.push_str("\n\n");
+                }
+            }
+        }
+        text.trim_end().to_string()
+    }
+}
+
 /// Fetch one page, following and re-validating every redirect.
 pub fn fetch(url: &str) -> Result<Page, FetchError> {
     let agent = ureq::AgentBuilder::new()

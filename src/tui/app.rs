@@ -83,6 +83,10 @@ pub enum Entry {
     /// One deck the run built. The browser face renders the fragment; a
     /// terminal carries the fact that it exists and its shape.
     Deck(DeckCard),
+    /// One file handed to the owner. The browser face draws a card with
+    /// a download; a terminal names the path and its size, which is what
+    /// a terminal can do with a file.
+    Artifact(ArtifactCard),
 }
 
 /// One tool call as a card: name, one-line summary, a status dot, and the
@@ -93,6 +97,15 @@ pub struct ToolCard {
     pub summary: String,
     pub status: ToolStatus,
     pub preview: String,
+}
+
+/// One file handed to the owner: where it is, how big, and the note the
+/// model attached.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArtifactCard {
+    pub path: String,
+    pub size: u64,
+    pub note: Option<String>,
 }
 
 /// One lane joining a run: its name and how many tools it brought into
@@ -1406,6 +1419,15 @@ impl App {
                         preview,
                     })),
                 }
+            }
+            UiEvent::Artifact { path, size, note } => {
+                // The TUI has no download affordance: it names the file
+                // and where it is, which is what a terminal can do.
+                self.flush_streaming();
+                self.run.stage = Stage::Act;
+                self.run.last = format!("artifact {path}");
+                self.entries
+                    .push(Entry::Artifact(ArtifactCard { path, size, note }));
             }
             UiEvent::LaneJoined { lane, tool_count } => {
                 // A lane joining the run is a fact about the run, not

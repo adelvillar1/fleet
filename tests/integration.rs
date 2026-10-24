@@ -1535,6 +1535,163 @@ async fn repo_map_is_deterministic_budgeted_and_names_its_heuristic() {
     std::fs::remove_dir_all(&folder).ok();
 }
 
+/// C14: a document is read locally and the parser is named; a format the
+/// local parsers do not handle is refused by name, never shipped.
+#[tokio::test]
+async fn read_document_names_its_parser_and_refuses_what_it_cannot_read() {
+    let folder = std::env::temp_dir().join(format!("fleet-doc-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&folder);
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(folder.join("rows.csv"), "name,qty\nwidget,3\n").unwrap();
+    std::fs::write(folder.join("photo.png"), "not really a png").unwrap();
+    std::fs::write(folder.join("archive.zip"), "not really a zip").unwrap();
+
+    let mock = MockApi::start(vec![
+        tool_call_stream("c1", "read_document", r#"{"path":"rows.csv"}"#),
+        tool_call_stream("c2", "read_document", r#"{"path":"photo.png"}"#),
+        tool_call_stream("c3", "read_document", r#"{"path":"archive.zip"}"#),
+        assistant_stream(TOOL_REPORT),
+    ]);
+    let home = temp_home("read-document");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    run_in_folder(&mock, &mut session, &folder, 4)
+        .await
+        .unwrap();
+    let outputs: Vec<String> = session::replay(session.path())
+        .unwrap()
+        .iter()
+        .filter_map(|record| match record {
+            Record::ToolResult { name, output, .. } if name == "read_document" => {
+                Some(output.clone())
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(outputs.len(), 3, "{outputs:?}");
+    assert!(outputs[0].starts_with("read by local:"), "{}", outputs[0]);
+    assert!(outputs[0].contains("widget"), "{}", outputs[0]);
+    // No egress, and the refusal points at the owner's own surface.
+    assert!(
+        outputs[1].contains("never sends a document off this machine"),
+        "{}",
+        outputs[1]
+    );
+    // An extension no parser claims is refused by name, too.
+    assert!(
+        outputs[2].contains("no parser handles this extension"),
+        "{}",
+        outputs[2]
+    );
+    std::fs::remove_dir_all(&home).ok();
+    std::fs::remove_dir_all(&folder).ok();
+}
+
+/// C16: handing a file over emits one artifact event and returns the
+/// path and size; a path outside the run's folder is refused.
+#[tokio::test]
+async fn send_file_emits_one_artifact_and_refuses_a_path_outside_the_folder() {
+    let folder = std::env::temp_dir().join(format!("fleet-send-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&folder);
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(folder.join("report.md"), "# Report\n").unwrap();
+
+    let mock = MockApi::start(vec![
+        tool_call_stream(
+            "c1",
+            "send_file",
+            r#"{"path":"report.md","note":"the quarter's numbers"}"#,
+        ),
+        tool_call_stream("c2", "send_file", r#"{"path":"../../etc/hosts"}"#),
+        assistant_stream(TOOL_REPORT),
+    ]);
+    let home = temp_home("send-file");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let (ui_tx, mut ui_rx) = tokio::sync::mpsc::unbounded_channel::<UiEvent>();
+    {
+        let client = Client::new(mock.url(), "test-key");
+        let options = AgentOptions {
+            goal: None,
+            model: "test-model".to_string(),
+            identity: None,
+            max_turns: 4,
+            ui_tx: Some(ui_tx.clone()),
+            lane_specs: None,
+            calib: None,
+            skills: Vec::new(),
+            role_overlay: None,
+            memory: None,
+            scope: None,
+            improve_home: None,
+            gui_prompt: None,
+            compact_now: false,
+            checkpoints: None,
+            file_access: FileAccess::Folder(folder.clone()),
+            plan_mode: false,
+        };
+        let mut progress = Vec::new();
+        let mut agent = Agent::new(
+            &client,
+            options,
+            &mut session,
+            Box::new(ApproveAll),
+            &mut progress,
+        )
+        .unwrap();
+        agent.run("hand it over").await.unwrap();
+    }
+    drop(ui_tx);
+    let mut artifacts = Vec::new();
+    while let Some(event) = ui_rx.recv().await {
+        if let UiEvent::Artifact { path, size, note } = event {
+            artifacts.push((path, size, note));
+        }
+    }
+    assert_eq!(artifacts.len(), 1, "{artifacts:?}");
+    assert_eq!(artifacts[0].0, "report.md");
+    assert_eq!(artifacts[0].1, 9);
+    assert_eq!(artifacts[0].2.as_deref(), Some("the quarter's numbers"));
+
+    let outputs: Vec<String> = session::replay(session.path())
+        .unwrap()
+        .iter()
+        .filter_map(|record| match record {
+            Record::ToolResult { name, output, .. } if name == "send_file" => Some(output.clone()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        outputs[0].contains("handed `report.md` to the owner (9 bytes)"),
+        "{}",
+        outputs[0]
+    );
+    assert!(outputs[1].contains("error:"), "{}", outputs[1]);
+    std::fs::remove_dir_all(&home).ok();
+    std::fs::remove_dir_all(&folder).ok();
+}
+
+/// C15: a URL is read through the guard. A private address is refused at
+/// the first hop, and the refusal is the guard's sentence, not a fetch
+/// failure.
+#[tokio::test]
+async fn web_with_a_url_reads_through_the_guard_and_refuses_a_private_hop() {
+    let mock = MockApi::start(vec![
+        tool_call_stream("c1", "web", r#"{"url":"http://127.0.0.1:9/"}"#),
+        assistant_stream(TOOL_REPORT),
+    ]);
+    let home = temp_home("web-url");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    run_on(&mock, &mut session, Box::new(ApproveAll), 4, "read it")
+        .await
+        .unwrap();
+    let (output, _) = tool_result(&session::replay(session.path()).unwrap(), "web");
+    assert!(output.starts_with("error:"), "{output}");
+    assert!(
+        output.contains("loopback") || output.contains("private"),
+        "the guard's own sentence, not a transport error: {output}"
+    );
+    std::fs::remove_dir_all(&home).ok();
+}
+
 /// The `process` tool controls what `bash run_in_background` started:
 /// incremental output, a bounded wait, and a kill. The registry dies
 /// with the run, so an unknown id is a named error.
@@ -3362,6 +3519,8 @@ async fn a_full_run_calls_the_real_sem1_lane_through_the_mock_api() {
             "deck",
             "vision",
             "web",
+            "read_document",
+            "send_file",
             "computer_use",
             // The background handle: a command started
             // in the background is controllable only if the
@@ -3370,7 +3529,7 @@ async fn a_full_run_calls_the_real_sem1_lane_through_the_mock_api() {
         ]
     );
     let second = declared_tools(&bodies[1]);
-    assert_eq!(second.len(), 25, "{second:?}");
+    assert_eq!(second.len(), 27, "{second:?}");
     assert_eq!(
         &second[..4],
         &["bash", "read_file", "write_file", "list_dir"]
@@ -3389,7 +3548,7 @@ async fn a_full_run_calls_the_real_sem1_lane_through_the_mock_api() {
     // The native tools ride before the joined lane's, and the lane's
     // tools are the deferred tail of the declaration list.
     assert_eq!(
-        &second[10..21],
+        &second[10..23],
         &[
             "measure",
             "imagine",
@@ -3400,6 +3559,8 @@ async fn a_full_run_calls_the_real_sem1_lane_through_the_mock_api() {
             "deck",
             "vision",
             "web",
+            "read_document",
+            "send_file",
             "computer_use",
             // The background handle: a command started
             // in the background is controllable only if the
@@ -3559,8 +3720,8 @@ async fn a_dead_lane_child_degrades_the_run_without_killing_it() {
     // model can still see them, and calling one is a typed failure.
     let bodies = mock.bodies();
     assert_eq!(bodies.len(), 3);
-    assert_eq!(declared_tools(&bodies[1]).len(), 22);
-    assert_eq!(declared_tools(&bodies[2]).len(), 22);
+    assert_eq!(declared_tools(&bodies[1]).len(), 24);
+    assert_eq!(declared_tools(&bodies[2]).len(), 24);
     assert!(declared_tools(&bodies[1]).contains(&"mcp__sem1__probe".to_string()));
 
     std::fs::remove_dir_all(&home).ok();
@@ -3932,7 +4093,7 @@ async fn a_denied_lane_call_never_spawns_the_lane() {
     // No lane joined, so the second request still declares only the
     // built-ins and the delegation tool.
     let bodies = mock.bodies();
-    assert_eq!(declared_tools(&bodies[1]).len(), 21);
+    assert_eq!(declared_tools(&bodies[1]).len(), 23);
 
     std::fs::remove_dir_all(&home).ok();
 }
@@ -4002,7 +4163,7 @@ async fn a_lane_that_cannot_launch_fails_its_call_and_the_run_answers() {
     assert!(records
         .iter()
         .all(|record| !matches!(record, Record::LaneTools { .. })));
-    assert_eq!(declared_tools(&mock.bodies()[1]).len(), 21);
+    assert_eq!(declared_tools(&mock.bodies()[1]).len(), 23);
 
     std::fs::remove_dir_all(&home).ok();
 }
@@ -5665,7 +5826,7 @@ async fn a_selected_skills_body_rides_the_tool_result_path() {
     // The declarations carry `use_skill` beside the four built-ins, the
     // delegation tool beside that, and the convention lookup after it.
     let declared = declared_tools(&bodies[0]);
-    assert_eq!(declared.len(), 22, "{declared:?}");
+    assert_eq!(declared.len(), 24, "{declared:?}");
     assert!(declared.contains(&"use_skill".to_string()), "{declared:?}");
     assert!(declared.contains(&"subagent".to_string()), "{declared:?}");
     assert!(declared.contains(&"convention".to_string()), "{declared:?}");
@@ -6544,6 +6705,8 @@ async fn a_runs_request_carries_the_assembled_memory_block() {
             "deck",
             "vision",
             "web",
+            "read_document",
+            "send_file",
             "computer_use",
             // The background handle: a command started
             // in the background is controllable only if the
@@ -6694,6 +6857,8 @@ async fn a_memory_less_run_is_byte_for_byte_unchanged() {
             "deck",
             "vision",
             "web",
+            "read_document",
+            "send_file",
             "computer_use",
             // The background handle: a command started
             // in the background is controllable only if the
@@ -6758,6 +6923,8 @@ async fn a_memory_less_run_is_byte_for_byte_unchanged() {
             "deck",
             "vision",
             "web",
+            "read_document",
+            "send_file",
             "computer_use",
             // The background handle: a command started
             // in the background is controllable only if the
@@ -7055,6 +7222,8 @@ async fn the_improve_tool_files_a_proposal_inside_a_run_and_never_applies_one() 
             "deck",
             "vision",
             "web",
+            "read_document",
+            "send_file",
             "computer_use",
             // The background handle: a command started
             // in the background is controllable only if the
@@ -7129,6 +7298,8 @@ async fn a_run_without_a_home_does_not_declare_the_improve_tool() {
             "deck",
             "vision",
             "web",
+            "read_document",
+            "send_file",
             "computer_use",
             // The background handle: a command started
             // in the background is controllable only if the
