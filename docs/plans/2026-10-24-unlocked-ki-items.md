@@ -1,5 +1,5 @@
 ---
-status: active
+status: completed
 created: 2026-10-24
 updated: 2026-10-24
 slug: unlocked-ki-items
@@ -100,27 +100,27 @@ the instrumentation as landed.
 
 ## Acceptance criteria
 
-- [ ] **C0 — KI-190.** The row reads closed naming `e1796da` and the
+- [x] **C0 — KI-190.** The row reads closed naming `e1796da` and the
       walked-confidence pin; no code in that commit.
-- [ ] **C1 — KI-239.** The `deck` tool accepts `format: "pptx"`, writes
+- [x] **C1 — KI-239.** The `deck` tool accepts `format: "pptx"`, writes
       a valid `.pptx` beside the render, and names the path in the
       summary; by test.
-- [ ] **C2 — KI-241.** A deck run writes `deck-<stamp>.html` beside the
+- [x] **C2 — KI-241.** A deck run writes `deck-<stamp>.html` beside the
       session and the summary names the path, on every surface; by
       test.
-- [ ] **C3 — KI-240.** The deck intent skill's build step says the
+- [x] **C3 — KI-240.** The deck intent skill's build step says the
       tool's schema is authoritative; the row closes.
-- [ ] **C4 — KI-268.** The rank-route test drives a partial embed and
+- [x] **C4 — KI-268.** The rank-route test drives a partial embed and
       asserts the shape the route actually permits; by test.
-- [ ] **C5 — KI-066.** The smoke guard is a standing sentence in
+- [x] **C5 — KI-066.** The smoke guard is a standing sentence in
       `docs/harness-orientation.md`; the row closes on it.
-- [ ] **C6 — KI-310.** blend1's `refresh` names the missing variable in
+- [x] **C6 — KI-310.** blend1's `refresh` names the missing variable in
       its refusal and its description; upstream and fleet's vendored
       copy agree; by test.
-- [ ] **C7 — KI-249.** Embed durations land in the redacted
+- [x] **C7 — KI-249.** Embed durations land in the redacted
       calibration/log vocabulary; the row stays open naming the
       instrumentation and the day of data it waits for.
-- [ ] **C8 — close-out.** The full gate green by exit code; the ledger
+- [x] **C8 — close-out.** The full gate green by exit code; the ledger
       agrees with the tree; KI-252's gated moves and KI-249's
       bound-change remain the named out-of-scope.
 
