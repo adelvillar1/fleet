@@ -504,7 +504,8 @@ async fn route_with(
         }
         ("GET", "/api/sessions") => {
             let session = asked_session(bridge, request);
-            api(200, bridge.sessions(&session).await)
+            let q = decode_query(&request.query, "q");
+            api(200, bridge.sessions(&session, &q).await)
         }
         ("GET", "/api/session") => {
             let asked = decode_query(&request.query, "id");
