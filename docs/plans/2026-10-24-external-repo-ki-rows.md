@@ -1,5 +1,5 @@
 ---
-status: active
+status: completed
 created: 2026-10-24
 updated: 2026-10-24
 slug: external-repo-ki-rows
@@ -115,32 +115,32 @@ configuration, the same line every other provider takes.
 
 ## Acceptance criteria
 
-- [ ] **C0 — KI-004.** The row reads closed naming the remote and the
+- [x] **C0 — KI-004.** The row reads closed naming the remote and the
   even-with-origin state, no code in that commit.
-- [ ] **C1 — KI-003.** The guard is a commit on `feature/plan-surface`
+- [x] **C1 — KI-003.** The guard is a commit on `feature/plan-surface`
   (branch tests green first), the branch is pushed, and the row closes:
   no uncommitted sys1 work remains.
-- [ ] **C2 — KI-029.** `services/sys1/` matches upstream at a recorded
+- [x] **C2 — KI-029.** `services/sys1/` matches upstream at a recorded
   landed sha, `VENDOR.json` carries that sha and a provenance note that
   names a commit, fleet's sys1 lane tests pass, and the row closes.
-- [ ] **C3 — KI-001.** `ci.yml` installs before `npm test` on a Node
+- [x] **C3 — KI-001.** `ci.yml` installs before `npm test` on a Node
   that strips types; the suite passes locally under that Node; the
   change is pushed; the row closes on the CI run's verdict.
-- [ ] **C4 — KI-005.** `~/Projects/sem1/CLAUDE.md` exists on the
+- [x] **C4 — KI-005.** `~/Projects/sem1/CLAUDE.md` exists on the
   sibling pattern and is committed; the row closes.
-- [ ] **C5 — KI-143.** The MCP adapter and its test are commits on a
+- [x] **C5 — KI-143.** The MCP adapter and its test are commits on a
   branch of upstream blend1, importing only main's library surface; the
   row closes on the filing.
-- [ ] **C6 — KI-207.** The driver binary is updated per the owner's
+- [x] **C6 — KI-207.** The driver binary is updated per the owner's
   recorded ruling, its version reads back aligned, one live MCP call
   answers, and the row closes with both.
-- [ ] **C8 — TypeLLM as a sys1 provider.** The wire, head mapping,
+- [x] **C8 — TypeLLM as a sys1 provider.** The wire, head mapping,
   parser, head-set, config, and MCP pass-through mirror the ScaleDown
   shape; a live probe with the owner's key answers a real classify
   before landing; mock-wire tests pin the parser; the key rides the
   env chain only and no committed file carries it; the repo's suite
   passes and the MCP pass-through admits the provider.
-- [ ] **C7 — close-out.** Fleet's ledger carries every closure with its
+- [x] **C7 — close-out.** Fleet's ledger carries every closure with its
   evidence; the fleet gate is green by exit code read directly; commits
   carry explicit paths per repo; the plan's `status` agrees.
 
