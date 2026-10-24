@@ -3038,6 +3038,9 @@ fn entry_of(record: &Record) -> Option<Entry> {
         Record::ToolResolution { .. } => None,
         // Bookkeeping: a server that did not join is run metadata.
         Record::LaneFailed { .. } => None,
+        // Bookkeeping: what a run declared is lifecycle data, not a
+        // conversation block.
+        Record::Declarations { .. } => None,
         // The model's thinking is a card the face draws first; the TUI's
         // own Thought block is a later increment, so a resumed log's
         // reasoning does not become a pane entry here.

@@ -29,6 +29,11 @@ pub const MAX_DIR_ENTRIES: usize = 1_000;
 /// `mcp__<svc>__<tool>`.
 pub const MCP_NAMESPACE: &str = "mcp__";
 
+/// The model-visible name of the background-process control tool:
+/// `process` reads, waits on, and kills what `bash
+/// run_in_background` started.
+pub const PROCESS_TOOL: &str = "process";
+
 /// The model-visible name of the progressive-disclosure tool a run
 /// declares when it carries skills: `use_skill` fetches one skill's
 /// body on demand. It lives beside the lane namespace because it is
@@ -1174,11 +1179,36 @@ pub const ALL_TOOLS: [Tool; 8] = [
     Tool::Todo,
 ];
 
+/// The declaration of the background-process control tool.
+pub fn process_spec() -> ToolSpec {
+    ToolSpec::function(
+        PROCESS_TOOL,
+        "Control a background process this run started with bash run_in_background.          `output` returns the bytes since your last read and whether it finished; `wait`          blocks up to timeout_ms for it; `kill` stops it. A process still running when          the run ends is left alive and named in the report.",
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "id": { "type": "string", "description": "The process id the bash result named (p0, p1, ...)." },
+                "action": {
+                    "type": "string",
+                    "enum": ["output", "wait", "kill"],
+                    "description": "What to do. Default output."
+                },
+                "timeout_ms": {
+                    "type": "integer", "minimum": 100, "maximum": 600000,
+                    "description": "For `wait`. Default 30000."
+                },
+            },
+            "required": ["id"],
+        }),
+    )
+}
+
 /// Every tool name the harness can declare, native and special, for a
 /// surface that has no run to ask.
 pub fn known_tool_names() -> Vec<&'static str> {
     let mut names: Vec<&'static str> = ALL_TOOLS.iter().map(|tool| tool.name()).collect();
     names.extend([
+        PROCESS_TOOL,
         USE_SKILL_TOOL,
         REMEMBER_TOOL,
         SUPERSEDE_TOOL,
@@ -1423,20 +1453,22 @@ impl Tool {
         root: &Path,
         spill: Option<&Path>,
     ) -> Result<ToolOutcome, String> {
-        self.execute_in_with_spill_stop(arguments, root, spill, None)
+        self.execute_in_with_spill_stop(arguments, root, spill, None, None)
     }
 
     /// The same execution with an in-flight stop flag: `bash` polls it
     /// while the child runs, so the owner's stop does not wait for it.
+    #[allow(clippy::too_many_arguments)]
     pub fn execute_in_with_spill_stop(
         self,
         arguments: &serde_json::Value,
         root: &Path,
         spill: Option<&Path>,
         stop: Option<&std::sync::Arc<std::sync::atomic::AtomicBool>>,
+        registry: Option<&crate::processes::Registry>,
     ) -> Result<ToolOutcome, String> {
         let outcome = match self {
-            Tool::Bash => run_bash_arguments(arguments, Some(root), stop)?,
+            Tool::Bash => run_bash_arguments(arguments, Some(root), stop, registry)?,
             Tool::ReadFile => run_read_file_window(arguments, Some(root))?,
             Tool::WriteFile => run_write_file(arguments, Some(root))?,
             Tool::ListDir => run_list_dir(arguments, Some(root))?,
@@ -1457,7 +1489,7 @@ impl Tool {
         arguments: &serde_json::Value,
         spill: Option<&Path>,
     ) -> Result<ToolOutcome, String> {
-        self.execute_without_folder_spill_stop(arguments, spill, None)
+        self.execute_without_folder_spill_stop(arguments, spill, None, None)
     }
 
     pub fn execute_without_folder_spill_stop(
@@ -1465,9 +1497,10 @@ impl Tool {
         arguments: &serde_json::Value,
         spill: Option<&Path>,
         stop: Option<&std::sync::Arc<std::sync::atomic::AtomicBool>>,
+        registry: Option<&crate::processes::Registry>,
     ) -> Result<ToolOutcome, String> {
         let outcome = match self {
-            Tool::Bash => run_bash_arguments(arguments, None, stop)?,
+            Tool::Bash => run_bash_arguments(arguments, None, stop, registry)?,
             Tool::ReadFile => run_read_file_window(arguments, None)?,
             Tool::WriteFile => run_write_file(arguments, None)?,
             Tool::ListDir => run_list_dir(arguments, None)?,
@@ -1671,13 +1704,14 @@ fn run_bash_arguments(
     arguments: &serde_json::Value,
     root: Option<&Path>,
     stop: Option<&std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    registry: Option<&crate::processes::Registry>,
 ) -> Result<ToolOutcome, String> {
     let command = string_arg(arguments, "command")?;
     let timeout = integer_arg(arguments, "timeout_ms")
         .map(|ms| Duration::from_millis(ms.clamp(1_000, 600_000) as u64))
         .unwrap_or(BASH_TIMEOUT);
     if bool_arg(arguments, "run_in_background").unwrap_or(false) {
-        return run_bash_background(&command, root);
+        return run_bash_background(&command, root, registry);
     }
     run_bash_in(&command, root, timeout, stop)
 }
@@ -1685,7 +1719,11 @@ fn run_bash_arguments(
 /// Start a command whose life outlasts the call. Its output goes to one
 /// file, so a later `read_file` or `bash tail` sees it without the
 /// turn's pipes holding the result.
-fn run_bash_background(command: &str, root: Option<&Path>) -> Result<ToolOutcome, String> {
+fn run_bash_background(
+    command: &str,
+    root: Option<&Path>,
+    registry: Option<&crate::processes::Registry>,
+) -> Result<ToolOutcome, String> {
     let dir = std::env::temp_dir().join("fleet-background");
     fs::create_dir_all(&dir)
         .map_err(|error| format!("could not create {}: {error}", dir.display()))?;
@@ -1716,11 +1754,22 @@ fn run_bash_background(command: &str, root: Option<&Path>) -> Result<ToolOutcome
     let child = shell
         .spawn()
         .map_err(|error| format!("could not spawn the shell: {error}"))?;
+    // Registered when the run carries a registry: the `process` tool's
+    // handle. Unregistered is the shell's own path (tests, tools runs).
+    let (handle, output_files) = match registry {
+        Some(registry) => {
+            let id = registry.register(command, path.clone(), path.clone(), child.id());
+            (
+                format!("\nprocess id: {id} (use the `process` tool)"),
+                path.display().to_string(),
+            )
+        }
+        None => (String::new(), path.display().to_string()),
+    };
     Ok(ToolOutcome {
         output: format!(
-            "started in the background (pid {})\noutput: {}\nread it with read_file, or tail it with bash\n",
+            "started in the background (pid {})\noutput: {output_files}{handle}\nread it with the process tool, or tail it with bash\n",
             child.id(),
-            path.display()
         ),
         truncated: false,
     })

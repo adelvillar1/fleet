@@ -43,6 +43,7 @@ pub mod nomenclature;
 pub mod perception;
 pub mod plan_graph;
 pub mod plugins;
+pub mod processes;
 pub mod recall_graph;
 pub mod remote;
 pub mod roles;

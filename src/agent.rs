@@ -1080,6 +1080,10 @@ pub struct Agent<'a> {
     /// `bash` child is killed instead of holding the stop until it
     /// finishes.
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// The background processes this run started, by `process` id.
+    /// One registry per run, behind an `Arc`: the work clones the
+    /// handle, never replaces the registry.
+    processes: std::sync::Arc<crate::processes::Registry>,
     /// The skills this run declared, in load order. Their
     /// name+description pairs ride the system prompt; a body enters
     /// context only when the loop selects it through `use_skill`.
@@ -1260,6 +1264,7 @@ impl<'a> Agent<'a> {
             disabled,
             todos: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             stop: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            processes: std::sync::Arc::new(crate::processes::Registry::new()),
             skills,
             memory,
             scope,
@@ -1508,6 +1513,8 @@ impl<'a> Agent<'a> {
         specs.push(tools::vision_spec());
         specs.push(tools::web_spec());
         specs.push(tools::computer_use_spec());
+        // The background handle, in the live path's position.
+        specs.push(tools::process_spec());
         specs
     }
 
@@ -1608,6 +1615,12 @@ impl<'a> Agent<'a> {
         // rest and the gate is what makes it different.
         if admitted(tools::COMPUTER_USE_TOOL) {
             specs.push(tools::computer_use_spec());
+        }
+        // The process control tool rides every run that can start a
+        // background command: a handle without a control is a bet the
+        // model can only lose.
+        if admitted(tools::PROCESS_TOOL) {
+            specs.push(tools::process_spec());
         }
         // A large catalog is declared in two tiers. The core above stays
         // byte-stable; the lanes' tools are held back when they would
@@ -1834,6 +1847,17 @@ impl<'a> Agent<'a> {
         alive.store(false, std::sync::atomic::Ordering::Relaxed);
         let _ = watcher.join();
         self.lanes.close_all().await;
+        // A background process still running at the end is left alive
+        // and named: killing the owner's server is worse than leaving
+        // it, and the owner reads what is still theirs.
+        let survivors = self.processes.still_running();
+        if !survivors.is_empty() {
+            let _ = writeln!(self.progress, "\u{2014} still running in the background:");
+            for (id, command) in &survivors {
+                let _ = writeln!(self.progress, "    {id}: {command}");
+            }
+            let _ = self.progress.flush();
+        }
         // One turn row per run, on every exit path — the outcome's grade
         // and the ending named. Best-effort by construction.
         self.record_turn(task, &outcome);
@@ -3217,6 +3241,23 @@ impl<'a> Agent<'a> {
                 },
             });
         }
+        if name == tools::PROCESS_TOOL {
+            return Ok(match serde_json::from_str(&call.function.arguments) {
+                Err(error) => settled(format!(
+                    "error[validation]: arguments were not valid JSON: {error}"
+                )),
+                Ok(arguments) => {
+                    if let Err(reason) = process_validate(&arguments) {
+                        settled(format!("error[validation]: {reason}"))
+                    } else {
+                        Prepared::Ready(Work::Process {
+                            registry: self.processes.clone(),
+                            arguments,
+                        })
+                    }
+                }
+            });
+        }
         if tools::lane_of(name).is_some() {
             return Ok(Prepared::Serial { call: call.clone() });
         }
@@ -3281,6 +3322,9 @@ impl<'a> Agent<'a> {
                         access: self.options.file_access.clone(),
                         spill: self.session.path().parent().map(|dir| dir.join("calls")),
                         stop: Some(self.stop.clone()),
+                        // The handle, not the registry: one registry per
+                        // run, so every call sees every registration.
+                        processes: Some(self.processes.clone()),
                     }))
                 }
             },
@@ -3845,6 +3889,13 @@ enum Work {
         spill: Option<std::path::PathBuf>,
         /// The run's stop flag, for a command that must not outlive it.
         stop: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+        /// The run's background registry, for `run_in_background`.
+        processes: Option<std::sync::Arc<crate::processes::Registry>>,
+    },
+    /// One background-process control call: output, wait, or kill.
+    Process {
+        registry: std::sync::Arc<crate::processes::Registry>,
+        arguments: serde_json::Value,
     },
     /// A skill's body, fetched from this run's declared list.
     UseSkill {
@@ -3935,6 +3986,7 @@ async fn run_work(work: Work) -> (String, bool) {
             access,
             spill,
             stop,
+            processes,
         } => {
             // The write-time guard reads the vocabulary of the tree the
             // run works in: the chat's folder when it has one, else the
@@ -3985,13 +4037,61 @@ async fn run_work(work: Work) -> (String, bool) {
                 // of the process (KI-232). The guard is the one caller
                 // that knows the tree changed.
                 crate::nomenclature::invalidate(&guard_root);
-                let (output, truncated) = run_builtin(tool, arguments, access, spill, stop).await;
+                let (output, truncated) =
+                    run_builtin(tool, arguments, access, spill, stop, processes).await;
                 return match note {
                     Some(note) => (format!("{output}\n{note}"), truncated),
                     None => (output, truncated),
                 };
             }
-            run_builtin(tool, arguments, access, spill, stop).await
+            run_builtin(tool, arguments, access, spill, stop, processes).await
+        }
+        Work::Process {
+            registry,
+            arguments,
+        } => {
+            let id = arguments.get("id").and_then(|id| id.as_str()).unwrap_or("");
+            let action = arguments
+                .get("action")
+                .and_then(|action| action.as_str())
+                .unwrap_or("output");
+            let outcome = match action {
+                "output" => registry.output(id).map(|(text, finished)| {
+                    format!(
+                        "{text}{}",
+                        if finished {
+                            "\n(finished)"
+                        } else {
+                            "\n(still running)"
+                        }
+                    )
+                }),
+                "wait" => {
+                    let timeout = arguments
+                        .get("timeout_ms")
+                        .and_then(|value| value.as_u64())
+                        .unwrap_or(30_000);
+                    registry.wait(id, timeout).map(|(finished, text)| {
+                        format!(
+                            "{text}{}",
+                            if finished {
+                                "\n(finished)"
+                            } else {
+                                "\n(still running after the timeout)"
+                            }
+                        )
+                    })
+                }
+                "kill" => registry.kill(id),
+                other => Err(format!("unknown action `{other}`")),
+            };
+            (
+                match outcome {
+                    Ok(text) => text,
+                    Err(error) => format!("error: {error}"),
+                },
+                false,
+            )
         }
         Work::UseSkill { skills, arguments } => {
             let outcome = tools::bound(ToolOutcome {
@@ -4236,6 +4336,7 @@ async fn run_builtin(
     access: FileAccess,
     spill: Option<std::path::PathBuf>,
     stop: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    processes: Option<std::sync::Arc<crate::processes::Registry>>,
 ) -> (String, bool) {
     let unknown = tools::unknown_arguments(tool, &arguments);
     // KI-017: tool execution is blocking work (a `bash` child can run
@@ -4244,13 +4345,20 @@ async fn run_builtin(
     match tokio::task::spawn_blocking(move || match access {
         // A chat's folder is a boundary: relative paths resolve under
         // it and a path that leaves it is refused.
-        FileAccess::Folder(root) => {
-            tool.execute_in_with_spill_stop(&arguments, &root, spill.as_deref(), stop.as_ref())
-        }
+        FileAccess::Folder(root) => tool.execute_in_with_spill_stop(
+            &arguments,
+            &root,
+            spill.as_deref(),
+            stop.as_ref(),
+            processes.as_deref(),
+        ),
         // No folder: the process's working directory, unrestricted.
-        FileAccess::Unrestricted => {
-            tool.execute_without_folder_spill_stop(&arguments, spill.as_deref(), stop.as_ref())
-        }
+        FileAccess::Unrestricted => tool.execute_without_folder_spill_stop(
+            &arguments,
+            spill.as_deref(),
+            stop.as_ref(),
+            processes.as_deref(),
+        ),
         // Unreachable from the loop — the gate refuses the call first —
         // but a run built by hand still gets the rule rather than a
         // panic.
@@ -4644,6 +4752,7 @@ fn writer_of(prepared: &Prepared) -> Option<String> {
             Work::Vision { .. } => Some("vision".to_string()),
             // A lookup reads the tree and writes nothing: no writer to
             // hold apart, so two of them in one batch run together.
+            Work::Process { .. } => None,
             Work::Convention { .. } => None,
             // A plan draft WRITES the plan document, so it takes the
             // document's own writer slot: two drafts to one plan in one
@@ -4817,6 +4926,39 @@ impl Agent<'_> {
             }
         }
     }
+}
+
+/// The `process` tool's own conditional validation: an id is required,
+/// the action is a closed set, and the timeout is bounded.
+fn process_validate(arguments: &serde_json::Value) -> Result<(), String> {
+    if arguments
+        .get("id")
+        .and_then(|id| id.as_str())
+        .is_none_or(str::is_empty)
+    {
+        return Err(
+            "field `id` is required and must be the process id a bash result named".to_string(),
+        );
+    }
+    match arguments.get("action").and_then(|action| action.as_str()) {
+        None | Some("output") | Some("wait") | Some("kill") => {}
+        Some(other) => {
+            return Err(format!(
+                "field `action` must be one of \"output\", \"wait\", \"kill\"; got {other:?}"
+            ))
+        }
+    }
+    if let Some(timeout) = arguments.get("timeout_ms") {
+        match timeout.as_u64() {
+            Some(value) if (100..=600_000).contains(&value) => {}
+            _ => {
+                return Err(
+                    "field `timeout_ms` must be an integer between 100 and 600000".to_string(),
+                )
+            }
+        }
+    }
+    Ok(())
 }
 
 /// The marker a read records: the canonical path a later edit compares
@@ -6595,7 +6737,10 @@ mod tests {
                 "deck",
                 "vision",
                 "web",
-                "computer_use"
+                "computer_use",
+                // A background command needs a handle: the control tool
+                // is declared beside the tool that starts one.
+                "process"
             ]
         );
 
@@ -6642,7 +6787,7 @@ mod tests {
         // computation over a value the model writes, and neither touches
         // anything outside itself. So does `plan`: it drafts a plan
         // document's declaration, which is the repo's own state.
-        assert_eq!(plain.declarations().len(), 18);
+        assert_eq!(plain.declarations().len(), 19);
         assert_eq!(plain.system_prompt(None), default_prompt());
         let _ = std::fs::remove_dir_all(&home);
         let _ = std::fs::remove_dir_all(&root);
@@ -8485,6 +8630,7 @@ You are auditing a change. Read the diff before you judge it.
             access: FileAccess::Folder(std::path::PathBuf::from("/root")),
             spill: None,
             stop: None,
+            processes: None,
         })
     }
 
@@ -9224,6 +9370,7 @@ You are auditing a change. Read the diff before you judge it.
             access: FileAccess::Folder(root.clone()),
             spill: None,
             stop: None,
+            processes: None,
         })
         .await;
         assert!(output.contains("write_file` refused"), "{output}");
@@ -9239,6 +9386,7 @@ You are auditing a change. Read the diff before you judge it.
             access: FileAccess::Folder(root.clone()),
             spill: None,
             stop: None,
+            processes: None,
         })
         .await;
         assert_eq!(
@@ -9268,6 +9416,7 @@ You are auditing a change. Read the diff before you judge it.
             access: FileAccess::Folder(root.clone()),
             spill: None,
             stop: None,
+            processes: None,
         })
         .await;
         assert!(

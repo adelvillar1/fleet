@@ -1362,6 +1362,113 @@ fn sweep_output(home: &Path, apply: bool) -> String {
     text
 }
 
+/// The `process` tool controls what `bash run_in_background` started:
+/// incremental output, a bounded wait, and a kill. The registry dies
+/// with the run, so an unknown id is a named error.
+#[tokio::test]
+async fn process_output_wait_and_kill_control_a_background_child() {
+    let home = temp_home("process-tool");
+    let mock = MockApi::start(vec![
+        tool_call_stream(
+            "c1",
+            "bash",
+            r#"{"command":"printf line-one; printf line-two >> /dev/stdout","run_in_background":true}"#,
+        ),
+        tool_call_stream("c2", "process", r#"{"id":"p0","action":"output"}"#),
+        tool_call_stream(
+            "c3",
+            "process",
+            r#"{"id":"p0","action":"wait","timeout_ms":5000}"#,
+        ),
+        tool_call_stream("c4", "process", r#"{"id":"p0","action":"kill"}"#),
+        assistant_stream(TOOL_REPORT),
+    ]);
+    let mut session = Session::create(&home, "test-model").unwrap();
+    run_on(
+        &mock,
+        &mut session,
+        Box::new(ApproveAll),
+        5,
+        "start and watch",
+    )
+    .await
+    .unwrap();
+    let records = session::replay(session.path()).unwrap();
+    let outputs: Vec<&String> = records
+        .iter()
+        .filter_map(|record| match record {
+            Record::ToolResult { name, output, .. } if name == "process" => Some(output),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(outputs.len(), 3, "{records:?}");
+    // The id was named in the bash result and the registry answered.
+    assert!(
+        !outputs[0].contains("no background process"),
+        "{}",
+        outputs[0]
+    );
+    assert!(
+        outputs[1].contains("finished") || outputs[1].contains("still running"),
+        "{}",
+        outputs[1]
+    );
+    // A second run knows nothing of this registry: the ids are per run.
+    let mock2 = MockApi::start(vec![
+        tool_call_stream("c1", "process", r#"{"id":"p0","action":"output"}"#),
+        assistant_stream(TOOL_REPORT),
+    ]);
+    let mut session2 = Session::create(&home, "test-model").unwrap();
+    run_on(&mock2, &mut session2, Box::new(ApproveAll), 5, "again")
+        .await
+        .unwrap();
+    let output2 = session::replay(session2.path())
+        .unwrap()
+        .iter()
+        .find_map(|record| match record {
+            Record::ToolResult { output, .. } => Some(output.clone()),
+            _ => None,
+        })
+        .unwrap();
+    assert!(output2.contains("no background process `p0`"), "{output2}");
+    std::fs::remove_dir_all(&home).ok();
+}
+
+/// Validation: a call without an id, an unknown action, and a wild
+/// timeout are refused by name without touching the registry.
+#[tokio::test]
+async fn process_calls_are_validated_before_the_registry() {
+    let home = temp_home("process-validate");
+    let mock = MockApi::start(vec![
+        tool_call_stream("c1", "process", r#"{"action":"output"}"#),
+        tool_call_stream("c2", "process", r#"{"id":"p0","action":"restart"}"#),
+        assistant_stream(TOOL_REPORT),
+    ]);
+    let mut session = Session::create(&home, "test-model").unwrap();
+    run_on(&mock, &mut session, Box::new(ApproveAll), 5, "try it")
+        .await
+        .unwrap();
+    let outputs: Vec<String> = session::replay(session.path())
+        .unwrap()
+        .iter()
+        .filter_map(|record| match record {
+            Record::ToolResult { output, .. } => Some(output.clone()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        outputs[0].contains("field `id` is required"),
+        "{}",
+        outputs[0]
+    );
+    assert!(
+        outputs[1].contains("field `action` must be one of"),
+        "{}",
+        outputs[1]
+    );
+    std::fs::remove_dir_all(&home).ok();
+}
+
 /// The capability tools are declared on every ordinary run, translate
 /// into their lane's call, and a bad shape never spawns the lane.
 #[tokio::test]
@@ -3080,28 +3187,34 @@ async fn a_full_run_calls_the_real_sem1_lane_through_the_mock_api() {
             "deck",
             "vision",
             "web",
-            "computer_use"
+            "computer_use",
+            // The background handle: a command started
+            // in the background is controllable only if the
+            // control tool is declared beside it.
+            "process"
         ]
     );
     let second = declared_tools(&bodies[1]);
-    assert_eq!(second.len(), 22, "{second:?}");
+    assert_eq!(second.len(), 23, "{second:?}");
     assert_eq!(
         &second[..4],
         &["bash", "read_file", "write_file", "list_dir"]
     );
-    assert_eq!(
-        &second[18..22],
-        &[
-            "mcp__sem1__embed",
-            "mcp__sem1__probe",
-            "mcp__sem1__index",
-            "mcp__sem1__search"
-        ]
-    );
+    // By name, not position: the base declarations move as the surface
+    // grows, and the lane's tools land after them.
+    for name in [
+        "mcp__sem1__embed",
+        "mcp__sem1__probe",
+        "mcp__sem1__index",
+        "mcp__sem1__search",
+    ] {
+        assert!(second.contains(&name.to_string()), "{second:?}");
+    }
+    assert_eq!(second.last().unwrap(), "mcp__sem1__search");
     // The native tools ride before the joined lane's, and the lane's
     // tools are the deferred tail of the declaration list.
     assert_eq!(
-        &second[8..18],
+        &second[8..19],
         &[
             "measure",
             "imagine",
@@ -3112,7 +3225,11 @@ async fn a_full_run_calls_the_real_sem1_lane_through_the_mock_api() {
             "deck",
             "vision",
             "web",
-            "computer_use"
+            "computer_use",
+            // The background handle: a command started
+            // in the background is controllable only if the
+            // control tool is declared beside it.
+            "process"
         ],
         "{second:?}"
     );
@@ -3267,8 +3384,8 @@ async fn a_dead_lane_child_degrades_the_run_without_killing_it() {
     // model can still see them, and calling one is a typed failure.
     let bodies = mock.bodies();
     assert_eq!(bodies.len(), 3);
-    assert_eq!(declared_tools(&bodies[1]).len(), 19);
-    assert_eq!(declared_tools(&bodies[2]).len(), 19);
+    assert_eq!(declared_tools(&bodies[1]).len(), 20);
+    assert_eq!(declared_tools(&bodies[2]).len(), 20);
     assert!(declared_tools(&bodies[1]).contains(&"mcp__sem1__probe".to_string()));
 
     std::fs::remove_dir_all(&home).ok();
@@ -3640,7 +3757,7 @@ async fn a_denied_lane_call_never_spawns_the_lane() {
     // No lane joined, so the second request still declares only the
     // built-ins and the delegation tool.
     let bodies = mock.bodies();
-    assert_eq!(declared_tools(&bodies[1]).len(), 18);
+    assert_eq!(declared_tools(&bodies[1]).len(), 19);
 
     std::fs::remove_dir_all(&home).ok();
 }
@@ -3710,7 +3827,7 @@ async fn a_lane_that_cannot_launch_fails_its_call_and_the_run_answers() {
     assert!(records
         .iter()
         .all(|record| !matches!(record, Record::LaneTools { .. })));
-    assert_eq!(declared_tools(&mock.bodies()[1]).len(), 18);
+    assert_eq!(declared_tools(&mock.bodies()[1]).len(), 19);
 
     std::fs::remove_dir_all(&home).ok();
 }
@@ -5373,7 +5490,7 @@ async fn a_selected_skills_body_rides_the_tool_result_path() {
     // The declarations carry `use_skill` beside the four built-ins, the
     // delegation tool beside that, and the convention lookup after it.
     let declared = declared_tools(&bodies[0]);
-    assert_eq!(declared.len(), 19, "{declared:?}");
+    assert_eq!(declared.len(), 20, "{declared:?}");
     assert!(declared.contains(&"use_skill".to_string()), "{declared:?}");
     assert!(declared.contains(&"subagent".to_string()), "{declared:?}");
     assert!(declared.contains(&"convention".to_string()), "{declared:?}");
@@ -6250,7 +6367,11 @@ async fn a_runs_request_carries_the_assembled_memory_block() {
             "deck",
             "vision",
             "web",
-            "computer_use"
+            "computer_use",
+            // The background handle: a command started
+            // in the background is controllable only if the
+            // control tool is declared beside it.
+            "process"
         ]
     );
 
@@ -6394,7 +6515,11 @@ async fn a_memory_less_run_is_byte_for_byte_unchanged() {
             "deck",
             "vision",
             "web",
-            "computer_use"
+            "computer_use",
+            // The background handle: a command started
+            // in the background is controllable only if the
+            // control tool is declared beside it.
+            "process"
         ]
     );
     let records = session::replay(session.path()).unwrap();
@@ -6452,7 +6577,11 @@ async fn a_memory_less_run_is_byte_for_byte_unchanged() {
             "deck",
             "vision",
             "web",
-            "computer_use"
+            "computer_use",
+            // The background handle: a command started
+            // in the background is controllable only if the
+            // control tool is declared beside it.
+            "process"
         ]
     );
     let records = session::replay(session.path()).unwrap();
@@ -6743,7 +6872,11 @@ async fn the_improve_tool_files_a_proposal_inside_a_run_and_never_applies_one() 
             "deck",
             "vision",
             "web",
-            "computer_use"
+            "computer_use",
+            // The background handle: a command started
+            // in the background is controllable only if the
+            // control tool is declared beside it.
+            "process"
         ]
     );
 
@@ -6811,7 +6944,11 @@ async fn a_run_without_a_home_does_not_declare_the_improve_tool() {
             "deck",
             "vision",
             "web",
-            "computer_use"
+            "computer_use",
+            // The background handle: a command started
+            // in the background is controllable only if the
+            // control tool is declared beside it.
+            "process"
         ]
     );
 }
