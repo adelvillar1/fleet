@@ -2638,12 +2638,24 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn the_related_route_answers_one_document_and_refuses_a_foreign_kind() {
         let (token, port) = launch().await;
-        let anonymous = ask_within(
-            port,
-            "GET /api/related?kind=fact&id=one HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
-            None,
-            Duration::from_secs(12),
-        );
+        // The observable reply is the bound: a loaded suite can starve
+        // the server's accept path past any fixed read budget, which is
+        // the empty reply that red one gate run at the body split
+        // (KI-293, the KI-287/288 shape). The ask retries until a head
+        // terminator arrives under a total deadline; a real refusal
+        // carries a head and fails the status assert at once.
+        let deadline = std::time::Instant::now() + Duration::from_secs(60);
+        let anonymous = loop {
+            let reply = ask_within(
+                port,
+                "GET /api/related?kind=fact&id=one HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+                None,
+                Duration::from_secs(12),
+            );
+            if reply.contains("\r\n\r\n") || std::time::Instant::now() >= deadline {
+                break reply;
+            }
+        };
         assert!(anonymous.starts_with("HTTP/1.1 200"), "{anonymous}");
         let document: serde_json::Value = serde_json::from_str(
             anonymous

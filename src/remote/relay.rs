@@ -401,7 +401,28 @@ mod tests {
         // The sender stays alive for the loop's life: `let _ =` would
         // drop it at once.
         let _ = shutdown;
-        tokio::time::sleep(Duration::from_millis(1500)).await;
+        // The loop's own counters are the observable state: a bounded
+        // poll gives a loaded machine the time the first poll needs,
+        // where the fixed 1.5 s wait red under a parallel suite
+        // (KI-288). The leak bound stays: a dropped sender answers
+        // `changed()` at once and drives the in-flight count up within
+        // a short soak, so the soak can be short.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+        loop {
+            let seen = relay.joined.load(std::sync::atomic::Ordering::SeqCst);
+            let most = relay
+                .most_in_flight
+                .load(std::sync::atomic::Ordering::SeqCst);
+            if seen >= 1 && most >= 1 {
+                break;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "the loop never reached the relay under the deadline: joined={seen}, most={most}"
+            );
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        tokio::time::sleep(Duration::from_millis(300)).await;
         let most = relay
             .most_in_flight
             .load(std::sync::atomic::Ordering::SeqCst);
