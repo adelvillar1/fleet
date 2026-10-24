@@ -3490,7 +3490,7 @@ mod tests {
             assert!(!body.contains(secret) && !head.contains(secret), "{page}");
         }
         if let Some((at, word)) =
-            key_shaped_occurrence(&body).or_else(|| key_shaped_occurrence(&head))
+            key_shaped_occurrence(body).or_else(|| key_shaped_occurrence(head))
         {
             panic!("a reply carries a key-shaped token at byte {at}: {word}");
         }
