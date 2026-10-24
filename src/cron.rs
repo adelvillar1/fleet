@@ -1482,6 +1482,11 @@ pub async fn execute(
         // owner is present; an unattended scheduled run does not carry
         // it, so no proposal is filed by a run nobody is watching.
         improve_home: None,
+        // The route home is the run's own home: a scheduled run's child
+        // routes through prepare_child like any other child — the
+        // router rules everything but nothing else was reaching it
+        // (KI-278) — while the improve home above stays None.
+        route_home: Some(home.to_path_buf()),
         gui_prompt: None,
         compact_now: false,
         checkpoints: None,

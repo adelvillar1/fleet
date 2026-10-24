@@ -870,6 +870,7 @@ fn spawn_agent(config: AgentConfig) -> thread::JoinHandle<()> {
                             // proposal, and only the owner's `fleet
                             // improve apply` runs one.
                             improve_home: Some(home.clone()),
+                            route_home: None,
                             gui_prompt: None,
                             // The interactive surface has no forced-fold
                             // flag: its owner is present, so the budget's

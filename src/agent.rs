@@ -346,6 +346,14 @@ pub struct AgentOptions {
     /// apply`, through the same gate, so a session can propose a change
     /// to the harness but never apply one.
     pub improve_home: Option<std::path::PathBuf>,
+    /// The home a delegated child routes from, distinct from the
+    /// improve home (KI-278): a scheduled run sets this to its own home
+    /// so its child routes through `route::prepare_child` — the one
+    /// route the router-rules-everything ruling names — while
+    /// `improve_home` stays `None`, because no unattended run files
+    /// proposals. `None` falls back to the improve home, which is every
+    /// interactive run's shape, byte for byte.
+    pub route_home: Option<std::path::PathBuf>,
     /// The standing line a GUI run's system prompt carries: the surface
     /// the owner is talking through, with its loopback URL. `None` is
     /// the run this crate has always had — no line, byte for byte. The
@@ -394,6 +402,7 @@ impl Default for AgentOptions {
             memory: None,
             scope: None,
             improve_home: None,
+            route_home: None,
             gui_prompt: None,
             compact_now: false,
             checkpoints: None,
@@ -3678,7 +3687,14 @@ impl<'a> Agent<'a> {
         // home, where the owner's roles live. `None` is a run with no
         // home — a child that names a role then meets the named
         // refusal, never a silent default.
-        let home = self.options.improve_home.clone();
+        // The home the child routes and resolves its role under: the
+        // run's route home when one is set — a scheduled run's child
+        // routes even though its run files no proposals (KI-278) — and
+        // this run's improve home otherwise, which is every
+        // interactive run's shape. `None` is a run with no home — a
+        // child that names a role then meets the named refusal, never
+        // a silent default.
+        let home = delegation_home(&self.options);
         let result = crate::subagents::run(crate::subagents::Delegation {
             client,
             // The parent's standing choice rides down; the child's own
@@ -5798,6 +5814,17 @@ fn every_occurrence_in_absolute_path(token: &str, content: &str) -> bool {
     occurrences > 0
 }
 
+/// The home a delegated child routes from: the run's route home when
+/// it declares one — a scheduled run's child routes through
+/// `prepare_child` even though its run files no proposals (KI-278) —
+/// else the improve home, which is every interactive run's shape.
+fn delegation_home(options: &AgentOptions) -> Option<std::path::PathBuf> {
+    options
+        .route_home
+        .clone()
+        .or_else(|| options.improve_home.clone())
+}
+
 fn write_guard(root: &std::path::Path, arguments: &serde_json::Value) -> WriteGuard {
     let Some(content) = arguments
         .get("content")
@@ -6881,6 +6908,7 @@ mod tests {
             memory: None,
             scope: None,
             improve_home: None,
+            route_home: None,
             gui_prompt: None,
             compact_now: false,
             checkpoints: None,
@@ -7208,6 +7236,7 @@ mod tests {
             memory: Some(memory),
             scope: None,
             improve_home: None,
+            route_home: None,
             gui_prompt: None,
             compact_now: false,
             checkpoints: None,
@@ -7322,6 +7351,7 @@ mod tests {
             memory: None,
             scope: None,
             improve_home: None,
+            route_home: None,
             gui_prompt: None,
             compact_now: false,
             checkpoints: None,
@@ -7504,6 +7534,7 @@ mod tests {
                 memory: None,
                 scope: None,
                 improve_home: None,
+                route_home: None,
                 gui_prompt: None,
                 compact_now: false,
                 checkpoints: None,
@@ -7572,6 +7603,7 @@ You are auditing a change. Read the diff before you judge it.
             memory: None,
             scope: None,
             improve_home: None,
+            route_home: None,
             gui_prompt: None,
             compact_now: false,
             checkpoints: None,
@@ -7606,6 +7638,7 @@ You are auditing a change. Read the diff before you judge it.
             memory: None,
             scope: None,
             improve_home: None,
+            route_home: None,
             gui_prompt: None,
             compact_now: false,
             checkpoints: None,
@@ -7649,6 +7682,7 @@ You are auditing a change. Read the diff before you judge it.
             memory: None,
             scope: None,
             improve_home: None,
+            route_home: None,
             gui_prompt: Some(line.clone()),
             compact_now: false,
             checkpoints: None,
@@ -7685,6 +7719,7 @@ You are auditing a change. Read the diff before you judge it.
             memory: None,
             scope: None,
             improve_home: None,
+            route_home: None,
             gui_prompt: None,
             compact_now: false,
             checkpoints: None,
@@ -7726,6 +7761,7 @@ You are auditing a change. Read the diff before you judge it.
             memory: None,
             scope: None,
             improve_home: None,
+            route_home: None,
             gui_prompt: None,
             compact_now: false,
             checkpoints: None,
@@ -7776,6 +7812,7 @@ You are auditing a change. Read the diff before you judge it.
             memory: None,
             scope: None,
             improve_home: None,
+            route_home: None,
             gui_prompt: None,
             compact_now: false,
             checkpoints: None,
@@ -7882,6 +7919,7 @@ You are auditing a change. Read the diff before you judge it.
             memory: None,
             scope: None,
             improve_home: None,
+            route_home: None,
             gui_prompt: None,
             compact_now: false,
             checkpoints: Some(store.clone()),
@@ -7950,6 +7988,7 @@ You are auditing a change. Read the diff before you judge it.
             memory: None,
             scope: None,
             improve_home: None,
+            route_home: None,
             gui_prompt: None,
             compact_now: false,
             checkpoints: Some(store.clone()),
@@ -8058,6 +8097,7 @@ You are auditing a change. Read the diff before you judge it.
             memory: Some(memory),
             scope: None,
             improve_home: None,
+            route_home: None,
             gui_prompt: None,
             compact_now: false,
             checkpoints: None,
@@ -8193,6 +8233,7 @@ You are auditing a change. Read the diff before you judge it.
             memory: Some(memory),
             scope: None,
             improve_home: None,
+            route_home: None,
             gui_prompt: None,
             compact_now: false,
             checkpoints: None,
@@ -8708,6 +8749,7 @@ You are auditing a change. Read the diff before you judge it.
             memory: None,
             scope: None,
             improve_home: None,
+            route_home: None,
             gui_prompt: None,
             compact_now: true,
             checkpoints: None,
@@ -8765,6 +8807,7 @@ You are auditing a change. Read the diff before you judge it.
             memory: None,
             scope: None,
             improve_home: None,
+            route_home: None,
             gui_prompt: None,
             compact_now: false,
             checkpoints: None,
@@ -8831,6 +8874,7 @@ You are auditing a change. Read the diff before you judge it.
             memory: None,
             scope: None,
             improve_home: None,
+            route_home: None,
             gui_prompt: None,
             compact_now: false,
             checkpoints: None,
@@ -8886,6 +8930,7 @@ You are auditing a change. Read the diff before you judge it.
             memory: None,
             scope: None,
             improve_home: None,
+            route_home: None,
             gui_prompt: None,
             compact_now: false,
             checkpoints: None,
@@ -9049,6 +9094,7 @@ You are auditing a change. Read the diff before you judge it.
             memory: None,
             scope: None,
             improve_home: None,
+            route_home: None,
             gui_prompt: None,
             compact_now: false,
             checkpoints: None,
@@ -9446,6 +9492,7 @@ You are auditing a change. Read the diff before you judge it.
             memory: None,
             scope: None,
             improve_home: None,
+            route_home: None,
             gui_prompt: None,
             compact_now: false,
             checkpoints: None,
@@ -9926,6 +9973,35 @@ You are auditing a change. Read the diff before you judge it.
             "a backticked variant is still policed: {guard:?}"
         );
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_scheduled_child_routes_from_the_route_home_without_the_improve_home() {
+        // KI-278: the route home and the improve home are different
+        // decisions. A scheduled run declares the route home and no
+        // improve home — its child routes, and its run files no
+        // proposals — while an interactive run, which sets only the
+        // improve home, resolves the same home it always handed its
+        // child.
+        let scheduled = AgentOptions {
+            route_home: Some(std::path::PathBuf::from("/tmp/fleet-home")),
+            ..Default::default()
+        };
+        assert_eq!(
+            delegation_home(&scheduled),
+            Some(std::path::PathBuf::from("/tmp/fleet-home"))
+        );
+
+        let interactive = AgentOptions {
+            improve_home: Some(std::path::PathBuf::from("/tmp/fleet-home")),
+            ..Default::default()
+        };
+        assert_eq!(
+            delegation_home(&interactive),
+            Some(std::path::PathBuf::from("/tmp/fleet-home"))
+        );
+
+        assert_eq!(delegation_home(&AgentOptions::default()), None);
     }
 
     #[test]

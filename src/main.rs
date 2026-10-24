@@ -2624,6 +2624,7 @@ async fn drive(
         // home: a session can file a proposal, and only the owner's
         // `fleet improve apply` runs one.
         improve_home: Some(home.to_path_buf()),
+        route_home: None,
         gui_prompt: None,
         compact_now,
         checkpoints,

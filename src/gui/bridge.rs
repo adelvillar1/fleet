@@ -6550,6 +6550,7 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
                             // proposal, and only the owner's `fleet improve
                             // apply` runs one.
                             improve_home: Some(home.clone()),
+                            route_home: None,
                             // The owner is in a browser, and the run says
                             // so: the prompt line is what tells the model
                             // its progress is being watched live and where
@@ -7865,8 +7866,7 @@ mod tests {
         for spelling in [".env", ".env.local", ".envrc"] {
             let refused = bridge.file(spelling).await;
             assert_eq!(
-                refused["refused"][0],
-                "a credential file is never served",
+                refused["refused"][0], "a credential file is never served",
                 "{spelling}"
             );
         }
