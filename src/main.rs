@@ -1708,10 +1708,17 @@ fn cron_command(options: &cli::CronOptions) -> ExitCode {
             name,
             schedule,
             task,
+            tools,
             auto_approve,
         } => {
             match fleet::cron::Store::open(&home).and_then(|mut store| {
                 let job = store.add(name, schedule, task, *auto_approve)?;
+                if !tools.is_empty() {
+                    // The allowlist rides the declaration: a job approved
+                    // to reach a lane names the tool, and enabling it is
+                    // the approval (KI-256).
+                    return store.set_declaration(name, &job.task, tools);
+                }
                 Ok(job)
             }) {
                 Ok(job) => {
@@ -1762,9 +1769,7 @@ fn cron_command(options: &cli::CronOptions) -> ExitCode {
                     println!("fleet: cron: seeded `{name}`");
                 }
                 for name in &report.reconciled {
-                    println!(
-                        "fleet: cron: reconciled `{name}`'s task string to the manifest"
-                    );
+                    println!("fleet: cron: reconciled `{name}`'s task string to the manifest");
                 }
                 if report.added.is_empty() && report.reconciled.is_empty() {
                     println!("fleet: cron: the store matches the manifest");

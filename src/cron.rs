@@ -654,6 +654,13 @@ pub struct Job {
     /// Whether the job is declared unattended: true lets its tool calls
     /// run, false skips and names them.
     pub auto_approve: bool,
+    /// The lane tools this job is approved to call, full MCP names
+    /// (`mcp__blend1__refresh`). The allowlist is the approval: enabling
+    /// a job whose declaration names a lane tool is what lets an
+    /// unattended run reach that lane — nothing else is asked and
+    /// nothing else joins (KI-256). Empty means no lanes at all.
+    #[serde(default)]
+    pub tools: Vec<String>,
     pub enabled: bool,
     /// The minute the job last ran for, `YYYY-MM-DDTHH:MMZ`, or `null`
     /// when it never has.
@@ -824,6 +831,18 @@ pub fn seed_task(project: &str) -> String {
     )
 }
 
+/// The lane tools a manifest entry's job is approved to call (KI-256):
+/// every corpus-refresh job names the blend1 refresh tool, and nothing
+/// else joins an unattended run. A `task:` entry — fleet's own
+/// maintenance — carries no lanes.
+fn seed_tools(project: &str) -> Vec<String> {
+    if project.starts_with("task:") {
+        Vec::new()
+    } else {
+        vec!["mcp__blend1__refresh".to_string()]
+    }
+}
+
 /// What a seed pass did: the names it added to a store that lacked
 /// them, and the names whose task string it reconciled to the
 /// manifest's current wording (KI-277).
@@ -836,11 +855,11 @@ pub struct SeedReport {
 /// Seed the manifest's jobs into a home whose store lacks them. An
 /// existing job's schedule and enabled flag are never rewritten — the
 /// owner's edits there win, which is what makes the manifest safe to
-/// re-run. The task string is the manifest's own declaration and is
-/// reconciled to its current wording (KI-277): a fix that landed only
-/// in `seed_task` reached no job that already existed, and every seeded
-/// corpus-refresh job kept serving a stale string. The store is created
-/// when it does not exist.
+/// re-run. The task string and the tool allowlist are the manifest's
+/// own declaration and are reconciled to its current wording (KI-277,
+/// KI-256): a fix that landed only in `seed_task` reached no job that
+/// already existed, and every seeded corpus-refresh job kept serving a
+/// stale string. The store is created when it does not exist.
 pub fn seed_missing(home: &Path) -> Result<SeedReport, CronError> {
     let mut store = Store::open(home)?;
     let existing: Vec<String> = store.jobs().iter().map(|job| job.name.clone()).collect();
@@ -848,19 +867,23 @@ pub fn seed_missing(home: &Path) -> Result<SeedReport, CronError> {
     let mut reconciled = Vec::new();
     for (name, schedule, project) in SEED_MANIFEST {
         let declared = seed_task(project);
+        let tools = seed_tools(project);
         if existing.iter().any(|have| have == name) {
             let stale = store
                 .jobs()
                 .iter()
                 .find(|job| job.name == *name)
-                .is_some_and(|job| job.task != declared);
+                .is_some_and(|job| job.task != declared || job.tools != tools);
             if stale {
-                store.set_task(name, &declared)?;
+                store.set_declaration(name, &declared, &tools)?;
                 reconciled.push((*name).to_string());
             }
             continue;
         }
-        store.add(name, schedule, &declared, true)?;
+        let job = store.add(name, schedule, &declared, true)?;
+        if !tools.is_empty() {
+            store.set_declaration(name, &job.task, &tools)?;
+        }
         added.push((*name).to_string());
     }
     Ok(SeedReport { added, reconciled })
@@ -1100,6 +1123,7 @@ impl Store {
             schedule: schedule.trim().to_string(),
             task: task.to_string(),
             auto_approve,
+            tools: Vec::new(),
             enabled: true,
             last_run: None,
             last_outcome: None,
@@ -1125,22 +1149,29 @@ impl Store {
         Ok(stored)
     }
 
-    /// Rewrite one job's task string. KI-277: a wording fix that lands
-    /// in `seed_task` reached no job that already existed —
-    /// `seed_missing` skipped every present name, so all fourteen live
-    /// corpus-refresh jobs kept the pre-fix wording naming a lane tool
-    /// the driver session cannot call. The manifest owns a seeded job's
-    /// task string: a stored task that diverges from the declaration is
-    /// reconciled to it on the next seed, while the owner's schedule
-    /// and enabled edits — the fields `seed_missing` never wrote — are
-    /// untouched.
-    pub fn set_task(&mut self, name: &str, task: &str) -> Result<Job, CronError> {
+    /// Rewrite one job's declaration — the task string and the tool
+    /// allowlist. KI-277: a wording fix that lands in `seed_task`
+    /// reached no job that already existed — `seed_missing` skipped
+    /// every present name, so all fourteen live corpus-refresh jobs
+    /// kept the pre-fix wording naming a lane tool the driver session
+    /// cannot call. KI-256: the allowlist rides the same declaration.
+    /// The manifest owns a seeded job's declaration: a stored job that
+    /// diverges is reconciled to it on the next seed, while the owner's
+    /// schedule and enabled edits — the fields `seed_missing` never
+    /// wrote — are untouched.
+    pub fn set_declaration(
+        &mut self,
+        name: &str,
+        task: &str,
+        tools: &[String],
+    ) -> Result<Job, CronError> {
         let job = self
             .jobs
             .iter_mut()
             .find(|job| job.name == name)
             .ok_or_else(|| CronError::Missing(name.to_string()))?;
         job.task = task.to_string();
+        job.tools = tools.to_vec();
         let stored = job.clone();
         self.save()?;
         Ok(stored)
@@ -1330,6 +1361,62 @@ pub struct RunOutcome {
 /// directory). Making it explicit is also what lets a test drive this
 /// path without writing recall hits into whatever corpus its own
 /// working directory happens to sit above.
+/// The lane specs one job's allowlist resolves to (KI-256): each named
+/// tool's server, and nothing else. A job with no list carries no lanes
+/// at all — `None`, the same shape an unrouted test double sees. The
+/// vendored lanes resolve first (the registry reserves their names);
+/// a name left over resolves through the registry's enabled servers;
+/// a name neither carries is named on stderr and skipped — the run
+/// proceeds on what resolved, and the job's outcome says what it could
+/// not reach.
+fn job_lane_specs(
+    home: &Path,
+    job: &Job,
+) -> Option<std::collections::HashMap<String, crate::mcp::ServerSpec>> {
+    if job.tools.is_empty() {
+        return None;
+    }
+    let mut specs = std::collections::HashMap::new();
+    let mut missed: Vec<(String, String)> = Vec::new();
+    for tool in &job.tools {
+        let server = tool.split("__").nth(1).unwrap_or_default();
+        match crate::lanes::spec_for(server) {
+            Ok(spec) => {
+                specs.insert(server.to_string(), spec);
+            }
+            Err(_) => missed.push((tool.clone(), server.to_string())),
+        }
+    }
+    if !missed.is_empty() {
+        let dotenv: std::collections::BTreeMap<String, String> =
+            crate::home::read_dotenv_with_process_vault(home)
+                .into_iter()
+                .collect();
+        match crate::mcp_registry::enabled_specs(home, &dotenv) {
+            Ok(enabled) => {
+                for (tool, server) in missed {
+                    match enabled.get(&server) {
+                        Some(spec) => {
+                            specs.insert(server, spec.clone());
+                        }
+                        None => eprintln!(
+                            "fleet: cron: job `{}`: tool `{tool}` names server \
+                             `{server}`, which is neither a vendored lane nor an \
+                             enabled registry server",
+                            job.name
+                        ),
+                    }
+                }
+            }
+            Err(reason) => eprintln!(
+                "fleet: cron: job `{}`: the registry did not resolve: {reason}",
+                job.name
+            ),
+        }
+    }
+    Some(specs)
+}
+
 pub async fn execute(
     home: &Path,
     client: &Client,
@@ -1361,6 +1448,12 @@ pub async fn execute(
         std::env::var("HOME").ok().as_deref(),
         home,
     );
+    // The job's own allowlist is the lane approval (KI-256): a tool the
+    // declaration names rides its server's spec, and a job with no list
+    // carries no lanes. A name whose server is not enabled is named and
+    // skipped — the run proceeds on what resolved, and the outcome says
+    // what was missing.
+    let lane_specs = job_lane_specs(home, job);
     // The corpus is loaded per run, off the async worker, from the root
     // the caller resolved — exactly the way `fleet run` wires it: the
     // files can change between runs, and a load that cannot complete
@@ -1377,7 +1470,7 @@ pub async fn execute(
         max_turns: DEFAULT_MAX_TURNS,
         identity: crate::home::read_soul(home),
         ui_tx: None,
-        lane_specs: None,
+        lane_specs,
         calib,
         skills,
         // A scheduled run has no owner present to steer it and no role
@@ -2446,6 +2539,15 @@ fn card(home: &Path, job: &Job, now: Minute) -> String {
     for chunk in crate::skills::wrap_detail(&job.task, CARD_WIDTH - 4) {
         lines.push(format!("{DIM}\u{2502}{RESET} {TEXT}{chunk}{RESET}"));
     }
+    // The allowlist is on the card: a job approved to reach a lane says
+    // which tool, because enabling the job is the approval and the
+    // approval should be visible where the job is read (KI-256).
+    if !job.tools.is_empty() {
+        lines.push(format!(
+            "{DIM}\u{2502}{RESET} {DIM}lane tools {}{RESET}",
+            job.tools.join(", ")
+        ));
+    }
     let next = if job.enabled {
         // A disabled job keeps its schedule but will never fire on it,
         // so the card says so rather than promising a fire.
@@ -2540,6 +2642,7 @@ mod tests {
             schedule: schedule.to_string(),
             task: "the goal".to_string(),
             auto_approve: false,
+            tools: Vec::new(),
             enabled: true,
             last_run: last_run.map(str::to_string),
             last_outcome: None,
@@ -2603,7 +2706,10 @@ mod tests {
         // nothing.
         let before = store.jobs().to_vec();
         let again = seed_missing(&home).expect("the re-seed lands");
-        assert!(again.added.is_empty() && again.reconciled.is_empty(), "{again:?}");
+        assert!(
+            again.added.is_empty() && again.reconciled.is_empty(),
+            "{again:?}"
+        );
         let after = Store::open(&home).unwrap().jobs().to_vec();
         assert_eq!(before, after);
         let _ = std::fs::remove_dir_all(&home);
@@ -2661,9 +2767,44 @@ mod tests {
             .find(|job| job.name == name)
             .expect("the job")
             .clone();
-        assert_eq!(job.task, seed_task(project), "the wording is the manifest's");
+        assert_eq!(
+            job.task,
+            seed_task(project),
+            "the wording is the manifest's"
+        );
         assert_eq!(job.schedule, "9 5 * * *", "the owner's schedule wins");
         assert!(!job.enabled, "the owner's enabled flag wins");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn a_jobs_allowlist_resolves_its_server_and_nothing_else() {
+        // KI-256: the allowlist is the approval. A job naming a lane
+        // tool rides that tool's lane spec — blend1 is a vendored lane,
+        // and the registry reserves its name; a job with no list
+        // carries no lanes at all; a name nothing carries is named and
+        // skipped while the rest still resolves.
+        let home = temp_home("job-lane-specs");
+
+        let mut allowlisted = job("corpus-refresh", "15 1 * * *", None);
+        allowlisted.tools = vec!["mcp__blend1__refresh".to_string()];
+        let specs = job_lane_specs(&home, &allowlisted).expect("the allowlist resolves");
+        assert!(
+            specs.contains_key("blend1"),
+            "the named tool's lane joins: {:?}",
+            specs.keys().collect::<Vec<_>>()
+        );
+
+        let plain = job("daily-digest", "0 7 * * *", None);
+        assert!(job_lane_specs(&home, &plain).is_none(), "no list, no lanes");
+
+        let mut mixed = job("mixed", "0 8 * * *", None);
+        mixed.tools = vec![
+            "mcp__blend1__refresh".to_string(),
+            "mcp__nowhere__tool".to_string(),
+        ];
+        let specs = job_lane_specs(&home, &mixed).expect("the resolvable half lands");
+        assert_eq!(specs.len(), 1, "{:?}", specs.keys().collect::<Vec<_>>());
         let _ = std::fs::remove_dir_all(&home);
     }
 

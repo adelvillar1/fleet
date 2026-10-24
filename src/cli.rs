@@ -478,6 +478,8 @@ pub enum CronAction {
         name: String,
         schedule: String,
         task: String,
+        /// The lane tools the job is approved to call (KI-256).
+        tools: Vec<String>,
         auto_approve: bool,
     },
     /// Turn a job back on.
@@ -662,9 +664,11 @@ usage:
                                 --archive lists what the cycle forgot
   fleet cron                     list the scheduled jobs: schedule, next fire,
                                 last run and outcome
-  fleet cron add --name <name> --schedule \"<expr>\" --task \"<goal>\" [--auto-approve]
+  fleet cron add --name <name> --schedule \"<expr>\" --task \"<goal>\" [--tool <mcp__server__tool>] [--auto-approve]
                                 schedule a task; the expression is five fields,
                                 minute hour day-of-month month day-of-week,
+                                --tool names a lane tool the job may call
+                                (repeatable; the allowlist is the approval),
                                 and --auto-approve lets its tool calls run
                                 unattended
   fleet cron enable --name <name>
@@ -1658,6 +1662,7 @@ fn parse_cron(args: &[String]) -> Result<Command, String> {
             let mut name: Option<String> = None;
             let mut schedule: Option<String> = None;
             let mut task: Option<String> = None;
+            let mut tools: Vec<String> = Vec::new();
             let mut auto_approve = false;
             let mut index = 0;
             while index < rest.len() {
@@ -1667,6 +1672,7 @@ fn parse_cron(args: &[String]) -> Result<Command, String> {
                     "--name" => name = Some(take_value(rest, &mut index, arg)?),
                     "--schedule" => schedule = Some(take_value(rest, &mut index, arg)?),
                     "--task" => task = Some(take_value(rest, &mut index, arg)?),
+                    "--tool" => tools.push(take_value(rest, &mut index, arg)?),
                     "--auto-approve" => auto_approve = true,
                     _ if arg.starts_with('-') && arg != "-" => {
                         return Err(format!("unknown cron option `{arg}`"));
@@ -1687,6 +1693,7 @@ fn parse_cron(args: &[String]) -> Result<Command, String> {
                     name,
                     schedule,
                     task,
+                    tools,
                     auto_approve,
                 },
             }))
@@ -3640,6 +3647,7 @@ mod tests {
                     name: "daily-digest".to_string(),
                     schedule: "0 7 * * *".to_string(),
                     task: "Summarize the day.".to_string(),
+                    tools: Vec::new(),
                     auto_approve: true,
                 }
             })
