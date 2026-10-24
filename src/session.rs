@@ -844,7 +844,7 @@ pub fn session_path(home: &Path, id: &str) -> PathBuf {
 }
 
 /// `YYYYMMDDTHHMMSSZ` from the wall clock.
-fn compact_utc_stamp(at: SystemTime) -> io::Result<String> {
+pub fn compact_utc_stamp(at: SystemTime) -> io::Result<String> {
     let (year, month, day, hour, minute, second) = civil_utc(at)?;
     Ok(format!(
         "{year:04}{month:02}{day:02}T{hour:02}{minute:02}{second:02}Z"

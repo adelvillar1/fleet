@@ -308,6 +308,11 @@ pub fn deck_spec() -> ToolSpec {
                         }
                     },
                     "required": ["project_type", "nodes"]
+                },
+                "format": {
+                    "type": "string",
+                    "enum": ["pptx"],
+                    "description": "Ask for a PowerPoint file: a real .pptx is written beside the session's rendered deck and its path is named in the result. Omit for the HTML render alone."
                 }
             },
             "required": ["deck"],
@@ -352,10 +357,13 @@ pub struct DeckEventData {
 }
 
 pub fn run_deck(arguments: &serde_json::Value) -> Result<ToolOutcome, String> {
-    run_deck_with_event(arguments).map(|run| run.outcome)
+    run_deck_with_event(arguments, None).map(|run| run.outcome)
 }
 
-pub fn run_deck_with_event(arguments: &serde_json::Value) -> Result<DeckRun, String> {
+pub fn run_deck_with_event(
+    arguments: &serde_json::Value,
+    session_dir: Option<&std::path::Path>,
+) -> Result<DeckRun, String> {
     // The suggest mode: the vector half of "choose the layout from the
     // content". An intent in, the index ranked out — the planner builds
     // with the match or disagrees with it on content grounds, and a
@@ -471,6 +479,39 @@ pub fn run_deck_with_event(arguments: &serde_json::Value) -> Result<DeckRun, Str
     let mut output = crate::deck::review_line(&deck);
     if !actions.is_empty() {
         output.push_str(&format!("\n{}", actions.join("\n")));
+    }
+    // The doors (KI-241, KI-239): beside the session, the rendered deck
+    // is a file the owner can open — headless as much as in the face —
+    // and a asked-for `.pptx` lands beside it. A write that fails names
+    // itself and the deck still ships; the paths ride the summary the
+    // model reads, so the owner hears them from the agent.
+    if let Some(dir) = session_dir {
+        let stamp = crate::session::compact_utc_stamp(std::time::SystemTime::now())
+            .unwrap_or_else(|_| "deck".to_string());
+        let stem = dir.join(format!("deck-{stamp}"));
+        match std::fs::write(format!("{}.html", stem.display()), &html) {
+            Ok(()) => output.push_str(&format!(
+                "\nthe rendered deck is saved at {}.html",
+                stem.display()
+            )),
+            Err(error) => {
+                output.push_str(&format!("\nthe deck file could not be written: {error}"))
+            }
+        }
+        if arguments.get("format").and_then(|f| f.as_str()) == Some("pptx") {
+            match std::fs::write(
+                format!("{}.pptx", stem.display()),
+                crate::deck::to_pptx(&deck),
+            ) {
+                Ok(()) => output.push_str(&format!(
+                    "\nthe PowerPoint file is saved at {}.pptx",
+                    stem.display()
+                )),
+                Err(error) => output.push_str(&format!(
+                    "\nthe PowerPoint file could not be written: {error}"
+                )),
+            }
+        }
     }
     output.push_str(&format!("\n\n{}", html));
     Ok(DeckRun {
@@ -3979,7 +4020,7 @@ mod tests {
                 }]
             }
         });
-        let run = run_deck_with_event(&overfull).expect("a result, not an error");
+        let run = run_deck_with_event(&overfull, None).expect("a result, not an error");
         let event = run.event.expect("a rendered deck carries its event");
         assert!(!event.faults.is_empty(), "the faults ride the event");
         assert!(
@@ -3994,6 +4035,75 @@ mod tests {
         // The pre-baked fix is the honest one: its own review is clean.
         let fixed: crate::deck::Deck = serde_json::from_str(&event.fix_deck).unwrap();
         assert!(crate::deck::review(&fixed).is_empty());
+    }
+
+    #[test]
+    fn a_deck_run_writes_its_render_and_pptx_beside_the_session() {
+        // KI-241/KI-239: the rendered deck and an asked-for .pptx land
+        // beside the session as files the owner can open, and the summary
+        // the model reads names both paths.
+        let dir = scratch_dir("deck-doors");
+        let arguments = serde_json::json!({
+            "deck": {
+                "project_type": "presentation",
+                "nodes": [
+                    {
+                        "id": "slide_01",
+                        "layout": "split_two_column",
+                        "eyebrow": "Market Analysis 2026",
+                        "headline": "Q3 growth came from regional expansion",
+                        "components": [
+                            {"type": "bullet_list", "items": ["**54% increase** in APAC sales"]},
+                            {"type": "metric", "value": "$4.2M", "label": "Net new ARR"}
+                        ]
+                    },
+                    {
+                        "id": "slide_02",
+                        "layout": "metric_row",
+                        "headline": "The reserve covers two quarters at current burn",
+                        "components": [
+                            {"type": "metrics", "items": [["18", "months of runway"]]}
+                        ]
+                    }
+                ]
+            },
+            "format": "pptx"
+        });
+        let run = run_deck_with_event(&arguments, Some(&dir)).expect("a result, not an error");
+        assert!(run.event.is_some(), "the face still gets its card");
+        let htmls: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "html"))
+            .collect();
+        assert_eq!(htmls.len(), 1, "one render beside the session");
+        let pptx_path = dir
+            .read_dir()
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.path())
+            .find(|path| path.extension().is_some_and(|ext| ext == "pptx"))
+            .expect("the PowerPoint door opens");
+        let bytes = std::fs::read(&pptx_path).expect("the pptx read");
+        assert_eq!(&bytes[..2], b"PK", "a zip by signature");
+        assert!(
+            run.outcome.output.contains("saved at"),
+            "the paths are named: {}",
+            run.outcome.output.lines().next().unwrap_or("")
+        );
+        assert!(
+            run.outcome.output.contains("PowerPoint file is saved at"),
+            "the pptx path is named"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn scratch_dir(tag: &str) -> std::path::PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("fleet-deck-doors-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
     }
 
     #[test]

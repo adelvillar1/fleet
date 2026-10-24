@@ -3078,44 +3078,54 @@ impl<'a> Agent<'a> {
             // The deck is validated before anything is rendered, and the
             // rendered fragment rides its own event so the surface shows
             // the deck while the model reads the summary. A refusal is a
-            // model-visible error naming the node and the rule.
+            // model-visible error naming the node and the rule. The
+            // session's directory is the write target: the rendered deck
+            // and an asked-for .pptx land beside the log, headless as
+            // much as in the face (KI-241, KI-239).
+            let session_dir = self
+                .session
+                .path()
+                .parent()
+                .map(std::path::Path::to_path_buf);
             return Ok(match serde_json::from_str(&call.function.arguments) {
                 Err(error) => settled(format!("error: arguments were not valid JSON: {error}")),
-                Ok(arguments) => match tools::run_deck_with_event(&arguments) {
-                    Err(error) => settled(format!("error: {error}")),
-                    Ok(run) => {
-                        let bounded = tools::bound(run.outcome);
-                        // The HTML is everything past the summary line:
-                        // the model reads the summary, the surface reads
-                        // the deck.
-                        let (summary, html) = match bounded.output.find("\n\n") {
-                            Some(at) => (
-                                bounded.output[..at].to_string(),
-                                bounded.output[at + 2..].to_string(),
-                            ),
-                            None => (bounded.output.clone(), String::new()),
-                        };
-                        let (faults, original_deck, fix_deck, fix_actions) = match &run.event {
-                            Some(event) => (
-                                serde_json::to_string(&event.faults)
-                                    .expect("fault values serialize"),
-                                Some(event.original_deck.clone()),
-                                Some(event.fix_deck.clone()),
-                                event.fix_actions.clone(),
-                            ),
-                            None => (String::new(), None, None, Vec::new()),
-                        };
-                        Prepared::Ready(Work::Deck {
-                            summary,
-                            html,
-                            faults,
-                            original_deck,
-                            fix_deck,
-                            fix_actions,
-                            ui_tx: self.ui_tx.clone(),
-                        })
+                Ok(arguments) => {
+                    match tools::run_deck_with_event(&arguments, session_dir.as_deref()) {
+                        Err(error) => settled(format!("error: {error}")),
+                        Ok(run) => {
+                            let bounded = tools::bound(run.outcome);
+                            // The HTML is everything past the summary line:
+                            // the model reads the summary, the surface reads
+                            // the deck.
+                            let (summary, html) = match bounded.output.find("\n\n") {
+                                Some(at) => (
+                                    bounded.output[..at].to_string(),
+                                    bounded.output[at + 2..].to_string(),
+                                ),
+                                None => (bounded.output.clone(), String::new()),
+                            };
+                            let (faults, original_deck, fix_deck, fix_actions) = match &run.event {
+                                Some(event) => (
+                                    serde_json::to_string(&event.faults)
+                                        .expect("fault values serialize"),
+                                    Some(event.original_deck.clone()),
+                                    Some(event.fix_deck.clone()),
+                                    event.fix_actions.clone(),
+                                ),
+                                None => (String::new(), None, None, Vec::new()),
+                            };
+                            Prepared::Ready(Work::Deck {
+                                summary,
+                                html,
+                                faults,
+                                original_deck,
+                                fix_deck,
+                                fix_actions,
+                                ui_tx: self.ui_tx.clone(),
+                            })
+                        }
                     }
-                },
+                }
             });
         }
         if name == tools::VISION_TOOL {
