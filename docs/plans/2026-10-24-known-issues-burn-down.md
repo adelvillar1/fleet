@@ -1,5 +1,5 @@
 ---
-status: active
+status: completed
 created: 2026-10-24
 updated: 2026-10-24
 slug: known-issues-burn-down
@@ -203,28 +203,28 @@ The build order is the ruling's order: the hunk and the evidence-only
 closes first, then the mechanical rows, the flakes, the daily rows, the
 design rows.
 
-- [ ] **C0 — the missed hunk.** `src/remote/listener.rs`'s `/api/sessions`
+- [x] **C0 — the missed hunk.** `src/remote/listener.rs`'s `/api/sessions`
   route forwards the search query to the two-arg `Bridge::sessions`, in a
   commit of its own; `cargo check --all-targets` exits 0 before and after.
-- [ ] **C1 — evidence closes KI-282, KI-248, KI-242.** Each row's Status
+- [x] **C1 — evidence closes KI-282, KI-248, KI-242.** Each row's Status
   reads closed with its evidence named (the 200 probe; the shipped steer/
   stop/btw verbs; the shipped cache validators and their tests), and no
   code changes in that commit.
-- [ ] **C2 — KI-294.** Both unattended `skills::load` sites resolve the
+- [x] **C2 — KI-294.** Both unattended `skills::load` sites resolve the
   canonical skills directory via the shared precedence; a test with a
   home carrying `skills/<name>/SKILL.md` asserts both the scheduled and
   the delegated path declare it.
-- [ ] **C3 — KI-308.** The credential scan matches `sk-` plus a run of at
+- [x] **C3 — KI-308.** The credential scan matches `sk-` plus a run of at
   least 20 key characters and names the matched word with its offset on
   failure; a `task-wrap` payload passes and an `sk-`-shaped token fails
   with both named, by test.
-- [ ] **C4 — KI-288 + KI-293.** Both flaky tests bound on observable state
+- [x] **C4 — KI-288 + KI-293.** Both flaky tests bound on observable state
   (the loop's counter under a deadline; read-until-head-terminator), no
   fixed sleeps, by test.
-- [ ] **C5 — KI-277.** `seed_missing` reconciles a diverged task string to
+- [x] **C5 — KI-277.** `seed_missing` reconciles a diverged task string to
   `seed_task(project)` leaving schedule/enabled untouched; a test carries
   a pre-fix string in and the current wording out.
-- [ ] **C6 — KI-284.** The write guard exempts the unrenamable: docstring
+- [x] **C6 — KI-284.** The write guard exempts the unrenamable: docstring
   prose stripped from its own Python pass, absolute-path-only
   occurrences, protocol-shaped tokens, and established file names — the
   row's recorded unrenamable refusals (`Scheduled`, `MCP`, `Implements`,
@@ -234,18 +234,18 @@ design rows.
   doc naming a thing, so the plan-drafting three (`RunOptions`,
   `LaneJoined`, `LaneChild`) keep the documented bare-prose shape. By
   test.
-- [ ] **C7 — KI-238 + KI-237.** `.envrc` is refused by the pane's
+- [x] **C7 — KI-238 + KI-237.** `.envrc` is refused by the pane's
   credential read (test beside the existing refusal), and the Esc
   handler's comment matches the code's behavior.
-- [ ] **C8 — KI-289.** `#/file/<path>` opens the pane with the preview tab
+- [x] **C8 — KI-289.** `#/file/<path>` opens the pane with the preview tab
   showing the file, rendered for markdown; a face check drives the route.
-- [ ] **C9 — KI-256.** A job's optional `tools` list reaches the run's
+- [x] **C9 — KI-256.** A job's optional `tools` list reaches the run's
   lane specs; the seed writes `mcp__blend1__refresh` on corpus jobs; a
   job without the list gets none; the card shows the line; by test.
-- [ ] **C10 — KI-278.** The child dispatch reads a route home distinct
+- [x] **C10 — KI-278.** The child dispatch reads a route home distinct
   from `improve_home`; a scheduled run passes the sessions parent; a test
   asserts the child's `own_route` resolves from it.
-- [ ] **C11 — KI-297 + KI-296.** blend1's derive dedupes by key and
+- [x] **C11 — KI-297 + KI-296.** blend1's derive dedupes by key and
   reports dropped duplicates (repeated-heading fixture converges to
   `changed: false`, by test); the embedder probe retries within its
   budget (first-slow/second-fast double succeeds, by test); the row
