@@ -13469,8 +13469,10 @@
       if (rows.length) choosePalette(rows[face.paletteAt || 0].dataset.address);
     }
   });
-  // The palette's own key, and Esc from anywhere: the one keystroke that
-  // reaches every surface, and the one that always comes home.
+  // The palette's own key, and Esc from anywhere: the overlays close
+  // first (the goal pop, then the palette), an empty pane closes with
+  // it, and a pane holding a file stays up while the hash walks home —
+  // close-when-empty, home-when-file-open.
   window.addEventListener('keydown', function (event) {
     var typing = document.activeElement === el.paletteInput
       || document.activeElement === el.task;

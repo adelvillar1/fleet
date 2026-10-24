@@ -3540,9 +3540,10 @@ fn file_read(root: &std::path::Path, asked: &str) -> Value {
     // The credential check is lexical and first, so a dotenv is refused
     // by name whether or not it exists — a browser that can ask for a
     // file is exactly where a credential would leak, and the refusal must
-    // not depend on the file being there to refuse.
+    // not depend on the file being there to refuse. The prefix covers
+    // every dotenv spelling, `.envrc` included (KI-238).
     let name = asked.rsplit('/').next().unwrap_or(asked);
-    if name == ".env" || name.starts_with(".env.") {
+    if name.starts_with(".env") {
         return json!({"type": "file", "refused": ["a credential file is never served"]});
     }
     let path = match pane_path(root, asked) {
@@ -7858,9 +7859,17 @@ mod tests {
         let text = document["text"].as_str().expect("the text");
         assert!(text.contains("--dsw-alias-page"), "{text}");
         assert_eq!(document["truncated"], false);
-        // The dotenv is refused by name, with the reason the pane shows.
-        let dotenv = bridge.file(".env").await;
-        assert_eq!(dotenv["refused"][0], "a credential file is never served");
+        // The dotenv family is refused by name, with the reason the pane
+        // shows — `.envrc` beside `.env` and the dotted variants
+        // (KI-238).
+        for spelling in [".env", ".env.local", ".envrc"] {
+            let refused = bridge.file(spelling).await;
+            assert_eq!(
+                refused["refused"][0],
+                "a credential file is never served",
+                "{spelling}"
+            );
+        }
     }
 
     /// A deck rides the event log the way every other intelligence card
