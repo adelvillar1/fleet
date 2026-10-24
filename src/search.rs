@@ -67,6 +67,23 @@ pub fn grep_providers() -> Vec<crate::tool_router::Provider> {
 }
 
 /// `grep`: literal or regex search, capped and counted.
+/// The optional refinements one grep call carries, as the tool reads
+/// them. A struct rather than seven positional arguments: two of them
+/// are booleans whose order a caller would eventually swap.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct GrepOptions<'a> {
+    pub glob: Option<&'a str>,
+    pub case_sensitive: bool,
+    pub mode: &'a str,
+    pub max: Option<usize>,
+    /// Lines of context before and after each content match.
+    pub context: Option<usize>,
+    /// A file-type filter (`rust`, `py`, …). rg only.
+    pub file_type: Option<&'a str>,
+    /// Let the pattern span lines. rg only.
+    pub multiline: bool,
+}
+
 pub fn run_grep(
     pattern: &str,
     path: &Path,
@@ -76,6 +93,36 @@ pub fn run_grep(
     mode: &str,
     max: Option<usize>,
 ) -> Result<SearchOutcome, String> {
+    run_grep_with(
+        pattern,
+        path,
+        base,
+        GrepOptions {
+            glob,
+            case_sensitive,
+            mode,
+            max,
+            ..Default::default()
+        },
+    )
+}
+
+/// `grep` with the refinements the tool's own schema offers.
+pub fn run_grep_with(
+    pattern: &str,
+    path: &Path,
+    base: &Path,
+    options: GrepOptions<'_>,
+) -> Result<SearchOutcome, String> {
+    let GrepOptions {
+        glob,
+        case_sensitive,
+        mode,
+        max,
+        context,
+        file_type,
+        multiline,
+    } = options;
     let target = display_path(path, base);
     let providers = grep_providers();
     let chosen = crate::tool_router::choose(&providers, false)
@@ -91,6 +138,9 @@ pub fn run_grep(
                         .arg("--line-number")
                         .arg("--no-heading")
                         .arg(format!("--max-count={}", max.unwrap_or(10)));
+                    if let Some(context) = context.filter(|lines| *lines > 0) {
+                        command.arg("--context").arg(context.to_string());
+                    }
                 }
                 "count" => {
                     command.arg("--count");
@@ -105,6 +155,15 @@ pub fn run_grep(
             }
             if let Some(glob) = glob {
                 command.arg("--glob").arg(glob);
+            }
+            if let Some(file_type) = file_type {
+                command.arg("--type").arg(file_type);
+            }
+            if multiline {
+                // `-U` lets a pattern cross lines; the dotall flag makes
+                // `.` cross them too, which is what a model writing
+                // `fn x.*` across two lines means.
+                command.arg("-U").arg("--multiline-dotall");
             }
             command
         }
@@ -130,6 +189,9 @@ pub fn run_grep(
             }
             if let Some(glob) = glob {
                 command.arg(format!("--include={glob}"));
+            }
+            if let Some(context) = context.filter(|lines| *lines > 0) {
+                command.arg(format!("-C{context}"));
             }
             command
         }
@@ -194,6 +256,22 @@ pub fn run_grep(
             "; rg unavailable — dispatch chose grep ({})",
             chosen.1
         ));
+        // A search that quietly drops a filter answers a different
+        // question than the one asked, so the fallback names what it
+        // could not honour.
+        let mut unsupported: Vec<&str> = Vec::new();
+        if file_type.is_some() {
+            unsupported.push("`type`");
+        }
+        if multiline {
+            unsupported.push("`multiline`");
+        }
+        if !unsupported.is_empty() {
+            text.push_str(&format!(
+                "; {} ignored without rg — install rg or drop the filter",
+                unsupported.join(" and ")
+            ));
+        }
     }
     text.push_str(")\n");
     Ok(SearchOutcome { text, truncated })
@@ -201,6 +279,9 @@ pub fn run_grep(
 
 /// `glob`: walk, match, order by mtime, cap.
 pub fn run_glob(pattern: &str, path: &Path, base: &Path) -> Result<SearchOutcome, String> {
+    if let Some(outcome) = run_glob_rg(pattern, path, base)? {
+        return Ok(outcome);
+    }
     let mut found: Vec<(SystemTime, PathBuf)> = Vec::new();
     let mut visited = 0usize;
     let mut cut = false;
@@ -256,6 +337,69 @@ pub fn tree_files(root: &Path) -> (Vec<PathBuf>, bool) {
     });
     found.sort();
     (found, cut)
+}
+
+/// `glob` through `rg --files`: honors `.gitignore`, compiles the
+/// pattern, and is what a repository's own tooling already assumes.
+///
+/// `None` means rg is not installed or refused this pattern; the caller
+/// falls back to the walker, which says so in its tail. The ordering
+/// differs by design: rg answers in its own walk order and the walker
+/// answers newest-first, so each provider's answer is honest about where
+/// it came from rather than pretending the two are one ranking.
+fn run_glob_rg(pattern: &str, path: &Path, base: &Path) -> Result<Option<SearchOutcome>, String> {
+    let target = display_path(path, base);
+    let mut command = Command::new("rg");
+    command
+        .arg("--files")
+        .arg("--color=never")
+        .arg("--no-messages")
+        .arg("--glob")
+        .arg(pattern);
+    // rg honors `.gitignore`, but a tree without one still should not
+    // walk a build directory: the same skips the native walker applies,
+    // applied here so the two providers answer the same question.
+    for skip in SKIP_DIRS {
+        command.arg("--glob").arg(format!("!{skip}"));
+    }
+    let output = match command.arg(&target).current_dir(base).output() {
+        Ok(output) => output,
+        // rg is not installed: the walker is the answer, not an error.
+        Err(_) => return Ok(None),
+    };
+    if output.status.code() == Some(2) {
+        // A pattern rg refuses is the walker's to try.
+        return Ok(None);
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut found: Vec<String> = stdout
+        .lines()
+        .filter(|line| !line.is_empty())
+        .map(|line| strip_prefix(line, base).trim_end().to_string())
+        .collect();
+    found.sort();
+    let total = found.len();
+    let shown = total.min(GLOB_CAP);
+    if shown == 0 {
+        return Ok(Some(SearchOutcome {
+            text: format!("no files matched `{pattern}`\n"),
+            truncated: false,
+        }));
+    }
+    let mut text = String::new();
+    for line in &found[..shown] {
+        text.push_str(line);
+        text.push('\n');
+    }
+    if total > shown {
+        text.push_str(&format!(
+            "({total} file(s) matched; showing {shown}, alphabetical — narrow the pattern)\n"
+        ));
+    }
+    Ok(Some(SearchOutcome {
+        text,
+        truncated: total > shown,
+    }))
 }
 
 /// The entries in `dir` whose names are closest to `name`, for a

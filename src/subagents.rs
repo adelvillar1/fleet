@@ -2188,6 +2188,7 @@ mod tests {
                 "grep".to_string(),
                 "glob".to_string(),
                 "repo_map".to_string(),
+                "file_change".to_string(),
                 "todo".to_string(),
                 "use_skill".to_string(),
             ]

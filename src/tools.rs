@@ -115,6 +115,15 @@ pub const WEB_TOOL: &str = "web";
 pub const READ_DOCUMENT_TOOL: &str = "read_document";
 /// Hand a file to the owner: an artifact card in the face.
 pub const SEND_FILE_TOOL: &str = "send_file";
+/// Move, copy, delete, and create directories — one tool, an op enum.
+pub const FILE_CHANGE_TOOL: &str = "file_change";
+
+/// The paths no `file_change` call may touch: the repository's own
+/// metadata, and the fleet home where sessions and memory live. A
+/// `move` or a `delete` naming one of these is refused by name before
+/// anything is read, because "the model tidied the wrong directory" is
+/// not a recovery anyone wants to test.
+const RESERVED_SEGMENTS: &[&str] = &[".git", ".fleet", "node_modules"];
 
 /// The arrow a forwarded subagent call's name carries. A subagent's own
 /// tool calls reach the owner's Approver through the parent's gate, and
@@ -1281,10 +1290,11 @@ pub enum Tool {
     Todo,
     ApplyPatch,
     RepoMap,
+    FileChange,
 }
 
 /// All tools, in declaration order.
-pub const ALL_TOOLS: [Tool; 10] = [
+pub const ALL_TOOLS: [Tool; 11] = [
     Tool::Bash,
     Tool::ReadFile,
     Tool::WriteFile,
@@ -1294,6 +1304,7 @@ pub const ALL_TOOLS: [Tool; 10] = [
     Tool::Grep,
     Tool::Glob,
     Tool::RepoMap,
+    Tool::FileChange,
     Tool::Todo,
 ];
 
@@ -1372,6 +1383,7 @@ impl Tool {
             Tool::Todo => "todo",
             Tool::ApplyPatch => "apply_patch",
             Tool::RepoMap => "repo_map",
+            Tool::FileChange => "file_change",
         }
     }
 
@@ -1382,10 +1394,11 @@ impl Tool {
             Tool::WriteFile => "Create or replace a whole file, atomically. Use edit for a change to part of an existing file: this tool loses anything you do not reproduce exactly. The parent directory must already exist.",
             Tool::ListDir => "List a directory's entries, directories marked with a trailing slash. depth (default 1, maximum 8) lists nested levels. Capped at 1000 entries.",
             Tool::Edit => "Replace one exact passage in a file you have already read. Use this for every change to an existing file; do not rewrite the file with write_file. old_string must match byte for byte, including indentation, and must appear exactly once - include two or three surrounding lines to make it unique. Do not use line numbers: they shift. Zero matches names the closest line; several matches name their lines. Returns the changed line and a diff.",
-            Tool::Grep => "Search file contents. Prefer this over bash grep: results are capped, counted, and say when they were cut. output_mode is files (default), content, or count. Honors .gitignore when rg is installed. When the cap is hit, narrow the pattern or add glob.",
-            Tool::Glob => "Find files by path pattern. Supports * and ? within a segment and ** across segments, for example src/**/*.rs. Newest first, capped at 100. Use it to locate files; use grep to find contents.",
+            Tool::Grep => "Search file contents. Prefer this over bash grep: results are capped, counted, and say when they were cut. output_mode is files (default), content, or count; context adds lines around a content match, type filters by language, and multiline lets the pattern span lines (both rg only, and the grep fallback names what it dropped). Honors .gitignore when rg is installed. When the cap is hit, narrow the pattern or add glob.",
+            Tool::Glob => "Find files by path pattern: * and ? within a segment, ** across segments, for example src/**/*.rs. Newest first, capped at 100, and it honors .gitignore when rg is installed (the walker says when it fell back). Use it to locate files; use grep to find contents.",
             Tool::ApplyPatch => "Apply a content-anchored patch across files in one call: `*** Update File:`, `*** Add File:`, `*** Delete File:` sections; inside an update, ` context`, `-removed`, `+added`, with `@@` between hunks. There are no line numbers by design — each hunk matches its own context, so a stale read fails by name instead of corrupting the file. Every hunk for a file is checked before that file is written; earlier files stay written if a later one is refused, and the result names which landed.",
             Tool::RepoMap => "A token-budgeted map of the repository: files ranked by how often their definitions are referenced elsewhere, with their top-level definitions and line numbers. Use it on arrival to find where something lives. It is a heuristic — pattern-matched definitions and a reference count, not a parser — and it says so.",
+            Tool::FileChange => "Move, copy, delete, or create a directory. Prefer this over `bash mv/rm/mkdir`: the path is resolved inside the chat's folder, `.git`, the fleet home and `node_modules` are refused by name, and `move` and `delete` ask the owner in every mode because they are the two that cannot be undone from the result. A move that has to copy across filesystems says so.",
             Tool::Todo => "Replace the run's task list. Send the complete list every time; it is not appended. status is pending, in_progress, or completed (todo, doing, and done are accepted). Keep one line per step, and mark the step in progress before starting it.",
         }
     }
@@ -1470,6 +1483,18 @@ impl Tool {
                         "type": "integer", "minimum": 1, "maximum": 1000,
                         "description": "Rows to return. Defaults: 100 files, 50 lines, 100 counts."
                     },
+                    "context": {
+                        "type": "integer", "minimum": 0, "maximum": 20,
+                        "description": "Lines before and after each content match. 0 (default) for matching lines alone."
+                    },
+                    "type": {
+                        "type": "string",
+                        "description": "A language filter rg understands, such as rust, py, ts, go. Ignored by the grep fallback, which says so."
+                    },
+                    "multiline": {
+                        "type": "boolean",
+                        "description": "Let the pattern span lines (rg only; the fallback says it cannot)."
+                    },
                 },
                 "required": ["pattern"],
             }),
@@ -1500,6 +1525,19 @@ impl Tool {
                     },
                     "path": { "type": "string", "description": "Root to map. Default the working folder." },
                 },
+            }),
+            Tool::FileChange => serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "op": {
+                        "type": "string",
+                        "enum": ["move", "copy", "delete", "make_dir"],
+                        "description": "What to do. `move` and `delete` ask for approval in every mode."
+                    },
+                    "path": { "type": "string", "description": "The target: the file or directory to move, copy or delete, or the directory to create." },
+                    "to": { "type": "string", "description": "For `move` and `copy`: the destination path." },
+                },
+                "required": ["op", "path"],
             }),
             Tool::Todo => serde_json::json!({
                 "type": "object",
@@ -1543,6 +1581,7 @@ impl Tool {
                 }
                 "patch"
             }
+            Tool::FileChange => "path",
             Tool::Todo => {
                 let count = arguments
                     .get("items")
@@ -1630,6 +1669,7 @@ impl Tool {
             Tool::Glob => run_glob_tool(arguments, Some(root))?,
             Tool::ApplyPatch => run_apply_patch(arguments, Some(root))?,
             Tool::RepoMap => run_repo_map(arguments, Some(root))?,
+            Tool::FileChange => run_file_change(arguments, Some(root))?,
             Tool::Todo => run_todo(arguments)?,
         };
         Ok(bound_with_spill(outcome, spill))
@@ -1664,6 +1704,7 @@ impl Tool {
             Tool::Glob => run_glob_tool(arguments, None)?,
             Tool::ApplyPatch => run_apply_patch(arguments, None)?,
             Tool::RepoMap => run_repo_map(arguments, None)?,
+            Tool::FileChange => run_file_change(arguments, None)?,
             Tool::Todo => run_todo(arguments)?,
         };
         Ok(bound_with_spill(outcome, spill))
@@ -2024,8 +2065,16 @@ fn run_grep_tool(
         .and_then(|value| value.as_str())
         .unwrap_or("files");
     let max = integer_arg(arguments, "max").map(|value| value.max(1) as usize);
-    let outcome =
-        crate::search::run_grep(&pattern, &resolved, &base, glob, case_sensitive, mode, max)?;
+    let options = crate::search::GrepOptions {
+        glob,
+        case_sensitive,
+        mode,
+        max,
+        context: integer_arg(arguments, "context").map(|value| value.clamp(0, 20) as usize),
+        file_type: arguments.get("type").and_then(|value| value.as_str()),
+        multiline: bool_arg(arguments, "multiline").unwrap_or(false),
+    };
+    let outcome = crate::search::run_grep_with(&pattern, &resolved, &base, options)?;
     Ok(ToolOutcome {
         output: outcome.text,
         truncated: outcome.truncated,
@@ -2187,6 +2236,150 @@ fn resolve_for_patch(root: Option<&Path>, path: &str, adding: bool) -> Result<Pa
         Some(root) if adding => resolve_write_in_root(root, path),
         Some(root) => resolve_in_root(root, path),
         None => Ok(PathBuf::from(path)),
+    }
+}
+
+/// `file_change`: move, copy, delete, make_dir — one op each.
+///
+/// Every path is resolved inside the run's folder when there is one, so
+/// a `to` that escapes it is refused by the same rule every write
+/// follows. The reserved segments are checked on the resolved path too,
+/// not on the string: `./x/../.git/config` is the same file as
+/// `.git/config`.
+fn run_file_change(
+    arguments: &serde_json::Value,
+    root: Option<&Path>,
+) -> Result<ToolOutcome, String> {
+    let op = string_arg(arguments, "op")?;
+    let path = string_arg(arguments, "path")?;
+    let destructive = matches!(op.as_str(), "move" | "delete");
+    let from = resolve_change(root, &path, destructive)?;
+    if let Some(segment) = reserved_segment(&from) {
+        return Err(format!(
+            "`{path}` is inside `{segment}`, which this tool does not touch: the repository's own metadata and the harness's home are not a run's to rearrange"
+        ));
+    }
+    match op.as_str() {
+        "delete" => {
+            if !from.exists() {
+                return Err(missing_path(&path, &from));
+            }
+            let removed = if from.is_dir() {
+                std::fs::remove_dir_all(&from)
+            } else {
+                std::fs::remove_file(&from)
+            };
+            removed.map_err(|error| format!("could not delete `{path}`: {error}"))?;
+            Ok(ToolOutcome {
+                output: format!("deleted {path}\n"),
+                truncated: false,
+            })
+        }
+        "make_dir" => {
+            std::fs::create_dir_all(&from)
+                .map_err(|error| format!("could not create `{path}`: {error}"))?;
+            Ok(ToolOutcome {
+                output: format!("created {path}\n"),
+                truncated: false,
+            })
+        }
+        "move" | "copy" => {
+            let to = string_arg(arguments, "to")?;
+            // The destination is a path to create: it resolves as a
+            // write, so a destination that does not exist yet is the
+            // normal case rather than an error.
+            let destination = resolve_change(root, &to, false)?;
+            if let Some(segment) = reserved_segment(&destination) {
+                return Err(format!(
+                    "`{to}` is inside `{segment}`, which this tool does not touch"
+                ));
+            }
+            if !from.exists() {
+                return Err(missing_path(&path, &from));
+            }
+            if let Some(parent) = destination.parent() {
+                if !parent.as_os_str().is_empty() && !parent.is_dir() {
+                    std::fs::create_dir_all(parent).map_err(|error| {
+                        format!("could not create `{}`: {error}", parent.display())
+                    })?;
+                }
+            }
+            let mut note = String::new();
+            if op == "move" {
+                match std::fs::rename(&from, &destination) {
+                    Ok(()) => {}
+                    // A rename across filesystems fails; the copy is the
+                    // fallback and it says so, because the result is the
+                    // one place the owner learns the inode changed.
+                    Err(_) => {
+                        copy_tree(&from, &destination)?;
+                        if from.is_dir() {
+                            std::fs::remove_dir_all(&from)
+                        } else {
+                            std::fs::remove_file(&from)
+                        }
+                        .map_err(|error| {
+                            format!("could not remove `{path}` after copying: {error}")
+                        })?;
+                        note.push_str(
+                            "\n(the move crossed filesystems: copied, then removed the source)\n",
+                        );
+                    }
+                }
+                Ok(ToolOutcome {
+                    output: format!("moved {path} -> {to}{note}"),
+                    truncated: false,
+                })
+            } else {
+                copy_tree(&from, &destination)?;
+                Ok(ToolOutcome {
+                    output: format!("copied {path} -> {to}\n"),
+                    truncated: false,
+                })
+            }
+        }
+        other => Err(format!(
+            "`op` must be one of move, copy, delete, make_dir; got `{other}`"
+        )),
+    }
+}
+
+/// Resolve a `file_change` path. A destructive op resolves as a read
+/// first, so a missing source names the nearest real entry; a writing
+/// op resolves as a write, so a path that leaves the folder is refused
+/// before anything is touched.
+fn resolve_change(root: Option<&Path>, path: &str, destructive: bool) -> Result<PathBuf, String> {
+    match root {
+        Some(root) if destructive => resolve_in_root(root, path),
+        Some(root) => resolve_write_in_root(root, path),
+        None => Ok(PathBuf::from(path)),
+    }
+}
+
+/// The reserved segment a resolved path sits under, if any.
+fn reserved_segment(path: &Path) -> Option<&'static str> {
+    RESERVED_SEGMENTS
+        .iter()
+        .find(|segment| path.components().any(|part| part.as_os_str() == **segment))
+        .copied()
+}
+
+/// Copy a file or a whole tree, creating the destination as it goes.
+fn copy_tree(from: &Path, to: &Path) -> Result<(), String> {
+    if from.is_dir() {
+        std::fs::create_dir_all(to)
+            .map_err(|error| format!("could not create `{}`: {error}", to.display()))?;
+        for entry in std::fs::read_dir(from)
+            .map_err(|error| format!("could not read `{}`: {error}", from.display()))?
+        {
+            let entry = entry.map_err(|error| error.to_string())?;
+            copy_tree(&entry.path(), &to.join(entry.file_name()))?;
+        }
+        Ok(())
+    } else {
+        std::fs::copy(from, to)
+            .map(|_| ())
+            .map_err(|error| format!("could not copy `{}`: {error}", from.display()))
     }
 }
 
@@ -3574,8 +3767,8 @@ mod tests {
             &[("probe", "probe the embeddings worker")],
         )];
         let specs = declarations(&lanes);
-        // The ten built-ins keep their names and their order, always.
-        assert_eq!(specs.len(), 11);
+        // The eleven built-ins keep their names and their order, always.
+        assert_eq!(specs.len(), 12);
         let names: Vec<String> = specs
             .iter()
             .map(|spec| {
@@ -3597,12 +3790,13 @@ mod tests {
                 "grep",
                 "glob",
                 "repo_map",
+                "file_change",
                 "todo",
                 "mcp__sem1__probe"
             ]
         );
         // The lane's own description and schema rode along verbatim.
-        let lane = serde_json::to_value(&specs[10]).unwrap();
+        let lane = serde_json::to_value(&specs[11]).unwrap();
         assert_eq!(
             lane["function"]["description"],
             "probe the embeddings worker"
@@ -3620,11 +3814,11 @@ mod tests {
             lane_roster("sys1", &[("sys1_classify", "classify")]),
         ];
         let specs = declarations(&lanes);
-        assert_eq!(specs.len(), 12);
-        let last = serde_json::to_value(&specs[11]).unwrap();
+        assert_eq!(specs.len(), 13);
+        let last = serde_json::to_value(&specs[12]).unwrap();
         assert_eq!(last["function"]["name"], "mcp__sys1__sys1_classify");
-        // No lanes joined: exactly the closed ten, unchanged.
-        assert_eq!(declarations(&[]).len(), 10);
+        // No lanes joined: exactly the closed eleven, unchanged.
+        assert_eq!(declarations(&[]).len(), 11);
     }
 
     #[test]

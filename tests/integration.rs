@@ -620,7 +620,7 @@ async fn client_posts_auth_and_tool_declarations() {
     );
     let body: serde_json::Value = serde_json::from_str(&recorded.body).unwrap();
     assert_eq!(body["model"], "test-model");
-    assert_eq!(body["tools"].as_array().unwrap().len(), 10);
+    assert_eq!(body["tools"].as_array().unwrap().len(), 11);
     assert_eq!(body["messages"][0]["role"], "user");
 }
 
@@ -1533,6 +1533,163 @@ async fn repo_map_is_deterministic_budgeted_and_names_its_heuristic() {
     );
     std::fs::remove_dir_all(&home).ok();
     std::fs::remove_dir_all(&folder).ok();
+}
+
+/// C19: the search refinements behave as declared, and a provider that
+/// cannot honor one says so rather than dropping it.
+#[tokio::test]
+async fn grep_context_and_type_and_multiline_are_honored_or_named() {
+    let folder = std::env::temp_dir().join(format!("fleet-grep-opts-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&folder);
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(
+        folder.join("one.rs"),
+        "fn outer() {\n    let needle = 1;\n}\n",
+    )
+    .unwrap();
+    std::fs::write(folder.join("two.py"), "needle = 2\n").unwrap();
+
+    let mock = MockApi::start(vec![
+        // context: the match plus the lines around it.
+        tool_call_stream(
+            "c1",
+            "grep",
+            r#"{"pattern":"needle","output_mode":"content","context":1}"#,
+        ),
+        // type: only the Python file.
+        tool_call_stream(
+            "c2",
+            "grep",
+            r#"{"pattern":"needle","output_mode":"files","type":"py"}"#,
+        ),
+        // multiline: a pattern that spans two lines.
+        tool_call_stream(
+            "c3",
+            "grep",
+            r#"{"pattern":"fn outer.*\n    let","output_mode":"files","multiline":true}"#,
+        ),
+        assistant_stream(TOOL_REPORT),
+    ]);
+    let home = temp_home("grep-opts");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    run_in_folder(&mock, &mut session, &folder, 6)
+        .await
+        .unwrap();
+    let outputs: Vec<String> = session::replay(session.path())
+        .unwrap()
+        .iter()
+        .filter_map(|record| match record {
+            Record::ToolResult { name, output, .. } if name == "grep" => Some(output.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(outputs.len(), 3, "{outputs:?}");
+    // context: the surrounding lines arrive with the match.
+    assert!(outputs[0].contains("fn outer() {"), "{}", outputs[0]);
+    assert!(outputs[0].contains("needle"), "{}", outputs[0]);
+    // type: the Python file, and not the Rust one.
+    assert!(outputs[1].contains("two.py"), "{}", outputs[1]);
+    assert!(!outputs[1].contains("one.rs"), "{}", outputs[1]);
+    // multiline: the two-line pattern matched.
+    assert!(outputs[2].contains("one.rs"), "{}", outputs[2]);
+    std::fs::remove_dir_all(&home).ok();
+    std::fs::remove_dir_all(&folder).ok();
+}
+
+/// C20: `file_change` moves, copies, deletes and creates; a path under a
+/// reserved segment is refused by name; `move` and `delete` are in the
+/// destructive class and ask in every mode.
+#[tokio::test]
+async fn file_change_does_its_four_ops_and_refuses_a_reserved_path() {
+    let folder = std::env::temp_dir().join(format!("fleet-change-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&folder);
+    std::fs::create_dir_all(folder.join(".git")).unwrap();
+    std::fs::write(folder.join("a.txt"), "alpha\n").unwrap();
+    std::fs::write(folder.join(".git/config"), "[core]\n").unwrap();
+
+    let mock = MockApi::start(vec![
+        tool_call_stream("c1", "file_change", r#"{"op":"make_dir","path":"sub"}"#),
+        tool_call_stream(
+            "c2",
+            "file_change",
+            r#"{"op":"copy","path":"a.txt","to":"sub/b.txt"}"#,
+        ),
+        tool_call_stream(
+            "c3",
+            "file_change",
+            r#"{"op":"move","path":"a.txt","to":"sub/a.txt"}"#,
+        ),
+        tool_call_stream("c4", "file_change", r#"{"op":"delete","path":"sub/b.txt"}"#),
+        tool_call_stream(
+            "c5",
+            "file_change",
+            r#"{"op":"delete","path":".git/config"}"#,
+        ),
+        assistant_stream(TOOL_REPORT),
+    ]);
+    let home = temp_home("file-change");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    run_in_folder(&mock, &mut session, &folder, 8)
+        .await
+        .unwrap();
+    let outputs: Vec<String> = session::replay(session.path())
+        .unwrap()
+        .iter()
+        .filter_map(|record| match record {
+            Record::ToolResult { name, output, .. } if name == "file_change" => {
+                Some(output.clone())
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(outputs.len(), 5, "{outputs:?}");
+    assert!(outputs[0].contains("created sub"), "{}", outputs[0]);
+    assert!(
+        outputs[1].contains("copied a.txt -> sub/b.txt"),
+        "{outputs:?}"
+    );
+    assert!(
+        outputs[2].contains("moved a.txt -> sub/a.txt"),
+        "{}",
+        outputs[2]
+    );
+    assert!(outputs[3].contains("deleted sub/b.txt"), "{}", outputs[3]);
+    assert!(outputs[4].contains("inside `.git`"), "{}", outputs[4]);
+    // The tree is what the ops said it would be.
+    assert!(folder.join("sub/a.txt").is_file());
+    assert!(!folder.join("a.txt").exists());
+    assert!(!folder.join("sub/b.txt").exists());
+    assert!(
+        folder.join(".git/config").is_file(),
+        "the refusal left it alone"
+    );
+    std::fs::remove_dir_all(&home).ok();
+    std::fs::remove_dir_all(&folder).ok();
+}
+
+/// C20's classification half: the two subtractions are destructive and
+/// the two additions are not, whatever the mode.
+#[test]
+fn file_change_classes_move_and_delete_as_destructive() {
+    use fleet::approvals::Gate;
+    let call = |arguments: &str| fleet::api::ToolCall {
+        id: "c1".to_string(),
+        kind: "function".to_string(),
+        function: fleet::api::FunctionCall {
+            name: "file_change".to_string(),
+            arguments: arguments.to_string(),
+        },
+    };
+    assert!(Gate::is_destructive(&call(
+        r#"{"op":"move","path":"a","to":"b"}"#
+    )));
+    assert!(Gate::is_destructive(&call(r#"{"op":"delete","path":"a"}"#)));
+    assert!(!Gate::is_destructive(&call(
+        r#"{"op":"copy","path":"a","to":"b"}"#
+    )));
+    assert!(!Gate::is_destructive(&call(
+        r#"{"op":"make_dir","path":"a"}"#
+    )));
 }
 
 /// C17: `recall` reads the harness's own holdings, ranked, and makes no
@@ -3691,6 +3848,7 @@ async fn a_full_run_calls_the_real_sem1_lane_through_the_mock_api() {
             "grep",
             "glob",
             "repo_map",
+            "file_change",
             "todo",
             "measure",
             "imagine",
@@ -3714,7 +3872,7 @@ async fn a_full_run_calls_the_real_sem1_lane_through_the_mock_api() {
         ]
     );
     let second = declared_tools(&bodies[1]);
-    assert_eq!(second.len(), 30, "{second:?}");
+    assert_eq!(second.len(), 31, "{second:?}");
     assert_eq!(
         &second[..4],
         &["bash", "read_file", "write_file", "list_dir"]
@@ -3733,7 +3891,7 @@ async fn a_full_run_calls_the_real_sem1_lane_through_the_mock_api() {
     // The native tools ride before the joined lane's, and the lane's
     // tools are the deferred tail of the declaration list.
     assert_eq!(
-        &second[10..26],
+        &second[11..27],
         &[
             "measure",
             "imagine",
@@ -3908,8 +4066,8 @@ async fn a_dead_lane_child_degrades_the_run_without_killing_it() {
     // model can still see them, and calling one is a typed failure.
     let bodies = mock.bodies();
     assert_eq!(bodies.len(), 3);
-    assert_eq!(declared_tools(&bodies[1]).len(), 27);
-    assert_eq!(declared_tools(&bodies[2]).len(), 27);
+    assert_eq!(declared_tools(&bodies[1]).len(), 28);
+    assert_eq!(declared_tools(&bodies[2]).len(), 28);
     assert!(declared_tools(&bodies[1]).contains(&"mcp__sem1__probe".to_string()));
 
     std::fs::remove_dir_all(&home).ok();
@@ -4281,7 +4439,7 @@ async fn a_denied_lane_call_never_spawns_the_lane() {
     // No lane joined, so the second request still declares only the
     // built-ins and the delegation tool.
     let bodies = mock.bodies();
-    assert_eq!(declared_tools(&bodies[1]).len(), 26);
+    assert_eq!(declared_tools(&bodies[1]).len(), 27);
 
     std::fs::remove_dir_all(&home).ok();
 }
@@ -4351,7 +4509,7 @@ async fn a_lane_that_cannot_launch_fails_its_call_and_the_run_answers() {
     assert!(records
         .iter()
         .all(|record| !matches!(record, Record::LaneTools { .. })));
-    assert_eq!(declared_tools(&mock.bodies()[1]).len(), 26);
+    assert_eq!(declared_tools(&mock.bodies()[1]).len(), 27);
 
     std::fs::remove_dir_all(&home).ok();
 }
@@ -6014,7 +6172,7 @@ async fn a_selected_skills_body_rides_the_tool_result_path() {
     // The declarations carry `use_skill` beside the four built-ins, the
     // delegation tool beside that, and the convention lookup after it.
     let declared = declared_tools(&bodies[0]);
-    assert_eq!(declared.len(), 27, "{declared:?}");
+    assert_eq!(declared.len(), 28, "{declared:?}");
     assert!(declared.contains(&"use_skill".to_string()), "{declared:?}");
     assert!(declared.contains(&"subagent".to_string()), "{declared:?}");
     assert!(declared.contains(&"convention".to_string()), "{declared:?}");
@@ -6881,6 +7039,7 @@ async fn a_runs_request_carries_the_assembled_memory_block() {
             "grep",
             "glob",
             "repo_map",
+            "file_change",
             "todo",
             "measure",
             "imagine",
@@ -7038,6 +7197,7 @@ async fn a_memory_less_run_is_byte_for_byte_unchanged() {
             "grep",
             "glob",
             "repo_map",
+            "file_change",
             "todo",
             "measure",
             "imagine",
@@ -7105,6 +7265,7 @@ async fn a_memory_less_run_is_byte_for_byte_unchanged() {
             "grep",
             "glob",
             "repo_map",
+            "file_change",
             "todo",
             "measure",
             "imagine",
@@ -7408,6 +7569,7 @@ async fn the_improve_tool_files_a_proposal_inside_a_run_and_never_applies_one() 
             "grep",
             "glob",
             "repo_map",
+            "file_change",
             "todo",
             "measure",
             "imagine",
@@ -7488,6 +7650,7 @@ async fn a_run_without_a_home_does_not_declare_the_improve_tool() {
             "grep",
             "glob",
             "repo_map",
+            "file_change",
             "todo",
             "measure",
             "imagine",
@@ -7692,6 +7855,7 @@ async fn a_delegated_task_runs_in_its_own_session_on_the_parents_model() {
             "grep",
             "glob",
             "repo_map",
+            "file_change",
             "todo"
         ]
     );

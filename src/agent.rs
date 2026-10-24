@@ -5037,6 +5037,9 @@ fn writer_of(prepared: &Prepared) -> Option<String> {
                 // slot, beside an edit, because two writers in one batch
                 // is the race the one-writer discipline exists to stop.
                 Tool::ApplyPatch => Some("shell".to_string()),
+                // A move or a delete rearranges the tree the same way a
+                // shell command would: one slot, one at a time.
+                Tool::FileChange => Some("shell".to_string()),
                 // Search reads the tree and writes nothing.
                 Tool::ReadFile | Tool::ListDir | Tool::Grep | Tool::Glob | Tool::RepoMap => None,
             },
@@ -6990,7 +6993,7 @@ mod tests {
         assert!(second.text.contains("remain declared"), "{}", second.text);
         // A dead lane contributes no declarations: the model never saw a
         // tool that cannot run.
-        assert_eq!(crate::tools::declarations(&roster.lane_tools()).len(), 10);
+        assert_eq!(crate::tools::declarations(&roster.lane_tools()).len(), 11);
         assert!(roster.lane_tools().is_empty());
         // And an unknown lane is a named reason, not a panic — and not a
         // spawn: no registry lane carries this name, so nothing launches.
@@ -7009,7 +7012,7 @@ mod tests {
     async fn a_lane_that_never_joins_leaves_the_declarations_at_the_builtins() {
         // The lazy path's cost when no lane is called: nothing.
         let roster = LaneRoster::new(HashMap::new());
-        assert_eq!(crate::tools::declarations(&roster.lane_tools()).len(), 10);
+        assert_eq!(crate::tools::declarations(&roster.lane_tools()).len(), 11);
         let names: Vec<String> = crate::tools::declarations(&roster.lane_tools())
             .iter()
             .map(|spec| {
@@ -7031,6 +7034,7 @@ mod tests {
                 "grep",
                 "glob",
                 "repo_map",
+                "file_change",
                 "todo",
             ]
         );
@@ -7158,6 +7162,7 @@ mod tests {
                 "grep",
                 "glob",
                 "repo_map",
+                "file_change",
                 "todo",
                 "measure",
                 "imagine",
@@ -7228,7 +7233,7 @@ mod tests {
         // computation over a value the model writes, and neither touches
         // anything outside itself. So does `plan`: it drafts a plan
         // document's declaration, which is the repo's own state.
-        assert_eq!(plain.declarations().len(), 26);
+        assert_eq!(plain.declarations().len(), 27);
         assert_eq!(plain.system_prompt(None), default_prompt());
         let _ = std::fs::remove_dir_all(&home);
         let _ = std::fs::remove_dir_all(&root);

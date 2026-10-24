@@ -228,6 +228,21 @@ fn bash_command(call: &ToolCall) -> Option<String> {
     arguments.get("command")?.as_str().map(str::to_string)
 }
 
+/// The `file_change` op when it is one of the two that subtract: `move`
+/// and `delete`. `copy` and `make_dir` add something and are never in
+/// the class; an unreadable argument blob is not read here at all — the
+/// bash rule's fail-closed reading already treats an unparseable call as
+/// destructive by name.
+fn destructive_file_change(call: &ToolCall) -> Option<String> {
+    let call = unlabel(call);
+    if call.function.name != crate::tools::FILE_CHANGE_TOOL {
+        return None;
+    }
+    let arguments: serde_json::Value = serde_json::from_str(&call.function.arguments).ok()?;
+    let op = arguments.get("op")?.as_str()?;
+    matches!(op, "move" | "delete").then(|| op.to_string())
+}
+
 /// The gate a run consults before each call.
 ///
 /// The gate answers one question — may this call run without asking? —
@@ -300,6 +315,13 @@ impl Gate {
     /// cannot vouch for, and the fail-closed reading is the only one
     /// that does not require the gate to guess.
     pub fn is_destructive(call: &ToolCall) -> bool {
+        // `file_change` is the other tool whose argument picks the
+        // operation, and two of its four ops cannot be undone from the
+        // result. `copy` and `make_dir` add; `move` and `delete`
+        // subtract, so they ask in every mode.
+        if destructive_file_change(call).is_some() {
+            return true;
+        }
         let Some(command) = bash_command(call) else {
             return call.function.name == BASH_TOOL;
         };
@@ -319,10 +341,13 @@ impl Gate {
     pub fn denial_text(&self, call: &ToolCall) -> String {
         let subject = match bash_command(call) {
             Some(command) => format!("`{command}`"),
-            None => format!(
-                "a `{}` call whose arguments could not be read",
-                call.function.name
-            ),
+            None => match destructive_file_change(call) {
+                Some(op) => format!("`file_change {op}`"),
+                None => format!(
+                    "a `{}` call whose arguments could not be read",
+                    call.function.name
+                ),
+            },
         };
         format!(
             "denied: the mode is {} and this call is in the destructive class — {} — \
