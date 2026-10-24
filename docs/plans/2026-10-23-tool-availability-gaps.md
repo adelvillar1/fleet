@@ -693,9 +693,23 @@ its unit test and failed in use:
   so the common case — a destination that does not exist yet — failed
   with "no such file or directory".
 
-Open, deliberately: there is no session index for `recall` to search,
-`repo_map` remains a heuristic rather than a parser, and the LSP is
-still deferred behind `apply_patch` as D4 says.
+**The tools card and `fleet tools` now read one list.** Both showed the
+eleven built-ins and nothing else, which left a disabled `recall` with
+no row — and no enable action — anywhere in the face. Both read
+`Agent::base_declarations`, the same derivation the run declares from.
+Verified live against a second GUI instance: 27 native rows over
+`/api/settings`, with the bounds reporting 32 tools and 9,000 tokens.
+
+Open, deliberately:
+
+- **`docs/images/settings-tools.png` is one card behind.** The capture
+  predates the card's expansion to the whole native surface; the data
+  half is verified live (27 rows), and the image wants a refresh at the
+  next capture pass. Recorded rather than silently claimed.
+- There is no session index for `recall` to search, so the session
+  channel reports `NotWarmed` and will until one exists.
+- `repo_map` remains a heuristic rather than a parser, and the LSP is
+  still deferred behind `apply_patch` as D4 says.
 
 ## Files to be touched
 

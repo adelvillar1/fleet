@@ -4566,10 +4566,12 @@ fn settings_read(home: &std::path::Path) -> Value {
         })
         .collect();
     let tools_document = json!({
-        "native": crate::tools::ALL_TOOLS
+        // The whole native surface, not only the built-ins: a tool the
+        // model can call must be a row the owner can see the state of,
+        // because the enable action lives on that row.
+        "native": crate::agent::Agent::base_declarations(&[])
             .iter()
-            .map(|tool| {
-                let spec = tool.spec();
+            .map(|spec| {
                 json!({
                     "name": spec.name(),
                     "summary": spec.description(),

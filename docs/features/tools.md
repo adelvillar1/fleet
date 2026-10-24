@@ -6,7 +6,7 @@ catalog stays out of the prompt until it is needed.
 Analysis and the full build order: `docs/architecture/tool-surface.md`
 and `docs/plans/2026-10-23-tool-surface-and-lane-resolution.md`.
 
-## The eight built-ins
+## The eleven built-ins
 
 | Tool | What it does | The guarantee |
 |---|---|---|
@@ -15,8 +15,11 @@ and `docs/plans/2026-10-23-tool-surface-and-lane-resolution.md`.
 | `write_file` | creates or replaces a file | atomic temp+rename; the parent must exist |
 | `list_dir` | lists a directory | `depth` (1–8), directories marked `/`, capped at 1,000 |
 | `edit` | replaces one exact passage | requires a prior `read_file` of the path; a unique match unless `replace_all`; zero matches name the closest line; several name their lines; atomic write and a diff |
-| `grep` | searches contents | files/content/count modes, a cap with "narrow the query", a match and file count; `rg` when installed, `grep` otherwise |
-| `glob` | finds files by pattern | `*`, `?`, `**`, newest first, capped at 100 |
+| `apply_patch` | applies a content-anchored patch | `*** Update/Add/Delete File:` sections with ` context`, `-removed`, `+added`; no line numbers; every hunk for a file checked before that file is written; a mismatch names the hunk and its nearest line |
+| `grep` | searches contents | files/content/count modes, `context` lines, `type` and `multiline` (rg only, and the fallback names what it dropped), a cap with "narrow the query", a match and file count |
+| `glob` | finds files by pattern | `*`, `?`, `**`, newest first, capped at 100; `rg --files` when installed, so `.gitignore` is honored, and the walker says when it fell back |
+| `repo_map` | maps the repository | files ranked by how often their definitions are referenced, top-level definitions with line numbers, a token budget (default 1,000) that states when it cut, and the result says it is heuristic |
+| `file_change` | moves, copies, deletes, makes directories | paths inside the chat's folder; `.git`, the fleet home and `node_modules` refused by name; `move` and `delete` are the destructive class and ask in every mode |
 | `todo` | replaces the run's task list | full-list replacement, `pending`/`in_progress`/`completed` with `todo`/`doing`/`done` aliases |
 
 `edit` is content-anchored rather than line-anchored: line numbers shift
@@ -40,7 +43,7 @@ loudly instead of corrupting the file.
 ## A large catalog: two tiers
 
 Native tools are always declared. Joined MCP tools are declared too
-while the request fits **28 tools and 8,000 definition tokens**. Past
+while the request fits **32 tools and 9,000 definition tokens**. Past
 either bound the native set stays (byte-stable, so the prompt cache
 survives), the MCP tools are held back, and `tool_search` is declared.
 
@@ -152,5 +155,9 @@ and `grep`) and the dispatch policy picks between them; MCP `annotations`
 are read, and a destructive hint forces the prompt path without ever
 granting; an image result is written to a file and named, so `vision`
 can read it. `ALL_TOOLS` is the native registry: an enum plus a spec and
-a validator per tool, not a trait object. The live Settings card is
-captured at `docs/images/settings-tools.png`.
+a validator per tool, not a trait object. `Agent::base_declarations`
+is the one derivation of the whole surface a run declares — the
+built-ins and the tools that ride beside them — and the Settings card
+and `fleet tools` both read it, so there is no second answer to "what
+does this harness declare". The live Settings card is captured at
+`docs/images/settings-tools.png`.

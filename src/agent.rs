@@ -1515,7 +1515,12 @@ impl<'a> Agent<'a> {
     /// carries the lesson store's recent records, a live fact the log
     /// cannot hold, so the reconstruction notes its absence rather than
     /// inventing the description.
-    fn base_declarations(skills: &[crate::skills::SkillRef]) -> Vec<crate::api::ToolSpec> {
+    /// The declarations every ordinary run carries, before any lane or
+    /// memory joins — the one derivation of the native surface. Public
+    /// because the Settings card and `fleet tools` read the same list:
+    /// a second enumeration is a second answer to "what does this
+    /// harness declare".
+    pub fn base_declarations(skills: &[crate::skills::SkillRef]) -> Vec<crate::api::ToolSpec> {
         let mut specs: Vec<crate::api::ToolSpec> =
             tools::ALL_TOOLS.iter().map(|tool| tool.spec()).collect();
         // The capability tools, in the live path's position: right after

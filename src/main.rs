@@ -1257,12 +1257,20 @@ async fn tools_command(options: &cli::ToolsOptions) -> ExitCode {
             .as_deref()
             .map(fleet::settings::tools_disabled)
             .unwrap_or_default();
-        for tool in fleet::tools::ALL_TOOLS {
-            let spec = tool.spec();
+        // The whole native surface, in the order a run declares it: the
+        // built-ins, then the tools that ride beside them. A list of the
+        // eleven built-ins alone was the answer when that was the whole
+        // surface, and it stopped being the whole surface.
+        for spec in fleet::agent::Agent::base_declarations(&[]) {
+            let builtin = fleet::tools::ALL_TOOLS
+                .iter()
+                .any(|tool| tool.name() == spec.name());
             let mark = if disabled.iter().any(|name| name == spec.name()) {
                 "  [disabled]"
-            } else {
+            } else if builtin {
                 ""
+            } else {
+                "  [beside]"
             };
             println!("{}{}  {}", spec.name(), mark, spec.description());
         }
