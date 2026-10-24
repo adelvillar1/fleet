@@ -254,16 +254,33 @@ def _chunks(path: Path) -> list[tuple[str, str, str]]:
     return [(r, h, t[:SECTION_MAX_CHARS]) for r, h, t in out]
 
 
-def _derive(sources: list[str] | None) -> tuple[list[dict], int, list[str]]:
-    """(items, source_file_count, missing_sources) — items sorted by
-    (relpath, heading) so a rebuild over unchanged docs is byte-stable."""
+def _derive(sources: list[str] | None) -> tuple[list[dict], int, list[str], int]:
+    """(items, source_file_count, missing_sources, dropped_duplicates) —
+    items deduplicated by key, first occurrence kept, sorted by
+    (relpath, heading) so a rebuild over unchanged docs is byte-stable.
+
+    A doc that repeats a `## heading` with different bodies used to
+    leave the derived (key, sha) set permanently larger than the store,
+    which keeps one entry per key — every refresh reported rebuilt and
+    re-embedded a byte-identical corpus, four projects recorded
+    (KI-297). The dropped count keeps the truncation visible instead of
+    silent: a repeated heading is a doc shape worth knowing about."""
     files, missing = _source_files(sources)
     triples: list[tuple[str, str, str]] = []
     for path in files:
         triples.extend(_chunks(path))
     triples.sort(key=lambda t: (t[0], t[1]))
-    items = [{"key": f"{rel}#{heading}", "text": text} for rel, heading, text in triples]
-    return items, len(files), missing
+    items: list[dict] = []
+    seen: set[str] = set()
+    dropped = 0
+    for rel, heading, text in triples:
+        key = f"{rel}#{heading}"
+        if key in seen:
+            dropped += 1
+            continue
+        seen.add(key)
+        items.append({"key": key, "text": text})
+    return items, len(files), missing, dropped
 
 
 def derive_items(sources: list[str] | None = None) -> list[dict]:
@@ -288,11 +305,12 @@ def refresh(*, project: str | None = None, sources: list[str] | None = None) -> 
     """
     resolved = resolve_project(project)
     root = store_root(resolved)
-    items, n_files, missing = _derive(sources)
+    items, n_files, missing, dropped = _derive(sources)
     report: dict = {
         "project": resolved,
         "source_files": n_files,
         "items": len(items),
+        "dropped_duplicates": dropped,
         "changed": False,
         "action": "no-source",
         "store": str(root),

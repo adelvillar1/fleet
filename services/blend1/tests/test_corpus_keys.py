@@ -19,7 +19,14 @@ import os
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+# The refresh's embed path imports the sibling sem1 core, the way the
+# launch spec's BLEND1_SEM1_PYTHONPATH wires it for the lane.
+sys.path.insert(
+    0, str(Path(__file__).resolve().parent.parent.parent / "sem1" / "src")
+)
 
 from blend1 import corpus  # noqa: E402
 
@@ -32,9 +39,9 @@ def test_the_key_is_the_absolute_path_so_the_cwd_cannot_poison_it(tmp_path):
 
     here = os.getcwd()
     try:
-        items_from_here, _, _ = corpus._derive([absolute])
+        items_from_here, _, _, _ = corpus._derive([absolute])
         os.chdir(tmp_path)
-        items_from_there, _, _ = corpus._derive([absolute])
+        items_from_there, _, _, _ = corpus._derive([absolute])
     finally:
         os.chdir(here)
 
@@ -62,3 +69,53 @@ def test_the_missing_sources_ride_the_refresh_report(tmp_path, monkeypatch=None)
     report = corpus.refresh(project="ki-225-probe", sources=[str(tmp_path / "gone.md")])
     assert report["action"] == "no-source", report
     assert report["missing_sources"] == [str(tmp_path / "gone.md")], report
+
+
+def test_a_repeated_heading_dedupes_at_derive_and_counts_what_it_dropped(tmp_path):
+    """KI-297: a doc that repeats a `##` heading with different bodies
+    used to leave the derived (key, sha) set permanently larger than the
+    store, which keeps one entry per key — every refresh reported
+    rebuilt and re-embedded a byte-identical corpus. Derive keeps one
+    occurrence per key (the first, in document order) and counts what it
+    dropped, so the truncation is visible instead of silent."""
+    source = tmp_path / "doc.md"
+    source.write_text(
+        "# Title\n\n## Notes\n\nfirst copy\n\n## Notes\n\nsecond copy\n",
+        encoding="utf-8",
+    )
+    resolved = str(source.resolve())
+    items, _, _, dropped = corpus._derive([str(source.resolve())])
+    assert [item["key"] for item in items] == [
+        f"{resolved}#(preamble)",
+        f"{resolved}#Notes",
+    ], items
+    assert dropped == 1, dropped
+    # A doc that repeats nothing drops nothing.
+    plain = tmp_path / "plain.md"
+    plain.write_text("## Only\n\ntext\n", encoding="utf-8")
+    _, _, _, dropped = corpus._derive([str(plain.resolve())])
+    assert dropped == 0, dropped
+
+
+def test_a_repeated_heading_converges_in_the_refresh(tmp_path, monkeypatch):
+    """The steady state the row asked for by name: a second refresh over
+    a corpus whose doc repeats a heading reports unchanged — no
+    re-embed, no byte-identical store rewrite."""
+    monkeypatch.setenv("BLEND1_VECTORS_DIR", str(tmp_path / "vectors"))
+    source = tmp_path / "doc.md"
+    source.write_text(
+        "# Title\n\n## Notes\n\nfirst copy\n\n## Notes\n\nsecond copy\n",
+        encoding="utf-8",
+    )
+    try:
+        import sem1  # noqa: F401  the refresh's own embed path
+
+        sem1.embed(["probe"])
+    except Exception:
+        pytest.skip("this machine has no embedding backend")
+    first = corpus.refresh(project="ki-297-probe", sources=[str(source)])
+    assert first["action"] == "rebuilt", first
+    assert first["dropped_duplicates"] == 1, first
+    second = corpus.refresh(project="ki-297-probe", sources=[str(source)])
+    assert second["action"] == "unchanged", second
+    assert second["dropped_duplicates"] == 1, second

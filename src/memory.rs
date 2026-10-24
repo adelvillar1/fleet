@@ -919,6 +919,16 @@ fn endpoint_from(lookup: impl Fn(&str) -> Option<String>) -> String {
 /// is the ceiling for a black-holed port, not the expected cost.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// The pause between the probe's first try and its retry. The machine's
+/// endpoint flaps — a request hangs past every budget, an identical one
+/// answers in 37 ms between them, and a restart window refuses outright
+/// — and a probe that reads one failure as "no backend" degrades a
+/// healthy machine for a whole process (KI-296). The embed's own retry
+/// is immediate, which absorbs a dead pooled connection but lands right
+/// back in a hang or a refused restart; the pause is what spans it. A
+/// genuinely-dead backend pays the pause once per load.
+const PROBE_RETRY_PAUSE: Duration = Duration::from_millis(750);
+
 /// A steady-state embed's budget, for the load-time index build.
 const EMBED_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -978,7 +988,15 @@ impl HttpEmbedder {
             dims: 0,
             agent: ureq::AgentBuilder::new().timeout(PROBE_TIMEOUT).build(),
         };
-        let dims = Embedder::embed(&embedder, PROBE_TEXT)?.len();
+        // One retry after a pause (KI-296): the flap a live endpoint
+        // answers through outlasts an immediate retry, and a restart
+        // window refuses for about as long as the pause.
+        let dims = Embedder::embed(&embedder, PROBE_TEXT)
+            .or_else(|| {
+                std::thread::sleep(PROBE_RETRY_PAUSE);
+                Embedder::embed(&embedder, PROBE_TEXT)
+            })?
+            .len();
         embedder.dims = dims;
         // The probe proved the model answers within the probe's budget,
         // so the steady-state agent takes the more generous one: the
@@ -5387,8 +5405,47 @@ fn an_env_write_is_readable_by_the_runtime() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write as _;
     use std::os::unix::fs::PermissionsExt;
     use std::sync::Arc;
+
+    #[test]
+    fn the_probe_retries_after_a_pause_so_a_flap_is_not_a_missing_backend() {
+        // KI-296: the machine's endpoint flaps — a request hangs past
+        // every budget, an identical one answers in 37 ms between them,
+        // and a restart window refuses outright. A probe that reads one
+        // failure as "no backend" degrades a healthy machine for a
+        // whole process. The double refuses the first two connections —
+        // the embed's own immediate retry among them — and answers the
+        // third, which only the paused retry reaches.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for (index, stream) in listener.incoming().enumerate() {
+                let mut stream = match stream {
+                    Ok(stream) => stream,
+                    Err(_) => break,
+                };
+                if index < 2 {
+                    drop(stream);
+                    continue;
+                }
+                let body = r#"{"data":[{"embedding":[0.5,0.25,0.125]}]}"#;
+                let _ = stream.write_all(
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\
+                         Content-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        body.len(),
+                        body
+                    )
+                    .as_bytes(),
+                );
+            }
+        });
+        let embedder = HttpEmbedder::probe(&format!("http://127.0.0.1:{port}/v1/embeddings"));
+        let embedder = embedder.expect("the probe read the flap as no backend");
+        assert_eq!(embedder.dims, 3, "the dimensionality the probe found");
+    }
 
     /// A scratch corpus root, unique per call.
     fn scratch(tag: &str) -> PathBuf {
