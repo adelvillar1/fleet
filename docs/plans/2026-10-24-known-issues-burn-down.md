@@ -126,17 +126,18 @@ the current wording; the live store heals on the next `fleet cron` seed.
 words case-match an established term, so mandated content — absolute
 paths under the owner's home, protocol tokens, established doc names —
 cannot be written at all, and callers route around the guard through
-bash. Steps: three named exemptions, applied after the vocabulary match —
-(a) the occurrence sits inside an absolute path (`/`- or `~/`-rooted);
-(b) the token is protocol-shaped (the `mcp__`-style double-underscore
+bash. Steps: the exemptions applied after the vocabulary match —
+(a) the occurrence sits inside an absolute path (`/`-rooted); (b) the
+token is protocol-shaped (the `mcp__`-style double-underscore
 convention); (c) the token is an established file name (`CLAUDE.md`,
 `TECHNICAL-DOCUMENTATION.md`, `FUNCTIONAL-SPECIFICATIONS.md` — another
-file's own established usage). C6 is this increment's work: the three
-exemptions are its deliverable, every refusal recorded in the row
-(`Scheduled`, `MCP`, `Implements`, `Path`, `Projects`, and the
-plan-drafting seven) must pass after them, a novel separator-variant the
-author invents must still be refused, and the guard's existing negative
-tests must stay red.
+file's own established usage); (d) a Python file's docstrings are prose
+and leave the guard's own candidate pass. C6 is this increment's work:
+the recorded unrenamable refusals pass after the exemptions, a novel
+separator-variant the author invents is still refused, and the guard's
+existing negative tests stay red — KI-220's pin included, so a
+backticked case variant in a doc (`RunOptions` in a plan) remains
+refused and keeps the documented bare-prose shape.
 
 ### Increment 7 — quick wins (C7, KI-238 + KI-237)
 
@@ -223,9 +224,16 @@ design rows.
 - [ ] **C5 — KI-277.** `seed_missing` reconciles a diverged task string to
   `seed_task(project)` leaving schedule/enabled untouched; a test carries
   a pre-fix string in and the current wording out.
-- [ ] **C6 — KI-284.** The write guard's three named exemptions pass every
-  refusal recorded in the row, and the guard's existing negative tests
-  stay red, by test.
+- [ ] **C6 — KI-284.** The write guard exempts the unrenamable: docstring
+  prose stripped from its own Python pass, absolute-path-only
+  occurrences, protocol-shaped tokens, and established file names — the
+  row's recorded unrenamable refusals (`Scheduled`, `MCP`, `Implements`,
+  `Path`, `Projects`, the protocol token, `CLAUDE.md` and its siblings)
+  pass after the change, and the guard's existing negative tests stay
+  red, including KI-220's: a backticked case variant in a doc is still a
+  doc naming a thing, so the plan-drafting three (`RunOptions`,
+  `LaneJoined`, `LaneChild`) keep the documented bare-prose shape. By
+  test.
 - [ ] **C7 — KI-238 + KI-237.** `.envrc` is refused by the pane's
   credential read (test beside the existing refusal), and the Esc
   handler's comment matches the code's behavior.

@@ -5682,10 +5682,11 @@ enum WriteGuard {
 /// per call, and a name the vocabulary already carries is skipped in one
 /// lookup instead of a scan.
 /// Python's own capitalized names, which a driver cannot avoid writing
-/// and the project does not declare: the builtin exception classes and
-/// the threading and queue primitives. Lowercase, because the check
-/// lowercases the token first.
-const PYTHON_BUILTINS: [&str; 12] = [
+/// and the project does not declare: the builtin exception classes, the
+/// threading and queue primitives, and the pathlib's `Path` (KI-284's
+/// recorded refusal). Lowercase, because the check lowercases the token
+/// first.
+const PYTHON_BUILTINS: [&str; 13] = [
     "exception",
     "systemexit",
     "timeouterror",
@@ -5698,6 +5699,7 @@ const PYTHON_BUILTINS: [&str; 12] = [
     "notimplementederror",
     "thread",
     "queue",
+    "path",
 ];
 
 /// A name the guard does not police: a live roster model — the string
@@ -5714,6 +5716,86 @@ fn is_external_name(token: &str, path: &str) -> bool {
         return true;
     }
     path.ends_with(".py") && PYTHON_BUILTINS.contains(&lowered.as_str())
+}
+
+/// Python triple-quoted strings removed, the code around them intact: a
+/// docstring is prose, and prose is not an identifier channel (KI-219's
+/// rule, scoped to the guard's own pass — the derivation's shared
+/// channel is untouched). A torn literal drops the tail: content inside
+/// an unclosed triple quote is string, not code, and the guard that
+/// polices it polices the wrong language.
+fn strip_python_docstrings(content: &str) -> String {
+    let mut out = String::with_capacity(content.len());
+    let mut rest = content;
+    while let Some((at, quote)) = next_docstring(rest) {
+        out.push_str(&rest[..at]);
+        let after = &rest[at + 3..];
+        match after.find(quote) {
+            Some(end) => rest = &after[end + 3..],
+            None => return out,
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// The earlier of the two triple-quote openers, as (offset, opener).
+fn next_docstring(text: &str) -> Option<(usize, &'static str)> {
+    let double = text.find("\"\"\"");
+    let single = text.find("'''");
+    match (double, single) {
+        (Some(d), Some(s)) if d <= s => Some((d, "\"\"\"")),
+        (Some(_), Some(s)) => Some((s, "'''")),
+        (Some(d), None) => Some((d, "\"\"\"")),
+        (None, Some(s)) => Some((s, "'''")),
+        (None, None) => None,
+    }
+}
+
+/// Content the caller cannot rename is mandated, not chosen: the row's
+/// own shapes (KI-284). A protocol token's double underscores are the
+/// wire's naming convention; a file's own name is established by
+/// existing; an occurrence that only ever sits inside an absolute path
+/// is a mandated source glob carried verbatim. A `Projects` the file
+/// also uses as a class name still polices — not every occurrence is
+/// path-bound.
+fn is_unrenamable(token: &str, content: &str) -> bool {
+    if token.contains("__") {
+        return true;
+    }
+    if is_file_name(token) {
+        return true;
+    }
+    every_occurrence_in_absolute_path(token, content)
+}
+
+/// A token with an extension (`CLAUDE.md`, `tool_coverage.rs`): a
+/// file's own name, another artifact's, not a coinage.
+fn is_file_name(token: &str) -> bool {
+    let Some(dot) = token.rfind('.') else {
+        return false;
+    };
+    let (stem, ext) = (&token[..dot], &token[dot + 1..]);
+    !stem.is_empty() && !ext.is_empty() && ext.chars().all(|c| c.is_ascii_alphanumeric())
+}
+
+/// Whether the token occurs at all and every occurrence sits inside an
+/// absolute path — the character before each is `/`.
+fn every_occurrence_in_absolute_path(token: &str, content: &str) -> bool {
+    let mut from = 0;
+    let mut occurrences = 0;
+    while let Some(at) = content[from..].find(token) {
+        let start = from + at;
+        if !content[..start].ends_with('/') {
+            return false;
+        }
+        occurrences += 1;
+        from = start + token.len();
+        if from >= content.len() {
+            break;
+        }
+    }
+    occurrences > 0
 }
 
 fn write_guard(root: &std::path::Path, arguments: &serde_json::Value) -> WriteGuard {
@@ -5826,7 +5908,15 @@ fn guard_content(root: &std::path::Path, path: &str, content: &str) -> WriteGuar
     if !inside {
         return WriteGuard::Clean;
     }
-    let candidates = crate::nomenclature::channel_tokens(path, content);
+    // A Python file's docstrings are prose, and prose is not an
+    // identifier channel (KI-219's rule, KI-284's scope): the guard's
+    // own pass strips them, and the derivation's shared channel is
+    // untouched.
+    let candidates = if path.ends_with(".py") {
+        crate::nomenclature::channel_tokens(path, &strip_python_docstrings(content))
+    } else {
+        crate::nomenclature::channel_tokens(path, content)
+    };
     let vocabulary = crate::nomenclature::vocabulary(root);
     let mut flagged: Vec<(String, String, String)> = Vec::new();
     let mut seen: Vec<String> = Vec::new();
@@ -5842,6 +5932,13 @@ fn guard_content(root: &std::path::Path, path: &str, content: &str) -> WriteGuar
         // (KI-226). Both are external names; the guard polices this
         // project's drift.
         if is_external_name(&token, path) {
+            continue;
+        }
+        // Content the caller cannot rename is mandated, not chosen: it
+        // is not an identifier the author coined, and the guard that
+        // refuses it teaches the model to route around the guard
+        // through bash (KI-284).
+        if is_unrenamable(&token, content) {
             continue;
         }
         // The vocabulary's canonical form for this name, in both
@@ -9711,14 +9808,17 @@ You are auditing a change. Read the diff before you judge it.
     // --- the write-time guard (D7) -----------------------------------------
 
     /// A scratch project root whose `src/` establishes `judge_route` (and
-    /// its parts) in the identifier channel, for the guard's tests. The
-    /// vocabulary derives from the tree, so the tree is the fixture.
+    /// its parts) in the identifier channel, for the guard's tests — plus
+    /// the terms the KI-284 tests need (`Run_Options` as the canonical
+    /// CamelCase-with-separator form, `projects` in a string, `path` as a
+    /// bare word). The vocabulary derives from the tree, so the tree is
+    /// the fixture.
     fn vocabulary_root(tag: &str) -> std::path::PathBuf {
         let root = scratch(tag);
         std::fs::create_dir_all(root.join("src")).unwrap();
         std::fs::write(
             root.join("src/lib.rs"),
-            "pub fn judge_route() -> u8 { 1 }\npub fn judge_route_again() -> u8 { judge_route() }\n",
+            "pub fn judge_route() -> u8 { 1 }\npub fn judge_route_again() -> u8 { judge_route() }\npub struct Run_Options;\nstatic PROJECTS: &str = \"projects\";\nuse std::path;\n",
         )
         .unwrap();
         root
@@ -9758,6 +9858,73 @@ You are auditing a change. Read the diff before you judge it.
             &serde_json::json!({"path":"src/x.rs","content":"let Judge_Route = judge_route();"}),
         );
         assert!(matches!(guard, WriteGuard::Refused { .. }), "{guard:?}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn mandated_content_is_not_policed_as_though_the_author_named_it() {
+        // KI-284's recorded refusals, each passing after its exemption,
+        // with the guard's policing of chosen identifiers intact.
+        let root = vocabulary_root("guard-mandated");
+
+        // A docstring is prose: the established `judge_route` named in
+        // one is usage, not an identifier the driver coined. The same
+        // name in code is still the project's to police.
+        let guard = write_guard(
+            &root,
+            &serde_json::json!({
+                "path":"tmp/driver.py",
+                "content":"\"\"\"Drives the judge_route scan for a day.\"\"\"\nvalue = 1\n"
+            }),
+        );
+        assert_eq!(guard, WriteGuard::Clean, "{guard:?}");
+        let guard = write_guard(
+            &root,
+            &serde_json::json!({
+                "path":"tmp/driver.py",
+                "content":"value = judgeRoute\n"
+            }),
+        );
+        assert!(
+            matches!(guard, WriteGuard::Refused { .. }),
+            "code is still policed: {guard:?}"
+        );
+
+        // A mandated source glob: every occurrence of `Projects` sits
+        // inside an absolute path the job carries verbatim.
+        let guard = write_guard(
+            &root,
+            &serde_json::json!({
+                "path":"tmp/driver.py",
+                "content":"sources = ['/root/Projects/blend1/docs/**/*.md']\n"
+            }),
+        );
+        assert_eq!(guard, WriteGuard::Clean, "{guard:?}");
+
+        // The markdown shapes that are unrenamable — a protocol token's
+        // double underscores, a file's own name — pass, while a
+        // backticked case variant of an established term is still a doc
+        // naming a thing (KI-220's pin): the plan-drafting three keep
+        // their documented bare-prose shape.
+        let guard = write_guard(
+            &root,
+            &serde_json::json!({
+                "path":"docs/note.md",
+                "content":"Use `mcp__blend1__refresh` per `CLAUDE.md`.\n"
+            }),
+        );
+        assert_eq!(guard, WriteGuard::Clean, "{guard:?}");
+        let guard = write_guard(
+            &root,
+            &serde_json::json!({
+                "path":"docs/note.md",
+                "content":"The type is `RunOptions`.\n"
+            }),
+        );
+        assert!(
+            matches!(guard, WriteGuard::Refused { .. }),
+            "a backticked variant is still policed: {guard:?}"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
