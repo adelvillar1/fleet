@@ -12299,6 +12299,30 @@
     var parts = raw.split('/');
     var which = parts[0] || '';
     var focusId = parts.length > 1 ? decodeURIComponent(parts.slice(1).join('/')) : '';
+    // The deliverable address (KI-289): an agent closes its work with a
+    // link, and the link opens the face with the pane's preview in
+    // front — the rendered document for markdown, the file otherwise.
+    // The conversation stays the surface behind the pane.
+    if (which === 'file' && focusId) {
+      face.panel = 'chat';
+      face.focus = null;
+      try { window.localStorage.setItem('fleet-panel', 'chat'); } catch (error) { }
+      markRail();
+      setWork(false);
+      Object.keys(PANEL_EL).forEach(function (key) {
+        PANEL_EL[key].hidden = key !== 'chat';
+      });
+      el.panelLater.hidden = true;
+      readHome(false).then(function () {
+        paintHome();
+        paintRecent();
+        paintSince();
+      }).catch(function () { });
+      openPane();
+      showPaneTab('preview');
+      openFile(focusId);
+      return;
+    }
     var known = ROUTES.filter(function (route) { return route[0] === which; })[0];
     var address = which === 'chat' || !known ? 'chat' : which;
     // The work surface is not a panel of its own any more: it is the
