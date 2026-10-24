@@ -3352,6 +3352,15 @@ impl<'a> Agent<'a> {
                             skills,
                             facts_found,
                             skills_found,
+                            // The index lives at the home, one level
+                            // above the sessions directory the log is
+                            // written in.
+                            sessions: crate::recall::sessions(
+                                self.session
+                                    .path()
+                                    .parent()
+                                    .and_then(|dir| dir.parent()),
+                            ),
                         };
                         settled(crate::recall::render(instruction, &recall))
                     }

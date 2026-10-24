@@ -668,6 +668,40 @@ fn collapse(text: &str) -> String {
 mod tests {
     use super::*;
 
+    /// A redirect is re-guarded, so the address a page sends the reader
+    /// to is held to the same rule as the address that was asked for.
+    ///
+    /// `fetch` calls `guard` once per hop, on the URL it is about to
+    /// read; this pins the composition the loop performs — a redirect
+    /// target resolved against the page that sent it, then guarded — for
+    /// the hop that matters most: a public page pointing at the metadata
+    /// service, which is how an SSRF guard is usually walked around.
+    #[test]
+    fn a_redirect_to_a_private_address_fails_the_next_hop_s_guard() {
+        for (from, location) in [
+            (
+                "https://example.com/report",
+                "http://169.254.169.254/latest/meta-data/",
+            ),
+            (
+                "https://example.com/report",
+                "http://127.0.0.1:8901/v1/embeddings",
+            ),
+            ("https://example.com/report", "/../internal"),
+            ("https://example.com/a/b", "http://10.0.0.7/"),
+        ] {
+            let next = resolve_redirect(from, location);
+            match guard(&next) {
+                Err(FetchError::Private(_)) => {}
+                // `/../internal` stays on the same public origin: the
+                // point of that case is that a relative hop is resolved,
+                // not that it leaves the host.
+                Ok(_) if location.starts_with('/') => {}
+                other => panic!("{next} was not refused: {other:?}"),
+            }
+        }
+    }
+
     /// The guard refuses everything that is not an http(s) address, and
     /// everything that resolves to this machine or its neighbours — the
     /// SSRF boundary, which is the reason this module exists.

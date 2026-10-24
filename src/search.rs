@@ -123,6 +123,12 @@ pub fn run_grep_with(
         file_type,
         multiline,
     } = options;
+    // The base is canonicalized before anything is prefix-stripped: a
+    // folder handed in through a symlink (macOS's `/var` is
+    // `/private/var`) would otherwise never match the paths the provider
+    // prints, and the model would read absolute temp paths for a search
+    // it scoped to a folder.
+    let base = &base.canonicalize().unwrap_or_else(|_| base.to_path_buf());
     let target = display_path(path, base);
     let providers = grep_providers();
     let chosen = crate::tool_router::choose(&providers, false)
@@ -231,19 +237,27 @@ pub fn run_grep_with(
         text.push_str(line.trim_end());
         text.push('\n');
     }
-    let files = if mode == "content" {
-        lines
+    // With `context`, the output carries more than the matches: rg marks
+    // a match's separator `:` and a context line's `-`, and groups are
+    // split by `--`. Counting the lines would report the neighbourhood
+    // as matches, so the count reads the separator.
+    let (matches, files) = if mode == "content" {
+        let paths: std::collections::BTreeSet<&str> = lines
             .iter()
-            .filter_map(|line| line.split(':').next())
-            .collect::<std::collections::BTreeSet<_>>()
-            .len()
+            .filter_map(|line| content_match_path(line))
+            .collect();
+        let matches = lines
+            .iter()
+            .filter(|line| content_match_path(line).is_some())
+            .count();
+        (matches, paths.len())
     } else {
-        lines.len()
+        (lines.len(), lines.len())
     };
     let truncated = lines.len() > shown;
     text.push_str(&format!(
         "({} {label} in {} file(s){}",
-        lines.len(),
+        matches,
         files,
         if truncated {
             format!("; showing {shown} — narrow the query")
@@ -275,6 +289,30 @@ pub fn run_grep_with(
     }
     text.push_str(")\n");
     Ok(SearchOutcome { text, truncated })
+}
+
+/// The file part of a content line when the line is a match.
+///
+/// rg and grep both write `<path>:<line>:<text>` for a match and
+/// `<path>-<line>-<text>` for a context line, so the separator after the
+/// line number is what tells them apart. Paths can contain a colon; the
+/// scan looks for a colon followed by digits followed by a colon, which
+/// is the shape only a match line has.
+fn content_match_path(line: &str) -> Option<&str> {
+    let bytes = line.as_bytes();
+    for index in 0..bytes.len() {
+        if bytes[index] != b':' {
+            continue;
+        }
+        let mut digits = index + 1;
+        while digits < bytes.len() && bytes[digits].is_ascii_digit() {
+            digits += 1;
+        }
+        if digits > index + 1 && digits < bytes.len() && bytes[digits] == b':' {
+            return Some(&line[..index]);
+        }
+    }
+    None
 }
 
 /// `glob`: walk, match, order by mtime, cap.

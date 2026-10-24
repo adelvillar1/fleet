@@ -1535,6 +1535,83 @@ async fn repo_map_is_deterministic_budgeted_and_names_its_heuristic() {
     std::fs::remove_dir_all(&folder).ok();
 }
 
+/// A DOCX with one paragraph, written the way the format is written: a
+/// stored (uncompressed) zip holding `word/document.xml`.
+///
+/// Hand-built rather than shelling out to `zip`: the fixture must not
+/// depend on a binary the gate's machine may not have, and a stored
+/// entry is a header, the bytes, and a directory. The CRC is the only
+/// arithmetic.
+fn write_docx(path: &std::path::Path, text: &str) {
+    let body = format!(
+        r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:body></w:document>"#
+    );
+    let name = b"word/document.xml";
+    let data = body.as_bytes();
+    let crc = crc32(data);
+    let mut out: Vec<u8> = Vec::new();
+    let u16le = |out: &mut Vec<u8>, value: u16| out.extend_from_slice(&value.to_le_bytes());
+    let u32le = |out: &mut Vec<u8>, value: u32| out.extend_from_slice(&value.to_le_bytes());
+    // Local file header.
+    u32le(&mut out, 0x0403_4b50);
+    u16le(&mut out, 20);
+    u16le(&mut out, 0);
+    u16le(&mut out, 0);
+    u16le(&mut out, 0);
+    u16le(&mut out, 0);
+    u32le(&mut out, crc);
+    u32le(&mut out, data.len() as u32);
+    u32le(&mut out, data.len() as u32);
+    u16le(&mut out, name.len() as u16);
+    u16le(&mut out, 0);
+    out.extend_from_slice(name);
+    out.extend_from_slice(data);
+    // Central directory.
+    let directory_at = out.len() as u32;
+    u32le(&mut out, 0x0201_4b50);
+    u16le(&mut out, 20);
+    u16le(&mut out, 20);
+    u16le(&mut out, 0);
+    u16le(&mut out, 0);
+    u16le(&mut out, 0);
+    u16le(&mut out, 0);
+    u32le(&mut out, crc);
+    u32le(&mut out, data.len() as u32);
+    u32le(&mut out, data.len() as u32);
+    u16le(&mut out, name.len() as u16);
+    u16le(&mut out, 0);
+    u16le(&mut out, 0);
+    u16le(&mut out, 0);
+    u16le(&mut out, 0);
+    u32le(&mut out, 0);
+    u32le(&mut out, 0);
+    out.extend_from_slice(name);
+    let directory_size = out.len() as u32 - directory_at;
+    // End of central directory.
+    u32le(&mut out, 0x0605_4b50);
+    u16le(&mut out, 0);
+    u16le(&mut out, 0);
+    u16le(&mut out, 1);
+    u16le(&mut out, 1);
+    u32le(&mut out, directory_size);
+    u32le(&mut out, directory_at);
+    u16le(&mut out, 0);
+    std::fs::write(path, out).unwrap();
+}
+
+/// The zip's own CRC-32 (polynomial 0xEDB88320).
+fn crc32(data: &[u8]) -> u32 {
+    let mut crc = 0xFFFF_FFFFu32;
+    for byte in data {
+        crc ^= u32::from(*byte);
+        for _ in 0..8 {
+            let mask = (crc & 1).wrapping_neg();
+            crc = (crc >> 1) ^ (0xEDB8_8320 & mask);
+        }
+    }
+    !crc
+}
+
 /// C19: the search refinements behave as declared, and a provider that
 /// cannot honor one says so rather than dropping it.
 #[tokio::test]
@@ -1768,6 +1845,8 @@ async fn recall_with_nothing_matching_says_so_by_name() {
         output.contains("nothing in this harness's memory"),
         "{output}"
     );
+    // The channel it did not search is named rather than left out.
+    assert!(output.contains("session index is not warmed"), "{output}");
     std::fs::remove_dir_all(&home).ok();
 }
 
@@ -1882,13 +1961,18 @@ async fn read_document_names_its_parser_and_refuses_what_it_cannot_read() {
     let _ = std::fs::remove_dir_all(&folder);
     std::fs::create_dir_all(&folder).unwrap();
     std::fs::write(folder.join("rows.csv"), "name,qty\nwidget,3\n").unwrap();
+    // A real DOCX: a zip with the one part the extractor reads. Built
+    // here rather than checked in, so the fixture is the format's own
+    // shape and not a file that could drift.
+    write_docx(&folder.join("brief.docx"), "the quarterly brief");
     std::fs::write(folder.join("photo.png"), "not really a png").unwrap();
     std::fs::write(folder.join("archive.zip"), "not really a zip").unwrap();
 
     let mock = MockApi::start(vec![
         tool_call_stream("c1", "read_document", r#"{"path":"rows.csv"}"#),
         tool_call_stream("c2", "read_document", r#"{"path":"photo.png"}"#),
-        tool_call_stream("c3", "read_document", r#"{"path":"archive.zip"}"#),
+        tool_call_stream("c3", "read_document", r#"{"path":"brief.docx"}"#),
+        tool_call_stream("c4", "read_document", r#"{"path":"archive.zip"}"#),
         assistant_stream(TOOL_REPORT),
     ]);
     let home = temp_home("read-document");
@@ -1906,7 +1990,7 @@ async fn read_document_names_its_parser_and_refuses_what_it_cannot_read() {
             _ => None,
         })
         .collect();
-    assert_eq!(outputs.len(), 3, "{outputs:?}");
+    assert_eq!(outputs.len(), 4, "{outputs:?}");
     assert!(outputs[0].starts_with("read by local:"), "{}", outputs[0]);
     assert!(outputs[0].contains("widget"), "{}", outputs[0]);
     // No egress, and the refusal points at the owner's own surface.
@@ -1915,11 +1999,18 @@ async fn read_document_names_its_parser_and_refuses_what_it_cannot_read() {
         "{}",
         outputs[1]
     );
-    // An extension no parser claims is refused by name, too.
+    // A real document format reads as markdown, with its own parser.
     assert!(
-        outputs[2].contains("no parser handles this extension"),
+        outputs[2].starts_with("read by local:docx"),
         "{}",
         outputs[2]
+    );
+    assert!(outputs[2].contains("the quarterly brief"), "{}", outputs[2]);
+    // An extension no parser claims is refused by name, too.
+    assert!(
+        outputs[3].contains("no parser handles this extension"),
+        "{}",
+        outputs[3]
     );
     std::fs::remove_dir_all(&home).ok();
     std::fs::remove_dir_all(&folder).ok();

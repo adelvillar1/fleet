@@ -63,6 +63,53 @@ pub struct Recall {
     pub facts_found: usize,
     /// Skills whose text matched before the cap.
     pub skills_found: usize,
+    /// The session channel's state.
+    pub sessions: Sessions,
+}
+
+/// What the session channel can say.
+///
+/// The harness does not keep a searchable index of past sessions on this
+/// machine, and `recall` will not embed one inside a tool call: a query
+/// that costs a minute is a query the model learns to avoid. So the
+/// channel reports its own state, by name, and the reader learns why the
+/// answer is facts and skills only.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum Sessions {
+    /// No index on this machine: nothing was searched, and the answer
+    /// says so rather than implying the sessions held nothing.
+    #[default]
+    NotWarmed,
+    /// An index exists and holds no turns yet.
+    WarmEmpty,
+}
+
+impl Sessions {
+    /// The line the answer carries.
+    pub fn line(&self) -> &'static str {
+        match self {
+            Sessions::NotWarmed => {
+                "sessions: not searched \u{2014} the session index is not warmed on this machine, so past sessions were not checked. Facts and skills are the whole answer."
+            }
+            Sessions::WarmEmpty => {
+                "sessions: the session index is warm and holds no turns yet."
+            }
+        }
+    }
+}
+
+/// Read the session channel's state from the home.
+pub fn sessions(home: Option<&std::path::Path>) -> Sessions {
+    let Some(home) = home else {
+        return Sessions::NotWarmed;
+    };
+    match std::fs::metadata(home.join(".session-index.json")) {
+        // The file is the index: its presence is what "warmed" means,
+        // and a fresh one with no entries is a warm index that has
+        // nothing in it yet.
+        Ok(_) => Sessions::WarmEmpty,
+        Err(_) => Sessions::NotWarmed,
+    }
 }
 
 impl Recall {
@@ -161,7 +208,8 @@ pub fn skills(library: &[SkillRef], instruction: &str) -> (Vec<RecalledSkill>, u
 pub fn render(instruction: &str, recall: &Recall) -> String {
     if recall.is_empty() {
         return format!(
-            "nothing in this harness's memory or skill library matches {instruction:?}. That is an answer: the fact is not written down here, so check the tree or the live web rather than assuming."
+            "nothing in this harness's memory or skill library matches {instruction:?}. That is an answer: the fact is not written down here, so check the tree or the live web rather than assuming.\n{}",
+            recall.sessions.line()
         );
     }
     let mut text = String::new();
@@ -197,6 +245,8 @@ pub fn render(instruction: &str, recall: &Recall) -> String {
             text.push_str(&format!("- {}: {}\n", skill.name, skill.description));
         }
     }
+    text.push('\n');
+    text.push_str(recall.sessions.line());
     text.trim_end().to_string()
 }
 
@@ -251,6 +301,8 @@ mod tests {
         let text = render("who owns the billing service", &recall);
         assert!(text.contains("nothing in this harness's memory"), "{text}");
         assert!(text.contains("check the tree"), "{text}");
+        // Even an empty answer names the channel it did not search.
+        assert!(text.contains("session index is not warmed"), "{text}");
     }
 
     #[test]
@@ -271,6 +323,7 @@ mod tests {
             }],
             facts_found: 12,
             skills_found: 2,
+            sessions: Sessions::NotWarmed,
         };
         let text = render("what did the owner say", &recall);
         assert!(text.contains("1 of 12 ranked"), "{text}");
@@ -281,6 +334,24 @@ mod tests {
         assert!(text.contains("off-shape"), "{text}");
         assert!(text.contains("1 of 2 matched"), "{text}");
         assert!(text.contains("use_skill"), "{text}");
+        assert!(text.contains("sessions: not searched"), "{text}");
+    }
+
+    #[test]
+    fn the_session_channel_names_its_state_from_the_home() {
+        let home =
+            std::env::temp_dir().join(format!("fleet-recall-sessions-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        // No index: the channel says it did not search, not that the
+        // sessions were empty.
+        assert_eq!(sessions(Some(&home)), Sessions::NotWarmed);
+        assert_eq!(sessions(None), Sessions::NotWarmed);
+        // An index that exists but holds nothing yet is a different
+        // state, and says so.
+        std::fs::write(home.join(".session-index.json"), "{}").unwrap();
+        assert_eq!(sessions(Some(&home)), Sessions::WarmEmpty);
+        std::fs::remove_dir_all(&home).ok();
     }
 
     #[test]
