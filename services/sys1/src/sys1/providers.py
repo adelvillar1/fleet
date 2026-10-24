@@ -36,6 +36,8 @@ from .parsers import (
     parse_julia,
     parse_liquid,
     parse_modernbert,
+    parse_scaledown,
+    parse_typellm,
 )
 from .types import Answer, Head, Provider
 
@@ -361,6 +363,134 @@ def _glide_wire(pid: str):
     return _fn
 
 
+def _scaledown_wire(pid: str):
+    """
+    Classify fn for ScaleDown Decisions (POST /v1/scaledown, model classify-1)
+    — the documented Jev mirror (docs.scaledown.ai/api-reference/decisions,
+    probed live 2026-10-13).
+
+    Deltas vs _glide_wire:
+      - questions go through Head.to_scaledown_head(): noul takes the question
+        as `instructions` (a plain string), NOT true/false criteria; score
+        criteria is an ORDERED ARRAY of level descriptions (a map 422s —
+        probed); choice criteria is the label→description map.
+      - `state` accepts a plain string (shorthand for {"text": ...}); bounded
+        by `scaledown_max_chars` (1M-token context — generous but bounded).
+      - Both `Authorization: Bearer` and `x-api-key` are accepted, so
+        http_post_json's Bearer works unmodified.
+      - usage is {input_tokens, output_tokens, cost}: the contract telemetry
+        keys plus cost_usd (ScaleDown bills input only; output is free).
+    Retry policy matches http_post_json defaults: 429/5xx retry, 4xx fail fast.
+    """
+
+    def _fn(
+        text: str,
+        heads: list[Head],
+        cfg: dict,
+        telemetry: dict,
+        images: list | None = None,
+    ) -> dict[str, Answer]:
+        pcfg = cfg["providers"]
+        api_key = api_key_for(pid, cfg)
+        if _requires_key(pid, cfg) and not api_key:
+            raise RuntimeError(f"${pcfg.get(f'{pid}_api_key_env', pid.upper() + '_API_KEY')} not set")
+        url = pcfg.get(f"{pid}_api_url", "")
+        if not url:
+            raise RuntimeError(f"providers.{pid}_api_url not configured")
+        body = {
+            "model": pcfg.get(f"{pid}_model", pid),
+            "state": text[: pcfg.get("scaledown_max_chars", 1_000_000)],
+            "questions": {h.id: h.to_scaledown_head() for h in heads},
+        }
+        resp = http_post_json(
+            url,
+            body,
+            api_key=api_key,
+            timeout=pcfg["request_timeout_seconds"],
+            max_retries=pcfg["max_retries"],
+            backoff=pcfg["retry_backoff_seconds"],
+            telemetry=telemetry,
+            label=pid,
+        )
+        usage = resp.get("usage") or {}
+        if usage.get("input_tokens") is not None:
+            telemetry["token_prompt"] = usage.get("input_tokens")
+            telemetry["token_completion"] = usage.get("output_tokens")
+            telemetry["token_total"] = (usage.get("input_tokens") or 0) + (usage.get("output_tokens") or 0)
+        if usage.get("cost") is not None:
+            telemetry["cost_usd"] = usage.get("cost")
+        return parse_scaledown(resp, heads)
+
+    return _fn
+
+
+def _typellm_wire(pid: str):
+    """
+    Classify fn for TypeLLM (POST /v1/generate) — one call answers every
+    head (probed live 2026-10-24).
+
+    Deltas vs _scaledown_wire:
+      - questions go through Head.to_typellm_head(): every head carries
+        `return_probabilities`, so the label distribution rides the answer
+        and the provider's `confidence` is a second opinion. Enum fields are
+        `{"type": "string", "enum": ...}`; noul is `{"type": "boolean"}` —
+        the wire refuses `type: "bool"` outright.
+      - the body is {context, questions, images, options, timeout}; the
+        vendor's own ceiling is 90 s (85 worked — the typellm skill's
+        default), and the shared context is bounded by `typellm_max_chars`.
+      - usage is {input_tokens, thinking_tokens}; token_completion maps
+        thinking_tokens (the only output accounting this vendor returns) and
+        there is no cost field.
+
+    Retry policy matches http_post_json defaults: 429/5xx retry, 4xx fail
+    fast. The vendor treats its own 504 as a final timeout (their doc,
+    mirrored by the SDK's client); the shared helper still retries it once
+    or twice, which re-pays the wait — bounded, and rare, so the wire keeps
+    the shared policy rather than growing the helper a per-provider carve.
+    """
+
+    def _fn(
+        text: str,
+        heads: list[Head],
+        cfg: dict,
+        telemetry: dict,
+        images: list | None = None,
+    ) -> dict[str, Answer]:
+        pcfg = cfg["providers"]
+        api_key = api_key_for(pid, cfg)
+        if _requires_key(pid, cfg) and not api_key:
+            raise RuntimeError(f"${pcfg.get(f'{pid}_api_key_env', pid.upper() + '_API_KEY')} not set")
+        url = pcfg.get(f"{pid}_api_url", "")
+        if not url:
+            raise RuntimeError(f"providers.{pid}_api_url not configured")
+        body = {
+            "context": text[: pcfg.get("typellm_max_chars", 200_000)],
+            "questions": {h.id: h.to_typellm_head() for h in heads},
+            "images": [],
+            "options": {"mode": None, "seed": 7},
+            "timeout": 85,
+        }
+        resp = http_post_json(
+            url,
+            body,
+            api_key=api_key,
+            timeout=pcfg["request_timeout_seconds"],
+            max_retries=pcfg["max_retries"],
+            backoff=pcfg["retry_backoff_seconds"],
+            telemetry=telemetry,
+            label=pid,
+        )
+        usage = resp.get("usage") or {}
+        if usage.get("input_tokens") is not None:
+            telemetry["token_prompt"] = usage.get("input_tokens")
+            thinking = usage.get("thinking_tokens")
+            telemetry["token_completion"] = thinking if thinking is not None else 0
+            telemetry["token_total"] = (usage.get("input_tokens") or 0) + (thinking or 0)
+        return parse_typellm(resp, heads)
+
+    return _fn
+
+
 def _julia_wire(pid: str):
     """
     Classify fn for Supersoniclabs Julia-1 — BERT-based decision model on the
@@ -645,7 +775,7 @@ def _requires_key(pid: str, cfg: dict) -> bool:
     explicit = pcfg.get(f"{pid}_requires_key")
     if explicit is not None:
         return bool(explicit)
-    if pid in ("decide", "jev", "drex", "glide", "julia", "liquid"):
+    if pid in ("decide", "jev", "drex", "glide", "julia", "liquid", "scaledown", "typellm"):
         return True
     url = pcfg.get(f"{pid}_api_url", "")
     if url:
@@ -1015,6 +1145,42 @@ register(
         tier="core",
         wire="jev",
         meta={"setup": "set LIQUID_API_KEY (repo .env, gitignored); docs: docs.liquid.ai + api.liquid.ai/decisions/v1/models"},
+    )
+)
+register(
+    Provider(
+        id="scaledown",
+        name="ScaleDown Classify (hosted)",
+        classify=_scaledown_wire("scaledown"),
+        is_available=_hosted_available("scaledown"),
+        is_configured=_hosted_available("scaledown"),
+        description="ScaleDown's Decisions API (POST /v1/scaledown, model classify-1) — the "
+        "documented Jev mirror: {state, questions} with choice/noul/score answered by one "
+        "constrained-decoding model with calibrated softmax probabilities. 1M-token context; "
+        "$0.05 per 1M input tokens, output free (probed live 2026-10-13: route-task verdicts "
+        "agree with d1/GLiDE; prose-rating nouls compress toward the middle — a route seat, "
+        "not a validate critic).",
+        tier="core",
+        wire="jev",
+        meta={"setup": "set SCALEDOWN_API_KEY (env file); docs: docs.scaledown.ai/api-reference/decisions"},
+    )
+)
+register(
+    Provider(
+        id="typellm",
+        name="TypeLLM (hosted)",
+        classify=_typellm_wire("typellm"),
+        is_available=_hosted_available("typellm"),
+        is_configured=_hosted_available("typellm"),
+        description="TypeLLM's generate API (POST /v1/generate) — one call answers every "
+        "head: enum/boolean fields with return_probabilities, so each answer carries its "
+        "label distribution and the provider's confidence is a second opinion. A 90 s "
+        "vendor ceiling (the wire sends 85); usage reports input and thinking tokens only "
+        "(probed live 2026-10-24: enum and boolean distributions both returned; the "
+        "wire refuses `type: \"bool\"` — fields are `string` or `boolean`).",
+        tier="core",
+        wire="jev",
+        meta={"setup": "set TYPELLM_API_KEY (env file); docs: typellm.ai/cookbook"},
     )
 )
 register(

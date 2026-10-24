@@ -113,6 +113,76 @@ class Head:
             "criteria": criteria,
         }
 
+    def to_scaledown_head(self) -> dict:
+        """ScaleDown Decisions (/v1/scaledown) question shape — the documented
+        Jev mirror with two load-bearing deltas (docs.scaledown.ai/api-reference/
+        decisions, probed live 2026-10-13):
+
+          - noul takes the question as `instructions` (a plain string) — NOT
+            true/false criteria like Drex/GLiDE.
+          - score criteria is an ORDERED ARRAY of level descriptions (2-10
+            levels); passing a map 422s (probed).
+
+        choice criteria is the same label→description map as to_jev_head().
+        Every question carries `instructions`; the task text serves as the
+        choice/score guidance.
+        """
+        if self.kind == "noul":
+            return {"type": "noul", "instructions": self.task}
+        if self.kind == "score":
+            return {"type": "score", "instructions": self.task, "criteria": self._score_criteria()}
+        criteria = self.descriptions or {label_str: label_str for label_str in self.labels}
+        return {"type": "choice", "instructions": self.task, "criteria": criteria}
+
+    def to_typellm_head(self) -> dict:
+        """TypeLLM (/v1/generate) question shape — probed live 2026-10-24.
+
+        Every head carries `return_probabilities`, so the answer rides with
+        its label distribution and the provider's own `confidence` field is
+        a second opinion rather than the only signal. The wire's field types
+        are `string` (an enum question; `bool` is refused — "return_probabilities
+        for ... is only supported for enum or boolean fields") and `boolean`.
+
+          - choice: enum of the labels; a description map folds into the
+            instructions as a rubric (the wire has no per-label descriptions).
+          - noul: `type: "boolean"`, probabilities keyed by the strings
+            "true"/"false" on this wire.
+          - score: an enum of the ABSOLUTE level digits (score_min..score_max)
+            with the levels' descriptions folded into the instructions — the
+            wire has no ordered-score type, so the parser reads the digit and
+            shifts nothing (unlike drex/glide/scaledown's 0-indexed wires).
+        """
+        if self.kind == "noul":
+            return {
+                "type": "boolean",
+                "return_probabilities": True,
+                "instructions": self.task,
+            }
+        if self.kind == "score":
+            levels = [str(level) for level in range(self.score_min, self.score_max + 1)]
+            criteria = self._score_criteria()
+            rubric = "; ".join(
+                f"{level} = {description}"
+                for level, description in zip(levels, criteria, strict=True)
+            )
+            return {
+                "type": "string",
+                "enum": levels,
+                "return_probabilities": True,
+                "instructions": f"{self.task}\n\nScore levels: {rubric}",
+            }
+        if self.descriptions:
+            rubric = "; ".join(f"{label} = {rule}" for label, rule in self.descriptions.items())
+            instructions = f"{self.task}\n\nRubric: {rubric}"
+        else:
+            instructions = self.task
+        return {
+            "type": "string",
+            "enum": list(self.labels),
+            "return_probabilities": True,
+            "instructions": instructions,
+        }
+
     def wire_head_for(self, provider: str) -> dict:
         if provider in ("local", "modernbert"):
             return self.to_local_head()
@@ -120,6 +190,8 @@ class Head:
             return self.to_jev_head()
         if provider == "drex":
             return self.to_drex_head()
+        if provider == "typellm":
+            return self.to_typellm_head()
         return self.to_decide_head()
 
 

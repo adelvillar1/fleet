@@ -1,9 +1,9 @@
 {
   "name": "sys1",
   "upstream": "~/Projects/sys1",
-  "commit": "c1f73836e1849b3b3a594bf0ca5e706a186fd1f3",
-  "committedAt": "2026-10-09",
-  "commitSubject": "MCP classify accepts provider; safety task allow-list includes glide",
+  "commit": "f0faebc9bcc899a17ed0f184d5db4c1f41b9b55b",
+  "committedAt": "2026-10-24",
+  "commitSubject": "feat: TypeLLM provider \u2014 one call answers every head (probed live)",
   "license": "Apache-2.0",
   "upstreamAuthor": "adelvillar1 (same author as the fork; Apache-2.0)",
   "vendored": [
@@ -18,12 +18,12 @@
     "__pycache__/",
     "*.egg-info"
   ],
-  "pythonLoc": 6668,
+  "pythonLoc": 5911,
   "syncRule": "upstream repos stay the development home; re-vendor by copying src/ and service/mcp_server.py at a recorded sha",
   "fleetVendor": {
-    "source": "deepseek-harness fork services/sys1/ working tree",
-    "forkCommit": "542be5970b",
-    "vendoredAt": "2026-10-13",
-    "note": "This copy matches the upstream WORKING TREE on branch feature/plan-surface, which carries 4 uncommitted files (service/mcp_server.py, src/sys1/api.py, src/sys1/tasks.py, docs/plans/2026-10-04-canonical-provider-env.md — 89 insertions beyond the pinned commit, KI-003). The pinned commit is the recorded upstream base, not a byte-exact description of this copy; that state is what was boot-verified (1 tool: sys1_classify). Of those four delta files, docs/plans/2026-10-04-canonical-provider-env.md is not present in this copy — docs/ is in this copy's excluded set, so only the three code files were vendored."
+    "source": "~/Projects/sys1 branch feature/plan-surface at a landed commit",
+    "forkCommit": "f0faebc9bc",
+    "vendoredAt": "2026-10-24",
+    "note": "Re-vendored from the branch's own commits (KI-029 closed): src/ and service/mcp_server.py are byte-exact to f0faebc EXCEPT src/sys1/perception.py, which is fleet's carry \u2014 the documents session's parse_document lives only in the upstream working tree (never landed on feature/plan-surface), so the copy keeps fleet HEAD's file; rsync ran without --delete for exactly this reason. The same carried-file pattern KI-003 named, on a new file, until the module lands upstream."
   }
 }

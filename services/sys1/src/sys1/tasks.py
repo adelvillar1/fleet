@@ -557,56 +557,6 @@ _ROUTE = Task(
 )
 
 
-# ── tool_route: the capability class a tool request falls in ─────────────────
-# Fleet's tool search asks this before it ranks candidates. The labels are a
-# closed set, so a low-confidence answer is a named fallback rather than an
-# invented capability; `none` is the abstention the model needs when no tool
-# fits. The input text is the agent's own description of what it needs to do,
-# never a tool name.
-
-TOOL_CAPABILITY_LABELS = [
-    "read",
-    "search",
-    "edit",
-    "execute",
-    "web",
-    "memory",
-    "vision",
-    "media",
-    "delegate",
-    "none",
-]
-
-_TOOL_ROUTE = Task(
-    id="tool_route",
-    description=(
-        "Tool-selection judgment: given a sentence describing what an agent "
-        "needs to do, name the capability class the work falls in."
-    ),
-    heads=[
-        make_choice(
-            "An agent described what it needs to do next. Which capability "
-            "class best describes the work? Answer `none` when no tool is "
-            "needed.",
-            TOOL_CAPABILITY_LABELS,
-            id="capability",
-            descriptions={
-                "read": "Look at a file or directory that is already known: read its contents, a range, or a listing",
-                "search": "Find something not yet located: search file contents, find files by name or pattern",
-                "edit": "Change an existing file: replace a passage, write a new file, or refactor code",
-                "execute": "Run a command, build, test, or process",
-                "web": "Look something up on the live web, or read a page",
-                "memory": "Recall or record durable knowledge about the owner or the project",
-                "vision": "Look at an image or a screenshot",
-                "media": "Generate or judge an image, audio, or a rendered deck",
-                "delegate": "Hand a self-contained task to another agent",
-                "none": "Answer from what is already known; no tool is needed",
-            },
-        )
-    ],
-)
-
-
 # ── registry + detection ─────────────────────────────────────────────────────
 
 _TASKS: dict[str, Task] = {}
@@ -628,7 +578,6 @@ for _t in (
     _SAFETY,
     _VISION_QC,
     _ROUTE,
-    _TOOL_ROUTE,
 ):
     register_task(_t)
 
@@ -644,16 +593,16 @@ def list_tasks() -> list[str]:
 def heads_for(task: Task | str, provider: str) -> list[Head]:
     """Pick the head set for a given provider, falling back to the task default.
 
-    Drex, GLiDE, Julia, and Liquid have no per-task overrides of their own:
-    all four are Jev-class (same noul/choice/score primitives, same
-    calibrated-probability semantics), so they inherit the `jev` head set
-    wherever one is defined. Tasks that never gave jev its own heads fall
-    through to the task default for all of them.
+    Drex, GLiDE, Julia, Liquid, ScaleDown, and TypeLLM have no per-task
+    overrides of their own: all six are Jev-class (same noul/choice/score
+    primitives, same calibrated-probability semantics), so they inherit the
+    `jev` head set wherever one is defined. Tasks that never gave jev its
+    own heads fall through to the task default for all of them.
     """
     t = _TASKS.get(task) if isinstance(task, str) else task
     if t is None:
         raise KeyError(f"unknown task {task!r}; known: {sorted(_TASKS)}")
-    if provider in ("drex", "glide", "julia", "liquid") and provider not in t.provider_heads:
+    if provider in ("drex", "glide", "julia", "liquid", "scaledown", "typellm") and provider not in t.provider_heads:
         provider = "jev"
     return t.provider_heads.get(provider, t.heads)
 

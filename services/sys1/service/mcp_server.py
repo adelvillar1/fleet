@@ -24,9 +24,17 @@ def _add_sys1_src_to_path() -> None:
 
 def main() -> None:
     _add_sys1_src_to_path()
-    from sys1.api import classify  # noqa: E402  (import after path patch)
-    from sys1.config import load_config  # noqa: E402
-    from sys1.perception import parse_document  # noqa: E402
+    from sys1.api import classify
+    from sys1.config import load_config
+
+    try:
+        # Fleet's carry: the documents session's Perception tool rides the
+        # sys1 lane, and sys1.perception is a carried module (see
+        # VENDOR.json's fleetVendor note) — the adapter degrades to
+        # classify-only when the module is absent upstream.
+        from sys1.perception import parse_document  # noqa: E402
+    except ImportError:
+        parse_document = None
 
     cfg = load_config()
 
@@ -88,25 +96,31 @@ def main() -> None:
                             "required": ["text"],
                         },
                     },
-                    {
-                        "name": "sys1_perceive_document",
-                        "description": (
-                            "Parse one local document through Nace Perception, using the "
-                            "provider credential sys1 already holds. Returns markdown, pages, "
-                            "units, job id, and any content_truncated disclosure. A scan or a "
-                            "format local extraction cannot read is this tool's case."
-                        ),
-                        "inputSchema": {
-                            "type": "object",
-                            "properties": {
-                                "path": {
-                                    "type": "string",
-                                    "description": "Absolute path to the document on this machine.",
+                    *(
+                        []
+                        if parse_document is None
+                        else [
+                            {
+                                "name": "sys1_perceive_document",
+                                "description": (
+                                    "Parse one local document through Nace Perception, using the "
+                                    "provider credential sys1 already holds. Returns markdown, pages, "
+                                    "units, job id, and any content_truncated disclosure. A scan or a "
+                                    "format local extraction cannot read is this tool's case."
+                                ),
+                                "inputSchema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "path": {
+                                            "type": "string",
+                                            "description": "Absolute path to the document on this machine.",
+                                        },
+                                    },
+                                    "required": ["path"],
                                 },
-                            },
-                            "required": ["path"],
-                        },
-                    }
+                            }
+                        ]
+                    ),
                 ],
             })
         elif method == "tools/call":
@@ -114,6 +128,9 @@ def main() -> None:
             arguments = params.get("arguments", {}) or {}
 
             if tool_name == "sys1_perceive_document":
+                if parse_document is None:
+                    error(req_id, -32601, "Unknown tool: sys1_perceive_document")
+                    continue
                 path = arguments.get("path")
                 if not isinstance(path, str) or not path.strip():
                     error(req_id, -32602, "`path` must be a non-empty string.")
@@ -126,6 +143,7 @@ def main() -> None:
                     "content": [{"type": "text", "text": json.dumps(result)}],
                 })
                 continue
+
             if tool_name != "sys1_classify":
                 error(req_id, -32601, f"Unknown tool: {tool_name}")
                 continue

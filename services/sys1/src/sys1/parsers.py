@@ -229,12 +229,69 @@ def parse_glide(resp: dict, heads: list[Head]) -> dict[str, Answer]:
     return out
 
 
+# ── ScaleDown Decisions (/v1/scaledown, classify-1) ──────────────────────────
+
+def parse_scaledown(resp: dict, heads: list[Head]) -> dict[str, Answer]:
+    """
+    ScaleDown Decisions response — the documented Jev mirror
+    `{"model", "answers": {id: {...}}, "usage": {input_tokens,
+    output_tokens, cost}}` (docs.scaledown.ai/api-reference/decisions,
+    probed live 2026-10-13).
+
+    Per-kind deltas vs the Jev family:
+      - choice: {type, choice, probabilities, confidence} — `choice` renames
+        to sys1's `label` (handled by _jev_entry); probabilities sum to 1.0.
+      - noul: {type, noul: p} — p IS P(yes); no confidence field on this
+        wire, so gating derives max(p, 1-p) (same as jev/drex).
+      - score: {type, score, confidence, legend, probabilities} — 0-indexed
+        over the ordered criteria array, so the score shifts by
+        head.score_min (same as drex/glide); legend/probabilities arrive as
+        dicts keyed by index STRING ("0".."N-1"), so their keys shift
+        directly (no array→dict conversion, unlike drex).
+    """
+    inner: Any = resp
+    if "choices" in inner and isinstance(inner["choices"], list) and inner["choices"]:
+        msg = (inner["choices"][0] or {}).get("message") or {}
+        content = msg.get("content")
+        if isinstance(content, str):
+            try:
+                inner = _maybe_json(content)
+            except Exception:
+                return {h.id: declined("bad-content") for h in heads}
+
+    answers = inner.get("answers") if isinstance(inner, dict) else None
+    if not isinstance(answers, dict):
+        return {h.id: declined("no-answers") for h in heads}
+
+    out: dict[str, Answer] = {}
+    for head in heads:
+        a = answers.get(head.id) or answers.get(head.task)
+        if not isinstance(a, dict):
+            out[head.id] = declined("missing")
+            continue
+        entry = _jev_entry(head, a)
+        if entry.get("type") == "score" and head.kind == "score":
+            score = entry.get("score")
+            if isinstance(score, (int, float)) and not isinstance(score, bool):
+                entry["score"] = float(head.score_min) + float(score)
+            legend = entry.get("legend")
+            if isinstance(legend, dict):
+                entry["legend"] = {
+                    str(head.score_min + int(k)): str(v) for k, v in legend.items()
+                }
+            probs = entry.get("probabilities")
+            if isinstance(probs, dict):
+                entry["probabilities"] = {
+                    str(head.score_min + int(k)): v for k, v in probs.items()
+                }
+        out[head.id] = entry
+    return out
+
+
 def parse_julia(resp: dict, heads: list[Head]) -> dict[str, Answer]:
     """
     Julia-1 response — `{"answers": {id: {...}}}` (probed live 2026-10-02;
     deltas quoted in docs/plans/2026-10-02-julia-provider.md).
-
-    Per-kind deltas vs GliDE:
       - choice: {type, choice, confidence, probabilities} — confidence is the
         top1 probability (byte-equals probabilities[top1] on the wire), a
         probability scale directly thresholdable at the family floor; KEPT as
@@ -285,6 +342,85 @@ def parse_julia(resp: dict, heads: list[Head]) -> dict[str, Answer]:
                     for i, label in enumerate(head._score_criteria())
                 }
         out[head.id] = entry
+    return out
+
+
+# ── TypeLLM (api.typellm.ai /v1/generate) ─────────────────────────────────────
+
+def parse_typellm(resp: dict, heads: list[Head]) -> dict[str, Answer]:
+    """
+    TypeLLM response — `{"result": {id: {"value", "probabilities",
+    "confidence"}}, "usage": {"input_tokens", "thinking_tokens"}}` (probed
+    live 2026-10-24).
+
+    Per-kind deltas vs the Jev family:
+      - choice: `value` renames to sys1's `label`; probabilities arrive keyed
+        by the labels themselves.
+      - noul: `value` is the boolean; the wire keys its probabilities by the
+        STRINGS "true"/"false", so they re-key to the booleans here. `noul`
+        carries P(yes) when the distribution is present (the scaledown
+        semantic), else the bare boolean; the provider's `confidence` rides
+        along as the distribution-shape second opinion.
+      - score: `value` is the ABSOLUTE level digit (the head's enum is
+        score_min..score_max, so nothing shifts — unlike the 0-indexed
+        drex/glide/scaledown wires); probabilities re-key to strings.
+
+    A missing or malformed answer declines by name, like every parser.
+    """
+    result = resp.get("result") if isinstance(resp, dict) else None
+    if not isinstance(result, dict):
+        return {h.id: declined("no-answers") for h in heads}
+
+    out: dict[str, Answer] = {}
+    for head in heads:
+        a = result.get(head.id)
+        if not isinstance(a, dict) or "value" not in a:
+            out[head.id] = declined("missing")
+            continue
+        value = a.get("value")
+        probs = a.get("probabilities")
+        confidence = a.get("confidence")
+        if head.kind == "noul":
+            if isinstance(value, bool):
+                yes = value
+            elif isinstance(value, str) and value.lower() in ("true", "false"):
+                yes = value.lower() == "true"
+            else:
+                out[head.id] = declined("bad-noul")
+                continue
+            entry: Answer = {"type": "noul", "noul": yes, "confidence": confidence}
+            if isinstance(probs, dict) and any(
+                isinstance(k, str) and k.lower() in ("true", "false") for k in probs
+            ):
+                p_yes = probs.get("true", probs.get("True"))
+                if isinstance(p_yes, (int, float)):
+                    # The distribution is the sharper reading of P(yes): the
+                    # scaledown semantic, where `noul` IS the probability.
+                    entry["noul"] = float(p_yes)
+                entry["probabilities"] = {
+                    (k.lower() == "true")
+                    if isinstance(k, str) and k.lower() in ("true", "false")
+                    else k: v
+                    for k, v in probs.items()
+                }
+            out[head.id] = entry
+        elif head.kind == "score":
+            if isinstance(value, str) and value.strip().isdigit():
+                score = float(int(value.strip()))
+            elif isinstance(value, (int, float)) and not isinstance(value, bool):
+                score = float(value)
+            else:
+                out[head.id] = declined("bad-score")
+                continue
+            entry = {"type": "score", "score": score, "confidence": confidence}
+            if isinstance(probs, dict):
+                entry["probabilities"] = {str(k): v for k, v in probs.items()}
+            out[head.id] = entry
+        else:
+            entry = {"type": "choice", "label": value, "confidence": confidence}
+            if isinstance(probs, dict):
+                entry["probabilities"] = dict(probs)
+            out[head.id] = entry
     return out
 
 
