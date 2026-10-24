@@ -3404,6 +3404,49 @@ mod tests {
         assert!(malformed.starts_with("HTTP/1.1 400"), "{malformed}");
     }
 
+    /// The one credential shape worth scanning for: `sk-` followed by a
+    /// run of key characters. A prose or class-name `sk-` is not a key —
+    /// the blunt literal scan refused the face its own element names
+    /// (KI-308) — and the failure names the word with its offset instead
+    /// of dumping the payload.
+    fn key_shaped_occurrence(payload: &str) -> Option<(usize, String)> {
+        let bytes = payload.as_bytes();
+        let mut from = 0;
+        while let Some(at) = payload[from..].find("sk-") {
+            let start = from + at;
+            let mut end = start + 3;
+            while end < bytes.len()
+                && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_' || bytes[end] == b'-')
+            {
+                end += 1;
+            }
+            if end - (start + 3) >= 20 {
+                let word = payload[start..]
+                    .split(|c: char| c.is_whitespace())
+                    .next()
+                    .unwrap_or_default()
+                    .to_string();
+                return Some((start, word));
+            }
+            from = start + 3;
+        }
+        None
+    }
+
+    #[test]
+    fn the_credential_scan_reads_key_shape_not_any_sk_dash() {
+        // The class name that tripped the blunt scan is not a key, and
+        // neither is `sk-` in prose.
+        assert_eq!(key_shaped_occurrence("a .task-wrap { border: sk-; }"), None);
+        // A key-shaped token is found, and named with its word and
+        // offset rather than the whole payload.
+        let token = format!("sk-{}", "k".repeat(24));
+        let body = format!("let x = \"{token}\";");
+        let (at, word) = key_shaped_occurrence(&body).expect("the key-shaped token");
+        assert_eq!(&body[at..at + 3], "sk-", "the offset names the match");
+        assert!(word.contains(&token), "the word: {word}");
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn no_payload_carries_a_credential() {
         let (token, port) = launch().await;
@@ -3416,7 +3459,10 @@ mod tests {
             Some("heartbeat"),
         );
         for payload in [&page, &css, &js, &stream, INDEX, STYLES, SCRIPT] {
-            for secret in ["sk-", "DEEPSEEK_API_KEY", "Authorization", "Bearer"] {
+            if let Some((at, word)) = key_shaped_occurrence(payload) {
+                panic!("a payload carries a key-shaped token at byte {at}: {word}");
+            }
+            for secret in ["DEEPSEEK_API_KEY", "Authorization", "Bearer"] {
                 assert!(
                     !payload.contains(secret),
                     "a payload names {secret}: {payload}"
@@ -3428,8 +3474,13 @@ mod tests {
         // the head's silence about Set-Cookie is the pin.
         let (head, body) = page.split_once("\r\n\r\n").expect("a head and a body");
         assert!(!head.contains("Set-Cookie"), "{head}");
-        for secret in ["sk-", "DEEPSEEK_API_KEY", "fleet_gui"] {
+        for secret in ["DEEPSEEK_API_KEY", "fleet_gui"] {
             assert!(!body.contains(secret) && !head.contains(secret), "{page}");
+        }
+        if let Some((at, word)) =
+            key_shaped_occurrence(&body).or_else(|| key_shaped_occurrence(&head))
+        {
+            panic!("a reply carries a key-shaped token at byte {at}: {word}");
         }
     }
 
