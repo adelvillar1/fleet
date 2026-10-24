@@ -8,7 +8,7 @@ tier: durable
 shape: [docs]
 phrases: [the harness voice, the system prompt, SOUL.md, the identity slot, best of both prompts, what fleet is told]
 missing: []
-recall-count: 190
+recall-count: 200
 superseded-by:
 valid-until:
 ---
