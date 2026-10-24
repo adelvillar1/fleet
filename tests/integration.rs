@@ -620,7 +620,7 @@ async fn client_posts_auth_and_tool_declarations() {
     );
     let body: serde_json::Value = serde_json::from_str(&recorded.body).unwrap();
     assert_eq!(body["model"], "test-model");
-    assert_eq!(body["tools"].as_array().unwrap().len(), 8);
+    assert_eq!(body["tools"].as_array().unwrap().len(), 10);
     assert_eq!(body["messages"][0]["role"], "user");
 }
 
@@ -1360,6 +1360,179 @@ fn sweep_output(home: &Path, apply: bool) -> String {
         }
     }
     text
+}
+
+/// A folder-scoped run over `tools`, so the write tools take their real
+/// path resolution and the patch lands in a tree the test owns.
+async fn run_in_folder(
+    mock: &MockApi,
+    session: &mut Session,
+    folder: &std::path::Path,
+    max_turns: usize,
+) -> Result<RunReport, AgentError> {
+    let client = Client::new(mock.url(), "test-key");
+    let options = AgentOptions {
+        goal: None,
+        model: "test-model".to_string(),
+        identity: None,
+        max_turns,
+        ui_tx: None,
+        lane_specs: None,
+        calib: None,
+        skills: Vec::new(),
+        role_overlay: None,
+        memory: None,
+        scope: None,
+        improve_home: None,
+        gui_prompt: None,
+        compact_now: false,
+        checkpoints: None,
+        file_access: FileAccess::Folder(folder.to_path_buf()),
+        plan_mode: false,
+    };
+    let mut progress = Vec::new();
+    let mut agent = Agent::new(
+        &client,
+        options,
+        session,
+        Box::new(ApproveAll),
+        &mut progress,
+    )
+    .unwrap();
+    agent.run("patch the tree").await
+}
+
+/// `apply_patch` writes every file a patch names, and refuses a file whose
+/// hunk does not match without touching that file.
+#[tokio::test]
+async fn apply_patch_writes_every_file_and_refuses_a_stale_hunk_without_writing() {
+    let folder = std::env::temp_dir().join(format!("fleet-patch-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&folder);
+    std::fs::create_dir_all(folder.join("src")).unwrap();
+    std::fs::write(folder.join("src/one.rs"), "fn one() {\n    old();\n}\n").unwrap();
+    std::fs::write(folder.join("src/two.rs"), "fn two() {\n    keep();\n}\n").unwrap();
+
+    let good = [
+        "*** Begin Patch",
+        "*** Update File: src/one.rs",
+        "@@",
+        " fn one() {",
+        "-    old();",
+        "+    new();",
+        " }",
+        "*** Add File: src/three.rs",
+        "+pub fn three() {}",
+        "*** End Patch",
+    ]
+    .join("\n");
+    let arguments = serde_json::json!({ "patch": good }).to_string();
+    let mock = MockApi::start(vec![
+        tool_call_stream("c1", "apply_patch", &arguments),
+        assistant_stream(TOOL_REPORT),
+    ]);
+    let home = temp_home("patch-good");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    run_in_folder(&mock, &mut session, &folder, 4)
+        .await
+        .unwrap();
+    let (output, _) = tool_result(&session::replay(session.path()).unwrap(), "apply_patch");
+    assert!(output.contains("updated src/one.rs"), "{output}");
+    assert!(output.contains("added src/three.rs"), "{output}");
+    assert_eq!(
+        std::fs::read_to_string(folder.join("src/one.rs")).unwrap(),
+        "fn one() {\n    new();\n}\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(folder.join("src/three.rs")).unwrap(),
+        "pub fn three() {}\n"
+    );
+
+    // A stale hunk: refused by name, and the file it named is untouched.
+    let stale = [
+        "*** Begin Patch",
+        "*** Update File: src/two.rs",
+        "@@",
+        " fn two() {",
+        "-    gone();",
+        "+    changed();",
+        " }",
+        "*** End Patch",
+    ]
+    .join("\n");
+    let arguments = serde_json::json!({ "patch": stale }).to_string();
+    let mock = MockApi::start(vec![
+        tool_call_stream("c1", "apply_patch", &arguments),
+        assistant_stream(TOOL_REPORT),
+    ]);
+    let home2 = temp_home("patch-stale");
+    let mut session2 = Session::create(&home2, "test-model").unwrap();
+    run_in_folder(&mock, &mut session2, &folder, 4)
+        .await
+        .unwrap();
+    let (output, _) = tool_result(&session2_replay(&session2), "apply_patch");
+    assert!(output.contains("did not match"), "{output}");
+    assert!(output.contains("nearest line"), "{output}");
+    assert_eq!(
+        std::fs::read_to_string(folder.join("src/two.rs")).unwrap(),
+        "fn two() {\n    keep();\n}\n"
+    );
+    std::fs::remove_dir_all(&home).ok();
+    std::fs::remove_dir_all(&home2).ok();
+    std::fs::remove_dir_all(&folder).ok();
+}
+
+fn session2_replay(session: &Session) -> Vec<Record> {
+    session::replay(session.path()).unwrap()
+}
+
+/// `repo_map` is deterministic through the tool path, stays inside its
+/// budget, and says it is a heuristic.
+#[tokio::test]
+async fn repo_map_is_deterministic_budgeted_and_names_its_heuristic() {
+    let folder = std::env::temp_dir().join(format!("fleet-repomap-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&folder);
+    std::fs::create_dir_all(folder.join("src")).unwrap();
+    for index in 0..12 {
+        std::fs::write(
+            folder.join(format!("src/file{index}.rs")),
+            format!("pub fn shared_name() {{}}\npub fn only_{index}() {{}}\n"),
+        )
+        .unwrap();
+    }
+    let arguments = serde_json::json!({ "budget_tokens": 900 }).to_string();
+    let mock = MockApi::start(vec![
+        tool_call_stream("c1", "repo_map", &arguments),
+        tool_call_stream("c2", "repo_map", &arguments),
+        assistant_stream(TOOL_REPORT),
+    ]);
+    let home = temp_home("repomap");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    run_in_folder(&mock, &mut session, &folder, 4)
+        .await
+        .unwrap();
+    let outputs: Vec<String> = session::replay(session.path())
+        .unwrap()
+        .iter()
+        .filter_map(|record| match record {
+            Record::ToolResult { name, output, .. } if name == "repo_map" => Some(output.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(outputs.len(), 2, "{outputs:?}");
+    assert_eq!(outputs[0], outputs[1], "two reads, one map");
+    assert!(
+        outputs[0].starts_with("Repo map (heuristic"),
+        "{}",
+        outputs[0]
+    );
+    assert!(outputs[0].contains("shared_name"), "{}", outputs[0]);
+    assert!(
+        outputs[0].len() <= 900 * 4 + 300,
+        "{} bytes",
+        outputs[0].len()
+    );
+    std::fs::remove_dir_all(&home).ok();
+    std::fs::remove_dir_all(&folder).ok();
 }
 
 /// The `process` tool controls what `bash run_in_background` started:
@@ -3175,8 +3348,10 @@ async fn a_full_run_calls_the_real_sem1_lane_through_the_mock_api() {
             "write_file",
             "list_dir",
             "edit",
+            "apply_patch",
             "grep",
             "glob",
+            "repo_map",
             "todo",
             "measure",
             "imagine",
@@ -3195,7 +3370,7 @@ async fn a_full_run_calls_the_real_sem1_lane_through_the_mock_api() {
         ]
     );
     let second = declared_tools(&bodies[1]);
-    assert_eq!(second.len(), 23, "{second:?}");
+    assert_eq!(second.len(), 25, "{second:?}");
     assert_eq!(
         &second[..4],
         &["bash", "read_file", "write_file", "list_dir"]
@@ -3214,7 +3389,7 @@ async fn a_full_run_calls_the_real_sem1_lane_through_the_mock_api() {
     // The native tools ride before the joined lane's, and the lane's
     // tools are the deferred tail of the declaration list.
     assert_eq!(
-        &second[8..19],
+        &second[10..21],
         &[
             "measure",
             "imagine",
@@ -3384,8 +3559,8 @@ async fn a_dead_lane_child_degrades_the_run_without_killing_it() {
     // model can still see them, and calling one is a typed failure.
     let bodies = mock.bodies();
     assert_eq!(bodies.len(), 3);
-    assert_eq!(declared_tools(&bodies[1]).len(), 20);
-    assert_eq!(declared_tools(&bodies[2]).len(), 20);
+    assert_eq!(declared_tools(&bodies[1]).len(), 22);
+    assert_eq!(declared_tools(&bodies[2]).len(), 22);
     assert!(declared_tools(&bodies[1]).contains(&"mcp__sem1__probe".to_string()));
 
     std::fs::remove_dir_all(&home).ok();
@@ -3757,7 +3932,7 @@ async fn a_denied_lane_call_never_spawns_the_lane() {
     // No lane joined, so the second request still declares only the
     // built-ins and the delegation tool.
     let bodies = mock.bodies();
-    assert_eq!(declared_tools(&bodies[1]).len(), 19);
+    assert_eq!(declared_tools(&bodies[1]).len(), 21);
 
     std::fs::remove_dir_all(&home).ok();
 }
@@ -3827,7 +4002,7 @@ async fn a_lane_that_cannot_launch_fails_its_call_and_the_run_answers() {
     assert!(records
         .iter()
         .all(|record| !matches!(record, Record::LaneTools { .. })));
-    assert_eq!(declared_tools(&mock.bodies()[1]).len(), 19);
+    assert_eq!(declared_tools(&mock.bodies()[1]).len(), 21);
 
     std::fs::remove_dir_all(&home).ok();
 }
@@ -5490,7 +5665,7 @@ async fn a_selected_skills_body_rides_the_tool_result_path() {
     // The declarations carry `use_skill` beside the four built-ins, the
     // delegation tool beside that, and the convention lookup after it.
     let declared = declared_tools(&bodies[0]);
-    assert_eq!(declared.len(), 20, "{declared:?}");
+    assert_eq!(declared.len(), 22, "{declared:?}");
     assert!(declared.contains(&"use_skill".to_string()), "{declared:?}");
     assert!(declared.contains(&"subagent".to_string()), "{declared:?}");
     assert!(declared.contains(&"convention".to_string()), "{declared:?}");
@@ -6353,8 +6528,10 @@ async fn a_runs_request_carries_the_assembled_memory_block() {
             "write_file",
             "list_dir",
             "edit",
+            "apply_patch",
             "grep",
             "glob",
+            "repo_map",
             "todo",
             "measure",
             "imagine",
@@ -6503,8 +6680,10 @@ async fn a_memory_less_run_is_byte_for_byte_unchanged() {
             "write_file",
             "list_dir",
             "edit",
+            "apply_patch",
             "grep",
             "glob",
+            "repo_map",
             "todo",
             "measure",
             "imagine",
@@ -6563,8 +6742,10 @@ async fn a_memory_less_run_is_byte_for_byte_unchanged() {
             "write_file",
             "list_dir",
             "edit",
+            "apply_patch",
             "grep",
             "glob",
+            "repo_map",
             "todo",
             "measure",
             "imagine",
@@ -6859,8 +7040,10 @@ async fn the_improve_tool_files_a_proposal_inside_a_run_and_never_applies_one() 
             "write_file",
             "list_dir",
             "edit",
+            "apply_patch",
             "grep",
             "glob",
+            "repo_map",
             "todo",
             "measure",
             "imagine",
@@ -6932,8 +7115,10 @@ async fn a_run_without_a_home_does_not_declare_the_improve_tool() {
             "write_file",
             "list_dir",
             "edit",
+            "apply_patch",
             "grep",
             "glob",
+            "repo_map",
             "todo",
             "measure",
             "imagine",
@@ -7129,8 +7314,10 @@ async fn a_delegated_task_runs_in_its_own_session_on_the_parents_model() {
             "write_file",
             "list_dir",
             "edit",
+            "apply_patch",
             "grep",
             "glob",
+            "repo_map",
             "todo"
         ]
     );

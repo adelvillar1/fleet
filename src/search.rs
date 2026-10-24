@@ -243,6 +243,21 @@ pub fn run_glob(pattern: &str, path: &Path, base: &Path) -> Result<SearchOutcome
     })
 }
 
+/// Every file under `root` the walker reaches, relative to it, with the
+/// same skips and caps a search uses. Sorted by path so two calls over an
+/// unchanged tree return the same order — a map that reshuffles itself
+/// between reads is a map the model cannot cite.
+pub fn tree_files(root: &Path) -> (Vec<PathBuf>, bool) {
+    let mut found: Vec<PathBuf> = Vec::new();
+    let mut visited = 0usize;
+    let mut cut = false;
+    walk(root, 0, &mut visited, &mut cut, &mut |entry, _| {
+        found.push(entry.strip_prefix(root).unwrap_or(entry).to_path_buf());
+    });
+    found.sort();
+    (found, cut)
+}
+
 /// The entries in `dir` whose names are closest to `name`, for a
 /// not-found error that points at what exists.
 pub fn nearest_entries(dir: &Path, name: &str) -> Vec<String> {

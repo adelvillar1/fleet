@@ -134,8 +134,9 @@ pub const DELEGATION_CONCURRENCY: usize = 3;
 
 /// The most tools one request should declare before the rest are held
 /// behind `tool_search`. Past roughly thirty, selection accuracy falls
-/// faster than the extra tools help.
-pub const MAX_VISIBLE_TOOLS: usize = 28;
+/// faster than the extra tools help — the measured all is 30–50, so the
+/// line sits at the low edge and the surface above it is deferred.
+pub const MAX_VISIBLE_TOOLS: usize = 32;
 
 /// The most definition tokens one request should carry.
 pub const MAX_DEFINITION_TOKENS: usize = 8_000;
@@ -3999,7 +4000,7 @@ async fn run_work(work: Work) -> (String, bool) {
                     std::env::current_dir().unwrap_or_default()
                 }
             };
-            if tool == Tool::WriteFile {
+            if tool == Tool::WriteFile || tool == Tool::ApplyPatch {
                 // The write-time guard runs before the write, and it
                 // runs on the blocking pool: reading the vocabulary and
                 // matching names against it is CPU work, the same reason
@@ -4008,8 +4009,14 @@ async fn run_work(work: Work) -> (String, bool) {
                 let guard = {
                     let root = guard_root.clone();
                     let arguments = arguments.clone();
-                    match tokio::task::spawn_blocking(move || write_guard(&root, &arguments)).await
-                    {
+                    let guard = move || {
+                        if tool == Tool::ApplyPatch {
+                            patch_guard(&root, &arguments)
+                        } else {
+                            write_guard(&root, &arguments)
+                        }
+                    };
+                    match tokio::task::spawn_blocking(guard).await {
                         Err(error) => {
                             return (format!("error: the guard task failed: {error}"), false)
                         }
@@ -4778,8 +4785,12 @@ fn writer_of(prepared: &Prepared) -> Option<String> {
                 // The ledger is one slot: two todo calls in a batch would
                 // otherwise race to be the last full-list replacement.
                 Tool::Todo => Some("todo".to_string()),
+                // A patch writes several files: it takes the shell's
+                // slot, beside an edit, because two writers in one batch
+                // is the race the one-writer discipline exists to stop.
+                Tool::ApplyPatch => Some("shell".to_string()),
                 // Search reads the tree and writes nothing.
-                Tool::ReadFile | Tool::ListDir | Tool::Grep | Tool::Glob => None,
+                Tool::ReadFile | Tool::ListDir | Tool::Grep | Tool::Glob | Tool::RepoMap => None,
             },
         },
     }
@@ -5021,8 +5032,10 @@ fn profile_rank(workload: &str, name: &str) -> usize {
             "write_file",
             "list_dir",
             "edit",
+            "apply_patch",
             "grep",
             "glob",
+            "repo_map",
             "todo",
         ],
         "hard" => &[
@@ -5447,6 +5460,87 @@ fn write_guard(root: &std::path::Path, arguments: &serde_json::Value) -> WriteGu
         // fails on its own, with its own reason.
         return WriteGuard::Clean;
     };
+    let path = arguments
+        .get("path")
+        .and_then(|path| path.as_str())
+        .unwrap_or_default();
+    guard_content(root, path, content)
+}
+
+/// The guard over a whole patch: every hunk is applied in memory first,
+/// and each file the patch would write is checked against the
+/// vocabulary, so a patch fails the same names a single write would.
+///
+/// A patch that does not parse or whose hunks do not match is left to
+/// the tool itself: the guard is not the place to report a malformed
+/// patch, and refusing it here would name the wrong reason.
+fn patch_guard(root: &std::path::Path, arguments: &serde_json::Value) -> WriteGuard {
+    let Some(text) = arguments.get("patch").and_then(|value| value.as_str()) else {
+        return WriteGuard::Clean;
+    };
+    let Ok(patch) = crate::apply_patch::parse(text) else {
+        return WriteGuard::Clean;
+    };
+    let mut existing: std::collections::BTreeMap<String, String> =
+        std::collections::BTreeMap::new();
+    for change in &patch.changes {
+        let path = match change {
+            crate::apply_patch::Change::Add { path, .. }
+            | crate::apply_patch::Change::Update { path, .. }
+            | crate::apply_patch::Change::Delete { path } => path,
+        };
+        let resolved = match root_of_patch(root, path) {
+            Some(resolved) => resolved,
+            None => continue,
+        };
+        if let Ok(current) = std::fs::read_to_string(&resolved) {
+            existing.insert(path.clone(), current);
+        }
+    }
+    let Ok(outcomes) = crate::apply_patch::apply(&patch, &existing) else {
+        return WriteGuard::Clean;
+    };
+    let mut notes: Vec<String> = Vec::new();
+    for outcome in outcomes {
+        let (path, text) = match outcome {
+            crate::apply_patch::Outcome::Added { path, text }
+            | crate::apply_patch::Outcome::Updated { path, text } => (path, text),
+            crate::apply_patch::Outcome::Deleted { .. } => continue,
+        };
+        match guard_content(root, &path, &text) {
+            WriteGuard::Clean => {}
+            WriteGuard::Flagged { note } => notes.push(note),
+            WriteGuard::Refused { reason } => return WriteGuard::Refused { reason },
+        }
+    }
+    if notes.is_empty() {
+        return WriteGuard::Clean;
+    }
+    WriteGuard::Flagged {
+        note: notes.join("\n"),
+    }
+}
+
+/// Where a patch path lands for the guard's own read. A path that leaves
+/// the root is skipped: the guard's scope is the tree it derived its
+/// vocabulary from, and a move-in path would be checked by the writer.
+fn root_of_patch(root: &std::path::Path, path: &str) -> Option<std::path::PathBuf> {
+    let given = std::path::Path::new(path);
+    if given.is_absolute() {
+        return if given.starts_with(root) {
+            Some(given.to_path_buf())
+        } else {
+            None
+        };
+    }
+    Some(root.join(given))
+}
+
+/// The guard's own body, callable for any (path, content) pair — one
+/// implementation for `write_file` and for every file an `apply_patch`
+/// call writes, so a patch cannot introduce a name the one-file write
+/// would have refused.
+fn guard_content(root: &std::path::Path, path: &str, content: &str) -> WriteGuard {
     // The candidates are read through the vocabulary's own channel
     // rules, by the path being written: a code file's identifiers, a
     // markdown file's code spans, and neither file's prose. KI-219 — a
@@ -5455,10 +5549,6 @@ fn write_guard(root: &std::path::Path, arguments: &serde_json::Value) -> WriteGu
     // variant of the established `context` the services carry, and
     // prose is not an identifier. The rule is the derivation's, stated
     // once and shared, so the guard cannot drift from what it reads.
-    let path = arguments
-        .get("path")
-        .and_then(|path| path.as_str())
-        .unwrap_or_default();
     // The guard's scope is this project's own naming. A path outside the
     // tree the vocabulary was derived from is not project code — a
     // scratch driver under /tmp policed against the repo's vocabulary is
@@ -6580,7 +6670,7 @@ mod tests {
         assert!(second.text.contains("remain declared"), "{}", second.text);
         // A dead lane contributes no declarations: the model never saw a
         // tool that cannot run.
-        assert_eq!(crate::tools::declarations(&roster.lane_tools()).len(), 8);
+        assert_eq!(crate::tools::declarations(&roster.lane_tools()).len(), 10);
         assert!(roster.lane_tools().is_empty());
         // And an unknown lane is a named reason, not a panic — and not a
         // spawn: no registry lane carries this name, so nothing launches.
@@ -6599,7 +6689,7 @@ mod tests {
     async fn a_lane_that_never_joins_leaves_the_declarations_at_the_builtins() {
         // The lazy path's cost when no lane is called: nothing.
         let roster = LaneRoster::new(HashMap::new());
-        assert_eq!(crate::tools::declarations(&roster.lane_tools()).len(), 8);
+        assert_eq!(crate::tools::declarations(&roster.lane_tools()).len(), 10);
         let names: Vec<String> = crate::tools::declarations(&roster.lane_tools())
             .iter()
             .map(|spec| {
@@ -6617,8 +6707,10 @@ mod tests {
                 "write_file",
                 "list_dir",
                 "edit",
+                "apply_patch",
                 "grep",
                 "glob",
+                "repo_map",
                 "todo",
             ]
         );
@@ -6720,8 +6812,10 @@ mod tests {
                 "write_file",
                 "list_dir",
                 "edit",
+                "apply_patch",
                 "grep",
                 "glob",
+                "repo_map",
                 "todo",
                 "measure",
                 "imagine",
@@ -6787,7 +6881,7 @@ mod tests {
         // computation over a value the model writes, and neither touches
         // anything outside itself. So does `plan`: it drafts a plan
         // document's declaration, which is the repo's own state.
-        assert_eq!(plain.declarations().len(), 19);
+        assert_eq!(plain.declarations().len(), 21);
         assert_eq!(plain.system_prompt(None), default_prompt());
         let _ = std::fs::remove_dir_all(&home);
         let _ = std::fs::remove_dir_all(&root);

@@ -210,14 +210,16 @@ const BRIEF_PART_CAP: usize = 8 * 1024;
 /// that names it opens a second level, and a delegation that does not
 /// keeps the chain at one. It is stripped again at the cap, so the
 /// admission a depth-2 run can be given is empty by construction.
-pub const ADMISSIBLE_TOOLS: [&str; 12] = [
+pub const ADMISSIBLE_TOOLS: [&str; 14] = [
     "bash",
     "read_file",
     "write_file",
     "list_dir",
     "edit",
+    "apply_patch",
     "grep",
     "glob",
+    "repo_map",
     "todo",
     tools::USE_SKILL_TOOL,
     tools::SUBAGENT_TOOL,
@@ -2182,8 +2184,10 @@ mod tests {
                 "write_file".to_string(),
                 "list_dir".to_string(),
                 "edit".to_string(),
+                "apply_patch".to_string(),
                 "grep".to_string(),
                 "glob".to_string(),
+                "repo_map".to_string(),
                 "todo".to_string(),
                 "use_skill".to_string(),
             ]

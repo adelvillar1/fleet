@@ -149,7 +149,7 @@ pub fn subagent_spec() -> ToolSpec {
                     "description": "The capabilities this subtree needs, which IS the subagent's admitted scope: a declared tool is admitted and an undeclared one is refused by name. Naming subagent opens a second delegation level; at depth 2 it is stripped and the call is refused citing the cap. An empty list admits no tool at all.",
                     "items": {
                         "type": "string",
-                        "enum": ["bash", "read_file", "write_file", "list_dir", "edit", "grep", "glob", "todo", "use_skill", "subagent", "web", "computer_use"],
+                        "enum": ["bash", "read_file", "write_file", "list_dir", "edit", "apply_patch", "grep", "glob", "repo_map", "todo", "use_skill", "subagent", "web", "computer_use"],
                     },
                 },
                 "node": {
@@ -1165,17 +1165,21 @@ pub enum Tool {
     Grep,
     Glob,
     Todo,
+    ApplyPatch,
+    RepoMap,
 }
 
 /// All tools, in declaration order.
-pub const ALL_TOOLS: [Tool; 8] = [
+pub const ALL_TOOLS: [Tool; 10] = [
     Tool::Bash,
     Tool::ReadFile,
     Tool::WriteFile,
     Tool::ListDir,
     Tool::Edit,
+    Tool::ApplyPatch,
     Tool::Grep,
     Tool::Glob,
+    Tool::RepoMap,
     Tool::Todo,
 ];
 
@@ -1247,6 +1251,8 @@ impl Tool {
             Tool::Grep => "grep",
             Tool::Glob => "glob",
             Tool::Todo => "todo",
+            Tool::ApplyPatch => "apply_patch",
+            Tool::RepoMap => "repo_map",
         }
     }
 
@@ -1259,6 +1265,8 @@ impl Tool {
             Tool::Edit => "Replace one exact passage in a file you have already read. Use this for every change to an existing file; do not rewrite the file with write_file. old_string must match byte for byte, including indentation, and must appear exactly once - include two or three surrounding lines to make it unique. Do not use line numbers: they shift. Zero matches names the closest line; several matches name their lines. Returns the changed line and a diff.",
             Tool::Grep => "Search file contents. Prefer this over bash grep: results are capped, counted, and say when they were cut. output_mode is files (default), content, or count. Honors .gitignore when rg is installed. When the cap is hit, narrow the pattern or add glob.",
             Tool::Glob => "Find files by path pattern. Supports * and ? within a segment and ** across segments, for example src/**/*.rs. Newest first, capped at 100. Use it to locate files; use grep to find contents.",
+            Tool::ApplyPatch => "Apply a content-anchored patch across several files in one call. Sections: `*** Update File:`, `*** Add File:`, `*** Delete File:`; inside an update, ` context`, `-removed`, `+added`, with `@@` between hunks. There are no line numbers by design: each hunk matches its own context, so a stale read fails by name instead of corrupting the file. Every hunk for a file is checked before any of that file is written; earlier files in the patch stay written if a later one is refused, and the result names exactly which landed.",
+            Tool::RepoMap => "A token-budgeted map of the repository: files ranked by how often their definitions are referenced elsewhere, each with its top-level definitions and line numbers. Use it on arrival to find where something lives, before reading files one at a time. It is a heuristic (pattern-matched definitions and a reference count, not a parser) and it says so; budget_tokens caps the size.",
             Tool::Todo => "Replace the run's task list. Send the complete list every time; it is not appended. status is pending, in_progress, or completed (todo, doing, and done are accepted). Keep one line per step, and mark the step in progress before starting it.",
         }
     }
@@ -1354,6 +1362,26 @@ impl Tool {
                 },
                 "required": ["pattern"],
             }),
+            Tool::ApplyPatch => serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "patch": {
+                        "type": "string",
+                        "description": "The patch text: `*** Begin Patch`, then `*** Update File: path`, `*** Add File: path`, or `*** Delete File: path` sections. Inside an update, prefix context lines with a space, removals with `-`, additions with `+`; `@@` starts a hunk."
+                    },
+                },
+                "required": ["patch"],
+            }),
+            Tool::RepoMap => serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "budget_tokens": {
+                        "type": "integer", "minimum": 200, "maximum": 20000,
+                        "description": "Token budget for the map. Default 1000."
+                    },
+                    "path": { "type": "string", "description": "Root to map. Default the working folder." },
+                },
+            }),
             Tool::Todo => serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -1390,6 +1418,12 @@ impl Tool {
             Tool::Bash => "command",
             Tool::ReadFile | Tool::WriteFile | Tool::ListDir | Tool::Edit => "path",
             Tool::Grep | Tool::Glob => "pattern",
+            Tool::ApplyPatch | Tool::RepoMap => {
+                if self == Tool::RepoMap {
+                    return String::from("map");
+                }
+                "patch"
+            }
             Tool::Todo => {
                 let count = arguments
                     .get("items")
@@ -1475,6 +1509,8 @@ impl Tool {
             Tool::Edit => run_edit_tool(arguments, Some(root))?,
             Tool::Grep => run_grep_tool(arguments, Some(root))?,
             Tool::Glob => run_glob_tool(arguments, Some(root))?,
+            Tool::ApplyPatch => run_apply_patch(arguments, Some(root))?,
+            Tool::RepoMap => run_repo_map(arguments, Some(root))?,
             Tool::Todo => run_todo(arguments)?,
         };
         Ok(bound_with_spill(outcome, spill))
@@ -1507,6 +1543,8 @@ impl Tool {
             Tool::Edit => run_edit_tool(arguments, None)?,
             Tool::Grep => run_grep_tool(arguments, None)?,
             Tool::Glob => run_glob_tool(arguments, None)?,
+            Tool::ApplyPatch => run_apply_patch(arguments, None)?,
+            Tool::RepoMap => run_repo_map(arguments, None)?,
             Tool::Todo => run_todo(arguments)?,
         };
         Ok(bound_with_spill(outcome, spill))
@@ -1946,6 +1984,118 @@ fn run_todo(arguments: &serde_json::Value) -> Result<ToolOutcome, String> {
     Ok(ToolOutcome {
         output,
         truncated: false,
+    })
+}
+
+/// `apply_patch`: parse, check every hunk against the tree, then write
+/// file by file.
+///
+/// Atomicity is per file. Every hunk for a file is matched in memory
+/// before a byte of that file is written, so a file is never left half
+/// patched; a later file's refusal does not roll back an earlier file's
+/// write, and the report says exactly which files landed. That is the
+/// honest failure: an owner may already be reading the first file, and
+/// silently reverting it is a second surprise on top of the first.
+fn run_apply_patch(
+    arguments: &serde_json::Value,
+    root: Option<&Path>,
+) -> Result<ToolOutcome, String> {
+    let text = string_arg(arguments, "patch")?;
+    let patch = crate::apply_patch::parse(&text).map_err(|error| error.to_string())?;
+    // Read the tree the patch expects: every path a section names, so a
+    // missing file is refused before anything is written.
+    let mut existing: std::collections::BTreeMap<String, String> =
+        std::collections::BTreeMap::new();
+    for change in &patch.changes {
+        let path = match change {
+            crate::apply_patch::Change::Add { path, .. } => path,
+            crate::apply_patch::Change::Update { path, .. } => path,
+            crate::apply_patch::Change::Delete { path } => path,
+        };
+        let resolved = resolve_for_patch(
+            root,
+            path,
+            matches!(change, crate::apply_patch::Change::Add { .. }),
+        )?;
+        if let Ok(current) = std::fs::read_to_string(&resolved) {
+            existing.insert(path.clone(), current);
+        }
+    }
+    let outcomes =
+        crate::apply_patch::apply(&patch, &existing).map_err(|error| error.to_string())?;
+    let mut report = String::new();
+    for outcome in &outcomes {
+        let resolved = resolve_for_patch(
+            root,
+            outcome.path(),
+            matches!(outcome, crate::apply_patch::Outcome::Added { .. }),
+        )?;
+        match outcome {
+            crate::apply_patch::Outcome::Added { text, .. }
+            | crate::apply_patch::Outcome::Updated { text, .. } => {
+                if let Some(parent) = resolved.parent() {
+                    if !parent.as_os_str().is_empty() && !parent.is_dir() {
+                        return Err(format!(
+                            "{}: parent directory does not exist; create it with bash first{report}",
+                            outcome.path()
+                        ));
+                    }
+                }
+                crate::fileops::atomic_write(&resolved, text)?;
+            }
+            crate::apply_patch::Outcome::Deleted { .. } => {
+                std::fs::remove_file(&resolved)
+                    .map_err(|error| format!("{}: {error}", outcome.path()))?;
+            }
+        }
+        report.push_str(&outcome.summary());
+        report.push('\n');
+    }
+    Ok(ToolOutcome {
+        output: report,
+        truncated: false,
+    })
+}
+
+/// Where a patch section's path lands: inside the chat's folder when the
+/// run has one (a path that leaves it is refused), else as written.
+///
+/// An add's path may name a file that does not exist yet, so it resolves
+/// as a write; an update or a delete must resolve as a read first, which
+/// is what names a missing file correctly.
+fn resolve_for_patch(root: Option<&Path>, path: &str, adding: bool) -> Result<PathBuf, String> {
+    match root {
+        Some(root) if adding => resolve_write_in_root(root, path),
+        Some(root) => resolve_in_root(root, path),
+        None => Ok(PathBuf::from(path)),
+    }
+}
+
+/// `repo_map`: the ranked, budgeted map of the tree the run works in.
+fn run_repo_map(arguments: &serde_json::Value, root: Option<&Path>) -> Result<ToolOutcome, String> {
+    let budget = arguments
+        .get("budget_tokens")
+        .and_then(|value| value.as_u64())
+        .unwrap_or(1_000) as usize;
+    let asked = arguments
+        .get("path")
+        .and_then(|value| value.as_str())
+        .unwrap_or(".");
+    let start = match root {
+        Some(root) => resolve_in_root(root, asked)?,
+        None => {
+            let given = Path::new(asked);
+            if given.is_absolute() {
+                given.to_path_buf()
+            } else {
+                std::env::current_dir().unwrap_or_default().join(given)
+            }
+        }
+    };
+    let map = crate::repo_map::build(&start, budget);
+    Ok(ToolOutcome {
+        output: map.text,
+        truncated: map.shown < map.files,
     })
 }
 
@@ -3195,8 +3345,8 @@ mod tests {
             &[("probe", "probe the embeddings worker")],
         )];
         let specs = declarations(&lanes);
-        // The eight built-ins keep their names and their order, always.
-        assert_eq!(specs.len(), 9);
+        // The ten built-ins keep their names and their order, always.
+        assert_eq!(specs.len(), 11);
         let names: Vec<String> = specs
             .iter()
             .map(|spec| {
@@ -3214,14 +3364,16 @@ mod tests {
                 "write_file",
                 "list_dir",
                 "edit",
+                "apply_patch",
                 "grep",
                 "glob",
+                "repo_map",
                 "todo",
                 "mcp__sem1__probe"
             ]
         );
         // The lane's own description and schema rode along verbatim.
-        let lane = serde_json::to_value(&specs[8]).unwrap();
+        let lane = serde_json::to_value(&specs[10]).unwrap();
         assert_eq!(
             lane["function"]["description"],
             "probe the embeddings worker"
@@ -3239,11 +3391,11 @@ mod tests {
             lane_roster("sys1", &[("sys1_classify", "classify")]),
         ];
         let specs = declarations(&lanes);
-        assert_eq!(specs.len(), 10);
-        let last = serde_json::to_value(&specs[9]).unwrap();
+        assert_eq!(specs.len(), 12);
+        let last = serde_json::to_value(&specs[11]).unwrap();
         assert_eq!(last["function"]["name"], "mcp__sys1__sys1_classify");
-        // No lanes joined: exactly the closed eight, unchanged.
-        assert_eq!(declarations(&[]).len(), 8);
+        // No lanes joined: exactly the closed ten, unchanged.
+        assert_eq!(declarations(&[]).len(), 10);
     }
 
     #[test]

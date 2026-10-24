@@ -9,6 +9,7 @@
 
 pub mod agent;
 pub mod api;
+pub mod apply_patch;
 pub mod approvals;
 pub mod boards;
 pub mod calib;
@@ -46,6 +47,7 @@ pub mod plugins;
 pub mod processes;
 pub mod recall_graph;
 pub mod remote;
+pub mod repo_map;
 pub mod roles;
 pub mod route;
 pub mod route_cache;
