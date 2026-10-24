@@ -1798,26 +1798,7 @@ impl Bridge {
             // answer still degrades to the lexical ranking exactly as
             // before.
             let embedder = crate::memory::probed_embedder();
-            let query = embedder.embed(&asked);
-            // A machine with no embedding backend answers with every
-            // score zero rather than refusing. An empty list would be a
-            // refusal by another name — the browser would have nothing
-            // to order — so the candidates all ride through at zero and
-            // the type-ahead's own lexical pass decides.
-            candidates
-                .iter()
-                .enumerate()
-                .map(|(index, text)| {
-                    let score = match &query {
-                        Some(query) => embedder
-                            .embed(text)
-                            .map(|vector| crate::memory::cosine(query, &vector))
-                            .unwrap_or(0.0),
-                        None => 0.0,
-                    };
-                    json!({"index": index, "score": score})
-                })
-                .collect::<Vec<_>>()
+            rank_with(&*embedder, &asked, &candidates)
         })
         .await
         .unwrap_or_default();
@@ -6671,6 +6652,34 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
             }
         });
     })
+}
+
+/// The rank route's scoring, extracted for the seam's own tests (KI-268):
+/// the ask embeds once, each candidate embeds beside it, and a candidate
+/// whose embed fails rides at exactly 0.0 — a PARTIAL embed is a shape the
+/// route permits, and the reply still orders descending with no refusal.
+/// `rank` hands this the process's probed embedder; the tests hand it a
+/// double that answers for some candidates and not others.
+pub(crate) fn rank_with(
+    embedder: &dyn crate::memory::Embedder,
+    asked: &str,
+    candidates: &[String],
+) -> Vec<serde_json::Value> {
+    let query = embedder.embed(asked);
+    candidates
+        .iter()
+        .enumerate()
+        .map(|(index, text)| {
+            let score = match &query {
+                Some(query) => embedder
+                    .embed(text)
+                    .map(|vector| crate::memory::cosine(query, &vector))
+                    .unwrap_or(0.0),
+                None => 0.0,
+            };
+            serde_json::json!({"index": index, "score": score})
+        })
+        .collect()
 }
 
 #[cfg(test)]

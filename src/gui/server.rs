@@ -3185,6 +3185,66 @@ mod tests {
         );
     }
 
+    /// KI-268, reproduced deliberately: a PARTIAL embed — the query
+    /// answered, one candidate's embed failing while the others score —
+    /// is a shape the route permits, and the reply must still order
+    /// descending with the failed candidate at exactly 0.0, no refusal.
+    /// The double answers the ask and the theme candidate; the pane and
+    /// compact candidates' embeds return None.
+    #[test]
+    fn the_rank_scoring_keeps_its_order_through_a_partial_embed() {
+        use crate::memory::Embedder;
+
+        struct PartialEmbedder;
+        impl Embedder for PartialEmbedder {
+            fn box_clone(&self) -> Box<dyn Embedder> {
+                Box::new(PartialEmbedder)
+            }
+            fn embed(&self, text: &str) -> Option<Vec<f32>> {
+                // The ask and the theme candidate score; the rest "time out".
+                if text.starts_with("make the screen darker")
+                    || text.starts_with("theme dark light mode")
+                {
+                    Some(vec![0.5, 0.5, 0.5])
+                } else {
+                    None
+                }
+            }
+            fn name(&self) -> &'static str {
+                "partial-double"
+            }
+            fn serves_vectors(&self) -> bool {
+                true
+            }
+            fn vector_info(&self) -> Option<(String, usize)> {
+                Some(("partial-double".to_string(), 3))
+            }
+        }
+
+        let embedder = PartialEmbedder;
+        let ranked = crate::gui::bridge::rank_with(
+            &embedder,
+            "make the screen darker",
+            &[
+                "theme dark light mode switch between the light and dark themes".to_string(),
+                "pane files code preview explore open or close the files and deliverables pane"
+                    .to_string(),
+                "compact fold summarise fold the conversation now".to_string(),
+            ],
+        );
+        assert_eq!(ranked[0]["index"], 0, "the scored candidate leads");
+        assert!(ranked[0]["score"].as_f64().unwrap() > 0.0, "{ranked:?}");
+        // The failed embeds ride at exactly 0.0 — not refused, not dropped.
+        assert_eq!(ranked[1]["score"], 0.0, "{ranked:?}");
+        assert_eq!(ranked[2]["score"], 0.0, "{ranked:?}");
+        assert!(
+            ranked.windows(2).all(
+                |pair| pair[0]["score"].as_f64().unwrap() >= pair[1]["score"].as_f64().unwrap()
+            ),
+            "the order stays descending through the partial embed"
+        );
+    }
+
     /// A home with no logs and no declared graph names both, rather than
     /// drawing an empty tree and an empty graph.
     #[tokio::test(flavor = "multi_thread")]
