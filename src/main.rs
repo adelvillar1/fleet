@@ -84,6 +84,7 @@ fn main() -> ExitCode {
             | Ok(Command::Explain(_))
             | Ok(Command::Mcp(_))
             | Ok(Command::Tools(_))
+            | Ok(Command::Lifecycle(_))
     );
     if needs_runtime {
         return match tokio::runtime::Builder::new_current_thread()
@@ -116,6 +117,7 @@ async fn dispatch(args: &[String]) -> ExitCode {
         Ok(Command::Lanes) => lanes_command().await,
         Ok(Command::Mcp(options)) => mcp_command(&options).await,
         Ok(Command::Tools(options)) => tools_command(&options).await,
+        Ok(Command::Lifecycle(options)) => lifecycle_command(&options),
         Ok(Command::Judge(options)) => judge_command(&options).await,
         Ok(Command::Delegate(options)) => delegate_command(&options).await,
         Ok(Command::Eval(options)) => eval_command(&options).await,
@@ -1038,44 +1040,57 @@ struct Sem1Embedder {
 
 impl fleet::tool_coverage::TurnEmbedder for Sem1Embedder {
     fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, String> {
-        tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async {
-                let timeouts = fleet::mcp::Timeouts::default();
-                let server = fleet::mcp::McpServer::spawn_with(&self.spec, timeouts)
-                    .map_err(|error| format!("the sem1 lane could not start: {error}"))?;
-                let joined = async {
-                    server.initialize().await?;
-                    server.list_tools().await
-                }
-                .await
-                .map_err(|error| format!("the sem1 lane could not initialize: {error}"))?;
-                let short = joined
-                    .iter()
-                    .find(|tool| tool.name == "sem1_embed")
-                    .map(|tool| {
-                        tool.name
-                            .strip_prefix("sem1_")
-                            .unwrap_or(&tool.name)
-                            .to_string()
-                    })
-                    .unwrap_or_else(|| "embed".to_string());
-                let mut vectors: Vec<Vec<f32>> = Vec::with_capacity(texts.len());
-                for batch in texts.chunks(48) {
-                    let items: Vec<String> = batch.to_vec();
-                    let call = server
-                        .call_tool(&short, serde_json::json!({ "items": items }))
-                        .await
-                        .map_err(|error| format!("the sem1 lane failed: {error}"))?;
-                    let parsed = fleet::tool_router::parse_vectors(&call.text())
-                        .filter(|parsed| parsed.len() == batch.len())
-                        .ok_or_else(|| {
-                            "the sem1 lane answered with the wrong vector shape".to_string()
-                        })?;
-                    vectors.extend(parsed);
-                }
-                let _ = server.close().await;
-                Ok(vectors)
-            })
+        // The trait is synchronous and the lane is async. `block_in_place`
+        // would do it on a multi-thread runtime, but every headless
+        // command here runs on a current-thread one (KI-023), so the
+        // work gets its own thread and its own runtime instead: the
+        // embedder is called a handful of times per pass and the thread
+        // costs less than a pool parked for the process's life.
+        std::thread::scope(|scope| {
+            let handle = scope.spawn(|| {
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .map_err(|error| format!("the embedder's runtime could not start: {error}"))?;
+                runtime.block_on(async {
+                    let timeouts = fleet::mcp::Timeouts::default();
+                    let server = fleet::mcp::McpServer::spawn_with(&self.spec, timeouts)
+                        .map_err(|error| format!("the sem1 lane could not start: {error}"))?;
+                    let joined = async {
+                        server.initialize().await?;
+                        server.list_tools().await
+                    }
+                    .await
+                    .map_err(|error| format!("the sem1 lane could not initialize: {error}"))?;
+                    // The server's own name for the tool, verbatim: the
+                    // roster strips the lane prefix for the model's
+                    // eyes, and the wire takes the prefixed form.
+                    let tool = joined
+                        .iter()
+                        .find(|tool| tool.name.ends_with("embed"))
+                        .map(|tool| tool.name.clone())
+                        .ok_or_else(|| "the sem1 lane lists no embed tool".to_string())?;
+                    let mut vectors: Vec<Vec<f32>> = Vec::with_capacity(texts.len());
+                    for batch in texts.chunks(48) {
+                        let items: Vec<String> = batch.to_vec();
+                        let call = server
+                            .call_tool(&tool, serde_json::json!({ "items": items }))
+                            .await
+                            .map_err(|error| format!("the sem1 lane failed: {error}"))?;
+                        let parsed = fleet::tool_router::parse_vectors(&call.text())
+                            .filter(|parsed| parsed.len() == batch.len())
+                            .ok_or_else(|| {
+                                "the sem1 lane answered with the wrong vector shape".to_string()
+                            })?;
+                        vectors.extend(parsed);
+                    }
+                    let _ = server.close().await;
+                    Ok(vectors)
+                })
+            });
+            handle
+                .join()
+                .unwrap_or_else(|_| Err("the embedder's thread panicked".to_string()))
         })
     }
 }
@@ -1185,6 +1200,56 @@ fn skill_metrics_from(
 /// archive, and the advisor over that scan. The scan reads files and
 /// spends nothing; the advice is a rule over its counts, so the whole
 /// surface answers without a lane or a model.
+/// `fleet lifecycle promote`: the archive's repeated work, as
+/// suggestions. It prints and exits; nothing is created, and the action
+/// line is the exact command the owner would run.
+fn lifecycle_command(options: &cli::LifecycleOptions) -> ExitCode {
+    let cli::LifecycleAction::Promote {
+        sessions,
+        min_sessions,
+        similarity_milli,
+    } = options.action;
+    let home = match fleet_home() {
+        Ok(home) => home,
+        Err(error) => {
+            eprintln!("fleet: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let similarity = f64::from(similarity_milli) / 1000.0;
+    let found = fleet::lifecycle::promote(&home, sessions, min_sessions, similarity, sessions);
+    println!(
+        "fleet lifecycle promote \u{2014} {} cluster(s) over the last {sessions} session(s), similarity {similarity:.2}, at least {min_sessions} each",
+        found.len()
+    );
+    if found.is_empty() {
+        println!(
+            "\nno repeated work found. That is an answer: nothing in this archive repeats often enough to be worth a new tool, skill, loop, or workflow yet."
+        );
+        return ExitCode::SUCCESS;
+    }
+    println!("\n  suggestions are text, never actions: read one, then run its line if you agree\n");
+    for promotion in &found {
+        // The pattern is the cluster's own task, which can be a whole
+        // briefing: one line here, and the action below is what the
+        // owner actually acts on.
+        let short: String = promotion.pattern.chars().take(110).collect();
+        let short = if short.chars().count() < promotion.pattern.chars().count() {
+            format!("{short}\u{2026}")
+        } else {
+            short
+        };
+        println!(
+            "  {:<9} {} ({} session(s))",
+            promotion.kind,
+            short.replace('\n', " "),
+            promotion.sessions
+        );
+        println!("            {}", promotion.action);
+    }
+    ExitCode::SUCCESS
+}
+
 async fn tools_command(options: &cli::ToolsOptions) -> ExitCode {
     if matches!(options.action, cli::ToolsAction::List) {
         let home = fleet_home().ok();

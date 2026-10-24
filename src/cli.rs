@@ -67,6 +67,10 @@ pub enum Command {
     /// `scan` counts what the sessions actually called, and `advise`
     /// turns those counts into build/fix/adopt/retire suggestions.
     Tools(ToolsOptions),
+    /// The lifecycle surface: promotion is the additive mirror of the
+    /// sweep. `promote` clusters the archive and suggests; it never
+    /// creates anything.
+    Lifecycle(LifecycleOptions),
     /// The self-maintenance surface: the bare command lists every
     /// proposal in both stores; `apply` runs one through the gate and
     /// `undo` reverts an applied one.
@@ -414,6 +418,29 @@ pub enum McpAction {
 #[derive(Debug, PartialEq, Eq)]
 pub struct ToolsOptions {
     pub action: ToolsAction,
+}
+
+/// What `fleet lifecycle` was asked to do.
+#[derive(Debug, PartialEq, Eq)]
+pub struct LifecycleOptions {
+    pub action: LifecycleAction,
+}
+
+/// The lifecycle verbs. One today: promotion, which is the mirror of
+/// the sweep — the sweep takes away what nothing uses, and promotion
+/// proposes what repetition has earned.
+#[derive(Debug, PartialEq, Eq)]
+pub enum LifecycleAction {
+    /// Cluster the archive's tasks and print what the evidence supports.
+    ///
+    /// The similarity is carried in thousandths rather than as an
+    /// `f64`: the command enum derives `Eq`, and a float would make the
+    /// whole surface's comparison story a float comparison.
+    Promote {
+        sessions: usize,
+        min_sessions: usize,
+        similarity_milli: u16,
+    },
 }
 
 /// What `fleet tools` was asked to do.
@@ -775,6 +802,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "memories" => parse_memories(rest),
         "cron" => parse_cron(rest),
         "tools" => parse_tools(rest),
+        "lifecycle" => parse_lifecycle(rest),
         "improve" => parse_improve(rest),
         "vault" => parse_vault(rest),
         "remember" => parse_remember(rest),
@@ -1379,6 +1407,68 @@ fn parse_memories(args: &[String]) -> Result<Command, String> {
 /// `fleet tools`: the bare command lists the built-ins; `scan` and
 /// `advise` read the same window of session logs. One window flag, and
 /// the same default when it is absent.
+/// `fleet lifecycle`: the additive half of the surface's lifecycle.
+fn parse_lifecycle(args: &[String]) -> Result<Command, String> {
+    let Some(subcommand) = args.first() else {
+        return Err(
+            "lifecycle takes one of: promote --sessions N --min N --similarity F".to_string(),
+        );
+    };
+    let rest = &args[1..];
+    match subcommand.as_str() {
+        "promote" => {
+            let mut sessions = crate::tool_advisor::DEFAULT_WINDOW;
+            let mut min_sessions = 3;
+            let mut similarity_milli: u16 = 500;
+            let mut rest = rest;
+            while let Some(flag) = rest.first() {
+                let value = rest
+                    .get(1)
+                    .ok_or_else(|| format!("{flag} needs a number"))?;
+                match flag.as_str() {
+                    "--sessions" => {
+                        sessions = value
+                            .parse()
+                            .map_err(|_| format!("`{value}` is not a session count"))?;
+                        if sessions == 0 {
+                            return Err("--sessions must be at least 1".to_string());
+                        }
+                    }
+                    "--min" => {
+                        min_sessions = value
+                            .parse()
+                            .map_err(|_| format!("`{value}` is not a count"))?;
+                        if min_sessions < 2 {
+                            return Err("--min must be at least 2".to_string());
+                        }
+                    }
+                    "--similarity" => {
+                        let parsed: f64 = value
+                            .parse()
+                            .map_err(|_| format!("`{value}` is not a similarity"))?;
+                        if !(0.0..=1.0).contains(&parsed) {
+                            return Err("--similarity must be between 0 and 1".to_string());
+                        }
+                        similarity_milli = (parsed * 1000.0).round() as u16;
+                    }
+                    other => return Err(format!("unknown flag `{other}` for promote")),
+                }
+                rest = &rest[2..];
+            }
+            Ok(Command::Lifecycle(LifecycleOptions {
+                action: LifecycleAction::Promote {
+                    sessions,
+                    min_sessions,
+                    similarity_milli,
+                },
+            }))
+        }
+        other => Err(format!(
+            "unknown lifecycle command `{other}` \u{2014} try `fleet lifecycle promote`"
+        )),
+    }
+}
+
 fn parse_tools(args: &[String]) -> Result<Command, String> {
     let Some(subcommand) = args.first() else {
         return Ok(Command::Tools(ToolsOptions {
@@ -1450,9 +1540,15 @@ fn parse_tools(args: &[String]) -> Result<Command, String> {
             }))
         }
         "sweep" => {
+            // A dry run is the default, so `--dry-run` is accepted as
+            // the explicit spelling of the same thing: it is the safe
+            // direction, and refusing it because it is redundant would
+            // teach the owner's own muscle memory to fail.
             let apply = rest.iter().any(|flag| flag == "--apply");
-            if rest.len() > 1 || (rest.len() == 1 && !apply) {
-                return Err("sweep takes no arguments, or --apply".to_string());
+            let dry = rest.iter().any(|flag| flag == "--dry-run");
+            let known = rest.iter().all(|flag| flag == "--apply" || flag == "--dry-run");
+            if !known || (apply && dry) || rest.len() > 2 {
+                return Err("sweep takes no arguments, --dry-run, or --apply".to_string());
             }
             Ok(Command::Tools(ToolsOptions {
                 action: ToolsAction::Sweep { apply },
@@ -2426,6 +2522,60 @@ mod tests {
 
     fn args(list: &[&str]) -> Vec<String> {
         list.iter().map(|item| item.to_string()).collect()
+    }
+
+    #[test]
+    fn lifecycle_promote_takes_its_three_flags_and_nothing_else() {
+        let command = parse(&args(&[
+            "lifecycle",
+            "promote",
+            "--sessions",
+            "30",
+            "--min",
+            "4",
+            "--similarity",
+            "0.6",
+        ]))
+        .unwrap();
+        let Command::Lifecycle(options) = command else {
+            panic!("not a lifecycle command")
+        };
+        assert_eq!(
+            options.action,
+            LifecycleAction::Promote {
+                sessions: 30,
+                min_sessions: 4,
+                similarity_milli: 600,
+            }
+        );
+        // The defaults, and the bare word being an error rather than a
+        // silent default run.
+        let Command::Lifecycle(options) = parse(&args(&["lifecycle", "promote"])).unwrap() else {
+            panic!("not a lifecycle command")
+        };
+        assert_eq!(
+            options.action,
+            LifecycleAction::Promote {
+                sessions: crate::tool_advisor::DEFAULT_WINDOW,
+                min_sessions: 3,
+                similarity_milli: 500,
+            }
+        );
+        assert!(parse(&args(&["lifecycle"])).is_err());
+        assert!(parse(&args(&["lifecycle", "promote", "--sessions", "0"])).is_err());
+        assert!(parse(&args(&["lifecycle", "promote", "--similarity", "2"])).is_err());
+        assert!(parse(&args(&["lifecycle", "promote", "--min"])).is_err());
+        assert!(parse(&args(&["lifecycle", "sweep"])).is_err());
+    }
+
+    #[test]
+    fn a_sweep_accepts_the_explicit_dry_run_and_refuses_both_directions() {
+        let Command::Tools(options) = parse(&args(&["tools", "sweep", "--dry-run"])).unwrap()
+        else {
+            panic!("not a tools command")
+        };
+        assert_eq!(options.action, ToolsAction::Sweep { apply: false });
+        assert!(parse(&args(&["tools", "sweep", "--apply", "--dry-run"])).is_err());
     }
 
     #[test]

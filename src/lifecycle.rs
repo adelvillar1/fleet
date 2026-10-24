@@ -564,12 +564,15 @@ pub struct Promotion {
 /// sort by size, and a cluster below the minimum is never proposed.
 pub fn promote(
     home: &Path,
-    thresholds: &LifecycleThresholds,
+    window: usize,
     min_sessions: usize,
     similarity: f64,
     cap: usize,
 ) -> Vec<Promotion> {
-    let tasks = session_tasks(home, thresholds.window);
+    // The window is a parameter rather than the thresholds' own: the
+    // sweep reads what the settings say, and promotion is an explicit
+    // question the owner asks with a number in hand.
+    let tasks = session_tasks(home, window);
     if tasks.len() < min_sessions {
         return Vec::new();
     }
