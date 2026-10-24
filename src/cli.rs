@@ -486,6 +486,9 @@ pub enum CronAction {
     Disable { name: String },
     /// Remove a job from the store.
     Remove { name: String },
+    /// Seed the manifest into the store, reconciling seeded jobs' task
+    /// strings to its current wording (KI-277).
+    Seed,
 }
 
 /// Options for `fleet improve`. The bare command lists the proposals;
@@ -667,6 +670,10 @@ usage:
   fleet cron enable --name <name>
   fleet cron disable --name <name>
   fleet cron remove --name <name>
+  fleet cron seed                seed the manifest into the store and
+                                reconcile seeded jobs' task strings to
+                                its current wording (the owner's
+                                schedule and enabled edits win)
   fleet improve                list the proposals awaiting the gate: both
                                 stores, with target, basis, status, and
                                 the last gate result
@@ -1715,6 +1722,9 @@ fn parse_cron(args: &[String]) -> Result<Command, String> {
             };
             Ok(Command::Cron(CronOptions { action }))
         }
+        "seed" => Ok(Command::Cron(CronOptions {
+            action: CronAction::Seed,
+        })),
         other => Err(format!(
             "unknown cron subcommand `{other}` \u{2014} try `fleet help`"
         )),

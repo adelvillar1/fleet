@@ -1756,6 +1756,26 @@ fn cron_command(options: &cli::CronOptions) -> ExitCode {
                 }
             }
         }
+        CronAction::Seed => match fleet::cron::seed_missing(&home) {
+            Ok(report) => {
+                for name in &report.added {
+                    println!("fleet: cron: seeded `{name}`");
+                }
+                for name in &report.reconciled {
+                    println!(
+                        "fleet: cron: reconciled `{name}`'s task string to the manifest"
+                    );
+                }
+                if report.added.is_empty() && report.reconciled.is_empty() {
+                    println!("fleet: cron: the store matches the manifest");
+                }
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("fleet: {error}");
+                ExitCode::FAILURE
+            }
+        },
     }
 }
 
@@ -3301,14 +3321,17 @@ fn install_command(options: &cli::InstallOptions) -> ExitCode {
         }
     };
     // KI-161: the repo-side cron manifest, seeded into a home that lacks
-    // its jobs. An existing job is never rewritten, so an owner's
-    // edits win and a re-run is a no-op; a fresh home gets the schedule
-    // the owner built by hand, declared where it cannot be lost.
+    // its jobs. An existing job's schedule and enabled flag are never
+    // rewritten, so an owner's edits win and a re-run is a no-op there;
+    // a seeded job's task string reconciles to the manifest's current
+    // wording (KI-277), and a fresh home gets the schedule the owner
+    // built by hand, declared where it cannot be lost.
     match fleet::cron::seed_missing(&home) {
-        Ok(added) if !added.is_empty() => {
+        Ok(report) if !report.added.is_empty() || !report.reconciled.is_empty() => {
             println!(
-                "fleet: install: cron: seeded {} manifest job(s)",
-                added.len()
+                "fleet: install: cron: seeded {} manifest job(s), reconciled {} task string(s)",
+                report.added.len(),
+                report.reconciled.len()
             );
         }
         Ok(_) => {}

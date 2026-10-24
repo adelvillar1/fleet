@@ -824,23 +824,46 @@ pub fn seed_task(project: &str) -> String {
     )
 }
 
+/// What a seed pass did: the names it added to a store that lacked
+/// them, and the names whose task string it reconciled to the
+/// manifest's current wording (KI-277).
+#[derive(Debug, PartialEq, Eq)]
+pub struct SeedReport {
+    pub added: Vec<String>,
+    pub reconciled: Vec<String>,
+}
+
 /// Seed the manifest's jobs into a home whose store lacks them. An
-/// existing job is never rewritten: the owner's edits — a changed
-/// schedule, a disabled job, a task they reworded — win over the
-/// declaration, which is what makes the manifest safe to re-run. The
-/// store is created when it does not exist. Returns the names added.
-pub fn seed_missing(home: &Path) -> Result<Vec<String>, CronError> {
+/// existing job's schedule and enabled flag are never rewritten — the
+/// owner's edits there win, which is what makes the manifest safe to
+/// re-run. The task string is the manifest's own declaration and is
+/// reconciled to its current wording (KI-277): a fix that landed only
+/// in `seed_task` reached no job that already existed, and every seeded
+/// corpus-refresh job kept serving a stale string. The store is created
+/// when it does not exist.
+pub fn seed_missing(home: &Path) -> Result<SeedReport, CronError> {
     let mut store = Store::open(home)?;
     let existing: Vec<String> = store.jobs().iter().map(|job| job.name.clone()).collect();
     let mut added = Vec::new();
+    let mut reconciled = Vec::new();
     for (name, schedule, project) in SEED_MANIFEST {
+        let declared = seed_task(project);
         if existing.iter().any(|have| have == name) {
+            let stale = store
+                .jobs()
+                .iter()
+                .find(|job| job.name == *name)
+                .is_some_and(|job| job.task != declared);
+            if stale {
+                store.set_task(name, &declared)?;
+                reconciled.push((*name).to_string());
+            }
             continue;
         }
-        store.add(name, schedule, &seed_task(project), true)?;
+        store.add(name, schedule, &declared, true)?;
         added.push((*name).to_string());
     }
-    Ok(added)
+    Ok(SeedReport { added, reconciled })
 }
 
 /// `<home>/cron/jobs.json`.
@@ -1097,6 +1120,27 @@ impl Store {
             .find(|job| job.name == name)
             .ok_or_else(|| CronError::Missing(name.to_string()))?;
         job.enabled = enabled;
+        let stored = job.clone();
+        self.save()?;
+        Ok(stored)
+    }
+
+    /// Rewrite one job's task string. KI-277: a wording fix that lands
+    /// in `seed_task` reached no job that already existed —
+    /// `seed_missing` skipped every present name, so all fourteen live
+    /// corpus-refresh jobs kept the pre-fix wording naming a lane tool
+    /// the driver session cannot call. The manifest owns a seeded job's
+    /// task string: a stored task that diverges from the declaration is
+    /// reconciled to it on the next seed, while the owner's schedule
+    /// and enabled edits — the fields `seed_missing` never wrote — are
+    /// untouched.
+    pub fn set_task(&mut self, name: &str, task: &str) -> Result<Job, CronError> {
+        let job = self
+            .jobs
+            .iter_mut()
+            .find(|job| job.name == name)
+            .ok_or_else(|| CronError::Missing(name.to_string()))?;
+        job.task = task.to_string();
         let stored = job.clone();
         self.save()?;
         Ok(stored)
@@ -2544,8 +2588,9 @@ mod tests {
     #[test]
     fn the_manifest_seeds_a_fresh_home_and_never_rewrites() {
         let home = temp_home("seed-manifest");
-        let added = seed_missing(&home).expect("the seed lands");
-        assert_eq!(added.len(), SEED_MANIFEST.len(), "{added:?}");
+        let report = seed_missing(&home).expect("the seed lands");
+        assert_eq!(report.added.len(), SEED_MANIFEST.len(), "{report:?}");
+        assert!(report.reconciled.is_empty(), "{report:?}");
         let store = Store::open(&home).unwrap();
         assert_eq!(store.jobs().len(), SEED_MANIFEST.len());
         // Every seeded job parses and is enabled with auto-approve.
@@ -2558,7 +2603,7 @@ mod tests {
         // nothing.
         let before = store.jobs().to_vec();
         let again = seed_missing(&home).expect("the re-seed lands");
-        assert!(again.is_empty(), "{again:?}");
+        assert!(again.added.is_empty() && again.reconciled.is_empty(), "{again:?}");
         let after = Store::open(&home).unwrap().jobs().to_vec();
         assert_eq!(before, after);
         let _ = std::fs::remove_dir_all(&home);
@@ -2573,6 +2618,53 @@ mod tests {
         assert!(task.contains("mcp_server.py"), "{task}");
         assert!(task.contains("refresh"), "{task}");
         assert!(task.contains("fleet"), "{task}");
+    }
+
+    #[test]
+    fn a_stored_task_string_is_reconciled_to_the_manifest() {
+        // KI-277: the wording fix reached no job that already existed —
+        // the seed skipped every present name, so the live store kept
+        // serving the pre-fix wording. The manifest owns the task
+        // string; the owner's schedule and enabled edits still win.
+        let home = temp_home("seed-reconcile");
+        let mut store = Store::open(&home).unwrap();
+        let (name, _schedule, project) = SEED_MANIFEST[0];
+        store
+            .add(
+                name,
+                "9 5 * * *",
+                &format!("call the lane tool mcp__blend1__refresh for {project}"),
+                true,
+            )
+            .unwrap();
+        store.set_enabled(name, false).unwrap();
+
+        let report = seed_missing(&home).expect("the seed lands");
+        assert!(
+            !report.added.iter().any(|have| have == name),
+            "the pre-existing job was not re-added: {report:?}"
+        );
+        assert_eq!(
+            report.added.len(),
+            SEED_MANIFEST.len() - 1,
+            "the rest of the manifest seeds: {report:?}"
+        );
+        assert_eq!(
+            report.reconciled,
+            vec![name.to_string()],
+            "the stale wording is named: {report:?}"
+        );
+        let job = Store::open(&home)
+            .unwrap()
+            .jobs()
+            .iter()
+            .find(|job| job.name == name)
+            .expect("the job")
+            .clone();
+        assert_eq!(job.task, seed_task(project), "the wording is the manifest's");
+        assert_eq!(job.schedule, "9 5 * * *", "the owner's schedule wins");
+        assert!(!job.enabled, "the owner's enabled flag wins");
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     #[test]
