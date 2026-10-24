@@ -919,15 +919,23 @@ fn endpoint_from(lookup: impl Fn(&str) -> Option<String>) -> String {
 /// is the ceiling for a black-holed port, not the expected cost.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// The pause between the probe's first try and its retry. The machine's
-/// endpoint flaps — a request hangs past every budget, an identical one
-/// answers in 37 ms between them, and a restart window refuses outright
-/// — and a probe that reads one failure as "no backend" degrades a
-/// healthy machine for a whole process (KI-296). The embed's own retry
-/// is immediate, which absorbs a dead pooled connection but lands right
+/// The pause between the probe's tries. The machine's endpoint flaps —
+/// a request hangs past every budget, an identical one answers in
+/// 37 ms between them, and a restart window refuses outright — and a
+/// probe that reads one failure as "no backend" degrades a healthy
+/// machine for a whole process (KI-296). The embed's own retry is
+/// immediate, which absorbs a dead pooled connection but lands right
 /// back in a hang or a refused restart; the pause is what spans it. A
-/// genuinely-dead backend pays the pause once per load.
+/// genuinely-dead backend refuses in milliseconds, so the pauses are
+/// the whole extra cost; a black-holed port is bounded by the probe
+/// budget per try, paid once per load.
 const PROBE_RETRY_PAUSE: Duration = Duration::from_millis(750);
+
+/// How many paused retries follow the probe's first try — three tries
+/// in all. One was not enough under a loaded suite: a try can fail
+/// before it ever reaches the backend, and the flap's own length is
+/// nobody's to promise.
+const PROBE_RETRIES: usize = 2;
 
 /// A steady-state embed's budget, for the load-time index build.
 const EMBED_TIMEOUT: Duration = Duration::from_secs(10);
@@ -988,15 +996,18 @@ impl HttpEmbedder {
             dims: 0,
             agent: ureq::AgentBuilder::new().timeout(PROBE_TIMEOUT).build(),
         };
-        // One retry after a pause (KI-296): the flap a live endpoint
-        // answers through outlasts an immediate retry, and a restart
-        // window refuses for about as long as the pause.
-        let dims = Embedder::embed(&embedder, PROBE_TEXT)
-            .or_else(|| {
-                std::thread::sleep(PROBE_RETRY_PAUSE);
-                Embedder::embed(&embedder, PROBE_TEXT)
-            })?
-            .len();
+        // Paused retries (KI-296): the flap a live endpoint answers
+        // through outlasts an immediate retry, and a restart window
+        // refuses for about as long as the pause.
+        let mut dims = Embedder::embed(&embedder, PROBE_TEXT);
+        for _ in 0..PROBE_RETRIES {
+            if dims.is_some() {
+                break;
+            }
+            std::thread::sleep(PROBE_RETRY_PAUSE);
+            dims = Embedder::embed(&embedder, PROBE_TEXT);
+        }
+        let dims = dims?.len();
         embedder.dims = dims;
         // The probe proved the model answers within the probe's budget,
         // so the steady-state agent takes the more generous one: the
@@ -5415,9 +5426,12 @@ mod tests {
         // every budget, an identical one answers in 37 ms between them,
         // and a restart window refuses outright. A probe that reads one
         // failure as "no backend" degrades a healthy machine for a
-        // whole process. The double refuses the first two connections —
-        // the embed's own immediate retry among them — and answers the
-        // third, which only the paused retry reaches.
+        // whole process. The double refuses the first four connections
+        // — the embed's own immediate retry and the probe's first
+        // paused retry among them — and answers within the second,
+        // which is also the margin a loaded suite needs: a try can fail
+        // before it ever reaches the backend, and the probe's own
+        // retry count is the bound the double is sized against.
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         std::thread::spawn(move || {
@@ -5426,9 +5440,28 @@ mod tests {
                     Ok(stream) => stream,
                     Err(_) => break,
                 };
-                if index < 2 {
+                if index < 4 {
                     drop(stream);
                     continue;
+                }
+                // Read the request before answering: dropping a stream
+                // that still holds unread request bytes sends RST, and
+                // an RST discards what is already sitting in the
+                // client's receive queue — under a loaded suite the
+                // reply was lost to exactly that, and every try failed.
+                let mut seen = 0;
+                while seen < 10 {
+                    let mut scratch = [0u8; 4096];
+                    match std::io::Read::read(&mut stream, &mut scratch) {
+                        Ok(0) => break,
+                        Ok(read) => {
+                            seen += 1;
+                            if scratch[..read].windows(4).any(|w| w == b"\r\n\r\n") {
+                                break;
+                            }
+                        }
+                        Err(_) => break,
+                    }
                 }
                 let body = r#"{"data":[{"embedding":[0.5,0.25,0.125]}]}"#;
                 let _ = stream.write_all(
