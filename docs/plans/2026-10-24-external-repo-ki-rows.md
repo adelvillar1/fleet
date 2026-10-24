@@ -91,6 +91,28 @@ names as the carry's end state.
 and one live MCP call through fleet's own client proves the
 compatibility the row died on. The row closes with both.
 
+### Increment 7 — TypeLLM as a sys1 provider (C8, the owner's directive)
+
+The owner's mid-session directive: include TypeLLM as a sys1 provider,
+"check the skill to understand the capabilities". The typellm skill:
+a hosted classifier where ONE call answers N segments — enum labels
+with `return_probabilities`, answers carrying either
+`{label: score}` or `{value, confidence}`, a ≤90 s ceiling (85 s
+worked), key `TYPELLM_API_KEY`. The reference shape is the ScaleDown
+commit (`701b44a`): wire + head mapping + parser + head-set
+inheritance + config + MCP pass-through + mock-wire tests, probed
+live before landing. TypeLLM's key rides the env chain only — the
+owner supplied it in conversation; no committed file ever carries it,
+and nothing prints it (the repo's own hard rule). Stdlib-only holds:
+the wire speaks HTTPS through `urllib`, never the SDK package.
+
+### Increment 8 — re-vendor, now carrying TypeLLM (C2 revised)
+
+The re-vendor follows the provider landing, so the vendored sys1
+carries it; fleet's lane tests must pass with no `TYPELLM_API_KEY` in
+the environment — a provider whose key is absent fails open at
+configuration, the same line every other provider takes.
+
 ## Acceptance criteria
 
 - [ ] **C0 — KI-004.** The row reads closed naming the remote and the
@@ -112,6 +134,12 @@ compatibility the row died on. The row closes with both.
 - [ ] **C6 — KI-207.** The driver binary is updated per the owner's
   recorded ruling, its version reads back aligned, one live MCP call
   answers, and the row closes with both.
+- [ ] **C8 — TypeLLM as a sys1 provider.** The wire, head mapping,
+  parser, head-set, config, and MCP pass-through mirror the ScaleDown
+  shape; a live probe with the owner's key answers a real classify
+  before landing; mock-wire tests pin the parser; the key rides the
+  env chain only and no committed file carries it; the repo's suite
+  passes and the MCP pass-through admits the provider.
 - [ ] **C7 — close-out.** Fleet's ledger carries every closure with its
   evidence; the fleet gate is green by exit code read directly; commits
   carry explicit paths per repo; the plan's `status` agrees.
