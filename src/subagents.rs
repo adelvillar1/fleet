@@ -2403,6 +2403,7 @@ mod tests {
             how: crate::route::How::Judged,
             workload: Some("hard".to_string()),
             verdict: Some("pass".to_string()),
+            execution: None,
             reason: "sys1 judged `hard`".to_string(),
             judged_from: crate::route::JudgedFrom::Fresh,
             start_index: 0,

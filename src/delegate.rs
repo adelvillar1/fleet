@@ -95,7 +95,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::calib::{self, FitState};
-use crate::mcp::{CallResult, McpServer, ServerSpec};
 use crate::session::{self, Record};
 use crate::skills::wrap_detail;
 
@@ -215,18 +214,11 @@ pub const OUTCOME_FAILED: &str = "failed";
 /// recorded an ending — absent evidence, never a named absence.
 pub const OUTCOME_INTERRUPTED: &str = "interrupted";
 
-/// Where the ask's lane comes from: the vendored registry on the real
-/// path, or an injected spec a test or the eval corpus scripts. The
-/// seam is the same one either way — [`crate::mcp::ServerSpec`] through
-/// the MCP client, exactly as the routing beat resolves one.
-#[derive(Debug, Clone)]
-pub enum LaneSource {
-    /// The vendored sys1 lane, resolved through [`crate::lanes::spec_for`].
-    Vendored,
-    /// A scripted lane: the spec a caller built, so no paid call and no
-    /// live service stands between the beat and its grade.
-    Scripted(ServerSpec),
-}
+/// Where the ask's lane comes from. The delegate beat resolves through
+/// the routing beat's one source and one session ([`crate::judge::
+/// LaneSource`], [`crate::judge::LaneSession`]) — the two beats are one
+/// loop by design, and the lane plumbing is not a second loop (C0).
+pub use crate::judge::LaneSource;
 
 /// One judgment batch's request.
 #[derive(Debug, Clone)]
@@ -920,55 +912,11 @@ fn string_field(object: &serde_json::Map<String, Value>, key: &str) -> Option<St
         .filter(|s| !s.is_empty())
 }
 
-/// The lane's spec for this request: the vendored registry's, or the
-/// injected one. A registry that cannot resolve the lane names its
-/// reason — that is the fail-open, not a silent absence.
-fn lane_spec(source: &LaneSource) -> Result<ServerSpec, String> {
-    match source {
-        LaneSource::Vendored => crate::lanes::spec_for(DELEGATE_LANE),
-        LaneSource::Scripted(spec) => Ok(spec.clone()),
-    }
-}
-
-/// One bounded ask to the lane, over the same seam the routing judgment
-/// walks: resolve the spec, spawn the child, handshake, list its tools,
-/// call `sys1_classify`, tear the child down. One ask, bounded by the
-/// MCP client's own timeouts, and every failure named: an unconfigured
-/// lane, a child that will not spawn, a handshake that times out, a tool
-/// the lane does not declare, a call the lane refused, an answer that is
-/// not the structured content it promises, and a lane that failed open.
-async fn ask_lane(source: &LaneSource, prompt: &str) -> Result<DelegateReply, String> {
-    let spec = lane_spec(source)?;
-    let server =
-        McpServer::spawn(&spec).map_err(|error| format!("the lane could not start: {error}"))?;
-    server
-        .initialize()
-        .await
-        .map_err(|error| format!("the lane's handshake failed: {error}"))?;
-    let tools = server
-        .list_tools()
-        .await
-        .map_err(|error| format!("the lane's tool list failed: {error}"))?;
-    if !tools.iter().any(|tool| tool.name == DELEGATE_TOOL) {
-        server.close().await.ok();
-        return Err(format!(
-            "lane `{DELEGATE_LANE}` declares no `{DELEGATE_TOOL}` tool — it cannot judge a \
-             delegation"
-        ));
-    }
-    let arguments = json!({ "task": DELEGATE_TASK, "text": prompt });
-    let result: CallResult = server
-        .call_tool(DELEGATE_TOOL, arguments)
-        .await
-        .map_err(|error| format!("the lane refused the ask: {error}"))?;
-    server.close().await.ok();
-    if result.is_error {
-        return Err(format!("the lane refused the ask: {}", result.text()));
-    }
-    let text = result.text();
-    let value: Value = serde_json::from_str(&text).map_err(|error| {
-        format!("the lane's answer was not the structured content it promises: {error}")
-    })?;
+/// The judgment's semantic half: a structured lane answer in, the typed
+/// reply out — with the two refusals that guard the cell math. The
+/// transport is the shared [`crate::judge::LaneSession`]; the checks are
+/// this beat's own reading.
+fn parse_judgment(value: Value) -> Result<DelegateReply, String> {
     let reply = DelegateReply::parse(&value);
     // The lane's own fail-open, named: an answer whose verdict is
     // `error`, or that names no verdict at all, is the lane composing
@@ -1314,6 +1262,13 @@ pub async fn judge(request: JudgeRequest<'_>) -> JudgeOutcome {
     }
 
     let mut spend = spent;
+    // The lane session (C0), the routing beat's shape: opened lazily
+    // before the first row that will ask, one spawn for the batch,
+    // closed once on the one exit path below. An open that failed is
+    // kept and named; the remaining rows refuse by it and no second
+    // spawn is attempted.
+    let mut session: Option<crate::judge::LaneSession> = None;
+    let mut open_failure: Option<String> = None;
     for delegation in &delegations {
         let key = delegation_key(delegation);
         if already.contains(&key) {
@@ -1359,9 +1314,47 @@ pub async fn judge(request: JudgeRequest<'_>) -> JudgeOutcome {
             continue;
         }
 
+        if let Some(failure) = open_failure.clone() {
+            refusals.push((
+                key,
+                format!(
+                    "{failure} — the batch refuses the remaining rows by name; the lane is \
+                         not spawned twice in one run"
+                ),
+            ));
+            continue;
+        }
+        if session.is_none() {
+            match crate::judge::LaneSession::open(
+                &lane,
+                DELEGATE_LANE,
+                DELEGATE_TOOL,
+                DELEGATE_TASK,
+            )
+            .await
+            {
+                Ok(opened) => session = Some(opened),
+                Err(error) => {
+                    open_failure.get_or_insert(error.clone());
+                    refusals.push((key, error));
+                    continue;
+                }
+            }
+        }
         let started = Instant::now();
-        let reply = match ask_lane(&lane, &prompt).await {
-            Ok(reply) => reply,
+        let reply = match session
+            .as_mut()
+            .expect("opened or refused above")
+            .ask(&prompt)
+            .await
+        {
+            Ok(value) => match parse_judgment(value) {
+                Ok(reply) => reply,
+                Err(reason) => {
+                    refusals.push((key, reason));
+                    continue;
+                }
+            },
             Err(reason) => {
                 refusals.push((key, reason));
                 continue;
@@ -1409,6 +1402,11 @@ pub async fn judge(request: JudgeRequest<'_>) -> JudgeOutcome {
         }
         spend += reply.cost_usd.unwrap_or(0.0);
         judged.push(row);
+    }
+    // The one exit path's close (C0): one spawn, one close, whatever the
+    // rows did — judged, refused, budget-stopped.
+    if let Some(session) = session.take() {
+        session.close().await;
     }
 
     let spent = if dry_run {

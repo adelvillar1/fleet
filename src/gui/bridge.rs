@@ -3617,7 +3617,8 @@ fn cards_from_records(records: &[session::Record]) -> (Vec<Value>, usize) {
             | session::Record::End { .. }
             | session::Record::ToolResolution { .. }
             | session::Record::LaneFailed { .. }
-            | session::Record::Declarations { .. } => {}
+            | session::Record::Declarations { .. }
+            | session::Record::Routed { .. } => {}
             // Bookkeeping, like start and end — it replays to no message
             // — but it carries the facts the inbox shows, so the replay
             // surfaces it rather than dropping it.
@@ -5892,7 +5893,7 @@ fn record(state: &Mutex<GuiState>, events: &broadcast::Sender<Value>, session: &
 /// function, so the transcript, the tool cards, and the intelligence
 /// cards all read the same shape the stream carried — a second mapping
 /// would be a second answer to what an event means.
-fn describe(event: &UiEvent) -> Value {
+pub(crate) fn describe(event: &UiEvent) -> Value {
     match event {
         UiEvent::Token(text) => json!({"type": "token", "text": text}),
         UiEvent::Reasoning { text, seconds } => json!({
@@ -5958,6 +5959,7 @@ fn describe(event: &UiEvent) -> Value {
             judged_from,
             reason,
             order,
+            execution,
         } => json!({
             "type": "routed",
             "provider": provider,
@@ -5967,6 +5969,8 @@ fn describe(event: &UiEvent) -> Value {
             "verdict": verdict,
             "judged_from": judged_from,
             "reason": reason,
+            "order": order,
+            "execution": execution,
             "order": order
                 .iter()
                 .map(|(provider, model)| json!({"provider": provider, "model": model}))
@@ -7757,6 +7761,33 @@ mod tests {
         );
     }
 
+    #[test]
+    fn the_routed_event_carries_the_execution_head_or_names_its_absence() {
+        // C4's bridge half: the `routed` event carries the execution
+        // head when the decision has one, and null when it does not —
+        // the page renders both from the same event, and an answer
+        // without the head never invents a label.
+        let base = |execution: Option<crate::route::ExecutionHead>| UiEvent::Routed {
+            provider: "stepfun".to_string(),
+            model: "step-5-preview".to_string(),
+            how: "judged".to_string(),
+            workload: Some("hard".to_string()),
+            verdict: Some("pass".to_string()),
+            judged_from: "fresh".to_string(),
+            reason: "sys1 judged `hard`".to_string(),
+            order: vec![("stepfun".to_string(), "step-5-preview".to_string())],
+            execution,
+        };
+        let rendered = crate::gui::bridge::describe(&base(None));
+        assert_eq!(rendered["execution"], serde_json::Value::Null);
+        let rendered = crate::gui::bridge::describe(&base(Some(crate::route::ExecutionHead {
+            label: "swarm".to_string(),
+            confidence: 0.91,
+        })));
+        assert_eq!(rendered["execution"]["label"], "swarm");
+        assert_eq!(rendered["execution"]["confidence"], 0.91);
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn the_core_events_land_ordered_and_the_state_replays_them() {
         let (bridge, sources, _door) = bridge().await;
@@ -7772,6 +7803,10 @@ mod tests {
                 judged_from: "fresh".to_string(),
                 reason: "the orchestrator walks hard's chain".to_string(),
                 order: vec![("stepfun".to_string(), "step-5-preview".to_string())],
+                execution: Some(crate::route::ExecutionHead {
+                    label: "mixture".to_string(),
+                    confidence: 0.86,
+                }),
             })
             .expect("the route lands");
         sources
@@ -7816,6 +7851,11 @@ mod tests {
         assert_eq!(events[0]["workload"], "hard");
         assert_eq!(events[0]["judged_from"], "fresh");
         assert_eq!(events[0]["order"][0]["provider"], "stepfun");
+        // The execution head rides the event whole (C4): the live line
+        // and the transcript's route strip name both heads from the
+        // same facts.
+        assert_eq!(events[0]["execution"]["label"], "mixture");
+        assert_eq!(events[0]["execution"]["confidence"], 0.86);
         assert_eq!(events[1]["type"], "usage");
         assert_eq!(events[1]["prompt"], 1200);
         assert_eq!(events[2]["type"], "delegation");

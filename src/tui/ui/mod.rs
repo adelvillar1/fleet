@@ -4474,6 +4474,7 @@ mod tests {
             judged_from: "fresh".to_string(),
             reason: "the orchestrator walks hard's chain".to_string(),
             order: vec![("stepfun".to_string(), "step-5-preview".to_string())],
+            execution: None,
         });
         app.apply_ui_event(UiEvent::Turn(2));
         app.apply_ui_event(UiEvent::ToolCall {

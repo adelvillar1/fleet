@@ -415,7 +415,9 @@ impl Default for AgentOptions {
 /// What the loop reports to a live UI as it happens. These are transport,
 /// not log content: the session log is written exactly as before, beside
 /// these emissions, so model-visible stays model-visible either way.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// (`Eq` is deliberately absent: the routed event carries the execution
+/// head's confidence, an `f64`, and `Eq` is a lie for floats.)
+#[derive(Debug, Clone, PartialEq)]
 pub enum UiEvent {
     /// One streamed content delta.
     Token(String),
@@ -500,6 +502,11 @@ pub enum UiEvent {
         judged_from: String,
         reason: String,
         order: Vec<(String, String)>,
+        /// The execution head when the lane judged it (C4): the
+        /// topology verdict beside the workload's, so the live line and
+        /// the transcript's route strip name both heads. Absent when
+        /// the lane answer named no execution head.
+        execution: Option<crate::route::ExecutionHead>,
     },
     /// A turn's file state was checkpointed: the store holds the working
     /// tree as this turn left it, so the run can be rewound to here. One
@@ -1346,6 +1353,14 @@ impl<'a> Agent<'a> {
             .into_iter()
             .map(|skill| skill.into())
             .collect();
+        // The execution head is read from the run's own route decision
+        // at assembly time — the same decision the routed event named a
+        // moment ago, so the prompt's line and the decision can never
+        // disagree, on any surface that routes (C3).
+        let execution = self
+            .client
+            .route_decision()
+            .and_then(|decision| decision.execution.clone());
         Self::composed_prompt(
             self.options.identity.as_deref(),
             &refs,
@@ -1354,14 +1369,37 @@ impl<'a> Agent<'a> {
             self.options.gui_prompt.as_deref(),
             self.options.goal.as_deref(),
             &self.options.file_access,
+            execution.as_ref(),
         )
+    }
+
+    /// The one compiled-in line an execution verdict adds to the prompt
+    /// (C3). `single` — and any label the wire did not mean as a
+    /// decomposition — adds nothing: the line names the tool only when
+    /// the judgment named a decomposition.
+    fn execution_prompt_line(head: &crate::route::ExecutionHead) -> Option<String> {
+        let named = match head.label.as_str() {
+            "mixture" => {
+                "The judgment named this request a mixture: several independent answers compared \
+                 by a judge would beat one."
+            }
+            "swarm" => {
+                "The judgment named this request a swarm: it decomposes into substantial \
+                 independent parts whose quality depends on critique rounds."
+            }
+            _ => return None,
+        };
+        Some(format!(
+            "{named} `subagent` runs one self-contained task in its own child session."
+        ))
     }
 
     /// The system prompt's composition, as one free function the live
     /// loop and the reconstructor share (D10): the identity base, the
     /// reporting contract, the goal, the skills list, the memory block,
-    /// the role overlay, the surface line, and the file access — in the
-    /// order the loop has always composed them.
+    /// the role overlay, the surface line, the file access, and the
+    /// execution head — in the order the loop has always composed them.
+    #[allow(clippy::too_many_arguments)]
     fn composed_prompt(
         identity: Option<&str>,
         skills: &[crate::skills::SkillRef],
@@ -1370,14 +1408,17 @@ impl<'a> Agent<'a> {
         gui_prompt: Option<&str>,
         goal: Option<&str>,
         file_access: &FileAccess,
+        execution: Option<&crate::route::ExecutionHead>,
     ) -> String {
         let base = identity.unwrap_or(SYSTEM_PROMPT);
+        let execution_line = execution.and_then(Self::execution_prompt_line);
         if identity.is_none()
             && skills.is_empty()
             && memory_block.is_none()
             && role_overlay.is_none()
             && gui_prompt.is_none()
             && goal.is_none()
+            && execution_line.is_none()
             && *file_access == FileAccess::Unrestricted
         {
             return default_prompt();
@@ -1385,6 +1426,14 @@ impl<'a> Agent<'a> {
         let mut prompt = String::from(base);
         prompt.push_str("\n\n");
         prompt.push_str(REPORTING_CONTRACT);
+        // The execution verdict the leader hears (C3): one compiled-in
+        // line when the judgment named this request a decomposition,
+        // none otherwise. The line names the tool that decomposes; it
+        // never instructs the model to use it.
+        if let Some(line) = &execution_line {
+            prompt.push_str("\n\n## This request\n\n");
+            prompt.push_str(line);
+        }
         if let Some(goal) = goal {
             prompt.push_str(
                 "\n\n## Goal\n\nThe owner's standing objective for this session \u{2014} every turn serves it, and it outlives any one task:\n\n",
@@ -1464,10 +1513,12 @@ impl<'a> Agent<'a> {
         let mut goal: Option<&str> = None;
         let mut skills: Vec<crate::skills::SkillRef> = Vec::new();
         let mut lanes: Vec<tools::LaneTools> = Vec::new();
+        let mut execution: Option<&crate::route::ExecutionHead> = None;
         for record in records {
             match record {
                 Record::Goal { text } => goal = Some(text.as_str()),
                 Record::Skills { skills: said } => skills = said.clone(),
+                Record::Routed { execution: head } => execution = Some(head),
                 Record::LaneTools { lane, tools } => lanes.push(tools::LaneTools {
                     lane: lane.clone(),
                     tools: tools.clone(),
@@ -1484,6 +1535,7 @@ impl<'a> Agent<'a> {
             gui_prompt,
             goal,
             file_access,
+            execution,
         );
         let Conversation { messages, .. } = crate::session::conversation(records);
         let mut request_messages = Vec::with_capacity(messages.len() + 1);
@@ -2036,7 +2088,18 @@ impl<'a> Agent<'a> {
                 judged_from: decision.judged_from.label().to_string(),
                 reason: decision.reason.clone(),
                 order: decision.order.clone(),
+                execution: decision.execution.clone(),
             });
+            // The head rides the log beside the event: the prompt gains
+            // its line from this decision (C3), and the log is what
+            // keeps the prompt the model saw reconstructable (hard rule
+            // 5) — a mixture run's reconstruction replays the same line
+            // the run carried.
+            if let Some(execution) = &decision.execution {
+                self.record(&Record::Routed {
+                    execution: execution.clone(),
+                })?;
+            }
         }
         // The skills this run declared, recorded once, at run start. The
         // list is dynamic — the files change between runs — and the
@@ -7335,6 +7398,91 @@ mod tests {
     }
 
     #[test]
+    fn the_prompt_carries_the_execution_line_only_when_the_judgment_named_a_decomposition() {
+        // C3: one compiled-in line when the run's own route decision
+        // carries a decomposition verdict, no line otherwise — the line
+        // names the tool that decomposes and never instructs the model
+        // to use it. The decision is the run's own: the prompt is
+        // assembled after the route, from the same decision the routed
+        // event named.
+        let home = scratch("execution-prompt");
+        let root = corpus("execution-prompt-corpus", &[]);
+        let decision_with = |label: Option<&'static str>| {
+            let mut decision =
+                crate::route::workload_decision("hard").expect("hard maps a preference");
+            decision.execution = label.map(|label| crate::route::ExecutionHead {
+                label: label.to_string(),
+                confidence: 0.86,
+            });
+            decision
+        };
+        let agent_over_decision = |decision: crate::route::RouteDecision| {
+            let roster = crate::route::default_roster();
+            let dotenv: std::collections::HashMap<String, String> = roster
+                .iter()
+                .map(|candidate| (candidate.key_env.clone(), "sk-fake".to_string()))
+                .collect();
+            let resolved = crate::route::resolve(&roster, &dotenv);
+            let client = Box::leak(Box::new(crate::api::Client::routed(std::sync::Arc::new(
+                crate::route::Router::new(resolved, decision),
+            ))));
+            let session = Box::leak(Box::new(
+                crate::session::Session::create(&home, "m").unwrap(),
+            ));
+            let memory = Arc::new(Memory::load_with(
+                &root,
+                Box::new(crate::memory::KeywordOnly),
+            ));
+            let options = AgentOptions {
+                goal: None,
+                model: "m".to_string(),
+                identity: None,
+                max_turns: 1,
+                ui_tx: None,
+                lane_specs: None,
+                calib: None,
+                skills: Vec::new(),
+                role_overlay: None,
+                memory: Some(memory),
+                scope: None,
+                improve_home: None,
+                route_home: None,
+                gui_prompt: None,
+                compact_now: false,
+                checkpoints: None,
+                file_access: FileAccess::Unrestricted,
+                plan_mode: false,
+            };
+            Agent::new(
+                client,
+                options,
+                session,
+                Box::new(ApproveAll),
+                Box::leak(Box::new(Vec::new())),
+            )
+            .unwrap()
+        };
+
+        // mixture and swarm carry the line; single and the absent head
+        // add nothing at all — the run stays the compiled-in prompt.
+        let mixture = agent_over_decision(decision_with(Some("mixture")));
+        let mixture_prompt = mixture.system_prompt(None);
+        assert!(
+            mixture_prompt.contains("## This request")
+                && mixture_prompt.contains("mixture")
+                && mixture_prompt.contains("`subagent` runs one self-contained task"),
+            "{mixture_prompt}"
+        );
+        let swarm = agent_over_decision(decision_with(Some("swarm")));
+        assert!(swarm.system_prompt(None).contains("swarm"));
+        let single = agent_over_decision(decision_with(Some("single")));
+        assert_eq!(single.system_prompt(None), default_prompt());
+        let absent = agent_over_decision(decision_with(None));
+        assert_eq!(absent.system_prompt(None), default_prompt());
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
     fn a_run_with_memory_declares_the_write_path_and_one_without_it_does_not() {
         let home = scratch("memory-declarations");
         let root = corpus("memory-declarations-corpus", &[]);
@@ -8916,6 +9064,7 @@ You are auditing a change. Read the diff before you judge it.
             how: crate::route::How::Judged,
             workload: Some("hard".to_string()),
             verdict: Some("pass".to_string()),
+            execution: None,
             reason: "sys1 judged `hard`".to_string(),
             judged_from: crate::route::JudgedFrom::Fresh,
             start_index: 0,

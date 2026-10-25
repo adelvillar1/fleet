@@ -71,6 +71,12 @@ pub struct RouteRow {
     pub workload: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub verdict: Option<String>,
+    /// The execution head when the lane judged it (plan
+    /// 2026-10-23-judgment-beats-one-lane.md, C1): the topology verdict
+    /// beside the workload's. Absent on rows written before the head
+    /// was read, and on rows whose lane answer named no execution head.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution: Option<crate::route::ExecutionHead>,
     pub reason: String,
     pub model: String,
     /// The candidates actually attempted, in order.
@@ -3398,6 +3404,7 @@ mod tests {
             how: "fallback".to_string(),
             workload: None,
             verdict: None,
+            execution: None,
             reason: "test".to_string(),
             model: "test-model".to_string(),
             providers_used: attempts.iter().map(|(id, _)| id.to_string()).collect(),

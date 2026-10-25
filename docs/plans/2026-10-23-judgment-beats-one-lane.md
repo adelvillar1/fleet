@@ -1,5 +1,5 @@
 ---
-status: active
+status: completed
 created: 2026-10-23
 updated: 2026-10-25
 slug: judgment-beats-one-lane-and-a-verdict-that-steers
@@ -80,12 +80,12 @@ the leader's prompt, when the verdict names a decomposition
 
 ## Acceptance criteria
 
-- [ ] **C0 — one lane, N asks.** `fleet judge` spawns the sys1 lane once per run and closes it once on every exit path (success, refusal, budget stop); each row is one `sys1_classify` call on that session. Pinned by a test with a counting session seam: N rows → one open, N asks, one close; a lane that fails to open refuses every row by name without a second spawn. `fleet delegate` uses the same session type (one implementation, not a second loop).
-- [ ] **C1 — both heads are read and recorded.** `parse_workload` returns the execution head's label and confidence beside the workload's; `RouteDecision` carries `execution`, the calibration `RouteRow` carries it, and the decision's reason names it when present. A lane answer with both heads records `execution: "mixture"`; an answer without the execution head records none rather than inventing one. Pinned by unit tests over a two-head answer and a workload-only answer.
-- [ ] **C2 — the execution head steers a judged walk.** A `Walk::Judged` selection whose verdict is `mixture` or `swarm` walks `ORCHESTRATOR_WORKLOAD`'s chain and its reason names why; `single` and an absent head walk the judged workload's chain. The leader's walk is unchanged. Pinned by a `select_walk` test with a scripted sys1 verdict for each execution label.
-- [ ] **C3 — the leader hears a decomposition verdict.** The run's prompt carries one compiled-in line naming `subagent` when the decision's execution is `mixture` or `swarm`, and no line otherwise. `AgentOptions` carries the execution from the run's boundary, and a prompt test pins both.
-- [ ] **C4 — the surfaces say it.** The `routed` event carries `execution` (a bridge test asserts the field from a decision that has one, and its absence when not), the Router board's live line renders it, and `FUNCTIONAL-SPECIFICATIONS.md` plus `docs/features/routing.md` name the two heads (a grep for `execution` in both prints the new lines). The gate is green.
-- [ ] **C5 — one open, and no row left unjudged.** The counting test pins exactly one open for N rows and N asks on it; and a scripted N-row run lands one `route_judged` row per input row in the calibration stream — the same count the day carried before the change (81–162 per day on this machine, read 2026-10-23), so the collapse buys the boot cost and loses no judgment.
+- [x] **C0 — one lane, N asks.** `fleet judge` spawns the sys1 lane once per run and closes it once on every exit path (success, refusal, budget stop); each row is one `sys1_classify` call on that session. Pinned by a test with a counting session seam: N rows → one open, N asks, one close; a lane that fails to open refuses every row by name without a second spawn. `fleet delegate` uses the same session type (one implementation, not a second loop).
+- [x] **C1 — both heads are read and recorded.** `parse_workload` returns the execution head's label and confidence beside the workload's; `RouteDecision` carries `execution`, the calibration `RouteRow` carries it, and the decision's reason names it when present. A lane answer with both heads records `execution: "mixture"`; an answer without the execution head records none rather than inventing one. Pinned by unit tests over a two-head answer and a workload-only answer.
+- [x] **C2 — the execution head steers a judged walk.** A `Walk::Judged` selection whose verdict is `mixture` or `swarm` walks `ORCHESTRATOR_WORKLOAD`'s chain and its reason names why; `single` and an absent head walk the judged workload's chain. The leader's walk is unchanged. Pinned by a `select_walk` test with a scripted sys1 verdict for each execution label.
+- [x] **C3 — the leader hears a decomposition verdict.** The run's prompt carries one compiled-in line naming `subagent` when the decision's execution is `mixture` or `swarm`, and no line otherwise. As built, the line is read from the run's own route decision at prompt-assembly time — the same decision the `routed` event named, one source on every routed surface — and the head rides a `routed` session record beside the event so the reconstruction replays the same line (hard rule 5). A prompt test pins both.
+- [x] **C4 — the surfaces say it.** The `routed` event carries `execution` (a bridge test asserts the field from a decision that has one, and its absence when not), the Router board's live line renders it, and `FUNCTIONAL-SPECIFICATIONS.md` plus `docs/features/routing.md` name the two heads (a grep for `execution` in both prints the new lines). The gate is green.
+- [x] **C5 — one open, and no row left unjudged.** The counting test pins exactly one open for N rows and N asks on it; and a scripted N-row run lands one `route_judged` row per input row in the calibration stream — the same count the day carried before the change (81–162 per day on this machine, read 2026-10-23), so the collapse buys the boot cost and loses no judgment.
 
 ## Files to be touched
 
@@ -114,6 +114,26 @@ The tests named per criterion; the gate; and C5's live measurement on
 this machine. The capture rate the calibration stream already records
 (`route_judged` rows per day) is the regression guard: the beats must
 keep judging every row they judged before.
+
+## Notes — built 2026-10-25 (the 2026-10-23 audit stands below)
+
+All six criteria landed in one increment, gate green (fmt, clippy,
+release, 1,526 lib tests + every integration suite). The counting seam
+(`LaneSession`, `LaneSource::Counting`) pins C0/C5 for both beats: N
+rows → one open, N asks, one close, and a failed open refuses every
+remaining row by name without a second spawn. The scripted-lane mock
+grew an asks parameter — one classify entry per ask, the way a real
+lane serves a session — which is why the mock's three-entry script
+could not survive the collapse unchanged. C3's mechanism as built
+reads the head from the run's own route decision at prompt-assembly
+time (one source, every routed surface) and records it beside the
+`routed` event so the reconstruction replays the same line; the plan's
+`AgentOptions` carrier is superseded by that, named here rather than
+silently. C2's floors: the head steers only at or above the gate's own
+confidence floor, and a sub-floor head rides the row as evidence
+without steering. Live capture-rate measurement (the 81–162 rows/day
+guard) stays the next `fleet judge` run's own report — the invariant
+it guards (one row per input row) is pinned by the counting test.
 
 ## Notes — audited 2026-10-25, against commit history
 

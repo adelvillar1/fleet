@@ -3555,7 +3555,18 @@
       ['workload', route.workload || 'none judged'],
       ['verdict', route.verdict || '\u2014'],
       ['judged from', route.judged_from || 'none']
-    ].forEach(function (pair) {
+    ];
+    // The second head, when the lane judged it (C4): the topology
+    // verdict beside the workload's, with the head's own confidence.
+    // A workload-only answer adds no row — the absence is not a dash
+    // nobody reads.
+    if (route.execution) {
+      facts.push(['execution', route.execution.label +
+        (typeof route.execution.confidence === 'number'
+          ? ' \u00b7 ' + route.execution.confidence.toFixed(2)
+          : '')]);
+    }
+    facts.forEach(function (pair) {
       var wrap = node('div', 'fact');
       wrap.appendChild(node('dt', null, pair[0]));
       wrap.appendChild(node('dd', null, pair[1]));
@@ -8171,6 +8182,7 @@
       route: function () {
         return (row.provider || '?') + ' \u2192 ' + (row.model || '?') +
           (row.workload ? ' \u00b7 ' + row.workload : '') +
+          (row.execution ? ' \u00b7 ' + row.execution.label : '') +
           (row.how ? ' \u00b7 ' + row.how +
             (row.judged_from ? ' (' + row.judged_from + ')' : '') : '');
       },

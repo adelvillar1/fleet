@@ -230,6 +230,14 @@ head, the rail and the panels keep the measure they have.
   routed over its own brief.
 - A verdict below the confidence gate promotes the default workload,
   and the row says so — a gated route is a fallback, not a judgment.
+- The judgment is two heads in one call: the workload and the execution
+  topology (`single`/`mixture`/`swarm`). The execution head rides the
+  decision, the calibration row, and the `routed` event; a delegated
+  child's walk whose head read `mixture` or `swarm` walks the `hard`
+  chain with the reason naming the head, and the leader's prompt gains
+  one line naming `subagent` when the head named a decomposition. A
+  workload-only answer records no execution head — never an invented
+  one.
 - A mid-stream failure is fatal rather than a failover.
 - A run that stops after tool work with no message — or a bare "done" —
   is asked once for its closing report; the ask is visible on every

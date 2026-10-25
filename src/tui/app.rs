@@ -3052,6 +3052,9 @@ fn entry_of(record: &Record) -> Option<Entry> {
         // Bookkeeping: the standing goal rides the prompt, and the run
         // card is where a TUI reads it.
         Record::Goal { .. } => None,
+        // Bookkeeping: the execution head rides the prompt's one line
+        // (C3), and the route strip names it — not a conversation block.
+        Record::Routed { .. } => None,
         // Bookkeeping: the channel a peer arrived on is not a
         // conversation block.
         Record::Channel { .. } => None,
@@ -4550,6 +4553,7 @@ mod tests {
             judged_from: "fresh".to_string(),
             reason: "the orchestrator walks hard's chain".to_string(),
             order: vec![("stepfun".to_string(), "step-5-preview".to_string())],
+            execution: None,
         }
     }
 

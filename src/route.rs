@@ -1185,6 +1185,28 @@ impl How {
     }
 }
 
+/// The execution head's answer, when the lane judged it: the topology
+/// label (`single`/`mixture`/`swarm`) and the head's own confidence.
+/// Evidence, not a command — what steers is decided at the walk.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ExecutionHead {
+    pub label: String,
+    pub confidence: f64,
+}
+
+/// One judgment over one task: the workload head the route serves from,
+/// the lane's confidence in it, the top-level verdict, and the
+/// execution head when the lane answered it. The second head was judged
+/// and paid for on every routed run before this type existed; reading
+/// it is C1 (plan 2026-10-23-judgment-beats-one-lane.md).
+#[derive(Debug, Clone, PartialEq)]
+pub struct RouteJudgment {
+    pub workload: String,
+    pub confidence: f64,
+    pub verdict: String,
+    pub execution: Option<ExecutionHead>,
+}
+
 /// One routing decision, made once per session before the run.
 #[derive(Debug, Clone)]
 pub struct RouteDecision {
@@ -1199,6 +1221,11 @@ pub struct RouteDecision {
     pub workload: Option<String>,
     /// sys1's verdict (`pass`/`escalate`/`block`/`error`), when there was one.
     pub verdict: Option<String>,
+    /// sys1's execution head, when the lane judged it — the topology
+    /// verdict (`single`/`mixture`/`swarm`) beside the workload's. The
+    /// row and the `routed` event carry it; a judged walk may steer by
+    /// it (C2). Absent when the lane answered the workload only.
+    pub execution: Option<ExecutionHead>,
     /// Why this route, in one line — the decision row and the status bar
     /// both read it.
     pub reason: String,
@@ -1261,6 +1288,7 @@ pub fn workload_decision(workload: &str) -> Option<RouteDecision> {
         with_default_tail(order),
         How::Judged,
         Some(workload.to_string()),
+        None,
         None,
         format!("the {workload} workload's own chain"),
         JudgedFrom::None,
@@ -1366,6 +1394,7 @@ pub async fn select_walk_with_home(
                         How::Pinned,
                         None,
                         None,
+                        None,
                         format!("pinned to {provider}/{model}"),
                         JudgedFrom::None,
                     ),
@@ -1390,20 +1419,20 @@ pub async fn select_walk_with_home(
     // own number, named where it changed the route. A gated route is a
     // FALLBACK, not a judgment: the row must not claim sys1 chose it.
     let (workload, verdict, _confidence, gate_note, gated) = match &judged {
-        Some((label, confidence, verdict)) if *confidence >= gates.min_confidence => (
-            label.clone(),
-            Some(verdict.clone()),
-            *confidence,
+        Some(judgment) if judgment.confidence >= gates.min_confidence => (
+            judgment.workload.clone(),
+            Some(judgment.verdict.clone()),
+            judgment.confidence,
             String::new(),
             false,
         ),
-        Some((label, confidence, _)) => (
+        Some(judgment) => (
             gates.default_workload.to_string(),
-            judged.as_ref().map(|(_, _, verdict)| verdict.clone()),
-            *confidence,
+            Some(judgment.verdict.clone()),
+            judgment.confidence,
             format!(
-                "sys1 judged `{label}` at {confidence:.2}, below the {:.2} gate; ",
-                gates.min_confidence
+                "sys1 judged `{}` at {:.2}, below the {:.2} gate; ",
+                judgment.workload, judgment.confidence, gates.min_confidence
             ),
             true,
         ),
@@ -1415,22 +1444,49 @@ pub async fn select_walk_with_home(
             true,
         ),
     };
+    // The execution head rides the decision whatever the workload did
+    // (C1: evidence before behaviour) — the row and the `routed` event
+    // name it, and the walk may steer by it below.
+    let execution = judged
+        .as_ref()
+        .and_then(|judgment| judgment.execution.clone());
 
     // The orchestrator's ruling, narrowed to the leader: the leading
     // session's walk leaves the judged workload here, because the first
     // model a run loads is the planner, so its chain is
     // `ORCHESTRATOR_WORKLOAD`'s; the judgment still ran and the row still
     // records its label. Every other route walks the judged workload's
-    // own chain — the judgment decides what serves. A table without the
+    // own chain — the judgment decides what serves — except for the one
+    // steer C2 adds: a judged walk whose execution head read `mixture`
+    // or `swarm` at or above the confidence floor walks the
+    // orchestrator's chain, because that is the planner tier, the one
+    // whose model can plan a decomposition. The head's own confidence
+    // clears the same floor the workload's does; below it the head rides
+    // the row as evidence but does not steer. A table without the
     // orchestrator workload falls back to the judged chain either way.
+    let execution_steer = walk == Walk::Judged
+        && execution.as_ref().is_some_and(|head| {
+            matches!(head.label.as_str(), "mixture" | "swarm")
+                && head.confidence >= gates.min_confidence
+        });
     let walked = match walk {
         Walk::Leader if preference_for(table, ORCHESTRATOR_WORKLOAD).is_some() => {
+            ORCHESTRATOR_WORKLOAD
+        }
+        _ if execution_steer && preference_for(table, ORCHESTRATOR_WORKLOAD).is_some() => {
             ORCHESTRATOR_WORKLOAD
         }
         Walk::Leader | Walk::Judged => workload.as_str(),
     };
     let orchestrator_note = if walked == workload {
         String::new()
+    } else if execution_steer {
+        let head = execution.as_ref().expect("the steer names its head");
+        format!(
+            "the judgment named this request `{}` ({:.2}): the orchestrator's chain is the \
+             planner tier; ",
+            head.label, head.confidence
+        )
     } else {
         format!("the orchestrator walks `{ORCHESTRATOR_WORKLOAD}`'s chain; ")
     };
@@ -1468,48 +1524,68 @@ pub async fn select_walk_with_home(
                 .filter(|(provider, _)| admissible(resolved, provider, &gates))
                 .map(|(provider, model)| (provider.to_string(), model.to_string()))
                 .collect();
-            let (order, reason) =
-                if order.is_empty() {
-                    // The walked workload names no candidate from the pinned
-                    // provider: the provider's own default model serves,
-                    // and the reason says so rather than silently
-                    // substituting some other provider. A provider the gate
-                    // disallows gets no such substitution — the empty order
-                    // falls to the fallback, which is filtered the same way.
-                    match provider_pin {
+            let (order, reason) = if order.is_empty() {
+                // The walked workload names no candidate from the pinned
+                // provider: the provider's own default model serves,
+                // and the reason says so rather than silently
+                // substituting some other provider. A provider the gate
+                // disallows gets no such substitution — the empty order
+                // falls to the fallback, which is filtered the same way.
+                match provider_pin {
                     Some(pin)
                         if admissible(
                             resolved,
-                            pin.split_once('/').map(|(provider, _)| provider).unwrap_or(pin),
+                            pin.split_once('/')
+                                .map(|(provider, _)| provider)
+                                .unwrap_or(pin),
                             &gates,
                         ) =>
-                    (
-                        vec![(
-                            pin.to_string(),
-                            resolved
-                                .iter()
-                                .find(|entry| entry.id() == pin)
-                                .map(|entry| entry.candidate.model().to_string())
-                                .unwrap_or_default(),
-                        )],
-                        format!("`{walked}` names no {pin} candidate; using {pin}'s default model"),
-                    ),
+                    {
+                        (
+                            vec![(
+                                pin.to_string(),
+                                resolved
+                                    .iter()
+                                    .find(|entry| entry.id() == pin)
+                                    .map(|entry| entry.candidate.model().to_string())
+                                    .unwrap_or_default(),
+                            )],
+                            format!(
+                                "`{walked}` names no {pin} candidate; using {pin}'s default model"
+                            ),
+                        )
+                    }
                     Some(pin) => (
                         Vec::new(),
-                        format!(
-                            "pinned to {pin}, but the gates disallow API models; "
-                        ),
+                        format!("pinned to {pin}, but the gates disallow API models; "),
                     ),
                     None => (Vec::new(), format!("`{walked}`'s preference is empty")),
                 }
+            } else {
+                // The execution head names itself in the reason
+                // whenever it was judged — steering or not — so the
+                // row is evidence first (C1). When it steered, the
+                // orchestrator note already carries label and
+                // confidence; when it did not, a short clause does.
+                let execution_note = if execution_steer {
+                    String::new()
                 } else {
-                    let reason = if let Some(pin) = provider_pin {
-                        format!("pinned to {pin}; sys1 judged `{workload}`; {orchestrator_note}")
-                    } else {
-                        format!("sys1 judged `{workload}`; {orchestrator_note}")
-                    };
-                    (order, reason)
+                    match &execution {
+                        Some(head) => {
+                            format!("execution `{}` ({:.2}); ", head.label, head.confidence)
+                        }
+                        None => String::new(),
+                    }
                 };
+                let reason = if let Some(pin) = provider_pin {
+                    format!(
+                            "pinned to {pin}; sys1 judged `{workload}`; {execution_note}{orchestrator_note}"
+                        )
+                } else {
+                    format!("sys1 judged `{workload}`; {execution_note}{orchestrator_note}")
+                };
+                (order, reason)
+            };
             let note = format!(
                 "{}{}",
                 unknown_pin.as_deref().unwrap_or_default(),
@@ -1537,6 +1613,7 @@ pub async fn select_walk_with_home(
                     how,
                     Some(workload.clone()),
                     verdict.clone(),
+                    execution.clone(),
                     format!("{note}{reason}"),
                     judged_from,
                 )
@@ -1566,11 +1643,13 @@ pub async fn select_walk_with_home(
 
 /// A decision over an explicit walk order — the one construction, so
 /// the order, the target, and the model can never disagree.
+#[allow(clippy::too_many_arguments)]
 fn decision_from(
     order: Vec<(String, String)>,
     how: How,
     workload: Option<String>,
     verdict: Option<String>,
+    execution: Option<ExecutionHead>,
     reason: String,
     judged_from: JudgedFrom,
 ) -> RouteDecision {
@@ -1593,6 +1672,7 @@ fn decision_from(
         how,
         workload,
         verdict,
+        execution,
         reason,
         judged_from,
         start_index,
@@ -1643,6 +1723,7 @@ fn fallback(
     let mut decision = decision_from(
         with_tail(order, resolved, &gates),
         How::Fallback,
+        None,
         None,
         None,
         reason.to_string(),
@@ -1841,7 +1922,7 @@ async fn judge(
     task: &str,
     specs: &HashMap<String, ServerSpec>,
     mut cache: Option<&mut crate::route_cache::Cache>,
-) -> (Option<(String, f64, String)>, JudgedFrom) {
+) -> (Option<RouteJudgment>, JudgedFrom) {
     let spec = match specs.get(JUDGE_LANE) {
         Some(spec) => spec.clone(),
         None => match lanes::spec_for(JUDGE_LANE) {
@@ -1872,11 +1953,12 @@ async fn judge(
         if cache.keyed_for(&key) {
             if let Some(recorded) = cache.get(&hash) {
                 return (
-                    Some((
-                        recorded.workload.clone(),
-                        recorded.confidence,
-                        recorded.verdict.clone(),
-                    )),
+                    Some(RouteJudgment {
+                        workload: recorded.workload.clone(),
+                        confidence: recorded.confidence,
+                        verdict: recorded.verdict.clone(),
+                        execution: recorded.execution.clone(),
+                    }),
                     JudgedFrom::Cached,
                 );
             }
@@ -1899,13 +1981,14 @@ async fn judge(
     // The write-through: a verdict the lane actually made is recorded
     // for the next run. A failed write costs a recompute and nothing
     // else — the cache never blocks a route.
-    if let (Some(cache), Some((workload, confidence, verdict))) = (cache, outcome.as_ref()) {
+    if let (Some(cache), Some(outcome)) = (cache, outcome.as_ref()) {
         cache.put(
             hash,
             crate::route_cache::Verdict {
-                workload: workload.clone(),
-                confidence: *confidence,
-                verdict: verdict.clone(),
+                workload: outcome.workload.clone(),
+                confidence: outcome.confidence,
+                verdict: outcome.verdict.clone(),
+                execution: outcome.execution.clone(),
             },
         );
         cache.flush(&crate::route_cache::Cache::key_for(&spec));
@@ -1916,7 +1999,7 @@ async fn judge(
 /// The live judgment over an already-spawned sys1 server. The call shape
 /// is the tool's own schema (`tools/list`): `sys1_classify` takes `text`
 /// (required) and `task` (the registered task name).
-async fn judge_live(server: &McpServer, task: &str) -> Option<(String, f64, String)> {
+async fn judge_live(server: &McpServer, task: &str) -> Option<RouteJudgment> {
     server.initialize().await.ok()?;
     let call = server
         .call_tool("sys1_classify", json!({ "task": JUDGE_TASK, "text": task }))
@@ -1925,14 +2008,19 @@ async fn judge_live(server: &McpServer, task: &str) -> Option<(String, f64, Stri
     parse_workload(&call.text())
 }
 
-/// Read the workload verdict out of a `sys1_classify` answer. The answer's
-/// text is a JSON object whose `answers` maps provider id → head id →
-/// answer; the routing signal is the `workload` head's `label` and its
-/// `confidence`. The top-level `verdict` rides along for the decision
-/// row. A missing or empty workload label is `None` (an unusable verdict
-/// → fallback); a missing confidence reads as 0.0, which the gate then
-/// routes to the default workload.
-fn parse_workload(text: &str) -> Option<(String, f64, String)> {
+/// Read the workload verdict — and the execution head beside it — out
+/// of a `sys1_classify` answer. The answer's text is a JSON object whose
+/// `answers` maps provider id → head id → answer; the routing signal is
+/// the `workload` head's `label` and its `confidence`, and the
+/// execution head's label/confidence ride the same answer when the lane
+/// judged them (the sys1 `route` task judges both heads in one call;
+/// C1 stops discarding the second). The top-level `verdict` rides along
+/// for the decision row. A missing or empty workload label is `None`
+/// (an unusable verdict → fallback); a missing confidence reads as 0.0,
+/// which the gate then routes to the default workload. An answer
+/// without the execution head records none — the absence is never
+/// invented.
+fn parse_workload(text: &str) -> Option<RouteJudgment> {
     let value: serde_json::Value = serde_json::from_str(text).ok()?;
     let verdict = value
         .get("verdict")
@@ -1954,7 +2042,29 @@ fn parse_workload(text: &str) -> Option<(String, f64, String)> {
                     .get("confidence")
                     .and_then(|c| c.as_f64())
                     .unwrap_or(0.0);
-                return Some((label.to_string(), confidence, verdict));
+                let execution = heads
+                    .get("execution")
+                    .and_then(|execution| execution.as_object())
+                    .and_then(|execution| {
+                        let label = execution
+                            .get("label")
+                            .and_then(|label| label.as_str())
+                            .filter(|label| !label.is_empty())?;
+                        let confidence = execution
+                            .get("confidence")
+                            .and_then(|c| c.as_f64())
+                            .unwrap_or(0.0);
+                        Some(ExecutionHead {
+                            label: label.to_string(),
+                            confidence,
+                        })
+                    });
+                return Some(RouteJudgment {
+                    workload: label.to_string(),
+                    confidence,
+                    verdict,
+                    execution,
+                });
             }
         }
     }
@@ -2355,6 +2465,7 @@ impl Router {
             how: self.decision.how.label().to_string(),
             workload: self.decision.workload.clone(),
             verdict: self.decision.verdict.clone(),
+            execution: self.decision.execution.clone(),
             reason,
             model,
             providers_used,
@@ -3428,7 +3539,12 @@ mod tests {
         );
         assert_eq!(
             workload,
-            Some(("hard".to_string(), 0.9, "pass".to_string()))
+            Some(RouteJudgment {
+                workload: "hard".to_string(),
+                confidence: 0.9,
+                verdict: "pass".to_string(),
+                execution: None,
+            })
         );
         // A missing confidence reads as 0.0 — the gate then routes to
         // the default workload rather than trusting a guess.
@@ -3437,8 +3553,43 @@ mod tests {
         );
         assert_eq!(
             no_confidence,
-            Some(("hard".to_string(), 0.0, "pass".to_string()))
+            Some(RouteJudgment {
+                workload: "hard".to_string(),
+                confidence: 0.0,
+                verdict: "pass".to_string(),
+                execution: None,
+            })
         );
+    }
+
+    #[test]
+    fn a_two_head_answer_reads_both_and_a_workload_only_answer_invents_none() {
+        // C1: the lane's one call answers both heads; the second head's
+        // label and confidence ride the judgment instead of being
+        // discarded — the seam the router deep dive named.
+        let both = parse_workload(
+            r#"{"verdict":"pass","answers":{"glide":{
+                "workload":{"label":"hard","confidence":0.88},
+                "execution":{"label":"mixture","confidence":0.86}}}}"#,
+        );
+        assert_eq!(
+            both,
+            Some(RouteJudgment {
+                workload: "hard".to_string(),
+                confidence: 0.88,
+                verdict: "pass".to_string(),
+                execution: Some(ExecutionHead {
+                    label: "mixture".to_string(),
+                    confidence: 0.86,
+                }),
+            })
+        );
+        // A workload-only answer records no execution head — the
+        // absence is named, never invented.
+        let one = parse_workload(
+            r#"{"verdict":"pass","answers":{"glide":{"workload":{"label":"hard","confidence":0.9}}}}"#,
+        );
+        assert_eq!(one.expect("the workload reads").execution, None);
     }
 
     #[test]
@@ -3476,6 +3627,7 @@ mod tests {
                 workload: "deep_research".to_string(),
                 confidence: 0.9,
                 verdict: "pass".to_string(),
+                execution: None,
             },
         );
         // The judge lane's spec, so the cache's key matches the lane
@@ -3489,7 +3641,7 @@ mod tests {
 
         let (verdict, from) = judge("a task", &specs, Some(&mut cache)).await;
         assert_eq!(
-            verdict.map(|(workload, _, _)| workload),
+            verdict.map(|judgment| judgment.workload),
             Some("deep_research".to_string()),
             "the recorded verdict is served"
         );
@@ -4085,6 +4237,7 @@ mod tests {
             how: How::Judged,
             workload: Some("hard".to_string()),
             verdict: Some("pass".to_string()),
+            execution: None,
             reason: "sys1 judged `hard`".to_string(),
             judged_from: crate::route::JudgedFrom::Fresh,
             start_index: 0,
@@ -4344,6 +4497,7 @@ mod tests {
             how: How::Fallback,
             workload: None,
             verdict: None,
+            execution: None,
             reason: "test".to_string(),
             judged_from: crate::route::JudgedFrom::Fresh,
             start_index: 0,
@@ -4374,6 +4528,7 @@ mod tests {
             how: How::Judged,
             workload: Some("hard".to_string()),
             verdict: None,
+            execution: None,
             reason: "test".to_string(),
             judged_from: crate::route::JudgedFrom::Fresh,
             start_index: 0,
@@ -4616,6 +4771,7 @@ mod tests {
             how: How::Fallback,
             workload: None,
             verdict: None,
+            execution: None,
             reason: "sys1 gave no usable verdict".to_string(),
             judged_from: crate::route::JudgedFrom::Fresh,
             start_index: 0,
@@ -4902,6 +5058,7 @@ mod tests {
             How::Judged,
             Some("hard".to_string()),
             None,
+            None,
             "sys1 judged `hard`; ".to_string(),
             JudgedFrom::Fresh,
         );
@@ -4944,6 +5101,7 @@ mod tests {
         let pinned = decision_from(
             vec![(TAIL_PROVIDER.to_string(), "deepseek-flash".to_string())],
             How::Pinned,
+            None,
             None,
             None,
             "pinned to deepseek/deepseek-flash".to_string(),
@@ -5067,6 +5225,147 @@ mod tests {
         assert!(unknown.contains("names no roster provider"), "{unknown}");
         let nobody = resolve_model_pin(&home, "no-such-model").expect_err("nobody serves it");
         assert!(nobody.contains("no roster provider serves"), "{nobody}");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[tokio::test]
+    async fn the_execution_head_steers_a_judged_walk_by_label() {
+        // C2: a judged walk whose execution head read `mixture` or
+        // `swarm` at or above the gate walks the orchestrator's chain —
+        // the planner tier. `single`, an absent head, and a head below
+        // the gate's floor walk the judged workload's own chain, with
+        // the head still naming itself in the decision and the row.
+        // The verdict is scripted through the route-decision cache (the
+        // KI-230 seam: a recorded judgment is a made judgment), so no
+        // lane spawns.
+        let home = std::env::temp_dir().join(format!(
+            "fleet-route-exec-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        let resolved = keyed_default_roster();
+        let table = default_preferences();
+        let gates = Gates::default();
+        // The real judge spec, as the KI-230 seam pins it: the cache
+        // answers before any spawn, so the lane is never launched on a
+        // hit — and a hit requires the file's key to be the key the
+        // spec computes (a mismatched key clears the entries).
+        let judge_spec = lanes::spec_for(JUDGE_LANE).expect("the vendored sys1 lane resolves");
+        let mut specs = HashMap::new();
+        specs.insert(JUDGE_LANE.to_string(), judge_spec.clone());
+
+        let seed = |cache: &mut crate::route_cache::Cache, label: &str, confidence: f64| {
+            cache.put(
+                calib::hash16("a task"),
+                crate::route_cache::Verdict {
+                    workload: "prose".to_string(),
+                    confidence: 0.9,
+                    verdict: "pass".to_string(),
+                    execution: Some(ExecutionHead {
+                        label: label.to_string(),
+                        confidence,
+                    }),
+                },
+            );
+            cache.flush(&crate::route_cache::Cache::key_for(&judge_spec));
+        };
+        let seed_absent = |cache: &mut crate::route_cache::Cache| {
+            cache.put(
+                calib::hash16("a task"),
+                crate::route_cache::Verdict {
+                    workload: "prose".to_string(),
+                    confidence: 0.9,
+                    verdict: "pass".to_string(),
+                    execution: None,
+                },
+            );
+            cache.flush(&crate::route_cache::Cache::key_for(&judge_spec));
+        };
+
+        let hard_head = preference_for(&table, ORCHESTRATOR_WORKLOAD)
+            .expect("hard")
+            .candidates[0];
+        let prose_head = preference_for(&table, "prose").expect("prose").candidates[0];
+
+        // mixture and swarm steer; single and a sub-floor head do not.
+        for (label, confidence, steers) in [
+            ("mixture", 0.86, true),
+            ("swarm", 0.90, true),
+            ("single", 0.90, false),
+            ("mixture", 0.40, false), // below the gate's floor: evidence, not a steer
+        ] {
+            let mut cache = crate::route_cache::Cache::load(&home);
+            seed(&mut cache, label, confidence);
+            let (child, _) = select_walk(
+                &resolved,
+                None,
+                "a task",
+                &specs,
+                &table,
+                gates,
+                Some(&mut cache),
+                Walk::Judged,
+            )
+            .await;
+            let head = if steers { hard_head } else { prose_head };
+            assert_eq!(
+                (child.order[0].0.as_str(), child.order[0].1.as_str()),
+                head,
+                "`{label}` at {confidence:.2} steers={steers}"
+            );
+            // The head rides the decision whatever it did (C1), and the
+            // row carries it.
+            let carried = child.execution.clone().expect("the head is recorded");
+            assert_eq!(carried.label, label);
+            assert_eq!(carried.confidence, confidence);
+            let row = Router::new(resolved.clone(), child).row("a task", 0);
+            assert_eq!(
+                row.execution.as_ref().map(|head| head.label.as_str()),
+                Some(label)
+            );
+            assert!(
+                row.workload.as_deref() == Some("prose"),
+                "the judged workload is recorded"
+            );
+            if steers {
+                assert!(
+                    row.reason.contains("planner tier") && row.reason.contains(label),
+                    "the reason names the steer: {}",
+                    row.reason
+                );
+            } else {
+                assert!(
+                    row.reason.contains("execution `") && !row.reason.contains("planner tier"),
+                    "the head names itself without steering: {}",
+                    row.reason
+                );
+            }
+        }
+
+        // The absent head: no execution field at all, and no invention.
+        let mut cache = crate::route_cache::Cache::load(&home);
+        seed_absent(&mut cache);
+        let (child, _) = select_walk(
+            &resolved,
+            None,
+            "a task",
+            &specs,
+            &table,
+            gates,
+            Some(&mut cache),
+            Walk::Judged,
+        )
+        .await;
+        assert_eq!(child.execution, None);
+        assert_eq!(
+            (child.order[0].0.as_str(), child.order[0].1.as_str()),
+            prose_head,
+            "an absent head walks the judged workload's own chain"
+        );
+        let row = Router::new(resolved, child).row("a task", 0);
+        assert_eq!(row.execution, None, "the row records no invention");
         let _ = std::fs::remove_dir_all(&home);
     }
 }

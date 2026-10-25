@@ -7,6 +7,7 @@
 
 use super::*;
 
+use crate::mcp::ServerSpec;
 use std::path::PathBuf;
 
 /// The card without its ANSI escapes, so a test reads the text an
@@ -298,7 +299,12 @@ fn parent_log(dir: &Path, session: &str, child: &str, continued: bool) -> PathBu
 
 /// A scripted MCP lane: the `mock-mcp` child over a script whose one
 /// `tools/call` answers with `reply`.
-fn scripted_lane(reply: &str) -> Option<ServerSpec> {
+/// The scripted lane over `asks` classify entries: a session answers
+/// every row on one spawn (C0), so the mock serves one reply per ask —
+/// the same one script entry per request the `mock-mcp` binary
+/// documents. A script with a single classify entry served the old
+/// per-ask spawn; under the session it would close mid-batch.
+fn scripted_lane(reply: &str, asks: usize) -> Option<ServerSpec> {
     let bin = crate::eval::mock_mcp_binary()?;
     let scratch = scratch("lane-script");
     let entries = [
@@ -320,6 +326,22 @@ fn scripted_lane(reply: &str) -> Option<ServerSpec> {
             "result": { "content": [{ "type": "text", "text": reply }], "isError": false },
         } }),
     ];
+    // One classify entry per ask: the session asks once per row.
+    let entries = entries
+        .into_iter()
+        .flat_map(|entry| {
+            if entry
+                .get("reply")
+                .and_then(|reply| reply.get("result"))
+                .and_then(|result| result.get("content"))
+                .is_some()
+            {
+                (0..asks).map(|_| entry.clone()).collect::<Vec<_>>()
+            } else {
+                vec![entry]
+            }
+        })
+        .collect::<Vec<_>>();
     let script = entries
         .iter()
         .map(|entry| format!("{entry}\n"))
@@ -361,7 +383,21 @@ async fn judge_over(
     dry_run: bool,
     reply: &str,
 ) -> JudgeOutcome {
-    let lane = scripted_lane(reply).expect("the scripted lane");
+    judge_over_asks(home, root, day, dry_run, reply, 1).await
+}
+
+/// [`judge_over`] over a day the test knows carries `asks` rows: the
+/// scripted lane serves one classify reply per ask, the way the
+/// session's one spawn serves every row (C0).
+async fn judge_over_asks(
+    home: &Path,
+    root: &Path,
+    day: &str,
+    dry_run: bool,
+    reply: &str,
+    asks: usize,
+) -> JudgeOutcome {
+    let lane = scripted_lane(reply, asks).expect("the scripted lane");
     judge(JudgeRequest {
         root,
         home,
@@ -2177,7 +2213,9 @@ async fn an_over_budget_day_is_refused_naming_the_spend_on_a_mixed_day() {
         "cost_usd": 0.049,
     })
     .to_string();
-    let outcome = judge_over(&home, &root, &day(), false, &reply).await;
+    // Three rows, two asked: the scripted lane serves one classify
+    // reply per ask on the session's one spawn (C0).
+    let outcome = judge_over_asks(&home, &root, &day(), false, &reply, 2).await;
 
     // Two judged, one refused, and the refusal names both numbers.
     assert_eq!(outcome.judged.len(), 2, "{:?}", outcome.refusals);

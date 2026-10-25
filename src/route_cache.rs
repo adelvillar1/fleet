@@ -48,6 +48,12 @@ pub struct Verdict {
     pub confidence: f64,
     /// The lane's verdict (`pass`/`escalate`/`block`/`error`).
     pub verdict: String,
+    /// The execution head when the lane judged it (C1). Absent on
+    /// entries written before the head was read, which deserialize as
+    /// none — the same named absence a workload-only lane answer
+    /// records.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution: Option<crate::route::ExecutionHead>,
 }
 
 /// The loaded cache: the key it was written under, one entry per task
@@ -218,6 +224,7 @@ mod tests {
             workload: "hard".to_string(),
             confidence: 0.91,
             verdict: "pass".to_string(),
+            execution: None,
         }
     }
 
@@ -372,6 +379,7 @@ mod tests {
                 workload: "deep_research".to_string(),
                 confidence: 0.8,
                 verdict: "pass".to_string(),
+                execution: None,
             },
         );
         cache.put(
@@ -380,6 +388,7 @@ mod tests {
                 workload: "hard".to_string(),
                 confidence: 0.7,
                 verdict: "escalate".to_string(),
+                execution: None,
             },
         );
         let stats = cache.stats();

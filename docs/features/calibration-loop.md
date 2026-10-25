@@ -19,7 +19,11 @@ shape tied to the word phrases that were recorded during the resolution
 are key information."*
 
 Applied here, concretely: **the calibration is keyed by
-(provider × workload shape), never by provider alone.** A provider that
+(provider × workload shape), never by provider alone.** A route row
+also carries the judgment's **execution head** (`single`/`mixture`/
+`swarm`) beside the workload's, when the lane answered it — the second
+head the `route` task judges in the same call — so the stream can count
+the topology split the same way it counts the workload mix. A provider that
 is right for `hard` and wrong for `prose` must not be averaged into one
 wrong-rate — that average is exactly the wrong-context failure the
 owner names. Every computation in this slice is per **cell**:

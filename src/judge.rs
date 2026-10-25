@@ -52,6 +52,8 @@
 //! no checkout dependency.
 
 use std::path::Path;
+#[cfg(test)]
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use serde_json::{json, Value};
@@ -153,7 +155,9 @@ const AVAILABILITY_CLASSES: [&str; 7] = [
 /// Where the ask's lane comes from: the vendored registry on the real
 /// path, or an injected spec a test or the eval corpus scripts. The seam
 /// is the same one either way — [`crate::mcp::ServerSpec`] through the
-/// MCP client, exactly as the agent's lane roster resolves one.
+/// MCP client, exactly as the agent's lane roster resolves one. Both
+/// beats ([`crate::delegate`] included) resolve through this one enum —
+/// one lane source, one session, not a second loop (C0).
 #[derive(Debug, Clone)]
 pub enum LaneSource {
     /// The vendored sys1 lane, resolved through [`crate::lanes::spec_for`].
@@ -161,6 +165,23 @@ pub enum LaneSource {
     /// A scripted lane: the spec a caller built, so no paid call and no
     /// live service stands between the beat and its grade.
     Scripted(ServerSpec),
+    /// The counting session: a scripted lane that records its own
+    /// open/ask/close events instead of spawning a process, so a test
+    /// can pin one open, N asks, one close. Test-only — the counting
+    /// seam C0's tests pin the beats through.
+    #[cfg(test)]
+    Counting(Arc<Mutex<CountingLog>>),
+}
+
+/// The counting session's shared log: the events in order, and whether
+/// the session is scripted to refuse its open (the second half of the
+/// C0 seam — a lane that fails to open refuses every row by name
+/// without a second spawn).
+#[cfg(test)]
+#[derive(Debug, Default)]
+pub struct CountingLog {
+    pub events: Vec<&'static str>,
+    pub fail_open: bool,
 }
 
 /// One judgment batch's request.
@@ -594,52 +615,140 @@ fn string_field(object: &serde_json::Map<String, Value>, key: &str) -> Option<St
 
 /// The lane's spec for this request: the vendored registry's, or the
 /// injected one. A registry that cannot resolve the lane names its
-/// reason — that is the fail-open, not a silent absence.
-fn lane_spec(source: &LaneSource) -> Result<ServerSpec, String> {
+/// reason — that is the fail-open, not a silent absence. Both beats
+/// resolve through this one function, each with its own lane name.
+pub(crate) fn lane_spec(source: &LaneSource, lane: &str) -> Result<ServerSpec, String> {
     match source {
-        LaneSource::Vendored => crate::lanes::spec_for(JUDGE_LANE),
+        LaneSource::Vendored => crate::lanes::spec_for(lane),
         LaneSource::Scripted(spec) => Ok(spec.clone()),
+        #[cfg(test)]
+        LaneSource::Counting(_) => Err("the counting session resolves no spec".to_string()),
     }
 }
 
-/// One bounded ask to the lane, over the same seam the routing judgment
-/// walks: resolve the spec, spawn the child, handshake, list its tools,
-/// call `sys1_classify`, tear the child down. One ask, bounded by the
-/// MCP client's own timeouts, and every failure named: an unconfigured
-/// lane, a child that will not spawn, a handshake that times out, a tool
-/// the lane does not declare, a call the lane refused, an answer that is
-/// not the structured content it promises, and a lane that failed open.
-async fn ask_lane(source: &LaneSource, prompt: &str) -> Result<JudgeReply, String> {
-    let spec = lane_spec(source)?;
-    let server =
-        McpServer::spawn(&spec).map_err(|error| format!("the lane could not start: {error}"))?;
-    server
-        .initialize()
-        .await
-        .map_err(|error| format!("the lane's handshake failed: {error}"))?;
-    let tools = server
-        .list_tools()
-        .await
-        .map_err(|error| format!("the lane's tool list failed: {error}"))?;
-    if !tools.iter().any(|tool| tool.name == JUDGE_TOOL) {
-        server.close().await.ok();
-        return Err(format!(
-            "lane `{JUDGE_LANE}` declares no `{JUDGE_TOOL}` tool — it cannot judge a route"
-        ));
+/// One lane session (C0): open once — resolve, spawn, handshake, tools
+/// check — ask per row, close once. The beats' loop opens lazily before
+/// the first row that will ask and closes on its one exit path; an open
+/// that failed refuses the remaining rows by name without a second
+/// spawn (the loop keeps the failure and never re-opens). The counting
+/// session answers the open/ask/close events into a shared log instead
+/// of spawning a process, which is the seam C0's and C5's tests pin.
+pub struct LaneSession {
+    server: Option<McpServer>,
+    tool: &'static str,
+    task: &'static str,
+    #[cfg(test)]
+    counting: Option<Arc<Mutex<CountingLog>>>,
+}
+
+impl LaneSession {
+    /// Open the session: one spawn, one handshake, one tools check. A
+    /// lane that fails any of these returns the named error and the
+    /// caller never opens again this run.
+    pub async fn open(
+        source: &LaneSource,
+        lane: &str,
+        tool: &'static str,
+        task: &'static str,
+    ) -> Result<LaneSession, String> {
+        #[cfg(test)]
+        if let LaneSource::Counting(log) = source {
+            let counting = Arc::clone(log);
+            counting.lock().unwrap().events.push("open");
+            if counting.lock().unwrap().fail_open {
+                return Err("the lane could not start: scripted to refuse".to_string());
+            }
+            return Ok(LaneSession {
+                server: None,
+                tool,
+                task,
+                counting: Some(counting),
+            });
+        }
+        let spec = lane_spec(source, lane)?;
+        let server = McpServer::spawn(&spec)
+            .map_err(|error| format!("the lane could not start: {error}"))?;
+        server
+            .initialize()
+            .await
+            .map_err(|error| format!("the lane's handshake failed: {error}"))?;
+        let tools = server
+            .list_tools()
+            .await
+            .map_err(|error| format!("the lane's tool list failed: {error}"))?;
+        if !tools.iter().any(|declared| declared.name == tool) {
+            server.close().await.ok();
+            return Err(format!(
+                "lane `{lane}` declares no `{tool}` tool — it cannot answer the beat's ask"
+            ));
+        }
+        Ok(LaneSession {
+            server: Some(server),
+            tool,
+            task,
+            #[cfg(test)]
+            counting: None,
+        })
     }
-    let arguments = json!({ "task": JUDGE_TASK, "text": prompt });
-    let result: CallResult = server
-        .call_tool(JUDGE_TOOL, arguments)
-        .await
-        .map_err(|error| format!("the lane refused the ask: {error}"))?;
-    server.close().await.ok();
-    if result.is_error {
-        return Err(format!("the lane refused the ask: {}", result.text()));
+
+    /// One bounded ask on the open session — one `sys1_classify` call,
+    /// bounded by the MCP client's own timeouts, the structured answer
+    /// parsed or named. The semantic reading (fail-open, the confidence
+    /// refusal) stays with the beat's own parser.
+    pub async fn ask(&mut self, prompt: &str) -> Result<Value, String> {
+        #[cfg(test)]
+        if let Some(counting) = &self.counting {
+            counting.lock().unwrap().events.push("ask");
+            // The lane's own wire shape, so both beats' parsers read it
+            // exactly as they read a real answer: the workload head
+            // under a provider, with the verdict and the reason riding
+            // along.
+            return Ok(json!({
+                "verdict": "pass",
+                "reason": "the counting session's scripted judgment",
+                "answers": {
+                    "glide": {
+                        "workload": {"label": "standard_code", "confidence": 0.9}
+                    }
+                }
+            }));
+        }
+        let server = self
+            .server
+            .as_ref()
+            .expect("an opened session carries its server");
+        let arguments = json!({ "task": self.task, "text": prompt });
+        let result: CallResult = server
+            .call_tool(self.tool, arguments)
+            .await
+            .map_err(|error| format!("the lane refused the ask: {error}"))?;
+        if result.is_error {
+            return Err(format!("the lane refused the ask: {}", result.text()));
+        }
+        let text = result.text();
+        serde_json::from_str(&text).map_err(|error| {
+            format!("the lane's answer was not the structured content it promises: {error}")
+        })
     }
-    let text = result.text();
-    let value: Value = serde_json::from_str(&text).map_err(|error| {
-        format!("the lane's answer was not the structured content it promises: {error}")
-    })?;
+
+    /// Close the session on the loop's one exit path. One close, per
+    /// open, whatever the rows did.
+    pub async fn close(self) {
+        #[cfg(test)]
+        if let Some(counting) = &self.counting {
+            counting.lock().unwrap().events.push("close");
+        }
+        if let Some(server) = self.server {
+            server.close().await.ok();
+        }
+    }
+}
+
+/// The judgment's semantic half: a structured lane answer in, the typed
+/// reply out — with the two refusals that guard the cell math. Split
+/// from the transport when the ask became a session (C0); the checks
+/// are unchanged.
+fn parse_judgment(value: Value) -> Result<JudgeReply, String> {
     let reply = JudgeReply::parse(&value);
     // The lane's own fail-open, named: an answer whose verdict is
     // `error`, or that carries no workload label, is the lane composing
@@ -934,6 +1043,13 @@ pub async fn judge(request: JudgeRequest<'_>) -> JudgeOutcome {
     }
 
     let mut spend = spent;
+    // The lane session (C0): opened lazily before the first row that
+    // will ask, one spawn for the whole batch, closed once on the one
+    // exit path below. An open that failed is kept and named: every
+    // remaining row refuses by that name and no second spawn is
+    // attempted.
+    let mut session: Option<LaneSession> = None;
+    let mut open_failure: Option<String> = None;
     for route in &routes {
         let key = calib::route_key(route);
         if already.contains(&key) {
@@ -979,9 +1095,40 @@ pub async fn judge(request: JudgeRequest<'_>) -> JudgeOutcome {
             continue;
         }
 
+        if let Some(failure) = open_failure.clone() {
+            refusals.push((
+                key,
+                format!(
+                    "{failure} — the batch refuses the remaining rows by name; the lane is \
+                         not spawned twice in one run"
+                ),
+            ));
+            continue;
+        }
+        if session.is_none() {
+            match LaneSession::open(&lane, JUDGE_LANE, JUDGE_TOOL, JUDGE_TASK).await {
+                Ok(opened) => session = Some(opened),
+                Err(error) => {
+                    open_failure.get_or_insert(error.clone());
+                    refusals.push((key, error));
+                    continue;
+                }
+            }
+        }
         let started = Instant::now();
-        let reply = match ask_lane(&lane, &prompt).await {
-            Ok(reply) => reply,
+        let reply = match session
+            .as_mut()
+            .expect("opened or refused above")
+            .ask(&prompt)
+            .await
+        {
+            Ok(value) => match parse_judgment(value) {
+                Ok(reply) => reply,
+                Err(reason) => {
+                    refusals.push((key, reason));
+                    continue;
+                }
+            },
             Err(reason) => {
                 refusals.push((key, reason));
                 continue;
@@ -1031,6 +1178,11 @@ pub async fn judge(request: JudgeRequest<'_>) -> JudgeOutcome {
         }
         spend += reply.cost_usd.unwrap_or(0.0);
         judged.push(row);
+    }
+    // The one exit path's close (C0): one spawn, one close, whatever the
+    // rows did — judged, refused, budget-stopped.
+    if let Some(session) = session.take() {
+        session.close().await;
     }
 
     let spent = if dry_run {

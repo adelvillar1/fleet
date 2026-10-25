@@ -52,6 +52,21 @@ declared HEAD and says so. Routing never blocks a run: sys1 that cannot
 launch or cannot judge is a fallback, not an error. A configured `pin`
 bypasses judgment entirely.
 
+**Two heads, one call.** The sys1 `route` task judges the workload and
+the execution topology (`single`, `mixture`, `swarm`) in one call. Both
+are read: the decision carries the execution head, the calibration
+`route` row records it, and the `routed` event, the Router board's live
+card, and the transcript's route strip all name it beside the
+workload's. A judged walk whose execution head read `mixture` or
+`swarm` at or above the confidence gate walks the orchestrator's chain
+— the planner tier, the one whose model can plan a decomposition — and
+the reason says the head did it; `single`, a sub-floor head, and an
+answer that named no execution head walk the judged workload's own
+chain, and the head still records what it said. The leading session's
+prompt also gains one compiled-in line naming `subagent` when the head
+named a decomposition, and no line otherwise. The head is evidence
+before it is behaviour.
+
 **The orchestrator walks `hard`.** The first model a run loads is the
 planner — it assigns the work and supervises it — so the walk leaves the
 judged workload at one point: the chain is `ORCHESTRATOR_WORKLOAD`'s

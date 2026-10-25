@@ -170,6 +170,17 @@ pub enum Record {
     Goal {
         text: String,
     },
+    /// The route decision's execution head, recorded once at run start
+    /// when the lane judged it (plan 2026-10-23-judgment-beats-one-lane.md,
+    /// C3). The head rides the system prompt as one compiled-in line in
+    /// the `## This request` section, so this record is what makes the
+    /// prompt the model saw reconstructable from the log (hard rule 5) —
+    /// the `skills`/`goal` records' precedent, for the line C3 adds.
+    /// Bookkeeping: it replays to no message. Absent on every log whose
+    /// lane answer named no execution head.
+    Routed {
+        execution: crate::route::ExecutionHead,
+    },
     /// The memory one run's turn context carried, recorded once at run
     /// start. The assembled block is dynamic two ways over — the
     /// corpus's files change between runs and the block depends on the
@@ -821,6 +832,7 @@ pub fn conversation(records: &[Record]) -> Conversation {
             | Record::Skills { .. }
             | Record::Memory { .. }
             | Record::Goal { .. }
+            | Record::Routed { .. }
             | Record::ToolResolution { .. } => {}
         }
     }

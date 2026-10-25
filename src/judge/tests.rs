@@ -119,7 +119,12 @@ fn judged_row(
 
 /// A scripted MCP lane: the `mock-mcp` child over a script whose one
 /// `tools/call` answers with `reply`.
-fn scripted_lane(reply: &str) -> Option<ServerSpec> {
+/// The scripted lane over `asks` classify entries: a session answers
+/// every row on one spawn (C0), so the mock serves one reply per ask —
+/// the same one script entry per request the `mock-mcp` binary
+/// documents. A script with a single classify entry served the old
+/// per-ask spawn; under the session it would close mid-batch.
+fn scripted_lane(reply: &str, asks: usize) -> Option<ServerSpec> {
     let bin = crate::eval::mock_mcp_binary()?;
     let scratch = scratch("lane-script");
     let entries = [
@@ -141,6 +146,22 @@ fn scripted_lane(reply: &str) -> Option<ServerSpec> {
             "result": { "content": [{ "type": "text", "text": reply }], "isError": false },
         } }),
     ];
+    // One classify entry per ask: the session asks once per row.
+    let entries = entries
+        .into_iter()
+        .flat_map(|entry| {
+            if entry
+                .get("reply")
+                .and_then(|reply| reply.get("result"))
+                .and_then(|result| result.get("content"))
+                .is_some()
+            {
+                (0..asks).map(|_| entry.clone()).collect::<Vec<_>>()
+            } else {
+                vec![entry]
+            }
+        })
+        .collect::<Vec<_>>();
     let script = entries
         .iter()
         .map(|entry| format!("{entry}\n"))
@@ -182,7 +203,21 @@ async fn judge_over(
     dry_run: bool,
     reply: &str,
 ) -> JudgeOutcome {
-    let lane = scripted_lane(reply).expect("the scripted lane");
+    judge_over_asks(home, root, day, dry_run, reply, 1).await
+}
+
+/// [`judge_over`] over a day the test knows carries `asks` rows: the
+/// scripted lane serves one classify reply per ask, the way the
+/// session's one spawn serves every row (C0).
+async fn judge_over_asks(
+    home: &Path,
+    root: &Path,
+    day: &str,
+    dry_run: bool,
+    reply: &str,
+    asks: usize,
+) -> JudgeOutcome {
+    let lane = scripted_lane(reply, asks).expect("the scripted lane");
     judge(JudgeRequest {
         root,
         home,
@@ -249,6 +284,7 @@ fn route_row_value(row: ReadRow) -> Row {
         how: row.how,
         workload: (!row.workload.is_empty()).then_some(row.workload),
         verdict: (!row.verdict.is_empty()).then_some(row.verdict),
+        execution: None,
         reason: row.reason,
         model: row.model,
         providers_used: row.providers_used,
@@ -2455,4 +2491,121 @@ fn read_judged_value(
     row.confidence = confidence;
     row.disposition = (!disposition.is_empty()).then(|| disposition.to_string());
     row
+}
+
+// --- C0: one lane per beat run (the counting seam) ----------------------
+
+/// The counting session's log, shared with the beat under test.
+fn counting_log(fail_open: bool) -> std::sync::Arc<std::sync::Mutex<CountingLog>> {
+    std::sync::Arc::new(std::sync::Mutex::new(CountingLog {
+        events: Vec::new(),
+        fail_open,
+    }))
+}
+
+#[tokio::test]
+async fn one_lane_opens_once_and_asks_once_per_row() {
+    // C0's first half: N rows -> one open, N asks, one close. The
+    // counting session is the seam; the rows are the day's own.
+    let root = scratch("counting-session");
+    let home = std::env::temp_dir().join(format!(
+        "fleet-judge-counting-home-{}-{}",
+        std::process::id(),
+        line!()
+    ));
+    std::fs::create_dir_all(&home).unwrap();
+    let day = day();
+    let rows: Vec<Row> = (0..3)
+        .map(|index| {
+            route_row_value(route_row(
+                &format!("2026-10-24T10:0{index}:00Z"),
+                "stepfun",
+                "hard",
+                &[
+                    ("stepfun", "failed", Some("server")),
+                    ("zai", "served", None),
+                ],
+                &format!("route-{index}"),
+            ))
+        })
+        .collect();
+    write_day(&root, &day, &rows);
+
+    let log = counting_log(false);
+    let outcome = judge(JudgeRequest {
+        root: &root,
+        home: &home,
+        day: day.clone(),
+        dry_run: false,
+        lane: LaneSource::Counting(std::sync::Arc::clone(&log)),
+    })
+    .await;
+    let events = log.lock().unwrap().events.clone();
+    assert_eq!(
+        events,
+        vec!["open", "ask", "ask", "ask", "close"],
+        "{events:?}"
+    );
+    // C5's other half: the collapse buys the boot cost and loses no
+    // judgment — one judged row per input row.
+    assert_eq!(outcome.judged.len(), 3, "{:?}", outcome.refusals);
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&home);
+}
+
+#[tokio::test]
+async fn a_lane_that_fails_to_open_refuses_every_row_by_name() {
+    // C0's second half: an open that failed is kept and named; the
+    // remaining rows refuse by it and the lane is not spawned twice.
+    let root = scratch("counting-open-failure");
+    let home = std::env::temp_dir().join(format!(
+        "fleet-judge-openfail-home-{}-{}",
+        std::process::id(),
+        line!()
+    ));
+    std::fs::create_dir_all(&home).unwrap();
+    let day = day();
+    let rows: Vec<Row> = (0..2)
+        .map(|index| {
+            route_row_value(route_row(
+                &format!("2026-10-24T11:0{index}:00Z"),
+                "stepfun",
+                "hard",
+                &[
+                    ("stepfun", "failed", Some("server")),
+                    ("zai", "served", None),
+                ],
+                &format!("openfail-{index}"),
+            ))
+        })
+        .collect();
+    write_day(&root, &day, &rows);
+
+    let log = counting_log(true);
+    let outcome = judge(JudgeRequest {
+        root: &root,
+        home: &home,
+        day: day.clone(),
+        dry_run: false,
+        lane: LaneSource::Counting(std::sync::Arc::clone(&log)),
+    })
+    .await;
+    let events = log.lock().unwrap().events.clone();
+    assert_eq!(
+        events,
+        vec!["open"],
+        "one spawn attempt, no second: {events:?}"
+    );
+    assert_eq!(outcome.judged.len(), 0, "no row was judged");
+    assert_eq!(outcome.refusals.len(), 2, "{:?}", outcome.refusals);
+    assert!(
+        outcome
+            .refusals
+            .iter()
+            .all(|(_, reason)| reason.contains("the lane could not start")),
+        "{:?}",
+        outcome.refusals
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&home);
 }
