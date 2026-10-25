@@ -10333,3 +10333,394 @@ async fn a_recorded_call_re_runs_without_touching_the_log() {
     assert!(refused.contains("edit-and-resend"), "{refused}");
     std::fs::remove_dir_all(&home).ok();
 }
+
+// --- The delegated-workspaces arm -------------------------------------
+// docs/plans/2026-10-25-layerfs-delegated-workspaces.md, C2/C3.
+//
+// The driver under test is the real one; the CLI is a stub whose mode
+// and log ride the environment. The gate caches the ONE stub path per
+// process, so the stub is written once and never deleted here — an
+// earlier draft deleted it at cleanup and the next test's spawn hit a
+// missing file, then panicked while holding AMBIENT_LOCK and poisoned
+// the lock for every env test behind it. Two rules follow: the stub
+// outlives the tests, and assertions run AFTER the lock scope closes
+// so a failing test cannot poison a shared mutex.
+
+/// The shared stub body: one script, env-driven behavior.
+const LAYERFS_STUB: &str = r#"#!/bin/sh
+printf '%s\n' "$*" >> "$FLEET_STUB_LOG"
+case "$*" in
+  *--version*) echo "1.1.0" ;;
+  *"workspace mount"*)
+    mkdir -p "$FLEET_TEST_MOUNT"
+    printf '{"sandbox":"1","path":"%s","image":"sha256:x","ws":"1:%s"}\n' "$FLEET_TEST_MOUNT" "$FLEET_TEST_MOUNT" ;;
+  *"branch merge"*)
+    if [ "$FLEET_STUB_MODE" = "conflict" ]; then
+      echo '{"code":"Conflict","message":"both changed src/lib.rs","detail":{"conflicts":[{"path":"src/lib.rs"}]}}' >&2
+      exit 125
+    fi
+    echo '{"merge":"m-1"}' ;;
+  *"sandbox create"*) echo '{"sandbox":"1","image":"sha256:x"}' ;;
+  *"branch fork"*) echo '{"name":"ok"}' ;;
+  *"workspace commit"*) echo '{"commit":"c-1"}' ;;
+  *"workspace unmount"*|*"sandbox close"*|*"branch publish"*) echo '{}' ;;
+  *) echo '{"code":"Usage","message":"unknown command"}' >&2; exit 2 ;;
+esac
+"#;
+
+/// The process's one stub: written once (the gate's cached path), kept
+/// for the process's life, its per-test argv log addressed by env.
+fn shared_layerfs_stub() -> &'static std::path::Path {
+    static STUB: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+    STUB.get_or_init(|| {
+        let dir = std::env::temp_dir().join(format!(
+            "fleet-layerfs-it-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let script = dir.join("layerfs");
+        std::fs::write(&script, LAYERFS_STUB).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        script
+    })
+    .as_path()
+}
+
+/// C2's happy path end to end: an opted-in delegation mounts one
+/// Workspace, the child's tools work AT THE MOUNT (never in the
+/// parent's tree), and the parent's tool result reads the branch, the
+/// capture, and the merge back into main — with every lifecycle call
+/// in the CLI's own grammar in the argv log.
+// The lock serializes the process's env against the other env
+// tests for the whole awaited run — the same deliberate hold the
+// ambient test documents.
+#[tokio::test]
+#[allow(clippy::await_holding_lock)]
+async fn a_layerfs_child_works_in_its_workspace_and_the_parent_reads_the_merge() {
+    let mock = MockApi::start(vec![
+        tool_call_stream(
+            "call-1",
+            "subagent",
+            &delegation_arguments("tidy the workspace"),
+        ),
+        tool_call_stream("child-1", "bash", r#"{"command":"pwd -P"}"#),
+        assistant_stream("the child is done"),
+        assistant_stream("the parent wraps up"),
+    ]);
+    let home = temp_home("layerfs-arm-home");
+    let mount = temp_home("layerfs-mount");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let client = Client::new(mock.url(), "test-key");
+    let options = AgentOptions {
+        goal: None,
+        model: "test-model".to_string(),
+        identity: None,
+        max_turns: 8,
+        ui_tx: None,
+        lane_specs: None,
+        calib: None,
+        skills: Vec::new(),
+        role_overlay: None,
+        memory: None,
+        scope: None,
+        improve_home: None,
+        route_home: None,
+        gui_prompt: None,
+        compact_now: false,
+        checkpoints: None,
+        file_access: FileAccess::Unrestricted,
+        plan_mode: false,
+    };
+    let argv = std::env::temp_dir().join(format!(
+        "fleet-layerfs-it-argv-happy-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&argv);
+    {
+        let _lock = AMBIENT_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _bin = AmbientKey::set("FLEET_LAYERFS_BIN", shared_layerfs_stub().to_str().unwrap());
+        // The knob is per-test-thread (thread-local), never env: an
+        // env window would switch the arm on inside another test's
+        // delegation running concurrently.
+        fleet::layerfs_tools::set_project_for_test("shop");
+        let _mode = AmbientKey::set("FLEET_STUB_MODE", "happy");
+        let _log = AmbientKey::set("FLEET_STUB_LOG", argv.to_str().unwrap());
+        let _mount_path = AmbientKey::set("FLEET_TEST_MOUNT", mount.to_str().unwrap());
+        let mut progress = Vec::new();
+        // The agent borrows the session mutably; scope it so the
+        // read-back below replays a session nothing holds.
+        {
+            let mut agent = Agent::new(
+                &client,
+                options,
+                &mut session,
+                Box::new(ApproveAll),
+                &mut progress,
+            )
+            .unwrap();
+            agent.run("delegate the tidying").await.unwrap();
+        }
+    } // guards restore the env, then the lock releases — assertions below hold neither.
+
+    // The child worked at the mount: its pwd is the Workspace's path
+    // and never the process's directory — the collision the plan
+    // exists to prevent, absent by construction.
+    let child = child_summary(&home);
+    let child_records = session::replay(&child.path).unwrap();
+    let (pwd, _) = tool_result(&child_records, "bash");
+    let canonical = mount.canonicalize().unwrap();
+    assert!(
+        pwd.contains(&canonical.display().to_string()),
+        "the child worked in its Workspace: {pwd}"
+    );
+    assert!(
+        !pwd.contains(&std::env::current_dir().unwrap().display().to_string()),
+        "the child did not work in the parent's tree: {pwd}"
+    );
+
+    // The parent's tool result reads the workspace facts.
+    let parent_records = session::replay(session.path()).unwrap();
+    let (read_back, _) = tool_result(&parent_records, "subagent");
+    assert!(
+        read_back.contains("workspace: branch fleet/"),
+        "the branch rides the result: {read_back}"
+    );
+    assert!(read_back.contains("merged to main"), "{read_back}");
+
+    // The CLI's own grammar, call by call: fork the child's branch,
+    // a sandbox, the mount, the capture, the teardown, then the
+    // parent's merge and publish — the child never appears as an
+    // actor in any of it.
+    let calls = std::fs::read_to_string(&argv).expect("the stub was called");
+    assert!(
+        calls.contains("--project shop branch fork fleet/"),
+        "the fork: {calls}"
+    );
+    assert!(calls.contains("--project shop sandbox create"), "{calls}");
+    assert!(
+        calls.contains("--project shop workspace mount 1 fleet/"),
+        "{calls}"
+    );
+    assert!(
+        calls.contains("--project shop workspace commit 1:"),
+        "the capture before unmount: {calls}"
+    );
+    assert!(calls.contains("workspace unmount 1:"), "{calls}");
+    assert!(calls.contains("sandbox close 1"), "{calls}");
+    assert!(
+        calls.contains("--project shop branch merge main fleet/"),
+        "the merge is the parent's act, main against the child's branch: {calls}"
+    );
+    assert!(calls.contains("branch publish fleet-merge-"), "{calls}");
+    // Unmount comes after the commit — a Clean End refuses
+    // uncommitted state, so the order is custody, not convenience.
+    let commit_at = calls.find("workspace commit").expect("commit logged");
+    let unmount_at = calls.find("workspace unmount").expect("unmount logged");
+    assert!(
+        commit_at < unmount_at,
+        "capture first, unmount second: {calls}"
+    );
+
+    std::fs::remove_dir_all(&home).ok();
+    std::fs::remove_dir_all(&mount).ok();
+    std::fs::remove_file(&argv).ok();
+}
+
+/// C3's byte-identity, at the arm: with no project named, the driver
+/// is never consulted — the stub records no argv at all — and the
+/// parent's result carries no workspace block. The default run is the
+/// run fleet always had.
+// The lock serializes the process's env against the other env
+// tests for the whole awaited run — the same deliberate hold the
+// ambient test documents.
+#[tokio::test]
+#[allow(clippy::await_holding_lock)]
+async fn without_the_knob_the_delegation_never_touches_the_driver() {
+    let mock = MockApi::start(vec![
+        tool_call_stream(
+            "call-1",
+            "subagent",
+            &delegation_arguments("tidy the workspace"),
+        ),
+        assistant_stream("the child is done"),
+        assistant_stream("the parent wraps up"),
+    ]);
+    let home = temp_home("layerfs-off-home");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let client = Client::new(mock.url(), "test-key");
+    let options = AgentOptions {
+        goal: None,
+        model: "test-model".to_string(),
+        identity: None,
+        max_turns: 8,
+        ui_tx: None,
+        lane_specs: None,
+        calib: None,
+        skills: Vec::new(),
+        role_overlay: None,
+        memory: None,
+        scope: None,
+        improve_home: None,
+        route_home: None,
+        gui_prompt: None,
+        compact_now: false,
+        checkpoints: None,
+        file_access: FileAccess::Unrestricted,
+        plan_mode: false,
+    };
+    let argv =
+        std::env::temp_dir().join(format!("fleet-layerfs-it-argv-off-{}", std::process::id()));
+    let _ = std::fs::remove_file(&argv);
+    {
+        let _lock = AMBIENT_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _bin = AmbientKey::set("FLEET_LAYERFS_BIN", shared_layerfs_stub().to_str().unwrap());
+        // The knob is never set on this thread and never set in the
+        // environment: off is the default the C3 test asserts.
+        let _log = AmbientKey::set("FLEET_STUB_LOG", argv.to_str().unwrap());
+        let mut progress = Vec::new();
+        {
+            let mut agent = Agent::new(
+                &client,
+                options,
+                &mut session,
+                Box::new(ApproveAll),
+                &mut progress,
+            )
+            .unwrap();
+            agent.run("delegate the tidying").await.unwrap();
+        }
+    }
+
+    assert!(
+        !argv.exists(),
+        "the driver was never consulted — no argv log exists at {argv:?}"
+    );
+    let parent_records = session::replay(session.path()).unwrap();
+    let (read_back, _) = tool_result(&parent_records, "subagent");
+    assert!(
+        !read_back.contains("workspace:"),
+        "no workspace block in the default run: {read_back}"
+    );
+    assert!(read_back.contains("subagent completed"), "{read_back}");
+
+    std::fs::remove_dir_all(&home).ok();
+    std::fs::remove_file(&argv).ok();
+}
+
+/// C2's conflict leg: two agents changed the same file, the merge
+/// refused, and the PARENT reads the Conflict — named with its path,
+/// the child's branch kept for resolution, the delegation itself
+/// still the success it was. Nothing is overwritten silently.
+// The lock serializes the process's env against the other env
+// tests for the whole awaited run — the same deliberate hold the
+// ambient test documents.
+#[tokio::test]
+#[allow(clippy::await_holding_lock)]
+async fn a_same_file_collision_is_a_conflict_the_parent_reads() {
+    let mock = MockApi::start(vec![
+        tool_call_stream(
+            "call-1",
+            "subagent",
+            &delegation_arguments("tidy the workspace"),
+        ),
+        assistant_stream("the child is done"),
+        assistant_stream("the parent wraps up"),
+    ]);
+    let home = temp_home("layerfs-conflict-home");
+    let mount = temp_home("layerfs-conflict-mount");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let client = Client::new(mock.url(), "test-key");
+    let options = AgentOptions {
+        goal: None,
+        model: "test-model".to_string(),
+        identity: None,
+        max_turns: 8,
+        ui_tx: None,
+        lane_specs: None,
+        calib: None,
+        skills: Vec::new(),
+        role_overlay: None,
+        memory: None,
+        scope: None,
+        improve_home: None,
+        route_home: None,
+        gui_prompt: None,
+        compact_now: false,
+        checkpoints: None,
+        file_access: FileAccess::Unrestricted,
+        plan_mode: false,
+    };
+    let argv = std::env::temp_dir().join(format!(
+        "fleet-layerfs-it-argv-conflict-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&argv);
+    {
+        let _lock = AMBIENT_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _bin = AmbientKey::set("FLEET_LAYERFS_BIN", shared_layerfs_stub().to_str().unwrap());
+        // The knob is per-test-thread (thread-local), never env: an
+        // env window would switch the arm on inside another test's
+        // delegation running concurrently.
+        fleet::layerfs_tools::set_project_for_test("shop");
+        let _mode = AmbientKey::set("FLEET_STUB_MODE", "conflict");
+        let _log = AmbientKey::set("FLEET_STUB_LOG", argv.to_str().unwrap());
+        let _mount_path = AmbientKey::set("FLEET_TEST_MOUNT", mount.to_str().unwrap());
+        let mut progress = Vec::new();
+        {
+            let mut agent = Agent::new(
+                &client,
+                options,
+                &mut session,
+                Box::new(ApproveAll),
+                &mut progress,
+            )
+            .unwrap();
+            agent.run("delegate the tidying").await.unwrap();
+        }
+    }
+
+    let parent_records = session::replay(session.path()).unwrap();
+    let (read_back, _) = tool_result(&parent_records, "subagent");
+    assert!(
+        read_back.contains("CONFLICT with main on 1 path: src/lib.rs"),
+        "the collision is named with its path: {read_back}"
+    );
+    assert!(
+        read_back.contains("is kept for resolution"),
+        "the child's branch is kept, not silently dropped: {read_back}"
+    );
+    // The child succeeded; the collision is a fact about main, not a
+    // failure of the delegation.
+    assert!(
+        read_back.starts_with("subagent completed"),
+        "the outcome stays the child's: {read_back}"
+    );
+    let calls = std::fs::read_to_string(&argv).expect("the stub was called");
+    assert!(
+        calls.contains("--project shop branch merge main fleet/"),
+        "the merge was attempted the parent's way: {calls}"
+    );
+    // A refused merge publishes nothing.
+    assert!(
+        !calls.contains("branch publish"),
+        "no publish follows a conflict: {calls}"
+    );
+
+    std::fs::remove_dir_all(&home).ok();
+    std::fs::remove_dir_all(&mount).ok();
+    std::fs::remove_file(&argv).ok();
+}

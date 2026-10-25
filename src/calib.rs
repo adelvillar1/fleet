@@ -512,6 +512,17 @@ pub struct DelegatedRunRow {
     /// grandchild.
     #[serde(default)]
     pub depth: u32,
+    /// The child's LayerFS branch when the delegated-workspaces arm
+    /// ran (an opted-in run's child worked in its own Workspace over
+    /// one shared history); empty for every other run, which reads
+    /// exactly as the row always did. See
+    /// `docs/plans/2026-10-25-layerfs-delegated-workspaces.md`.
+    #[serde(default)]
+    pub workspace_branch: String,
+    /// The Workspace handle (`<sandbox>:<path>`) beside the branch —
+    /// the join from a row back to the mount the child worked in.
+    #[serde(default)]
+    pub workspace: String,
 }
 
 /// Record one delegated run to the stream and hand the stamped row
@@ -3587,6 +3598,8 @@ mod tests {
             parent_session: "20261015T085959Z-000000".to_string(),
             root_session: "20261015T085959Z-000000".to_string(),
             depth: 1,
+            workspace_branch: String::new(),
+            workspace: String::new(),
         };
         let line = serde_json::to_string(&Row::Delegation(row)).unwrap();
         let value: serde_json::Value = serde_json::from_str(&line).unwrap();

@@ -36,6 +36,7 @@ pub mod install;
 pub mod judge;
 pub mod lane_client;
 pub mod lanes;
+pub mod layerfs_tools;
 pub mod lifecycle;
 pub mod mcp;
 pub mod mcp_meta;

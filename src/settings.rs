@@ -907,6 +907,13 @@ pub fn render(home: &Path) -> String {
             "\u{2500}".repeat(CARD_WIDTH - 2)
         ));
     }
+    // The one knob the card table cannot hold, named so an owner
+    // reading the surface knows it exists: it lives in the
+    // environment, unset is off, and no value is ever printed.
+    out.push_str(&format!(
+        "{DIM}env-only: {} names a LayerFS project for delegated workspaces \u{b7} unset is off{RESET}\n",
+        crate::layerfs_tools::PROJECT_ENV
+    ));
     out.push_str(&format!(
         "\n{DIM}{} settings \u{b7} `fleet settings set <key> <value>` writes one \u{b7} a key's \\
          value is never printed{RESET}\n",

@@ -140,6 +140,55 @@ pub fn evaluate_shell(probe: Result<&'static str, String>) -> Check {
     }
 }
 
+/// The LayerFS line: the CLI's readiness beside the one opt-in knob.
+/// Off — the default — is healthy and reads `ok` with the knob's name
+/// beside it; a CLI the machine cannot answer is a FAIL only when the
+/// knob turned the feature on, because then the owner asked for
+/// something that cannot work (the plan's C3).
+pub fn evaluate_layerfs(
+    gate: &Result<crate::layerfs_tools::Gate, String>,
+    project: &Result<Option<String>, String>,
+) -> Check {
+    let cli = gate.as_ref().err().cloned();
+    match (project, cli) {
+        (Err(reason), _) => Check {
+            name: "layerfs",
+            ok: false,
+            detail: format!("the knob is set wrong: {reason}"),
+        },
+        (Ok(Some(project)), None) => Check {
+            name: "layerfs",
+            ok: true,
+            detail: format!(
+                "project `{project}` \u{b7} CLI {} ready",
+                crate::layerfs_tools::SUPPORTED_WIRE
+            ),
+        },
+        (Ok(Some(project)), Some(reason)) => Check {
+            name: "layerfs",
+            ok: false,
+            detail: format!("project `{project}` but {reason}"),
+        },
+        (Ok(None), None) => Check {
+            name: "layerfs",
+            ok: true,
+            detail: format!(
+                "off (no {} \u{b7} CLI {} present)",
+                crate::layerfs_tools::PROJECT_ENV,
+                crate::layerfs_tools::SUPPORTED_WIRE
+            ),
+        },
+        (Ok(None), Some(reason)) => Check {
+            name: "layerfs",
+            ok: true,
+            detail: format!(
+                "off ({}, unset \u{b7} {reason})",
+                crate::layerfs_tools::PROJECT_ENV
+            ),
+        },
+    }
+}
+
 /// The calibration-stream line, informational and never a check: the
 /// resolved root and whether today's file exists. It is the cheapest
 /// guard against dev-decisions moving its `LOG_DIR` literal and silently
@@ -867,6 +916,38 @@ mod tests {
         // The wrapper is `set (…)`, so the masked tail sits just inside the paren.
         assert!(check.detail.ends_with("890\u{e9})"), "{}", check.detail);
         assert!(!check.detail.contains("sk-1234567890"));
+    }
+
+    /// The plan's C3 doctor line: off is the default and healthy; the
+    /// knob on over a machine that cannot answer the CLI is a FAIL
+    /// (the owner asked for something that cannot work); a knob set
+    /// wrong is named before anything else is considered.
+    #[test]
+    fn layerfs_off_is_ok_and_on_over_a_missing_cli_fails() {
+        let absent = Err("the CLI could not be spawned: No such file".to_string());
+        let off = evaluate_layerfs(&absent, &Ok(None));
+        assert!(off.ok, "off is the default and healthy: {}", off.detail);
+        assert!(
+            off.detail.contains(crate::layerfs_tools::PROJECT_ENV),
+            "{}",
+            off.detail
+        );
+        let on = evaluate_layerfs(&absent, &Ok(Some("shop".to_string())));
+        assert!(
+            !on.ok,
+            "the owner asked for something that cannot work: {}",
+            on.detail
+        );
+        assert!(on.detail.contains("shop"), "{}", on.detail);
+        let ready = evaluate_layerfs(
+            &Ok(crate::layerfs_tools::Gate::for_test("layerfs".into())),
+            &Ok(Some("shop".to_string())),
+        );
+        assert!(ready.ok, "{}", ready.detail);
+        assert!(ready.detail.contains("ready"), "{}", ready.detail);
+        let bad_knob = evaluate_layerfs(&absent, &Err("bad name".to_string()));
+        assert!(!bad_knob.ok, "{}", bad_knob.detail);
+        assert!(bad_knob.detail.contains("bad name"), "{}", bad_knob.detail);
     }
 
     #[test]

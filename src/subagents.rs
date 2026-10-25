@@ -1345,6 +1345,14 @@ pub struct SubagentResult {
     /// against at all. The one field the structured report needs, so a
     /// caller constructs a result with `delta: Default::default()`.
     pub delta: DeltaReport,
+    /// The child's LayerFS workspace, when the run was opted in
+    /// (`FLEET_LAYERFS_PROJECT`) and a Workspace opened — the branch it
+    /// worked on, whether its changes were captured, how the merge back
+    /// into main landed, and the cleanup facts. `None` for every run
+    /// that never touched the driver, which is every run by default:
+    /// the block renders only when there is one, so the result is
+    /// byte-identical to the one it always was (the plan's C3).
+    pub workspace: Option<crate::layerfs_tools::WorkspaceReport>,
 }
 
 /// What one delegated run reports about the angle between the approach
@@ -1389,6 +1397,7 @@ impl SubagentResult {
             reason: Some(reason),
             delta: DeltaReport::default(),
             goal: String::new(),
+            workspace: None,
         }
     }
 
@@ -1427,6 +1436,16 @@ impl SubagentResult {
             text.push_str(&format!(" \u{b7} log {}", self.log.display()));
         }
         text.push('\n');
+        // The workspace facts, when this child worked in one: the
+        // branch it stood on, whether its changes were captured, and
+        // how the merge back into main landed — a Conflict named with
+        // its paths, because a collision the parent can see is the
+        // whole point of the arm. Renders only when there is one, so
+        // every other result stays byte-identical (the plan's C3).
+        if let Some(workspace) = &self.workspace {
+            text.push_str(&render_workspace(workspace));
+            text.push('\n');
+        }
         if self.summary.trim().is_empty() {
             // Never silence: a child that produced no words still says
             // so, and still names where its work is.
@@ -1465,6 +1484,54 @@ impl SubagentResult {
         }
         text
     }
+}
+
+/// The workspace block of a rendered result — the branch the child
+/// stood on, whether its changes were captured, how the merge back
+/// into main landed, and whatever cleanup had to be named. Conflict
+/// paths stop at four and then count, so a ten-path collision is
+/// still one bounded line.
+fn render_workspace(report: &crate::layerfs_tools::WorkspaceReport) -> String {
+    use crate::layerfs_tools::MergeOutcome;
+    let mut line = format!("workspace: branch {}", report.branch);
+    line.push_str(if report.committed {
+        " \u{b7} committed"
+    } else {
+        " \u{b7} not committed"
+    });
+    if let Some(note) = &report.commit_note {
+        line.push_str(&format!(" ({note})"));
+    }
+    match &report.merge {
+        Some(MergeOutcome::Merged(_)) => line.push_str(" \u{b7} merged to main"),
+        Some(MergeOutcome::Conflict { paths }) => {
+            let shown: Vec<&str> = paths.iter().take(4).map(String::as_str).collect();
+            let more = paths.len().saturating_sub(shown.len());
+            line.push_str(&format!(
+                " \u{b7} CONFLICT with main on {} path{}: {}{}",
+                paths.len(),
+                if paths.len() == 1 { "" } else { "s" },
+                shown.join(", "),
+                if more > 0 {
+                    format!(" (+{more} more)")
+                } else {
+                    String::new()
+                },
+            ));
+        }
+        None => {}
+    }
+    for note in report.notes.iter().take(3) {
+        line.push_str(&format!("\n  {note}"));
+    }
+    if report.notes.len() > 3 {
+        line.push_str(&format!(
+            "\n  (+{} more cleanup note{})",
+            report.notes.len() - 3,
+            if report.notes.len() - 3 == 1 { "" } else { "s" }
+        ));
+    }
+    line
 }
 
 /// Everything one delegated run needs, gathered by the caller so the
@@ -1663,6 +1730,17 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
         }
         _ => skills,
     };
+    // The delegated-workspaces knob, read before anything is created:
+    // unset — the default — reaches none of this and every run stays
+    // byte-identical to the one fleet always had (the plan's C3). A
+    // knob set wrong is a named refusal here, before a route judgment
+    // or a child session is spent on it, the way a bad role's is.
+    let layerfs_project = match crate::layerfs_tools::project_name() {
+        Ok(project) => project,
+        Err(reason) => {
+            return SubagentResult::refused(format!("the delegated-workspaces knob: {reason}"))
+        }
+    };
     // The overlay rides the child's system prompt beside the compiled-in
     // one, delimited so the child knows what is standing instruction
     // for this delegation's role and what is the harness prompt.
@@ -1764,6 +1842,76 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
         },
     );
 
+    // C2 of the LayerFS plan: an opted-in run's child works in its own
+    // Workspace — one Branch forked from main, one Sandbox, one mount —
+    // and its tools run confined to the mount path through
+    // `FileAccess::Folder`, the seam that already exists. An opted-in
+    // run that cannot mount does NOT fall back to the parent's tree:
+    // the owner turned the knob on to get collision isolation, and a
+    // silent fallback would re-open the exact collisions the knob
+    // exists to close. The refusal is typed and lands a row, like any
+    // other run that stopped before the loop.
+    let mut workspace: Option<crate::layerfs_tools::WorkspaceSession> = match &layerfs_project {
+        None => None,
+        Some(project) => {
+            let branch = format!("fleet/{session}");
+            let opened = tokio::task::spawn_blocking({
+                let project = project.clone();
+                let branch = branch.clone();
+                move || crate::layerfs_tools::WorkspaceSession::open(&project, &branch)
+            })
+            .await;
+            match opened {
+                Ok(Ok(workspace)) => Some(workspace),
+                Ok(Err(error)) => {
+                    let result = SubagentResult {
+                        summary: String::new(),
+                        goal: goal.clone(),
+                        session: session.clone(),
+                        log: log.clone(),
+                        turns: 0,
+                        outcome: Outcome::Failed,
+                        reason: Some(format!("the delegated workspace could not open: {error}")),
+                        delta: DeltaReport {
+                            own: None,
+                            children: Vec::new(),
+                            offered: brief.offers_an_approach(),
+                        },
+                        workspace: None,
+                    };
+                    land_delegation_row(
+                        stream.as_ref(),
+                        delegation_row(
+                            &brief,
+                            &recorded_scope,
+                            child_route.provider.as_deref(),
+                            &result,
+                            &chain,
+                            started.elapsed().as_millis() as u64,
+                        ),
+                    );
+                    emit(
+                        &ui_tx,
+                        UiEvent::Subagent {
+                            goal: label.clone(),
+                            session: result.session.clone(),
+                            stage: SubagentStage::Done {
+                                outcome: Outcome::Failed.label().to_string(),
+                                turns: 0,
+                            },
+                        },
+                    );
+                    return result;
+                }
+                Err(join_error) => {
+                    return SubagentResult::refused(format!(
+                        "the delegated workspace could not be awaited: {join_error}"
+                    ));
+                }
+            }
+        }
+    };
+
     let options = AgentOptions {
         goal: None,
         model: child_route.model,
@@ -1789,8 +1937,15 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
         checkpoints: None,
         // The parent's access rides down with the rest of the run's
         // identity: the folder when there is one, and the refusal when
-        // there is not.
-        file_access,
+        // there is not. A child whose Workspace opened gets the mount
+        // path instead — the plan's seam: `Folder` already confines
+        // bash and every relative path to one directory, and this
+        // directory is the Workspace, so the child cannot touch the
+        // parent's tree and two children cannot touch each other.
+        file_access: match &workspace {
+            Some(workspace) => FileAccess::Folder(workspace.path().to_path_buf()),
+            None => file_access,
+        },
         plan_mode,
     };
     let gate = InheritedApprover {
@@ -1806,7 +1961,7 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
         let mut agent = match Agent::new(client, options, &mut child, Box::new(gate), progress) {
             Ok(agent) => agent,
             Err(error) => {
-                let result = SubagentResult {
+                let mut result = SubagentResult {
                     summary: String::new(),
                     goal: goal.clone(),
                     session,
@@ -1819,7 +1974,23 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
                         children: Vec::new(),
                         offered: brief.offers_an_approach(),
                     },
+                    workspace: None,
                 };
+                // A workspace that opened must be settled even though
+                // the loop never ran: nothing worth keeping, so it is
+                // discarded, unmounted, and its Sandbox closed — the
+                // same custody every completion path owes.
+                if let Some(workspace) = workspace.take() {
+                    let report = tokio::task::spawn_blocking(move || workspace.settle(false))
+                        .await
+                        .unwrap_or_else(|join_error| crate::layerfs_tools::WorkspaceReport {
+                            notes: vec![format!(
+                                "the workspace settle could not be awaited: {join_error}"
+                            )],
+                            ..Default::default()
+                        });
+                    result.workspace = Some(report);
+                }
                 // A run that never reached the loop still lands its row:
                 // a delegation nobody recorded is a delegation the loop
                 // cannot grade, and the reason it never ran is the most
@@ -1876,6 +2047,7 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
                 children: Vec::new(),
                 offered: brief.offers_an_approach(),
             },
+            workspace: None,
         },
         Err(error) => SubagentResult {
             summary: String::new(),
@@ -1892,6 +2064,7 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
                 children: Vec::new(),
                 offered: brief.offers_an_approach(),
             },
+            workspace: None,
         },
     };
     // A child that stopped without a final message still returns its
@@ -1903,6 +2076,25 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
         if let Some(words) = last_words(&records) {
             result.summary = words;
         }
+    }
+    // C2's settlement, at every completion path: capture when the child
+    // stopped clean enough to keep its work (completed, or capped after
+    // doing some), discard when it died — then unmount, close the
+    // Sandbox, and merge the Branch back into main the parent's way.
+    // The report rides the result, so a Conflict is a line the parent
+    // reads beside its child's answer rather than a silent overwrite
+    // discovered later.
+    if let Some(workspace) = workspace.take() {
+        let keep = matches!(result.outcome, Outcome::Completed | Outcome::MaxTurns);
+        let report = tokio::task::spawn_blocking(move || workspace.settle(keep))
+            .await
+            .unwrap_or_else(|join_error| crate::layerfs_tools::WorkspaceReport {
+                notes: vec![format!(
+                    "the workspace settle could not be awaited: {join_error}"
+                )],
+                ..Default::default()
+            });
+        result.workspace = Some(report);
     }
     // The delta the child reported, verified against its own session log
     // rather than believed, and the deltas of the delegations it made,
@@ -2004,6 +2196,20 @@ fn delegation_row(
         parent_session: chain.parent.clone(),
         root_session: chain.root.clone(),
         depth: chain.depth as u32,
+        // The workspace ids, when the arm ran: the join from a
+        // delegation row to the LayerFS branch its work stands on.
+        // Empty for every run that never touched the driver, which
+        // reads exactly as the row always did.
+        workspace_branch: result
+            .workspace
+            .as_ref()
+            .map(|workspace| workspace.branch.clone())
+            .unwrap_or_default(),
+        workspace: result
+            .workspace
+            .as_ref()
+            .map(|workspace| workspace.ws.clone())
+            .unwrap_or_default(),
     }
 }
 
@@ -2163,6 +2369,7 @@ mod tests {
             reason: None,
             goal: "triage the KI ledger".to_string(),
             delta: DeltaReport::default(),
+            workspace: None,
         };
         let text = result.render_report();
         assert!(text.contains("goal: triage the KI ledger"), "{text}");
@@ -2430,6 +2637,7 @@ mod tests {
             reason: None,
             delta: DeltaReport::default(),
             goal: String::new(),
+            workspace: None,
         };
         let text = result.render();
         assert!(
@@ -2460,6 +2668,7 @@ mod tests {
             reason: Some("API error 402: the account needs a balance top-up".to_string()),
             delta: DeltaReport::default(),
             goal: String::new(),
+            workspace: None,
         };
         let text = failed.render();
         assert!(text.contains("subagent failed (API error 402"), "{text}");
@@ -2577,6 +2786,7 @@ mod tests {
             reason: Some(error.to_string()),
             delta: DeltaReport::default(),
             goal: String::new(),
+            workspace: None,
         };
         assert!(
             result.reason.as_deref().unwrap().contains("402"),
@@ -3073,6 +3283,7 @@ mod tests {
                 children: vec![grandchild.clone()],
                 offered: true,
             },
+            workspace: None,
         };
         let rendered = result.render();
         // Reading the rendered result back rebuilds the tree rather than
@@ -3118,6 +3329,7 @@ mod tests {
                 children: Vec::new(),
                 offered: true,
             },
+            workspace: None,
         };
         let outcome = bound_result(&result);
         assert!(outcome.truncated, "the report half is bounded");
@@ -3162,6 +3374,7 @@ mod tests {
                 children: Vec::new(),
                 offered: true,
             },
+            workspace: None,
         };
         assert!(
             offered.render().contains("no delta reported"),
@@ -3179,6 +3392,85 @@ mod tests {
     }
 
     // --- the row ------------------------------------------------------------
+
+    /// C2: the workspace rides BOTH the row the beat grades (the join
+    /// from a delegation to the LayerFS branch its work stands on) and
+    /// the render the parent reads — a Conflict named with its paths,
+    /// the branch kept — while a result with no workspace renders and
+    /// rows exactly as it always did.
+    #[test]
+    fn the_workspace_rides_the_row_and_the_render() {
+        use crate::layerfs_tools::{MergeOutcome, WorkspaceReport};
+        let report = WorkspaceReport {
+            branch: "fleet/child-1".to_string(),
+            ws: "1:/workspaces/1".to_string(),
+            sandbox: "1".to_string(),
+            committed: true,
+            commit_note: None,
+            merge: Some(MergeOutcome::Conflict {
+                paths: vec!["src/lib.rs".to_string(), "src/agent.rs".to_string()],
+            }),
+            notes: vec!["main moved while the child worked — kept for resolution".to_string()],
+        };
+        let result = SubagentResult {
+            summary: "the work".to_string(),
+            session: "child-1".to_string(),
+            log: PathBuf::from("/tmp/child-1.jsonl"),
+            turns: 3,
+            outcome: Outcome::Completed,
+            reason: None,
+            goal: "do the work".to_string(),
+            delta: DeltaReport::default(),
+            workspace: Some(report),
+        };
+        let text = result.render_report();
+        assert!(text.contains("workspace: branch fleet/child-1"), "{text}");
+        assert!(text.contains("committed"), "{text}");
+        assert!(
+            text.contains("CONFLICT with main on 2 paths: src/lib.rs, src/agent.rs"),
+            "{text}"
+        );
+        assert!(text.contains("kept for resolution"), "{text}");
+
+        let chain = Chain {
+            parent: "parent-1".to_string(),
+            root: "root-1".to_string(),
+            depth: 1,
+            lineage: vec!["root-1".to_string(), "parent-1".to_string()],
+        };
+        let row = delegation_row(
+            &Brief::parse("do the work"),
+            "bash",
+            Some("test-model"),
+            &result,
+            &chain,
+            42,
+        );
+        assert_eq!(row.workspace_branch, "fleet/child-1");
+        assert_eq!(row.workspace, "1:/workspaces/1");
+
+        // No workspace, no block, no ids: the default run's result and
+        // row read exactly as they always did (the plan's C3).
+        let plain = SubagentResult {
+            workspace: None,
+            ..result
+        };
+        assert!(
+            !plain.render_report().contains("workspace:"),
+            "{}",
+            plain.render_report()
+        );
+        let plain_row = delegation_row(
+            &Brief::parse("do the work"),
+            "bash",
+            Some("test-model"),
+            &plain,
+            &chain,
+            42,
+        );
+        assert_eq!(plain_row.workspace_branch, "");
+        assert_eq!(plain_row.workspace, "");
+    }
 
     #[test]
     fn the_row_writer_lands_a_row_the_reader_reads_back() {
@@ -3206,6 +3498,7 @@ mod tests {
                 children: Vec::new(),
                 offered: true,
             },
+            workspace: None,
         };
         let chain = Chain {
             parent: "root-1".to_string(),

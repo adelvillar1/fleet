@@ -4942,6 +4942,7 @@ async fn delta_replan(_mock_bin: PathBuf) -> ScenarioOutcome {
             children: Vec::new(),
             offered: true,
         },
+        workspace: None,
     };
     let rendered = crate::subagents::bound_result(&result).output;
     let read = Delta::parse_render(&rendered).expect("the rendered result parses");

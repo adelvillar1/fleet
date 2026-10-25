@@ -1,5 +1,5 @@
 ---
-status: draft
+status: active
 created: 2026-10-25
 updated: 2026-10-25
 slug: layerfs-delegated-workspaces
@@ -101,7 +101,7 @@ this compiles.
       `layerfs_tools.rs` parses its first real answer. Blocked-until-
       measurable, like the extraction leg's E0: no Docker, no
       measurement, no driver.
-- [ ] **C1 — the driver.** `src/layerfs_tools.rs` spawns the CLI and
+- [x] **C1 — the driver.** `src/layerfs_tools.rs` spawns the CLI and
       parses JSON into typed results and typed refusals; availability
       is its own once-per-process gate with the named absence; unit
       tests against a stub `layerfs` executable (the double pattern)
@@ -121,7 +121,7 @@ this compiles.
       checkout identity fleet pins is named (a VENDOR-style pin), and
       a CLI that answers a different wire version is refused by name,
       not parsed hopefully.
-- [ ] **C4 — close-out.** The full gate green by exit code; the
+- [x] **C4 — close-out.** The full gate green by exit code; the
       ledger carries whatever the live run opened; this plan's status
       updates in the same commit that lands the work.
 
@@ -168,6 +168,68 @@ Docker, recorded like the extraction leg recorded its first call. C3
 is the what-the-model-saw byte-equality test (both declaration paths,
 per the reconstruction rule) and the doctor card. The gate runs whole
 before every commit, exit codes read directly.
+
+## Status — 2026-10-25 (implemented; the live gate blocked, named)
+
+- **C0 — the ladder ran; blocked at the CLI rung, recorded.**
+  `scripts/layerfs-probe.sh` walked this Mac on 2026-10-25: Docker
+  (engine 29.7.2 running) and node (v24.19.0) answered; the rung
+  `the layerfs CLI` did not — the addon, the CLI link, and behind them
+  the macOS worker bundle and the runtime image were never built here.
+  `tmp/layerfs-probe/result.json` holds the shortfall record and the
+  script's stderr names the provision steps. The loop's latencies and
+  the worker lifecycle are therefore **not measured**; they land in
+  this section when the environment exists, in one command
+  (`scripts/layerfs-probe.sh`). Ledger: KI-313.
+- **C1 — landed.** `src/layerfs_tools.rs`: the CLI-spawn driver with
+  the once-per-process gate, the `SUPPORTED_WIRE` refusal (fleet
+  drives 1.1.0; the CLI breaks its API between minors), the typed
+  error custody (refusal/timeout/decode/spawn/failed), and the
+  opt-in knob's grammar. Eight unit tests over the stub pin the
+  grammar and parse, Conflict-as-answer, refusal codes, the wire
+  refusal, decode-with-bounded-body, the budget's one attempt, the
+  named absence, and the knob.
+- **C2 — landed stub-side; the live run blocked (KI-313).** The arm
+  in `src/subagents.rs`: mount at spawn (branch `fleet/<child>`),
+  `FileAccess::Folder` at the mount path, settlement at every
+  completion path (completed/capped → Commit, then unmount; failure →
+  discard), the parent's merge `main` ← child plus publish as the
+  harness's act — the child never sees a layerfs call — a `Conflict`
+  rendered with its paths and the branch kept, and the branch/
+  Workspace ids on the delegation row (`workspace_branch`,
+  `workspace`). Three integration tests drive a delegation through the
+  stub: the child's `pwd` lands at the mount and never at the
+  parent's tree (argv grammar checked call by call, Commit ordered
+  before unmount); default-off never consults the driver (no argv log
+  exists); a same-file collision renders `CONFLICT with main on 1
+  path` to the parent while the outcome stays the child's success.
+  The row-ids and render are pinned by
+  `the_workspace_rides_the_row_and_the_render`.
+- **C3 — met except the checkout pin, which waits with C0.** The
+  byte-identity holds two ways: no knob → no spawn → no block (the
+  integration test asserts the absence itself), and `fleet doctor`'s
+  new line reads `off (FLEET_LAYERFS_PROJECT, unset · …)` or FAILs
+  only when the knob is on over a machine that cannot answer —
+  28 doctor tests. The settings surface names the env-only knob
+  without a value. The wire-version refusal is C1's gate. The
+  **VENDOR-style checkout pin is deferred with KI-313**: there is no
+  checkout yet to pin, and a pin of nothing would be theater.
+- **C4 — close-out: green by exit code.** `cargo fmt --all --check`,
+  `cargo clippy --all-targets -- -D warnings`, `cargo build
+  --release`, `cargo test` — 0, 0, 0, 0; **1703 passed, 0 failed,
+  2 ignored** (the live-API e2e among them). The ledger carries
+  KI-313 (the live-run gate), and this status lands in the same
+  commit as the work. The road to the green gate is part of the
+  record: two process-global test bugs of this arm's own making were
+  caught by the suite — a stub deleted while the gate's cached path
+  still pointed at it (panic under `AMBIENT_LOCK` poisoned the shared
+  mutex for the env tests behind it), and the knob as process-wide
+  env letting a concurrent test's delegation mount a workspace inside
+  another test's run (observed: a child pwd'd into a foreign mount).
+  The fixes are structural — one never-deleted stub per process, the
+  knob as a per-thread override production never sets, assertions
+  outside the lock — and the caught-by-the-suite story is the
+  standing lesson's eleventh form.
 
 ## Linked artifacts
 

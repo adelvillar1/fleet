@@ -3162,6 +3162,17 @@ fn doctor_checks() -> ExitCode {
     failed |= !shell_check.ok;
     println!("{}", doctor::render(&shell_check));
 
+    // The delegated-workspaces layer: the one opt-in knob beside the
+    // CLI it drives. Off is the default and reads ok; a knob turned on
+    // over a machine that cannot answer is a broken layer, named here
+    // rather than at the first delegation that tries to mount.
+    let layerfs_check = doctor::evaluate_layerfs(
+        fleet::layerfs_tools::gate(),
+        &fleet::layerfs_tools::project_name(),
+    );
+    failed |= !layerfs_check.ok;
+    println!("{}", doctor::render(&layerfs_check));
+
     // The roster layer: how many routing candidates can serve. Named
     // beside the credentials line — a keyless machine is the layer a
     // routed run cannot cross, and `doctor` says so rather than leaving

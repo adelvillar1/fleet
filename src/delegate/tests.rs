@@ -103,6 +103,8 @@ fn delegation_row(
         parent_session: "parent-session".to_string(),
         root_session: "root-session".to_string(),
         depth: 1,
+        workspace_branch: String::new(),
+        workspace: String::new(),
     }
 }
 
