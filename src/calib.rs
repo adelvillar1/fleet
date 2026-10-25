@@ -652,6 +652,158 @@ pub fn record_embed_timing(stream: &Stream, kind: &str, ms: u128, facts: Option<
     }));
 }
 
+/// One embedder kind's measured tail (KI-249): the row count and the
+/// median/p95/max of the recorded durations. The bounds are set from
+/// these, not from a guess.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EmbedTail {
+    pub kind: String,
+    pub rows: usize,
+    pub median_ms: f64,
+    pub p95_ms: f64,
+    pub max_ms: u128,
+}
+
+/// The measured tails over the stream's `embed_timing` rows, with the
+/// window gate stated: the pass that sets bounds runs only on 20+ rows
+/// spanning 24+ hours, and the shortfall is named rather than implied.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EmbedTailReport {
+    pub kinds: Vec<EmbedTail>,
+    pub total_rows: usize,
+    pub span_hours: f64,
+    pub window_met: bool,
+    pub shortfall: Option<String>,
+}
+
+/// Walk the stream's day files and measure the `embed_timing` rows: per
+/// kind, the count, median, p95, and max; plus the window gate. The day
+/// files are read raw (the JSONL is the system of record; the reader's
+/// typed shape does not carry embed fields).
+pub fn embed_tail(root: &Path, days_back: usize) -> EmbedTailReport {
+    let mut rows: Vec<(String, u128, String)> = Vec::new();
+    let mut day_files: Vec<PathBuf> = Vec::new();
+    collect_day_files(root, &mut day_files);
+    day_files.sort();
+    let skip = day_files.len().saturating_sub(days_back);
+    for path in day_files.iter().skip(skip) {
+        let Ok(text) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        for line in text.lines() {
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+                continue;
+            };
+            if value.get("op").and_then(|op| op.as_str()) != Some(OP_EMBED_TIMING) {
+                continue;
+            }
+            let kind = value
+                .get("kind")
+                .and_then(|kind| kind.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let ms = value.get("ms").and_then(|ms| ms.as_u64()).unwrap_or(0) as u128;
+            let ts = value
+                .get("ts")
+                .and_then(|ts| ts.as_str())
+                .unwrap_or_default()
+                .to_string();
+            rows.push((kind, ms, ts));
+        }
+    }
+    let total_rows = rows.len();
+    let mut stamps: Vec<&str> = rows.iter().map(|(_, _, ts)| ts.as_str()).collect();
+    stamps.sort();
+    let span_hours = match (stamps.first(), stamps.last()) {
+        (Some(first), Some(last)) => {
+            span_hours_between(first, last).unwrap_or(0.0)
+        }
+        _ => 0.0,
+    };
+    let mut kinds: Vec<String> = rows.iter().map(|(kind, _, _)| kind.clone()).collect();
+    kinds.sort();
+    kinds.dedup();
+    let mut tails: Vec<EmbedTail> = Vec::new();
+    for kind in kinds {
+        let mut durations: Vec<u128> = rows
+            .iter()
+            .filter(|(row_kind, _, _)| row_kind == &kind)
+            .map(|(_, ms, _)| *ms)
+            .collect();
+        durations.sort();
+        let rows_n = durations.len();
+        let max = durations.last().copied().unwrap_or(0);
+        let median = durations
+            .get(rows_n / 2)
+            .copied()
+            .unwrap_or(0) as f64;
+        let p95 = durations
+            .get((rows_n * 95).saturating_sub(1) / 100)
+            .copied()
+            .unwrap_or(0) as f64;
+        tails.push(EmbedTail {
+            kind,
+            rows: rows_n,
+            median_ms: median,
+            p95_ms: p95,
+            max_ms: max,
+        });
+    }
+    let window_met = total_rows >= 20 && span_hours >= 24.0;
+    let shortfall = if window_met {
+        None
+    } else {
+        Some(format!(
+            "the window is not met: {total_rows} of 20 embed_timing rows over {span_hours:.1} of 24 hours — let real use accumulate the tail before setting bounds"
+        ))
+    };
+    EmbedTailReport {
+        kinds: tails,
+        total_rows,
+        span_hours,
+        window_met,
+        shortfall,
+    }
+}
+
+/// Hours between two `YYYY-MM-DDTHH:MM:SSZ` stamps, by their prefixes'
+/// numeric order and a day+second parse. `None` when either stamp is
+/// empty or unparseable.
+fn span_hours_between(first: &str, last: &str) -> Option<f64> {
+    let parse = |stamp: &str| -> Option<(i64, i64, i64, i64, i64, i64)> {
+        let (date, time) = stamp.split_once('T')?;
+        let mut date = date.split('-');
+        let year: i64 = date.next()?.parse().ok()?;
+        let month: i64 = date.next()?.parse().ok()?;
+        let day: i64 = date.next()?.parse().ok()?;
+        let mut time = time.trim_end_matches('Z').split(':');
+        let hour: i64 = time.next()?.parse().ok()?;
+        let minute: i64 = time.next()?.parse().ok()?;
+        let second: i64 = time.next()?.parse().ok()?;
+        Some((year, month, day, hour, minute, second))
+    };
+    let (fy, fm, fd, fh, fmi, fs) = parse(first)?;
+    let (ly, lm, ld, lh, lmi, ls) = parse(last)?;
+    let days = (ly - fy) * 365 + (lm - fm) * 30 + (ld - fd);
+    let seconds = (lh - fh) * 3600 + (lmi - fmi) * 60 + (ls - fs);
+    Some((days * 24 + seconds / 3600) as f64 + (seconds % 3600) as f64 / 3600.0)
+}
+
+/// Every day file under the stream root, at any depth.
+fn collect_day_files(root: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_day_files(&path, out);
+        } else {
+            out.push(path);
+        }
+    }
+}
+
 /// The routing op.
 pub const OP_ROUTE: &str = "route";
 /// The approval-screening op.
@@ -3171,6 +3323,36 @@ pub fn render_calibration(root: &Path, day: &str, informs_failover: bool) -> Str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_tail_reader_measures_and_names_the_window_shortfall() {
+        // KI-249's C0/C1: the reader returns per-kind tails over real day
+        // files and states the window shortfall by name while the stream
+        // is under it.
+        let root = scratch("embed-tail");
+        let stream = Stream::open(&root);
+        // Eight rows at the same confidence of wall clock — under the
+        // window (20 rows, 24 hours), and the corpus-load kind's max is
+        // exact.
+        for ms in [100u128, 200, 300, 400, 500, 600, 700, 4_000] {
+            record_embed_timing(&stream, "corpus-load", ms, Some(10));
+        }
+        drop(stream);
+        let report = embed_tail(&root, 30);
+        assert_eq!(report.total_rows, 8);
+        assert!(!report.window_met, "{report:?}");
+        let shortfall = report.shortfall.expect("the shortfall is named");
+        assert!(shortfall.contains("8 of 20"), "{shortfall}");
+        let load = report
+            .kinds
+            .iter()
+            .find(|tail| tail.kind == "corpus-load")
+            .expect("the corpus-load tail");
+        assert_eq!(load.rows, 8);
+        assert_eq!(load.max_ms, 4_000);
+        assert!(load.median_ms > 0.0 && load.p95_ms >= load.median_ms);
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn an_embed_timing_row_rides_the_vocabulary_redacted() {

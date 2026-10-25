@@ -1,5 +1,5 @@
 ---
-status: draft
+status: active
 created: 2026-10-24
 updated: 2026-10-24
 slug: embed-bounds-from-measured-tail
