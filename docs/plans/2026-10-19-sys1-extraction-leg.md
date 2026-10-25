@@ -75,7 +75,7 @@ wires the four inheritors.
 
 ## Acceptance criteria
 
-### E0 — the wire probe (blocked on credentials — KI-312; harness committed, runnable in one command)
+### E0 — the wire probe (re-pointed 2026-10-25: the probe exercises the sys1 shape; KI-312 dissolved — the key already resolves)
 
 - **C1** The live endpoint is called from a scratch harness over a
   real unstructured document, and the actual request/response JSON is
@@ -88,7 +88,7 @@ wires the four inheritors.
   recorded here — E1's timeouts are set from the measurement, not a
   guess (KI-249's discipline applied to the new leg at birth).
 
-### E1 — the sys1 leg (landed 2026-10-25 against the documented shape; constants re-source when E0 measures)
+### E1 — the sys1 leg (landed 2026-10-25; RE-POINTED the same day by owner ruling — see the re-point section below; the criteria below are the Clairic text, kept for the record, superseded by the re-point's shapes)
 
 - **C1** `src/extract.rs` exposes the four verbs — extract, compute,
   estimate, forecast — over a typed response model (value, span,
@@ -108,7 +108,7 @@ wires the four inheritors.
   (KI-243's mechanism), and the per-verb timeouts come from E0-C3 with
   the measured number named in each constant's comment.
 
-### E2 — fleet inherits: the `extract` tool (landed 2026-10-25; the named absence answers until E0 unblocks)
+### E2 — fleet inherits: the `extract` tool (landed 2026-10-25; re-pointed with E1 — the tool renders spans, confidence, quotes, and the named absence)
 
 - **C1** A general agent tool takes `{state, fields[]}` and returns
   typed values with spans, confidence, and `p_null` — declared in its
@@ -217,7 +217,81 @@ Per increment:
   onto the bus with their fixes pre-baked.
 - E6 is verified live against a fetched page, the raw path unchanged.
 
-## E0 status — blocked on credentials, harness committed (2026-10-25)
+## E0 status — blocked on credentials, harness committed (2026-10-25; SUPERSEDED the same day by the re-point below)
+
+The wire contract is documented and reconciled from the announcement
+and the Workers AI REST docs: POST
+`https://api.cloudflare.com/client/v4/accounts/{ACCOUNT_ID}/ai/run/@cf/cloudflare/clairic`,
+Bearer auth, body `{"state": text, "fields": {name: {type, ...}}}`,
+answers carrying `value` / `p_null` / `confidence` / `guess` /
+`span`/`spans` (estimates add median/p10/p90/p_below/p_above;
+forecasts add per-step arrays). The four verbs are FIELD TYPES on one
+pass, not four endpoints — E1's client sends one request carrying
+every requested field.
+
+The live probe is blocked on credentials that exist nowhere on this
+machine: `CLOUDFLARE_ACCOUNT_ID` and `WORKERS_AI_API_TOKEN` (Workers
+AI Read/Edit token) are absent from the environment, `~/.fleet/.env`,
+and sys1's env. The harness is committed and runnable in one command
+the moment the key lands: `scripts/extract-probe.sh [dotenv-file]` —
+it calls all four verbs over a representative invoice, captures the
+raw JSON under `tmp/extract-probe/`, and prints per-verb latency
+(E0-C1/C2/C3 in one command; the token is never printed or captured).
+Until then E1 builds against the documented shape with the
+stub-server tests this plan's C5 designs, and every timeout constant
+names the announcement (sub-second typical, 0.46 s measured) as its
+source pending E0's measurement.
+
+## Re-pointed 2026-10-25 — the leg rides sys1's own models (owner ruling)
+
+The owner challenged the Cloudflare premise ("isn't that what GLiNER
+2.5 already does and it's already wired to sys1?"), the deep dive ran
+against the vendored tree and `sys1 doctor`, and the ruling followed:
+**"if we need to rewrite things to use sys1 appropriately we do that,
+and don't invent a new approach because what's wrongly built should not
+stay."** What the deep dive established (all evidence in the session's
+memory, `sys1-pool-is-all-hosted-no-extraction-wire`):
+
+- The pool's five available providers are all hosted — decide, glide,
+  drex, jev, liquid. The "local venv" GLiNER entries are dead code on
+  this machine (`venv not found at /private/tmp/gliner-decide`), and
+  the router's own default chain is hosted-only by design
+  (`glide,drex,jev`, config.py).
+- The wired GLiNER is the hosted Decide model — classification-class.
+  No sys1 wire extracts spans. But the extraction-class model is
+  hosted by the tier's own vendor under the same key: Fastino GLiNER
+  2.5 Multi (`/v1/chat/completions` with an entities schema, spans +
+  confidence, $0.03/1M input).
+- The Clairic leg was therefore a second vendor and a second key for a
+  capability the first vendor serves — and its unique classes
+  (estimates, forecasts) are the ones this plan's own law refuses as
+  gate inputs. KI-312's credential ask was answering the wrong
+  question: `FASTINO_API_KEY` already resolves, so the leg is live
+  with no new credentials.
+
+The rebuild follows the pattern jobhound measured for exactly this
+problem (`requirement_pass.py`): **locate** (one entity call; the
+requested fields are the entity names) → **segment** (pure Rust, the
+jobhound segmentation) → **verify** (one decision call per carrying
+segment over the sys1 chain glide → drex → jev, the router's own
+measured order, filtered by the keys present) → **reconcile
+asymmetrically** (assert at 0.85, veto at 0.35, contested between —
+one adjudication to the chain's next verifier, capped at 3, and a
+still-contested span ships marked with its quote). Every answer
+carries the sentence it was read from. Estimates and forecasts do not
+exist in the rebuilt leg at all: the field-kind enum has no variant
+for them, which is E3-C3's refusal in its strongest form — an
+illustrative number cannot even be requested. The absence semantics
+are structural: no `p_null` field, a field with no surviving span is
+absent BY NAME with the reason (no candidate above the entity
+threshold, or none that cleared the verify floors).
+
+Superseded in one stroke: the Clairic client, the
+`CLOUDFLARE_ACCOUNT_ID`/`WORKERS_AI_API_TOKEN` pair, the four-verb
+field types, and E0's blocked state. `scripts/extract-probe.sh`
+exercises the new shape in one command; E0's C1–C3 remain "measure
+live and record here" — now unblocked, the machine already holds the
+key.
 
 The wire contract is documented and reconciled from the announcement
 and the Workers AI REST docs: POST

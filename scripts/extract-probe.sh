@@ -1,75 +1,74 @@
-#!/bin/zsh
-# E0's wire probe for the extraction leg (plan 2026-10-19-sys1-extraction-leg.md).
+#!/usr/bin/env bash
+# E0's live probe for the extraction leg, in its sys1 shape (the
+# 2026-10-25 re-point; plan 2026-10-19-sys1-extraction-leg.md).
 #
-# Reads CLOUDFLARE_ACCOUNT_ID and WORKERS_AI_API_TOKEN from the environment
-# (or a dotenv-style file passed as $1), calls the hosted Clairic model once
-# per verb over a representative unstructured document, captures the raw
-# request/response JSON under tmp/ (never committed, no token in it), and
-# prints per-verb latency. E0-C1/C2/C3 run in one command:
+# Reads FASTINO_API_KEY from the environment (or a dotenv-style file
+# passed as $1), runs the leg's two passes over a representative
+# invoice — the locate pass (Fastino GLiNER 2.5 Multi entities) and the
+# verify pass (glide on /v1/systemone) — captures the raw
+# request/response JSON under tmp/ (never committed, no key in it), and
+# prints per-pass latency and status. The key is never printed; the
+# captured files carry only the wire JSON.
 #
 #   scripts/extract-probe.sh [dotenv-file]
 #
-# The token is never printed; the captured files carry only the wire JSON.
+# Optional env: DREX_API_KEY / TYPESAFE_API_KEY extend the client's
+# verify chain; this probe exercises the primary verifier, glide.
 
 set -euo pipefail
 
 if [[ -n "${1:-}" ]]; then
   set -a; source "$1"; set +a
 fi
+: "${FASTINO_API_KEY:?set FASTINO_API_KEY}"
 
-: "${CLOUDFLARE_ACCOUNT_ID:?set CLOUDFLARE_ACCOUNT_ID}"
-: "${WORKERS_AI_API_TOKEN:?set WORKERS_AI_API_TOKEN}"
-
-MODEL="${EXTRACT_MODEL:-@cf/cloudflare/clairic}"
-URL="https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/ai/run/${MODEL}"
 OUT="tmp/extract-probe"
 mkdir -p "$OUT"
 
-STATE='Invoice INV-2026-0042 from Northwind Traders, dated March 14 2026.
-Total due: $4,180.00 including 9.5% tax on the $3,816.44 of services.
-Delivery was confirmed on March 21 2026; payment terms net-30 from that date.
-Contact: billing@northwind.example. Reference the PO 88-BLUE.'
+STATE='Invoice INV-2026-0042 is due on 2026-11-30. The total due is $4,180.00 payable within 30 days. Late fees apply after the due date at 1.5 percent monthly. Net terms are net-45 for approved accounts.'
 
-probe() {
-  local verb="$1" fields="$2"
-  local body start ms
-  body=$(printf '{"state": %s, "fields": %s}' \
-    "$(python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))' <<< "$STATE")" \
-    "$fields")
-  start=$(python3 -c 'import time; print(time.monotonic_ns())')
-  curl -sS --max-time 30 "$URL" \
-    -H "Authorization: Bearer ${WORKERS_AI_API_TOKEN}" \
-    -H 'Content-Type: application/json' \
-    -d "$body" -o "$OUT/$verb.json"
-  ms=$(( ($(python3 -c 'import time; print(time.monotonic_ns())') - start) / 1000000 ))
-  echo "$verb: ${ms} ms -> $OUT/$verb.json"
-}
+printf '%s\n' "=== pass 1: locate (fastino/gliner2.5-multi-v1 entities) ==="
+LOCATE_BODY=$(jq -n --arg state "$STATE" '{
+  model: "fastino/gliner2.5-multi-v1",
+  messages: [{role: "user", content: $state}],
+  schema: {entities: [
+    {name: "invoice_id", description: "the invoice identifier written in the text"},
+    {name: "total_due",  description: "the total amount due written in the text"},
+    {name: "due_date",   description: "the due date written in the text"},
+    {name: "net_terms",  description: "the payment terms length written in the text"}
+  ]},
+  threshold: 0.5, include_confidence: true, include_spans: true, store: false
+}')
+LOCATE=$(curl -sS --max-time 30 -w '\n%{http_code} %{time_total}s' \
+  -X POST https://api.fastino.ai/v1/chat/completions \
+  -H "Authorization: Bearer ${FASTINO_API_KEY}" \
+  -H 'Content-Type: application/json' \
+  -d "$LOCATE_BODY")
+printf '%s\n' "$LOCATE" | sed '$d' > "$OUT/locate.json"
+jq '.choices[0].message.content | fromjson' < "$OUT/locate.json"
+printf 'locate: %s\n' "$(printf '%s' "$LOCATE" | tail -1)"
 
-probe extract '{"fields": {
-  "invoice_id":   {"type": "text", "instructions": "the invoice number"},
-  "issuer":       {"type": "text", "instructions": "the company that issued the invoice"},
-  "total_due":    {"type": "number", "decimals": 2, "unit": "USD"},
-  "invoice_date": {"type": "date"},
-  "due_terms":    {"type": "duration", "unit": "days", "instructions": "payment terms in days"},
-  "contact":      {"type": "text", "instructions": "the billing contact email"}
-}}'
-
-probe compute '{"fields": {
-  "net_amount":  {"type": "number", "decimals": 2, "instructions": "the amount before tax, from total and tax rate"},
-  "tax_paid":    {"type": "number", "decimals": 2, "instructions": "the tax amount"}
-}}'
-
-probe estimate '{"fields": {
-  "expected_total": {"type": "estimate", "min": 3000, "max": 5000, "step": 10,
-                     "instructions": "the plausible total for an invoice like this one"}
-}}'
-
-probe forecast '{"fields": {
-  "next_quarter_total": {"type": "forecast", "horizon": 3, "interval": 80,
-                         "instructions": "the invoice total trend projected three steps ahead"}
-}}'
+printf '%s\n' "=== pass 3: verify (fastino/glide, /v1/systemone nouls) ==="
+VERIFY_BODY=$(jq -n --arg state "$STATE" '{
+  model: "fastino/glide",
+  state: $state,
+  questions: {
+    invoice_id: {type: "noul", instructions: "Does this text state the invoice identifier?", criteria: {true: "Yes, the invoice identifier is stated here.", false: "No."}},
+    total_due:  {type: "noul", instructions: "Does this text state the total amount due?",     criteria: {true: "Yes, the total amount due is stated here.",  false: "No."}},
+    due_date:   {type: "noul", instructions: "Does this text state the due date?",             criteria: {true: "Yes, the due date is stated here.",          false: "No."}},
+    net_terms:  {type: "noul", instructions: "Does this text state the payment terms length?", criteria: {true: "Yes, the payment terms length is stated here.", false: "No."}}
+  }
+}')
+VERIFY=$(curl -sS --max-time 30 -w '\n%{http_code} %{time_total}s' \
+  -X POST https://api.fastino.ai/v1/systemone \
+  -H "Authorization: Bearer ${FASTINO_API_KEY}" \
+  -H 'Content-Type: application/json' \
+  -d "$VERIFY_BODY")
+printf '%s\n' "$VERIFY" | sed '$d' > "$OUT/verify.json"
+jq '.answers' < "$OUT/verify.json"
+printf 'verify: %s\n' "$(printf '%s' "$VERIFY" | tail -1)"
 
 echo "---"
-echo "Reconcile the captured shapes against the documented contract, record the"
-echo "latencies and every delta in the plan's E0 section, then delete nothing:"
-echo "these files are the evidence E1 compiles against."
+echo "Reconcile the captured shapes against the client (src/extract.rs), record the"
+echo "latencies and every delta in the plan's E0 section: these files are the"
+echo "evidence the leg compiles against. The key rides nowhere in them."
