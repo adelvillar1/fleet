@@ -553,6 +553,193 @@ pub fn run_deck_with_event(
 /// pasted paragraph from becoming a vocabulary scan key.
 pub const CONCEPT_LIMIT: usize = 120;
 
+/// The extraction tool (E2, plan 2026-10-19-sys1-extraction-leg.md):
+/// one pass over `state` answering every requested field with typed
+/// values, spans, and the model's own doubt — declared in the spec,
+/// because a field type the spec does not declare is invisible to the
+/// model (the deck-suggest lesson). Nothing deck-specific: the state is
+/// any text the run already holds.
+pub const EXTRACT_TOOL: &str = "extract";
+
+/// The `extract` declaration: state, the typed fields, and the honest
+/// absence — a machine with no extraction credentials is told in the
+/// description that the tool refuses by name there.
+pub fn extract_spec() -> ToolSpec {
+    ToolSpec::function(
+        EXTRACT_TOOL,
+        "Extract typed values from unstructured text in one pass: spans, confidence, and p_null (the named absence). Ask for the fields you need — text, number, date, duration, list, estimate, forecast — with plain-language instructions. Works on any text the run already holds: a fetched page, a session log, a file, pasted prose.",
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "state": { "type": "string", "description": "The unstructured text to read." },
+                "fields": {
+                    "type": "array",
+                    "description": "The fields to extract, in the order they matter.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": { "type": "string", "description": "The field's name in the answer." },
+                            "type": { "type": "string", "enum": ["text", "number", "date", "time", "datetime", "duration", "list", "estimate", "forecast"], "description": "The field's type. estimate and forecast are illustrative only — calibration never accepts them." },
+                            "instructions": { "type": "string", "description": "Plain language: what this field is." },
+                            "integer": { "type": "boolean", "description": "number only: no decimals." },
+                            "decimals": { "type": "integer", "description": "number only: decimal places." },
+                            "unit": { "type": "string", "description": "number/duration only: USD, days, …" },
+                            "items": { "type": "string", "description": "list only: the item type." },
+                            "min": { "type": "number", "description": "estimate only: the distribution's floor." },
+                            "max": { "type": "number", "description": "estimate only: the distribution's ceiling." },
+                            "step": { "type": "number", "description": "estimate only: the grid step." },
+                            "horizon": { "type": "integer", "description": "forecast only: steps ahead." },
+                            "interval": { "type": "integer", "description": "forecast only: the interval percent." }
+                        },
+                        "required": ["name", "type"]
+                    }
+                }
+            },
+            "required": ["state", "fields"]
+        }),
+    )
+}
+
+/// One field request, as the tool's arguments carry it.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct ExtractFieldRequest {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub kind: String,
+    #[serde(default)]
+    pub instructions: Option<String>,
+    #[serde(default)]
+    pub integer: bool,
+    #[serde(default)]
+    pub decimals: Option<u32>,
+    #[serde(default)]
+    pub unit: Option<String>,
+    #[serde(default)]
+    pub items: Option<String>,
+    #[serde(default)]
+    pub min: Option<f64>,
+    #[serde(default)]
+    pub max: Option<f64>,
+    #[serde(default)]
+    pub step: Option<f64>,
+    #[serde(default)]
+    pub horizon: Option<u32>,
+    #[serde(default)]
+    pub interval: Option<u32>,
+}
+
+/// Run the extraction tool: arguments in, one pass, the report as the
+/// model-readable text — typed values with spans and doubt, a `p_null`
+/// shown as the named absence it is. A machine with no extraction
+/// credentials gets the named absence in the result, never a failed run.
+pub fn run_extract(arguments: &serde_json::Value) -> Result<ToolOutcome, String> {
+    let state = arguments
+        .get("state")
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.trim().is_empty())
+        .ok_or("the `state` argument is required: the text to read")?;
+    let requested: Vec<ExtractFieldRequest> = serde_json::from_value(
+        arguments
+            .get("fields")
+            .cloned()
+            .ok_or("the `fields` argument is required: the fields to extract")?,
+    )
+    .map_err(|error| format!("the fields are not the schema this tool declares: {error}"))?;
+    if requested.is_empty() {
+        return Ok(ToolOutcome {
+            output: "error: the fields array is empty — ask for at least one field".to_string(),
+            truncated: false,
+        });
+    }
+    if crate::extract::sys1_extracts() {
+        let (client, missing) = crate::extract::ExtractClient::from_env()
+            .ok_or("the extraction leg is not configured: set CLOUDFLARE_ACCOUNT_ID and WORKERS_AI_API_TOKEN")?;
+        if !missing.is_empty() {
+            return Ok(ToolOutcome {
+                output: format!(
+                    "the extraction leg is unavailable — set {} and call again; nothing was spent",
+                    missing.join(", ")
+                ),
+                truncated: false,
+            });
+        }
+        let specs: Vec<(String, crate::extract::FieldSpec)> = requested
+            .iter()
+            .map(|field| (field.name.clone(), spec_of(field)))
+            .collect();
+        let report = client
+            .run(state, &specs, "extract")
+            .map_err(|error| format!("error: {error}"))?;
+        let mut output = format!(
+            "extracted {} field(s) in {} ms on {}:
+",
+            report.answers.len(),
+            report.latency_ms,
+            report.model
+        );
+        for answer in &report.answers {
+            let doubt = if answer.p_null >= 0.5 {
+                format!("p_null {:.2} — likely absent from the state", answer.p_null)
+            } else {
+                match answer.confidence {
+                    Some(confidence) => format!("confidence {:.2}", confidence),
+                    None => format!("p_null {:.2}", answer.p_null),
+                }
+            };
+            output.push_str(&format!(
+                "
+- {}: {} ({doubt})",
+                answer.name, answer.value
+            ));
+            if !answer.spans.is_empty() {
+                let spans: Vec<String> = answer
+                    .spans
+                    .iter()
+                    .map(|(start, end)| format!("{start}–{end}"))
+                    .collect();
+                output.push_str(&format!(" [{}]", spans.join(", ")));
+            }
+        }
+        Ok(ToolOutcome {
+            output,
+            truncated: false,
+        })
+    } else {
+        Ok(ToolOutcome {
+            output: "the extraction leg is unavailable — set CLOUDFLARE_ACCOUNT_ID and WORKERS_AI_API_TOKEN (env or ~/.fleet/.env) and call again; nothing was spent".to_string(),
+            truncated: false,
+        })
+    }
+}
+
+/// The request's field object → the leg's field spec.
+fn spec_of(field: &ExtractFieldRequest) -> crate::extract::FieldSpec {
+    let kind = match field.kind.as_str() {
+        "number" => crate::extract::FieldKind::Number,
+        "date" => crate::extract::FieldKind::Date,
+        "time" => crate::extract::FieldKind::Time,
+        "datetime" => crate::extract::FieldKind::Datetime,
+        "duration" => crate::extract::FieldKind::Duration,
+        "list" => crate::extract::FieldKind::List,
+        "estimate" => crate::extract::FieldKind::Estimate,
+        "forecast" => crate::extract::FieldKind::Forecast,
+        _ => crate::extract::FieldKind::Text,
+    };
+    crate::extract::FieldSpec {
+        kind,
+        instructions: field.instructions.clone(),
+        integer: field.integer,
+        decimals: field.decimals,
+        unit: field.unit.clone(),
+        items: field.items.clone(),
+        min: field.min,
+        max: field.max,
+        step: field.step,
+        horizon: field.horizon,
+        interval: field.interval,
+    }
+}
+
 /// The request declaration for `convention`: one concept, and the
 /// question "what does this project already call this?".
 ///

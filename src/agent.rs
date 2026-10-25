@@ -1647,6 +1647,13 @@ impl<'a> Agent<'a> {
         if admitted(tools::DECK_TOOL) {
             specs.push(tools::deck_spec());
         }
+        // The extraction leg rides every run whose machine carries the
+        // credentials: a typed read beside the decision tier, declared
+        // even when unavailable so its absence is named in the result
+        // rather than invisible to the model (E2-C3).
+        if admitted(tools::EXTRACT_TOOL) {
+            specs.push(tools::extract_spec());
+        }
         // `vision` rides every run too, and for the same reason plus one:
         // it is a read of a file the owner already has, it touches
         // nothing outside itself, and a model that cannot be shown a
@@ -3128,6 +3135,15 @@ impl<'a> Agent<'a> {
                 }
             });
         }
+        if name == tools::EXTRACT_TOOL {
+            // The leg is an HTTPS call with its own timeout: the
+            // executor runs it off the async worker. The named absence
+            // is a result the model reads, never a failed run (E2-C3).
+            return Ok(match serde_json::from_str(&call.function.arguments) {
+                Err(error) => settled(format!("error: arguments were not valid JSON: {error}")),
+                Ok(arguments) => Prepared::Ready(Work::Extract { arguments }),
+            });
+        }
         if name == tools::VISION_TOOL {
             // The images are read here, in the agent's own working
             // directory, with the same boundary the browser's file pane
@@ -4151,6 +4167,11 @@ enum Work {
         arguments: serde_json::Value,
         derived: Vec<String>,
     },
+    /// One extraction pass over the extraction leg (KI: the sys1
+    /// extraction leg, E2): the arguments ride whole because the tool
+    /// parses and validates them itself, and the leg's own client does
+    /// the HTTP.
+    Extract { arguments: serde_json::Value },
     /// One live-source ask: blend1's web leg, spawned for the call and
     /// torn down after it. The spec rides the work because it is
     /// resolved where the launch is known, the way the judge's is.
@@ -4482,6 +4503,26 @@ async fn run_work(work: Work) -> (String, bool) {
                 output: answer,
                 truncated: false,
             });
+            (outcome.output, outcome.truncated)
+        }
+        Work::Extract { arguments } => {
+            // The leg is an HTTPS call with its own timeout: off the
+            // async worker, the way the web fetch runs. The named
+            // absence is a result the model reads, never a failed run
+            // (E2-C3).
+            let read = tokio::task::spawn_blocking(move || tools::run_extract(&arguments));
+            let outcome = match read.await {
+                Ok(Ok(outcome)) => outcome,
+                Ok(Err(error)) => ToolOutcome {
+                    output: format!("error: {error}"),
+                    truncated: false,
+                },
+                Err(error) => ToolOutcome {
+                    output: format!("error: the extraction task failed: {error}"),
+                    truncated: false,
+                },
+            };
+            let outcome = tools::bound(outcome);
             (outcome.output, outcome.truncated)
         }
         Work::Web { spec, arguments } => {
@@ -5044,6 +5085,10 @@ fn writer_of(prepared: &Prepared) -> Option<String> {
             Work::Improve { .. } => Some("proposals".to_string()),
             Work::Deck { .. } => Some("deck".to_string()),
             Work::Vision { .. } => Some("vision".to_string()),
+            // The extraction leg is a read of the outside world: it
+            // writes nothing here, so two of them in one batch run
+            // together — the leg's own timeout is the clamp.
+            Work::Extract { .. } => None,
             // A lookup reads the tree and writes nothing: no writer to
             // hold apart, so two of them in one batch run together.
             Work::Process { .. } => None,
@@ -7329,6 +7374,10 @@ mod tests {
                 // neither, so a child cannot rewrite its parent's plan.
                 "plan",
                 "deck",
+                // The extraction leg rides the deck's slot: a typed read
+                // beside the decision tier, declared when the machine
+                // carries the credentials and named-absent otherwise.
+                "extract",
                 "vision",
                 "web",
                 "read_document",
@@ -7384,7 +7433,7 @@ mod tests {
         // computation over a value the model writes, and neither touches
         // anything outside itself. So does `plan`: it drafts a plan
         // document's declaration, which is the repo's own state.
-        assert_eq!(plain.declarations().len(), 27);
+        assert_eq!(plain.declarations().len(), 28);
         assert_eq!(plain.system_prompt(None), default_prompt());
         let _ = std::fs::remove_dir_all(&home);
         let _ = std::fs::remove_dir_all(&root);
