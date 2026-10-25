@@ -102,6 +102,16 @@ Effort levels per workload (research done, plan not written); the
 shell; the cron corpus-refresh repair. Each is named with its reason in
 the technical document's Sequencing section.
 
+Collision-free delegation is planned on top of
+[LayerFS](https://github.com/Ephemeral-AI-Lab/layerfs) (MIT): each
+delegated child would work in its own writable workspace over one
+shared committed history, so concurrent agents answer a named conflict
+instead of stepping on each other's code. Fleet drives LayerFS the way
+it drives the vendored lanes — an external tool reached through its
+`layerfs` command, with nothing of it vendored and no runtime entering
+the binary. The contract is
+[docs/plans/2026-10-25-layerfs-delegated-workspaces.md](docs/plans/2026-10-25-layerfs-delegated-workspaces.md).
+
 ## Start here
 
 ```sh
