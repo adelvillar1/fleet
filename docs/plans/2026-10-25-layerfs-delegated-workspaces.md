@@ -92,7 +92,9 @@ this compiles.
 
 ## Acceptance criteria
 
-- [ ] **C0 — the probe gate.** `scripts/layerfs-probe.sh` measures the
+- [ ] **C0 — the probe gate** *(ladder ran 2026-10-25; blocked at the CLI
+      rung — KI-313; the latencies land here when the environment exists)*.
+  `scripts/layerfs-probe.sh` measures the
       real machine before the driver exists: init a scratch project,
       fork, mount, exec, commit, unmount, and the macOS worker's
       lifecycle (start, a second client, idle exit, reclaim), with
@@ -106,7 +108,8 @@ this compiles.
       is its own once-per-process gate with the named absence; unit
       tests against a stub `layerfs` executable (the double pattern)
       pin the parse, the refusal shapes, and the timeout.
-- [ ] **C2 — the delegation arm.** An opted-in run's child mounts one
+- [ ] **C2 — the delegation arm** *(landed and stub-pinned; the one live
+      run blocked — KI-313)*. An opted-in run's child mounts one
       Workspace at spawn, runs with `FileAccess::Folder` at the mount
       path, and on every completion path — success, failure, turn-cap
       — commits-or-discards per policy and unmounts; only the parent
@@ -115,7 +118,8 @@ this compiles.
       carries the Branch and Workspace ids. Pinned by integration
       tests with the stub; one live run recorded in the increment's
       report.
-- [ ] **C3 — the boundary.** Default OFF: a run that names no project
+- [ ] **C3 — the boundary** *(byte-identity, doctor, wire refusal landed;
+      the checkout pin waits with KI-313)*. Default OFF: a run that names no project
       is byte-identical in what the model sees (the reconstruction
       test). `fleet doctor` names the CLI's presence or absence. The
       checkout identity fleet pins is named (a VENDOR-style pin), and
