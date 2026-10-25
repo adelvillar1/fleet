@@ -1259,6 +1259,204 @@ pub fn suggest_layouts_with(
     ranked
 }
 
+/// The asset library's directory: `FLEET_ASSETS_DIR` when set. The
+/// owner names the directory; an unset or empty one is the named
+/// absence `find_assets` answers with (KI-252 move 3).
+pub fn assets_dir() -> Option<std::path::PathBuf> {
+    std::env::var("FLEET_ASSETS_DIR")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .map(std::path::PathBuf::from)
+}
+
+/// One asset match: the file, its caption's score against the intent,
+/// and the aspect the grader certified — `None` when the format's
+/// dimensions could not be read, which the surface names.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AssetMatch {
+    pub name: String,
+    pub path: std::path::PathBuf,
+    pub score: f64,
+    pub aspect: Option<f64>,
+    /// The aspect certification the grader ran, as the surface reads
+    /// it: what was compared and what passed, or why it could not.
+    pub certification: String,
+}
+
+/// The frame aspect each project type is graded against: a
+/// presentation's slide is 16:9, an infographic and a poster are read
+/// as portrait pages at A-series ratio (√2). One decimal of slack is
+/// the certification's tolerance.
+pub fn frame_aspect(project: ProjectType) -> f64 {
+    match project {
+        ProjectType::Presentation => 16.0 / 9.0,
+        ProjectType::Infographic | ProjectType::Poster => 2_f64.sqrt(),
+    }
+}
+
+/// The image's aspect ratio, read without a decoder: a PNG's IHDR
+/// carries width/height at bytes 16–24, and an SVG's width/height
+/// attributes (or viewBox) carry the document's own ratio. Anything
+/// else returns `None` — uncertified, and the surface says so.
+pub fn image_aspect(path: &std::path::Path) -> Option<f64> {
+    match path.extension().and_then(|ext| ext.to_str()) {
+        Some("png") => {
+            let bytes = std::fs::read(path).ok()?;
+            if bytes.len() < 24 || &bytes[12..16] != b"IHDR" {
+                return None;
+            }
+            let width = u32::from_be_bytes(bytes[16..20].try_into().ok()?);
+            let height = u32::from_be_bytes(bytes[20..24].try_into().ok()?);
+            (width > 0 && height > 0).then(|| width as f64 / height as f64)
+        }
+        Some("svg") => {
+            let text = std::fs::read_to_string(path).ok()?;
+            let width = attribute(&text, "width")?;
+            let height = attribute(&text, "height")?;
+            (width > 0.0 && height > 0.0).then_some(width / height)
+        }
+        _ => None,
+    }
+}
+
+/// An SVG attribute's numeric value (`width="512"` or
+/// `viewBox="0 0 512 512"`), first match wins.
+fn attribute(text: &str, name: &str) -> Option<f64> {
+    for quote in ['"', '\''] {
+        let needle = format!("{name}={quote}");
+        if let Some(at) = text.find(&needle) {
+            let rest = &text[at + needle.len()..];
+            let end = rest.find(quote)?;
+            return rest[..end].trim().parse().ok();
+        }
+    }
+    None
+}
+
+/// The asset caption: the file stem with separators spoken as spaces,
+/// plus a sidecar caption file's first line when one exists
+/// (`<asset>.caption.txt` — the filename rarely says enough).
+fn asset_caption(path: &std::path::Path) -> String {
+    let stem = path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or_default();
+    let mut caption = stem.replace(['-', '_'], " ");
+    let sidecar = path.with_extension("caption.txt");
+    if let Ok(line) = std::fs::read_to_string(&sidecar) {
+        let line = line.trim();
+        if !line.is_empty() {
+            caption.push_str(". ");
+            caption.push_str(line);
+        }
+    }
+    caption
+}
+
+/// The grader's asset check: a match is certified only when its aspect
+/// holds the project frame's own ratio within a quarter — the same
+/// "certify before it is placed" gate the blueprint's step names. The
+/// verdict is the surface's sentence: what was compared and what held,
+/// or why the check could not run (an unreadable aspect is a named
+/// non-certification, never a silent pass).
+pub fn certify_asset(matched: &AssetMatch, project: ProjectType) -> String {
+    match matched.aspect {
+        Some(ratio) => {
+            let frame = frame_aspect(project);
+            if (ratio - frame).abs() / frame <= 0.25 {
+                format!("certified: aspect {ratio:.2} holds the frame's {frame:.2}")
+            } else {
+                format!(
+                    "refused: aspect {ratio:.2} breaks the frame's {frame:.2} — find a differently shaped asset or crop this one"
+                )
+            }
+        }
+        None => "not certified: the asset's dimensions could not be read".to_string(),
+    }
+}
+
+/// The asset library, ranked: every image in the directory gets its
+/// caption embedded against the intent, the top-k returned with the
+/// grader's aspect certification beside each score. An unset or empty
+/// directory, or a machine with no embedding backend, is the named
+/// absence — an empty list with the reason, never a fabricated match.
+pub fn find_assets(
+    embedder: &dyn crate::memory::Embedder,
+    intent: &str,
+    dir: &std::path::Path,
+    k: usize,
+) -> (Vec<AssetMatch>, Option<String>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return (
+            Vec::new(),
+            Some(format!(
+                "no asset library at {} — set FLEET_ASSETS_DIR to a directory of images",
+                dir.display()
+            )),
+        );
+    };
+    let query = match embedder.embed(intent) {
+        Some(query) => query,
+        None => {
+            return (
+                Vec::new(),
+                Some("no embedding backend — the asset library cannot rank".to_string()),
+            )
+        }
+    };
+    let mut candidates: Vec<(std::path::PathBuf, String)> = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let is_image = path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| matches!(ext, "png" | "svg" | "jpg" | "jpeg" | "webp"));
+        if is_image {
+            candidates.push((path.clone(), asset_caption(&path)));
+        }
+    }
+    if candidates.is_empty() {
+        return (
+            Vec::new(),
+            Some(format!(
+                "the asset library at {} holds no images (png, svg, jpg, webp)",
+                dir.display()
+            )),
+        );
+    }
+    let mut ranked: Vec<AssetMatch> = candidates
+        .iter()
+        .filter_map(|(path, caption)| {
+            embedder.embed(caption).map(|vector| {
+                let score = crate::memory::cosine(&query, &vector);
+                let aspect = image_aspect(path);
+                AssetMatch {
+                    name: path
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                    path: path.clone(),
+                    score,
+                    aspect,
+                    certification: match aspect {
+                        Some(ratio) => format!("aspect {ratio:.2} read"),
+                        None => "aspect unreadable — not certified".to_string(),
+                    },
+                }
+            })
+        })
+        .collect();
+    ranked.sort_by(|left, right| {
+        right
+            .score
+            .partial_cmp(&left.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    ranked.truncate(k);
+    (ranked, None)
+}
+
 /// The matcher over an explicit embedder — the seam the tests use.
 pub fn suggest_layout_with(
     embedder: &dyn crate::memory::Embedder,
@@ -1815,7 +2013,98 @@ mod tests {
         assert!(fitted.actions.is_empty());
         assert!(fitted.residual.is_empty());
     }
+
     use super::*;
+
+    #[test]
+    fn find_assets_ranks_and_certifies_and_names_the_absence() {
+        // KI-252 move 3: the ranked library with the grader's aspect
+        // certification beside each score, and the named absence when
+        // the directory is unset or empty — never a fabricated match.
+        let dir = std::env::temp_dir().join(format!("fleet-assets-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // A 16:9 SVG (the presentation frame's own ratio) and a
+        // portrait one; the captions say which is which.
+        std::fs::write(
+            dir.join("market-chart.svg"),
+            r##"<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900"><rect width="1600" height="900" fill="teal"/></svg>"##,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("market-chart.svg.caption.txt"),
+            "a chart of market growth over quarters",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("tall-banner.svg"),
+            r##"<svg xmlns="http://www.w3.org/2000/svg" width="400" height="1200"><rect width="400" height="1200" fill="plum"/></svg>"##,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("tall-banner.svg.caption.txt"),
+            "a chart of market growth over quarters, tall",
+        )
+        .unwrap();
+
+        struct Scripted;
+        impl crate::memory::Embedder for Scripted {
+            fn box_clone(&self) -> Box<dyn crate::memory::Embedder> {
+                Box::new(Scripted)
+            }
+            fn embed(&self, text: &str) -> Option<Vec<f32>> {
+                // "tall" in the query or the caption flips the vector to
+                // the tall banner's side; anything else is the 16:9's.
+                let lean = if text.contains("tall") { -1.0 } else { 1.0 };
+                Some(vec![lean, 0.5])
+            }
+            fn name(&self) -> &'static str {
+                "scripted"
+            }
+            fn serves_vectors(&self) -> bool {
+                true
+            }
+            fn vector_info(&self) -> Option<(String, usize)> {
+                Some(("scripted".to_string(), 2))
+            }
+        }
+
+        // The wide match ranks first for a plain intent and its aspect
+        // certifies against the presentation frame.
+        let (matches, note) = find_assets(&Scripted, "a chart for the deck", &dir, 3);
+        assert!(note.is_none(), "{note:?}");
+        assert_eq!(matches.len(), 2, "{matches:?}");
+        assert_eq!(matches[0].name, "market-chart.svg");
+        assert!(
+            matches[0].certification.contains("aspect 1.78 read"),
+            "{matches:?}"
+        );
+        // The grader refuses the breaking aspect by name.
+        let tall = matches
+            .iter()
+            .find(|matched| matched.name == "tall-banner.svg")
+            .expect("the tall banner ranked");
+        let verdict = certify_asset(tall, ProjectType::Presentation);
+        assert!(verdict.contains("refused"), "{verdict}");
+        assert!(verdict.contains("breaks the frame"), "{verdict}");
+        // And the wide one's verdict certifies it.
+        let wide = matches
+            .iter()
+            .find(|matched| matched.name == "market-chart.svg")
+            .expect("the wide chart ranked");
+        assert!(certify_asset(wide, ProjectType::Presentation).contains("certified"));
+
+        // The named absence: an empty directory says it holds nothing.
+        let empty = dir.join("empty");
+        std::fs::create_dir_all(&empty).unwrap();
+        let (matches, note) = find_assets(&Scripted, "a chart", &empty, 3);
+        assert!(matches.is_empty());
+        assert!(note
+            .expect("the absence is named")
+            .contains("holds no images"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     fn node(id: &str, headline: &str, components: Vec<Component>) -> Node {
         Node {

@@ -272,9 +272,10 @@ pub fn deck_spec() -> ToolSpec {
             "properties": {
                 "suggest": {
                     "type": "object",
-                    "description": "Suggest mode: rank the layouts for an intent instead of building. Carries one field, intent — what the owner is trying to show. Returns the nearest layouts, best first, with their match scores.",
+                    "description": "Suggest mode: rank the layouts for an intent instead of building, and name assets from the library when one is configured. Carries intent — what the owner is trying to show — and an optional project_type for the asset fit. Returns the nearest layouts, best first, with their match scores.",
                     "properties": {
-                        "intent": { "type": "string", "description": "What the owner is trying to show, in their own words." }
+                        "intent": { "type": "string", "description": "What the owner is trying to show, in their own words." },
+                        "project_type": { "type": "string", "enum": ["presentation", "infographic", "poster"], "description": "The frame the asset fit is graded against; presentation by default." }
                     },
                     "required": ["intent"]
                 },
@@ -400,12 +401,36 @@ pub fn run_deck_with_event(
             .take(3)
             .map(|(layout, score)| format!("{} ({:.3})", layout.label(), score))
             .collect();
+        let mut output = format!(
+            "the nearest layouts for {intent:?}: {} — build with the first unless the content says otherwise",
+            named.join(", ")
+        );
+        // The asset library's own line (KI-252 move 3): what matched,
+        // at what score, and whether the grader certified the fit for
+        // this project type. An unset library is the named absence.
+        if let Some(dir) = crate::deck::assets_dir() {
+            let project = match suggest.get("project_type").and_then(|value| value.as_str()) {
+                Some("infographic") => crate::deck::ProjectType::Infographic,
+                Some("poster") => crate::deck::ProjectType::Poster,
+                _ => crate::deck::ProjectType::Presentation,
+            };
+            let (matches, note) =
+                crate::deck::find_assets(&*crate::memory::probed_embedder(), &intent, &dir, 3);
+            if let Some(note) = note {
+                output.push_str(&format!("\nassets: {note}"));
+            } else {
+                for matched in &matches {
+                    let verdict = crate::deck::certify_asset(matched, project);
+                    output.push_str(&format!(
+                        "\nasset: {} ({:.3}) — {verdict}",
+                        matched.name, matched.score
+                    ));
+                }
+            }
+        }
         return Ok(DeckRun {
             outcome: ToolOutcome {
-                output: format!(
-                    "the nearest layouts for {intent:?}: {} — build with the first unless the content says otherwise",
-                    named.join(", ")
-                ),
+                output,
                 truncated: false,
             },
             event: None,
