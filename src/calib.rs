@@ -715,9 +715,7 @@ pub fn embed_tail(root: &Path, days_back: usize) -> EmbedTailReport {
     let mut stamps: Vec<&str> = rows.iter().map(|(_, _, ts)| ts.as_str()).collect();
     stamps.sort();
     let span_hours = match (stamps.first(), stamps.last()) {
-        (Some(first), Some(last)) => {
-            span_hours_between(first, last).unwrap_or(0.0)
-        }
+        (Some(first), Some(last)) => span_hours_between(first, last).unwrap_or(0.0),
         _ => 0.0,
     };
     let mut kinds: Vec<String> = rows.iter().map(|(kind, _, _)| kind.clone()).collect();
@@ -733,10 +731,7 @@ pub fn embed_tail(root: &Path, days_back: usize) -> EmbedTailReport {
         durations.sort();
         let rows_n = durations.len();
         let max = durations.last().copied().unwrap_or(0);
-        let median = durations
-            .get(rows_n / 2)
-            .copied()
-            .unwrap_or(0) as f64;
+        let median = durations.get(rows_n / 2).copied().unwrap_or(0) as f64;
         let p95 = durations
             .get((rows_n * 95).saturating_sub(1) / 100)
             .copied()
