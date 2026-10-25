@@ -1,5 +1,5 @@
 ---
-status: draft
+status: active
 created: 2026-10-19
 updated: 2026-10-19
 slug: sys1-extraction-leg
@@ -216,6 +216,31 @@ Per increment:
 - E5 is verified by the vm/Playwright harness pattern: triggers push
   onto the bus with their fixes pre-baked.
 - E6 is verified live against a fetched page, the raw path unchanged.
+
+## E0 status — blocked on credentials, harness committed (2026-10-25)
+
+The wire contract is documented and reconciled from the announcement
+and the Workers AI REST docs: POST
+`https://api.cloudflare.com/client/v4/accounts/{ACCOUNT_ID}/ai/run/@cf/cloudflare/clairic`,
+Bearer auth, body `{"state": text, "fields": {name: {type, ...}}}`,
+answers carrying `value` / `p_null` / `confidence` / `guess` /
+`span`/`spans` (estimates add median/p10/p90/p_below/p_above;
+forecasts add per-step arrays). The four verbs are FIELD TYPES on one
+pass, not four endpoints — E1's client sends one request carrying
+every requested field.
+
+The live probe is blocked on credentials that exist nowhere on this
+machine: `CLOUDFLARE_ACCOUNT_ID` and `WORKERS_AI_API_TOKEN` (Workers
+AI Read/Edit token) are absent from the environment, `~/.fleet/.env`,
+and sys1's env. The harness is committed and runnable in one command
+the moment the key lands: `scripts/extract-probe.sh [dotenv-file]` —
+it calls all four verbs over a representative invoice, captures the
+raw JSON under `tmp/extract-probe/`, and prints per-verb latency
+(E0-C1/C2/C3 in one command; the token is never printed or captured).
+Until then E1 builds against the documented shape with the
+stub-server tests this plan's C5 designs, and every timeout constant
+names the announcement (sub-second typical, 0.46 s measured) as its
+source pending E0's measurement.
 
 ## Audited 2026-10-25 — against commit history
 
