@@ -183,6 +183,16 @@ directly — with a harness case and a live verification.
   the confirmed path, the offer cleared, the route bar resolved.
 - C5: the full gate, exit codes read directly.
 
+## Audited 2026-10-25 — against commit history
+
+Fully pending: the only commit touching this work is this plan's own
+drafting (`6be8096`). No capability-offer surface exists in the tree —
+the bridge's `capability` hits are the pairing/channel capability, an
+unrelated sense. C1's no-roster-keys offer, C2's accept-fills-composer,
+and C4's health-check-backed embedder offer are all unbuilt; C4's
+health check now rides the probe machinery KI-296's retry hardened,
+which makes the offer's honesty easier than when this was drafted.
+
 ## Linked artifacts
 
 - `docs/features/gui.md` — the home briefing section carries the

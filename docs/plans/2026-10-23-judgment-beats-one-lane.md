@@ -114,6 +114,18 @@ this machine. The capture rate the calibration stream already records
 (`route_judged` rows per day) is the regression guard: the beats must
 keep judging every row they judged before.
 
+## Audited 2026-10-25 — against commit history
+
+No commit has touched `src/judge.rs` or `src/delegate.rs` since this
+plan was written: the gap is real and every criterion unmet. Verified
+against the tree — `ask_lane` still spawns → initializes → lists → one
+call → tears down (`src/judge.rs:612`; `src/delegate.rs:940` — this
+plan's `1363` citation has drifted, use 940), `parse_workload` still
+returns only the workload head and discards the execution head. C0
+through C5 all stand as written. Build order note: C0+C5 are one
+increment (the counting seam), C1 is the parse, C2–C4 hang the
+steering off it.
+
 ## Linked artifacts
 
 - `docs/plans/2026-10-21-router-rules-everything-else.md` — the router's walk this plan steers inside.

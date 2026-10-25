@@ -217,6 +217,23 @@ Per increment:
   onto the bus with their fixes pre-baked.
 - E6 is verified live against a fetched page, the raw path unchanged.
 
+## Audited 2026-10-25 — against commit history
+
+Partially overtaken by a sibling route. What landed since this plan:
+the **Perception leg** (`5782497`, `35a3335`, 2026-10-20) — sys1
+exposes `sys1_perceive_document` using the DREX key from its own
+provider env, and fleet hands the lane a path and caches by content
+hash. That proves this plan's C2 discipline (credentials through sys1,
+masking held) with a real extraction-class capability — but it is not
+E1: no `src/extract.rs`, no four verbs (extract, compute, estimate,
+forecast), no `p_null` typed model, no `sys1_extracts()` gate. E0's
+wire probe never ran (no Clairic trace in any tree). E2's fleet-side
+`extract` exists as `crate::documents::extract` — local extraction, a
+different lineage from the sys1 leg. Verdict: E1 remains the gap, E0
+is stale-until-probed, and the next session must read Perception
+first so the four-verb leg builds on the credential-holder pattern
+that already landed instead of beside it.
+
 ## Linked artifacts
 
 - The Clairic announcement —
