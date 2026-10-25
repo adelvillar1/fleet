@@ -1465,6 +1465,50 @@ impl Score {
 /// Cosine similarity, in full f64 even though the vectors are f32. A
 /// length mismatch or a zero vector scores 0.0 — not similar, not an
 /// error.
+/// The Matryoshka slice: the vector's leading 128 dimensions. Truncation
+/// is the property the model was trained for — the slice carries most of
+/// the neighborhood for coarse ranking at a quarter of the multiply cost,
+/// and the full-width re-rank restores the fine order (KI-252 move 2).
+pub(crate) const SLICE_DIMS: usize = 128;
+
+/// How many slice-stage survivors re-rank full-width (KI-252 move 2).
+/// Named so the measurement gate can argue it: large enough that the
+/// true neighborhood survives the coarse order on a healthy corpus,
+/// small enough that the full-width pass touches a fraction of it.
+pub(crate) const PREFILTER_K: usize = 24;
+
+pub(crate) fn slice(v: &[f32]) -> &[f32] {
+    &v[..v.len().min(SLICE_DIMS)]
+}
+
+/// The two-stage prefilter: which facts' vector term gets a full-width
+/// cosine. Stage one scores every fact's slice against the query's slice
+/// and keeps the top-K; every fact outside the set reads 0.0 for its
+/// vector term, exactly the shape a partial embed leaves.
+pub(crate) fn vector_prefilter(
+    query_vector: &Option<Vec<f32>>,
+    vectors: &HashMap<String, Vec<f32>>,
+    k: usize,
+) -> Option<std::collections::HashSet<String>> {
+    let query = query_vector.as_ref()?;
+    if query.len() < SLICE_DIMS {
+        return None; // a short (already-sliced or partial) query: rank full-width
+    }
+    let query_slice = slice(query);
+    let mut scored: Vec<(String, f64)> = vectors
+        .iter()
+        .filter(|(_, vector)| vector.len() >= SLICE_DIMS)
+        .map(|(name, vector)| (name.clone(), cosine(query_slice, slice(vector))))
+        .collect();
+    scored.sort_by(|left, right| {
+        right
+            .1
+            .partial_cmp(&left.1)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    Some(scored.into_iter().take(k).map(|(name, _)| name).collect())
+}
+
 pub(crate) fn cosine(left: &[f32], right: &[f32]) -> f64 {
     if left.len() != right.len() || left.is_empty() {
         return 0.0;
@@ -2063,6 +2107,11 @@ pub struct Memory {
     /// The adjacency map over the frontmatter's own edges, derived at
     /// load. See [`crate::recall_graph`].
     graph: crate::recall_graph::Graph,
+    /// KI-252 move 2, default off: rank the vector channel's fan-out on
+    /// the 128-dimension Matryoshka slice and re-rank the top slice hits
+    /// full-width. The measurement gate decides the default; the setting
+    /// exists so the single pass stays the contract until it does.
+    pub two_stage: std::sync::atomic::AtomicBool,
 }
 
 impl Memory {
@@ -2209,6 +2258,7 @@ impl Memory {
             facts: Mutex::new(facts),
             vectors,
             graph,
+            two_stage: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -2250,6 +2300,7 @@ impl Memory {
             facts: Mutex::new(facts),
             vectors,
             graph,
+            two_stage: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -2326,6 +2377,13 @@ impl Memory {
     pub fn partition(&self, instruction: &str) -> Partition {
         let shape = classify_shape(instruction);
         let query_vector = self.embedder.embed(instruction);
+        // The two-stage prefilter, when the setting is on: the slice
+        // stage's top-K is the only set whose vector term survives.
+        let prefilter = if self.two_stage.load(std::sync::atomic::Ordering::Relaxed) {
+            vector_prefilter(&query_vector, &self.vectors, PREFILTER_K)
+        } else {
+            None
+        };
         // Stemmed, like the fact side: both halves of every lexical
         // comparison are reduced the same way, so the channel stays
         // symmetric and neither side gains from the rule (R3).
@@ -2338,7 +2396,13 @@ impl Memory {
         for fact in facts.iter().filter(|fact| {
             !fact.protected() && fact.tier != Tier::Working && !fact.forgotten(&today)
         }) {
-            let score = self.score(fact, &query_vector, &query_tokens, today_days);
+            let score = self.score(
+                fact,
+                &query_vector,
+                &query_tokens,
+                today_days,
+                prefilter.as_ref(),
+            );
             if score.total < MIN_RECALL_SCORE {
                 continue;
             }
@@ -2364,6 +2428,7 @@ impl Memory {
             vector: &query_vector,
             tokens: &query_tokens,
             today_days,
+            prefilter: prefilter.as_ref(),
         };
         let graph = self.graph_hits(&facts, &primary, &spillover, &query, &today);
         Partition {
@@ -2424,7 +2489,13 @@ impl Memory {
                 if fact.protected() || fact.tier == Tier::Working || fact.forgotten(today) {
                     continue;
                 }
-                let score = self.score(fact, query.vector, query.tokens, query.today_days);
+                let score = self.score(
+                    fact,
+                    query.vector,
+                    query.tokens,
+                    query.today_days,
+                    query.prefilter,
+                );
                 out.push(ScoredFact {
                     fact: fact.clone(),
                     score,
@@ -2448,7 +2519,13 @@ impl Memory {
             if !fact.forgotten(today) {
                 continue;
             }
-            let score = self.score(fact, query.vector, query.tokens, query.today_days);
+            let score = self.score(
+                fact,
+                query.vector,
+                query.tokens,
+                query.today_days,
+                query.prefilter,
+            );
             if score.total < MIN_RECALL_SCORE {
                 continue;
             }
@@ -2567,10 +2644,20 @@ impl Memory {
         query_vector: &Option<Vec<f32>>,
         query_tokens: &[String],
         today_days: Option<i64>,
+        prefilter: Option<&std::collections::HashSet<String>>,
     ) -> Score {
-        let vector = match (query_vector, self.vectors.get(&fact.name)) {
-            (Some(query), Some(fact_vector)) => cosine(query, fact_vector).max(0.0),
-            _ => 0.0,
+        // KI-252 move 2, when the prefilter is on: a fact the 128-dim
+        // stage ranked out reads 0.0 for its vector term — the same
+        // shape a partial embed leaves — and the top-K members keep the
+        // full-width cosine the final order is ranked on.
+        let sliced_out = matches!(prefilter, Some(members) if !members.contains(&fact.name));
+        let vector = if sliced_out {
+            0.0
+        } else {
+            match (query_vector, self.vectors.get(&fact.name)) {
+                (Some(query), Some(fact_vector)) => cosine(query, fact_vector).max(0.0),
+                _ => 0.0,
+            }
         };
         let keyword = keyword_coverage(query_tokens, &stems(&fact.topic_text()));
         let trajectory = trajectory_coverage(query_tokens, &fact.phrases);
@@ -2665,6 +2752,9 @@ struct Query<'a> {
     /// Days since the epoch for today, or `None` when the clock is
     /// unreadable.
     today_days: Option<i64>,
+    /// The two-stage prefilter's surviving names (KI-252 move 2), when
+    /// the setting is on; `None` ranks full-width.
+    prefilter: Option<&'a std::collections::HashSet<String>>,
 }
 
 /// One fact ranked for one instruction: the fact, the score that
@@ -5612,6 +5702,131 @@ mod tests {
 
     fn hit_names(hits: &[ScoredFact]) -> Vec<&str> {
         hits.iter().map(|hit| hit.fact.name.as_str()).collect()
+    }
+
+    #[test]
+    fn the_two_stage_prefilter_keeps_the_neighborhood_and_ranks_the_rest_out() {
+        // KI-252 move 2, unit-level: with the setting on, the queried
+        // fact keeps its full-width score (it survives the slice stage)
+        // and the shape of a slice-ranked-out fact is the vector term at
+        // 0.0 — the same shape a partial embed leaves, by construction.
+        let (_calls, embedder) = ScriptedEmbedder::new();
+        let root = scratch("two-stage");
+        write_fact(
+            &root,
+            "deploy-note",
+            &recalled_fact(
+                "deploy-note",
+                "How the deploy pipeline works on railway",
+                "How the deploy pipeline works",
+                0,
+            ),
+        );
+        write_fact(
+            &root,
+            "walnut-note",
+            &recalled_fact(
+                "walnut-note",
+                "A walnut unrelated to deploys or renders",
+                "A walnut note",
+                0,
+            ),
+        );
+        let memory = Memory::load_with(&root, embedder);
+        memory
+            .two_stage
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+
+        // Directly: the prefilter over three synthetic vectors keeps the
+        // top-K by slice and only the slice.
+        // Real variance in the slice: `near` mirrors the query's first
+        // 128 dims, `far` inverts them — constant vectors are all
+        // parallel under cosine and would prove nothing.
+        let mut query_vec = vec![0.0; SLICE_DIMS + 4];
+        for (index, value) in query_vec.iter_mut().enumerate().take(SLICE_DIMS) {
+            *value = if index % 2 == 0 { 1.0 } else { -1.0 };
+        }
+        let query = Some(query_vec);
+        let mut vectors: HashMap<String, Vec<f32>> = HashMap::new();
+        vectors.insert("near".to_string(), query.clone().unwrap());
+        vectors.insert(
+            "far".to_string(),
+            query
+                .clone()
+                .unwrap()
+                .iter()
+                .take(SLICE_DIMS)
+                .map(|value| -value)
+                .chain(vec![0.0; 4])
+                .collect(),
+        );
+        let prefilter = vector_prefilter(&query, &vectors, 1);
+        assert!(
+            prefilter
+                .as_ref()
+                .is_some_and(|members| members.contains("near") && !members.contains("far")),
+            "{prefilter:?}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The measurement harness (KI-252 move 2's gate, C1 of its plan):
+    /// over the real corpus, recall@10 single-pass versus two-stage and
+    /// both wall clocks. `#[ignore]`d because it grades the machine's
+    /// live corpus and embedder — run it with `cargo test
+    /// --lib the_two_stage_measurement -- --ignored --nocapture` and let
+    /// the printed gate decide `memory.vectors.two_stage`'s default.
+    #[test]
+    #[ignore = "grades the live corpus and embedder; run with --ignored"]
+    fn the_two_stage_measurement() {
+        let root = crate::memory::resolve_root(&std::env::current_dir().unwrap_or_default());
+        let memory = Memory::load(&root);
+        let facts = memory.fact_count();
+        let instructions = [
+            "how does the router choose a provider",
+            "the gate's four commands",
+            "what is the calibration stream",
+            "blend1's corpus refresh spawn route",
+            "the plan-as-contract discipline",
+            "how recall ranks facts",
+            "the tui's session surface",
+            "credentials resolve from where",
+            "the deck tool's layouts",
+            "what the lifecycle sweep disables",
+        ];
+        let measure = |two_stage: bool| {
+            memory
+                .two_stage
+                .store(two_stage, std::sync::atomic::Ordering::Relaxed);
+            let started = std::time::Instant::now();
+            let mut runs: Vec<Vec<String>> = Vec::new();
+            for instruction in &instructions {
+                let hits = memory.recall(instruction);
+                runs.push(
+                    hits.iter()
+                        .take(10)
+                        .map(|hit| hit.fact.name.clone())
+                        .collect(),
+                );
+            }
+            (started.elapsed().as_millis(), runs)
+        };
+        let (plain_ms, plain_runs) = measure(false);
+        let (two_ms, two_runs) = measure(true);
+        let mut overlaps = Vec::new();
+        for (index, (plain, two)) in plain_runs.iter().zip(two_runs.iter()).enumerate() {
+            let shared = plain.iter().filter(|name| two.contains(name)).count();
+            overlaps.push(shared);
+            println!(
+                "q{index:02}: overlap@10 {shared}/10 (single {plain_ms}ms total, two-stage {two_ms}ms total)"
+            );
+        }
+        let mean_overlap: f64 =
+            overlaps.iter().map(|o| *o as f64).sum::<f64>() / overlaps.len() as f64 / 10.0;
+        println!(
+            "the gate: mean recall@10 agreement {mean_overlap:.3} (≥0.98 passes) over {facts} facts; single {plain_ms}ms vs two-stage {two_ms}ms for {} instructions",
+            instructions.len()
+        );
     }
 
     /// A deterministic embedder over a fixed scripted vocabulary: each
