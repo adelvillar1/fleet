@@ -1,7 +1,7 @@
 ---
 status: active
 created: 2026-10-19
-updated: 2026-10-19
+updated: 2026-10-25
 slug: sys1-extraction-leg
 ---
 
@@ -75,7 +75,7 @@ wires the four inheritors.
 
 ## Acceptance criteria
 
-### E0 — the wire probe
+### E0 — the wire probe (blocked on credentials — KI-312; harness committed, runnable in one command)
 
 - **C1** The live endpoint is called from a scratch harness over a
   real unstructured document, and the actual request/response JSON is
@@ -88,7 +88,7 @@ wires the four inheritors.
   recorded here — E1's timeouts are set from the measurement, not a
   guess (KI-249's discipline applied to the new leg at birth).
 
-### E1 — the sys1 leg
+### E1 — the sys1 leg (landed 2026-10-25 against the documented shape; constants re-source when E0 measures)
 
 - **C1** `src/extract.rs` exposes the four verbs — extract, compute,
   estimate, forecast — over a typed response model (value, span,
@@ -108,7 +108,7 @@ wires the four inheritors.
   (KI-243's mechanism), and the per-verb timeouts come from E0-C3 with
   the measured number named in each constant's comment.
 
-### E2 — fleet inherits: the `extract` tool
+### E2 — fleet inherits: the `extract` tool (landed 2026-10-25; the named absence answers until E0 unblocks)
 
 - **C1** A general agent tool takes `{state, fields[]}` and returns
   typed values with spans, confidence, and `p_null` — declared in its
