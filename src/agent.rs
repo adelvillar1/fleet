@@ -2530,7 +2530,7 @@ impl<'a> Agent<'a> {
         };
         let pin = asked.trim();
         let pin = (!pin.is_empty() && !pin.eq_ignore_ascii_case("auto")).then_some(pin);
-        let dotenv = crate::home::read_dotenv(&home);
+        let dotenv = crate::home::read_dotenv_with_process_vault(&home);
         let specs = self.options.lane_specs.clone().unwrap_or_default();
         // A fixed task text: a mid-run switch is about the provider, and
         // the route-decision cache then serves every re-route after the
@@ -5821,10 +5821,10 @@ enum WriteGuard {
 /// lookup instead of a scan.
 /// Python's own capitalized names, which a driver cannot avoid writing
 /// and the project does not declare: the builtin exception classes, the
-/// threading and queue primitives, and the pathlib's `Path` (KI-284's
-/// recorded refusal). Lowercase, because the check lowercases the token
-/// first.
-const PYTHON_BUILTINS: [&str; 13] = [
+/// threading and queue primitives, the pathlib's `Path` (KI-284's
+/// recorded refusal), and `subprocess.Popen` (KI-226's own example).
+/// Lowercase, because the check lowercases the token first.
+const PYTHON_BUILTINS: [&str; 14] = [
     "exception",
     "systemexit",
     "timeouterror",
@@ -5838,6 +5838,9 @@ const PYTHON_BUILTINS: [&str; 13] = [
     "thread",
     "queue",
     "path",
+    // The subprocess spawn a stdio driver cannot avoid writing
+    // (KI-226's own first example): `subprocess.Popen`.
+    "popen",
 ];
 
 /// A name the guard does not police: a live roster model — the string
@@ -10014,6 +10017,33 @@ You are auditing a change. Read the diff before you judge it.
         let framed = steer_frame("look at the gate");
         assert!(framed.contains("the owner speaking, not you"), "{framed}");
         assert!(framed.ends_with("look at the gate"), "{framed}");
+    }
+
+    #[test]
+    fn an_ordinary_python_driver_is_writable() {
+        // KI-226: the guard's job is drift, and a driver's stdlib names
+        // are not the project's coinages. `subprocess.Popen`,
+        // `threading.Thread`, `queue.Queue`, `TimeoutError` and
+        // `SystemExit` are the language's own — the exemption's list,
+        // pinned against the row's own examples. The vocabulary here
+        // establishes the lowercase forms, which is what made the old
+        // guard refuse them.
+        let root = vocabulary_root("guard-python");
+        let guard = write_guard(
+            &root,
+            &serde_json::json!({"path":"driver.py","content":
+                "import subprocess, threading, queue\n\
+                 proc = subprocess.Popen([\"sys1\"])\n\
+                 worker = threading.Thread(target=queue.Queue)\n\
+                 try:\n\
+                 \u{2003}\u{2003}pass\n\
+                 except TimeoutError:\n\
+                 \u{2003}\u{2003}raise SystemExit(1)"}),
+        );
+        assert!(
+            matches!(guard, WriteGuard::Clean),
+            "a python driver is writable: {guard:?}"
+        );
     }
 
     #[test]

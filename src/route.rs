@@ -1908,7 +1908,7 @@ fn sys1_judges() -> bool {
             std::env::var("HOME").ok().as_deref(),
         );
         let dotenv = home
-            .map(|home| crate::home::read_dotenv(&home))
+            .map(|home| crate::home::read_dotenv_with_process_vault(&home))
             .unwrap_or_default();
         any_key_resolves(SYS1_DECISION_KEYS, |name| {
             std::env::var(name)
@@ -2739,7 +2739,7 @@ pub async fn prepare_child(
     specs: &HashMap<String, ServerSpec>,
     pin: Option<&str>,
 ) -> Result<Prepared, ConfigError> {
-    let dotenv = crate::home::read_dotenv(home);
+    let dotenv = crate::home::read_dotenv_with_process_vault(home);
     prepare_walk(home, &dotenv, brief, specs, pin, Walk::Judged).await
 }
 
@@ -5119,6 +5119,54 @@ mod tests {
         }
         let row = router.row("a task", 0);
         assert!(!row.reason.contains("failover tail"), "{}", row.reason);
+    }
+
+    #[test]
+    fn a_sealed_credential_answers_the_router_through_the_vault_overlay() {
+        // KI-250: the vault's biggest consumer reads the vault. Seal a
+        // key, drop the plaintext line, unlock the process — the
+        // roster's resolution answers with the sealed value, and a
+        // candidate keyed by it is usable. Before the fix the router
+        // read the plain dotenv alone, so a sealed-only key left every
+        // candidate keyless on the machine that sealed it.
+        let home = std::env::temp_dir().join(format!(
+            "fleet-route-vault-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::write(home.join(".env"), "STEPFUN_API_KEY=sk-sealed-value\n").unwrap();
+        crate::settings::vault_init_with(&home, "vault-test-pass")
+            .expect("the vault seals the credential-shaped entry");
+        crate::settings::vault_remove_env(&home, "STEPFUN_API_KEY")
+            .expect("the plaintext line drops after the seal");
+        let plain = crate::home::read_dotenv(&home);
+        assert!(
+            !plain.contains_key("STEPFUN_API_KEY"),
+            "the plaintext no longer carries the key"
+        );
+        crate::home::unlock_vault("vault-test-pass");
+        let overlaid = crate::home::read_dotenv_with_process_vault(&home);
+        assert_eq!(
+            overlaid.get("STEPFUN_API_KEY").map(String::as_str),
+            Some("sk-sealed-value"),
+            "the overlay answers with the sealed value"
+        );
+        // The router's own resolution, over the overlay: the stepfun
+        // candidate reads as keyed, which is what `sys1_judges` and the
+        // roster walk consult.
+        let resolved = resolve(&default_roster(), &overlaid);
+        let stepfun = resolved
+            .iter()
+            .find(|entry| entry.candidate.key_env == "STEPFUN_API_KEY")
+            .expect("a roster candidate keyed by STEPFUN_API_KEY");
+        assert!(stepfun.usable(), "the sealed key makes it usable");
+        // The unlock is this test's alone: it never leaks into another
+        // test's resolution.
+        crate::home::lock_vault();
+        crate::home::reset_vault_unlock();
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     #[tokio::test]

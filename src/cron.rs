@@ -1567,7 +1567,7 @@ pub async fn run_job(
     minute: Minute,
     catch_up: bool,
 ) -> Result<RunOutcome, String> {
-    let dotenv = crate::home::read_dotenv(home);
+    let dotenv = crate::home::read_dotenv_with_process_vault(home);
     let prepared = route::prepare(home, &dotenv, &job.task, &HashMap::new())
         .await
         .map_err(|error| error.to_string())?;
