@@ -244,7 +244,9 @@ before every commit, exit codes read directly.
   an opted-in child's host-side processes cannot work at it — the
   child-execution seam (dsh routes file ops through `layerfs fs.*`
   and command runs through `workspace exec`) is the next increment
-  (KI-314, open).
+  (KI-314, deferred by design — the arm ships without it: the child's
+  host-side processes work at the checkout's own paths, and the mount
+  stays sandbox-local).
 - **C3 — landed, pin included.** `CHECKOUT_PIN` names the checkout
   the way a VENDOR.json names a carry —
   `github.com/Ephemeral-AI-Lab/layerfs@ad78914e36b258b360daf13aec164b5655814689 (wire 1.1.0)`
@@ -263,7 +265,8 @@ before every commit, exit codes read directly.
   3 ignored** (the live-API e2e, the `#[ignore]`d LayerFS live roundtrip
   — which RAN on demand and passed — and one pre-existing). The ledger
   carries KI-313 (closed with the provision record), KI-314 (the
-  child-execution seam, open), KI-315 (the branch-grammar defect,
+  child-execution seam, deferred by design as the next increment),
+  KI-315 (the branch-grammar defect,
   closed same day), and this status lands in the same
   commit as the work. The road to the green gate is part of the
   record: two process-global test bugs of this arm's own making were
