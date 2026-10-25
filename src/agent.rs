@@ -1547,6 +1547,10 @@ impl<'a> Agent<'a> {
         specs.push(tools::convention_spec());
         specs.push(tools::plan_spec());
         specs.push(tools::deck_spec());
+        // The extraction leg, in the live path's position after the deck:
+        // declared unguarded because the named absence lives in the
+        // result, not the declaration (E2-C3).
+        specs.push(tools::extract_spec());
         specs.push(tools::vision_spec());
         specs.push(tools::web_spec());
         specs.push(tools::read_document_spec());
