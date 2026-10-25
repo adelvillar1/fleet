@@ -1,5 +1,5 @@
 ---
-status: draft
+status: completed
 created: 2026-10-24
 updated: 2026-10-24
 slug: deck-vector-moves-2-3
@@ -97,23 +97,24 @@ criterion is the commit that shows both.
 
 ## Acceptance criteria
 
-- [ ] **C0 — the slice and two-stage rank.** The corpus recall offers a
+- [x] **C0 — the slice and two-stage rank.** The corpus recall offers a
       two-stage path (128-dim fan-out, full-width top-K re-rank) behind
       a default-off setting, with the slice's why in a comment.
-- [ ] **C1 — the measurement gate.** A committed harness — a test
-      module in `src/deck.rs`'s suite, `#[ignore]`d where the corpus is
-      absent — prints recall@10 two-stage versus single-pass and both
-      wall clocks over the real corpus; the `memory.vectors.two_stage`
-      default follows the printed gate, and the numbers land in the
-      KI-252 row and the recap either way.
-- [ ] **C2 — the asset seam.** `deck::find_assets` ranks the owner's
+- [x] **C1 — the measurement gate.** Landed as
+      `the_two_stage_measurement` in `src/memory.rs`'s suite (the
+      corpus recall is what it measures), `#[ignore]`d over the live
+      corpus and embedder. The printed gate REFUSED the default: mean
+      recall@10 agreement 0.830 < 0.98 at K=24 over this 50-fact
+      corpus — `memory.vectors.two_stage` stays off, and the numbers
+      are in the KI-252 row.
+- [x] **C2 — the asset seam.** `deck::find_assets` ranks the owner's
       asset directory by embedded caption, and an unset or empty
       directory answers with the named absence; by test.
-- [ ] **C3 — the grader certifies.** A placed asset's aspect and
+- [x] **C3 — the grader certifies.** A placed asset's aspect and
       whitespace hold the frame's bounds or the placement is refused
       with the reason named; the deck tool carries the asset mode; by
       test over fixture assets.
-- [ ] **C4 — the close-out and the ledger.** `docs/known-issues.md`'s
+- [x] **C4 — the close-out and the ledger.** `docs/known-issues.md`'s
       KI-252 row and this plan's checkboxes carry the same final status
       in the same commit — closed with both moves landed and the
       measurement numbers, or open carrying the named gate refusal of
