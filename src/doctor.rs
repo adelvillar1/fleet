@@ -160,8 +160,9 @@ pub fn evaluate_layerfs(
             name: "layerfs",
             ok: true,
             detail: format!(
-                "project `{project}` \u{b7} CLI {} ready",
-                crate::layerfs_tools::SUPPORTED_WIRE
+                "project `{project}` \u{b7} CLI {} ready \u{b7} pinned {}",
+                crate::layerfs_tools::SUPPORTED_WIRE,
+                crate::layerfs_tools::CHECKOUT_PIN
             ),
         },
         (Ok(Some(project)), Some(reason)) => Check {
@@ -173,9 +174,10 @@ pub fn evaluate_layerfs(
             name: "layerfs",
             ok: true,
             detail: format!(
-                "off (no {} \u{b7} CLI {} present)",
+                "off (no {} \u{b7} CLI {} present \u{b7} pinned {})",
                 crate::layerfs_tools::PROJECT_ENV,
-                crate::layerfs_tools::SUPPORTED_WIRE
+                crate::layerfs_tools::SUPPORTED_WIRE,
+                crate::layerfs_tools::CHECKOUT_PIN
             ),
         },
         (Ok(None), Some(reason)) => Check {
@@ -945,6 +947,12 @@ mod tests {
         );
         assert!(ready.ok, "{}", ready.detail);
         assert!(ready.detail.contains("ready"), "{}", ready.detail);
+        // C3: the ready line carries the checkout identity.
+        assert!(
+            ready.detail.contains(crate::layerfs_tools::CHECKOUT_PIN),
+            "{}",
+            ready.detail
+        );
         let bad_knob = evaluate_layerfs(&absent, &Err("bad name".to_string()));
         assert!(!bad_knob.ok, "{}", bad_knob.detail);
         assert!(bad_knob.detail.contains("bad name"), "{}", bad_knob.detail);

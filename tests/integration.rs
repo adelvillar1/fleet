@@ -10492,7 +10492,7 @@ async fn a_layerfs_child_works_in_its_workspace_and_the_parent_reads_the_merge()
     let parent_records = session::replay(session.path()).unwrap();
     let (read_back, _) = tool_result(&parent_records, "subagent");
     assert!(
-        read_back.contains("workspace: branch fleet/"),
+        read_back.contains("workspace: branch fleet-child-"),
         "the branch rides the result: {read_back}"
     );
     assert!(read_back.contains("merged to main"), "{read_back}");
@@ -10503,12 +10503,12 @@ async fn a_layerfs_child_works_in_its_workspace_and_the_parent_reads_the_merge()
     // actor in any of it.
     let calls = std::fs::read_to_string(&argv).expect("the stub was called");
     assert!(
-        calls.contains("--project shop branch fork fleet/"),
+        calls.contains("--project shop branch fork fleet-child-"),
         "the fork: {calls}"
     );
     assert!(calls.contains("--project shop sandbox create"), "{calls}");
     assert!(
-        calls.contains("--project shop workspace mount 1 fleet/"),
+        calls.contains("--project shop workspace mount 1 fleet-child-"),
         "{calls}"
     );
     assert!(
@@ -10518,10 +10518,13 @@ async fn a_layerfs_child_works_in_its_workspace_and_the_parent_reads_the_merge()
     assert!(calls.contains("workspace unmount 1:"), "{calls}");
     assert!(calls.contains("sandbox close 1"), "{calls}");
     assert!(
-        calls.contains("--project shop branch merge main fleet/"),
+        calls.contains("--project shop branch merge main fleet-child-"),
         "the merge is the parent's act, main against the child's branch: {calls}"
     );
-    assert!(calls.contains("branch publish fleet-merge-"), "{calls}");
+    assert!(
+        calls.contains("branch publish merge-fleet-child-"),
+        "{calls}"
+    );
     // Unmount comes after the commit — a Clean End refuses
     // uncommitted state, so the order is custody, not convenience.
     let commit_at = calls.find("workspace commit").expect("commit logged");
@@ -10711,7 +10714,7 @@ async fn a_same_file_collision_is_a_conflict_the_parent_reads() {
     );
     let calls = std::fs::read_to_string(&argv).expect("the stub was called");
     assert!(
-        calls.contains("--project shop branch merge main fleet/"),
+        calls.contains("--project shop branch merge main fleet-child-"),
         "the merge was attempted the parent's way: {calls}"
     );
     // A refused merge publishes nothing.
@@ -10723,4 +10726,119 @@ async fn a_same_file_collision_is_a_conflict_the_parent_reads() {
     std::fs::remove_dir_all(&home).ok();
     std::fs::remove_dir_all(&mount).ok();
     std::fs::remove_file(&argv).ok();
+}
+
+/// C2's live run — the driver's whole LayerFS leg against the real
+/// wire, plus the boundary the live run itself discovered: the mount
+/// lives in the SANDBOX's namespace, so a host process at that path
+/// meets ENOENT (named as KI-314 — the child-execution seam is the
+/// next increment; dsh's pattern routes file ops through `layerfs
+/// fs.*` and command runs through `workspace exec`).
+///
+/// Needs the provisioned environment (KI-313's recipe: the sealed
+/// bundle, the worker, an initialized project — `scripts/layerfs-probe.sh`
+/// walks and names every rung):
+///   LAYERFS_HOME=… LAYERFS_WORKER_ENDPOINT=… LAYERFS_IMAGE=… \
+///   LAYERFS_DAEMON=… LAYERFS_STORE_PATH=… FLEET_LAYERFS_BIN=… \
+///   cargo test --test integration a_layerfs_live -- --ignored --nocapture
+#[tokio::test]
+#[ignore = "needs the provisioned LayerFS environment (KI-313); see scripts/layerfs-probe.sh"]
+async fn a_layerfs_live_driver_roundtrip_against_the_real_wire() {
+    // Prerequisites named, never assumed.
+    let endpoint = std::env::var("LAYERFS_WORKER_ENDPOINT")
+        .expect("LAYERFS_WORKER_ENDPOINT — provision first (KI-313's recipe)");
+    assert!(
+        std::path::Path::new(&endpoint).exists(),
+        "the worker endpoint exists at {endpoint}"
+    );
+    let bin = std::env::var("FLEET_LAYERFS_BIN").expect("FLEET_LAYERFS_BIN");
+    let project =
+        std::env::var("LAYERFS_PROJECT_FOR_TEST").unwrap_or_else(|_| "fleet-probe".to_string());
+    let branch = format!("fleet-live-{}", std::process::id());
+
+    // Open: fork, sandbox, mount — the real CLI through the driver's gate.
+    let open_started = std::time::Instant::now();
+    let session = fleet::layerfs_tools::WorkspaceSession::open(&project, &branch)
+        .expect("a live workspace opens against the provisioned wire");
+    let open_ms = open_started.elapsed().as_millis();
+    let ws = session.mount.ws.clone();
+
+    // The boundary: the host cannot see the mount; the sandbox can.
+    assert!(
+        !session.path().exists(),
+        "the mount is sandbox-local — the host meets ENOENT at {:?}",
+        session.path()
+    );
+    let exec = std::process::Command::new(&bin)
+        .args([
+            "--project",
+            &project,
+            "workspace",
+            "exec",
+            &ws,
+            "printf 'live-roundtrip\\n' > live-marker.txt && cat live-marker.txt README.md",
+        ])
+        .output()
+        .expect("the exec call spawns");
+    assert!(
+        exec.status.success(),
+        "the in-sandbox write runs: {}",
+        String::from_utf8_lossy(&exec.stderr)
+    );
+    let exec_stdout = String::from_utf8_lossy(&exec.stdout);
+    assert!(
+        exec_stdout.contains("live-roundtrip") && exec_stdout.contains("layerfs probe"),
+        "the in-sandbox command wrote inside the mount and read the project tree: {exec_stdout}"
+    );
+
+    // Settle the arm's way: Commit, unmount, Sandbox close, merge into
+    // main, publish — against the real store.
+    let settle_started = std::time::Instant::now();
+    let report = session.settle(true);
+    let settle_ms = settle_started.elapsed().as_millis();
+    assert!(report.committed, "the live Commit landed: {report:?}");
+    assert!(
+        matches!(
+            report.merge,
+            Some(fleet::layerfs_tools::MergeOutcome::Merged(_))
+        ),
+        "the merge into main landed: {report:?}"
+    );
+    assert!(
+        report.notes.is_empty(),
+        "no cleanup needed a note: {:?}",
+        report.notes
+    );
+
+    // Read back from MAIN after publish: the child's file is history.
+    let read = std::process::Command::new(&bin)
+        .args([
+            "--project",
+            &project,
+            "fs",
+            "read",
+            "main",
+            "/live-marker.txt",
+        ])
+        .output()
+        .expect("the read-back spawns");
+    assert!(
+        read.status.success(),
+        "main carries the published file: {}",
+        String::from_utf8_lossy(&read.stderr)
+    );
+    let body = String::from_utf8_lossy(&read.stdout);
+    assert!(
+        body.contains("live-roundtrip"),
+        "read back from main: {body}"
+    );
+
+    println!(
+        "LIVE ROUNDTRIP: open={open_ms}ms settle(incl. commit+unmount+close+merge+publish)={settle_ms}ms branch={branch} ws={ws}"
+    );
+
+    std::process::Command::new(&bin)
+        .args(["--project", &project, "sandbox", "close", &report.sandbox])
+        .output()
+        .ok();
 }

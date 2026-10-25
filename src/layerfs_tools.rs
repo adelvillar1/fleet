@@ -35,6 +35,15 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::time::Duration;
 
+/// The LayerFS checkout fleet drives, named the way `services/` VENDOR.json
+/// names a carry: repository at commit, and the wire that tree speaks.
+/// This is the plan's C3 pin — the gate refuses a CLI whose `--version`
+/// disagrees with [`SUPPORTED_WIRE`], and this line says which source
+/// tree the supported wire came from. Update both together, in one
+/// commit, when the checkout moves.
+pub const CHECKOUT_PIN: &str =
+    "github.com/Ephemeral-AI-Lab/layerfs@ad78914e36b258b360daf13aec164b5655814689 (wire 1.1.0)";
+
 /// The one `layerfs` wire version fleet drives. A CLI that answers
 /// anything else is refused by name: 1.1.0 broke the 1.0.0 SDK under
 /// an explicit owner waiver, so "close enough" is a bug waiting to
@@ -171,19 +180,7 @@ fn validated(name: String) -> Result<Option<String>, String> {
     if name.is_empty() {
         return Ok(None);
     }
-    let valid = name.len() <= 63
-        && name
-            .chars()
-            .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || "_-.".contains(ch))
-        && name
-            .chars()
-            .next()
-            .is_some_and(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit())
-        && name
-            .chars()
-            .last()
-            .is_some_and(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit());
-    if valid {
+    if name_fits(&name) {
         Ok(Some(name))
     } else {
         Err(format!(
@@ -191,6 +188,92 @@ fn validated(name: String) -> Result<Option<String>, String> {
              lowercase letters, digits, `_`, `-` or `.`, starting and ending alphanumeric"
         ))
     }
+}
+
+/// The wire's own name rule — `HistoryName` in layerfs-history: 1 to
+/// 63 ASCII bytes, lowercase letters, digits, `.`, `_`, `-`,
+/// alphanumeric at both ends. Branch names and project names share
+/// it; the live run taught that assuming otherwise costs a real
+/// delegation (`fleet/<session>` with its `/` and uppercase stamp was
+/// refused by the wire while the stub accepted it).
+fn name_fits(name: &str) -> bool {
+    let bytes = name.as_bytes();
+    let body = |byte: u8| {
+        byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'.' | b'_' | b'-')
+    };
+    let ends = |byte: u8| byte.is_ascii_lowercase() || byte.is_ascii_digit();
+    !bytes.is_empty()
+        && bytes.len() <= 63
+        && ends(bytes[0])
+        && ends(bytes[bytes.len() - 1])
+        && bytes.iter().all(|&byte| body(byte))
+}
+
+/// The rule, as the driver's named refusal: checked before a spawn so
+/// an illegal name is an answer here, never a wasted round trip.
+pub fn history_name_ok(name: &str) -> Result<(), String> {
+    if name_fits(name) {
+        Ok(())
+    } else {
+        Err(format!(
+            "`{name}` is not a valid LayerFS name — 1 to 63 ASCII bytes, lowercase letters, \
+             digits, `.`, `_` or `-`, starting and ending alphanumeric (the wire's own rule)"
+        ))
+    }
+}
+
+/// Fold any raw text into the wire's grammar within `budget` bytes:
+/// lowercase, illegal runs collapse to one `-`, trimmed at both ends,
+/// truncated at the budget with a trailing `-` re-trimmed so the
+/// result always ends alphanumeric.
+pub fn fold_history_name(raw: &str, budget: usize) -> String {
+    let mut folded = String::with_capacity(raw.len());
+    let mut last_dash = false;
+    for raw_ch in raw.chars() {
+        // Lowercase first — a session stamp's `T`/`Z` become readable
+        // letters, not dashes — then map anything outside the grammar.
+        let ch = raw_ch.to_ascii_lowercase();
+        let keep = ch.is_ascii_lowercase() || ch.is_ascii_digit() || matches!(ch, '.' | '_');
+        let mapped = if keep { ch } else { '-' };
+        if mapped == '-' {
+            if !last_dash && !folded.is_empty() {
+                folded.push('-');
+            }
+            last_dash = true;
+        } else {
+            folded.push(mapped);
+            last_dash = false;
+        }
+    }
+    let mut cut: String = folded.chars().take(budget).collect();
+    while cut
+        .chars()
+        .last()
+        .is_some_and(|ch| !ch.is_ascii_lowercase() && !ch.is_ascii_digit())
+    {
+        cut.pop();
+    }
+    // A budget-0 or all-illegal input can cut to nothing; the prefix
+    // callers always prepend keeps the final name non-empty.
+    cut
+}
+
+/// The child's Branch from its session id: session stamps carry
+/// uppercase (`20261025T183442Z-…`), which the wire refuses — folded
+/// here so every arm fork is valid by construction, bounded to 63
+/// with the `fleet-child-` prefix.
+pub fn child_branch_name(session: &str) -> String {
+    const PREFIX: &str = "fleet-child-";
+    let folded = fold_history_name(session, 63 - PREFIX.len());
+    format!("{PREFIX}{folded}")
+}
+
+/// The integration Branch a settled child merges through, folded to
+/// the same rule: `merge-` plus the child's branch, bounded to 63.
+pub fn merge_branch_name(child: &str) -> String {
+    const PREFIX: &str = "merge-";
+    let folded = fold_history_name(child, 63 - PREFIX.len());
+    format!("{PREFIX}{folded}")
 }
 
 /// Arm the knob for THIS thread only. Test support: every test gets
@@ -639,6 +722,15 @@ impl WorkspaceSession {
     /// harmless and an owner can remove it; losing the name would be
     /// the actual sin).
     pub fn open(project: &str, branch: &str) -> Result<WorkspaceSession, Error> {
+        // The wire's name rule, checked before anything spawns: the
+        // live run taught that an illegal branch (`fleet/<session>`
+        // with its slash and uppercase stamp) is refused by the Store
+        // while a stub would have accepted it — so the refusal is
+        // raised here, named, with no round trip spent.
+        history_name_ok(branch).map_err(|reason| Error::Refused {
+            code: "WorkspaceOpen".to_string(),
+            message: format!("the child's branch would be refused by the wire: {reason}"),
+        })?;
         let gate = match gate() {
             Ok(gate) => gate.clone(),
             Err(reason) => return Err(Error::Absent(reason.clone())),
@@ -714,7 +806,7 @@ impl WorkspaceSession {
             match gate.commit(&self.project, &self.mount.ws, &message) {
                 Ok(_) => {
                     report.committed = true;
-                    merge_branch = Some(format!("fleet-merge-{}", self.branch));
+                    merge_branch = Some(merge_branch_name(&self.branch));
                 }
                 Err(error) => {
                     report.commit_note = Some(error.to_string());
@@ -1019,6 +1111,71 @@ esac
         assert!(
             error.contains("127") || error.contains("version"),
             "{error}"
+        );
+    }
+
+    /// C3's pin: the checkout identity names a 40-hex commit of the
+    /// repository and the wire that tree speaks — moved together or
+    /// not at all.
+    #[test]
+    fn the_checkout_pin_names_the_commit_and_the_wire() {
+        let commit = CHECKOUT_PIN
+            .split('@')
+            .nth(1)
+            .and_then(|rest| rest.split(' ').next())
+            .expect("repo@commit");
+        assert_eq!(commit.len(), 40, "{commit}");
+        assert!(
+            commit.chars().all(|ch| ch.is_ascii_hexdigit()),
+            "a full lowercase hex commit: {commit}"
+        );
+        assert!(CHECKOUT_PIN.contains(SUPPORTED_WIRE), "{CHECKOUT_PIN}");
+    }
+
+    /// The live run's lesson, pinned: session stamps carry uppercase
+    /// and `fleet/` a slash — both refused by the wire — so the arm's
+    /// branch is folded into the wire's own grammar by construction.
+    #[test]
+    fn child_branch_name_folds_a_real_session_id_into_the_wires_rule() {
+        let session = "20261025T183442Z-b340b2c9";
+        let branch = child_branch_name(session);
+        assert!(branch.starts_with("fleet-child-"), "{branch}");
+        assert!(
+            history_name_ok(&branch).is_ok(),
+            "a real session id folds to a valid branch: {branch}"
+        );
+        assert_eq!(branch, "fleet-child-20261025t183442z-b340b2c9");
+        let merge = merge_branch_name(&branch);
+        assert!(history_name_ok(&merge).is_ok(), "{merge}");
+        assert_eq!(merge, "merge-fleet-child-20261025t183442z-b340b2c9");
+        // Long and hostile input still bounds to 63 and ends alnum.
+        let long = child_branch_name(&"x/".repeat(80));
+        assert!(long.len() <= 63, "{}", long.len());
+        assert!(history_name_ok(&long).is_ok(), "{long}");
+    }
+
+    /// The wire's refusal raised HERE, before a spawn spends anything:
+    /// an illegal branch names itself and the stub records no fork.
+    #[test]
+    fn open_refuses_an_illegal_branch_before_it_spawns() {
+        let _lock = ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let script = stub("illegal-branch", HAPPY);
+        let _env = EnvGuard::set(CLI_ENV, &script);
+        let error = WorkspaceSession::open("shop", "fleet/bad")
+            .expect_err("the slash is not the wire's grammar");
+        match &error {
+            Error::Refused { code, message } => {
+                assert_eq!(code, "WorkspaceOpen");
+                assert!(message.contains("not a valid LayerFS name"), "{message}");
+            }
+            other => panic!("the named refusal, got {other:?}"),
+        }
+        let lines = log_lines(&script);
+        assert!(
+            !lines.iter().any(|line| line.contains("branch fork")),
+            "nothing spawned: {lines:?}"
         );
     }
 

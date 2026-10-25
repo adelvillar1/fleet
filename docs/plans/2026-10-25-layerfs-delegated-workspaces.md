@@ -1,5 +1,5 @@
 ---
-status: active
+status: completed
 created: 2026-10-25
 updated: 2026-10-25
 slug: layerfs-delegated-workspaces
@@ -92,8 +92,8 @@ this compiles.
 
 ## Acceptance criteria
 
-- [ ] **C0 — the probe gate** *(ladder ran 2026-10-25; blocked at the CLI
-      rung — KI-313; the latencies land here when the environment exists)*.
+- [x] **C0 — the probe gate** *(measured 2026-10-25 — the full ladder
+      and the worker lifecycle below, exit 0)*.
   `scripts/layerfs-probe.sh` measures the
       real machine before the driver exists: init a scratch project,
       fork, mount, exec, commit, unmount, and the macOS worker's
@@ -108,8 +108,10 @@ this compiles.
       is its own once-per-process gate with the named absence; unit
       tests against a stub `layerfs` executable (the double pattern)
       pin the parse, the refusal shapes, and the timeout.
-- [ ] **C2 — the delegation arm** *(landed and stub-pinned; the one live
-      run blocked — KI-313)*. An opted-in run's child mounts one
+- [x] **C2 — the delegation arm** *(landed, stub-pinned, and the one
+      live run executed and recorded below; its two findings: the
+      branch-grammar fix (KI-315, closed same day) and the
+      child-execution seam (KI-314, the next increment) )*. An opted-in run's child mounts one
       Workspace at spawn, runs with `FileAccess::Folder` at the mount
       path, and on every completion path — success, failure, turn-cap
       — commits-or-discards per policy and unmounts; only the parent
@@ -118,8 +120,8 @@ this compiles.
       carries the Branch and Workspace ids. Pinned by integration
       tests with the stub; one live run recorded in the increment's
       report.
-- [ ] **C3 — the boundary** *(byte-identity, doctor, wire refusal landed;
-      the checkout pin waits with KI-313)*. Default OFF: a run that names no project
+- [x] **C3 — the boundary** *(byte-identity, doctor, wire refusal, and
+      the checkout pin — `CHECKOUT_PIN` — all landed)*. Default OFF: a run that names no project
       is byte-identical in what the model sees (the reconstruction
       test). `fleet doctor` names the CLI's presence or absence. The
       checkout identity fleet pins is named (a VENDOR-style pin), and
@@ -173,28 +175,44 @@ is the what-the-model-saw byte-equality test (both declaration paths,
 per the reconstruction rule) and the doctor card. The gate runs whole
 before every commit, exit codes read directly.
 
-## Status — 2026-10-25 (implemented; the live gate blocked, named)
+## Status — 2026-10-25 (implemented; the live wire measured, the seam named)
 
-- **C0 — the ladder ran; blocked at the CLI rung, recorded.**
-  `scripts/layerfs-probe.sh` walked this Mac on 2026-10-25: Docker
-  (engine 29.7.2 running) and node (v24.19.0) answered; the rung
-  `the layerfs CLI` did not — the addon, the CLI link, and behind them
-  the macOS worker bundle and the runtime image were never built here.
-  `tmp/layerfs-probe/result.json` holds the shortfall record and the
-  script's stderr names the provision steps. The loop's latencies and
-  the worker lifecycle are therefore **not measured**; they land in
-  this section when the environment exists, in one command
-  (`scripts/layerfs-probe.sh`). Ledger: KI-313.
+- **C0 — measured end to end.** The environment was provisioned the
+  same day and `scripts/layerfs-probe.sh` ran the whole ladder
+  (exit 0; `tmp/layerfs-probe/result.json` = `{"status":"ok", …}`):
+  init through `@layerfs/runtime`'s `start_init` — the sanctioned
+  macOS path, 406 ms, volume `layerfs-fleet-probe-store-mvo74iik` —
+  then fork **55 ms**, sandbox create **288 ms**, mount **62 ms**,
+  exec **104 ms**, write **60 ms**, commit **63 ms**, unmount **61
+  ms**, close **201 ms**; two Store clients in flight together **60
+  ms** (both exit 0); and the worker/sandbox lifecycle — worker start
+  **581 ms** cold / **58 ms** warm, sandbox **idle exit 121,225 ms**
+  after unmount (the documented two-minute self-end, observed), and
+  **reclaim 391 ms with the same sandbox number reused**. The
+  provision chain, in order: the pinned checkout at `ad78914` with
+  `npm install` in `api/` and `api/agent/cli`; the sealed Linux
+  bundle built by `tools/worktree.py` (`build-linux-25b0bed7197842688bed6e1364c9b25e`
+  — `layerfs-daemon`, `layerfs.node`, `worker/server.js`, the CLI,
+  182 hashed files, `manifest.json` status `sealed`); the runtime
+  image `sha256:3d27e5c11e5786e309ec3e03f93ae536eb36e6e5eb3714d5eb3300a36157add0`
+  (node:24.21.0-bookworm — the same digest dsh's Dockerfile pins);
+  the home's worker started by `@layerfs/runtime` (endpoint
+  `<home>/worker/endpoint.json`); init by `start_init`. KI-313
+  closes with this record.
 - **C1 — landed.** `src/layerfs_tools.rs`: the CLI-spawn driver with
   the once-per-process gate, the `SUPPORTED_WIRE` refusal (fleet
   drives 1.1.0; the CLI breaks its API between minors), the typed
   error custody (refusal/timeout/decode/spawn/failed), and the
-  opt-in knob's grammar. Eight unit tests over the stub pin the
+  opt-in knob's grammar. Eleven unit tests over the stub pin the
   grammar and parse, Conflict-as-answer, refusal codes, the wire
   refusal, decode-with-bounded-body, the budget's one attempt, the
-  named absence, and the knob.
-- **C2 — landed stub-side; the live run blocked (KI-313).** The arm
-  in `src/subagents.rs`: mount at spawn (branch `fleet/<child>`),
+  named absence, the knob, the branch-name fold against a real
+  session stamp, the pre-spawn refusal of an illegal branch, and the
+  checkout pin's shape.
+- **C2 — landed; the live run ran.** The arm
+  in `src/subagents.rs`: mount at spawn (branch
+  `fleet-child-<session>`, folded into the wire's grammar by
+  `child_branch_name`),
   `FileAccess::Folder` at the mount path, settlement at every
   completion path (completed/capped → Commit, then unmount; failure →
   discard), the parent's merge `main` ← child plus publish as the
@@ -208,21 +226,45 @@ before every commit, exit codes read directly.
   exists); a same-file collision renders `CONFLICT with main on 1
   path` to the parent while the outcome stays the child's success.
   The row-ids and render are pinned by
-  `the_workspace_rides_the_row_and_the_render`.
-- **C3 — met except the checkout pin, which waits with C0.** The
+  `the_workspace_rides_the_row_and_the_render`. **The live run:**
+  `a_layerfs_live_driver_roundtrip_against_the_real_wire`
+  (`#[ignore]`d; run 2026-10-25 against the provisioned env with
+  `cargo test --test integration a_layerfs_live -- --ignored
+  --nocapture`) — open (fork + sandbox + mount) **580 ms**, settle
+  (Commit + unmount + close + merge into main + publish) **361 ms**,
+  the in-sandbox write read back **from `main` after publish**, and
+  the host/sandbox namespace boundary asserted — the host meets
+  ENOENT at the mount the sandbox serves. Two findings landed with
+  it, same day: **(a)** the wire's `HistoryName` grammar refused the
+  arm's `fleet/<session>` branch names (slash + uppercase stamp)
+  while the stub accepted them — a real delegation would have failed
+  at its first fork; fixed by `child_branch_name`'s fold plus the
+  pre-spawn `history_name_ok` refusal, grammar tests pinning both
+  (KI-315, closed same day). **(b)** the mount is sandbox-local, so
+  an opted-in child's host-side processes cannot work at it — the
+  child-execution seam (dsh routes file ops through `layerfs fs.*`
+  and command runs through `workspace exec`) is the next increment
+  (KI-314, open).
+- **C3 — landed, pin included.** `CHECKOUT_PIN` names the checkout
+  the way a VENDOR.json names a carry —
+  `github.com/Ephemeral-AI-Lab/layerfs@ad78914e36b258b360daf13aec164b5655814689 (wire 1.1.0)`
+  — carried on `fleet doctor`'s layerfs line and pinned by
+  `the_checkout_pin_names_the_commit_and_the_wire`; the gate's wire
+  refusal keeps the two halves honest when either moves. The
   byte-identity holds two ways: no knob → no spawn → no block (the
   integration test asserts the absence itself), and `fleet doctor`'s
   new line reads `off (FLEET_LAYERFS_PROJECT, unset · …)` or FAILs
   only when the knob is on over a machine that cannot answer —
   28 doctor tests. The settings surface names the env-only knob
-  without a value. The wire-version refusal is C1's gate. The
-  **VENDOR-style checkout pin is deferred with KI-313**: there is no
-  checkout yet to pin, and a pin of nothing would be theater.
+  without a value. The wire-version refusal is C1's gate.
 - **C4 — close-out: green by exit code.** `cargo fmt --all --check`,
   `cargo clippy --all-targets -- -D warnings`, `cargo build
-  --release`, `cargo test` — 0, 0, 0, 0; **1703 passed, 0 failed,
-  2 ignored** (the live-API e2e among them). The ledger carries
-  KI-313 (the live-run gate), and this status lands in the same
+  --release`, `cargo test` — 0, 0, 0, 0; **1706 passed, 0 failed,
+  3 ignored** (the live-API e2e, the `#[ignore]`d LayerFS live roundtrip
+  — which RAN on demand and passed — and one pre-existing). The ledger
+  carries KI-313 (closed with the provision record), KI-314 (the
+  child-execution seam, open), KI-315 (the branch-grammar defect,
+  closed same day), and this status lands in the same
   commit as the work. The road to the green gate is part of the
   record: two process-global test bugs of this arm's own making were
   caught by the suite — a stub deleted while the gate's cached path

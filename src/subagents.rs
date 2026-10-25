@@ -1854,7 +1854,10 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
     let mut workspace: Option<crate::layerfs_tools::WorkspaceSession> = match &layerfs_project {
         None => None,
         Some(project) => {
-            let branch = format!("fleet/{session}");
+            // The wire's name rule folded in: session stamps carry
+            // uppercase and `fleet/` a slash, both refused live — so
+            // the branch is valid by construction (layerfs_tools).
+            let branch = crate::layerfs_tools::child_branch_name(&session);
             let opened = tokio::task::spawn_blocking({
                 let project = project.clone();
                 let branch = branch.clone();
@@ -3402,7 +3405,7 @@ mod tests {
     fn the_workspace_rides_the_row_and_the_render() {
         use crate::layerfs_tools::{MergeOutcome, WorkspaceReport};
         let report = WorkspaceReport {
-            branch: "fleet/child-1".to_string(),
+            branch: "fleet-child-1".to_string(),
             ws: "1:/workspaces/1".to_string(),
             sandbox: "1".to_string(),
             committed: true,
@@ -3424,7 +3427,7 @@ mod tests {
             workspace: Some(report),
         };
         let text = result.render_report();
-        assert!(text.contains("workspace: branch fleet/child-1"), "{text}");
+        assert!(text.contains("workspace: branch fleet-child-1"), "{text}");
         assert!(text.contains("committed"), "{text}");
         assert!(
             text.contains("CONFLICT with main on 2 paths: src/lib.rs, src/agent.rs"),
@@ -3446,7 +3449,7 @@ mod tests {
             &chain,
             42,
         );
-        assert_eq!(row.workspace_branch, "fleet/child-1");
+        assert_eq!(row.workspace_branch, "fleet-child-1");
         assert_eq!(row.workspace, "1:/workspaces/1");
 
         // No workspace, no block, no ids: the default run's result and
