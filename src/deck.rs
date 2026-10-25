@@ -1353,6 +1353,58 @@ fn asset_caption(path: &std::path::Path) -> String {
     caption
 }
 
+/// The whitespace fraction of an SVG: the canvas minus what its drawn
+/// elements cover, from the geometry the text itself carries — rect
+/// w×h, circle πr², ellipse πab — over the canvas area. Paths and
+/// polygons have no text-extractable bounding box, so they count as
+/// ink at their stroke only through being uncaptured: the fraction is
+/// a floor on coverage, not an exact measure, and the certification
+/// names it as such. `None` when the canvas cannot be read.
+pub fn svg_whitespace(path: &std::path::Path) -> Option<f64> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let canvas = attribute(&text, "width")? * attribute(&text, "height")?;
+    if canvas <= 0.0 {
+        return None;
+    }
+    let mut ink = 0.0;
+    let mut rest = text.as_str();
+    while let Some(at) = rest.find("<rect") {
+        rest = &rest[at..];
+        let end = rest.find("/>").or_else(|| rest.find(">"))?;
+        let element = &rest[..end];
+        let width = attribute(element, "width").unwrap_or(0.0);
+        let height = attribute(element, "height").unwrap_or(0.0);
+        ink += width * height;
+        rest = &rest[end..];
+    }
+    rest = text.as_str();
+    while let Some(at) = rest.find("<circle") {
+        rest = &rest[at..];
+        let end = rest.find("/>").or_else(|| rest.find(">"))?;
+        let element = &rest[..end];
+        let radius = attribute(element, "r").unwrap_or(0.0);
+        ink += std::f64::consts::PI * radius * radius;
+        rest = &rest[end..];
+    }
+    rest = text.as_str();
+    while let Some(at) = rest.find("<ellipse") {
+        rest = &rest[at..];
+        let end = rest.find("/>").or_else(|| rest.find(">"))?;
+        let element = &rest[..end];
+        let rx = attribute(element, "rx").unwrap_or(0.0);
+        let ry = attribute(element, "ry").unwrap_or(0.0);
+        ink += std::f64::consts::PI * rx * ry;
+        rest = &rest[end..];
+    }
+    Some((1.0 - ink / canvas).clamp(0.0, 1.0))
+}
+
+/// The whitespace budget: a placed asset carries 10–90% whitespace —
+/// a solid-ink slab reads as a wall, a blank one as nothing. The
+/// band is the budget; the certification names it.
+pub const WHITESPACE_FLOOR: f64 = 0.1;
+pub const WHITESPACE_CEILING: f64 = 0.9;
+
 /// The grader's asset check: a match is certified only when its aspect
 /// holds the project frame's own ratio within a quarter — the same
 /// "certify before it is placed" gate the blueprint's step names. The
@@ -1360,19 +1412,41 @@ fn asset_caption(path: &std::path::Path) -> String {
 /// or why the check could not run (an unreadable aspect is a named
 /// non-certification, never a silent pass).
 pub fn certify_asset(matched: &AssetMatch, project: ProjectType) -> String {
-    match matched.aspect {
+    let aspect_verdict = match matched.aspect {
         Some(ratio) => {
             let frame = frame_aspect(project);
             if (ratio - frame).abs() / frame <= 0.25 {
-                format!("certified: aspect {ratio:.2} holds the frame's {frame:.2}")
+                format!("aspect {ratio:.2} holds the frame's {frame:.2}")
             } else {
-                format!(
+                return format!(
                     "refused: aspect {ratio:.2} breaks the frame's {frame:.2} — find a differently shaped asset or crop this one"
-                )
+                );
             }
         }
-        None => "not certified: the asset's dimensions could not be read".to_string(),
-    }
+        None => return "not certified: the asset's dimensions could not be read".to_string(),
+    };
+    // The whitespace leg, where the format's own text carries it: an
+    // SVG's ink coverage is computable, and a placed asset stays
+    // inside the budget. PNG/JPG need a pixel decoder stdlib Rust
+    // lacks — the aspect stands and the whitespace names itself as
+    // unchecked (the remainder recorded in KI-252's row and the plan).
+    let whitespace_verdict = if matched.path.extension().and_then(|ext| ext.to_str()) == Some("svg")
+    {
+        match svg_whitespace(&matched.path) {
+            Some(whitespace) if (WHITESPACE_FLOOR..=WHITESPACE_CEILING).contains(&whitespace) => {
+                format!("whitespace {whitespace:.2} inside the budget")
+            }
+            Some(whitespace) => {
+                return format!(
+                    "refused: whitespace {whitespace:.2} is outside the budget ({WHITESPACE_FLOOR:.2}–{WHITESPACE_CEILING:.2}) — a solid slab reads as a wall and a blank one as nothing"
+                );
+            }
+            None => "whitespace unreadable".to_string(),
+        }
+    } else {
+        "whitespace unchecked — needs a pixel decoder (KI-252's recorded remainder)".to_string()
+    };
+    format!("certified: {aspect_verdict}; {whitespace_verdict}")
 }
 
 /// The asset library, ranked: every image in the directory gets its
@@ -2028,7 +2102,7 @@ mod tests {
         // portrait one; the captions say which is which.
         std::fs::write(
             dir.join("market-chart.svg"),
-            r##"<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900"><rect width="1600" height="900" fill="teal"/></svg>"##,
+            r##"<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900"><rect width="400" height="300" fill="teal"/><circle cx="1300" cy="700" r="120"/></svg>"##,
         )
         .unwrap();
         std::fs::write(
@@ -2102,6 +2176,67 @@ mod tests {
         assert!(note
             .expect("the absence is named")
             .contains("holds no images"));
+
+        // The whitespace budget, on the format whose own text carries
+        // it: a full-canvas slab is refused (whitespace 0), a sparse
+        // one is certified inside the budget.
+        let slab = dir.join("slab.svg");
+        std::fs::write(
+            &slab,
+            r##"<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900"><rect width="1600" height="900" fill="teal"/></svg>"##,
+        )
+        .unwrap();
+        let sparse = dir.join("sparse.svg");
+        std::fs::write(
+            &sparse,
+            r##"<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900"><rect width="700" height="450" fill="teal"/><circle cx="1300" cy="700" r="200"/></svg>"##,
+        )
+        .unwrap();
+        let slab_whitespace = svg_whitespace(&slab).expect("the slab's canvas reads");
+        assert!(slab_whitespace < WHITESPACE_FLOOR, "{slab_whitespace}");
+        let slab_whitespace = svg_whitespace(&slab).expect("the slab's canvas reads");
+        assert!(slab_whitespace < WHITESPACE_FLOOR, "{slab_whitespace}");
+        // The mid-density one certifies inside the budget, and the
+        // ceiling side is the blank asset: nothing drawn at all.
+        let blank = dir.join("blank.svg");
+        std::fs::write(
+            &blank,
+            r##"<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900"></svg>"##,
+        )
+        .unwrap();
+        let blank_whitespace = svg_whitespace(&blank).expect("the blank canvas reads");
+        assert!(blank_whitespace > WHITESPACE_CEILING, "{blank_whitespace}");
+        let slab_match = AssetMatch {
+            name: "slab.svg".to_string(),
+            path: slab,
+            score: 0.9,
+            aspect: Some(16.0 / 9.0),
+            certification: String::new(),
+        };
+        let verdict = certify_asset(&slab_match, ProjectType::Presentation);
+        assert!(verdict.contains("refused"), "{verdict}");
+        assert!(verdict.contains("whitespace"), "{verdict}");
+        let blank_match = AssetMatch {
+            name: "blank.svg".to_string(),
+            path: blank,
+            score: 0.8,
+            aspect: Some(16.0 / 9.0),
+            certification: String::new(),
+        };
+        let verdict = certify_asset(&blank_match, ProjectType::Presentation);
+        assert!(verdict.contains("refused"), "{verdict}");
+        assert!(verdict.contains("whitespace"), "{verdict}");
+        // The market chart itself is mid-density and certifies whole.
+        let chart_match = AssetMatch {
+            name: "market-chart.svg".to_string(),
+            path: dir.join("market-chart.svg"),
+            score: 0.7,
+            aspect: Some(16.0 / 9.0),
+            certification: String::new(),
+        };
+        let verdict = certify_asset(&chart_match, ProjectType::Presentation);
+        assert!(verdict.contains("certified"), "{verdict}");
+        assert!(verdict.contains("whitespace"), "{verdict}");
 
         let _ = std::fs::remove_dir_all(&dir);
     }

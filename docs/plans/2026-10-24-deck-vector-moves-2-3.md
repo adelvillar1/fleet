@@ -110,9 +110,20 @@ criterion is the commit that shows both.
 - [x] **C2 — the asset seam.** `deck::find_assets` ranks the owner's
       asset directory by embedded caption, and an unset or empty
       directory answers with the named absence; by test.
-- [x] **C3 — the grader certifies.** A placed asset's aspect and
-      whitespace hold the frame's bounds or the placement is refused
-      with the reason named; the deck tool carries the asset mode; by
+- [x] **C3 — the grader certifies, with a recorded remainder.** A
+      placed asset's aspect holds the frame's bounds or the placement
+      is refused with the reason named — for every format the reader
+      can parse (PNG IHDR, SVG width/height). The whitespace leg is
+      certified where the format's own text carries it: an SVG's ink
+      coverage (rect/circle/ellipse areas over the canvas, a floor
+      estimate named as such) must sit inside the 0.10–0.90 budget — a
+      solid slab or a blank one is refused by name. PNG/JPG whitespace
+      needs a pixel decoder stdlib Rust lacks: those assets carry the
+      aspect certification and the sentence "whitespace unchecked —
+      needs a pixel decoder (KI-252's recorded remainder)", which is
+      this plan's explicit open item rather than a silent pass. The
+      deck tool carries the asset mode; by test over fixture SVGs
+      (slab, blank, mid-density) and the class-name assertions.
       test over fixture assets.
 - [x] **C4 — the close-out and the ledger.** `docs/known-issues.md`'s
       KI-252 row and this plan's checkboxes carry the same final status
