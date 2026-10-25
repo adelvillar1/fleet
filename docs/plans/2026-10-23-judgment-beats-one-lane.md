@@ -1,7 +1,7 @@
 ---
-status: draft
+status: active
 created: 2026-10-23
-updated: 2026-10-23
+updated: 2026-10-25
 slug: judgment-beats-one-lane-and-a-verdict-that-steers
 ---
 
@@ -35,14 +35,14 @@ answer, and what the pass makes of them is its own.
 
 ## Approach
 
-**One lane per beat run.** `ask_lane` becomes a session: `open`
+**One lane per beat run.** C0 and C5 are this increment's deliverable. `ask_lane` becomes a session: `open`
 (spawn, initialize, tools-check), `ask` (one call), `close`. The beat's
 loop opens once before the first row, asks per row inside, and closes
 on every exit path — the router's `judge` shape, applied to the beats.
 The same refactor lands in `fleet delegate`, because the two beats are
 one loop by design ("the loop is reused, never forked").
 
-**The verdict that steers.** The parse reads both heads into the
+**The verdict that steers.** C1, C2, and C3 are this increment's deliverables. The parse reads both heads into the
 decision: `RouteDecision.execution` (a label and its confidence), the
 calibration row carries it, and the reason names it — evidence before
 behaviour. Then the execution head steers the one decision fleet can
@@ -55,10 +55,11 @@ the orchestration chain. True multi-worker dispatch stays the
 delegation tool's job, and the leader's prompt gains one compiled-in
 line when the verdict is `mixture`/`swarm`, naming the tool.
 
-**The surfaces.** The `routed` event the face already renders gains the
-execution field, so the Router board's live line and the transcript's
-route strip name both heads; the functional spec and
-`docs/features/routing.md` state what the second head is for.
+**The surfaces.** C4 is this increment's deliverable: the `routed`
+event the face already renders gains the execution field, so the
+Router board's live line and the transcript's route strip name both
+heads; the functional spec and `docs/features/routing.md` state what
+the second head is for.
 
 The mockups — the voice to approve before a line is built:
 
@@ -114,7 +115,7 @@ this machine. The capture rate the calibration stream already records
 (`route_judged` rows per day) is the regression guard: the beats must
 keep judging every row they judged before.
 
-## Audited 2026-10-25 — against commit history
+## Notes — audited 2026-10-25, against commit history
 
 No commit has touched `src/judge.rs` or `src/delegate.rs` since this
 plan was written: the gap is real and every criterion unmet. Verified
