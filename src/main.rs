@@ -2609,6 +2609,13 @@ async fn drive(
             load_started.elapsed().as_millis(),
             Some(memory.fact_count()),
         );
+        // KI-249's other half: one row per embed the load's index build
+        // made \u{2014} `EMBED_TIMEOUT` bounds one of these calls, so the
+        // bound's size is the measurement's to set. An empty build adds
+        // nothing.
+        for ms in &memory.build_embeds_ms {
+            fleet::calib::record_embed_timing(&stream, "embed", *ms, None);
+        }
     }
     // The registry's enabled servers seed the run's lane specs, so the
     // run pre-joins them before its first request (D2). A name the env

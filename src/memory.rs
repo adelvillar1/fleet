@@ -2112,6 +2112,12 @@ pub struct Memory {
     /// full-width. The measurement gate decides the default; the setting
     /// exists so the single pass stays the contract until it does.
     pub two_stage: std::sync::atomic::AtomicBool,
+    /// The load-time index build's per-embed wall clocks, in call order
+    /// (KI-249): `EMBED_TIMEOUT` bounds one of these calls, and the
+    /// bound's size is the measurement's to set. Empty unless this
+    /// load embedded something; the caller holding a calibration stream
+    /// records one row per entry.
+    pub build_embeds_ms: Vec<u128>,
 }
 
 impl Memory {
@@ -2180,6 +2186,10 @@ impl Memory {
     pub fn load_with(root: &Path, embedder: Box<dyn Embedder>) -> Memory {
         let facts = load_facts(root);
         let mut vectors: HashMap<String, Vec<f32>> = HashMap::new();
+        // KI-249: the load-time index build's per-embed wall clocks,
+        // collected across the block below and carried on the Memory for
+        // the caller's stream to record.
+        let mut build_embeds_ms: Vec<u128> = Vec::new();
         if embedder.serves_vectors() {
             let key = embedder.vector_info();
             let index = Index::read(root);
@@ -2205,22 +2215,28 @@ impl Memory {
                     .map(|entry| entry.vector.clone());
                 let vector = match cached {
                     Some(vector) => vector,
-                    None => match embedder.embed(&fact.indexed_text()) {
-                        Some(vector) => {
-                            changed = true;
-                            vector
+                    None => {
+                        let started = std::time::Instant::now();
+                        let embedded = embedder.embed(&fact.indexed_text());
+                        build_embeds_ms.push(started.elapsed().as_millis());
+                        match embedded {
+                            Some(vector) => {
+                                changed = true;
+                                vector
+                            }
+                            None => {
+                                // Never silent: the fact keeps no vector
+                                // this load and one line says so, by
+                                // name \u{2014} the keyword channels
+                                // still rank it.
+                                eprintln!(
+                                    "fleet: memories: `{}` \u{2014} the embed failed, so it carries no vector this load",
+                                    fact.name
+                                );
+                                continue;
+                            }
                         }
-                        None => {
-                            // Never silent: the fact keeps no vector this
-                            // load and one line says so, by name — the
-                            // keyword channels still rank it.
-                            eprintln!(
-                                "fleet: memories: `{}` \u{2014} the embed failed, so it carries no vector this load",
-                                fact.name
-                            );
-                            continue;
-                        }
-                    },
+                    }
                 };
                 fresh.insert(
                     fact.name.clone(),
@@ -2259,6 +2275,7 @@ impl Memory {
             vectors,
             graph,
             two_stage: std::sync::atomic::AtomicBool::new(false),
+            build_embeds_ms,
         }
     }
 
@@ -2301,6 +2318,7 @@ impl Memory {
             vectors,
             graph,
             two_stage: std::sync::atomic::AtomicBool::new(false),
+            build_embeds_ms: Vec::new(),
         }
     }
 
@@ -6317,6 +6335,17 @@ mod tests {
         // The load-time index build embedded every fact exactly once;
         // the recalls below each embed the query beside it.
         assert_eq!(calls.load(Ordering::Relaxed), 4);
+        // KI-249: the build's per-embed timings carry the same count, so
+        // the caller's stream records one row per embed the bound
+        // (`EMBED_TIMEOUT`) is about. A cached reload adds none.
+        assert_eq!(
+            vector_on.build_embeds_ms.len(),
+            4,
+            "{:?}",
+            vector_on.build_embeds_ms
+        );
+        let reloaded = Memory::load_with(&root, Box::new(KeywordOnly));
+        assert!(reloaded.build_embeds_ms.is_empty());
         let on: Vec<String> = vector_on
             .recall("the railway deploy is failing")
             .into_iter()
