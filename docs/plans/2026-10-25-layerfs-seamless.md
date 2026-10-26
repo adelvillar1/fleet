@@ -1,0 +1,195 @@
+---
+status: draft
+created: 2026-10-25
+updated: 2026-10-25
+slug: layerfs-seamless
+---
+
+# LayerFS, seamlessly: no manual steps, new and existing projects
+
+## Context
+
+Two owner statements set the bar: the capability is proven (the two
+completed LayerFS plans — provisioned wire, cadence, children working
+through branches), but **"this is not a seamless experience"** and
+**"what I need is [a] plan to seamlessly use layerfs on new and
+existing projects, no manual steps on my part."** Today running the
+feature means seven shell exports, a checkout and CLI parked in
+`/tmp` (which macOS purges), a home inside the repo's `tmp/`, a
+scratch project, and knowledge that `start_init` exists. Every one of
+those is a manual step, and `fleet doctor` validates only one of the
+seven facts the CLI actually needs — a wrong one passes green and
+fails the first delegation.
+
+The standing tests this plan answers:
+
+- **Anti-Hermes:** does the owner need to know a knob exists? Target:
+  the owner points fleet at a project the way they always do — and
+  delegations isolate themselves, or say exactly why they cannot.
+- **One machine step, ever:** fleet already has the pattern —
+  `fleet install --lanes` is the optional second step that names what
+  it cannot build. LayerFS joins it as `fleet install --layerfs`.
+  Nothing else is typed, exported, or remembered.
+
+**The facts that make zero-config possible** (measured this session,
+reused as-is): the worker endpoint derives from the home
+(`<home>/worker/endpoint.json`); the daemon is `<bundle>/layerfs-daemon`;
+the store path is `/var/lib/docker/volumes/<volume>/_data/global/store.sqlite`
+once the project's volume name is known — and fleet records that name
+when *it* registers the project, so no runtime-internal file is ever
+read; the runtime image digest is one machine-level fact; and the
+**sealed bundle in `~/.cache` already contains the `layerfs` CLI and
+its node_modules** (`bundle/api/agent/cli`) — so the runtime needs the
+checkout in `/tmp` for nothing. Init of a small project was measured
+at 406 ms; what a *real* repo costs (and what its import actually
+takes in — a build directory would be a disaster to swallow blindly)
+is C0's measurement before auto-registration exists.
+
+## Approach
+
+**One machine step: `fleet install --layerfs` (and `fleet doctor`
+knowing every fact).** The install phase verifies Docker and Node,
+locates or builds the sealed bundle and the runtime image (its own
+worktree build recipe when absent, exact provision commands named when
+it cannot), creates the durable home under `<FLEET_HOME>/layerfs-home`
+(mode 0700), starts the worker once, and records the machine facts —
+home, bundle, image — in `<FLEET_HOME>`'s config. Idempotent, skipped
+by name when a prerequisite is missing, same voice as `--lanes`.
+Doctor grows from one `layerfs` line to the seven facts: config
+present, home mode, endpoint parses, worker answers a ping, image
+digest exists in Docker, daemon file present, and the registered
+projects' store paths exist — each failure naming its fix, so the
+first delegation can never be the first discovery.
+
+**Zero shell environment: the driver composes the CLI's env per
+spawn.** Every LAYERFS_* value the CLI needs is derived from the
+machine facts plus the project's registration — endpoint, daemon,
+image, store path, home — and passed to the spawn explicitly. The
+seven exports retire; `FLEET_LAYERFS_PROJECT` retires to an optional
+test/override (the tests keep their thread-local override), and the
+production path resolves the project **from the folder the run was
+launched in**. The CLI itself runs from the sealed bundle
+(`node <bundle>/api/agent/cli/src/layerfs.js`), so the `/tmp`
+checkout and its wrapper are retired; a durable checkout exists only
+as the rebuild recipe's input, cloned fresh at the pinned commit when
+a rebuild is actually needed.
+
+**Registration: the folder decides, fleet records, nobody types.**
+The first delegation from a folder resolves through one map in
+`<FLEET_HOME>`'s config — canonical folder path → project name,
+volume, store path. A hit costs nothing; a miss runs the registration
+once (init the folder as a LayerFS project — measured C0 cost — then
+record the three facts) and every later run in that folder,
+new or existing project, is ceremony-free. A folder past C0's bound
+(large source, build trees) is a **named fallback, never a blind
+import**: the delegation runs the way it does today with the default
+boundary intact, and the reason and the next step ride one notice —
+swallowing a `target/` silently would be the opposite of seamless.
+Registration is keyed on the canonical path, so a symlinked visit
+registers once.
+
+**Sequencing: measure the real cost before the automation.** C0
+initializes one real repository of representative size through the
+runtime, recording the wall time, the volume size, and exactly what
+the import took in (build directories? `.git`?) — the numbers decide
+the bound and whether the import story needs a follow-up. Then the
+composed seam, then registration, then install/doctor, then the live
+proof: a run that needs **no environment at all**.
+
+## Acceptance criteria
+
+- [ ] **C0 — a real project's cost, measured before auto-registration
+      exists.** One representative real repository (not the scratch
+      project) initialized through `@layerfs/runtime`'s `start_init`
+      with wall time, entry/byte counts, and resulting volume size
+      recorded here — plus what the source actually included (a build
+      tree present in the import names the bound's shape). The
+      registration bound and this plan's Approach are set from those
+      numbers, and the cleanup (volume + home entry) is recorded.
+- [ ] **C1 — the composed seam, no shell environment.** The driver
+      builds every LAYERFS_* value the CLI needs from the machine
+      facts in `<FLEET_HOME>` plus a registration (endpoint, daemon,
+      image, store path, home) and passes them to each spawn; the CLI
+      resolves from the sealed bundle; the durable home lives under
+      `<FLEET_HOME>`; the `/tmp` checkout, wrapper, and the seven
+      exports are retired. Stub tests pin the composition (derived
+      values, missing fact = named absence), and the machine facts'
+      config keys ride the settings writer's own rules.
+- [ ] **C2 — registration: new and existing folders, zero steps.**
+      The folder → project map resolves the run's project; a miss
+      registers once (init + record) and a hit costs nothing; a
+      folder past the C0 bound falls back to today's default with a
+      one-time named notice, never an import. Idempotent under
+      concurrent runs (the config writer's lock), canonical-path
+      keyed, and pinned by integration tests over the stub CLI —
+      including the bound's refusal shape.
+- [ ] **C3 — the machine step and the seven facts.** `fleet install
+      --layerfs` provisions idempotently (verify → bundle/image →
+      home → worker → record) and names-with-commands whatever it
+      cannot do; `fleet doctor` checks all seven facts with the fix
+      on each failure, hermetically pinned like the rest of its
+      evaluators; the CLAUDE.local recipe collapses to the one
+      command.
+- [ ] **C4 — close-out: the no-manual-steps proof.** A live run with
+      a clean environment (no LAYERFS_* in the process env) registers
+      a fresh folder and completes a delegation end to end, recorded
+      here with its timings; the probe runs green against the durable
+      home; the full gate green by exit code; docs
+      (FUNCTIONAL/TECHNICAL surfaces and the doctor section) match
+      the shipped behavior; status updates in the same commit that
+      lands the work.
+
+## Files to be touched
+
+`src/layerfs_tools.rs` (env composition from facts + registration
+resolution, the CLI path from the bundle) · `<FLEET_HOME>` config via
+`src/settings.rs` (the machine facts and the folder→project map, one
+writer) · `src/subagents.rs` (resolve the project from the folder
+instead of the env; the named-fallback path) · `src/install.rs` +
+`src/cli.rs` (the `--layerfs` phase) · `src/doctor.rs` +
+`src/main.rs` (the seven checks; the durable home's path resolves
+through `src/home.rs`'s own root) · · `scripts/layerfs-probe.sh` (kept as the diagnostic; gains the
+derived-env mode so it validates what fleet will actually pass) ·
+`CLAUDE.local.md` (the recipe shrinks to one line) ·
+`FUNCTIONAL-SPECIFICATIONS.md` + `TECHNICAL-DOCUMENTATION.md` (the
+experience and the runbook) · `docs/known-issues.md` (whatever C0
+opens).
+
+## Out of scope
+
+- **The LayerFS History/Work face** — the visualization the owner
+  also asked for, deferred behind seamlessness and measured this
+  session ready for its own plan (branch rows carry
+  `base/head/forkedFrom`, commit rows carry `parent/secondParent/via`
+  — a full DAG; `main`'s trunk is not CLI-reachable —
+  `list_commits main` answers `NoSuchBranch` — so the trunk comes
+  from the backend package inside the bundle).
+- **`apply_patch` and the other named refusals** of the seam plan —
+  unchanged.
+- **Auto-rebuilds of the bundle** — install builds on demand; a
+  moving checkout never silently re-pins (the C3 pin governs).
+- **Windows**, multi-user hosts, and LayerFS Durable-profile work
+  (owner-disabled by LayerFS's own ruling).
+
+## Verification
+
+Stub-driven unit and integration tests for the composition and the
+registration (derived env values, the bound's named fallback,
+idempotence under the config lock); hermetic doctor evaluators; C0's
+measurement recorded against the real runtime; then the live close-out
+— clean-environment delegation on a fresh folder, the probe against
+the durable home, and the gate's four commands by exit code.
+
+## Linked artifacts
+
+- `docs/plans/2026-10-25-layerfs-delegated-workspaces.md` and
+  `docs/plans/2026-10-25-layerfs-child-execution-seam.md` — the two
+  completed plans this plan productizes; their byte-identity and
+  named-absence pins keep holding (the decision input changes from an
+  env knob to the folder map; the render the model sees is tested the
+  same way).
+- The provision recipe, live numbers, and env facts this session
+  measured — collapsed into this plan's Context and C1 rather than
+  re-derived.
+- The `fleet install --lanes` phase — the precedent for a heavy
+  optional machine step that names what it cannot build.
