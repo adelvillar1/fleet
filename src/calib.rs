@@ -1652,6 +1652,13 @@ pub struct ReadRow {
     pub tool: String,
     #[serde(default)]
     pub outcome: String,
+    /// The delegation row's session id and workspace branch — the
+    /// face's join from a LayerFS branch back to the child that
+    /// worked it. Empty on every other op.
+    #[serde(default)]
+    pub session: String,
+    #[serde(default)]
+    pub workspace_branch: String,
     #[serde(default)]
     pub stop_reason: String,
     #[serde(default)]

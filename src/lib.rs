@@ -36,7 +36,17 @@ pub mod install;
 pub mod judge;
 pub mod lane_client;
 pub mod lanes;
+/// The one lock every env-mutating test in the crate takes: the
+/// environment is process-global, and separate per-module locks let
+/// two tests' env windows overlap (found live: a view test's
+/// `FLEET_HOME` reaching a registration test's config read). Doctor's
+/// and the other hermetic tests need no lock — they construct their
+/// facts.
+#[cfg(test)]
+pub(crate) static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 pub mod layerfs_tools;
+pub mod layerfs_view;
 pub mod lifecycle;
 pub mod mcp;
 pub mod mcp_meta;

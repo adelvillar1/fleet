@@ -3534,6 +3534,9 @@ console.log(JSON.stringify({
                 }
             }
         }
+        let _lock = crate::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let _home_env = EnvGuard::set("FLEET_HOME", &home);
         crate::layerfs_tools::set_folder_for_test(&folder);
 
