@@ -744,6 +744,7 @@ esac
         let registration = Registration {
             name: "shop".to_string(),
             store: PathBuf::from("/volumes/v/_data/global/store.sqlite"),
+            tree: None,
         };
 
         let view = history(&gate, &registration, &home).expect("the view assembles");
