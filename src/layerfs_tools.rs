@@ -248,58 +248,86 @@ fn read_machine() -> Result<Machine, String> {
             .map(str::to_string)
             .ok_or_else(|| format!("the `layerfs.{key}` fact is missing — re-run `fleet install`"))
     };
+    let home = PathBuf::from(text("home")?);
+    let bundle = PathBuf::from(text("bundle")?);
+    if !home.is_dir() {
+        return Err(format!(
+            "the recorded LayerFS home {} is gone — re-run `fleet install`",
+            home.display()
+        ));
+    }
+    if !bundle.is_dir() {
+        return Err(format!(
+            "the recorded bundle {} is gone — re-run `fleet install`",
+            bundle.display()
+        ));
+    }
     Ok(Machine {
-        home: PathBuf::from(text("home")?),
-        bundle: PathBuf::from(text("bundle")?),
+        home,
+        bundle,
         image: text("image")?,
     })
 }
 
-/// Every folder the machine has registered, read once per process
-/// from the same config section's `projects` map (keyed by the
-/// folder's canonical path).
+/// Every folder the machine has registered, read fresh from the
+/// config — the tests read this, since the process cache answers
+/// whichever config the first caller saw.
+pub fn read_registrations() -> Vec<(String, Registration)> {
+    let Ok(machine_home) = crate::home::fleet_home(
+        std::env::var("FLEET_HOME").ok().as_deref(),
+        std::env::var("HOME").ok().as_deref(),
+    ) else {
+        return Vec::new();
+    };
+    let Ok(document) = serde_json::from_str::<serde_json::Value>(
+        &std::fs::read_to_string(machine_home.join("config.json")).unwrap_or_default(),
+    ) else {
+        return Vec::new();
+    };
+    let Some(projects) = document
+        .get("layerfs")
+        .and_then(|layerfs| layerfs.get("projects"))
+        .and_then(|projects| projects.as_object())
+    else {
+        return Vec::new();
+    };
+    projects
+        .iter()
+        .filter_map(|(folder, record)| {
+            let name = record.get("name")?.as_str()?.to_string();
+            let store = record.get("store")?.as_str().map(PathBuf::from)?;
+            Some((folder.clone(), Registration { name, store }))
+        })
+        .collect()
+}
+
+/// Every folder the machine has registered, cached once per process
+/// — the arm's read; the config does not change under a running
+/// fleet except through registration itself, which records before it
+/// is consulted again.
 pub fn registrations() -> &'static [(String, Registration)] {
     static REGISTRATIONS: std::sync::OnceLock<Vec<(String, Registration)>> =
         std::sync::OnceLock::new();
-    REGISTRATIONS.get_or_init(|| {
-        let Ok(machine_home) = crate::home::fleet_home(
-            std::env::var("FLEET_HOME").ok().as_deref(),
-            std::env::var("HOME").ok().as_deref(),
-        ) else {
-            return Vec::new();
-        };
-        let Ok(document) = serde_json::from_str::<serde_json::Value>(
-            &std::fs::read_to_string(machine_home.join("config.json")).unwrap_or_default(),
-        ) else {
-            return Vec::new();
-        };
-        let Some(projects) = document
-            .get("layerfs")
-            .and_then(|layerfs| layerfs.get("projects"))
-            .and_then(|projects| projects.as_object())
-        else {
-            return Vec::new();
-        };
-        projects
-            .iter()
-            .filter_map(|(folder, record)| {
-                let name = record.get("name")?.as_str()?.to_string();
-                let store = record.get("store")?.as_str().map(PathBuf::from)?;
-                Some((folder.clone(), Registration { name, store }))
-            })
-            .collect()
-    })
+    REGISTRATIONS.get_or_init(read_registrations)
 }
 
 /// One folder's registration, matched on the canonical path (a
 /// symlinked visit registers once, not twice).
 pub fn registration(folder: &std::path::Path) -> Option<&'static Registration> {
+    find_registration(registrations(), folder)
+}
+
+/// The lookup itself, over any map — the cached read's body, and the
+/// tests' way to check a config they just wrote.
+pub fn find_registration<'a>(
+    map: &'a [(String, Registration)],
+    folder: &std::path::Path,
+) -> Option<&'a Registration> {
     let canonical = folder
         .canonicalize()
         .unwrap_or_else(|_| folder.to_path_buf());
-    registrations()
-        .iter()
-        .find(|(path, _)| Path::new(path) == &canonical)
+    map.iter()
+        .find(|(path, _)| Path::new(path) == canonical.as_path())
         .map(|(_, registration)| registration)
 }
 
@@ -420,6 +448,33 @@ pub fn set_project_for_test(name: &str) {
     PROJECT_OVERRIDE.with(|slot| *slot.borrow_mut() = Some(name.to_string()));
 }
 
+/// The test thread's override, when one is armed — the arm's
+/// resolution reads it first, before any machine fact. Production
+/// never arms it, so the thread-local reads `None` and the
+/// resolution falls through to the machine's facts.
+pub fn test_project() -> Option<String> {
+    PROJECT_OVERRIDE.with(|slot| slot.borrow().clone())
+}
+
+/// The test thread's folder, when one is set — the arm's resolution
+/// reads it before the process's cwd, so a test can register a folder
+/// without moving the process-global working directory a concurrent
+/// test would read. Production never sets it, so the resolution
+/// falls through to the cwd exactly as before.
+pub fn set_folder_for_test(folder: &Path) {
+    FOLDER_OVERRIDE.with(|slot| *slot.borrow_mut() = Some(folder.to_path_buf()));
+}
+
+/// The test thread's folder, when one is set.
+pub fn test_folder() -> Option<PathBuf> {
+    FOLDER_OVERRIDE.with(|slot| slot.borrow().clone())
+}
+
+thread_local! {
+    static FOLDER_OVERRIDE: std::cell::RefCell<Option<PathBuf>> =
+        const { std::cell::RefCell::new(None) };
+}
+
 thread_local! {
     static PROJECT_OVERRIDE: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
 }
@@ -432,6 +487,264 @@ pub struct Mount {
     pub sandbox: String,
     pub path: PathBuf,
     pub ws: String,
+}
+
+impl std::fmt::Display for RegisterError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RegisterError::Absent(reason) => write!(f, "{reason}"),
+            RegisterError::OverBound { .. } => {
+                write!(f, "the folder is past the registration bound")
+            }
+            RegisterError::Failed(reason) => write!(f, "{reason}"),
+        }
+    }
+}
+
+/// C2's bound, set by C0's measurement: a real repo (1,236 entries /
+/// 18.7 MB, `.git` included) registered in 2.5 s — and the runtime's
+/// import has no excludes (`scanSource` walks every entry), so a
+/// build tree is swallowed whole. These two numbers give real repos
+/// headroom and refuse the build-tree class; a folder past either is
+/// the named fallback, never a blind import.
+pub const REGISTRATION_MAX_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+pub const REGISTRATION_MAX_ENTRIES: u64 = 100_000;
+
+/// What a registration attempt answers. The named fallback is a
+/// first-class outcome: the delegation runs the way it does without
+/// the substrate, with the reason and the next step riding one
+/// owner-facing notice — never a silent import, never a failed run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RegistrationOutcome {
+    /// Registered (or already registered): the folder's project.
+    Registered(Registration),
+    /// Past the bound: the shape that crossed it, for the notice.
+    OverBound { entries: u64, bytes: u64 },
+}
+
+/// Why a registration could not be attempted at all — every one
+/// names what to do next.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RegisterError {
+    /// The machine has no recorded facts, or the register script is
+    /// not installed: `fleet install` provisions the substrate.
+    Absent(String),
+    /// The folder is past the bound: the shape that crossed it rides
+    /// the notice — the named fallback, never a blind import.
+    OverBound { entries: u64, bytes: u64 },
+    /// The registration ran and refused, or answered something the
+    /// driver does not know.
+    Failed(String),
+}
+
+/// The folder's shape — entries and regular-file bytes — with the
+/// early exit the bound exists for: a walk that crosses either bound
+/// stops and answers `OverBound` rather than measuring the whole
+/// tree. Links are not followed, mirroring the runtime's own scan.
+fn folder_shape_with(
+    folder: &Path,
+    max_bytes: u64,
+    max_entries: u64,
+) -> Result<(u64, u64), RegisterError> {
+    let mut entries: u64 = 0;
+    let mut bytes: u64 = 0;
+    let mut stack = vec![folder.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let reader = std::fs::read_dir(&dir)
+            .map_err(|error| RegisterError::Failed(format!("{}: {error}", dir.display())))?;
+        for entry in reader {
+            let entry = entry.map_err(|error| RegisterError::Failed(error.to_string()))?;
+            entries += 1;
+            if entries > max_entries {
+                return Err(RegisterError::OverBound { entries, bytes });
+            }
+            let file_type = entry
+                .file_type()
+                .map_err(|error| RegisterError::Failed(error.to_string()))?;
+            if file_type.is_dir() {
+                stack.push(entry.path());
+            } else if file_type.is_file() {
+                bytes += entry
+                    .metadata()
+                    .map_err(|error| RegisterError::Failed(error.to_string()))?
+                    .len();
+                if bytes > max_bytes {
+                    return Err(RegisterError::OverBound { entries, bytes });
+                }
+            }
+        }
+    }
+    Ok((entries, bytes))
+}
+
+/// The bound's pre-check at its production values.
+fn folder_shape(folder: &Path) -> Result<(u64, u64), RegisterError> {
+    folder_shape_with(folder, REGISTRATION_MAX_BYTES, REGISTRATION_MAX_ENTRIES)
+}
+
+/// The project name a folder registers under: its basename folded
+/// into the wire's grammar, de-duplicated against the names already
+/// registered (two folders called `api` are `api` and `api-2`).
+fn project_name_for(folder: &Path, taken: &[String]) -> String {
+    let raw = folder
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "project".to_string());
+    let folded = fold_history_name(&raw.to_lowercase(), 63);
+    let base = if folded.is_empty() {
+        "project".to_string()
+    } else {
+        folded
+    };
+    if !taken.iter().any(|name| name == &base) {
+        return base;
+    }
+    for suffix in 2..=999u32 {
+        let candidate = format!("{base}-{suffix}");
+        if !taken.iter().any(|name| name == &candidate) {
+            return candidate;
+        }
+    }
+    format!("{base}-{}", std::process::id())
+}
+
+/// The register script's location: the home's own copy (install puts
+/// it there), with the override for tests and operators.
+fn register_script(machine: &Machine) -> Result<PathBuf, RegisterError> {
+    if let Some(path) = std::env::var_os("FLEET_LAYERFS_REGISTER")
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+    {
+        return Ok(path);
+    }
+    let script = machine.home.join("register.mjs");
+    if script.is_file() {
+        Ok(script)
+    } else {
+        Err(RegisterError::Absent(format!(
+            "the register script is not at {} — `fleet install` provisions the substrate",
+            script.display()
+        )))
+    }
+}
+
+/// Register one folder: the bound's pre-check, the name, the
+/// runtime's Init through the register script, and the record —
+/// one attempt, and the config write under the corpus's own
+/// per-path lock so two runs registering at once cannot interleave.
+pub fn register(machine: &Machine, folder: &Path) -> Result<RegistrationOutcome, RegisterError> {
+    let script = register_script(machine)?;
+    let taken: Vec<String> = registrations()
+        .iter()
+        .map(|(_, registration)| registration.name.clone())
+        .collect();
+    folder_shape(folder)?;
+    let name = project_name_for(folder, &taken);
+    let output = std::process::Command::new("node")
+        .args([
+            script.to_string_lossy().as_ref(),
+            &name,
+            folder.to_string_lossy().as_ref(),
+            machine.home.to_string_lossy().as_ref(),
+            machine.bundle.to_string_lossy().as_ref(),
+            &machine.image,
+        ])
+        .output()
+        .map_err(|error| {
+            RegisterError::Failed(format!("the register script could not run: {error}"))
+        })?;
+    if !output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(RegisterError::Failed(format!(
+            "registration failed ({}): {}",
+            stdout.trim(),
+            stderr.trim()
+        )));
+    }
+    let document: serde_json::Value =
+        serde_json::from_str(std::str::from_utf8(&output.stdout).map_err(|error| {
+            RegisterError::Failed(format!("the register answer was not UTF-8: {error}"))
+        })?)
+        .map_err(|error| {
+            RegisterError::Failed(format!("the register answer was not JSON: {error}"))
+        })?;
+    let error = document
+        .get("error")
+        .and_then(|error| error.as_str())
+        .map(str::to_string);
+    if let Some(error) = error {
+        return Err(RegisterError::Failed(error));
+    }
+    let volume = document
+        .get("volume")
+        .and_then(|volume| volume.as_str())
+        .map(str::to_string)
+        .ok_or_else(|| RegisterError::Failed("the register answer named no volume".to_string()))?;
+    let store = PathBuf::from(
+        document
+            .get("store")
+            .and_then(|store| store.as_str())
+            .ok_or_else(|| {
+                RegisterError::Failed("the register answer named no store".to_string())
+            })?,
+    );
+    let registration = Registration { name, store };
+    record_registration(folder, &registration, &volume)?;
+    Ok(RegistrationOutcome::Registered(registration))
+}
+
+/// Write the folder's registration into `<FLEET_HOME>/config.json`
+/// under the per-path lock — the same exclusive lock the write path
+/// uses, so two registrations cannot interleave a read-modify-write.
+fn record_registration(
+    folder: &Path,
+    registration: &Registration,
+    volume: &str,
+) -> Result<(), RegisterError> {
+    let home = crate::home::fleet_home(
+        std::env::var("FLEET_HOME").ok().as_deref(),
+        std::env::var("HOME").ok().as_deref(),
+    )
+    .map_err(RegisterError::Absent)?;
+    let config = home.join("config.json");
+    let _guard = crate::filelock::FileLock::take(&crate::filelock::FileLock::beside(&config));
+    let mut document: serde_json::Value = std::fs::read_to_string(&config)
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+    let canonical = folder
+        .canonicalize()
+        .unwrap_or_else(|_| folder.to_path_buf());
+    let root = document
+        .as_object_mut()
+        .ok_or_else(|| RegisterError::Failed("config.json is not an object".to_string()))?;
+    let layerfs = root
+        .entry("layerfs")
+        .or_insert_with(|| serde_json::json!({}));
+    let layerfs = layerfs.as_object_mut().ok_or_else(|| {
+        RegisterError::Failed("config.json's `layerfs` is not an object".to_string())
+    })?;
+    let projects = layerfs
+        .entry("projects")
+        .or_insert_with(|| serde_json::json!({}));
+    let projects = projects.as_object_mut().ok_or_else(|| {
+        RegisterError::Failed("config.json's `layerfs.projects` is not an object".to_string())
+    })?;
+    projects.insert(
+        canonical.to_string_lossy().into_owned(),
+        serde_json::json!({
+            "name": registration.name,
+            "volume": volume,
+            "store": registration.store.to_string_lossy(),
+        }),
+    );
+    std::fs::write(
+        &config,
+        serde_json::to_string_pretty(&document).unwrap_or_default(),
+    )
+    .map_err(|error| RegisterError::Failed(format!("config.json could not be written: {error}")))?;
+    Ok(())
 }
 
 /// The context a [`FileAccess::LayerFs`] run works in — which
@@ -1765,10 +2078,11 @@ esac
 
         // The folder's registration resolves; an unregistered folder
         // is None, never a guess.
-        let reg = registration(&folder).expect("the registered folder");
+        let map = read_registrations();
+        let reg = find_registration(&map, &folder).expect("the registered folder");
         assert_eq!(reg.name, "shop");
         assert_eq!(reg.store, store);
-        assert!(registration(&home.join("elsewhere")).is_none());
+        assert!(find_registration(&map, &home.join("elsewhere")).is_none());
 
         // The composition: endpoint derived from the home, daemon from
         // the bundle, image from the record, store path from the
@@ -1805,9 +2119,208 @@ esac
         // read through the uncached reader, since the process-level
         // cache already holds this home's facts.
         std::fs::write(home.join("config.json"), "{}").unwrap();
-        let reason = read_machine().err().expect("no section is named");
+        let Err(reason) = read_machine() else {
+            panic!("no section is named");
+        };
         assert!(reason.contains("fleet install"), "{reason}");
         std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// C2's bound, named from C0's measurement: a folder past either
+    /// limit answers the typed over-bound — and the walk exits early,
+    /// so a 32 GB build tree costs the walk of its first directory
+    /// rather than the whole thing.
+    #[test]
+    fn the_registration_bound_refuses_a_build_tree_early() {
+        let root = std::env::temp_dir().join(format!(
+            "fleet-layerfs-bound-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("README.md"), "small\n").unwrap();
+        std::fs::write(root.join("src/lib.rs"), "fn main() {}\n").unwrap();
+        let shape = folder_shape_with(&root, 1_000, 100).expect("under the bound");
+        // The root itself is not an entry; every entry under it is,
+        // and only regular files count bytes.
+        assert_eq!(shape, (3, 19), "entries and bytes counted");
+
+        // Over on bytes: one big file answers the over-bound without
+        // walking further.
+        std::fs::write(root.join("big.bin"), vec![0u8; 2_000]).unwrap();
+        let over = folder_shape_with(&root, 1_000, 100).expect_err("past the bytes bound");
+        assert!(matches!(over, RegisterError::OverBound { .. }), "{over:?}");
+
+        // Over on entries: many small files answer the over-bound.
+        let many = std::env::temp_dir().join(format!(
+            "fleet-layerfs-bound-many-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = std::fs::remove_dir_all(&many);
+        std::fs::create_dir_all(&many).unwrap();
+        for index in 0..12 {
+            std::fs::write(many.join(format!("f{index}.txt")), "x").unwrap();
+        }
+        let over = folder_shape_with(&many, 1_000_000, 10).expect_err("past the entries bound");
+        assert!(matches!(over, RegisterError::OverBound { .. }), "{over:?}");
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&many);
+    }
+
+    /// C2's naming: the basename folded into the wire's grammar, and
+    /// two folders of one name answered `api` and `api-2`.
+    #[test]
+    fn the_registration_name_folds_and_dedupes() {
+        // The fold lowercases and keeps the grammar's legal `_`.
+        assert_eq!(project_name_for(Path::new("/srv/My_Repo"), &[]), "my_repo");
+        assert_eq!(
+            project_name_for(Path::new("/srv/My_Repo"), &["my_repo".to_string()]),
+            "my_repo-2"
+        );
+        assert_eq!(
+            project_name_for(
+                Path::new("/srv/My_Repo"),
+                &["my_repo".to_string(), "my_repo-2".to_string()]
+            ),
+            "my_repo-3"
+        );
+        // A hostile basename still lands inside the grammar.
+        let folded = project_name_for(Path::new("/srv/../weird name!"), &[]);
+        assert!(history_name_ok(&folded).is_ok(), "{folded}");
+    }
+
+    /// C2's record: the folder's registration lands in the config's
+    /// `layerfs.projects` under the canonical path, and the resolver
+    /// reads it back — the write that makes the second delegation in
+    /// the folder cost nothing.
+    #[test]
+    fn a_registration_lands_in_the_config_and_reads_back() {
+        let _lock = ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let home = std::env::temp_dir().join(format!(
+            "fleet-layerfs-reg-home-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        let folder = home.join("repo");
+        std::fs::create_dir_all(&folder).unwrap();
+        let folder = folder.canonicalize().unwrap();
+        let _home_env = EnvGuard::set("FLEET_HOME", &home);
+        record_registration(
+            &folder,
+            &Registration {
+                name: "repo".to_string(),
+                store: PathBuf::from("/volumes/v/_data/global/store.sqlite"),
+            },
+            "layerfs-repo-store-x",
+        )
+        .expect("the record lands");
+        let document: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(home.join("config.json")).unwrap())
+                .unwrap();
+        let record = &document["layerfs"]["projects"][folder.to_string_lossy().as_ref()];
+        assert_eq!(record["name"], "repo");
+        assert_eq!(record["volume"], "layerfs-repo-store-x");
+        assert_eq!(record["store"], "/volumes/v/_data/global/store.sqlite");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// C2's registration, end to end at the driver's layer: a
+    /// constructed machine (no config, no process cache), a stub
+    /// register script in the home, a real folder — the bound's
+    /// pre-check, the name, the script's argv, the config's record.
+    #[test]
+    fn register_runs_the_script_and_records_the_folder() {
+        let _lock = ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let home = std::env::temp_dir().join(format!(
+            "fleet-layerfs-reg-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = std::fs::remove_dir_all(&home);
+        let layerfs_home = home.join("layerfs-home");
+        let bundle = home.join("bundle");
+        std::fs::create_dir_all(&layerfs_home).unwrap();
+        std::fs::create_dir_all(&bundle).unwrap();
+        let folder = home.join("My Project");
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join("README.md"), "real\n").unwrap();
+        let argv_log = home.join("register-argv.log");
+        std::fs::write(
+            layerfs_home.join("register.mjs"),
+            r#"import { appendFileSync } from "node:fs";
+const name = process.argv[2];
+appendFileSync(process.env.FLEET_STUB_REGISTER_LOG, process.argv.slice(2).join(" ") + "\n");
+console.log(JSON.stringify({
+  name,
+  volume: `layerfs-${name}-store-x`,
+  store: `/var/lib/docker/volumes/layerfs-${name}-store-x/_data/global/store.sqlite`,
+}));
+"#,
+        )
+        .unwrap();
+
+        let _home_env = EnvGuard::set("FLEET_HOME", &home);
+        let _log = EnvGuard::set("FLEET_STUB_REGISTER_LOG", &argv_log);
+        let machine = Machine {
+            home: layerfs_home,
+            bundle,
+            image: "sha256:x".to_string(),
+        };
+        let outcome = register(&machine, &folder).expect("the registration runs");
+        let RegistrationOutcome::Registered(registration) = outcome else {
+            panic!("expected a registration");
+        };
+        assert_eq!(registration.name, "my-project");
+        assert_eq!(
+            registration.store,
+            PathBuf::from(
+                "/var/lib/docker/volumes/layerfs-my-project-store-x/_data/global/store.sqlite"
+            )
+        );
+        // The script's argv: the derived name, the source folder, and
+        // the machine's facts.
+        let argv = std::fs::read_to_string(&argv_log).expect("the script ran");
+        assert!(argv.contains("my-project"), "{argv}");
+        assert!(argv.contains(folder.to_string_lossy().as_ref()), "{argv}");
+        assert!(
+            argv.contains(&machine.home.to_string_lossy().to_string()),
+            "{argv}"
+        );
+        assert!(
+            argv.contains(&machine.bundle.to_string_lossy().to_string()),
+            "{argv}"
+        );
+        assert!(argv.contains("sha256:x"), "{argv}");
+        // The config recorded it, keyed canonically.
+        let document: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(home.join("config.json")).unwrap())
+                .unwrap();
+        let canonical = folder.canonicalize().unwrap();
+        assert_eq!(
+            document["layerfs"]["projects"][canonical.to_string_lossy().as_ref()]["name"],
+            "my-project"
+        );
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     /// C3's pin: the checkout identity names a 40-hex commit of the

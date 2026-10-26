@@ -218,7 +218,7 @@ proof: a run that needs **no environment at all**.
       exports are retired. Stub tests pin the composition (derived
       values, missing fact = named absence), and the machine facts'
       config keys ride the settings writer's own rules.
-- [ ] **C2 — registration: new and existing folders, zero steps.**
+- [x] **C2 — registration: new and existing folders, zero steps.**
       The folder → project map resolves the run's project; a miss
       registers once (init + record) and a hit costs nothing; a
       folder past the C0 bound falls back to today's default with a
@@ -339,7 +339,30 @@ measurement recorded against the real runtime; then the live close-out
 — clean-environment delegation on a fresh folder, the probe against
 the durable home, and the gate's four commands by exit code.
 
-## Status — 2026-10-25 (C0–C1 landed; C2–C6 to build)
+## Status — 2026-10-25 (C0–C2 landed; C3–C6 to build)
+
+- **C2 — landed.** The arm's resolution is one path — override → env
+  knob → the folder's registration → register-once — with the bound's
+  pre-check before anything spawns (a machine without the register
+  script never pays the walk) and every non-answer either silent (no
+  machine facts: the default-off boundary) or one owner-facing notice
+  per process (the bound, or a failed registration). The register
+  script (`scripts/layerfs-register.mjs`) imports the bundle's
+  runtime by absolute path, so nothing resolves from fleet's own
+  tree; the config write takes the corpus's per-path lock. Pinned at
+  two layers: `register_runs_the_script_and_records_the_folder` (the
+  driver: bound, name, argv, config) and
+  `the_arm_resolves_the_runs_folder_through_registration` (the arm's
+  wiring). Two process-global traps were found and closed while
+  testing: a `set_current_dir` leaked a test's folder into a
+  concurrent delegation (replaced by a thread-local folder override,
+  the project override's own pattern), and `machine()`/`registrations()`
+  cached the first caller's config — production-correct, but tests
+  need the fresh readers, so `read_machine`/`read_registrations` exist
+  beside the cached ones. Gate: fmt 0, clippy 0, release 0, lib
+  1545/0, integration 148/0.
+
+
 
 - **C0 — measured.** A real repository (zcode-router-kit: 1,236
   entries / 946 files / 18.7 MB, `.git` included) initializes in

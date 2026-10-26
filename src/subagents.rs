@@ -1614,6 +1614,77 @@ pub struct Delegation<'a> {
     pub file_access: FileAccess,
 }
 
+/// The project this delegation works in, and the machine's
+/// environment applied once — the seamless plan's resolution order:
+/// the test's thread-local override, the env knob (operators), the
+/// folder's registration, and a miss registers once (the bound's
+/// pre-check first). Every non-answer is either silent — the
+/// substrate isn't on this machine, the default-off boundary — or
+/// one owner-facing notice naming the reason and the way on; never a
+/// failed delegation, never a silent import.
+fn resolve_project(progress: &mut dyn Write) -> Option<String> {
+    if let Some(name) = crate::layerfs_tools::test_project() {
+        return Some(name);
+    }
+    let folder = crate::layerfs_tools::test_folder().or_else(|| std::env::current_dir().ok())?;
+    let Ok(machine) = crate::layerfs_tools::machine() else {
+        // No machine facts: the substrate isn't provisioned. A run
+        // that never opted in never learns the difference.
+        return None;
+    };
+    if let Some(name) = std::env::var_os(crate::layerfs_tools::PROJECT_ENV)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_string_lossy().into_owned())
+    {
+        let registration = crate::layerfs_tools::registration(&folder);
+        crate::layerfs_tools::apply_env(machine, registration);
+        return Some(name);
+    }
+    if let Some(registration) = crate::layerfs_tools::registration(&folder) {
+        crate::layerfs_tools::apply_env(machine, Some(registration));
+        return Some(registration.name.clone());
+    }
+    match crate::layerfs_tools::register(machine, &folder) {
+        Ok(crate::layerfs_tools::RegistrationOutcome::Registered(registration)) => {
+            crate::layerfs_tools::apply_env(machine, Some(&registration));
+            Some(registration.name)
+        }
+        Ok(crate::layerfs_tools::RegistrationOutcome::OverBound { entries, bytes })
+        | Err(crate::layerfs_tools::RegisterError::OverBound { entries, bytes }) => {
+            notice_once(
+                progress,
+                format!(
+                    "\u{2014} layerfs: {} is past the registration bound ({entries} entries / {bytes} bytes; the runtime imports a folder whole, so the bound is {} entries / {} bytes) \u{2014} delegations in this folder run without LayerFS workspaces",
+                    folder.display(),
+                    crate::layerfs_tools::REGISTRATION_MAX_ENTRIES,
+                    crate::layerfs_tools::REGISTRATION_MAX_BYTES,
+                ),
+            );
+            None
+        }
+        Err(error) => {
+            notice_once(
+                progress,
+                format!(
+                    "\u{2014} layerfs: registration failed ({error}) \u{2014} delegations in this folder run without LayerFS workspaces"
+                ),
+            );
+            None
+        }
+    }
+}
+
+/// One owner-facing notice per process: a fallback the owner should
+/// know about once, not once per delegated child.
+fn notice_once(progress: &mut dyn Write, line: String) {
+    static NOTICED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if NOTICED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
+    let _ = writeln!(progress, "{line}");
+    let _ = progress.flush();
+}
+
 /// Run one delegated task to a stop and return what it produced.
 ///
 /// Synchronous from the parent's side: the parent's turn waits. Every
@@ -1735,36 +1806,7 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
     // byte-identical to the one fleet always had (the plan's C3). A
     // knob set wrong is a named refusal here, before a route judgment
     // or a child session is spent on it, the way a bad role's is.
-    // The project the delegation works in: the test's thread-local
-    // override, the env knob (kept for operators), then the folder's
-    // registration — C1 reads the machine's map, C2 writes it on a
-    // miss. A registered folder needs no fact of its own: this is
-    // what makes the feature zero-step for the owner.
-    let layerfs_project = match crate::layerfs_tools::project_name() {
-        Ok(Some(project)) => Some(project),
-        Ok(None) => std::env::current_dir()
-            .ok()
-            .and_then(|folder| crate::layerfs_tools::registration(&folder))
-            .map(|registration| registration.name.clone()),
-        Err(reason) => {
-            return SubagentResult::refused(format!("the delegated-workspaces knob: {reason}"))
-        }
-    };
-    // The machine's facts, applied once into the process: endpoint,
-    // daemon, image, store path — the seven manual exports retire. A
-    // test's `FLEET_LAYERFS_BIN` override carries its own
-    // environment, so the composition is skipped for it.
-    if std::env::var_os(crate::layerfs_tools::CLI_ENV)
-        .filter(|path| !path.is_empty())
-        .is_none()
-    {
-        if let Ok(machine) = crate::layerfs_tools::machine() {
-            let registration = std::env::current_dir()
-                .ok()
-                .and_then(|folder| crate::layerfs_tools::registration(&folder));
-            crate::layerfs_tools::apply_env(machine, registration);
-        }
-    }
+    let layerfs_project = resolve_project(progress);
     // The overlay rides the child's system prompt beside the compiled-in
     // one, delimited so the child knows what is standing instruction
     // for this delegation's role and what is the harness prompt.
@@ -3421,6 +3463,92 @@ mod tests {
             ..offered.clone()
         };
         assert_eq!(plain.render(), "subagent completed \u{b7} 1 turn \u{b7} session child-1 \u{b7} log /tmp/child-1.jsonl\nI did the work");
+    }
+
+    /// C2's wiring at the arm's layer: a folder the machine has never
+    /// seen resolves through the registration — the machine's facts
+    /// from the config, the register script from the home, the
+    /// thread-local folder standing in for the process's cwd — and
+    /// the answer is the registered project's name, recorded in the
+    /// config. A machine with no facts answers None silently (the
+    /// default-off boundary).
+    #[test]
+    fn the_arm_resolves_the_runs_folder_through_registration() {
+        let home = std::env::temp_dir().join(format!(
+            "fleet-subagents-reg-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = std::fs::remove_dir_all(&home);
+        let layerfs_home = home.join("layerfs-home");
+        let bundle = home.join("bundle");
+        std::fs::create_dir_all(&layerfs_home).unwrap();
+        std::fs::create_dir_all(&bundle).unwrap();
+        std::fs::write(
+            home.join("config.json"),
+            serde_json::json!({
+                "layerfs": {
+                    "home": layerfs_home.display().to_string(),
+                    "bundle": bundle.display().to_string(),
+                    "image": "sha256:x",
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let folder = home.join("My Project");
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join("README.md"), "real\n").unwrap();
+        std::fs::write(
+            layerfs_home.join("register.mjs"),
+            r#"import { appendFileSync } from "node:fs";
+const name = process.argv[2];
+console.log(JSON.stringify({
+  name,
+  volume: `layerfs-${name}-store-x`,
+  store: `/var/lib/docker/volumes/layerfs-${name}-store-x/_data/global/store.sqlite`,
+}));
+"#,
+        )
+        .unwrap();
+
+        struct EnvGuard {
+            name: &'static str,
+            previous: Option<std::ffi::OsString>,
+        }
+        impl EnvGuard {
+            fn set(name: &'static str, value: &std::path::Path) -> EnvGuard {
+                let previous = std::env::var_os(name);
+                std::env::set_var(name, value);
+                EnvGuard { name, previous }
+            }
+        }
+        impl Drop for EnvGuard {
+            fn drop(&mut self) {
+                match &self.previous {
+                    Some(value) => std::env::set_var(self.name, value),
+                    None => std::env::remove_var(self.name),
+                }
+            }
+        }
+        let _home_env = EnvGuard::set("FLEET_HOME", &home);
+        crate::layerfs_tools::set_folder_for_test(&folder);
+
+        let mut progress: Vec<u8> = Vec::new();
+        let resolved = resolve_project(&mut progress);
+        let project = resolved.expect("the folder registers");
+        let canonical = folder.canonicalize().unwrap();
+        let document: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(home.join("config.json")).unwrap())
+                .unwrap();
+        assert_eq!(
+            document["layerfs"]["projects"][canonical.to_string_lossy().as_ref()]["name"],
+            project.as_str()
+        );
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     // --- the row ------------------------------------------------------------
