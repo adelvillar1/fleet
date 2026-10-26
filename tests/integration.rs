@@ -379,6 +379,13 @@ impl std::io::Write for Probe {
 }
 
 /// One full agent run against `mock` on the given session.
+///
+/// The run's world is pinned: a scratch FLEET_HOME with no config means
+/// the arm's resolve finds no machine facts, so a plain delegation never
+/// opts into a LayerFS workspace — whatever the launching repository
+/// has registered in the real home. (This repository itself became
+/// registered mid-plan — the motivating case — and a plain delegation
+/// test's premise must not ride on the world it runs in.)
 async fn run_on(
     mock: &MockApi,
     session: &mut Session,
@@ -386,6 +393,13 @@ async fn run_on(
     max_turns: usize,
     task: &str,
 ) -> Result<RunReport, AgentError> {
+    let scratch = temp_home("run-on-fleet-home");
+    let _fh = {
+        let _lock = AMBIENT_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        AmbientKey::set("FLEET_HOME", scratch.to_str().unwrap())
+    };
     let client = Client::new(mock.url(), "test-key");
     let options = AgentOptions {
         goal: None,
@@ -10488,6 +10502,7 @@ case "$*" in
     echo '{"kind":"ok"}' ;;
   *"fs edit"*) echo '{"kind":"ok"}' ;;
   *"fs grep"*|*"fs glob"*) echo '{"items":[],"hasMore":false}' ;;
+  *"branch diff_branches"*) printf '%s\n' '{"items":[{"path":"/home.txt","kind":"Modified"}],"hasMore":false}' ;;
   *) echo '{"code":"Usage","message":"unknown command"}' >&2; exit 2 ;;
 esac
 "#;
@@ -10648,6 +10663,14 @@ async fn a_layerfs_child_walks_the_coherence_sequence() {
     assert!(
         write < mount && mount < exec && exec < commit && commit < unmount && unmount < read,
         "fs write < mount < exec < commit < unmount < fs read: {calls}"
+    );
+    // The settle's own reads rode along after the cadence: the home
+    // apply's diff (C2) and the merge-back's publish, in that order.
+    let diff = at("branch diff_branches");
+    let publish = at("branch publish");
+    assert!(
+        unmount < diff && diff < publish,
+        "the settle diffs the child against main, then publishes: {calls}"
     );
     assert!(
         calls.contains("--project shop branch fork fleet-child-"),
@@ -11096,6 +11119,8 @@ async fn a_layerfs_live_coherence_findings_and_the_command_cadence() {
         project: project.clone(),
         branch: branch.clone(),
         sandbox: gate.sandbox_create(&project).expect("sandbox for cadence"),
+        digests: None,
+        folder: None,
     };
     let started = std::time::Instant::now();
     let outcome = gate
@@ -11220,4 +11245,140 @@ impl LiveJson for Result<serde_json::Value, fleet::layerfs_tools::Error> {
     fn await_exec_json(self, what: &str) -> serde_json::Value {
         self.unwrap_or_else(|error| panic!("{what}: {error}"))
     }
+}
+
+/// C2's integration proof: a delegation in a registered git folder
+/// settles its merge home — the child's change applied through the
+/// parent's own write path (one grouped approval, ApproveAll here), the
+/// host file carrying the merged child's version, and the report naming
+/// what was applied. The conflict half is pinned at the decision's own
+/// level (`the_settle_classifies_the_home_apply_from_the_spawn_hashes`),
+/// where the classification lives.
+#[tokio::test]
+async fn a_settled_delegation_applies_the_merge_home() {
+    let mock = MockApi::start(vec![
+        tool_call_stream(
+            "call-1",
+            "subagent",
+            &delegation_arguments("change home.txt"),
+        ),
+        tool_call_stream(
+            "child-w",
+            "write_file",
+            r#"{"path":"/home.txt","content":"the child wrote this\n"}"#,
+        ),
+        assistant_stream("the child is done"),
+        assistant_stream("the parent wraps up"),
+    ]);
+    let home = temp_home("layerfs-apply-home");
+    let folder = temp_home("layerfs-apply-repo");
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(folder.join("home.txt"), "base\n").unwrap();
+    let git = |args: &[&str]| {
+        let status = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&folder)
+            .args(args)
+            .env("GIT_AUTHOR_NAME", "t")
+            .env("GIT_AUTHOR_EMAIL", "t@t")
+            .env("GIT_COMMITTER_NAME", "t")
+            .env("GIT_COMMITTER_EMAIL", "t@t")
+            .status()
+            .expect("git runs");
+        assert!(status.success(), "git {args:?}");
+    };
+    git(&["init", "-q"]);
+    git(&["add", "-A"]);
+    git(&["commit", "-qm", "the base"]);
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let client = Client::new(mock.url(), "test-key");
+    let options = AgentOptions {
+        goal: None,
+        model: "test-model".to_string(),
+        identity: None,
+        max_turns: 8,
+        ui_tx: None,
+        lane_specs: None,
+        calib: None,
+        skills: Vec::new(),
+        role_overlay: None,
+        memory: None,
+        scope: None,
+        improve_home: None,
+        route_home: None,
+        gui_prompt: None,
+        compact_now: false,
+        checkpoints: None,
+        file_access: FileAccess::Folder(folder.clone()),
+        plan_mode: false,
+    };
+    let argv = std::env::temp_dir().join(format!(
+        "fleet-layerfs-it-argv-applyhome-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&argv);
+    // The SET is atomic (the lock); the restoration guard outlives the
+    // await, the lock guard does not — the sibling layerfs tests set
+    // their own stub mode in their own windows.
+    let _bin = {
+        let _lock = AMBIENT_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        AmbientKey::set("FLEET_LAYERFS_BIN", shared_layerfs_stub().to_str().unwrap())
+    };
+    fleet::layerfs_tools::set_project_for_test("shop");
+    let _mode = {
+        let _lock = AMBIENT_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        AmbientKey::set("FLEET_STUB_MODE", "happy")
+    };
+    let _log = {
+        let _lock = AMBIENT_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        AmbientKey::set("FLEET_STUB_LOG", argv.to_str().unwrap())
+    };
+    let mount = std::env::temp_dir().join(format!(
+        "fleet-layerfs-it-mount-applyhome-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&mount);
+    let _mount_path = {
+        let _lock = AMBIENT_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        AmbientKey::set("FLEET_TEST_MOUNT", mount.to_str().unwrap())
+    };
+    let mut progress = Vec::new();
+    {
+        let mut agent = Agent::new(
+            &client,
+            options,
+            &mut session,
+            Box::new(ApproveAll),
+            &mut progress,
+        )
+        .unwrap();
+        agent.run("delegate the change").await.unwrap();
+    }
+
+    // The host file carries the merged child's version — the apply rode
+    // the parent's own write path. The version is the stub's `fs read`
+    // answer (the shared stub does not track content), which is exactly
+    // what a real branch read would return.
+    assert_eq!(
+        std::fs::read_to_string(folder.join("home.txt")).unwrap(),
+        "hello\n",
+        "the settled merge landed home"
+    );
+    // The report names what was applied, in the parent's own result.
+    let parent_records = session::replay(session.path()).unwrap();
+    let (output, _) = tool_result(&parent_records, "subagent");
+    assert!(
+        output.contains("applied home") && output.contains("home.txt"),
+        "the apply is named in the result: {output}"
+    );
+    let _ = std::fs::remove_dir_all(&home);
+    let _ = std::fs::remove_dir_all(&folder);
 }

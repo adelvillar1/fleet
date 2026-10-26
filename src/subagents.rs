@@ -1942,6 +1942,13 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
     // but mount NOTHING at spawn — a held view pins its base (the
     // live run measured it), so each bash call mounts its own fresh
     // view inside the cadence, and the file tools never need one.
+    // The launch folder, once: the spawn's snapshot and the settle's
+    // apply both read it. The parent's own working root, the same
+    // derivation the resolve path makes.
+    let launch_folder = match &file_access {
+        FileAccess::Folder(root) => Some(root.clone()),
+        _ => crate::layerfs_tools::test_folder().or_else(|| std::env::current_dir().ok()),
+    };
     let mut handle: Option<crate::layerfs_tools::WorkspaceHandle> = match &layerfs_project {
         None => None,
         Some(project) => {
@@ -1949,10 +1956,27 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
             // uppercase and `fleet/` a slash, both refused live — so
             // the branch is valid by construction (layerfs_tools).
             let branch = crate::layerfs_tools::child_branch_name(&session);
+            // The spawn-time snapshot of the launch folder's declared
+            // content, taken BEFORE the fork: the settle reads it to
+            // tell the child's changes from the owner's. A folder that
+            // cannot be snapshotted (not a git repository) gets no
+            // home apply at all — its delta stays in the Store, named
+            // in the result.
+            let digests = launch_folder
+                .as_deref()
+                .and_then(crate::layerfs_tools::content_hashes);
+            let folder_recorded = launch_folder.clone();
             let opened = tokio::task::spawn_blocking({
                 let project = project.clone();
                 let branch = branch.clone();
-                move || crate::layerfs_tools::WorkspaceSession::open_handle(&project, &branch)
+                move || {
+                    crate::layerfs_tools::WorkspaceSession::open_handle(
+                        &project,
+                        &branch,
+                        digests,
+                        folder_recorded,
+                    )
+                }
             })
             .await;
             match opened {
@@ -2189,7 +2213,8 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
                 )],
                 ..Default::default()
             });
-        result.workspace = Some(report);
+        let project_name = layerfs_project.clone().unwrap_or_default();
+        result.workspace = Some(apply_home(report, approver, launch_folder, &project_name));
     }
     // The delta the child reported, verified against its own session log
     // rather than believed, and the deltas of the delegations it made,
@@ -2443,6 +2468,113 @@ pub fn bound_result(result: &SubagentResult) -> ToolOutcome {
         output,
         truncated: report.truncated,
     }
+}
+
+/// The settle's home apply, the ARM's act: ONE grouped approval naming
+/// every path, then the parent's own write path per path. Ask mode
+/// shows the owner the whole list once; the yes modes proceed; a
+/// denial leaves every file untouched and says so in the report. The
+/// knob that turns the substrate off kills the whole path — no
+/// workspace, no delta, no apply.
+fn apply_home(
+    mut report: crate::layerfs_tools::WorkspaceReport,
+    approver: &mut dyn crate::agent::Approver,
+    folder: Option<std::path::PathBuf>,
+    project: &str,
+) -> crate::layerfs_tools::WorkspaceReport {
+    let Some(home) = report.home.clone() else {
+        return report;
+    };
+    if home.applied.is_empty() {
+        if !home.held.is_empty() {
+            report.notes.push(format!(
+                "held at conflict: {} — you changed {} since the child forked, so nothing was \
+                 overwritten; the branch keeps both versions",
+                home.held.join(", "),
+                if home.held.len() == 1 { "it" } else { "them" }
+            ));
+        }
+        return report;
+    }
+    let call = crate::api::ToolCall {
+        id: format!("layerfs-apply-{}", std::process::id()),
+        kind: "function".to_string(),
+        function: crate::api::FunctionCall {
+            name: "layerfs".to_string(),
+            arguments: serde_json::json!({
+                "apply_home": {
+                    "paths": home.applied,
+                    "held": home.held,
+                },
+            })
+            .to_string(),
+        },
+    };
+    if !approver.approve(&call) {
+        report.notes.push(format!(
+            "the merge home was not approved — {} path(s) stay on the branch, readable in the \
+             workspace-history section",
+            home.applied.len()
+        ));
+        return report;
+    }
+    let Some(folder) = folder else {
+        report
+            .notes
+            .push("the apply had no launch folder recorded — nothing was written".to_string());
+        return report;
+    };
+    let gate = match crate::layerfs_tools::gate() {
+        Ok(gate) => gate,
+        Err(reason) => {
+            report
+                .notes
+                .push(format!("the CLI vanished before the apply: {reason}"));
+            return report;
+        }
+    };
+    let mut written = Vec::new();
+    for path in &home.applied {
+        let version = gate
+            .fs_read(project, &report.branch, path, None)
+            .ok()
+            .and_then(|document| {
+                document
+                    .get("text")
+                    .and_then(|text| text.as_str())
+                    .map(str::to_string)
+            });
+        let Some(content) = version else {
+            report
+                .notes
+                .push(format!("apply: {path} could not be read from the branch"));
+            continue;
+        };
+        let outcome = crate::tools::run_write_file(
+            &serde_json::json!({ "path": path, "content": content }),
+            Some(&folder),
+        );
+        match outcome {
+            Ok(_) => written.push(path.clone()),
+            Err(error) => report.notes.push(format!("apply: {path}: {error}")),
+        }
+    }
+    if !written.is_empty() {
+        report.notes.push(format!(
+            "applied home: {} — the merged child's work, written through the parent's own write \
+             path",
+            written.join(", ")
+        ));
+    }
+    if !home.held.is_empty() {
+        report.notes.push(format!(
+            "held at conflict: {} — you changed {} since the child forked, so nothing was \
+             overwritten; the branch keeps both versions",
+            home.held.join(", "),
+            if home.held.len() == 1 { "it" } else { "them" }
+        ));
+    }
+    report
 }
 
 #[cfg(test)]
@@ -3594,6 +3726,7 @@ console.log(JSON.stringify({
             merge: Some(MergeOutcome::Conflict {
                 paths: vec!["src/lib.rs".to_string(), "src/agent.rs".to_string()],
             }),
+            home: None,
             notes: vec!["main moved while the child worked — kept for resolution".to_string()],
         };
         let result = SubagentResult {

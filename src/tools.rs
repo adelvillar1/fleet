@@ -3758,7 +3758,11 @@ fn run_read_file_window(
     })
 }
 
-fn run_write_file(
+/// The host write path, shared: the tool calls it for a model's
+/// write, and the LayerFS settle's apply-home calls it for a merged
+/// child's work — one implementation, with the per-path lock both
+/// rides.
+pub(crate) fn run_write_file(
     arguments: &serde_json::Value,
     root: Option<&Path>,
 ) -> Result<ToolOutcome, String> {

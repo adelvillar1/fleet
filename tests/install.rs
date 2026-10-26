@@ -806,3 +806,205 @@ fn a_substrate_whose_worker_cannot_start_names_it_and_records_nothing() {
     assert!(stdout.contains("not provisioned"), "{stdout}");
     let _ = fs::remove_dir_all(&root);
 }
+
+/// C1's hermetic drive: a machine with NO discoverable bundle BUILDS
+/// one — a stubbed git clones, a stubbed docker pulls the two pinned
+/// images by digest, a stubbed worktree.py registers/prepares/builds
+/// and materializes a fake sealed bundle into the cache the discovery
+/// scans. The install's own world is a scratch HOME (the cache root
+/// lives under it), so the real machine's bundle is never found and the
+/// chain never touches the real substrate.
+#[cfg(unix)]
+#[test]
+fn the_install_builds_the_sealed_bundle_when_none_is_discovered() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = scratch("layerfs-build");
+    let home = root.join("home");
+    fs::create_dir_all(&home).unwrap();
+    let probe = Probe::listen();
+    let log = root.join("tool.log");
+
+    // The scratch HOME: the cache root the discovery scans is
+    // $HOME/.cache/layerfs-worktrees, and it starts empty.
+    let tools = root.join("tools");
+    fs::create_dir_all(&tools).unwrap();
+    std::os::unix::fs::symlink("/bin/sh", tools.join("sh")).unwrap();
+    let docker = tools.join("docker");
+    // The pinned images are absent (their inspects fail, their pulls
+    // succeed); the manifest's runtime digest — what the fresh bundle
+    // records — is present, because the chain just pulled it.
+    let docker_script = format!(
+        "#!/bin/sh\necho \"$@\" >> '{log}'\ncase \"$*\" in\n  info) exit 0 ;;\n  \"image inspect sha256:3d27e5c11\"*) exit 0 ;;\n  \"image inspect\"*) exit 1 ;;\n  pull*) exit 0 ;;\n  *) exit 0 ;;\nesac\n",
+        log = log.display()
+    );
+    fs::write(&docker, docker_script).unwrap();
+    fs::set_permissions(&docker, fs::Permissions::from_mode(0o755)).unwrap();
+    let git = tools.join("git");
+    // clone <url> <dir>: the "checkout" is a dir the stubbed python3
+    // reads its launcher from.
+    // clone --quiet <url> <dir>: the target is the FOURTH argument, and
+    // every helper is ABSOLUTE — a bare mkdir would not resolve on the
+    // controlled PATH.
+    let git_script = format!(
+        "#!/bin/sh\necho \"$@\" >> '{log}'\ncase \"$*\" in\n  clone*) /bin/mkdir -p \"$4/tools\" ;;\n  *) exit 0 ;;\nesac\nexit 0\n",
+        log = log.display()
+    );
+    fs::write(&git, git_script).unwrap();
+    fs::set_permissions(&git, fs::Permissions::from_mode(0o755)).unwrap();
+    // The stubbed worktree.py: register answers the resources.json
+    // path it writes; build materializes a sealed bundle where
+    // discover_bundle scans (the fake manifest carries the pinned
+    // runtime digest, so the image check passes against the stubbed
+    // docker).
+    let python3 = tools.join("python3");
+    fs::write(
+        &python3,
+        format!(
+            "#!/bin/sh\n\
+             echo \"$@\" >> '{}'\n\
+             if [ \"$2\" = \"register\" ]; then\n\
+               RES=\"$HOME/.cache/layerfs-worktrees/fixture/resources.json\"\n\
+               /bin/mkdir -p \"$(/usr/bin/dirname \"$RES\")\"\n\
+               echo '{{\"version\":1}}' > \"$RES\"\n\
+               echo \"$RES\"\n\
+               exit 0\n\
+             fi\n\
+             if [ \"$2\" = \"build\" ]; then\n\
+               OUT=\"$HOME/.cache/layerfs-worktrees/fixture/artifacts/build-linux-fixture\"\n\
+               /bin/mkdir -p \"$OUT/api/agent/cli/src\"\n\
+               printf 'stub' > \"$OUT/layerfs-daemon\"\n\
+               printf 'stub' > \"$OUT/api/agent/cli/src/layerfs.js\"\n\
+               printf '{{\"status\":\"sealed\",\"images\":{{\"runtime\":\"sha256:3d27e5c11e5786e309ec3e03f93ae536eb36e6e5eb3714d5eb3300a36157add0\"}}}}' > \"$OUT/manifest.json\"\n\
+               exit 0\n\
+             fi\n\
+             exit 0\n",
+            log.display()
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&python3, fs::Permissions::from_mode(0o755)).unwrap();
+
+    let mut command = Command::new(FLEET);
+    command.arg("install");
+    command.env("FLEET_HOME", &home);
+    command.env("HOME", &root);
+    command.env("PATH", &tools);
+    command.env("DEEPSEEK_API_KEY", PLACEHOLDER_KEY);
+    command.env(
+        "DEEPSEEK_BASE_URL",
+        format!("http://127.0.0.1:{}", probe.port()),
+    );
+    // The real node stays reachable for the worker's start attempt.
+    let real_node = std::env::var("PATH").ok().and_then(|path| {
+        path.split(':')
+            .map(|dir| format!("{dir}/node"))
+            .find(|candidate| std::path::Path::new(candidate).is_file())
+    });
+    if let Some(real) = real_node {
+        std::os::unix::fs::symlink(&real, tools.join("node")).unwrap();
+    }
+    let output = command.output().expect("the install runs");
+    let stdout = strip_ansi(&String::from_utf8_lossy(&output.stdout));
+    let stderr = strip_ansi(&String::from_utf8_lossy(&output.stderr));
+    let chain = fs::read_to_string(&log).unwrap_or_default();
+
+    // The chain ran, in order: clone the pin, pull both pinned images,
+    // register, prepare, build.
+    let clone_at = chain.find("clone").unwrap_or(usize::MAX);
+    let pull_rust = chain
+        .find("pull rust@sha256:e51d0265")
+        .unwrap_or(usize::MAX);
+    let pull_node = chain
+        .find("pull node@sha256:3d27e5c11")
+        .unwrap_or(usize::MAX);
+    let register_at = chain.find("register --worktree").unwrap_or(usize::MAX);
+    let prepare_at = chain.find("prepare --resources").unwrap_or(usize::MAX);
+    let build_at = chain.find("build --resources").unwrap_or(usize::MAX);
+    assert!(
+        clone_at < pull_rust,
+        "the clone precedes the pulls: {chain}"
+    );
+    assert!(pull_rust < pull_node, "both images pull: {chain}");
+    assert!(
+        pull_node < register_at,
+        "the images precede the tool: {chain}"
+    );
+    assert!(register_at < prepare_at, "register then prepare: {chain}");
+    assert!(prepare_at < build_at, "prepare then build: {chain}");
+    // The build was discovered, the worker was attempted through the
+    // bundle's runtime, and its failure is the named skip — the fake
+    // bundle has no runtime to import.
+    assert!(
+        stdout.contains("layerfs: skipped") && stdout.contains("worker could not be started"),
+        "the chain built, then named the worker: {stdout}{stderr}"
+    );
+    // Nothing recorded: a failed worker start records no facts.
+    assert_eq!(
+        fs::read_to_string(home.join("config.json")).unwrap(),
+        SCAFFOLD,
+        "a chain that cannot start its worker records nothing"
+    );
+    let _ = fs::remove_dir_all(&root);
+}
+
+/// C1's other half: without git the chain cannot even clone the pin,
+/// so THAT is the named skip — with the hand-build recipe beside it.
+#[cfg(unix)]
+#[test]
+fn the_install_names_git_as_the_missing_prerequisite_when_no_bundle_exists() {
+    let root = scratch("layerfs-build-no-git");
+    let home = root.join("home");
+    fs::create_dir_all(&home).unwrap();
+    let probe = Probe::listen();
+    let tools = root.join("tools");
+    fs::create_dir_all(&tools).unwrap();
+    // sh and node only: no git, no docker — docker's absence would be
+    // named first, so a stubbed docker answers `info`.
+    std::os::unix::fs::symlink("/bin/sh", tools.join("sh")).unwrap();
+    let docker = tools.join("docker");
+    fs::write(&docker, "#!/bin/sh\nexit 0\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&docker, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    if let Some(real) = std::env::var("PATH").ok().and_then(|path| {
+        path.split(':')
+            .map(|dir| format!("{dir}/node"))
+            .find(|candidate| std::path::Path::new(candidate).is_file())
+    }) {
+        std::os::unix::fs::symlink(real, tools.join("node")).unwrap();
+    }
+    // Its own command, NOT the `install` harness: the harness pins
+    // FLEET_LAYERFS_BUNDLE to an absent path, which would answer before
+    // the decision ever ran.
+    let mut command = Command::new(FLEET);
+    command.arg("install");
+    command.env("FLEET_HOME", &home);
+    command.env("DEEPSEEK_API_KEY", PLACEHOLDER_KEY);
+    command.env(
+        "DEEPSEEK_BASE_URL",
+        format!("http://127.0.0.1:{}", probe.port()),
+    );
+    command.env("PATH", &tools);
+    // A scratch HOME: the real home's cache would hand the discovery a
+    // real bundle and the decision would never reach the git check.
+    command.env("HOME", &root);
+    let output = command.output().expect("the install runs");
+    let stdout = strip_ansi(&String::from_utf8_lossy(&output.stdout));
+    let stderr = strip_ansi(&String::from_utf8_lossy(&output.stderr));
+    let code = output.status.code().unwrap_or(-1);
+    // The install stays green; the substrate's skip names git.
+    assert_eq!(code, 0, "the install stays green: {stdout}{stderr}");
+    // The printer wraps long lines, so the assertion reads the two
+    // halves separately rather than across a wrap.
+    assert!(
+        stdout.contains("layerfs: skipped")
+            && stdout.contains("git is not")
+            && stdout.contains("on PATH to clone the pinned checkout"),
+        "git is the named prerequisite: {stdout}"
+    );
+    assert!(stdout.contains("worktree.py"), "{stdout}");
+    let _ = fs::remove_dir_all(&root);
+}

@@ -44,6 +44,18 @@ use std::time::Duration;
 pub const CHECKOUT_PIN: &str =
     "github.com/Ephemeral-AI-Lab/layerfs@ad78914e36b258b360daf13aec164b5655814689 (wire 1.1.0)";
 
+/// The two images the sealed bundle's build runs on, pinned by digest —
+/// both OFFICIAL Docker Hub images, measured 2026-10-26 from the
+/// provisioned machine's own recorded build (the builder's
+/// `RepoDigests` names `rust@…`, the runtime's `node@…`). The install
+/// pulls exactly these and verifies what it pulled against them; a
+/// digest that does not match is a named failure, never a silent
+/// accept.
+pub const BUILD_IMAGE_PIN: &str =
+    "rust@sha256:e51d0265072d2d9d5d320f6a44dde6b9ef13653b035098febd68cce8fa7c0bc4";
+pub const RUNTIME_IMAGE_PIN: &str =
+    "node@sha256:3d27e5c11e5786e309ec3e03f93ae536eb36e6e5eb3714d5eb3300a36157add0";
+
 /// The one `layerfs` wire version fleet drives. A CLI that answers
 /// anything else is refused by name: 1.1.0 broke the 1.0.0 SDK under
 /// an explicit owner waiver, so "close enough" is a bug waiting to
@@ -374,6 +386,47 @@ pub fn apply_env(machine: &Machine, registration: Option<&Registration>) {
             Path::new(&store_volume(&registration.store)),
         );
     }
+}
+
+/// The launch folder's declared content hashes, the settle's record of
+/// what the host looked like when the child forked: a path whose hash
+/// moved since then was touched by the owner (or the parent) and is
+/// never overwritten by an apply. `None` for a folder that is not a git
+/// repository — the whole-tree walk has no cheap snapshot, and a folder
+/// that cannot be snapshotted gets no home apply at all (its delta
+/// stays in the Store, named in the result).
+///
+/// The hash is std's SipHash over the file's bytes and length: this is
+/// change detection inside one delegation, not a cryptographic
+/// boundary, and it is documented as such rather than borrowed
+/// vocabulary.
+pub fn content_hashes(folder: &Path) -> Option<std::collections::BTreeMap<String, String>> {
+    let (declared, _skipped) = declared_files(folder)?;
+    let mut hashes = std::collections::BTreeMap::new();
+    for entry in &declared {
+        let path = folder.join(&entry.path);
+        let Ok(bytes) = std::fs::read(&path) else {
+            continue;
+        };
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        std::hash::Hasher::write(&mut hasher, &bytes);
+        std::hash::Hasher::write_usize(&mut hasher, bytes.len());
+        hashes.insert(
+            entry.path.clone(),
+            format!("{:016x}", std::hash::Hasher::finish(&hasher)),
+        );
+    }
+    Some(hashes)
+}
+
+/// The host's hash for one path NOW — `None` when the file is absent,
+/// which is how a Removed path reads.
+fn host_hash(folder: &Path, path: &str) -> Option<String> {
+    let bytes = std::fs::read(folder.join(path)).ok()?;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    std::hash::Hasher::write(&mut hasher, &bytes);
+    std::hash::Hasher::write_usize(&mut hasher, bytes.len());
+    Some(format!("{:016x}", std::hash::Hasher::finish(&hasher)))
 }
 
 /// The Store's Docker volume, derived from the store path a
@@ -1040,6 +1093,15 @@ pub struct WorkspaceHandle {
     pub project: String,
     pub branch: String,
     pub sandbox: String,
+    /// The launch folder's content hashes at fork time — the settle's
+    /// record of the host's state, `None` for a folder that cannot be
+    /// snapshotted (a non-git folder: no home apply, the delta named in
+    /// the result instead).
+    pub digests: Option<std::collections::BTreeMap<String, String>>,
+    /// The launch folder the child's branch forked from — the apply's
+    /// host side. `None` for the probe's direct sessions, which have
+    /// no host to apply to.
+    pub folder: Option<PathBuf>,
 }
 
 /// What one command answered: the exit code and streams the model
@@ -1376,6 +1438,23 @@ impl Gate {
 
     /// `project list_branches` — every branch with its base, head and
     /// fork point: the face's branch list.
+    /// `branch diff_branches <from> <to>` — the changed paths between
+    /// two Branches (the wire diffs Branches or `main`; a fork base is
+    /// a Layer when main has never committed, so the settle's changed
+    /// set diffs the child against main and reads the spawn hashes
+    /// for the base).
+    pub fn diff_branches(
+        &self,
+        project: &str,
+        from: &str,
+        to: &str,
+    ) -> Result<serde_json::Value, Error> {
+        self.call(
+            "branch diff_branches",
+            &["--project", project, "branch", "diff_branches", from, to],
+        )
+    }
+
     pub fn list_branches(&self, project: &str) -> Result<serde_json::Value, Error> {
         self.call(
             "project list_branches",
@@ -1839,6 +1918,19 @@ pub struct WorkspaceSession {
 /// carried as a fact beside the result — a cleanup that did not land
 /// is named, never swallowed and never able to fail the delegation
 /// itself (the audit-trail law, applied to custody).
+/// The settle's decision about the launch folder: what may come home
+/// and what is held. The apply itself is the ARM's act (it rides the
+/// parent's approval gate); this is the decision the settle reaches
+/// from the wire and the spawn-time hashes.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct HomeApply {
+    /// Paths the child changed and the host did not: safe to apply.
+    pub applied: Vec<String>,
+    /// Paths the host moved since the fork: a named conflict, never
+    /// overwritten.
+    pub held: Vec<String>,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct WorkspaceReport {
     /// The child's branch — kept whether or not the merge landed, so
@@ -1857,6 +1949,12 @@ pub struct WorkspaceReport {
     /// The merge-back into main, after a commit. `None` when there
     /// was nothing to merge.
     pub merge: Option<MergeOutcome>,
+    /// The settle's home apply, when one was decided: the paths safe to
+    /// bring home (the child changed them, the host did not) and the
+    /// paths held (the host moved since the fork — a named conflict,
+    /// the file untouched). `None` when nothing was applied — no
+    /// snapshot, a refused merge, a child that changed nothing.
+    pub home: Option<HomeApply>,
     /// Cleanup facts: discards, unmount or close failures, publish
     /// failures — named, bounded, never fatal.
     pub notes: Vec<String>,
@@ -1872,7 +1970,12 @@ impl WorkspaceSession {
     /// seam plan's shape: the mount belongs to each bash call's
     /// cadence, not to the child's whole life, because a held view
     /// pins its base (measured) while a fresh mount sees the head.
-    pub fn open_handle(project: &str, branch: &str) -> Result<WorkspaceHandle, Error> {
+    pub fn open_handle(
+        project: &str,
+        branch: &str,
+        digests: Option<std::collections::BTreeMap<String, String>>,
+        folder: Option<PathBuf>,
+    ) -> Result<WorkspaceHandle, Error> {
         // The wire's name rule, checked before anything spawns: an
         // illegal branch is refused here, named, with no round trip —
         // the live run taught that the stub would have accepted it.
@@ -1897,6 +2000,8 @@ impl WorkspaceSession {
             project: project.to_string(),
             branch: branch.to_string(),
             sandbox,
+            digests,
+            folder,
         })
     }
 
@@ -1905,7 +2010,7 @@ impl WorkspaceSession {
     /// `open_handle` + per-command mounts instead; both share the
     /// fork half above.
     pub fn open(project: &str, branch: &str) -> Result<WorkspaceSession, Error> {
-        let handle = Self::open_handle(project, branch)?;
+        let handle = Self::open_handle(project, branch, None, None)?;
         let gate = gate().map_err(|reason| Error::Absent(reason.clone()))?;
         match gate.mount(project, &handle.sandbox, branch) {
             Ok(mount) => Ok(WorkspaceSession {
@@ -2063,9 +2168,110 @@ impl WorkspaceHandle {
             );
             return report;
         }
+        // The home apply's DECISION, before the merge: the changed set
+        // is the child against main, and the spawn-time hashes decide
+        // which of those paths the CHILD moved (a path where the
+        // child's version equals the fork-time version moved on main,
+        // not here — it is not this child's to bring home) and whether
+        // the host moved since the fork (a named conflict, never
+        // overwritten).
+        let home = plan_home(&gate, &self, &mut report);
         merge_back(&gate, &self.project, &self.branch, &mut report);
+        // Only a landed merge applies home: a Conflict keeps the branch
+        // for resolution, and applying its work to the host would walk
+        // around the very conflict the merge named.
+        match (&home, &report.merge) {
+            (Some(home), Some(MergeOutcome::Merged(_))) => report.home = Some(home.clone()),
+            (Some(_), _) => report.notes.push(
+                "the merge did not land, so nothing was applied home — the branch is kept for \
+                 resolution"
+                    .to_string(),
+            ),
+            (None, _) => {}
+        }
         report
     }
+}
+
+/// The home apply's decision, from the wire and the spawn hashes. The
+/// changed set is `diff_branches main <child>` — the wire diffs
+/// Branches, and the child's fork base is a Layer when main has never
+/// committed, so there is no base branch to name; the spawn hashes
+/// carry the base instead. Each candidate is read once from the
+/// child's branch and classified:
+///   the child's version equals the fork-time hash — main moved, not
+///     the child: skipped, not this child's change;
+///   the host equals the fork-time hash — untouched since the fork:
+///     applied;
+///   the host equals the child's version — already home: no-op;
+///   anything else — the host moved: HELD, named, untouched.
+fn plan_home(
+    gate: &Gate,
+    handle: &WorkspaceHandle,
+    report: &mut WorkspaceReport,
+) -> Option<HomeApply> {
+    let digests = handle.digests.as_ref()?;
+    let Ok(document) = gate.diff_branches(&handle.project, "main", &handle.branch) else {
+        // The diff is one call; a refusal names itself and the delta
+        // stays in the Store.
+        report.notes.push(
+            "the home apply could not read the child's changes — the delta stays on the \
+                   branch, readable in the workspace-history section"
+                .to_string(),
+        );
+        return None;
+    };
+    let items = document.get("items").and_then(|items| items.as_array())?;
+    let mut home = HomeApply::default();
+    for item in items {
+        let Some(path) = item.get("path").and_then(|path| path.as_str()) else {
+            continue;
+        };
+        let path = path.trim_start_matches('/').to_string();
+        let child_version = gate
+            .fs_read(&handle.project, &handle.branch, &path, None)
+            .ok();
+        let child_hash = child_version
+            .as_ref()
+            .and_then(|document| document.get("text").and_then(|text| text.as_str()))
+            .map(hash_text);
+        let spawn = digests.get(&path).cloned();
+        // The child did not move this path (its version is the
+        // fork-time version, or it never existed there): main moved.
+        if child_hash == spawn {
+            continue;
+        }
+        let now = host_hash_for(handle, &path);
+        if now == child_hash {
+            continue;
+        }
+        if now == spawn {
+            home.applied.push(path);
+        } else {
+            home.held.push(path);
+        }
+    }
+    if home.applied.is_empty() && home.held.is_empty() {
+        return None;
+    }
+    Some(home)
+}
+
+/// The host's hash for one path, through the folder the handle carries
+/// — `None` when the file is absent, which is how a Removed path reads.
+fn host_hash_for(handle: &WorkspaceHandle, path: &str) -> Option<String> {
+    let folder = handle.folder.as_ref()?;
+    host_hash(folder, path)
+}
+
+/// One text's hash, the same function the spawn snapshot uses — the
+/// two sides of a comparison must be one implementation.
+fn hash_text(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    std::hash::Hasher::write(&mut hasher, bytes);
+    std::hash::Hasher::write_usize(&mut hasher, bytes.len());
+    format!("{:016x}", std::hash::Hasher::finish(&hasher))
 }
 
 impl WorkspaceReport {
@@ -2865,6 +3071,197 @@ console.log(JSON.stringify({
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// C2's pin: the settle's home decision, classified from the wire
+    /// and the spawn hashes. Three paths in one diff — the child's own
+    /// change (host untouched: applied), the owner's edit (host moved:
+    /// HELD, never overwritten), and main's own movement (the child's
+    /// version equals the fork-time version: skipped, not this child's
+    /// to bring home).
+    #[test]
+    fn the_settle_classifies_the_home_apply_from_the_spawn_hashes() {
+        let _lock = crate::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let root = std::env::temp_dir().join(format!(
+            "fleet-layerfs-home-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        // A git repository: the snapshot is the DECLARED set (a 2 GiB
+        // whole-tree hash per delegation is the wrong cost), so the
+        // fixture is a real one.
+        let folder = root.join("repo");
+        std::fs::create_dir_all(&folder).unwrap();
+        // Three tracked files: one the child will change, one the owner
+        // will touch, one main will move (the child never does).
+        std::fs::write(folder.join("childs.txt"), "base\n").unwrap();
+        std::fs::write(folder.join("owners.txt"), "base\n").unwrap();
+        std::fs::write(folder.join("main-moved.txt"), "base\n").unwrap();
+        let git = |args: &[&str]| {
+            let status = std::process::Command::new("git")
+                .arg("-C")
+                .arg(&folder)
+                .args(args)
+                .env("GIT_AUTHOR_NAME", "t")
+                .env("GIT_AUTHOR_EMAIL", "t@t")
+                .env("GIT_COMMITTER_NAME", "t")
+                .env("GIT_COMMITTER_EMAIL", "t@t")
+                .status()
+                .expect("git runs");
+            assert!(status.success(), "git {args:?}");
+        };
+        git(&["init", "-q"]);
+        git(&["add", "-A"]);
+        git(&["commit", "-qm", "three files"]);
+        let digests = content_hashes(&folder).expect("the declared set hashes");
+        assert_eq!(digests.len(), 3, "{digests:?}");
+
+        // The stub: the diff names three paths; fs read answers the
+        // child's version per path — the child changed childs.txt,
+        // main moved main-moved.txt (the child's version is the base),
+        // and owners.txt is the child's version too.
+        let script = stub(
+            "home",
+            r#"case "$*" in
+  *--version*) echo "1.1.0" ;;
+  *"branch fork"*) echo '{"name":"ok"}' ;;
+  *"sandbox create"*) echo '{"sandbox":"1","image":"sha256:x"}' ;;
+  *"branch diff_branches"*)
+    echo '{"items":[
+      {"path":"/childs.txt","kind":"Modified"},
+      {"path":"/owners.txt","kind":"Modified"},
+      {"path":"/main-moved.txt","kind":"Modified"}
+    ],"hasMore":false}' ;;
+  *"fs read"*)
+    case "$*" in
+      *childs.txt*) printf '%s\n' '{"kind":"ok","text":"the child wrote this\n"}' ;;
+      *owners.txt*) printf '%s\n' '{"kind":"ok","text":"the child wrote this too\n"}' ;;
+      *main-moved.txt*) printf '%s\n' '{"kind":"ok","text":"base\n"}' ;;
+      *) printf '%s\n' '{"kind":"ok","text":""}' ;;
+    esac ;;
+  *"sandbox close"*) echo '{}' ;;
+  *"branch merge"*) echo '{"merge":"m-1"}' ;;
+  *"branch publish"*) echo '{}' ;;
+  *) echo '{}' ;;
+esac
+"#,
+        );
+        let _env = EnvGuard::set(CLI_ENV, &script);
+        let handle = WorkspaceHandle {
+            project: "shop".to_string(),
+            branch: "fleet-child-20261026t010000z-abc123".to_string(),
+            sandbox: "1".to_string(),
+            digests: Some(digests),
+            folder: Some(folder.clone()),
+        };
+        // The owner touched their file while the child worked.
+        std::fs::write(folder.join("owners.txt"), "the owner's own edit\n").unwrap();
+        let report = handle.close(true);
+        let home = report.home.clone().expect("the settle decided an apply");
+        assert_eq!(home.applied, vec!["childs.txt".to_string()], "{home:?}");
+        assert_eq!(home.held, vec!["owners.txt".to_string()], "{home:?}");
+        // main-moved.txt is in neither list: the child's version equals
+        // the fork-time version, so main moved it, not the child.
+        assert!(!home.applied.iter().any(|p| p == "main-moved.txt"));
+        assert!(!home.held.iter().any(|p| p == "main-moved.txt"));
+        // The merge landed, so the plan stands.
+        assert!(
+            matches!(report.merge, Some(MergeOutcome::Merged(_))),
+            "{report:?}"
+        );
+        // And nothing was written by the settle itself — the apply is
+        // the arm's act, gated.
+        assert_eq!(
+            std::fs::read_to_string(folder.join("childs.txt")).unwrap(),
+            "base\n",
+            "the settle decides; the arm applies"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The other half: a merge that does not land applies nothing home
+    /// — the branch is kept for resolution, and walking its work into
+    /// the host would route around the very conflict the merge named.
+    #[test]
+    fn a_conflicted_merge_applies_nothing_home() {
+        let _lock = crate::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let root = std::env::temp_dir().join(format!(
+            "fleet-layerfs-homeconf-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let folder = root.join("repo");
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join("childs.txt"), "base\n").unwrap();
+        let git = |args: &[&str]| {
+            let status = std::process::Command::new("git")
+                .arg("-C")
+                .arg(&folder)
+                .args(args)
+                .env("GIT_AUTHOR_NAME", "t")
+                .env("GIT_AUTHOR_EMAIL", "t@t")
+                .env("GIT_COMMITTER_NAME", "t")
+                .env("GIT_COMMITTER_EMAIL", "t@t")
+                .status()
+                .expect("git runs");
+            assert!(status.success(), "git {args:?}");
+        };
+        git(&["init", "-q"]);
+        git(&["add", "-A"]);
+        git(&["commit", "-qm", "one file"]);
+        let digests = content_hashes(&folder).expect("the snapshot");
+        let script = stub(
+            "homeconf",
+            r#"case "$*" in
+  *--version*) echo "1.1.0" ;;
+  *"branch fork"*) echo '{"name":"ok"}' ;;
+  *"sandbox create"*) echo '{"sandbox":"1","image":"sha256:x"}' ;;
+  *"branch diff_branches"*)
+    echo '{"items":[{"path":"/childs.txt","kind":"Modified"}],"hasMore":false}' ;;
+  *"fs read"*) printf '%s\n' '{"kind":"ok","text":"the child wrote this\n"}' ;;
+  *"sandbox close"*) echo '{}' ;;
+  *"branch merge"*)
+    echo '{"code":"Conflict","message":"both changed childs.txt","detail":{"conflicts":[{"path":"childs.txt"}]}}' >&2
+    exit 125 ;;
+  *) echo '{}' ;;
+esac
+"#,
+        );
+        let _env = EnvGuard::set(CLI_ENV, &script);
+        let handle = WorkspaceHandle {
+            project: "shop".to_string(),
+            branch: "fleet-child-20261026t010000z-abc123".to_string(),
+            sandbox: "1".to_string(),
+            digests: Some(digests),
+            folder: Some(folder.clone()),
+        };
+        let report = handle.close(true);
+        assert!(report.home.is_none(), "{report:?}");
+        assert!(
+            report
+                .notes
+                .iter()
+                .any(|note| note.contains("nothing was applied home")),
+            "{:?}",
+            report.notes
+        );
+        assert_eq!(
+            std::fs::read_to_string(folder.join("childs.txt")).unwrap(),
+            "base\n"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     /// C3's repair, pinned: the machine's facts MERGE into the config —
     /// the scaffold the install wrote a moment earlier and the
     /// registrations C2 recorded both survive beside the new section.
@@ -3020,6 +3417,8 @@ console.log(JSON.stringify({
             project: "shop".to_string(),
             branch: child_branch_name("20261026T010000Z-abc123"),
             sandbox: "2".to_string(),
+            digests: None,
+            folder: None,
         };
         let outcome = gate
             .run_command(&ctx, "cargo test --lib", Duration::from_secs(5))
@@ -3072,6 +3471,8 @@ console.log(JSON.stringify({
             project: "shop".to_string(),
             branch: "fleet-child-a".to_string(),
             sandbox: "1".to_string(),
+            digests: None,
+            folder: None,
         };
         let outcome = gate
             .run_command(&ctx, "false", Duration::from_secs(5))
@@ -3101,6 +3502,8 @@ console.log(JSON.stringify({
             project: "shop".to_string(),
             branch: "fleet-child-b".to_string(),
             sandbox: "1".to_string(),
+            digests: None,
+            folder: None,
         };
         let started = std::time::Instant::now();
         let error = gate

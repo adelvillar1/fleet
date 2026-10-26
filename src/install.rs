@@ -787,6 +787,12 @@ pub enum LayerfsStep {
     Provisioned { home: std::path::PathBuf },
     /// A prerequisite is missing, with the provision that lifts it.
     Skipped { reason: String, provision: String },
+    /// No sealed bundle is built and this machine CAN build one: the
+    /// step executes the build chain before anything else. The caller
+    /// never sees this variant — `layerfs_step` resolves it internally
+    /// (the chain runs, the plan re-decides) — it exists so the pure
+    /// decision can name the buildable state.
+    Build,
 }
 
 /// The decision, pure: what the machine has, and what it would take.
@@ -799,6 +805,7 @@ fn plan_layerfs(
     worker_up: bool,
     docker: bool,
     node: bool,
+    git: bool,
     bundle: Option<&std::path::Path>,
     image: bool,
 ) -> LayerfsStep {
@@ -820,13 +827,20 @@ fn plan_layerfs(
         };
     }
     let Some(bundle) = bundle else {
-        return LayerfsStep::Skipped {
-            reason: "no sealed LayerFS bundle is built on this machine".to_string(),
-            provision: "build one: clone the pinned layerfs checkout, npm install in api/, \
-                         then python3 tools/worktree.py register/prepare/build --platform linux \
-                         --profile release"
-                .to_string(),
-        };
+        // No bundle is not the end: this machine can build one, the
+        // way it builds the lanes' venvs — unattended, streamed, and
+        // verified before anything is recorded. Without git the chain
+        // cannot even clone the pin, so THAT is the named skip.
+        if !git {
+            return LayerfsStep::Skipped {
+                reason: "no sealed LayerFS bundle is built on this machine, and git is not                          on PATH to clone the pinned checkout"
+                    .to_string(),
+                provision: "install git, then re-run `fleet install` — or build the bundle by                             hand: clone github.com/Ephemeral-AI-Lab/layerfs, npm install in                             api/, then python3 tools/worktree.py register/prepare/build \
+                            --platform linux --profile release"
+                    .to_string(),
+            };
+        }
+        return LayerfsStep::Build;
     };
     if !image {
         return LayerfsStep::Skipped {
@@ -843,13 +857,16 @@ fn plan_layerfs(
 }
 
 /// The step, live: the pure decision over the machine's actual facts,
-/// and the provisioning when the decision allows it.
-pub fn layerfs_step(home: &Path) -> LayerfsStep {
+/// the provisioning when the decision allows it, and the BUILD when the
+/// decision says this machine can make its own bundle. `progress`
+/// carries the build chain's streaming lines, the way the lanes'
+/// multi-minute installs do.
+pub fn layerfs_step(home: &Path, progress: &mut dyn std::io::Write) -> LayerfsStep {
     // The operator's pin, honored before the cache is scanned: one
     // name (FLEET_LAYERFS_BUNDLE, the same one the driver and the face
     // read) for "this is the bundle". A pin that names nothing is a
     // named skip, never a silent fall back to the cache.
-    let bundle = match std::env::var_os("FLEET_LAYERFS_BUNDLE") {
+    let mut bundle = match std::env::var_os("FLEET_LAYERFS_BUNDLE") {
         Some(pinned) if !pinned.is_empty() => {
             let pinned = std::path::PathBuf::from(pinned);
             if !pinned.is_dir() {
@@ -884,33 +901,65 @@ pub fn layerfs_step(home: &Path) -> LayerfsStep {
             .map(|_| ())
     })()
     .is_some();
-    let plan = plan_layerfs(
-        configured,
-        worker_up,
+    let docker_up = || {
         std::process::Command::new("docker")
             .arg("info")
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .status()
-            .is_ok_and(|status| status.success()),
+            .is_ok_and(|status| status.success())
+    };
+    let image_in_docker = |bundle: Option<&std::path::Path>| {
+        bundle.and_then(bundle_image).is_some_and(|image| {
+            std::process::Command::new("docker")
+                .args(["image", "inspect", &image])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .is_ok_and(|status| status.success())
+        })
+    };
+    let mut plan = plan_layerfs(
+        configured,
+        worker_up,
+        docker_up(),
         node_present(),
+        git_present(),
         bundle.as_deref(),
         // The image the sealed bundle recorded — the bundle's own
         // manifest, so a clean environment provisions the same machine
         // a provisioned one verifies. The operator's LAYERFS_IMAGE pin
         // wins when it names one.
-        bundle
-            .as_deref()
-            .and_then(bundle_image)
-            .is_some_and(|image| {
-                std::process::Command::new("docker")
-                    .args(["image", "inspect", &image])
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .status()
-                    .is_ok_and(|status| status.success())
-            }),
+        image_in_docker(bundle.as_deref()),
     );
+    if matches!(plan, LayerfsStep::Build) {
+        // The chain runs, the world is re-read, the plan re-decides: a
+        // built bundle is a discovered bundle, and every fact after
+        // this point is measured against what now exists.
+        match build_bundle(progress) {
+            Ok(()) => {
+                bundle = discover_bundle();
+                plan = plan_layerfs(
+                    configured,
+                    worker_up,
+                    docker_up(),
+                    node_present(),
+                    true,
+                    bundle.as_deref(),
+                    image_in_docker(bundle.as_deref()),
+                );
+            }
+            Err(reason) => {
+                return LayerfsStep::Skipped {
+                    reason: format!("the bundle build did not land: {reason}"),
+                    provision: "fix the named step and re-run `fleet install` — or build the                                 bundle by hand: clone github.com/Ephemeral-AI-Lab/layerfs, \
+                                npm install in api/, then python3 tools/worktree.py \
+                                register/prepare/build --platform linux --profile release"
+                        .to_string(),
+                };
+            }
+        }
+    }
     let LayerfsStep::Provisioned { home: layerfs_home } = plan else {
         // A verified machine gets the scripts too: the home's copies are
         // what the driver resolves, and a home whose scripts are missing
@@ -1005,6 +1054,230 @@ fn node_present() -> bool {
                 .and_then(|major| major.parse::<u32>().ok())
         })
         .is_some_and(|major| major >= 20)
+}
+
+/// git's presence, the same shape as node's: the build chain cannot
+/// even clone the pin without it.
+fn git_present() -> bool {
+    std::process::Command::new("git")
+        .arg("--version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok()
+}
+
+/// One streamed command: its lines reach the operator as they arrive,
+/// the way the lanes' multi-minute installs do, and its failure is the
+/// caller's named reason.
+fn streamed(
+    progress: &mut dyn std::io::Write,
+    program: &str,
+    args: &[&str],
+    cwd: Option<&std::path::Path>,
+) -> Result<(), String> {
+    let _ = writeln!(
+        progress,
+        "fleet: install: layerfs: building: {program} {}",
+        args.join(" ")
+    );
+    let mut command = std::process::Command::new(program);
+    command.args(args).stdout(std::process::Stdio::piped());
+    if let Some(dir) = cwd {
+        command.current_dir(dir);
+    }
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("{program} could not run: {error}"))?;
+    if let Some(stdout) = child.stdout.take() {
+        let mut reader = std::io::BufReader::new(stdout);
+        let mut line = String::new();
+        loop {
+            line.clear();
+            match std::io::BufRead::read_line(&mut reader, &mut line) {
+                Ok(0) => break,
+                Ok(_) => {
+                    let _ = write!(progress, "fleet: install: layerfs: {line}");
+                    let _ = progress.flush();
+                }
+                Err(_) => break,
+            }
+        }
+    }
+    let status = child
+        .wait()
+        .map_err(|error| format!("{program}: {error}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("{program} {} exited {status}", args.join(" ")))
+    }
+}
+
+/// The checkout's clone, keyed BY the pin's commit: a pin move is a
+/// fresh directory, never a destructive fetch of a dir another run is
+/// reading. Present and matching is reused.
+fn checkout_dir(
+    progress: &mut dyn std::io::Write,
+    pin_sha: &str,
+) -> Result<std::path::PathBuf, String> {
+    let home = std::env::var_os("HOME")
+        .map(std::path::PathBuf::from)
+        .ok_or_else(|| "no HOME is known".to_string())?;
+    let dir = home.join(".cache/layerfs-checkouts").join(pin_sha);
+    if dir.join(".git").is_dir() {
+        let head = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&dir)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .map_err(|error| format!("git: {error}"))?;
+        if String::from_utf8_lossy(&head.stdout).trim() == pin_sha {
+            return Ok(dir);
+        }
+        std::fs::remove_dir_all(&dir)
+            .map_err(|error| format!("the stale checkout {}: {error}", dir.display()))?;
+    }
+    let url = crate::layerfs_tools::CHECKOUT_PIN
+        .split('@')
+        .next()
+        .unwrap_or_default();
+    let url = format!("https://{url}.git");
+    streamed(
+        progress,
+        "git",
+        &["clone", "--quiet", &url, dir.to_string_lossy().as_ref()],
+        None,
+    )?;
+    streamed(
+        progress,
+        "git",
+        &[
+            "-C",
+            dir.to_string_lossy().as_ref(),
+            "checkout",
+            "--quiet",
+            pin_sha,
+        ],
+        None,
+    )?;
+    Ok(dir)
+}
+
+/// One official image, pulled by digest and verified: pull-by-digest
+/// already guarantees the bytes, and the inspect names what landed so a
+/// mismatch is a named failure, never a silent accept.
+fn pull_image(progress: &mut dyn std::io::Write, pin: &str) -> Result<(), String> {
+    let present = std::process::Command::new("docker")
+        .args(["image", "inspect", pin])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success());
+    if !present {
+        streamed(progress, "docker", &["pull", pin], None)?;
+    }
+    Ok(())
+}
+
+/// The build chain, unattended: clone the pinned checkout, pull the two
+/// official images by digest, then the checkout's own tool — register,
+/// prepare, build — which manufactures the sealed bundle into the cache
+/// `discover_bundle` scans. Every command streams; every failure is a
+/// named reason; nothing is recorded here (the provision arm does that
+/// against what now exists).
+fn build_bundle(progress: &mut dyn std::io::Write) -> Result<(), String> {
+    let pin_sha = crate::layerfs_tools::CHECKOUT_PIN
+        .split('@')
+        .nth(1)
+        .and_then(|rest| rest.split(' ').next())
+        .ok_or_else(|| "the checkout pin does not name a commit".to_string())?
+        .to_string();
+    let clone = checkout_dir(progress, &pin_sha)?;
+    pull_image(progress, crate::layerfs_tools::BUILD_IMAGE_PIN)?;
+    pull_image(progress, crate::layerfs_tools::RUNTIME_IMAGE_PIN)?;
+    let register_args = [
+        "tools/worktree.py".to_string(),
+        "register".to_string(),
+        "--worktree".to_string(),
+        clone.to_string_lossy().to_string(),
+        "--owner".to_string(),
+        "fleet".to_string(),
+        "--build-image".to_string(),
+        crate::layerfs_tools::BUILD_IMAGE_PIN.to_string(),
+        "--runtime-image".to_string(),
+        crate::layerfs_tools::RUNTIME_IMAGE_PIN.to_string(),
+        "--sandbox-image".to_string(),
+        crate::layerfs_tools::RUNTIME_IMAGE_PIN.to_string(),
+    ];
+    let register_refs: Vec<&str> = register_args.iter().map(String::as_str).collect();
+    let _ = writeln!(
+        progress,
+        "fleet: install: layerfs: building: python3 {}",
+        register_args.join(" ")
+    );
+    let output = std::process::Command::new("python3")
+        .args(&register_refs)
+        .current_dir(&clone)
+        .output()
+        .map_err(|error| format!("worktree.py register could not run: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "worktree.py register exited {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    // The registration prints the absolute resources.json path its
+    // siblings consume.
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let resources = stdout
+        .lines()
+        .rev()
+        .find(|line| line.trim().ends_with("resources.json"))
+        .map(|line| line.trim().to_string())
+        .ok_or_else(|| {
+            format!(
+                "worktree.py register named no resources.json (its answer: {})",
+                stdout.trim()
+            )
+        })?;
+    streamed(
+        progress,
+        "python3",
+        &[
+            "tools/worktree.py",
+            "prepare",
+            "--resources",
+            &resources,
+            "--platform",
+            "linux",
+        ],
+        Some(&clone),
+    )?;
+    streamed(
+        progress,
+        "python3",
+        &[
+            "tools/worktree.py",
+            "build",
+            "--resources",
+            &resources,
+            "--platform",
+            "linux",
+            "--profile",
+            "release",
+        ],
+        Some(&clone),
+    )?;
+    // A chain that reports success but manufactures nothing is a
+    // failure, not a shrug: the discovery check is the gate, and the
+    // caller re-discovers what now exists.
+    discover_bundle().map(|_| ()).ok_or_else(|| {
+        "the build reported success but no sealed bundle is discoverable — the chain's \
+             logs live under ~/.cache/layerfs-worktrees"
+            .to_string()
+    })
 }
 
 /// The three scripts the driver spawns, carried IN the binary the way
@@ -1253,27 +1526,27 @@ mod tests {
         // Configured AND answering: the machine verifies in
         // milliseconds, whatever else the world holds.
         assert!(matches!(
-            plan_layerfs(true, true, false, false, None, false),
+            plan_layerfs(true, true, false, false, false, None, false),
             LayerfsStep::Verified
         ));
         // Configured but the worker is down: not Verified — the
         // substrate provisions again, which is what starts the worker.
         assert!(matches!(
-            plan_layerfs(true, false, false, false, None, false),
+            plan_layerfs(true, false, false, false, false, None, false),
             LayerfsStep::Skipped { .. }
         ));
-        match plan_layerfs(false, false, false, true, None, true) {
+        match plan_layerfs(false, false, false, true, false, None, true) {
             LayerfsStep::Skipped { reason, provision } => {
                 assert!(reason.contains("Docker"), "{reason}");
                 assert!(provision.contains("Docker Desktop"), "{provision}");
             }
             other => panic!("expected the docker skip, got {other:?}"),
         }
-        match plan_layerfs(false, false, true, false, None, true) {
+        match plan_layerfs(false, false, true, false, false, None, true) {
             LayerfsStep::Skipped { reason, .. } => assert!(reason.contains("Node"), "{reason}"),
             other => panic!("expected the node skip, got {other:?}"),
         }
-        match plan_layerfs(false, false, true, true, None, true) {
+        match plan_layerfs(false, false, true, true, false, None, true) {
             LayerfsStep::Skipped { reason, provision } => {
                 assert!(reason.contains("bundle"), "{reason}");
                 assert!(provision.contains("worktree.py"), "{provision}");
@@ -1285,6 +1558,7 @@ mod tests {
             false,
             true,
             true,
+            false,
             Some(std::path::Path::new("/b")),
             false,
         ) {
@@ -1297,11 +1571,27 @@ mod tests {
                 false,
                 true,
                 true,
+                true,
                 Some(std::path::Path::new("/b")),
                 true
             ),
             LayerfsStep::Provisioned { .. }
         ));
+        // No bundle and git present: the machine BUILDS one, unattended
+        // — the decision names the buildable state rather than skipping.
+        assert!(matches!(
+            plan_layerfs(false, false, true, true, true, None, false),
+            LayerfsStep::Build
+        ));
+        // No bundle and no git: the chain cannot even clone the pin, so
+        // THAT is the named skip, with the hand-build recipe beside it.
+        match plan_layerfs(false, false, true, true, false, None, false) {
+            LayerfsStep::Skipped { reason, provision } => {
+                assert!(reason.contains("git"), "{reason}");
+                assert!(provision.contains("worktree.py"), "{provision}");
+            }
+            other => panic!("expected the git skip, got {other:?}"),
+        }
     }
 
     use super::*;

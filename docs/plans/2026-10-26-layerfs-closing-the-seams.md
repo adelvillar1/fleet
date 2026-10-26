@@ -86,7 +86,8 @@ against the fork point, and dead already if the delegation knob is off.
       **The motivating case proves itself: the fleet repo registers for
       real, and a delegation launched in it runs isolated** — the
       one-notice fallback is gone from the repo this work exists for.
-- [ ] **C1 — the install builds the sealed bundle.** `fleet install`'s
+- [x] **C1 — the install builds the sealed bundle.**
+      **Landed** — recorded below. `fleet install`'s
       substrate phase grows the build the way the lanes' phase builds
       venvs: clone the pinned checkout (`CHECKOUT_PIN` names it — the
       same pin the doctor carries), `npm install` in `api/`, the build
@@ -188,6 +189,37 @@ against the fork point, and dead already if the delegation knob is off.
   diff_commits <from-commit> <to-commit> [--no-hunks]` answers the
   changed paths between two Commits — the fork base is a commit id, so
   the settle's changed set is exactly this call.
+
+## Status
+
+- **C1 — landed, live-built.** `plan_layerfs` grew the git fact and the
+  `Build` decision: no bundle and git on PATH is a machine that BUILDS
+  one, unattended — the way it builds the lanes' venvs. `build_bundle`
+  clones the pinned checkout keyed BY its commit (a pin move is a fresh
+  directory, never a destructive fetch), pulls the two OFFICIAL images
+  by digest (`rust@sha256:e51d0265…` builds, `node@sha256:3d27e5c11…`
+  runs — both measured from the provisioned machine's own recorded
+  build, pinned beside `CHECKOUT_PIN`), then the checkout's own tool:
+  register, prepare, build. Every command streams to the operator; a
+  chain that reports success but manufactures nothing is a named
+  failure (the discovery check gates the record); git's absence is the
+  named skip with the hand-build recipe beside it. Pinned hermetically:
+  `the_install_builds_the_sealed_bundle_when_none_is_discovered` drives
+  the whole chain over a stubbed git/docker/python3 on a controlled
+  PATH and asserts the order — clone, both pulls, register, prepare,
+  build — and that a fake bundle whose worker cannot start records
+  nothing; `the_install_names_git_as_the_missing_prerequisite_when_no_
+  bundle_exists` pins the other half. **Live, 2026-10-26, in an
+  isolated scratch HOME (the working substrate untouched):** the chain
+  ran end to end — clone, two pulls (cached), register, prepare, build
+  — and manufactured a real 22 MB sealed bundle into the scratch
+  cache; the install then reached the worker start and named the
+  engine-global container collision (`layerfs-worker` already serves
+  the machine's home — the runtime's own guard, the correct refusal for
+  a second home on one machine; the machine's single-home path is the
+  normal one and is unaffected). The build's wall time from a cold
+  cache is this machine's next first-run record; this run reused the
+  cached image layers.
 
 ## Files to be touched
 
