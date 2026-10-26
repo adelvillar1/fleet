@@ -8,8 +8,8 @@ tier: durable
 shape: [change, deps]
 phrases: [mcp__blend1__refresh, python3 -u service/mcp_server.py, BLEND1_PYTHONPATH, tools/call refresh, services/blend1, launch_spec]
 missing: []
-recall-count: 85
-superseded-by:
+recall-count: 92
+superseded-by: blend1-refresh-spawn-driver-recipe
 valid-until:
 ---
 
