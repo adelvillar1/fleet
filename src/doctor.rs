@@ -197,6 +197,12 @@ pub fn evaluate_layerfs(
 /// check names the FIRST fact that fails with its fix, so the first
 /// delegation can never be the first discovery.
 pub struct LayerfsFacts {
+    /// The config carries a `layerfs` section at all. An absent
+    /// substrate is a machine that has not provisioned — the same
+    /// optional-heavy class as the lanes — and never a failing check;
+    /// a recorded one that cannot answer IS a failure, which is what
+    /// the rest of these facts find.
+    pub recorded: bool,
     /// The recorded machine facts, read fresh from the config.
     pub machine: Result<crate::layerfs_tools::Machine, String>,
     /// The worker's endpoint file, parsed.
@@ -212,6 +218,18 @@ pub struct LayerfsFacts {
 /// The substrate line: the seven facts, the first failure named with
 /// its fix, or the ready line naming the project count.
 pub fn evaluate_layerfs_facts(facts: &LayerfsFacts) -> Check {
+    if !facts.recorded {
+        // Not provisioned, not broken: the line names the state and
+        // the provision, and the exit code does not move — the same
+        // voice the lanes' optional-heavy line speaks.
+        return Check {
+            name: "layerfs-home",
+            ok: true,
+            detail: "not provisioned — `fleet install` provisions the substrate (Docker, \
+                     Node 20+, the sealed bundle)"
+                .to_string(),
+        };
+    }
     let machine = match &facts.machine {
         Err(reason) => {
             return Check {
@@ -1106,6 +1124,7 @@ mod tests {
                      volumes: Vec<(String, Result<(), String>)>|
          -> crate::doctor::LayerfsFacts {
             crate::doctor::LayerfsFacts {
+                recorded: machine.is_ok(),
                 machine,
                 endpoint,
                 worker_ping: ping,
@@ -1135,6 +1154,10 @@ mod tests {
         assert!(!check.ok, "{}", check.detail);
         assert!(check.detail.contains("gone"), "{}", check.detail);
 
+        // A machine that has not provisioned is not a failing check:
+        // the line names the state and the provision, and the gate's
+        // exit code does not move — the optional-heavy class the lanes'
+        // line already established.
         let no_config = facts(
             Err("config.json carries no `layerfs` section — `fleet install` provisions the substrate".to_string()),
             Err("none".to_string()),
@@ -1143,7 +1166,8 @@ mod tests {
             Vec::new(),
         );
         let check = evaluate_layerfs_facts(&no_config);
-        assert!(!check.ok, "{}", check.detail);
+        assert!(check.ok, "{}", check.detail);
+        assert!(check.detail.contains("not provisioned"), "{}", check.detail);
         assert!(check.detail.contains("fleet install"), "{}", check.detail);
 
         let dead_worker = facts(

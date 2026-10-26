@@ -3153,7 +3153,20 @@ fn doctor_command(options: &cli::DoctorOptions) -> ExitCode {
 fn layerfs_facts() -> fleet::doctor::LayerfsFacts {
     let machine = fleet::layerfs_tools::machine().cloned();
     let Ok(machine) = machine else {
+        // The section's absence is a separate fact from a broken one:
+        // read it here, where the config is already in hand, so the
+        // doctor can tell "not provisioned" from "recorded but gone".
+        let recorded = std::env::var("FLEET_HOME")
+            .ok()
+            .or_else(|| std::env::var("HOME").ok())
+            .and_then(|home| {
+                std::fs::read_to_string(std::path::Path::new(&home).join("config.json")).ok()
+            })
+            .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+            .and_then(|document| document.get("layerfs").cloned())
+            .is_some_and(|section| section.get("home").is_some());
         return fleet::doctor::LayerfsFacts {
+            recorded,
             machine: Err(
                 "no LayerFS facts are recorded — `fleet install` provisions the substrate"
                     .to_string(),
@@ -3216,6 +3229,7 @@ fn layerfs_facts() -> fleet::doctor::LayerfsFacts {
         })
         .collect();
     fleet::doctor::LayerfsFacts {
+        recorded: true,
         machine: Ok(machine),
         endpoint,
         worker_ping,

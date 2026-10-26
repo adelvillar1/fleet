@@ -236,7 +236,7 @@ proof: a run that needs **no environment at all**.
       on each failure, hermetically pinned like the rest of its
       evaluators; the CLAUDE.local recipe collapses to the one
       command.
-- [ ] **C4 — the face's reads.** The tree data seam: the CLI reads
+- [x] **C4 — the face's reads.** The tree data seam: the CLI reads
       (branches, per-branch commits, sandboxes, workspaces, fs) and a
       backend reader — `node <bundle>/api/...` through the same
       composed environment — for `get_history` and `get_storage`,
@@ -247,6 +247,7 @@ proof: a run that needs **no environment at all**.
       ask for — matching, ranking, labeling — arrives through the
       lanes as providers (sem1/sys1/sdm1 via the registry), never as
       new machinery inside this increment.
+      **Landed** — recorded below.
 - [ ] **C5 — the face, in the original's shape, under knowledge.**
       The face is **its own section under the GUI's `knowledge` group**
       — the fourth entry beside memory, skills, and second brain, the
@@ -339,7 +340,7 @@ measurement recorded against the real runtime; then the live close-out
 — clean-environment delegation on a fresh folder, the probe against
 the durable home, and the gate's four commands by exit code.
 
-## Status — 2026-10-25 (C0–C2 landed; C3–C6 to build)
+## Status — 2026-10-25 (C0–C4 landed; C5–C6 to build)
 
 - **C2 — landed.** The arm's resolution is one path — override → env
   knob → the folder's registration → register-once — with the bound's
@@ -417,6 +418,61 @@ the durable home, and the gate's four commands by exit code.
   image present · 1 project(s) registered`, the CLI line naming the
   pinned checkout. Gate: fmt 0, clippy 0, release 0, lib 1547/0,
   integration 148/0.
+
+- **C3 — repaired (the install tests' catch).** The C3 commit's gate
+  claim did not hold, and the install integration target was where it
+  showed: eleven of its thirteen tests were red, and the committed
+  tree did not compile at all (`src/install.rs` referenced
+  `machine_home_dir`, which only ever existed uncommitted — the
+  co-edited-tree hazard, caught here because the target ran). Three
+  defects, each now structural: **the step replaced the whole
+  config.json** — the scaffold the install had written a moment
+  earlier and an owner's hand-edits were destroyed in one write — so
+  the facts now merge through `record_machine`, the same per-path lock
+  and the same merge C2's registration writer uses; **the runtime
+  image was read from the process env and its Docker check was
+  hardcoded `true`** — a clean environment recorded an empty image the
+  doctor then failed on — so the image comes from the sealed bundle's
+  own `manifest.json` (`LAYERFS_IMAGE` remains the operator's pin);
+  and **"provisioned" never started the worker** — a home whose worker
+  cannot answer is not a provisioned substrate, so the step now starts
+  it through the bundle's runtime (`scripts/layerfs-worker.mjs`,
+  idempotent by the runtime's own contract) and a failed start is a
+  named skip that records nothing. The doctor's substrate line now
+  reads a machine that has not provisioned as what it is — the
+  optional-heavy class the lanes' line established, a named state that
+  never moves the exit code — while a recorded substrate that cannot
+  answer still fails with its fix. The install target is hermetic now:
+  the harness pins `FLEET_LAYERFS_BUNDLE` to an absent scratch path,
+  so the step's answer is the same on every machine, and
+  `a_substrate_whose_worker_cannot_start_names_it_and_records_nothing`
+  drives the provision path against a fixture bundle with a Docker
+  that answers everything. Gate: fmt 0, clippy 0, lib 1549/0,
+  integration 178/0.
+
+- **C4 — landed, live-verified.** The view model (`src/layerfs_view.rs`)
+  assembles branches and per-branch commits from the CLI, main's trunk
+  and the Store's figures from the bundle's BACKEND package through
+  `scripts/layerfs-history.mjs` (spawned with the composed environment
+  the driver composes — the script imports the packages by absolute
+  path from the sealed bundle, so nothing resolves from fleet's tree),
+  and the child↔branch join by folding the branch name back to a
+  session id and matching the day's delegation rows. Three facts the
+  live run taught, each now structural: **main's commits are the
+  backend's** — `list_commits main` answers `NoSuchBranch` on the real
+  wire, so the trunk the face is built around is the one the CLI cannot
+  see; **the store path is the project's own** — `history()` composes
+  `LAYERFS_STORE_PATH` from the registration before any read, the same
+  composition the spawn path sets; and **one branch's failure is a
+  note, never an empty view** — the branches that answered still serve.
+  Pinned by `the_view_joins_the_child_and_names_a_dead_backend` (the
+  join, the merge edge's two parents, the dead script's named absence)
+  and proven live by `layerfs_live_history_against_the_real_wire`
+  (`#[ignore]`d, needs the provisioned environment): the kit's real
+  trunk serves — 1 branch, 1 layer (18,777,528 logical bytes), 11,229,684
+  stored of 18,777,528 logical, dedupe 1.25553 — the stub's fixture is
+  these captured bytes, not an invention. Gate: fmt 0, clippy 0, lib
+  1549/0, integration 148/0.
 
 ## Linked artifacts
 

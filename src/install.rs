@@ -790,14 +790,19 @@ pub enum LayerfsStep {
 }
 
 /// The decision, pure: what the machine has, and what it would take.
+/// `worker_up` is what makes a configured machine Verified — facts
+/// recorded but a worker that does not answer is a substrate to
+/// provision again, which is also what makes the doctor's own "start
+/// it with `fleet install`" true.
 fn plan_layerfs(
     configured: bool,
+    worker_up: bool,
     docker: bool,
     node: bool,
     bundle: Option<&std::path::Path>,
     image: bool,
 ) -> LayerfsStep {
-    if configured {
+    if configured && worker_up {
         return LayerfsStep::Verified;
     }
     if !docker {
@@ -840,13 +845,48 @@ fn plan_layerfs(
 /// The step, live: the pure decision over the machine's actual facts,
 /// and the provisioning when the decision allows it.
 pub fn layerfs_step(home: &Path) -> LayerfsStep {
+    // The operator's pin, honored before the cache is scanned: one
+    // name (FLEET_LAYERFS_BUNDLE, the same one the driver and the face
+    // read) for "this is the bundle". A pin that names nothing is a
+    // named skip, never a silent fall back to the cache.
+    let bundle = match std::env::var_os("FLEET_LAYERFS_BUNDLE") {
+        Some(pinned) if !pinned.is_empty() => {
+            let pinned = std::path::PathBuf::from(pinned);
+            if !pinned.is_dir() {
+                return LayerfsStep::Skipped {
+                    reason: format!("the pinned bundle {} is not there", pinned.display()),
+                    provision: "set FLEET_LAYERFS_BUNDLE to a sealed bundle, or unset it to \
+                                discover one"
+                        .to_string(),
+                };
+            }
+            Some(pinned)
+        }
+        _ => discover_bundle(),
+    };
     let configured = std::fs::read_to_string(home.join(CONFIG_FILE))
         .ok()
         .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
         .and_then(|document| document.get("layerfs").cloned())
         .is_some_and(|section| section.get("home").is_some());
+    // The worker's liveness, the one fact that makes "configured" mean
+    // "answers": the endpoint's port, connected to on loopback.
+    let worker_up = (|| {
+        let endpoint = std::fs::read_to_string(
+            crate::layerfs_tools::machine_home_dir().join("worker/endpoint.json"),
+        )
+        .ok()?;
+        let document: serde_json::Value = serde_json::from_str(&endpoint).ok()?;
+        let port = document.get("port").and_then(|port| port.as_u64())?;
+        let address: std::net::SocketAddr = format!("127.0.0.1:{port}").parse().ok()?;
+        std::net::TcpStream::connect_timeout(&address, std::time::Duration::from_millis(500))
+            .ok()
+            .map(|_| ())
+    })()
+    .is_some();
     let plan = plan_layerfs(
         configured,
+        worker_up,
         std::process::Command::new("docker")
             .arg("info")
             .stdout(std::process::Stdio::null())
@@ -854,34 +894,98 @@ pub fn layerfs_step(home: &Path) -> LayerfsStep {
             .status()
             .is_ok_and(|status| status.success()),
         node_present(),
-        discover_bundle().as_deref(),
-        true,
+        bundle.as_deref(),
+        // The image the sealed bundle recorded — the bundle's own
+        // manifest, so a clean environment provisions the same machine
+        // a provisioned one verifies. The operator's LAYERFS_IMAGE pin
+        // wins when it names one.
+        bundle
+            .as_deref()
+            .and_then(bundle_image)
+            .is_some_and(|image| {
+                std::process::Command::new("docker")
+                    .args(["image", "inspect", &image])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status()
+                    .is_ok_and(|status| status.success())
+            }),
     );
-    match plan {
-        LayerfsStep::Provisioned { home: layerfs_home } => {
-            if let Err(error) = std::fs::create_dir_all(&layerfs_home) {
-                return LayerfsStep::Skipped {
-                    reason: format!("the LayerFS home could not be created: {error}"),
-                    provision: "check the home's permissions and retry".to_string(),
-                };
-            }
-            let _ = std::fs::write(
-                home.join(CONFIG_FILE),
-                serde_json::json!({
-                    "layerfs": {
-                        "home": layerfs_home.display().to_string(),
-                        "bundle": discover_bundle()
-                            .map(|bundle| bundle.display().to_string())
-                            .unwrap_or_default(),
-                        "image": std::env::var("LAYERFS_IMAGE").unwrap_or_default(),
-                    }
-                })
-                .to_string(),
-            );
-            LayerfsStep::Provisioned { home: layerfs_home }
-        }
-        other => other,
+    let LayerfsStep::Provisioned { home: layerfs_home } = plan else {
+        return plan;
+    };
+    if let Err(error) = std::fs::create_dir_all(&layerfs_home) {
+        return LayerfsStep::Skipped {
+            reason: format!("the LayerFS home could not be created: {error}"),
+            provision: "check the home's permissions and retry".to_string(),
+        };
     }
+    // The three scripts the driver spawns — the worker starter, the
+    // register script, the history script — installed from this
+    // checkout's own scripts/, the way the lanes' cores are carried:
+    // by name, never a directory sweep.
+    for script in [
+        "layerfs-worker.mjs",
+        "layerfs-register.mjs",
+        "layerfs-history.mjs",
+    ] {
+        let source = std::path::Path::new("scripts").join(script);
+        if source.is_file() {
+            let _ = std::fs::copy(&source, layerfs_home.join(script));
+        }
+    }
+    // The worker, started through the bundle's runtime: a home whose
+    // worker cannot answer is not a provisioned substrate, so a failed
+    // start is a named skip and the facts stay unrecorded.
+    let image = bundle.as_deref().and_then(bundle_image).unwrap_or_default();
+    let started = std::process::Command::new("node")
+        .arg(layerfs_home.join("layerfs-worker.mjs"))
+        .args([
+            layerfs_home.to_string_lossy().to_string(),
+            bundle
+                .as_deref()
+                .map(|bundle| bundle.to_string_lossy().to_string())
+                .unwrap_or_default(),
+            image.clone(),
+        ])
+        .output();
+    match started {
+        Ok(output) if output.status.success() => {}
+        Ok(output) => {
+            let detail = String::from_utf8_lossy(&output.stdout);
+            let reason = serde_json::from_str::<serde_json::Value>(&detail)
+                .ok()
+                .and_then(|document| {
+                    document
+                        .get("error")
+                        .and_then(|error| error.as_str())
+                        .map(str::to_string)
+                })
+                .unwrap_or_else(|| detail.trim().to_string());
+            return LayerfsStep::Skipped {
+                reason: format!("the worker could not be started: {reason}"),
+                provision: "check Docker's own report, then re-run `fleet install`".to_string(),
+            };
+        }
+        Err(error) => {
+            return LayerfsStep::Skipped {
+                reason: format!("the worker's starter could not run: {error}"),
+                provision: "check that Node 20+ is on PATH, then re-run `fleet install`"
+                    .to_string(),
+            };
+        }
+    }
+    if let Err(error) = crate::layerfs_tools::record_machine(
+        &layerfs_home,
+        bundle.as_deref().unwrap_or(&layerfs_home),
+        &image,
+    ) {
+        return LayerfsStep::Skipped {
+            reason: format!("the substrate's facts could not be recorded: {error}"),
+            provision: "check the home's config.json, then re-run `fleet install`".to_string(),
+        };
+    }
+    LayerfsStep::Provisioned { home: layerfs_home }
 }
 
 /// Node 20+ on PATH, by its own report.
@@ -898,6 +1002,27 @@ fn node_present() -> bool {
                 .and_then(|major| major.parse::<u32>().ok())
         })
         .is_some_and(|major| major >= 20)
+}
+
+/// The runtime image the sealed bundle recorded — the bundle's own
+/// `manifest.json`, so a clean environment provisions the same machine
+/// a provisioned one verifies (the old path read the process env, and
+/// a clean env recorded an empty image, which the doctor then failed
+/// on). The operator's `LAYERFS_IMAGE` pin wins when it names one.
+fn bundle_image(bundle: &std::path::Path) -> Option<String> {
+    if let Some(pinned) = std::env::var("LAYERFS_IMAGE")
+        .ok()
+        .filter(|image| !image.trim().is_empty())
+    {
+        return Some(pinned);
+    }
+    let manifest = std::fs::read_to_string(bundle.join("manifest.json")).ok()?;
+    let document: serde_json::Value = serde_json::from_str(&manifest).ok()?;
+    document
+        .get("images")?
+        .get("runtime")?
+        .as_str()
+        .map(str::to_string)
 }
 
 /// The sealed bundle this machine has built, if any: the worktree
@@ -1092,34 +1217,56 @@ mod tests {
     /// provision, and a configured machine verifies.
     #[test]
     fn the_layerfs_decision_names_each_missing_prerequisite() {
+        // Configured AND answering: the machine verifies in
+        // milliseconds, whatever else the world holds.
         assert!(matches!(
-            plan_layerfs(true, false, false, None, false),
+            plan_layerfs(true, true, false, false, None, false),
             LayerfsStep::Verified
         ));
-        match plan_layerfs(false, false, true, None, true) {
+        // Configured but the worker is down: not Verified — the
+        // substrate provisions again, which is what starts the worker.
+        assert!(matches!(
+            plan_layerfs(true, false, false, false, None, false),
+            LayerfsStep::Skipped { .. }
+        ));
+        match plan_layerfs(false, false, false, true, None, true) {
             LayerfsStep::Skipped { reason, provision } => {
                 assert!(reason.contains("Docker"), "{reason}");
                 assert!(provision.contains("Docker Desktop"), "{provision}");
             }
             other => panic!("expected the docker skip, got {other:?}"),
         }
-        match plan_layerfs(false, true, false, None, true) {
+        match plan_layerfs(false, false, true, false, None, true) {
             LayerfsStep::Skipped { reason, .. } => assert!(reason.contains("Node"), "{reason}"),
             other => panic!("expected the node skip, got {other:?}"),
         }
-        match plan_layerfs(false, true, true, None, true) {
+        match plan_layerfs(false, false, true, true, None, true) {
             LayerfsStep::Skipped { reason, provision } => {
                 assert!(reason.contains("bundle"), "{reason}");
                 assert!(provision.contains("worktree.py"), "{provision}");
             }
             other => panic!("expected the bundle skip, got {other:?}"),
         }
-        match plan_layerfs(false, true, true, Some(std::path::Path::new("/b")), false) {
+        match plan_layerfs(
+            false,
+            false,
+            true,
+            true,
+            Some(std::path::Path::new("/b")),
+            false,
+        ) {
             LayerfsStep::Skipped { reason, .. } => assert!(reason.contains("image"), "{reason}"),
             other => panic!("expected the image skip, got {other:?}"),
         }
         assert!(matches!(
-            plan_layerfs(false, true, true, Some(std::path::Path::new("/b")), true),
+            plan_layerfs(
+                false,
+                false,
+                true,
+                true,
+                Some(std::path::Path::new("/b")),
+                true
+            ),
             LayerfsStep::Provisioned { .. }
         ));
     }

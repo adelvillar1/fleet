@@ -94,7 +94,10 @@ fn strip_ansi(text: &str) -> String {
 /// One `fleet install` run against a scratch home: the doctor's API
 /// probe pointed at a live loopback port (or a dead one when `probe`
 /// is `None`), a placeholder credential, and optionally a controlled
-/// PATH — the seam the lane-failure tests drive. Returns
+/// PATH — the seam the lane-failure tests drive. The LayerFS substrate
+/// is pinned to a bundle that is not there, so its step's answer is
+/// the same on every machine (a dev box with a sealed bundle cached
+/// would otherwise provision a real worker mid-test). Returns
 /// `(stdout, stderr, exit code)`, ANSI-stripped.
 fn install(
     home: &Path,
@@ -108,6 +111,10 @@ fn install(
     command.env("DEEPSEEK_API_KEY", PLACEHOLDER_KEY);
     let port = probe.map(|probe| probe.port()).unwrap_or(1);
     command.env("DEEPSEEK_BASE_URL", format!("http://127.0.0.1:{port}"));
+    // The substrate's pin: an absent path under the scratch home, so
+    // the step is skipped by name and never discovers this machine's
+    // own cached bundle.
+    command.env("FLEET_LAYERFS_BUNDLE", home.join("no-bundle"));
     if let Some(path) = path {
         command.env("PATH", path);
     }
@@ -140,6 +147,18 @@ fn install_creates_the_layout_and_the_scaffold_once() {
         SCAFFOLD
     );
     assert!(stdout.contains("+ config.json"), "{stdout}");
+    // The substrate's step rode along and named its skip: the pin
+    // points at a bundle that is not there, and the step says so by
+    // name rather than silently doing nothing.
+    assert!(
+        stdout.contains("layerfs: skipped") && stdout.contains("pinned bundle"),
+        "the substrate's step is named: {stdout}"
+    );
+    // An unprovisioned substrate is not a failing check — the
+    // optional-heavy class the lanes' line established — so the gate
+    // stays green on a machine that has not built the bundle.
+    assert!(stdout.contains("layerfs-home"), "{stdout}");
+    assert!(stdout.contains("not provisioned"), "{stdout}");
     // The gate's checks rode along with the install's own report.
     assert!(stdout.contains("── doctor ──"), "{stdout}");
     assert!(stdout.contains("credentials"), "{stdout}");
@@ -694,4 +713,96 @@ fn a_closed_stdout_pipe_is_a_quiet_exit_not_a_panic() {
         "the exit is the signal or a success, not an error: {status}"
     );
     let _ = fs::remove_dir_all(&home);
+}
+
+/// The substrate's provision path, driven hermetically: a sealed
+/// bundle that is there (its manifest carries the runtime image, its
+/// daemon and CLI are present, its runtime is a module that cannot
+/// import), a Docker that answers every probe, and a real Node. The
+/// step gets as far as starting the worker, the start fails by name,
+/// and the install's own report says so — while the config the
+/// scaffold wrote is left EXACTLY as it was: a failed provision
+/// records no facts, so the next run decides again from the world
+/// rather than from a half-written substrate.
+#[cfg(unix)]
+#[test]
+fn a_substrate_whose_worker_cannot_start_names_it_and_records_nothing() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = scratch("layerfs-worker");
+    let home = root.join("home");
+    fs::create_dir_all(&home).unwrap();
+    let probe = Probe::listen();
+
+    // A sealed bundle: the manifest's runtime image, the daemon, the
+    // CLI entry, and a runtime package whose import fails.
+    let bundle = root.join("bundle");
+    fs::create_dir_all(bundle.join("api/runtime/src")).unwrap();
+    fs::create_dir_all(bundle.join("api/agent/cli/src")).unwrap();
+    fs::write(
+        bundle.join("manifest.json"),
+        serde_json::json!({ "build_id": "fixture", "images": { "runtime": "sha256:fixture" } })
+            .to_string(),
+    )
+    .unwrap();
+    fs::write(bundle.join("layerfs-daemon"), "stub").unwrap();
+    fs::write(bundle.join("api/agent/cli/src/layerfs.js"), "// stub").unwrap();
+    fs::write(
+        bundle.join("api/runtime/src/index.js"),
+        "throw new Error(\"the fixture's runtime cannot load\");",
+    )
+    .unwrap();
+
+    // A controlled PATH: `sh` for the doctor's probe, a Docker that
+    // answers every question the step asks, and the real `node` so the
+    // worker's starter runs and fails on its import.
+    let tools = root.join("tools");
+    fs::create_dir_all(&tools).unwrap();
+    std::os::unix::fs::symlink("/bin/sh", tools.join("sh")).unwrap();
+    let docker = tools.join("docker");
+    fs::write(&docker, "#!/bin/sh\nexit 0\n").unwrap();
+    fs::set_permissions(&docker, fs::Permissions::from_mode(0o755)).unwrap();
+    let node = std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+        .filter_map(|dir| {
+            let candidate = dir.join("node");
+            candidate.is_file().then_some(candidate)
+        })
+        .next()
+        .expect("node on the test's PATH");
+    std::os::unix::fs::symlink(&node, tools.join("node")).unwrap();
+
+    let mut command = Command::new(FLEET);
+    command.arg("install");
+    command.env("FLEET_HOME", &home);
+    command.env("DEEPSEEK_API_KEY", PLACEHOLDER_KEY);
+    command.env(
+        "DEEPSEEK_BASE_URL",
+        format!("http://127.0.0.1:{}", probe.port()),
+    );
+    command.env("PATH", &tools);
+    command.env("FLEET_LAYERFS_BUNDLE", &bundle);
+    let output = command.output().expect("the install runs");
+    let stdout = strip_ansi(&String::from_utf8_lossy(&output.stdout));
+    let stderr = strip_ansi(&String::from_utf8_lossy(&output.stderr));
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "a worker that cannot start is a named skip, not a failed install: {stdout}{stderr}"
+    );
+    assert!(
+        stdout.contains("layerfs: skipped") && stdout.contains("worker could not be started"),
+        "the failed start is named: {stdout}"
+    );
+    // Nothing recorded: the scaffold's exact bytes survive, so the
+    // next run decides again from the world.
+    assert_eq!(
+        fs::read_to_string(home.join("config.json")).unwrap(),
+        SCAFFOLD,
+        "a failed provision records no facts"
+    );
+    // The doctor's substrate line still reads not-provisioned, because
+    // nothing was recorded.
+    assert!(stdout.contains("not provisioned"), "{stdout}");
+    let _ = fs::remove_dir_all(&root);
 }

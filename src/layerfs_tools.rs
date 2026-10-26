@@ -214,6 +214,18 @@ pub struct Registration {
     pub store: PathBuf,
 }
 
+/// Where the LayerFS home lives: `<FLEET_HOME>/layerfs-home` — fleet's
+/// own home, so the substrate's records live beside the machine's and
+/// never in a repo's `tmp/`.
+pub fn machine_home_dir() -> PathBuf {
+    crate::home::fleet_home(
+        std::env::var("FLEET_HOME").ok().as_deref(),
+        std::env::var("HOME").ok().as_deref(),
+    )
+    .map(|home| home.join("layerfs-home"))
+    .unwrap_or_else(|_| PathBuf::from("layerfs-home"))
+}
+
 /// The machine's facts, read once per process from `<FLEET_HOME>`'s
 /// config. The named absence says what to run, the way a lane's
 /// absence names its home.
@@ -747,6 +759,48 @@ fn record_registration(
     Ok(())
 }
 
+/// Record the machine's facts — the home, the bundle, the runtime
+/// image — into `<FLEET_HOME>/config.json` under the same per-path
+/// lock and the same merge `record_registration` uses: the `layerfs`
+/// section beside whatever the file already carries, so the scaffold
+/// the install wrote a moment earlier and an owner's hand-edits both
+/// survive. One writer for the section, whatever writes it.
+pub fn record_machine(home: &Path, bundle: &Path, image: &str) -> Result<(), String> {
+    let fleet_home = crate::home::fleet_home(
+        std::env::var("FLEET_HOME").ok().as_deref(),
+        std::env::var("HOME").ok().as_deref(),
+    )?;
+    let config = fleet_home.join("config.json");
+    let _guard = crate::filelock::FileLock::take(&crate::filelock::FileLock::beside(&config));
+    let mut document: serde_json::Value = std::fs::read_to_string(&config)
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+    let root = document
+        .as_object_mut()
+        .ok_or_else(|| "config.json is not an object".to_string())?;
+    let layerfs = root
+        .entry("layerfs")
+        .or_insert_with(|| serde_json::json!({}));
+    let layerfs = layerfs
+        .as_object_mut()
+        .ok_or_else(|| "config.json's `layerfs` is not an object".to_string())?;
+    layerfs.insert(
+        "home".to_string(),
+        serde_json::json!(home.display().to_string()),
+    );
+    layerfs.insert(
+        "bundle".to_string(),
+        serde_json::json!(bundle.display().to_string()),
+    );
+    layerfs.insert("image".to_string(), serde_json::json!(image));
+    std::fs::write(
+        &config,
+        serde_json::to_string_pretty(&document).unwrap_or_default(),
+    )
+    .map_err(|error| format!("config.json could not be written: {error}"))
+}
+
 /// The context a [`FileAccess::LayerFs`] run works in — which
 /// project's which branch, in which sandbox. The child's whole
 /// filesystem identity in one value; the arm carries it, the dispatch
@@ -1087,6 +1141,38 @@ impl Gate {
         self.call(
             "fs list",
             &["--project", project, "fs", "list", branch, path],
+        )
+    }
+
+    /// `project list_branches` — every branch with its base, head and
+    /// fork point: the face's branch list.
+    pub fn list_branches(&self, project: &str) -> Result<serde_json::Value, Error> {
+        self.call(
+            "project list_branches",
+            &["--project", project, "project", "list_branches"],
+        )
+    }
+
+    /// `branch list_commits <branch>` — one branch's recent commits,
+    /// newest first, with their parents.
+    pub fn list_commits(
+        &self,
+        project: &str,
+        branch: &str,
+        page_size: u32,
+    ) -> Result<serde_json::Value, Error> {
+        let size = page_size.to_string();
+        self.call(
+            "branch list_commits",
+            &[
+                "--project",
+                project,
+                "branch",
+                "list_commits",
+                branch,
+                "--page-size",
+                &size,
+            ],
         )
     }
 
@@ -1764,10 +1850,6 @@ mod tests {
     use super::*;
     use std::io::Write as _;
 
-    /// Env the tests mutate is process-global; one lock keeps a stub
-    /// path from being read mid-swap by another test thread.
-    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
     struct EnvGuard {
         name: &'static str,
         previous: Option<std::ffi::OsString>,
@@ -1862,7 +1944,7 @@ esac
 
     #[test]
     fn the_driver_composes_the_clis_own_grammar_and_parses_the_answer() {
-        let _lock = ENV_LOCK
+        let _lock = crate::TEST_ENV_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let script = stub("grammar", HAPPY);
@@ -1884,7 +1966,7 @@ esac
 
     #[test]
     fn a_conflict_is_an_answer_not_an_error() {
-        let _lock = ENV_LOCK
+        let _lock = crate::TEST_ENV_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let script = stub(
@@ -1912,7 +1994,7 @@ esac
 
     #[test]
     fn a_refusal_carries_its_own_code_and_message() {
-        let _lock = ENV_LOCK
+        let _lock = crate::TEST_ENV_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let script = stub(
@@ -1937,7 +2019,7 @@ esac
 
     #[test]
     fn a_wire_that_is_not_ours_is_refused_by_name() {
-        let _lock = ENV_LOCK
+        let _lock = crate::TEST_ENV_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let script = stub("wire", "echo 'layerfs 1.0.0'\n");
@@ -1951,7 +2033,7 @@ esac
 
     #[test]
     fn stdout_that_is_not_json_is_a_decode_with_the_body_bounded() {
-        let _lock = ENV_LOCK
+        let _lock = crate::TEST_ENV_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let script = stub(
@@ -1972,7 +2054,7 @@ esac
 
     #[test]
     fn a_budget_that_expires_is_one_attempt_named() {
-        let _lock = ENV_LOCK
+        let _lock = crate::TEST_ENV_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let script = stub(
@@ -2008,7 +2090,7 @@ esac
 
     #[test]
     fn a_missing_cli_is_the_named_absence() {
-        let _lock = ENV_LOCK
+        let _lock = crate::TEST_ENV_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let script = stub("absent", "exit 127\n");
@@ -2027,7 +2109,7 @@ esac
     /// section, with every missing fact named by what provisions it.
     #[test]
     fn the_machine_facts_compose_the_clis_environment() {
-        let _lock = ENV_LOCK
+        let _lock = crate::TEST_ENV_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let home = std::env::temp_dir().join(format!(
@@ -2203,7 +2285,7 @@ esac
     /// the folder cost nothing.
     #[test]
     fn a_registration_lands_in_the_config_and_reads_back() {
-        let _lock = ENV_LOCK
+        let _lock = crate::TEST_ENV_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let home = std::env::temp_dir().join(format!(
@@ -2245,7 +2327,7 @@ esac
     /// pre-check, the name, the script's argv, the config's record.
     #[test]
     fn register_runs_the_script_and_records_the_folder() {
-        let _lock = ENV_LOCK
+        let _lock = crate::TEST_ENV_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let home = std::env::temp_dir().join(format!(
@@ -2323,6 +2405,60 @@ console.log(JSON.stringify({
         let _ = std::fs::remove_dir_all(&home);
     }
 
+    /// C3's repair, pinned: the machine's facts MERGE into the config —
+    /// the scaffold the install wrote a moment earlier and the
+    /// registrations C2 recorded both survive beside the new section.
+    /// The install's first pass replaced the whole file, which
+    /// destroyed the scaffold and the owner's hand-edits in one write;
+    /// the live run caught it as eleven red install tests.
+    #[test]
+    fn the_machine_facts_merge_into_the_config_beside_what_is_there() {
+        let _lock = crate::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let home = std::env::temp_dir().join(format!(
+            "fleet-layerfs-machine-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = std::fs::remove_dir_all(&home);
+        let layerfs_home = home.join("layerfs-home");
+        let bundle = home.join("bundle");
+        std::fs::create_dir_all(&layerfs_home).unwrap();
+        std::fs::create_dir_all(&bundle).unwrap();
+        let _home_env = EnvGuard::set("FLEET_HOME", &home);
+
+        // The world as the install leaves it: the scaffold it just
+        // wrote, and one registration C2 recorded.
+        std::fs::write(
+            home.join("config.json"),
+            "{\n  \"pin\": null,\n  \"providers\": [],\n  \"layerfs\": {\n    \"projects\": {\n      \
+             \"/repo\": { \"name\": \"repo\", \"volume\": \"v1\", \"store\": \"/volumes/v1/store\" }\n    \
+             }\n  }\n}\n",
+        )
+        .unwrap();
+
+        record_machine(&layerfs_home, &bundle, "sha256:runtime").expect("the facts record");
+
+        let document: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(home.join("config.json")).unwrap())
+                .unwrap();
+        assert_eq!(document["pin"], serde_json::json!(null));
+        assert_eq!(document["providers"], serde_json::json!([]));
+        assert_eq!(
+            document["layerfs"]["home"],
+            layerfs_home.display().to_string()
+        );
+        assert_eq!(document["layerfs"]["bundle"], bundle.display().to_string());
+        assert_eq!(document["layerfs"]["image"], "sha256:runtime");
+        // The registration beside it is untouched.
+        assert_eq!(document["layerfs"]["projects"]["/repo"]["name"], "repo");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
     /// C3's pin: the checkout identity names a 40-hex commit of the
     /// repository and the wire that tree speaks — moved together or
     /// not at all.
@@ -2367,7 +2503,7 @@ console.log(JSON.stringify({
     /// an illegal branch names itself and the stub records no fork.
     #[test]
     fn open_refuses_an_illegal_branch_before_it_spawns() {
-        let _lock = ENV_LOCK
+        let _lock = crate::TEST_ENV_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let script = stub("illegal-branch", HAPPY);
@@ -2393,7 +2529,7 @@ console.log(JSON.stringify({
     /// the outcome the arm renders.
     #[test]
     fn run_command_walks_the_cadence_in_order() {
-        let _lock = ENV_LOCK
+        let _lock = crate::TEST_ENV_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let script = stub("cadence", HAPPY);
@@ -2444,7 +2580,7 @@ console.log(JSON.stringify({
     /// main), and the exit rides the answer.
     #[test]
     fn a_failing_command_still_checkpoints() {
-        let _lock = ENV_LOCK
+        let _lock = crate::TEST_ENV_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let script = stub("execfail", HAPPY);
@@ -2473,7 +2609,7 @@ console.log(JSON.stringify({
     /// nowhere else), and the typed timeout is what returns.
     #[test]
     fn a_hung_command_is_discarded_at_its_budget() {
-        let _lock = ENV_LOCK
+        let _lock = crate::TEST_ENV_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let script = stub("execsleep", HAPPY);
@@ -2514,7 +2650,7 @@ console.log(JSON.stringify({
     /// its body on stdin exactly.
     #[test]
     fn the_fs_verbs_speak_the_clis_grammar_and_write_rides_stdin() {
-        let _lock = ENV_LOCK
+        let _lock = crate::TEST_ENV_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let script = stub("fs-verbs", HAPPY);
@@ -2588,7 +2724,7 @@ console.log(JSON.stringify({
 
     #[test]
     fn the_knob_reads_unset_valid_and_invalid_by_name() {
-        let _lock = ENV_LOCK
+        let _lock = crate::TEST_ENV_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let _env = EnvGuard::set(PROJECT_ENV, std::path::Path::new(""));
