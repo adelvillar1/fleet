@@ -96,6 +96,29 @@ swallowing a `target/` silently would be the opposite of seamless.
 Registration is keyed on the canonical path, so a symlinked visit
 registers once.
 
+**The lanes are the providers — for everything the seam or the face
+asks of them.** The owner's standing rule, written where the gate can
+hold it: *if LayerFS support at any point needs classification,
+embeddings, tabular scoring, media, or composed answers, the existing
+lanes are used as providers — "we don't build another if we already
+have a solution for it."* Concretely: **sem1** for any embedding or
+vector matching (semantic file-finding, similarity over history —
+never a new embedder or a second vector path), **sys1** for any
+classification or judgment (labeling what a child's lane did, judging
+a change), **sdm1** for tabular scoring (attention ranking, figure
+tables), **gen1** for any media, and **blend1** for composed,
+grounded explanations ("what changed and why") — each invoked the way
+the rest of fleet already invokes them: the lane registry, MCP, the
+existing per-tool economics, never a bespoke client. When a shape
+looks like it needs new machinery, the first question is which lane
+already carries it; if none does, the feature is named unavailable
+rather than built — the extraction leg's own ruling (a second vendor
+for a capability the pool carries fails before any benchmark) applied
+here. Nothing in the current design needs a lane yet — the reads are
+LayerFS's own API and the view model is deterministic assembly — so
+this rule binds the increments as they grow, and C4/C5 carry the
+check.
+
 **The face, in dsh's shape, on fleet's console.** One new GUI
 destination carrying the two panes the original shipped, with
 UX-is-co-equal's bar (genuinely visual — an actual graph, not a
@@ -177,7 +200,10 @@ proof: a run that needs **no environment at all**.
       shaped into one view model the endpoint serves; the
       child-session ↔ branch join via the `fleet-child-` fold; every
       read stub-pinned (including a backend-script failure as a named
-      absence on the view, never an empty lie).
+      absence on the view, never an empty lie). Any support the reads
+      ask for — matching, ranking, labeling — arrives through the
+      lanes as providers (sem1/sys1/sdm1 via the registry), never as
+      new machinery inside this increment.
 - [ ] **C5 — the face, in the original's shape.** The new GUI
       destination with **History** (the DAG: main trunk, branches at
       their fork points, commits with merge links and messages,
@@ -187,7 +213,11 @@ proof: a run that needs **no environment at all**.
       visual, refreshable, honest empty states; `docs/architecture/
       surfaces.md` gains the destination and FUNCTIONAL's surface list
       ships with it (the docs gate's own rules); the endpoint's JSON
-      is pinned by Rust tests over the stub reads.
+      is pinned by Rust tests over the stub reads — and any
+      judgment, semantic, or composed support the face offers
+      (labeling a lane's work, explaining a change through blend1)
+      names its lane as the provider instead of growing a model-free
+      imitation here.
 - [ ] **C6 — close-out: the no-manual-steps proof.** A live run with
       a clean environment (no LAYERFS_* in the process env) registers
       a fresh folder and completes a delegation end to end, recorded
@@ -226,6 +256,11 @@ opens).
   (`@layerfs/backend`'s process API); fleet's face shows the recorded
   lanes and current sandbox/workspace state, and the live-process
   surface is its own later increment.
+- **New provider machinery of any kind** — embedders, classifiers,
+  vector stores, search engines, explainers. The lanes are the
+  providers (the Approach's rule); a capability no lane carries is
+  named unavailable and queued for a lane decision, never built as a
+  one-off inside a LayerFS increment.
 - **A trajectory-style alternative rendering** (the magpie plugin's
   bough/badge page) — the dsh tabs are the reference the owner named.
 - **`apply_patch` and the other named refusals** of the seam plan —
@@ -255,6 +290,10 @@ the durable home, and the gate's four commands by exit code.
 - The provision recipe, live numbers, and env facts this session
   measured — collapsed into this plan's Context and C1 rather than
   re-derived.
+- `docs/plans/2026-10-19-sys1-extraction-leg.md` — the ruling this
+  rule reuses: what's wrongly built as a second provider for a
+  capability the pool already carries should not stay (KI-315's
+  lesson in the ledger carries the same verdict).
 - dsh-layerfs (<https://github.com/Ephemeral-AI-Lab/dsh-layerfs>) —
   the original's face itself: the Work and History tabs' content and
   the recorded-run demos (Wayfare's 147-commit tree) that define
