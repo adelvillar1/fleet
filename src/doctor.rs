@@ -191,6 +191,117 @@ pub fn evaluate_layerfs(
     }
 }
 
+/// The substrate's seven facts, gathered by the caller — the hermetic
+/// ones read here, the live ones (the worker's ping, the image, each
+/// project's volume) probed by `fleet doctor` and passed in. One
+/// check names the FIRST fact that fails with its fix, so the first
+/// delegation can never be the first discovery.
+pub struct LayerfsFacts {
+    /// The recorded machine facts, read fresh from the config.
+    pub machine: Result<crate::layerfs_tools::Machine, String>,
+    /// The worker's endpoint file, parsed.
+    pub endpoint: Result<serde_json::Value, String>,
+    /// The worker answers a connection on its endpoint's port.
+    pub worker_ping: Result<(), String>,
+    /// The recorded runtime image exists in Docker.
+    pub image: Result<(), String>,
+    /// Each registered project's Store volume exists.
+    pub volumes: Vec<(String, Result<(), String>)>,
+}
+
+/// The substrate line: the seven facts, the first failure named with
+/// its fix, or the ready line naming the project count.
+pub fn evaluate_layerfs_facts(facts: &LayerfsFacts) -> Check {
+    let machine = match &facts.machine {
+        Err(reason) => {
+            return Check {
+                name: "layerfs-home",
+                ok: false,
+                detail: reason.clone(),
+            }
+        }
+        Ok(machine) => machine,
+    };
+    if !machine.home.is_dir() {
+        return Check {
+            name: "layerfs-home",
+            ok: false,
+            detail: format!(
+                "the recorded home {} is gone — re-run `fleet install`",
+                machine.home.display()
+            ),
+        };
+    }
+    match &facts.endpoint {
+        Err(reason) => {
+            return Check {
+                name: "layerfs-home",
+                ok: false,
+                detail: reason.clone(),
+            }
+        }
+        Ok(endpoint) => {
+            // The port may be a number, the secret a string — both
+            // are read the way the runtime writes them.
+            let has = |key: &str| {
+                endpoint
+                    .get(key)
+                    .is_some_and(|v| v.as_str().is_some() || v.as_u64().is_some())
+            };
+            if !has("port") || !has("secret") {
+                return Check {
+                    name: "layerfs-home",
+                    ok: false,
+                    detail: "the worker's endpoint is malformed — start the worker".to_string(),
+                };
+            }
+        }
+    }
+    if let Err(reason) = &facts.worker_ping {
+        return Check {
+            name: "layerfs-home",
+            ok: false,
+            detail: format!(
+                "the worker does not answer ({reason}) — start it with `fleet install`"
+            ),
+        };
+    }
+    if let Err(reason) = &facts.image {
+        return Check {
+            name: "layerfs-home",
+            ok: false,
+            detail: format!("the runtime image ({reason}) — pull or build it, then re-record"),
+        };
+    }
+    if !machine.bundle.join("layerfs-daemon").is_file() {
+        return Check {
+            name: "layerfs-home",
+            ok: false,
+            detail: format!(
+                "the recorded bundle {} has no daemon — re-run `fleet install`",
+                machine.bundle.display()
+            ),
+        };
+    }
+    for (folder, outcome) in &facts.volumes {
+        if let Err(reason) = outcome {
+            return Check {
+                name: "layerfs-home",
+                ok: false,
+                detail: format!("the project at {folder} has no Store volume ({reason}) — re-register the folder"),
+            };
+        }
+    }
+    Check {
+        name: "layerfs-home",
+        ok: true,
+        detail: format!(
+            "worker answering \u{b7} image present \u{b7} {} project(s) registered",
+            facts.volumes.len()
+        ),
+    }
+}
+
 /// The calibration-stream line, informational and never a check: the
 /// resolved root and whether today's file exists. It is the cheapest
 /// guard against dev-decisions moving its `LOG_DIR` literal and silently
@@ -956,6 +1067,111 @@ mod tests {
         let bad_knob = evaluate_layerfs(&absent, &Err("bad name".to_string()));
         assert!(!bad_knob.ok, "{}", bad_knob.detail);
         assert!(bad_knob.detail.contains("bad name"), "{}", bad_knob.detail);
+    }
+
+    /// C3's substrate line: the seven facts, the FIRST failure named
+    /// with its fix, and the ready line's project count — hermetic,
+    /// every fact injected.
+    #[test]
+    fn the_substrate_line_names_the_first_failing_fact() {
+        // A real home for the facts that check existence; a gone one
+        // for the first failure's case.
+        let real_home = std::env::temp_dir().join(format!(
+            "fleet-doctor-layerfs-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&real_home).unwrap();
+        // A real bundle with its daemon, for the checks that stat it.
+        let real_bundle = real_home.join("bundle");
+        std::fs::create_dir_all(&real_bundle).unwrap();
+        std::fs::write(real_bundle.join("layerfs-daemon"), "stub").unwrap();
+        let machine = crate::layerfs_tools::Machine {
+            home: real_home.clone(),
+            bundle: real_bundle.clone(),
+            image: "sha256:x".to_string(),
+        };
+        let gone = crate::layerfs_tools::Machine {
+            home: std::path::PathBuf::from("/nonexistent-layerfs-home"),
+            bundle: real_bundle.clone(),
+            image: "sha256:x".to_string(),
+        };
+        let facts = |machine: Result<crate::layerfs_tools::Machine, String>,
+                     endpoint: Result<serde_json::Value, String>,
+                     ping: Result<(), String>,
+                     image: Result<(), String>,
+                     volumes: Vec<(String, Result<(), String>)>|
+         -> crate::doctor::LayerfsFacts {
+            crate::doctor::LayerfsFacts {
+                machine,
+                endpoint,
+                worker_ping: ping,
+                image,
+                volumes,
+            }
+        };
+        let ready = facts(
+            Ok(machine.clone()),
+            Ok(serde_json::json!({"port": 7070, "secret": "s"})),
+            Ok(()),
+            Ok(()),
+            vec![("/repo".to_string(), Ok(()))],
+        );
+        let check = evaluate_layerfs_facts(&ready);
+        assert!(check.ok, "{}", check.detail);
+        assert!(check.detail.contains("1 project(s)"), "{}", check.detail);
+
+        let gone_home = facts(
+            Ok(gone),
+            Ok(serde_json::json!({"port": 7070, "secret": "s"})),
+            Ok(()),
+            Ok(()),
+            Vec::new(),
+        );
+        let check = evaluate_layerfs_facts(&gone_home);
+        assert!(!check.ok, "{}", check.detail);
+        assert!(check.detail.contains("gone"), "{}", check.detail);
+
+        let no_config = facts(
+            Err("config.json carries no `layerfs` section — `fleet install` provisions the substrate".to_string()),
+            Err("none".to_string()),
+            Err("none".to_string()),
+            Err("none".to_string()),
+            Vec::new(),
+        );
+        let check = evaluate_layerfs_facts(&no_config);
+        assert!(!check.ok, "{}", check.detail);
+        assert!(check.detail.contains("fleet install"), "{}", check.detail);
+
+        let dead_worker = facts(
+            Ok(machine.clone()),
+            Ok(serde_json::json!({"port": 7070, "secret": "s"})),
+            Err("connection refused".to_string()),
+            Ok(()),
+            Vec::new(),
+        );
+        let check = evaluate_layerfs_facts(&dead_worker);
+        assert!(!check.ok, "{}", check.detail);
+        assert!(
+            check.detail.contains("worker does not answer"),
+            "{}",
+            check.detail
+        );
+
+        let no_volume = facts(
+            Ok(machine),
+            Ok(serde_json::json!({"port": 7070, "secret": "s"})),
+            Ok(()),
+            Ok(()),
+            vec![("/repo".to_string(), Err("no such volume".to_string()))],
+        );
+        let check = evaluate_layerfs_facts(&no_volume);
+        assert!(!check.ok, "{}", check.detail);
+        assert!(check.detail.contains("re-register"), "{}", check.detail);
+        let _ = std::fs::remove_dir_all(&real_home);
     }
 
     #[test]

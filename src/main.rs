@@ -3146,6 +3146,84 @@ fn doctor_command(options: &cli::DoctorOptions) -> ExitCode {
 /// directly; `fleet install` ends on this same function — the gate is
 /// the doctor's own checks, the install adds none, and the install's
 /// exit code is this function's.
+/// The substrate's facts for doctor: the hermetic reads here, the live
+/// probes (the worker's port, the image, each project's volume) through
+/// Docker. Every probe is one attempt — the same no-retry discipline
+/// the rest of the machine keeps.
+fn layerfs_facts() -> fleet::doctor::LayerfsFacts {
+    let machine = fleet::layerfs_tools::machine().cloned();
+    let Ok(machine) = machine else {
+        return fleet::doctor::LayerfsFacts {
+            machine: Err(
+                "no LayerFS facts are recorded — `fleet install` provisions the substrate"
+                    .to_string(),
+            ),
+            endpoint: Err("no endpoint".to_string()),
+            worker_ping: Err("no worker".to_string()),
+            image: Err("no image".to_string()),
+            volumes: Vec::new(),
+        };
+    };
+    let endpoint = std::fs::read_to_string(machine.home.join("worker/endpoint.json"))
+        .map_err(|error| format!("the worker's endpoint could not be read: {error}"))
+        .and_then(|text| {
+            serde_json::from_str::<serde_json::Value>(&text)
+                .map_err(|error| format!("the endpoint is malformed: {error}"))
+        });
+    let worker_ping = match &endpoint {
+        Ok(endpoint) => {
+            let port = endpoint
+                .get("port")
+                .and_then(|port| port.as_u64())
+                .unwrap_or(0);
+            match format!("127.0.0.1:{port}").parse() {
+                Ok(address) => std::net::TcpStream::connect_timeout(
+                    &address,
+                    std::time::Duration::from_secs(2),
+                )
+                .map(|_| ())
+                .map_err(|error| error.to_string()),
+                Err(error) => Err(error.to_string()),
+            }
+        }
+        Err(reason) => Err(reason.clone()),
+    };
+    let image = std::process::Command::new("docker")
+        .args(["image", "inspect", &machine.image])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|_| ())
+        .map_err(|error| format!("docker: {error}"));
+    let volumes = fleet::layerfs_tools::registrations()
+        .iter()
+        .map(|(folder, registration)| {
+            let store = registration.store.to_string_lossy();
+            let name = store
+                .split("/volumes/")
+                .nth(1)
+                .and_then(|rest| rest.split('/').next())
+                .unwrap_or_default()
+                .to_string();
+            let outcome = std::process::Command::new("docker")
+                .args(["volume", "inspect", &name])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .map(|_| ())
+                .map_err(|error| format!("docker: {error}"));
+            (folder.clone(), outcome)
+        })
+        .collect();
+    fleet::doctor::LayerfsFacts {
+        machine: Ok(machine),
+        endpoint,
+        worker_ping,
+        image,
+        volumes,
+    }
+}
+
 fn doctor_checks() -> ExitCode {
     let home = fleet_home().ok();
     let dotenv = read_dotenv();
@@ -3190,6 +3268,11 @@ fn doctor_checks() -> ExitCode {
     );
     failed |= !layerfs_check.ok;
     println!("{}", doctor::render(&layerfs_check));
+    // The substrate's seven facts: the worker, the image, the daemon,
+    // the volumes — the first failure named with its fix.
+    let layerfs_home_check = doctor::evaluate_layerfs_facts(&layerfs_facts());
+    failed |= !layerfs_home_check.ok;
+    println!("{}", doctor::render(&layerfs_home_check));
 
     // The roster layer: how many routing candidates can serve. Named
     // beside the credentials line — a keyless machine is the layer a
@@ -3378,6 +3461,22 @@ fn install_command(options: &cli::InstallOptions) -> ExitCode {
     // a seeded job's task string reconciles to the manifest's current
     // wording (KI-277), and a fresh home gets the schedule the owner
     // built by hand, declared where it cannot be lost.
+    // The LayerFS substrate as a standard phase of the machine's own
+    // setup: verified on a provisioned machine, provisioned on a fresh
+    // one, skipped by name with its provision when a prerequisite is
+    // missing — the voice the lanes' phase speaks.
+    match fleet::install::layerfs_step(&home) {
+        fleet::install::LayerfsStep::Verified => {}
+        fleet::install::LayerfsStep::Provisioned { home: layerfs_home } => {
+            println!(
+                "fleet: install: layerfs: provisioned at {}",
+                layerfs_home.display()
+            );
+        }
+        fleet::install::LayerfsStep::Skipped { reason, provision } => {
+            println!("fleet: install: layerfs: skipped \u{2014} {reason}; {provision}");
+        }
+    }
     match fleet::cron::seed_missing(&home) {
         Ok(report) if !report.added.is_empty() || !report.reconciled.is_empty() => {
             println!(

@@ -226,7 +226,7 @@ proof: a run that needs **no environment at all**.
       concurrent runs (the config writer's lock), canonical-path
       keyed, and pinned by integration tests over the stub CLI —
       including the bound's refusal shape.
-- [ ] **C3 — the machine step and the seven facts.** `fleet install`
+- [x] **C3 — the machine step and the seven facts.** `fleet install`
       provisions the substrate as a **standard phase of the machine's
       own setup** — not an opt-in feature flag: idempotent (verify →
       bundle/image → home → worker → record), skipped by name with
@@ -400,6 +400,23 @@ the durable home, and the gate's four commands by exit code.
   sandbox held `layerfs-fleet-probe-1` and the new home's create
   answered 409 until it was removed — C3's provision step must stop a
   previous home's containers (or name them), never silently collide.
+
+- **C3 — landed.** `fleet install` provisions the substrate as a
+  standard phase of the machine's own setup — not an opt-in flag —
+  through a pure decision (`plan_layerfs`) over the world it is
+  handed, so each missing prerequisite names its provision (Docker,
+  Node 20+, the sealed bundle, the image) in the lanes' skip-by-name
+  voice, and a provisioned machine verifies in milliseconds
+  (`layerfs_step` answered Verified on this one, idempotently).
+  `fleet doctor` grew the substrate line: the seven facts — config,
+  home, endpoint, worker ping, image, daemon, each project's Store
+  volume — with the FIRST failure named with its fix, hermetically
+  pinned (`the_substrate_line_names_the_first_failing_fact`) beside
+  the decision's own test. Live proof: `fleet install` and
+  `fleet doctor` both answer `layerfs-home ok — worker answering ·
+  image present · 1 project(s) registered`, the CLI line naming the
+  pinned checkout. Gate: fmt 0, clippy 0, release 0, lib 1547/0,
+  integration 148/0.
 
 ## Linked artifacts
 

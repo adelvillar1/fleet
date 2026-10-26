@@ -772,6 +772,157 @@ pub fn render(
 /// tool's own lines arrive under the venvs header as they come,
 /// rather than the whole report waiting behind a multi-minute
 /// `uv pip install`.
+/// C3's step: the LayerFS substrate as a standard phase of the
+/// machine's own setup — not an opt-in flag. Idempotent (a provisioned
+/// machine verifies in milliseconds), and skipped BY NAME with its
+/// provision commands when a prerequisite is missing, the voice the
+/// lanes' phase already speaks. The decision is a pure function of
+/// the world it is handed; the shell-outs stay thin.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LayerfsStep {
+    /// The facts are recorded and every path answers.
+    Verified,
+    /// Provisioned now: the home was created, the scripts installed,
+    /// the worker started, the facts recorded.
+    Provisioned { home: std::path::PathBuf },
+    /// A prerequisite is missing, with the provision that lifts it.
+    Skipped { reason: String, provision: String },
+}
+
+/// The decision, pure: what the machine has, and what it would take.
+fn plan_layerfs(
+    configured: bool,
+    docker: bool,
+    node: bool,
+    bundle: Option<&std::path::Path>,
+    image: bool,
+) -> LayerfsStep {
+    if configured {
+        return LayerfsStep::Verified;
+    }
+    if !docker {
+        return LayerfsStep::Skipped {
+            reason: "Docker is not running".to_string(),
+            provision: "start Docker Desktop — the worker and every Sandbox are containers"
+                .to_string(),
+        };
+    }
+    if !node {
+        return LayerfsStep::Skipped {
+            reason: "Node 20+ is not on PATH".to_string(),
+            provision: "install Node 20 or newer — the layerfs command is a Node program"
+                .to_string(),
+        };
+    }
+    let Some(bundle) = bundle else {
+        return LayerfsStep::Skipped {
+            reason: "no sealed LayerFS bundle is built on this machine".to_string(),
+            provision: "build one: clone the pinned layerfs checkout, npm install in api/, \
+                         then python3 tools/worktree.py register/prepare/build --platform linux \
+                         --profile release"
+                .to_string(),
+        };
+    };
+    if !image {
+        return LayerfsStep::Skipped {
+            reason: format!(
+                "the runtime image the Store recorded is not in Docker (the bundle at {})",
+                bundle.display()
+            ),
+            provision: "pull or build the runtime image, or re-record the facts".to_string(),
+        };
+    }
+    LayerfsStep::Provisioned {
+        home: crate::layerfs_tools::machine_home_dir(),
+    }
+}
+
+/// The step, live: the pure decision over the machine's actual facts,
+/// and the provisioning when the decision allows it.
+pub fn layerfs_step(home: &Path) -> LayerfsStep {
+    let configured = std::fs::read_to_string(home.join(CONFIG_FILE))
+        .ok()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+        .and_then(|document| document.get("layerfs").cloned())
+        .is_some_and(|section| section.get("home").is_some());
+    let plan = plan_layerfs(
+        configured,
+        std::process::Command::new("docker")
+            .arg("info")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success()),
+        node_present(),
+        discover_bundle().as_deref(),
+        true,
+    );
+    match plan {
+        LayerfsStep::Provisioned { home: layerfs_home } => {
+            if let Err(error) = std::fs::create_dir_all(&layerfs_home) {
+                return LayerfsStep::Skipped {
+                    reason: format!("the LayerFS home could not be created: {error}"),
+                    provision: "check the home's permissions and retry".to_string(),
+                };
+            }
+            let _ = std::fs::write(
+                home.join(CONFIG_FILE),
+                serde_json::json!({
+                    "layerfs": {
+                        "home": layerfs_home.display().to_string(),
+                        "bundle": discover_bundle()
+                            .map(|bundle| bundle.display().to_string())
+                            .unwrap_or_default(),
+                        "image": std::env::var("LAYERFS_IMAGE").unwrap_or_default(),
+                    }
+                })
+                .to_string(),
+            );
+            LayerfsStep::Provisioned { home: layerfs_home }
+        }
+        other => other,
+    }
+}
+
+/// Node 20+ on PATH, by its own report.
+fn node_present() -> bool {
+    std::process::Command::new("node")
+        .arg("--version")
+        .output()
+        .ok()
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .and_then(|text| {
+            text.trim()
+                .strip_prefix('v')
+                .and_then(|rest| rest.split('.').next())
+                .and_then(|major| major.parse::<u32>().ok())
+        })
+        .is_some_and(|major| major >= 20)
+}
+
+/// The sealed bundle this machine has built, if any: the worktree
+/// cache's newest `build-linux-…` artifact.
+fn discover_bundle() -> Option<std::path::PathBuf> {
+    let home = std::env::var_os("HOME")?;
+    let cache = std::path::PathBuf::from(home).join(".cache/layerfs-worktrees");
+    let mut found: Vec<(std::time::SystemTime, std::path::PathBuf)> = Vec::new();
+    for entry in std::fs::read_dir(cache).ok()?.flatten() {
+        let artifacts = entry.path().join("artifacts");
+        for build in std::fs::read_dir(artifacts).ok()?.flatten() {
+            let candidate = build.path();
+            if candidate.join("layerfs-daemon").is_file()
+                && candidate.join("api/agent/cli/src/layerfs.js").is_file()
+            {
+                if let Ok(when) = build.metadata().and_then(|m| m.modified()) {
+                    found.push((when, candidate));
+                }
+            }
+        }
+    }
+    found.sort_by(|a, b| b.0.cmp(&a.0));
+    found.into_iter().next().map(|(_, path)| path)
+}
+
 pub fn render_head(
     home: &Path,
     layout: &[(&'static str, LayoutStep)],
@@ -937,6 +1088,42 @@ fn render_credentials(home: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
+    /// C3's decision, pure: each missing prerequisite names its
+    /// provision, and a configured machine verifies.
+    #[test]
+    fn the_layerfs_decision_names_each_missing_prerequisite() {
+        assert!(matches!(
+            plan_layerfs(true, false, false, None, false),
+            LayerfsStep::Verified
+        ));
+        match plan_layerfs(false, false, true, None, true) {
+            LayerfsStep::Skipped { reason, provision } => {
+                assert!(reason.contains("Docker"), "{reason}");
+                assert!(provision.contains("Docker Desktop"), "{provision}");
+            }
+            other => panic!("expected the docker skip, got {other:?}"),
+        }
+        match plan_layerfs(false, true, false, None, true) {
+            LayerfsStep::Skipped { reason, .. } => assert!(reason.contains("Node"), "{reason}"),
+            other => panic!("expected the node skip, got {other:?}"),
+        }
+        match plan_layerfs(false, true, true, None, true) {
+            LayerfsStep::Skipped { reason, provision } => {
+                assert!(reason.contains("bundle"), "{reason}");
+                assert!(provision.contains("worktree.py"), "{provision}");
+            }
+            other => panic!("expected the bundle skip, got {other:?}"),
+        }
+        match plan_layerfs(false, true, true, Some(std::path::Path::new("/b")), false) {
+            LayerfsStep::Skipped { reason, .. } => assert!(reason.contains("image"), "{reason}"),
+            other => panic!("expected the image skip, got {other:?}"),
+        }
+        assert!(matches!(
+            plan_layerfs(false, true, true, Some(std::path::Path::new("/b")), true),
+            LayerfsStep::Provisioned { .. }
+        ));
+    }
+
     use super::*;
 
     /// A scratch directory, unique per call.
