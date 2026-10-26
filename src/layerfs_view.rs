@@ -490,8 +490,8 @@ pub fn workspace_history(cwd: &Path) -> serde_json::Value {
             "note": "this folder has no LayerFS project — the first delegation here registers one",
         });
     };
-    let gate = match crate::layerfs_tools::gate().as_ref() {
-        Ok(gate) => gate.clone(),
+    let gate = match crate::layerfs_tools::gate() {
+        Ok(gate) => gate,
         Err(reason) => {
             return json!({
                 "type": "workspace-history",
@@ -573,8 +573,8 @@ pub fn workspace_files(cwd: &Path, branch: &str, path: &str, page: u32) -> serde
             "refused": ["this folder has no LayerFS project"],
         });
     };
-    let gate = match crate::layerfs_tools::gate().as_ref() {
-        Ok(gate) => gate.clone(),
+    let gate = match crate::layerfs_tools::gate() {
+        Ok(gate) => gate,
         Err(reason) => return json!({ "type": "workspace-files", "refused": [reason.clone()] }),
     };
     match gate.fs_list_page(&registration.name, branch, path, 200, page) {

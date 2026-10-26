@@ -7887,7 +7887,24 @@ async fn a_delegated_task_runs_in_its_own_session_on_the_parents_model() {
         assistant_stream("the child counted three files"),
     ]);
     let home = temp_home("subagent-own-session");
+    // The arm resolves the launch folder's registration, so the test
+    // pins its own absence: a scratch FLEET_HOME with no config means
+    // no machine facts, no workspace, the plain prompt — whatever the
+    // launching repository has registered in the real home. (This
+    // repository itself became registered mid-plan — the motivating
+    // case — and this test's premise must not ride on the world it
+    // runs in.)
+    let scratch = temp_home("subagent-own-session-fleet-home");
     let mut session = Session::create(&home, "test-model").unwrap();
+    // The lock guards the SET (atomic against the other ambient
+    // windows); the restoration guard outlives the await, the lock
+    // guard does not.
+    let _fh = {
+        let _lock = AMBIENT_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        AmbientKey::set("FLEET_HOME", scratch.to_str().unwrap())
+    };
     let report = run_on(
         &mock,
         &mut session,
@@ -8030,38 +8047,52 @@ async fn a_subagents_builtins_work_in_the_parents_folder() {
         assistant_stream("the child printed the folder"),
     ]);
     let home = temp_home("subagent-workdir-home");
+    // The default (non-isolated) path, pinned against the world: a
+    // scratch FLEET_HOME means no machine facts, so the arm never opts
+    // this child into a workspace — whatever the launching repository
+    // has registered in the real home.
+    let scratch = temp_home("subagent-workdir-fleet-home");
     let mut session = Session::create(&home, "test-model").unwrap();
     let client = Client::new(mock.url(), "test-key");
-    let options = AgentOptions {
-        goal: None,
-        model: "test-model".to_string(),
-        identity: None,
-        max_turns: 6,
-        ui_tx: None,
-        lane_specs: None,
-        calib: None,
-        skills: Vec::new(),
-        role_overlay: None,
-        memory: None,
-        scope: None,
-        improve_home: None,
-        route_home: None,
-        gui_prompt: None,
-        compact_now: false,
-        checkpoints: None,
-        file_access: FileAccess::Folder(folder.clone()),
-        plan_mode: false,
+    let _fh = {
+        let _lock = AMBIENT_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        AmbientKey::set("FLEET_HOME", scratch.to_str().unwrap())
     };
-    let mut progress = Vec::new();
-    let mut agent = Agent::new(
-        &client,
-        options,
-        &mut session,
-        Box::new(ApproveAll),
-        &mut progress,
-    )
-    .unwrap();
-    agent.run("show the folder").await.unwrap();
+    {
+        let _held = &_fh;
+        let options = AgentOptions {
+            goal: None,
+            model: "test-model".to_string(),
+            identity: None,
+            max_turns: 6,
+            ui_tx: None,
+            lane_specs: None,
+            calib: None,
+            skills: Vec::new(),
+            role_overlay: None,
+            memory: None,
+            scope: None,
+            improve_home: None,
+            route_home: None,
+            gui_prompt: None,
+            compact_now: false,
+            checkpoints: None,
+            file_access: FileAccess::Folder(folder.clone()),
+            plan_mode: false,
+        };
+        let mut progress = Vec::new();
+        let mut agent = Agent::new(
+            &client,
+            options,
+            &mut session,
+            Box::new(ApproveAll),
+            &mut progress,
+        )
+        .unwrap();
+        agent.run("show the folder").await.unwrap();
+    }
 
     let child = child_summary(&home);
     let records = session::replay(&child.path).unwrap();

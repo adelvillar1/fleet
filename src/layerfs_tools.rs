@@ -555,8 +555,14 @@ pub const REGISTRATION_MAX_ENTRIES: u64 = 100_000;
 /// owner-facing notice — never a silent import, never a failed run.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RegistrationOutcome {
-    /// Registered (or already registered): the folder's project.
-    Registered(Registration),
+    /// Registered (or already registered): the folder's project, and
+    /// the declared paths the import could not carry (gitlinks — a
+    /// submodule's contents live in their own checkout), for the one
+    /// notice that names them.
+    Registered {
+        registration: Registration,
+        skipped: Vec<String>,
+    },
     /// Past the bound: the shape that crossed it, for the notice.
     OverBound { entries: u64, bytes: u64 },
 }
@@ -683,19 +689,201 @@ fn register_script(machine: &Machine) -> Result<PathBuf, RegisterError> {
 /// runtime's Init through the register script, and the record —
 /// one attempt, and the config write under the corpus's own
 /// per-path lock so two runs registering at once cannot interleave.
+/// One path git declares, with how it must be carried: a regular file
+/// copied as bytes, a symlink recreated as the link it is (the Store's
+/// view carries links, not their targets), a gitlink SKIPPED (a
+/// submodule's contents live in their own checkout — the staged tree
+/// names the gap rather than importing a half-world).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Declared {
+    pub path: String,
+    pub kind: DeclaredKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DeclaredKind {
+    File,
+    Symlink,
+}
+
+/// What the folder's own rules say to carry: `git ls-files --stage`
+/// parsed NUL-safely (paths ride the tab, never a shell split). `None`
+/// for a folder that is not a git repository — the whole-tree walk
+/// stays that folder's answer, with the bound as its guard.
+pub fn declared_files(folder: &Path) -> Option<(Vec<Declared>, Vec<String>)> {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(folder)
+        .args(["ls-files", "--stage", "-z"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let mut declared = Vec::new();
+    let mut skipped = Vec::new();
+    for record in output.stdout.split(|byte| *byte == 0) {
+        if record.is_empty() {
+            continue;
+        }
+        let text = String::from_utf8_lossy(record);
+        let Some((meta, path)) = text.split_once('\t') else {
+            continue;
+        };
+        let mode = meta.split(' ').next().unwrap_or_default();
+        let path = path.to_string();
+        match mode {
+            "120000" => declared.push(Declared {
+                path,
+                kind: DeclaredKind::Symlink,
+            }),
+            "160000" => skipped.push(path),
+            _ => declared.push(Declared {
+                path,
+                kind: DeclaredKind::File,
+            }),
+        }
+    }
+    Some((declared, skipped))
+}
+
+/// The declared set's shape: entries counted, bytes statted — the
+/// bound applies to what will actually be imported, so an ignored
+/// build tree never counts against the repo that declares around it.
+fn declared_shape(declared: &[Declared], folder: &Path) -> Result<(u64, u64), RegisterError> {
+    let mut bytes: u64 = 0;
+    for entry in declared {
+        let meta = folder
+            .join(&entry.path)
+            .symlink_metadata()
+            .map_err(|error| RegisterError::Failed(format!("{}: {error}", entry.path)))?;
+        bytes += meta.len();
+    }
+    Ok((declared.len() as u64, bytes))
+}
+
+/// Stage the declared paths into a scratch dir under the LayerFS home:
+/// the Init imports the scratch, so the Store carries exactly what the
+/// repo declares. The caller removes the dir on EVERY path — success,
+/// refusal, or failure — with [`remove_staging`].
+fn stage_declared(
+    machine: &Machine,
+    folder: &Path,
+    declared: &[Declared],
+    name: &str,
+) -> Result<std::path::PathBuf, RegisterError> {
+    let staging = machine
+        .home
+        .join("staging")
+        .join(format!("{name}-{}", std::process::id()));
+    std::fs::create_dir_all(&staging)
+        .map_err(|error| RegisterError::Failed(format!("the staging dir: {error}")))?;
+    for entry in declared {
+        let from = folder.join(&entry.path);
+        let to = staging.join(&entry.path);
+        if let Some(parent) = to.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|error| RegisterError::Failed(format!("{}: {error}", entry.path)))?;
+        }
+        let staged = match entry.kind {
+            DeclaredKind::File => std::fs::copy(&from, &to).map(|_| ()),
+            DeclaredKind::Symlink => {
+                let target = std::fs::read_link(&from)
+                    .map_err(|error| RegisterError::Failed(format!("{}: {error}", entry.path)))?;
+                #[cfg(unix)]
+                {
+                    std::os::unix::fs::symlink(target, &to)
+                }
+                #[cfg(not(unix))]
+                {
+                    std::fs::copy(&from, &to).map(|_| ())
+                }
+            }
+        };
+        staged.map_err(|error| RegisterError::Failed(format!("{}: {error}", entry.path)))?;
+    }
+    Ok(staging)
+}
+
+/// The staging dir's removal, on every path — the scratch outlives no
+/// outcome.
+fn remove_staging(staging: &std::path::Path) {
+    let _ = std::fs::remove_dir_all(staging);
+}
+
 pub fn register(machine: &Machine, folder: &Path) -> Result<RegistrationOutcome, RegisterError> {
     let script = register_script(machine)?;
-    let taken: Vec<String> = registrations()
+    let taken: Vec<String> = read_registrations()
         .iter()
         .map(|(_, registration)| registration.name.clone())
         .collect();
-    folder_shape(folder)?;
+    // The declared set decides the shape: a git repo's bound counts
+    // what git tracks, so an ignored build tree never refuses the repo
+    // that declares around it. Nothing tracked is the named fallback —
+    // there is nothing to isolate a child inside.
+    let declared = declared_files(folder);
+    let (_entries, _bytes, skipped, staging) = match &declared {
+        Some((files, skipped)) if files.is_empty() => {
+            let _ = skipped;
+            return Err(RegisterError::Failed(
+                "the repository declares no files to carry (git tracks nothing here) —                  the folder runs without LayerFS workspaces"
+                    .to_string(),
+            ));
+        }
+        Some((files, skipped)) => {
+            let (entries, bytes) = declared_shape(files, folder)?;
+            if entries > REGISTRATION_MAX_ENTRIES || bytes > REGISTRATION_MAX_BYTES {
+                return Err(RegisterError::OverBound { entries, bytes });
+            }
+            let staging = stage_declared(machine, folder, files, "pending")?;
+            (entries, bytes, skipped.clone(), Some(staging))
+        }
+        None => {
+            let (entries, bytes) = folder_shape(folder)?;
+            (entries, bytes, Vec::new(), None)
+        }
+    };
     let name = project_name_for(folder, &taken);
+    // The staging dir's name carries the project once it is known;
+    // rename so a failed run's scratch is still identifiable.
+    let staging = match staging {
+        Some(dir) => {
+            let named = machine
+                .home
+                .join("staging")
+                .join(format!("{name}-{}", std::process::id()));
+            let _ = std::fs::rename(&dir, &named);
+            Some(named)
+        }
+        None => None,
+    };
+    let source = staging.clone().unwrap_or_else(|| folder.to_path_buf());
+    let outcome = register_inner(machine, &script, &name, &source, folder);
+    if let Some(dir) = &staging {
+        remove_staging(dir);
+    }
+    let registration = outcome?;
+    Ok(RegistrationOutcome::Registered {
+        registration,
+        skipped,
+    })
+}
+
+/// The script's one attempt, from the source the caller chose — the
+/// staging dir for a declared import, the folder itself for the
+/// whole-tree walk.
+fn register_inner(
+    machine: &Machine,
+    script: &Path,
+    name: &str,
+    source: &Path,
+    folder: &Path,
+) -> Result<Registration, RegisterError> {
     let output = std::process::Command::new("node")
         .args([
             script.to_string_lossy().as_ref(),
-            &name,
-            folder.to_string_lossy().as_ref(),
+            name,
+            source.to_string_lossy().as_ref(),
             machine.home.to_string_lossy().as_ref(),
             machine.bundle.to_string_lossy().as_ref(),
             &machine.image,
@@ -740,9 +928,12 @@ pub fn register(machine: &Machine, folder: &Path) -> Result<RegistrationOutcome,
                 RegisterError::Failed("the register answer named no store".to_string())
             })?,
     );
-    let registration = Registration { name, store };
+    let registration = Registration {
+        name: name.to_string(),
+        store,
+    };
     record_registration(folder, &registration, &volume)?;
-    Ok(RegistrationOutcome::Registered(registration))
+    Ok(registration)
 }
 
 /// Write the folder's registration into `<FLEET_HOME>/config.json`
@@ -1450,9 +1641,15 @@ impl Gate {
 /// that resolves the CLI once keeps resolving it; a machine that
 /// cannot names the same absence to every caller, and no caller
 /// retries per call.
-pub fn gate() -> &'static Result<Gate, String> {
-    static GATE: std::sync::OnceLock<Result<Gate, String>> = std::sync::OnceLock::new();
-    GATE.get_or_init(Gate::resolve)
+/// The gate, resolved FRESH per call: the ambient environment decides
+/// (the operator's `FLEET_LAYERFS_BIN`, else the sealed bundle), and no
+/// process cache can hand one caller's CLI to another's world — the
+/// live registration taught this, when a real delegation in the repo
+/// claimed the once-per-process cache and every stub test beside it
+/// inherited the real CLI. The cost is one `--version` per open, which
+/// is nothing beside the spawns it gates.
+pub fn gate() -> Result<Gate, String> {
+    Gate::resolve()
 }
 
 /// Read the CLI's wire version: the last `x.y.z` token of its first
@@ -1683,10 +1880,7 @@ impl WorkspaceSession {
             code: "WorkspaceOpen".to_string(),
             message: format!("the child's branch would be refused by the wire: {reason}"),
         })?;
-        let gate = match gate() {
-            Ok(gate) => gate.clone(),
-            Err(reason) => return Err(Error::Absent(reason.clone())),
-        };
+        let gate = gate().map_err(|reason| Error::Absent(reason.clone()))?;
         gate.fork(project, branch)?;
         let sandbox = match gate.sandbox_create(project) {
             Ok(sandbox) => sandbox,
@@ -1712,10 +1906,7 @@ impl WorkspaceSession {
     /// fork half above.
     pub fn open(project: &str, branch: &str) -> Result<WorkspaceSession, Error> {
         let handle = Self::open_handle(project, branch)?;
-        let gate = match gate() {
-            Ok(gate) => gate.clone(),
-            Err(reason) => return Err(Error::Absent(reason.clone())),
-        };
+        let gate = gate().map_err(|reason| Error::Absent(reason.clone()))?;
         match gate.mount(project, &handle.sandbox, branch) {
             Ok(mount) => Ok(WorkspaceSession {
                 project: handle.project,
@@ -1750,7 +1941,7 @@ impl WorkspaceSession {
     /// clean enough to keep its work.
     pub fn settle(self, commit: bool) -> WorkspaceReport {
         let gate = match gate() {
-            Ok(gate) => gate.clone(),
+            Ok(gate) => gate,
             Err(reason) => {
                 return WorkspaceReport {
                     branch: self.branch,
@@ -1854,7 +2045,7 @@ impl WorkspaceHandle {
             ..WorkspaceReport::default()
         };
         let gate = match gate() {
-            Ok(gate) => gate.clone(),
+            Ok(gate) => gate,
             Err(reason) => {
                 report
                     .notes
@@ -2408,9 +2599,16 @@ console.log(JSON.stringify({
             image: "sha256:x".to_string(),
         };
         let outcome = register(&machine, &folder).expect("the registration runs");
-        let RegistrationOutcome::Registered(registration) = outcome else {
+        let RegistrationOutcome::Registered {
+            registration,
+            skipped,
+        } = outcome
+        else {
             panic!("expected a registration");
         };
+        // A plain folder is not a git repository: the whole-tree walk
+        // is its answer, so nothing was skipped.
+        assert!(skipped.is_empty(), "{skipped:?}");
         assert_eq!(registration.name, "my-project");
         assert_eq!(
             registration.store,
@@ -2442,6 +2640,229 @@ console.log(JSON.stringify({
             "my-project"
         );
         let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// A fixture git repository: one tracked file, one ignored file,
+    /// one untracked file, one tracked symlink, one gitlink. The shape
+    /// the declared import has to read exactly right.
+    fn declared_fixture(root: &Path) -> std::path::PathBuf {
+        let folder = root.join("Declared Repo");
+        std::fs::create_dir_all(folder.join("sub")).unwrap();
+        std::fs::write(folder.join("README.md"), "declared\n").unwrap();
+        std::fs::write(folder.join(".gitignore"), "target/\nignored.txt\n").unwrap();
+        std::fs::create_dir_all(folder.join("target")).unwrap();
+        std::fs::write(
+            folder.join("target").join("build-artifact.bin"),
+            vec![b'x'; 64 * 1024],
+        )
+        .unwrap();
+        std::fs::write(folder.join("ignored.txt"), "ignored\n").unwrap();
+        std::fs::write(folder.join("link-target.txt"), "linked\n").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink("../link-target.txt", folder.join("sub").join("link")).unwrap();
+        let git = |args: &[&str]| {
+            let status = std::process::Command::new("git")
+                .arg("-C")
+                .arg(&folder)
+                .args(args)
+                .env("GIT_AUTHOR_NAME", "t")
+                .env("GIT_AUTHOR_EMAIL", "t@t")
+                .env("GIT_COMMITTER_NAME", "t")
+                .env("GIT_COMMITTER_EMAIL", "t@t")
+                .status()
+                .expect("git runs");
+            assert!(status.success(), "git {args:?} failed");
+        };
+        git(&["init", "-q"]);
+        git(&["add", "-A"]);
+        // Untracked, honestly: written after the add, never staged.
+        std::fs::write(folder.join("untracked.txt"), "untracked\n").unwrap();
+        // A submodule's gitlink, without a real submodule: the entry
+        // the import must SKIP and name.
+        git(&[
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            "160000,0123456789abcdef0123456789abcdef01234567,vendor/thing",
+        ]);
+        git(&["commit", "-qm", "the declared tree"]);
+        folder
+    }
+
+    /// C0's pin: a git repository's registration stages exactly what
+    /// git declares — the tracked file and the symlink carried, the
+    /// ignored and untracked files absent, the gitlink named as the
+    /// gap — and the staging dir outlives no outcome. The record is
+    /// keyed on the real folder, never on the scratch.
+    #[test]
+    fn the_register_stages_what_git_declares() {
+        let _lock = crate::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let home = std::env::temp_dir().join(format!(
+            "fleet-layerfs-declared-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = std::fs::remove_dir_all(&home);
+        let layerfs_home = home.join("layerfs-home");
+        let bundle = home.join("bundle");
+        std::fs::create_dir_all(&layerfs_home).unwrap();
+        std::fs::create_dir_all(&bundle).unwrap();
+        let folder = declared_fixture(&home);
+        let argv_log = home.join("register-argv.log");
+        // The stub logs its argv AND what its source dir actually
+        // holds — the Init would import exactly that tree.
+        std::fs::write(
+            layerfs_home.join(REGISTER_SCRIPT),
+            r#"import { appendFileSync, readdirSync } from "node:fs";
+const name = process.argv[2];
+const source = process.argv[3];
+const NL = String.fromCharCode(10);
+appendFileSync(process.env.FLEET_STUB_REGISTER_LOG, "ARGV " + process.argv.slice(2).join(" ") + NL);
+const walk = (dir, prefix) => readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+  const path = prefix + e.name;
+  if (e.name === ".git") return [];
+  return e.isDirectory() ? walk(dir + "/" + e.name, path + "/") : [path];
+});
+appendFileSync(process.env.FLEET_STUB_REGISTER_LOG, "SOURCE " + walk(source, "").sort().join(",") + NL);
+console.log(JSON.stringify({
+  name,
+  volume: `layerfs-${name}-store-x`,
+  store: `/var/lib/docker/volumes/layerfs-${name}-store-x/_data/global/store.sqlite`,
+}));
+"#,
+        )
+        .unwrap();
+
+        let _home_env = EnvGuard::set("FLEET_HOME", &home);
+        let _log = EnvGuard::set("FLEET_STUB_REGISTER_LOG", &argv_log);
+        let machine = Machine {
+            home: layerfs_home.clone(),
+            bundle,
+            image: "sha256:x".to_string(),
+        };
+        let outcome = register(&machine, &folder).expect("the registration runs");
+        let RegistrationOutcome::Registered {
+            registration,
+            skipped,
+        } = outcome
+        else {
+            panic!("expected a registration");
+        };
+        assert_eq!(registration.name, "declared-repo");
+        // The gitlink is the named gap; the ignored and untracked
+        // files are not named because they are not declared at all.
+        assert_eq!(skipped, vec!["vendor/thing".to_string()], "{skipped:?}");
+        let log = std::fs::read_to_string(&argv_log).expect("the script ran");
+        // The Init's source was the staging dir, not the folder.
+        assert!(
+            !log.contains(&folder.to_string_lossy().to_string()),
+            "{log}"
+        );
+        // What the Init would import: the declared files, carried.
+        let source_line = log
+            .lines()
+            .find(|line| line.starts_with("SOURCE "))
+            .expect("the source listing");
+        assert!(source_line.contains("README.md"), "{source_line}");
+        assert!(source_line.contains("sub/link"), "{source_line}");
+        assert!(!source_line.contains("ignored.txt"), "{source_line}");
+        assert!(!source_line.contains("untracked.txt"), "{source_line}");
+        assert!(!source_line.contains("build-artifact"), "{source_line}");
+        assert!(!source_line.contains("vendor"), "{source_line}");
+        // The staging dir outlives no outcome.
+        let staging_root = layerfs_home.join("staging");
+        let left = std::fs::read_dir(&staging_root)
+            .map(|entries| entries.count())
+            .unwrap_or(0);
+        assert_eq!(left, 0, "the staging scratch is empty: {log}");
+        // The record is keyed on the real folder, canonically.
+        let document: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(home.join("config.json")).unwrap())
+                .unwrap();
+        let canonical = folder.canonicalize().unwrap();
+        assert_eq!(
+            document["layerfs"]["projects"][canonical.to_string_lossy().as_ref()]["name"],
+            "declared-repo"
+        );
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// The bound counts the DECLARED set: a repository sitting on a
+    /// build tree larger than the bound registers anyway, because the
+    /// import will never touch what the repo declares around. The
+    /// whole-tree walk keeps its own bound (the previous test's
+    /// plain-folder shape), and nothing tracked is the named fallback.
+    #[test]
+    fn the_bound_counts_what_git_declares_and_nothing_else() {
+        let _lock = crate::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let root = std::env::temp_dir().join(format!(
+            "fleet-layerfs-declbound-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let folder = declared_fixture(&root);
+        // The declared parse: four carried paths (README, .gitignore,
+        // link-target, sub/link), the gitlink skipped, the ignored and
+        // untracked absent.
+        let (declared, skipped) = declared_files(&folder).expect("a git repository");
+        assert_eq!(skipped, vec!["vendor/thing".to_string()]);
+        let names: Vec<&str> = declared.iter().map(|entry| entry.path.as_str()).collect();
+        assert!(names.contains(&"README.md"), "{names:?}");
+        assert!(names.contains(&".gitignore"), "{names:?}");
+        assert!(names.contains(&"sub/link"), "{names:?}");
+        assert!(!names.contains(&"target/build-artifact.bin"), "{names:?}");
+        assert!(!names.contains(&"untracked.txt"), "{names:?}");
+        // The declared shape: the carried files' bytes, nothing else —
+        // and the symlink's own metadata (its link length), never its
+        // target's.
+        let (entries, bytes) = declared_shape(&declared, &folder).expect("the declared shape");
+        assert_eq!(entries, 4, "{names:?}");
+        let tracked_only = folder.join("README.md");
+        let readme_bytes = std::fs::metadata(&tracked_only).unwrap().len();
+        assert!(bytes > readme_bytes, "{bytes}");
+        assert!(
+            bytes
+                < std::fs::metadata(folder.join("target").join("build-artifact.bin"))
+                    .unwrap()
+                    .len(),
+            "the ignored build artifact never counts: {bytes}"
+        );
+        // Nothing tracked: the named fallback, word for word.
+        let empty = root.join("Empty Repo");
+        std::fs::create_dir_all(&empty).unwrap();
+        let git = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&empty)
+            .args(["init", "-q"])
+            .status()
+            .expect("git runs");
+        assert!(git.success());
+        let machine = Machine {
+            home: root.join("layerfs-home"),
+            bundle: root.join("bundle"),
+            image: "sha256:x".to_string(),
+        };
+        std::fs::create_dir_all(machine.home.clone()).unwrap();
+        std::fs::write(machine.home.join(REGISTER_SCRIPT), "console.log('{}');").unwrap();
+        let error = register(&machine, &empty).expect_err("nothing declared");
+        match error {
+            RegisterError::Failed(reason) => {
+                assert!(reason.contains("declares no files"), "{reason}");
+            }
+            other => panic!("expected the named fallback, got {other:?}"),
+        }
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// C3's repair, pinned: the machine's facts MERGE into the config —

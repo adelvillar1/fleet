@@ -62,7 +62,8 @@ against the fork point, and dead already if the delegation knob is off.
 
 ## Acceptance criteria
 
-- [ ] **C0 — the import carries what the repo declares.** When the
+- [x] **C0 — the import carries what the repo declares.**
+      **Landed** — recorded below. When the
       folder is a git repository, registration stages and imports
       exactly what git tracks (`git ls-files` — one implementation of
       ignore semantics, git's own, honoring `.gitignore` by
@@ -148,6 +149,46 @@ against the fork point, and dead already if the delegation knob is off.
       TECHNICAL reading as shipped. The gate green by exit code; the
       status flips in the same commit that lands the work.
 
+## Status
+
+- **C0 — landed, live-verified on the motivating case.** The declared
+  import: `declared_files` parses `git ls-files --stage -z` NUL-safely
+  (modes name the carrying — files copied, symlinks recreated as links,
+  gitlinks SKIPPED and named, because a submodule's contents live in
+  their own checkout); the bound counts the DECLARED set, so an ignored
+  build tree never refuses the repo that declares around it; the driver
+  stages the declared paths into `<layerfs-home>/staging/<name>-<pid>/`,
+  inits from there, records the REAL folder, and removes the scratch on
+  every path. A non-git folder keeps the whole-tree walk with the bound
+  as its guard; nothing tracked is the named fallback, word for word.
+  One refinement on the plan's letter, recorded here: the staging lives
+  in the DRIVER, not in the register script — the same contract (the
+  declared set, the scratch under the home, the cleanup on every path),
+  one implementation, and testable where the tests live. The stub
+  register script reads the staging dir it is handed, which is how the
+  pin works. Pinned by `the_register_stages_what_git_declares` (the
+  carried set read off the staging dir itself: tracked file and symlink
+  in, ignored/untracked/gitlink out; the scratch empty afterwards; the
+  record keyed on the real folder) and
+  `the_bound_counts_what_git_declares_and_nothing_else` (the declared
+  shape's bytes never include the ignored artifact; nothing tracked is
+  the named fallback). **The motivating case, live:** a delegation in
+  THIS repository — 436 files / 14.7 MB declared against a working
+  tree of 35 GB / 228,916 entries — registered as project `fleet`
+  (volume `layerfs-fleet-store-mvp4p8ae`), the child
+  `fleet-child-20261026t104335z-6892fd0` worked inside its workspace
+  (its bash resolves the branch view at `/workspaces/1`, the
+  sandbox-local mount the child-execution seam serves), wrote and read
+  back its file, and the parent settled it — the merge branch
+  `merge-fleet-child-…` carries the child's head. The host tree is
+  untouched (`seam-proof.txt` exists nowhere in the checkout), and the
+  Store's `main` carries the declared tree: `src` and `docs` in;
+  `target`, `.git` and `.env` out — the security win visible in the
+  Store's own listing. Measured beside it, for C2: `branch
+  diff_commits <from-commit> <to-commit> [--no-hunks]` answers the
+  changed paths between two Commits — the fork base is a commit id, so
+  the settle's changed set is exactly this call.
+
 ## Files to be touched
 
 `src/layerfs_tools.rs` (the manifest-carrying register: the git-declared
@@ -195,7 +236,7 @@ C2's apply and its forced conflict, C3's clean-env run. The probe stays
 the standing substrate diagnostic; the live script joins it as the
 standing seam diagnostic.
 
-## Status — 2026-10-26 (draft; measurements recorded, awaiting the word)
+### Status — 2026-10-26 (draft; measurements recorded, awaiting the word)
 
 The three gaps are measured, not estimated, and the measurements are in
 this file: the fleet repo's shape (35 GB / 228,916 entries, all

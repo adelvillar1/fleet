@@ -2939,6 +2939,15 @@ mod tests {
     /// tests; what this endpoint test owns is the route and the shape.
     #[tokio::test(flavor = "multi_thread")]
     async fn the_workspace_history_reads_name_a_folder_with_no_project() {
+        // The read resolves the CONFIG's registrations, so the test
+        // pins its own absence: a scratch FLEET_HOME with no layerfs
+        // facts, whatever the launching repo has registered in the
+        // real home. (This repository itself became registered mid-plan
+        // — the motivating case — and the test's premise must not
+        // depend on the world it happens to run in.)
+        let scratch = fresh_home();
+        let previous = std::env::var_os("FLEET_HOME");
+        std::env::set_var("FLEET_HOME", &scratch);
         let home = router_home();
         let (token, port) = launch_over(home, fresh_home()).await;
         let reply = get(port, "/api/workspace-history", &token);
@@ -2987,6 +2996,10 @@ mod tests {
             "{document}"
         );
         assert!(!body.contains("api_key"), "{body}");
+        match previous {
+            Some(value) => std::env::set_var("FLEET_HOME", value),
+            None => std::env::remove_var("FLEET_HOME"),
+        }
     }
 
     /// A fact edits through the substrate's own rewriter: the named

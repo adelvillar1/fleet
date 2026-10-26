@@ -1627,7 +1627,11 @@ fn resolve_project(progress: &mut dyn Write) -> Option<String> {
         return Some(name);
     }
     let folder = crate::layerfs_tools::test_folder().or_else(|| std::env::current_dir().ok())?;
-    let Ok(machine) = crate::layerfs_tools::machine() else {
+    // Fresh reads, never the process cache: the world this delegation
+    // resolves against is whatever the environment names NOW — the
+    // live registration taught that a cached machine hands one
+    // caller's substrate to another's world.
+    let Ok(ref machine) = crate::layerfs_tools::read_machine() else {
         // No machine facts: the substrate isn't provisioned. A run
         // that never opted in never learns the difference.
         return None;
@@ -1636,17 +1640,34 @@ fn resolve_project(progress: &mut dyn Write) -> Option<String> {
         .filter(|value| !value.is_empty())
         .map(|value| value.to_string_lossy().into_owned())
     {
-        let registration = crate::layerfs_tools::registration(&folder);
+        let registrations = crate::layerfs_tools::read_registrations();
+        let registration = crate::layerfs_tools::find_registration(&registrations, &folder);
         crate::layerfs_tools::apply_env(machine, registration);
         return Some(name);
     }
-    if let Some(registration) = crate::layerfs_tools::registration(&folder) {
+    let registrations = crate::layerfs_tools::read_registrations();
+    if let Some(registration) = crate::layerfs_tools::find_registration(&registrations, &folder) {
         crate::layerfs_tools::apply_env(machine, Some(registration));
         return Some(registration.name.clone());
     }
     match crate::layerfs_tools::register(machine, &folder) {
-        Ok(crate::layerfs_tools::RegistrationOutcome::Registered(registration)) => {
+        Ok(crate::layerfs_tools::RegistrationOutcome::Registered {
+            registration,
+            skipped,
+        }) => {
             crate::layerfs_tools::apply_env(machine, Some(&registration));
+            // The declared import's named gaps: a submodule's contents
+            // live in their own checkout, so its path is skipped — one
+            // notice says so, the way the bound's refusal does.
+            if !skipped.is_empty() {
+                notice_once(
+                    progress,
+                    format!(
+                        "— layerfs: the registered project skips submodule path(s) {} —                          a submodule's contents live in its own checkout",
+                        skipped.join(", ")
+                    ),
+                );
+            }
             Some(registration.name)
         }
         Ok(crate::layerfs_tools::RegistrationOutcome::OverBound { entries, bytes })

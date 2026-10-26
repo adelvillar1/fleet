@@ -3277,7 +3277,7 @@ fn doctor_checks() -> ExitCode {
     // over a machine that cannot answer is a broken layer, named here
     // rather than at the first delegation that tries to mount.
     let layerfs_check = doctor::evaluate_layerfs(
-        fleet::layerfs_tools::gate(),
+        &fleet::layerfs_tools::gate(),
         &fleet::layerfs_tools::project_name(),
     );
     failed |= !layerfs_check.ok;

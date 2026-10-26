@@ -4794,7 +4794,7 @@ async fn run_builtin(
         // absence is the named answer — no fallback to a host tree
         // the child was deliberately not given.
         FileAccess::LayerFs(ctx) => match crate::layerfs_tools::gate() {
-            Ok(gate) => tool.execute_in_layerfs(&arguments, &ctx, gate, spill.as_deref()),
+            Ok(gate) => tool.execute_in_layerfs(&arguments, &ctx, &gate, spill.as_deref()),
             Err(reason) => Err(format!("layerfs: {reason}")),
         },
         // No folder: the process's working directory, unrestricted.
