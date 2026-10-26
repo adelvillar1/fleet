@@ -14,6 +14,7 @@
 use std::path::{Path, PathBuf};
 
 use super::layerfs_tools::{Gate, Registration};
+use serde_json::json;
 
 /// One Commit on a branch's line: the short id, the message, how it
 /// was made (`fs`, mount, merge), when, and how many parents it
@@ -112,6 +113,17 @@ fn child_session_of(branch: &str) -> Option<&str> {
 /// Today's delegation rows' `session -> outcome` map — the join's
 /// other half, read from the calibration stream's own day file.
 fn delegation_outcomes() -> Vec<(String, String)> {
+    delegation_rows()
+        .into_iter()
+        .map(|(session, _branch, outcome)| (session, outcome))
+        .collect()
+}
+
+/// The day's delegation rows that stood on a workspace, as
+/// `(session, branch, outcome)` — the join the face reads in both
+/// directions: a branch folds to its child's session, and a session's
+/// row names the branch its work stands on.
+fn delegation_rows() -> Vec<(String, String, String)> {
     let Ok(home) = crate::home::fleet_home(
         std::env::var("FLEET_HOME").ok().as_deref(),
         std::env::var("HOME").ok().as_deref(),
@@ -123,8 +135,50 @@ fn delegation_outcomes() -> Vec<(String, String)> {
     crate::calib::read_day(&root, &day, 512)
         .into_iter()
         .filter(|row| row.op == crate::calib::OP_DELEGATION && !row.workspace_branch.is_empty())
-        .map(|row| (row.session, row.outcome))
+        .map(|row| (row.session, row.workspace_branch, row.outcome))
         .collect()
+}
+
+/// The session → branch map the delegation panel's rows carry, read
+/// from the day's stream. A branch a child worked is the click-through
+/// into the workspace-history section, so the panel names it where the
+/// owner already looks.
+pub fn session_branches() -> std::collections::HashMap<String, String> {
+    delegation_rows()
+        .into_iter()
+        .map(|(session, branch, _)| (session, branch))
+        .collect()
+}
+
+/// A branch's state, read off the view itself: **merged** when main's
+/// trunk carries the merge-back commit that names it (the parent's
+/// settlement commits onto the integration branch and publishes to
+/// main with `fleet: merge subagent <branch>` as its message), **open**
+/// when the branch holds commits nothing has merged, **idle** when it
+/// was forked and never worked. The state is derived, never recorded:
+/// one writer for the fact (the substrate), one reader for the face.
+pub fn branch_state(view: &HistoryView, branch: &str) -> &'static str {
+    let trunk = view
+        .branches
+        .iter()
+        .find(|one| one.name == "main")
+        .map(|main| &main.commits)
+        .cloned()
+        .unwrap_or_default();
+    let merged = trunk.iter().any(|commit| commit.message.contains(branch));
+    if merged {
+        return "merged";
+    }
+    let worked = view
+        .branches
+        .iter()
+        .find(|one| one.name == branch)
+        .is_some_and(|one| !one.commits.is_empty());
+    if worked {
+        "open"
+    } else {
+        "idle"
+    }
 }
 
 /// The view, assembled: branches and their commits from the CLI,
@@ -344,6 +398,146 @@ fn bounded_stderr(stderr: &[u8]) -> String {
         cut.push(ch);
     }
     cut
+}
+
+/// The launch folder's registration, resolved fresh from the config
+/// (the process cache answers whichever config the first caller saw,
+/// which a face that serves several folders cannot afford). `None` for
+/// a folder no delegation has registered yet.
+fn registered_folder(cwd: &Path) -> Option<(String, Registration)> {
+    let canonical = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
+    crate::layerfs_tools::read_registrations()
+        .into_iter()
+        .find(|(folder, _)| Path::new(folder) == canonical.as_path())
+}
+
+/// The section's document: the folder's own view, with each branch's
+/// state derived and the substrate's absences named rather than drawn
+/// as an empty tree. The GUI's launch folder is the project — the face
+/// reads the machine, it never registers anything (that is the arm's
+/// one-time job at a delegation's first spawn).
+pub fn workspace_history(cwd: &Path) -> serde_json::Value {
+    let Ok(home) = crate::home::fleet_home(
+        std::env::var("FLEET_HOME").ok().as_deref(),
+        std::env::var("HOME").ok().as_deref(),
+    ) else {
+        return json!({ "type": "workspace-history", "refused": ["no fleet home is known"] });
+    };
+    let Some((folder, registration)) = registered_folder(cwd) else {
+        return json!({
+            "type": "workspace-history",
+            "registered": false,
+            "folder": cwd.display().to_string(),
+            "branches": [],
+            "layers": [],
+            "refused": [],
+            "note": "this folder has no LayerFS project — the first delegation here registers one",
+        });
+    };
+    let gate = match crate::layerfs_tools::gate().as_ref() {
+        Ok(gate) => gate.clone(),
+        Err(reason) => {
+            return json!({
+                "type": "workspace-history",
+                "registered": true,
+                "project": registration.name,
+                "branches": [],
+                "layers": [],
+                "refused": [reason.clone()],
+            })
+        }
+    };
+    match history(&gate, &registration, &home) {
+        Ok(view) => {
+            let branches: Vec<serde_json::Value> = view
+                .branches
+                .iter()
+                .map(|branch| {
+                    json!({
+                        "name": branch.name,
+                        "head": branch.head,
+                        "forked_from": branch.forked_from,
+                        "state": branch_state(&view, &branch.name),
+                        "child": branch.child.as_ref().map(|child| json!({
+                            "session": child.session,
+                            "outcome": child.outcome,
+                        })),
+                        "commits": branch.commits.iter().map(|commit| json!({
+                            "id": commit.id,
+                            "message": commit.message,
+                            "via": commit.via,
+                            "time": commit.time,
+                            "parents": commit.parents,
+                        })).collect::<Vec<_>>(),
+                    })
+                })
+                .collect();
+            json!({
+                "type": "workspace-history",
+                "registered": true,
+                "folder": folder,
+                "project": registration.name,
+                "branches": branches,
+                "layers": view.layers.iter().map(|layer| json!({
+                    "id": layer.id,
+                    "logical": layer.logical,
+                    "parent": layer.parent,
+                })).collect::<Vec<_>>(),
+                "storage": view.storage.as_ref().map(|storage| json!({
+                    "logical": storage.logical,
+                    "canonical": storage.canonical,
+                    "stored": storage.stored,
+                    "dedupe": storage.dedupe,
+                    "compression": storage.compression,
+                })),
+                "note": view.note,
+                "refused": [],
+            })
+        }
+        Err(reason) => json!({
+            "type": "workspace-history",
+            "registered": true,
+            "project": registration.name,
+            "branches": [],
+            "layers": [],
+            "refused": [reason],
+        }),
+    }
+}
+
+/// The Files pane's one page of a branch's tree at a path — the CLI's
+/// own listing, shaped for the browser. Every absence (an unregistered
+/// folder, a CLI that cannot answer, a path the branch does not hold)
+/// is a named reason, never an empty list that reads as "nothing here".
+pub fn workspace_files(cwd: &Path, branch: &str, path: &str, page: u32) -> serde_json::Value {
+    let Some((_, registration)) = registered_folder(cwd) else {
+        return json!({
+            "type": "workspace-files",
+            "refused": ["this folder has no LayerFS project"],
+        });
+    };
+    let gate = match crate::layerfs_tools::gate().as_ref() {
+        Ok(gate) => gate.clone(),
+        Err(reason) => return json!({ "type": "workspace-files", "refused": [reason.clone()] }),
+    };
+    match gate.fs_list_page(&registration.name, branch, path, 200, page) {
+        Ok(document) => json!({
+            "type": "workspace-files",
+            "project": registration.name,
+            "branch": branch,
+            "path": path,
+            "page": page,
+            "items": document.get("items").cloned().unwrap_or(json!([])),
+            "has_more": document.get("hasMore").and_then(serde_json::Value::as_bool).unwrap_or(false),
+        }),
+        Err(error) => json!({
+            "type": "workspace-files",
+            "project": registration.name,
+            "branch": branch,
+            "path": path,
+            "refused": [error.to_string()],
+        }),
+    }
 }
 
 #[cfg(test)]

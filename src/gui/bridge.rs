@@ -915,6 +915,45 @@ impl Bridge {
         }
     }
 
+    /// The workspace-history section's document: the launch folder's
+    /// project as one tree — the branches and their commits, main's
+    /// Layers, the Store's figures, and each child branch's state and
+    /// session. The read is the substrate's own, so an unprovisioned
+    /// machine or an unregistered folder names itself here rather than
+    /// drawing an empty tree.
+    pub async fn workspace_history(&self) -> Value {
+        let cwd = self.cwd.clone();
+        match tokio::task::spawn_blocking(move || crate::layerfs_view::workspace_history(&cwd))
+            .await
+        {
+            Ok(document) => document,
+            Err(_) => json!({
+                "type": "workspace-history",
+                "refused": ["the workspace-history read did not land"],
+            }),
+        }
+    }
+
+    /// The Files pane's one page of a branch's tree. Read-only by
+    /// construction: the pane lists and reads text, and every write
+    /// verb stays the delegated child's, behind the arm.
+    pub async fn workspace_files(&self, branch: &str, path: &str, page: u32) -> Value {
+        let cwd = self.cwd.clone();
+        let branch = branch.to_string();
+        let path = path.to_string();
+        match tokio::task::spawn_blocking(move || {
+            crate::layerfs_view::workspace_files(&cwd, &branch, &path, page)
+        })
+        .await
+        {
+            Ok(document) => document,
+            Err(_) => json!({
+                "type": "workspace-files",
+                "refused": ["the workspace-files read did not land"],
+            }),
+        }
+    }
+
     /// Who may reach this face: the paired devices and the channel
     /// peers, as one document. The store holds digests, so this names
     /// who is paired and never what would let them in — the same masking
@@ -2994,12 +3033,18 @@ fn router_read(home: &std::path::Path) -> Value {
 /// would be a second opinion about the graph's own facts.
 fn delegation_read(home: &std::path::Path, session: &str) -> Value {
     let snapshot = crate::boards::read_delegation(home, session);
+    // The workspace join: the day's delegation rows name the branch
+    // each child's work stands on, so a row in this panel carries the
+    // click-through into the workspace-history section. The map is
+    // read once and walked down the trees — one source per picture.
+    let branches = crate::layerfs_view::session_branches();
+    let node = |node: &crate::boards::DelegationNode| delegation_node(node, &branches);
     json!({
         "type": "delegation",
         "read_at": snapshot.read_at,
         "depth_cap": snapshot.depth_cap,
-        "live": snapshot.live.as_ref().map(delegation_node),
-        "history": snapshot.history.iter().map(delegation_node).collect::<Vec<_>>(),
+        "live": snapshot.live.as_ref().map(node),
+        "history": snapshot.history.iter().map(node).collect::<Vec<_>>(),
         "graph": snapshot.graph.as_ref().map(graph_document),
         "refused": snapshot.refused,
     })
@@ -5767,7 +5812,10 @@ fn skills_read(home: &std::path::Path) -> Value {
 }
 
 /// One tree node and its children, recursively.
-fn delegation_node(node: &crate::boards::DelegationNode) -> Value {
+fn delegation_node(
+    node: &crate::boards::DelegationNode,
+    branches: &std::collections::HashMap<String, String>,
+) -> Value {
     json!({
         "id": node.id,
         "model": node.model,
@@ -5777,7 +5825,10 @@ fn delegation_node(node: &crate::boards::DelegationNode) -> Value {
         "status": node.status,
         "stop_reason": node.stop_reason,
         "turns": node.turns,
-        "children": node.children.iter().map(delegation_node).collect::<Vec<_>>(),
+        // The branch this child's work stands on, when it worked one:
+        // the row's link into the workspace-history section.
+        "workspace_branch": branches.get(&node.id),
+        "children": node.children.iter().map(|child| delegation_node(child, branches)).collect::<Vec<_>>(),
     })
 }
 

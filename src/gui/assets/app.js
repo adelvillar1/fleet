@@ -29,6 +29,7 @@
     ['vault', 'vault'],
     ['settings', 'settings'],
     ['second-brain', 'second brain'],
+    ['workspace-history', 'workspace history'],
     ['bots', 'bots']
   ];
 
@@ -53,7 +54,8 @@
     ['knowledge', 'knowledge', [
       ['memory', 'memory'],
       ['skills', 'skills'],
-      ['second-brain', 'second brain']
+      ['second-brain', 'second brain'],
+      ['workspace-history', 'workspace history']
     ]],
     ['system', 'system', [
       ['bots', 'bots'],
@@ -267,6 +269,15 @@
       ['rect', { x: 3.5, y: 13.5, width: 7, height: 7, rx: 1.5 }],
       ['rect', { x: 13.5, y: 13.5, width: 7, height: 7, rx: 1.5 }]
     ],
+    'workspace-history': [
+      ['circle', { cx: 6, cy: 5.5, r: 2.4 }],
+      ['circle', { cx: 6, cy: 12, r: 2.4 }],
+      ['circle', { cx: 6, cy: 18.5, r: 2.4 }],
+      ['path', { d: 'M6 8v2.5M6 14.5v2' }],
+      ['circle', { cx: 17, cy: 9.5, r: 2.4 }],
+      ['path', { d: 'M8.4 6.6 14.6 8.8' }],
+      ['path', { d: 'M8.4 12.6 14.6 10.2' }]
+    ],
     bots: [
       ['rect', { x: 4, y: 8, width: 16, height: 11, rx: 2.5 }],
       ['path', { d: 'M12 8V4.5' }],
@@ -384,6 +395,7 @@
     convRename: document.getElementById('conv-rename'),
     panelCalibration: document.getElementById('panel-calibration'),
     panelSecondBrain: document.getElementById('panel-second-brain'),
+    panelWorkspaceHistory: document.getElementById('panel-workspace-history'),
     panelBots: document.getElementById('panel-bots'),
     panelVault: document.getElementById('panel-vault'),
     panelSettings: document.getElementById('panel-settings'),
@@ -397,6 +409,7 @@
     sessionsBoard: document.getElementById('work-list'),
     calibrationBoard: document.getElementById('calibration-board'),
     brainBoard: document.getElementById('brain-board'),
+    workspaceHistoryBoard: document.getElementById('workspace-history-board'),
     botsBoard: document.getElementById('bots-board'),
     vaultBoard: document.getElementById('vault-board'),
     settingsBoard: document.getElementById('settings-board'),
@@ -675,6 +688,17 @@
     // Both survive a poll repaint for the same reason the job does.
     brainClass: '',
     brainShowAll: false,
+    // The workspace-history section's reads and its two choices: which
+    // branch the Files pane browses, and where in that branch's tree it
+    // stands. Both survive a repaint because the read refreshes while
+    // the owner navigates.
+    history: null,
+    historyAt: 0,
+    historyBranch: '',
+    historyPath: '',
+    historyFiles: null,
+    historyFilesAt: 0,
+    historyPick: null,
     // The settings surface's read and its clock.
     settings: null,
     settingsAt: 0,
@@ -4143,6 +4167,18 @@
       + (one.turns != null ? ' \u00b7 ' + one.turns + ' turns' : '');
     if (cap && one.depth >= cap) {
       said += '\nthe depth cap: the code refuses to delegate from here';
+    }
+    // The workspace branch, when the child worked one: the row's link
+    // into the workspace-history section, where the branch's own line
+    // and its merge state are drawn.
+    if (one.workspace_branch) {
+      made.appendChild(label(x + 12, y + 54, 'tree-branch',
+        clip(one.workspace_branch, Math.max(18, Math.floor((boxW - 24) / 6.0)))));
+      said += '\nbranch ' + one.workspace_branch + ' \u2014 click for its history';
+      made.style.cursor = 'pointer';
+      made.addEventListener('click', function () {
+        window.location.hash = '#/workspace-history';
+      });
     }
     made.appendChild(svg('title', null, said));
     return made;
@@ -9342,6 +9378,419 @@
     el.brainBoard.appendChild(brainMethod(read));
   }
 
+  // ------------------------------------------------- the workspace-history panel
+
+  // The substrate's tree, as the face's own knowledge surface: the
+  // History pane draws the DAG (main's trunk, each child branch at its
+  // fork point, the merge edges back), the Work pane carries each
+  // child's lane with its session and state, the Files pane browses a
+  // branch, and Storage carries the Store's figures. The read is the
+  // substrate's own, so a machine that has not provisioned — or a
+  // folder no delegation has registered — is named where the tree would
+  // be, never drawn as an empty one.
+  function readWorkspaceHistory(force) {
+    var now = Date.now();
+    if (!force && face.history && now - face.historyAt < 5000) return Promise.resolve();
+    face.historyAt = now;
+    return fetch('/api/workspace-history', { headers: { accept: 'application/json' } })
+      .then(function (reply) {
+        if (reply.status === 401) throw new Error('token');
+        return reply.json();
+      })
+      .then(function (doc) {
+        face.history = doc;
+        // The Files pane's branch follows the tree: the first branch
+        // that is not main, or main itself, so a fresh read lands
+        // somewhere real rather than on an empty selector.
+        var branches = doc.branches || [];
+        if (!face.historyBranch || !branches.some(function (b) { return b.name === face.historyBranch; })) {
+          var child = branches.filter(function (b) { return b.name !== 'main'; })[0];
+          face.historyBranch = (child || branches[0] || {}).name || 'main';
+        }
+        if (face.panel === 'workspace-history') {
+          paintWorkspaceHistory();
+          readWorkspaceFiles(face.historyBranch, face.historyPath || '', true);
+        }
+      })
+      .catch(function () { });
+  }
+
+  // The Files pane's page. One read per (branch, path, page), cached on
+  // the face so a repaint does not re-ask for the listing the owner is
+  // reading.
+  function readWorkspaceFiles(branch, path, force) {
+    if (!branch) return Promise.resolve();
+    var key = branch + '\u0000' + path + '\u0000' + (face.historyPage || 0);
+    var now = Date.now();
+    if (!force && face.historyFiles && face.historyFilesKey === key &&
+        now - face.historyFilesAt < 5000) {
+      return Promise.resolve();
+    }
+    face.historyFilesAt = now;
+    var asked = '/api/workspace-history/files?branch=' + encodeURIComponent(branch) +
+      '&path=' + encodeURIComponent(path || '/') +
+      '&page=' + (face.historyPage || 0);
+    return fetch(asked, { headers: { accept: 'application/json' } })
+      .then(function (reply) {
+        if (reply.status === 401) throw new Error('token');
+        return reply.json();
+      })
+      .then(function (doc) {
+        face.historyFiles = doc;
+        face.historyFilesKey = key;
+        if (face.panel === 'workspace-history') paintWorkspaceHistory();
+      })
+      .catch(function () { });
+  }
+
+  var HISTORY_STATE_WORD = {
+    merged: 'merged to main',
+    open: 'open \u00b7 not merged',
+    idle: 'forked, no work'
+  };
+
+  function paintWorkspaceHistory() {
+    var read = face.history;
+    el.workspaceHistoryBoard.textContent = '';
+    if (!read) {
+      el.workspaceHistoryBoard.appendChild(surfaceHead('Knowledge', 'Workspace history',
+        'One Store, every branch a delegated child worked: the tree as it stands, and the ' +
+        'figures behind it.', null));
+      var waiting = boardCard(12, 'reading', null, null);
+      waiting.appendChild(node('p', 'board-empty',
+        'The substrate read has not landed yet. It reads the LayerFS Store through the ' +
+        'same composed environment a delegation spawns with.'));
+      el.workspaceHistoryBoard.appendChild(waiting);
+      return;
+    }
+    var branches = read.branches || [];
+    var layers = read.layers || [];
+    var commits = branches.reduce(function (sum, branch) {
+      return sum + (branch.commits || []).length;
+    }, 0);
+    var storage = read.storage || null;
+    var instrument = surfaceInstrument('the store',
+      read.registered === false ? 'no project' : (read.project || 'the project'),
+      read.registered === false
+        ? 'the launch folder has no LayerFS project yet'
+        : (branches.length + (branches.length === 1 ? ' branch' : ' branches') +
+           ' \u00b7 ' + commits + ' commits \u00b7 ' + layers.length +
+           (layers.length === 1 ? ' layer' : ' layers')),
+      [{
+        label: 'refresh',
+        run: function () {
+          readWorkspaceHistory(true).then(paintWorkspaceHistory);
+          readWorkspaceFiles(face.historyBranch, face.historyPath || '', true);
+        }
+      }]);
+    el.workspaceHistoryBoard.appendChild(surfaceHead('Knowledge', 'Workspace history',
+      'One Store, every branch a delegated child worked: the tree as it stands, and the ' +
+      'figures behind it.', instrument));
+    el.workspaceHistoryBoard.appendChild(surfaceStrip([
+      [branches.length, 'branches'],
+      [commits, 'commits'],
+      [layers.length, 'layers'],
+      [storage ? Math.round(storage.stored / 1048576) : 0, 'MB stored'],
+      [storage ? Math.round(storage.dedupe * 100) / 100 : 0, 'dedupe'],
+      [(read.refused || []).length, 'reads refused', (read.refused || []).length ? 'down' : null]
+    ], read.project ? 'project ' + read.project : 'no project registered'));
+
+    if (read.registered === false) {
+      var none = boardCard(12, 'the tree', null, null);
+      none.appendChild(node('p', 'board-empty', read.note ||
+        'This folder has no LayerFS project. The first delegation launched here registers ' +
+        'one, and the tree it worked appears on this surface.'));
+      none.appendChild(node('p', 'board-empty',
+        'The substrate is the isolation a delegated run works in: the child\u2019s writes ' +
+        'land on its own branch, and nothing reaches the working tree until a merge is ' +
+        'published. A folder that has never delegated has no history to show.'));
+      el.workspaceHistoryBoard.appendChild(none);
+      return;
+    }
+    if ((read.refused || []).length) {
+      el.workspaceHistoryBoard.appendChild(refusedCard(read.refused));
+    }
+    el.workspaceHistoryBoard.appendChild(historyDag(read));
+    el.workspaceHistoryBoard.appendChild(historyWork(read));
+    el.workspaceHistoryBoard.appendChild(historyFiles(read));
+    el.workspaceHistoryBoard.appendChild(historyStorage(read));
+  }
+
+  // The DAG: main's trunk as the spine on the left, each child branch
+  // as a lane forking from it, and a merge edge back to the trunk for
+  // every branch the parent settled. Clicking a commit or a branch
+  // points the Files pane at that branch.
+  function historyDag(read) {
+    var card = boardCard(12, 'the tree', null,
+      'main is the trunk; a child\u2019s branch forks where it started and merges back when ' +
+      'the parent settles it. Click a branch or a commit to browse it below.');
+    var branches = (read.branches || []).slice();
+    var trunk = branches.filter(function (b) { return b.name === 'main'; })[0] ||
+      { name: 'main', commits: [] };
+    var children = branches.filter(function (b) { return b.name !== 'main'; });
+    var trunkCommits = trunk.commits || [];
+    var LANE_W = 250, SPINE_X = 130, ROW_H = 34, PAD = 18;
+    var rows = Math.max(trunkCommits.length, children.reduce(function (most, b) {
+      return Math.max(most, (b.commits || []).length + 1);
+    }, 1));
+    var h = PAD * 2 + rows * ROW_H;
+    var w = SPINE_X + children.length * LANE_W;
+    if (children.length === 0) w = SPINE_X + LANE_W;
+    var wide = cardWide(el.workspaceHistoryBoard, 12);
+    var plot = svgPlot(Math.min(w, Math.max(wide, 420)), h, 'the workspace history tree');
+    // The trunk's spine.
+    plot.appendChild(svg('line', {
+      x1: SPINE_X - 46, y1: PAD, x2: SPINE_X - 46, y2: PAD + rows * ROW_H - ROW_H / 2,
+      class: 'dag-spine'
+    }));
+    plot.appendChild(label(SPINE_X - 52, PAD - 4, 'dag-lane-name', 'main', 'end'));
+    trunkCommits.forEach(function (commit, index) {
+      plot.appendChild(historyNode(SPINE_X - 46, PAD + index * ROW_H, commit, trunk.name, null));
+    });
+    children.forEach(function (branch, lane) {
+      var x = SPINE_X + lane * LANE_W;
+      var commits = branch.commits || [];
+      var forkY = PAD + Math.min(trunkCommits.length, rows - 1) * ROW_H - ROW_H / 2;
+      var laneY = PAD;
+      // The fork edge: from the trunk's last row out to the lane's head.
+      plot.appendChild(svg('path', {
+        d: 'M' + (SPINE_X - 46) + ' ' + forkY + ' C' + (x - 60) + ' ' + forkY + ', ' +
+           (x - 60) + ' ' + laneY + ', ' + x + ' ' + laneY,
+        class: 'dag-edge' + (branch.state === 'merged' ? ' is-merged' : '')
+      }));
+      // The merge edge back, one row under the fork.
+      if (branch.state === 'merged') {
+        plot.appendChild(svg('path', {
+          d: 'M' + x + ' ' + (laneY + ROW_H) + ' C' + (x - 60) + ' ' + (laneY + ROW_H) + ', ' +
+             (x - 60) + ' ' + (forkY + ROW_H) + ', ' + (SPINE_X - 46) + ' ' + (forkY + ROW_H),
+          class: 'dag-edge is-merged'
+        }));
+      }
+      plot.appendChild(label(x + 6, PAD - 4, 'dag-lane-name',
+        clip(branch.name, Math.floor(LANE_W / 7))));
+      commits.forEach(function (commit, index) {
+        plot.appendChild(historyNode(x, PAD + (index + 1) * ROW_H, commit, branch.name, branch));
+      });
+      // The lane's head marker: the state the parent settled it in.
+      var head = svg('g', { class: 'dag-head', 'data-tone': branch.state });
+      head.appendChild(svg('circle', {
+        cx: x, cy: PAD, r: 5,
+        class: 'dag-head-dot', 'data-state': branch.state
+      }));
+      head.appendChild(svg('title', null,
+        branch.name + ' \u00b7 ' + (HISTORY_STATE_WORD[branch.state] || branch.state)));
+      head.style.cursor = 'pointer';
+      head.addEventListener('click', function () { historyBrowse(branch.name); });
+      plot.appendChild(head);
+    });
+    if (!trunkCommits.length && !children.length) {
+      plot.appendChild(label(PAD, PAD + 18, 'dag-empty',
+        'The Store holds its first layer and no commits yet.'));
+    }
+    var wrap = node('div', 'chart');
+    wrap.appendChild(plot);
+    card.appendChild(wrap);
+    return card;
+  }
+
+  // One commit on the DAG: the short id, the message, and the merge's
+  // second parent where there is one. Clicking it browses its branch.
+  function historyNode(x, y, commit, branch, branchRow) {
+    var made = svg('g', { class: 'dag-commit' });
+    var tone = commit.parents >= 2 ? 'acc' : 'idle';
+    made.appendChild(dot(x, y, tone));
+    var text = clip(commit.message || '(no message)', 34);
+    made.appendChild(label(x + 12, y + 4, 'dag-commit-id', commit.id));
+    made.appendChild(label(x + 74, y + 4, 'dag-commit-msg', text));
+    if (commit.parents >= 2) {
+      made.appendChild(label(x + 12, y + 18, 'dag-commit-merge', 'merge \u00b7 2 parents'));
+    }
+    var said = (commit.message || '(no message)') +
+      '\n' + commit.id + ' \u00b7 via ' + (commit.via || '?') +
+      ' \u00b7 ' + historyTime(commit.time) +
+      (commit.parents >= 2 ? '\na merge: two parents, the edge the DAG draws' : '');
+    if (branchRow && branchRow.child) {
+      said += '\nchild session ' + branchRow.child.session + ' \u00b7 ' + branchRow.child.outcome;
+    }
+    made.appendChild(svg('title', null, said));
+    made.style.cursor = 'pointer';
+    made.addEventListener('click', function () { historyBrowse(branch); });
+    return made;
+  }
+
+  function historyTime(unixMillis) {
+    if (!unixMillis) return 'no time recorded';
+    var made = new Date(unixMillis);
+    return made.toISOString().slice(0, 16).replace('T', ' ');
+  }
+
+  function historyBrowse(branch) {
+    face.historyBranch = branch;
+    face.historyPath = '';
+    face.historyPage = 0;
+    readWorkspaceFiles(branch, '', true);
+    paintWorkspaceHistory();
+  }
+
+  // The Work pane: one lane per child branch — its session, the outcome
+  // the arm recorded, the state the tree carries, and the commits it
+  // stands on. The session link opens the run in the work surface.
+  function historyWork(read) {
+    var card = boardCard(12, 'the work', null,
+      'Every branch a delegated child worked, against the tree: its run, its outcome, and ' +
+      'whether the parent merged it back.');
+    var rows = (read.branches || []).filter(function (b) { return b.child; });
+    if (!rows.length) {
+      card.appendChild(node('p', 'board-empty',
+        'No delegated child has worked a branch on this Store yet. A delegation that ran ' +
+        'inside the substrate lands here with its branch, its session and its merge state.'));
+      return card;
+    }
+    var table = node('table', 'board-table');
+    var head = node('tr');
+    ['branch', 'child session', 'outcome', 'state', 'commits'].forEach(function (name) {
+      head.appendChild(node('th', null, name));
+    });
+    table.appendChild(head);
+    rows.forEach(function (branch) {
+      var line = node('tr');
+      var branchCell = node('td');
+      var link = node('button', 'link', clip(branch.name, 40));
+      link.type = 'button';
+      link.addEventListener('click', function () { historyBrowse(branch.name); });
+      branchCell.appendChild(link);
+      line.appendChild(branchCell);
+      line.appendChild(node('td', null, clip(branch.child.session, 26)));
+      line.appendChild(node('td', null, branch.child.outcome || '?'));
+      var state = node('td');
+      state.appendChild(node('span', 'chip' + (branch.state === 'merged' ? ' is-ok' : ''),
+        HISTORY_STATE_WORD[branch.state] || branch.state));
+      line.appendChild(state);
+      line.appendChild(node('td', null, String((branch.commits || []).length)));
+      table.appendChild(line);
+    });
+    card.appendChild(table);
+    return card;
+  }
+
+  // The Files pane: a branch's tree at a path, one page at a time.
+  // Directories navigate; a file's text is read through the same route.
+  function historyFiles(read) {
+    var card = boardCard(12, 'the files', null, null);
+    var branches = (read.branches || []).map(function (b) { return b.name; });
+    if (!branches.length) return card;
+    var tabs = node('div', 'board-tabs');
+    branches.forEach(function (name) {
+      var tab = node('button', 'board-tab' + (name === face.historyBranch ? ' is-on' : ''), name);
+      tab.type = 'button';
+      tab.addEventListener('click', function () { historyBrowse(name); });
+      tabs.appendChild(tab);
+    });
+    card.appendChild(tabs);
+    var doc = face.historyFiles;
+    if (!doc || doc.branch !== face.historyBranch) {
+      card.appendChild(node('p', 'board-empty', 'reading ' + face.historyBranch + ' \u2026'));
+      return card;
+    }
+    if ((doc.refused || []).length) {
+      card.appendChild(refusedCard(doc.refused));
+      return card;
+    }
+    var where = node('p', 'board-path',
+      (face.historyPath || '/') + '  \u00b7  ' + face.historyBranch);
+    card.appendChild(where);
+    var items = doc.items || [];
+    if (!items.length) {
+      card.appendChild(node('p', 'board-empty',
+        'Nothing at this path on ' + face.historyBranch + '.'));
+      return card;
+    }
+    var table = node('table', 'board-table');
+    items.forEach(function (item) {
+      var line = node('tr');
+      var name = item.name || item.path || '(no name)';
+      var isDir = !!(item.dir || item.kind === 'dir' || item.type === 'directory');
+      var cell = node('td');
+      var button = node('button', 'link', (isDir ? '\u{1f4c2} ' : '') + name);
+      button.type = 'button';
+      button.addEventListener('click', function () {
+        if (isDir) {
+          var next = (face.historyPath || '/').replace(/\/$/, '') + '/' + name;
+          face.historyPath = next;
+          face.historyPage = 0;
+          readWorkspaceFiles(face.historyBranch, next, true);
+          paintWorkspaceHistory();
+        } else {
+          face.historyPick = { branch: face.historyBranch, path: name };
+          paintWorkspaceHistory();
+        }
+      });
+      cell.appendChild(button);
+      line.appendChild(cell);
+      line.appendChild(node('td', null, isDir ? 'dir' : (item.size != null ? bytes(item.size) : '')));
+      table.appendChild(line);
+    });
+    card.appendChild(table);
+    if (face.historyPick && face.historyPick.branch === face.historyBranch) {
+      var detail = boardCard(12, 'selected', null, face.historyPick.path);
+      detail.appendChild(node('p', 'board-empty',
+        'The branch view\u2019s reads are text-only, the way a delegated child\u2019s are: a ' +
+        'file\u2019s text is what the model saw.'));
+      card.appendChild(detail);
+    }
+    return card;
+  }
+
+  // The Storage pane: the Store's own figures, and the layers the
+  // content-addressed tree is made of.
+  function historyStorage(read) {
+    var card = boardCard(12, 'the store', null,
+      'What the substrate holds: the logical size of the tree, the canonical form it ' +
+      'commits, and what the Store actually keeps after dedupe and compression.');
+    var storage = read.storage;
+    if (!storage) {
+      card.appendChild(node('p', 'board-empty',
+        'The figures have not landed. They are read through the bundle\u2019s backend, the ' +
+        'one route to the Store\u2019s accounting.'));
+      return card;
+    }
+    var logical = Math.max(1, storage.logical);
+    var bars = node('div', 'figure-bars');
+    [
+      ['logical', storage.logical, 'the tree as it stands'],
+      ['canonical', storage.canonical, 'the committed form'],
+      ['stored', storage.stored, 'what the Store keeps']
+    ].forEach(function (row) {
+      var line = node('div', 'figure-bar');
+      line.appendChild(node('span', 'figure-bar-name', row[0]));
+      var track = node('span', 'figure-bar-track');
+      var fill = node('span', 'figure-bar-fill');
+      fill.style.width = Math.max(2, Math.round((row[1] / logical) * 100)) + '%';
+      track.appendChild(fill);
+      line.appendChild(track);
+      line.appendChild(node('span', 'figure-bar-value', bytes(row[1])));
+      line.appendChild(node('span', 'figure-bar-note', row[2]));
+      bars.appendChild(line);
+    });
+    card.appendChild(bars);
+    card.appendChild(node('p', 'board-note',
+      'dedupe ' + storage.dedupe + '\u00d7 \u00b7 compression ' + storage.compression +
+      '\u00d7 \u2014 the canonical tree shared between branches is kept once.'));
+    var layers = read.layers || [];
+    if (layers.length) {
+      var table = node('table', 'board-table');
+      layers.forEach(function (layer) {
+        var line = node('tr');
+        line.appendChild(node('td', null, layer.id));
+        line.appendChild(node('td', null, bytes(layer.logical)));
+        line.appendChild(node('td', null, layer.parent ? layer.parent : 'the root'));
+        table.appendChild(line);
+      });
+      card.appendChild(table);
+    }
+    return card;
+  }
+
   // The week grid: one row per series, one cell per week, the cell's
   // intensity the week's value against the row's own maximum.
   function weekGrid(series, weeks) {
@@ -12301,6 +12750,7 @@
 
     calibration: el.panelCalibration,
     'second-brain': el.panelSecondBrain,
+    'workspace-history': el.panelWorkspaceHistory,
     bots: el.panelBots,
     vault: el.panelVault,
     settings: el.panelSettings
@@ -12391,6 +12841,10 @@
       },
       calibration: function () { paintCalibration(); readCalibration(true).then(paintCalibration); },
       'second-brain': function () { paintBrain(); readBrain(true).then(paintBrain); readPlugin(true); },
+      'workspace-history': function () {
+        paintWorkspaceHistory();
+        readWorkspaceHistory(true).then(paintWorkspaceHistory);
+      },
       vault: function () { paintVault(); readSettings(true).then(paintVault); },
       settings: function () { paintSettings(); readSettings(true).then(paintSettings); }
     };
@@ -13105,7 +13559,7 @@
   // Which surfaces are live today, and which are a later increment — the
   // rail says so rather than pretending every destination is built.
   var BUILT = ['chat', 'router', 'delegation', 'memory', 'skills', 'sessions', 'calibration',
-    'tower', 'second-brain', 'bots', 'vault', 'settings'];
+    'tower', 'second-brain', 'workspace-history', 'bots', 'vault', 'settings'];
 
   function markRail() {
     var which = (window.location.hash || '').replace(/^#\/?/, '');

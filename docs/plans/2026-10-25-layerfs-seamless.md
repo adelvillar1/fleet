@@ -248,7 +248,8 @@ proof: a run that needs **no environment at all**.
       lanes as providers (sem1/sys1/sdm1 via the registry), never as
       new machinery inside this increment.
       **Landed** — recorded below.
-- [ ] **C5 — the face, in the original's shape, under knowledge.**
+- [x] **C5 — the face, in the original's shape, under knowledge.**
+      **Landed** — recorded below.
       The face is **its own section under the GUI's `knowledge` group**
       — the fourth entry beside memory, skills, and second brain, the
       nav's four-groups-one-level shape untouched, named the way that
@@ -473,6 +474,38 @@ the durable home, and the gate's four commands by exit code.
   stored of 18,777,528 logical, dedupe 1.25553 — the stub's fixture is
   these captured bytes, not an invention. Gate: fmt 0, clippy 0, lib
   1549/0, integration 148/0.
+
+- **C5 — landed.** The section is the knowledge group's fourth entry
+  (route `workspace-history`, named by the house's own naming law —
+  `workspace` and `history` are both established terms here), the nav's
+  four-groups-one-level shape untouched, and the palette picks it up
+  from the one declaration the rail is built from. Four panes, all from
+  one document: **History** draws the DAG — main's trunk as the spine,
+  each child branch a lane forking from it, the merge edge drawn back
+  when the parent settled it, a commit's message/via/time/parents in
+  its tooltip; **Work** carries each child branch's session, outcome
+  and state (merged/open/idle, derived from main's own commits rather
+  than recorded twice) with the session's link into the work surface;
+  **Files** browses a branch's tree a page at a time through the CLI's
+  own listing, text-only the way a delegated child's reads are;
+  **Storage** draws the Store's figures as bars against the logical
+  size with the layers beside them. The Delegation panel's tree rows
+  carry each child's branch and click straight through. The section's
+  reads are `GET /api/workspace-history` and
+  `GET /api/workspace-history/files`, both composing the same
+  environment the arm's spawns use; the delegation document's branch
+  join reads the day's own rows once and walks the trees. Pinned at
+  three layers: the endpoint's named absence
+  (`the_workspace_history_reads_name_a_folder_with_no_project`), the
+  face's own build against the real app.js
+  (`theWorkspaceHistorySectionDrawsTheTreeItRead` — the rail's entry,
+  the DAG's commits and merge edges, the Work table's session and
+  state, the Files pane's branch tabs, the figure bars, and the
+  unregistered folder's named empty state), and the view model C4
+  pinned. One stub repair the new case forced: the harness's
+  `setAttribute` did not map `class` onto `className`, so every SVG the
+  face draws was invisible to a selector. Gate: fmt 0, clippy 0, lib
+  1549/0, integration 178/0, face 227 checks across 27 cases.
 
 ## Linked artifacts
 

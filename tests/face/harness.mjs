@@ -128,7 +128,14 @@ class El {
   get firstChild() { return this.children.length ? this.children[0] : null; }
   get firstElementChild() { return this.firstChild; }
   appendChild(child) { child.parentNode = this; this.children.push(child); return child; }
-  setAttribute(k, v) { this.attrs[k] = String(v); if (k === 'id') this.id = String(v); }
+  setAttribute(k, v) {
+    this.attrs[k] = String(v);
+    if (k === 'id') this.id = String(v);
+    // A real DOM maps the class attribute onto className, and SVG
+    // elements take their class through setAttribute — without this the
+    // plots the face draws are invisible to a selector.
+    if (k === 'class') this.className = String(v);
+  }
   getAttribute(k) { return this.attrs[k]; }
   removeAttribute(k) { delete this.attrs[k]; }
   addEventListener(kind, fn) { (this.listeners[kind] = this.listeners[kind] || []).push(fn); }
@@ -284,6 +291,23 @@ function boot(options) {
     }
     if (pathOnly === '/api/run') {
       return Promise.resolve({ status: 200, json: () => Promise.resolve({ type: 'run', accepted: true }) });
+    }
+    if (pathOnly === '/api/workspace-history') {
+      return Promise.resolve({
+        status: 200,
+        json: () => Promise.resolve(documents['workspace-history'] || {}),
+      });
+    }
+    if (pathOnly === '/api/workspace-history/files') {
+      return Promise.resolve({
+        status: 200,
+        json: () => Promise.resolve(documents['workspace-history/files'] || {
+          type: 'workspace-files',
+          branch: 'main',
+          path: '/',
+          items: [],
+        }),
+      });
     }
     return Promise.resolve({ status: 200, json: () => Promise.resolve(opts.reply || {}) });
   };
@@ -1910,6 +1934,109 @@ async function theStripsLinesOpenTheirRecord() {
 
 // --------------------------------------------------------------------- run
 
+
+// C5's face: the workspace-history section builds its four panes from
+// the substrate's own document — the DAG with main's trunk and the
+// child branch's fork and merge edges, the Work table's session link
+// and state, the Files pane's branch tabs, and the Store's figure
+// bars. An unregistered folder names itself instead of drawing an
+// empty tree.
+async function theWorkspaceHistorySectionDrawsTheTreeItRead() {
+  const doc = {
+    type: 'workspace-history',
+    registered: true,
+    folder: '/Users/owner/Projects/fleet',
+    project: 'fleet',
+    branches: [
+      {
+        name: 'main', head: 'aa11', forked_from: null, state: 'open', child: null,
+        commits: [{ id: '1244ee6601', message: 'fleet: merge subagent fleet-child-20261026t010000z-abc123', via: 'merge', time: 1792975007476, parents: 2 }],
+      },
+      {
+        name: 'fleet-child-20261026t010000z-abc123', head: 'cc33', forked_from: 'aa11',
+        state: 'merged',
+        child: { session: '20261026T010000Z-abc123', outcome: 'completed' },
+        commits: [{ id: '12e968660147', message: 'fleet: write_file', via: 'fs', time: 1792975010000, parents: 1 }],
+      },
+    ],
+    layers: [{ id: '323d354b0ca1', logical: 18777528, parent: null }],
+    storage: { logical: 18777528, canonical: 14955859, stored: 11229684, dedupe: 1.25553, compression: 1.331815 },
+    note: null,
+    refused: [],
+  };
+  const page = boot({
+    hash: '#/workspace-history',
+    documents: {
+      'workspace-history': doc,
+      'workspace-history/files': {
+        type: 'workspace-files', branch: 'fleet-child-202paceholder', path: '/', items: [],
+      },
+    },
+  });
+  await flush();
+  page.open();
+  await flush();
+
+  // The rail carries the destination under knowledge, beside its
+  // siblings — the fourth entry, not a fifth top-level group.
+  const knowledge = page.rows('.surfaces-section')
+    .filter((section) => section.dataset.group === 'knowledge');
+  check('the knowledge group carries workspace history', knowledge.length === 1,
+    String(knowledge.length));
+  if (knowledge.length === 1) {
+    // The section's own links: four entries, workspace history last.
+    const entries = page.rows('.surfaces-link')
+      .filter((link) => link.closest('.surfaces-section') === knowledge[0])
+      .map((link) => link.textContent.trim());
+    check('the entry is named workspace history beside its siblings',
+      entries.length === 4 && entries[3] === 'workspace history', entries.join(' | '));
+  }
+  // The surface announces itself once, above the cards.
+  const title = page.rows('.surface-title').map((n) => n.textContent.trim());
+  check('the section names itself workspace history', title.includes('Workspace history'), title.join(' | '));
+  // The DAG drew the trunk's commit, the child's lane, and the merge
+  // edge back to main — three edges and the head marker, by class.
+  const dag = page.rows('.dag-commit');
+  check('the dag draws every commit', dag.length === 2, String(dag.length));
+  check('the dag draws the merge edge',
+    page.rows('.dag-edge.is-merged').length === 2,
+    String(page.rows('.dag-edge.is-merged').length));
+  // The Work table: the child's session and its state, with the
+  // branch's own commits counted.
+  const workText = page.rows('.board-card').map((c) => c.textContent).join(' ');
+  check('the work pane names the child session',
+    workText.includes('20261026T010000Z-abc123'), workText.slice(0, 200));
+  check('the work pane names the merged state', /merged to main/.test(workText), workText.slice(0, 200));
+  // The Files pane's tabs: the branch the read picked is on.
+  const tabs = page.rows('.board-tab').map((t) => t.textContent.trim());
+  check('the files pane offers every branch',
+    tabs.length === 2 && tabs.includes('main'), tabs.join(' | '));
+  // The Store's figures: three bars against the logical size.
+  check('the store draws its three bars',
+    page.rows('.figure-bar').length === 3, String(page.rows('.figure-bar').length));
+  const stored = page.rows('.figure-bar-value').map((n) => n.textContent.trim());
+  check('the bars name the stored size', stored.includes('10.7 MB'), stored.join(' | '));
+  // The honest empty state: a folder with no project says so.
+  const empty = boot({
+    hash: '#/workspace-history',
+    documents: {
+      'workspace-history': {
+        type: 'workspace-history', registered: false, folder: '/tmp/elsewhere',
+        branches: [], layers: [], refused: [],
+        note: 'this folder has no LayerFS project — the first delegation here registers one',
+      },
+    },
+  });
+  await flush();
+  empty.open();
+  await flush();
+  check('the unregistered folder names its absence',
+    empty.rows('.board-empty').some((n) => /no LayerFS project/.test(n.textContent)),
+    empty.rows('.board-empty').map((n) => n.textContent.trim().slice(0, 60)).join(' | '));
+  check('the unregistered folder draws no dag',
+    empty.rows('.dag-commit').length === 0, String(empty.rows('.dag-commit').length));
+}
+
 const cases = [
   ['C1/C8 the list groups by attention and counts what the server counted', theListGroupsByAttentionAndCountsWhatTheServerCounted],
   ['C2 every state opens through one verb', everyStateOpensThroughOneVerb],
@@ -1937,6 +2064,7 @@ const cases = [
   ['C2 a thought row opens on a press', aThoughtRowOpensOnAPress],
   ['C3 a command row names what ran', aCommandRowNamesWhatRan],
   ['C4 the strip lines open their record', theStripsLinesOpenTheirRecord],
+  ['C5 the workspace-history section draws the tree it read', theWorkspaceHistorySectionDrawsTheTreeItRead],
 ];
 
 for (const [name, run] of cases) {

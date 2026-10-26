@@ -273,6 +273,26 @@ async fn serve_connection(
         }
         ("GET", "/api/memory") => write_reply(&mut stream, api(200, bridge.memory().await)).await,
         ("GET", "/api/skills") => write_reply(&mut stream, api(200, bridge.skills().await)).await,
+        // The workspace-history section's two reads: the tree itself,
+        // and the Files pane's one page of a branch. Both read the
+        // substrate through the same composed environment the arm
+        // spawns with, and both name an absence rather than answering
+        // an empty list that would read as "nothing here".
+        ("GET", "/api/workspace-history") => {
+            write_reply(&mut stream, api(200, bridge.workspace_history().await)).await
+        }
+        ("GET", "/api/workspace-history/files") => {
+            let branch = decode_query(&request.query, "branch");
+            let path = decode_query(&request.query, "path");
+            let page = decode_query(&request.query, "page")
+                .parse::<u32>()
+                .unwrap_or(0);
+            write_reply(
+                &mut stream,
+                api(200, bridge.workspace_files(&branch, &path, page).await),
+            )
+            .await
+        }
         // The pane's two reads. Both are contained to the working
         // directory by the bridge, and both refuse a credential file by
         // name — the browser can ask for a file now, which is exactly
@@ -2908,6 +2928,65 @@ mod tests {
         );
         assert!(!body.contains("api_key"), "{body}");
         let _ = std::fs::remove_dir_all(&corpus);
+    }
+
+    /// The workspace-history section's reads on a machine whose launch
+    /// folder has no LayerFS project: the document names the absence
+    /// and the Files read refuses by name — neither answers an empty
+    /// list that would read as "the tree has nothing in it". The
+    /// substrate's own absences (an unprovisioned machine, a CLI that
+    /// cannot answer) ride the same rule, pinned by the view's own
+    /// tests; what this endpoint test owns is the route and the shape.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_workspace_history_reads_name_a_folder_with_no_project() {
+        let home = router_home();
+        let (token, port) = launch_over(home, fresh_home()).await;
+        let reply = get(port, "/api/workspace-history", &token);
+        assert!(reply.starts_with("HTTP/1.1 200"), "{reply}");
+        let body = reply
+            .split("\r\n\r\n")
+            .nth(1)
+            .expect("a body past the head");
+        let document: serde_json::Value = serde_json::from_str(body).expect("a JSON document");
+        assert_eq!(document["type"], "workspace-history");
+        assert_eq!(document["registered"], false, "{document}");
+        assert!(
+            document["branches"]
+                .as_array()
+                .is_some_and(|branches| branches.is_empty()),
+            "{document}"
+        );
+        assert!(
+            document["refused"]
+                .as_array()
+                .is_some_and(|refused| refused.is_empty()),
+            "an unregistered folder is a named state, not a refused read: {document}"
+        );
+        let note = document["note"].as_str().unwrap_or_default();
+        assert!(note.contains("no LayerFS project"), "{document}");
+        // The Files pane's page: the same absence, named.
+        let files = get(
+            port,
+            "/api/workspace-history/files?branch=main&path=/",
+            &token,
+        );
+        assert!(files.starts_with("HTTP/1.1 200"), "{files}");
+        let body = files
+            .split("\r\n\r\n")
+            .nth(1)
+            .expect("a body past the head");
+        let document: serde_json::Value = serde_json::from_str(body).expect("a JSON document");
+        assert_eq!(document["type"], "workspace-files");
+        let refused = document["refused"].as_array().expect("the refusal");
+        assert!(!refused.is_empty(), "{document}");
+        assert!(
+            refused[0]
+                .as_str()
+                .unwrap_or_default()
+                .contains("no LayerFS project"),
+            "{document}"
+        );
+        assert!(!body.contains("api_key"), "{body}");
     }
 
     /// A fact edits through the substrate's own rewriter: the named

@@ -3739,6 +3739,10 @@ pre.drawer-code {
 }
 
 .tree-goal { fill: var(--dsw-alias-ink-secondary); font-family: var(--font-text); font-size: 9px; }
+/* The child's LayerFS branch, under its goal: the row's link into the
+   workspace-history section, drawn in the mono voice a branch name is
+   read in. */
+.tree-branch { fill: var(--dsw-alias-accent); font-family: var(--font-mono); font-size: 8px; }
 .graph-score { fill: var(--dsw-alias-ink-tertiary); font-family: var(--font-mono); font-size: 9px; }
 .graph-track { fill: var(--dsw-alias-hairline); }
 .graph-fill { fill: var(--dsw-alias-accent); }
@@ -6858,3 +6862,33 @@ body[data-work="collapsed"] .work-list { display: none; }
 }
 .strip-line[role="button"] { border-radius: 6px; }
 .strip-line[role="button"]:hover { background: var(--dsw-alias-surface); }
+
+/* --- the workspace-history DAG ---------------------------------------
+   The trunk's spine, each child branch's lane, and the two edges that
+   make a merge legible: the fork out and the merge back. The colors
+   are the surface's own — a merged lane reads ok, an open one reads
+   the idle tertiary — so the state is legible without a legend. */
+.dag-spine { stroke: var(--dsw-alias-hairline-strong); stroke-width: 1.5; }
+.dag-edge { fill: none; stroke: var(--dsw-alias-ink-tertiary); stroke-width: 1; }
+.dag-edge.is-merged { stroke: var(--dsw-alias-ok); }
+.dag-lane-name { fill: var(--dsw-alias-ink-secondary); font-family: var(--font-mono); font-size: 9.5px; }
+.dag-commit { cursor: pointer; }
+.dag-commit:hover .dag-commit-msg { fill: var(--dsw-alias-accent); }
+.dag-commit-id { fill: var(--dsw-alias-ink-tertiary); font-family: var(--font-mono); font-size: 9px; }
+.dag-commit-msg { fill: var(--dsw-alias-ink); font-family: var(--font-text); font-size: 10px; }
+.dag-commit-merge { fill: var(--dsw-alias-warn); font-family: var(--font-mono); font-size: 8.5px; }
+.dag-head-dot[data-state="merged"] { fill: var(--dsw-alias-ok); }
+.dag-head-dot[data-state="open"] { fill: var(--dsw-alias-accent); }
+.dag-head-dot[data-state="idle"] { fill: var(--dsw-alias-ink-tertiary); }
+.dag-empty { fill: var(--dsw-alias-ink-tertiary); font-size: 10px; }
+
+/* The Store's figures: three bars against the logical size, so the
+   dedupe and compression are read as a shape rather than as two
+   decimals. */
+.figure-bars { display: grid; gap: 7px; margin: 10px 0 4px; }
+.figure-bar { display: grid; grid-template-columns: 74px 1fr 76px; align-items: center; gap: 8px; }
+.figure-bar-name { font-family: var(--font-mono); font-size: 10px; color: var(--dsw-alias-ink-secondary); }
+.figure-bar-track { height: 8px; border-radius: 999px; background: var(--dsw-alias-surface); overflow: hidden; }
+.figure-bar-fill { display: block; height: 100%; border-radius: 999px; background: var(--dsw-alias-accent); }
+.figure-bar-value { font-family: var(--font-mono); font-size: 10px; color: var(--dsw-alias-ink); text-align: right; }
+.figure-bar-note { grid-column: 2 / 4; font-size: 9.5px; color: var(--dsw-alias-ink-tertiary); }

@@ -104,6 +104,15 @@ one line its last session left behind, with the decisions that need a
 person kept beside them. Fleet surfaces what the tool publishes and
 forwards its actions; it does not reimplement the tool.
 
+**Knowledge — workspace history.** The LayerFS substrate's tree as
+fleet's own history: main's trunk, every branch a delegated child
+worked at its fork point, the merge edges back, and the Store's figures
+behind them. Read the tree; open a branch's files; follow a commit to
+its branch; see which children merged back and which are still open —
+and from the Delegation panel, click a child's branch straight through.
+A machine that has not provisioned the substrate says so rather than
+drawing an empty tree.
+
 **System — bots.** The channels that carry work in from outside: who is
 paired, what they may do, whether the service is listening, and what
 they have asked for. Let a peer in — capability fixed at pairing, token

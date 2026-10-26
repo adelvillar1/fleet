@@ -225,6 +225,30 @@ for anything the owner already trusts.
 **State.** Complete as a read; the tool's derived state is what it
 shows, with its own freshness stamp.
 
+### Workspace history — *knowledge*
+
+**What it is.** The LayerFS substrate's tree, read as fleet's own
+history: main's trunk, every branch a delegated child worked at its
+fork point, the merge edges back, and the Store's figures behind them
+— logical, canonical, stored, dedupe, compression. Branches, commits,
+layers, storage; each child branch carries its session, its outcome
+and its merge state.
+
+**What you do.** Read the tree as it stands; open a branch's own files;
+follow a commit to the branch it belongs to; see which children merged
+back and which are still open. The Delegation panel's rows carry each
+child's branch and click straight through.
+
+**Why.** Isolation is fleet's property, not a substrate's: a delegated
+child's writes land on its own branch and nothing reaches the working
+tree until a merge is published. That history was invisible until now —
+this surface is where the owner reads what the isolation kept.
+
+**State.** Complete as a read. The tree is the substrate's own; a
+machine that has not provisioned, or a folder no delegation has
+registered, says so where the tree would be rather than drawing an
+empty one.
+
 ### Bots — *system*
 
 **What it is.** The channels that carry work in from outside: who is
