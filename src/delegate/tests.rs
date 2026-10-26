@@ -377,6 +377,70 @@ fn lane_reply(verdict: &str, confidence: f64) -> String {
     .to_string()
 }
 
+#[tokio::test]
+async fn the_delegate_beat_opens_the_shared_session_once() {
+    // C0's delegate half: the same LaneSession the routing beat
+    // walks — one implementation, not a second loop — pinned through
+    // the same counting seam: one open, one ask per row, one close.
+    let root = scratch("delegate-counting");
+    let home = std::env::temp_dir().join(format!(
+        "fleet-delegate-counting-home-{}-{}",
+        std::process::id(),
+        line!()
+    ));
+    std::fs::create_dir_all(&home).unwrap();
+    let logs = std::env::temp_dir().join(format!(
+        "fleet-delegate-counting-logs-{}-{}",
+        std::process::id(),
+        line!()
+    ));
+    let day = calib::today();
+    let rows: Vec<serde_json::Value> = (0..2)
+        .map(|index| {
+            let session = format!("delegate-counting-{index}");
+            let log = write_log(
+                &logs,
+                &session,
+                &[Record::Start {
+                    v: 1,
+                    model: "m".to_string(),
+                    created: "2026-10-14T11:59:00Z".to_string(),
+                    kind: None,
+                    parent: None,
+                    workspace: None,
+                }],
+            );
+            let _ = log;
+            delegation_value(&delegation_row(
+                &session,
+                "zai-coding-plan",
+                "read the router",
+                "served",
+            ))
+        })
+        .collect();
+    write_day(&root, &day, &rows);
+
+    let log = std::sync::Arc::new(std::sync::Mutex::new(crate::judge::CountingLog {
+        events: Vec::new(),
+        fail_open: false,
+    }));
+    let outcome = judge(JudgeRequest {
+        root: &root,
+        home: &home,
+        day: day.clone(),
+        dry_run: false,
+        lane: LaneSource::Counting(std::sync::Arc::clone(&log)),
+    })
+    .await;
+    let events = log.lock().unwrap().events.clone();
+    assert_eq!(events, vec!["open", "ask", "ask", "close"], "{events:?}");
+    assert_eq!(outcome.judged.len(), 2, "{:?}", outcome.refusals);
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&home);
+    let _ = std::fs::remove_dir_all(&logs);
+}
+
 /// One judge call over the scripted lane.
 async fn judge_over(
     home: &Path,

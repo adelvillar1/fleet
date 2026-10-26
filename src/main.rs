@@ -3479,7 +3479,7 @@ fn install_command(options: &cli::InstallOptions) -> ExitCode {
     // setup: verified on a provisioned machine, provisioned on a fresh
     // one, skipped by name with its provision when a prerequisite is
     // missing — the voice the lanes' phase speaks.
-    match fleet::install::layerfs_step(&home) {
+    match fleet::install::layerfs_step(&home, &mut std::io::stdout()) {
         fleet::install::LayerfsStep::Verified => {}
         fleet::install::LayerfsStep::Provisioned { home: layerfs_home } => {
             println!(
@@ -3490,6 +3490,10 @@ fn install_command(options: &cli::InstallOptions) -> ExitCode {
         fleet::install::LayerfsStep::Skipped { reason, provision } => {
             println!("fleet: install: layerfs: skipped \u{2014} {reason}; {provision}");
         }
+        // Never returned: `layerfs_step` resolves its own build
+        // internally — the chain runs, the world is re-read, the plan
+        // re-decides. The arm exists for exhaustiveness.
+        fleet::install::LayerfsStep::Build => {}
     }
     match fleet::cron::seed_missing(&home) {
         Ok(report) if !report.added.is_empty() || !report.reconciled.is_empty() => {
