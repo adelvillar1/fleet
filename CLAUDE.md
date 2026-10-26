@@ -147,7 +147,7 @@ Single branch `master` → `origin/master`. No staging/production split: solo to
 
 ## Session protocol
 
-warmup (this file → latest recap → active plans) → plan (`docs/plans/`) → build (run the gate locally) → recap (`docs/recaps/`, then `scripts/cache-sweep.sh` — the recap step ends by pruning stale build artifacts, because cargo never does: KI-279, 159 GiB of dead test binaries) → commit with explicit paths.
+warmup (this file → latest recap → active plans) → plan (`docs/plans/`) → build (run the gate locally) → recap (`docs/recaps/` — the ledger must be well-formed before the document is generated: `python3 scripts/ki_ledger.py docs/known-issues.md` reports zero problems, since a malformed row shifts its cells and misreports the open count; then `scripts/cache-sweep.sh`, the recap step's closing sweep, because cargo never prunes: KI-279, 159 GiB of dead test binaries) → commit with explicit paths.
 
 ## Ecosystem at a glance
 
