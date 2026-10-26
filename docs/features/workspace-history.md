@@ -88,11 +88,27 @@ that worked it.
 
 The arm resolves the project as override → env knob → the folder's
 registration → register-once, so a delegation launched in a registered
-folder needs no fact of its own. The bound is entry- and byte-shaped
-and mandatory — 2 GiB or 100,000 entries per registration — because the
-runtime's import walks every entry with no exclude, and a build tree is
-exactly what it refuses. Over-bound is the named fallback, never a
-partial import.
+folder needs no fact of its own. For a git repository the import
+carries what the repo DECLARES (`git ls-files` — the `.gitignore` is
+the owner's already-made decision), staged into a scratch dir and
+imported from there, so the fleet repo's 35 GB `target/` never counts;
+a non-git folder keeps the whole-tree walk, and the bound (2 GiB or
+100,000 entries) is the guard. The Workspace is the declared source
+tree: `.git` is not carried (a frozen snapshot would be worse than
+absent — git history stays the host checkout's job), untracked files
+are not carried, and an ignored `.env` can never enter the Store.
+
+## The merge comes home
+
+When a child's merge and publish land, the settle brings the child's
+work to the launch folder through the parent's own write path — one
+grouped approval in ask mode, the yes modes proceed. The spawn-time
+content hashes decide: a path the host moved since the fork is a named
+conflict (the file untouched, both versions kept — the branch's
+readable in the Files pane), and everything else applies. A refused
+merge applies nothing. A non-git folder's delta stays in the Store,
+named in the result; and the Store's view of untouched files ages until
+a delta re-import at spawn — the plan's own named residue.
 
 ## What is not here
 

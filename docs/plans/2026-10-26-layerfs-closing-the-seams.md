@@ -1,5 +1,9 @@
 # Closing the seams: what the import carries, where the work lands, what a new machine needs
 
+> **Status: COMPLETE** — C0–C3 landed 2026-10-26 (`beafd6f` C0,
+> `76a58f1` C1+C2, this commit C3). The live proofs and the substrate
+> findings are in the Status section below.
+
 The seamless plan (`2026-10-25-layerfs-seamless.md`, completed `00267a2`)
 delivered the substrate, the face, and the clean-environment proof — and
 its close-out's live run, plus this morning's measurements, put three
@@ -105,7 +109,8 @@ against the fork point, and dead already if the delegation knob is off.
       fake bundle and assert the recorded facts, the probe's call, and
       each named skip. The build's wall time is recorded in this plan
       when it first runs.
-- [ ] **C2 — settle applies the delta home.** After the Store merge and
+- [x] **C2 — settle applies the delta home.**
+      **Landed** — recorded below. After the Store merge and
       publish SUCCEED, the parent applies the child's changed paths to
       the host tree through the parent's own write path. The changed
       set is `branch diff_branches <forkedFrom> <child>` (one call,
@@ -131,7 +136,8 @@ against the fork point, and dead already if the delegation knob is off.
       a later increment adds a delta re-import at spawn. Correctness
       holds (a stale base can only conflict, never overwrite); the
       staleness is the named cost.
-- [ ] **C3 — close-out: the prevention guards, as tests.** The
+- [x] **C3 — close-out: the prevention guards, as tests.**
+      **Landed** — recorded below. The
       clean-environment live script is kept (`scripts/layerfs-live.sh` —
       the C6 proof, exit-coded) and runs green against the durable home
       with a delegation registered, isolated, settled AND applied home.
@@ -221,6 +227,62 @@ against the fork point, and dead already if the delegation knob is off.
   cache is this machine's next first-run record; this run reused the
   cached image layers.
 
+## Status
+
+- **C2 — landed, live-proven including the forced conflict.** The
+  settle's decision (`plan_home`) runs BEFORE the merge: the changed
+  set is `diff_branches main <child>` (the wire diffs Branches, and the
+  child's fork base is a Layer when main has never committed — the
+  plan's literal base-diff is not wire-addressable, recorded as a
+  refinement), and each candidate is read once from the child's branch
+  and classified by the spawn-time hashes: the child's version equals
+  the fork-time version — main moved, not the child — skipped; the host
+  equals the fork-time hash — applied; the host equals the child's
+  version — already home; anything else — HELD, named, untouched. The
+  apply is the arm's act after the settle: ONE grouped approval, then
+  the parent's own write path per path (`run_write_file`, the per-path
+  lock both rides). A refused merge applies nothing. Pinned by
+  `the_settle_classifies_the_home_apply_from_the_spawn_hashes` (the
+  child's change applied, the owner's edit held, main's movement
+  skipped) and `a_conflicted_merge_applies_nothing_home`; the arm's
+  apply end to end by
+  `a_settled_delegation_applies_the_merge_home`. **Live, on the real
+  tree, three rounds:** a settled child's stamped file landed home
+  through `--yes` (the attended mode the apply's grouped approval
+  needs — a headless run's ask mode correctly denies, nobody at the
+  seat); the child's edit carried the owner's post-fork line intact
+  (the fork base included it — the registration imports the folder as
+  it stands); and the forced conflict HELD: the owner rewrote
+  `report.txt` between fork and settle, and the verdict was `held at
+  conflict: report.txt — you changed it since the child forked, so
+  nothing was overwritten; the branch keeps both versions` — the host
+  file carries exactly the owner's rewrite. The round also caught a
+  driver defect live: `fs_write` parsed ANY JSON as success, including
+  a wire refusal — a refused write reported "wrote 8 bytes" while the
+  branch had no commit; refusals are named now.
+- **C3 — landed.** `scripts/layerfs-live.sh` is the kept clean-env
+  diagnostic (exit-coded: the doctor's substrate line, a fresh folder's
+  registered delegation, the Store's branches, the applied home) —
+  green, with one lesson folded in: the script's content carries the
+  run's stamp, because the wire's piece-compare answers no Commit for
+  identical bytes and a repeat run proved nothing but a no-op. The
+  scrubbed-env pins exist where the world changed under them: `run_on`
+  (the plain delegation harness) pins a scratch FLEET_HOME, the server
+  test pins its own absence, and the layerfs integration tests take
+  atomic ambient windows — the repository itself became registered
+  mid-plan, and no test's premise rides on the world it runs in. The
+  forcing record above is the motivating case's third proof. Docs ship
+  in the same increments: surfaces.md and the feature doc carry the
+  guarantee change (declared import, `.git` not carried, the merge
+  comes home, the hold), FUNCTIONAL's surface entry carries the
+  apply-home, and the install doc carries the build phase. **Substrate
+  findings the rounds surfaced, for the vendor conversation (not fleet
+  defects):** branches carry `head: None` after merges land on their
+  layers, and a publish of a merged integration branch can refuse
+  `NoCommit` — the work is on the branch (the face reads it), the
+  publish bookkeeping disagrees. Gate: fmt 0, clippy -D 0, lib 1555/0,
+  integration 149/0.
+
 ## Files to be touched
 
 `src/layerfs_tools.rs` (the manifest-carrying register: the git-declared
@@ -269,6 +331,8 @@ the standing substrate diagnostic; the live script joins it as the
 standing seam diagnostic.
 
 ### Status — 2026-10-26 (draft; measurements recorded, awaiting the word)
+
+*(Superseded by the completion status at the top of this section.)*
 
 The three gaps are measured, not estimated, and the measurements are in
 this file: the fleet repo's shape (35 GB / 228,916 entries, all

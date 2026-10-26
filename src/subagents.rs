@@ -2535,8 +2535,11 @@ fn apply_home(
     };
     let mut written = Vec::new();
     for path in &home.applied {
+        // The branch view's paths are root-absolute; the host's are
+        // relative — one path, two forms, and the read needs the view's.
+        let view = format!("/{}", path.trim_start_matches('/'));
         let version = gate
-            .fs_read(project, &report.branch, path, None)
+            .fs_read(project, &report.branch, &view, None)
             .ok()
             .and_then(|document| {
                 document

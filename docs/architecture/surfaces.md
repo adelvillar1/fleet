@@ -241,8 +241,12 @@ child's branch and click straight through.
 
 **Why.** Isolation is fleet's property, not a substrate's: a delegated
 child's writes land on its own branch and nothing reaches the working
-tree until a merge is published. That history was invisible until now —
-this surface is where the owner reads what the isolation kept.
+tree until the merge is settled — and then the settle brings the merged
+work home through the parent's own gated write path, holding any file
+the owner touched since the fork. The import carries what a git repo
+declares (its tracked files — the `.gitignore` is the owner's own
+decision), so a build tree never blocks a registration. This surface is
+where the owner reads what the isolation kept and what came home.
 
 **State.** Complete as a read. The tree is the substrate's own; a
 machine that has not provisioned, or a folder no delegation has

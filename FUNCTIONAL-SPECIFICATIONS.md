@@ -110,8 +110,11 @@ worked at its fork point, the merge edges back, and the Store's figures
 behind them. Read the tree; open a branch's files; follow a commit to
 its branch; see which children merged back and which are still open —
 and from the Delegation panel, click a child's branch straight through.
-A machine that has not provisioned the substrate says so rather than
-drawing an empty tree.
+A settled merge comes home through the parent's own gated write path,
+holding any file the owner touched since the fork; the import carries
+what a git repo declares (its tracked files), so a build tree never
+blocks a registration. A machine that has not provisioned the substrate
+says so rather than drawing an empty tree.
 
 **System — bots.** The channels that carry work in from outside: who is
 paired, what they may do, whether the service is listening, and what

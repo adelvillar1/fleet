@@ -1541,13 +1541,26 @@ impl Gate {
             CONTROL_BUDGET,
             Some(content),
         )?;
-        match serde_json::from_str::<serde_json::Value>(raw.stdout.trim()) {
-            Ok(value) => Ok(value),
-            Err(_) => Err(Error::Decode {
+        let value: serde_json::Value =
+            serde_json::from_str(raw.stdout.trim()).map_err(|_| Error::Decode {
                 call: "fs write".to_string(),
                 body: bounded(&raw.stdout),
-            }),
+            })?;
+        // The wire answers a refusal as JSON with a `code` — parsing it
+        // as success would report a write that never landed (the live
+        // seam's failure: "wrote 8 bytes" with no Commit on the
+        // branch).
+        if let Some(code) = value.get("code").and_then(|code| code.as_str()) {
+            let message = value
+                .get("message")
+                .and_then(|message| message.as_str())
+                .unwrap_or_default();
+            return Err(Error::Refused {
+                code: code.to_string(),
+                message: message.to_string(),
+            });
         }
+        Ok(value)
     }
 
     /// `fs edit <branch> <path> --old --new` — exactly-one-match,
@@ -2227,9 +2240,13 @@ fn plan_home(
         let Some(path) = item.get("path").and_then(|path| path.as_str()) else {
             continue;
         };
+        // The branch view's paths are root-absolute (`/live-proof.txt`);
+        // the host's and the snapshot's keys are relative
+        // (`live-proof.txt`).
+        let view = format!("/{}", path.trim_start_matches('/'));
         let path = path.trim_start_matches('/').to_string();
         let child_version = gate
-            .fs_read(&handle.project, &handle.branch, &path, None)
+            .fs_read(&handle.project, &handle.branch, &view, None)
             .ok();
         let child_hash = child_version
             .as_ref()
