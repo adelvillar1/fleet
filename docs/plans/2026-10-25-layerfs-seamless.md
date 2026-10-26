@@ -21,7 +21,17 @@ Branches and Sandboxes played in step with the run — and **History** —
 the project's commit tree (their demo draws main after 147 Commits
 with each lane's Branches forking and merging around it), its Files,
 and its Storage. Fleet has never had that view of anything; LayerFS
-makes it a first-class surface. Today running the
+makes it a first-class surface. Two more statements set the bar:
+**"it needs to feel as an integral part of fleet and not as a bolt on
+or an afterthought"** — because it solves a problem fleet has actually
+had — and **"it should be its own section under knowledge"** — the
+substrate gets its proper home in fleet's own structure, the way
+memory and skills have one. The test this plan is graded against: an
+owner who never hears the word LayerFS on the work surfaces still
+experiences the property (delegations are isolated; the state shows
+where they already look), AND finds the substrate properly housed
+under knowledge, named like every other subsystem — never sprinkled,
+never a bolted-on page. Today running the
 feature means seven shell exports, a checkout and CLI parked in
 `/tmp` (which macOS purges), a home inside the repo's `tmp/`, a
 scratch project, and knowledge that `start_init` exists. Every one of
@@ -95,6 +105,36 @@ boundary intact, and the reason and the next step ride one notice —
 swallowing a `target/` silently would be the opposite of seamless.
 Registration is keyed on the canonical path, so a symlinked visit
 registers once.
+
+**Integral by construction, not beside the product.** Four
+placements make the property feel native:
+
+- **The default behavior IS fleet's.** An isolated delegation is
+  what a delegation does when the machine can hold one (C2) — not a
+  mode the owner turns on, not a "LayerFS session." When the machine
+  cannot, the delegation runs as it always has and the ONE notice
+  reads as a machine property ("this machine has no LayerFS
+  substrate"), the way lanes name themselves absent.
+- **The existing surfaces carry the state.** The Delegation
+  destination's rows grow each child's branch and merge status with a
+  click-through into the face; the subagent card in chat already
+  shows the workspace line; nothing about branches lives only on a
+  page the owner has to remember to visit. The face is where you see
+  the whole tree; the seams are where you incidentally notice it.
+- **Fleet's vocabulary is primary.** The face labels lanes by child
+  goal and session, branches second (the `fleet-child-…` fold decodes
+  the branch into the child, not the other way round); LayerFS nouns
+  (Branch, Commit, Layer) appear as the substrate's terms when
+  precision needs them — the way fleet mentions MCP or SQLite: how it
+  works, not what it is.
+- **The docs tell fleet's story.** The README's delegation bullet and
+  FUNCTIONAL's delegation surface grow isolation as a property of
+  fleet (the lanes' voice: what fleet does, substrate named), never a
+  section titled "LayerFS integration"; the HOW has its own proper
+  home — `docs/features/layerfs.md` beside its siblings — under
+  knowledge's documentation, and install/doctor present the substrate
+  as one more layer of the machine, in the same table and voice as
+  the roster, the ledger, and MCP.
 
 **The lanes are the providers — for everything the seam or the face
 asks of them.** The owner's standing rule, written where the gate can
@@ -186,10 +226,13 @@ proof: a run that needs **no environment at all**.
       concurrent runs (the config writer's lock), canonical-path
       keyed, and pinned by integration tests over the stub CLI —
       including the bound's refusal shape.
-- [ ] **C3 — the machine step and the seven facts.** `fleet install
-      --layerfs` provisions idempotently (verify → bundle/image →
-      home → worker → record) and names-with-commands whatever it
-      cannot do; `fleet doctor` checks all seven facts with the fix
+- [ ] **C3 — the machine step and the seven facts.** `fleet install`
+      provisions the substrate as a **standard phase of the machine's
+      own setup** — not an opt-in feature flag: idempotent (verify →
+      bundle/image → home → worker → record), skipped by name with
+      its provision commands when a prerequisite is missing, in the
+      same voice as the lanes' phase (C0's numbers set what the phase
+      builds unattended); `fleet doctor` checks all seven facts with the fix
       on each failure, hermetically pinned like the rest of its
       evaluators; the CLAUDE.local recipe collapses to the one
       command.
@@ -204,20 +247,28 @@ proof: a run that needs **no environment at all**.
       ask for — matching, ranking, labeling — arrives through the
       lanes as providers (sem1/sys1/sdm1 via the registry), never as
       new machinery inside this increment.
-- [ ] **C5 — the face, in the original's shape.** The new GUI
-      destination with **History** (the DAG: main trunk, branches at
-      their fork points, commits with merge links and messages,
-      click-through commits), **Work** (per-child lanes against the
-      tree, replayed with the session, sandbox/workspace state), the
-      **Files** browser, and the **Storage** figures — genuinely
-      visual, refreshable, honest empty states; `docs/architecture/
-      surfaces.md` gains the destination and FUNCTIONAL's surface list
-      ships with it (the docs gate's own rules); the endpoint's JSON
-      is pinned by Rust tests over the stub reads — and any
-      judgment, semantic, or composed support the face offers
-      (labeling a lane's work, explaining a change through blend1)
-      names its lane as the provider instead of growing a model-free
-      imitation here.
+- [ ] **C5 — the face, in the original's shape, under knowledge.**
+      The face is **its own section under the GUI's `knowledge` group**
+      — the fourth entry beside memory, skills, and second brain, the
+      nav's four-groups-one-level shape untouched, named the way that
+      group's siblings are (the subsystem's own name, `layerfs`, the
+      same way the section named `memory` names the memory system) —
+      not a fifth top-level destination bolted beside the rest. Its
+      panes: **History** (the DAG: main trunk, branches at their fork
+      points, commits with merge links and messages, click-through
+      commits), **Work** (per-child lanes against the tree, replayed
+      with the session, sandbox/workspace state), the **Files**
+      browser, and the **Storage** figures — genuinely visual,
+      refreshable, honest empty states; `docs/architecture/
+      surfaces.md` gains `### LayerFS — *knowledge*` beside its
+      siblings' sections and FUNCTIONAL's surface list ships with it
+      (the docs gate's own rules); the endpoint's JSON is pinned by
+      Rust tests over the stub reads — and any judgment, semantic, or
+      composed support the face offers (labeling a lane's work,
+      explaining a change through blend1) names its lane as the
+      provider instead of growing a model-free imitation here, while
+      the Delegation destination's rows carry each child's branch and
+      merge state with the click-through into this section.
 - [ ] **C6 — close-out: the no-manual-steps proof.** A live run with
       a clean environment (no LAYERFS_* in the process env) registers
       a fresh folder and completes a delegation end to end, recorded
@@ -238,13 +289,16 @@ writer) · `src/subagents.rs` (resolve the project from the folder
 instead of the env; the named-fallback path) ·
 `src/layerfs_view.rs` (new: the tree/work reads, the view model, and
 the child↔branch join) · `src/gui/assets/app.js` + the GUI's
-endpoint surface (the destination) · `docs/architecture/surfaces.md`
-(the twelfth destination) · `src/install.rs` +
+endpoint surface (the knowledge-group section) · `docs/architecture/surfaces.md`
+(the knowledge family's new `### LayerFS — *knowledge*` section) · `src/install.rs` +
 `src/cli.rs` (the `--layerfs` phase) · `src/doctor.rs` +
 `src/main.rs` (the seven checks; the durable home's path resolves
 through `src/home.rs`'s own root) · `scripts/layerfs-probe.sh` (kept as the diagnostic; gains the
 derived-env mode so it validates what fleet will actually pass) ·
 `CLAUDE.local.md` (the recipe shrinks to one line) ·
+`docs/features/layerfs.md` (new: the HOW, beside its feature-doc
+siblings) + `README.md`'s delegation bullet (isolation as fleet's
+property, substrate in the lanes' voice) ·
 `FUNCTIONAL-SPECIFICATIONS.md` + `TECHNICAL-DOCUMENTATION.md` (the
 experience and the runbook) · `docs/known-issues.md` (whatever C0
 opens).
