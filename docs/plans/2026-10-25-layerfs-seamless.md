@@ -5,15 +5,23 @@ updated: 2026-10-25
 slug: layerfs-seamless
 ---
 
-# LayerFS, seamlessly: no manual steps, new and existing projects
+# LayerFS in fleet, seamlessly: no manual steps on new and existing projects, plus the original's Work and History face
 
 ## Context
 
-Two owner statements set the bar: the capability is proven (the two
+Three owner statements set the bar: the capability is proven (the two
 completed LayerFS plans — provisioned wire, cadence, children working
-through branches), but **"this is not a seamless experience"** and
+through branches), but **"this is not a seamless experience"**,
 **"what I need is [a] plan to seamlessly use layerfs on new and
-existing projects, no manual steps on my part."** Today running the
+existing projects, no manual steps on my part"**, and **"visualizations
+from the original layerfs need to be part of the plan as well."** The
+original's face is the dsh-layerfs plugin's two tabs, and they are
+this plan's scope, not a follow-up: **Work** — the agents' terminals,
+Branches and Sandboxes played in step with the run — and **History** —
+the project's commit tree (their demo draws main after 147 Commits
+with each lane's Branches forking and merging around it), its Files,
+and its Storage. Fleet has never had that view of anything; LayerFS
+makes it a first-class surface. Today running the
 feature means seven shell exports, a checkout and CLI parked in
 `/tmp` (which macOS purges), a home inside the repo's `tmp/`, a
 scratch project, and knowledge that `start_init` exists. Every one of
@@ -88,6 +96,38 @@ swallowing a `target/` silently would be the opposite of seamless.
 Registration is keyed on the canonical path, so a symlinked visit
 registers once.
 
+**The face, in dsh's shape, on fleet's console.** One new GUI
+destination carrying the two panes the original shipped, with
+UX-is-co-equal's bar (genuinely visual — an actual graph, not a
+table; the surface and its docs land with the increment that builds
+it):
+
+- **History** — the branch/commit DAG over the reads this session
+  reconciled: branch rows (`base`, `head`, `forkedFrom`) give the
+  fork points; per-branch commit rows (`parent`, `secondParent`,
+  `via`, `message`, `time`, per-commit byte figures) give the links,
+  merge events, and labels; `main`'s trunk — not CLI-reachable
+  (`list_commits main` answers `NoSuchBranch`) — comes from the
+  backend package that already ships inside the sealed bundle
+  (`get_history`), spawned through the same composed environment as
+  the CLI. A **Files** browser rides the existing `fs list`/`fs read`
+  verbs (pick a branch, walk it), and **Storage** comes from the
+  backend's `get_storage` (logical/canonical/stored, the dedup
+  ratios the benchmarks quote).
+- **Work** — the played-in-step half from fleet's OWN records, which
+  already carry everything dsh had to add machinery for: the
+  delegation rows (branch ids join back to children through the
+  `fleet-child-<session>` fold), the subagent results' workspace
+  blocks, the session log's command rows — each child's lane drawn
+  against the tree, replayed with the session the way the chat
+  destination already replays turns. Sandbox/workspace state
+  (`project list_sandboxes`, `sandbox list_workspaces`) is one more
+  CLI read.
+
+The reads and the render are separate increments: the data seam is
+stub-pinned like the driver; the destination is endpoint-tested and
+verified live at close-out.
+
 **Sequencing: measure the real cost before the automation.** C0
 initializes one real repository of representative size through the
 runtime, recording the wall time, the volume size, and exactly what
@@ -130,14 +170,34 @@ proof: a run that needs **no environment at all**.
       on each failure, hermetically pinned like the rest of its
       evaluators; the CLAUDE.local recipe collapses to the one
       command.
-- [ ] **C4 — close-out: the no-manual-steps proof.** A live run with
+- [ ] **C4 — the face's reads.** The tree data seam: the CLI reads
+      (branches, per-branch commits, sandboxes, workspaces, fs) and a
+      backend reader — `node <bundle>/api/...` through the same
+      composed environment — for `get_history` and `get_storage`,
+      shaped into one view model the endpoint serves; the
+      child-session ↔ branch join via the `fleet-child-` fold; every
+      read stub-pinned (including a backend-script failure as a named
+      absence on the view, never an empty lie).
+- [ ] **C5 — the face, in the original's shape.** The new GUI
+      destination with **History** (the DAG: main trunk, branches at
+      their fork points, commits with merge links and messages,
+      click-through commits), **Work** (per-child lanes against the
+      tree, replayed with the session, sandbox/workspace state), the
+      **Files** browser, and the **Storage** figures — genuinely
+      visual, refreshable, honest empty states; `docs/architecture/
+      surfaces.md` gains the destination and FUNCTIONAL's surface list
+      ships with it (the docs gate's own rules); the endpoint's JSON
+      is pinned by Rust tests over the stub reads.
+- [ ] **C6 — close-out: the no-manual-steps proof.** A live run with
       a clean environment (no LAYERFS_* in the process env) registers
       a fresh folder and completes a delegation end to end, recorded
       here with its timings; the probe runs green against the durable
-      home; the full gate green by exit code; docs
-      (FUNCTIONAL/TECHNICAL surfaces and the doctor section) match
-      the shipped behavior; status updates in the same commit that
-      lands the work.
+      home; the destination renders THAT run's tree and lanes live
+      (endpoint answers against the real reads, verified by curl
+      against the running face); the full gate green by exit code;
+      docs (FUNCTIONAL/TECHNICAL surfaces, surfaces.md, the doctor
+      section) match the shipped behavior; status updates in the same
+      commit that lands the work.
 
 ## Files to be touched
 
@@ -145,10 +205,14 @@ proof: a run that needs **no environment at all**.
 resolution, the CLI path from the bundle) · `<FLEET_HOME>` config via
 `src/settings.rs` (the machine facts and the folder→project map, one
 writer) · `src/subagents.rs` (resolve the project from the folder
-instead of the env; the named-fallback path) · `src/install.rs` +
+instead of the env; the named-fallback path) ·
+`src/layerfs_view.rs` (new: the tree/work reads, the view model, and
+the child↔branch join) · `src/gui/assets/app.js` + the GUI's
+endpoint surface (the destination) · `docs/architecture/surfaces.md`
+(the twelfth destination) · `src/install.rs` +
 `src/cli.rs` (the `--layerfs` phase) · `src/doctor.rs` +
 `src/main.rs` (the seven checks; the durable home's path resolves
-through `src/home.rs`'s own root) · · `scripts/layerfs-probe.sh` (kept as the diagnostic; gains the
+through `src/home.rs`'s own root) · `scripts/layerfs-probe.sh` (kept as the diagnostic; gains the
 derived-env mode so it validates what fleet will actually pass) ·
 `CLAUDE.local.md` (the recipe shrinks to one line) ·
 `FUNCTIONAL-SPECIFICATIONS.md` + `TECHNICAL-DOCUMENTATION.md` (the
@@ -157,13 +221,13 @@ opens).
 
 ## Out of scope
 
-- **The LayerFS History/Work face** — the visualization the owner
-  also asked for, deferred behind seamlessness and measured this
-  session ready for its own plan (branch rows carry
-  `base/head/forkedFrom`, commit rows carry `parent/secondParent/via`
-  — a full DAG; `main`'s trunk is not CLI-reachable —
-  `list_commits main` answers `NoSuchBranch` — so the trunk comes
-  from the backend package inside the bundle).
+- **Live process streaming and the sandbox terminal panes** — the
+  original's Work tab also showed running processes live
+  (`@layerfs/backend`'s process API); fleet's face shows the recorded
+  lanes and current sandbox/workspace state, and the live-process
+  surface is its own later increment.
+- **A trajectory-style alternative rendering** (the magpie plugin's
+  bough/badge page) — the dsh tabs are the reference the owner named.
 - **`apply_patch` and the other named refusals** of the seam plan —
   unchanged.
 - **Auto-rebuilds of the bundle** — install builds on demand; a
@@ -191,5 +255,9 @@ the durable home, and the gate's four commands by exit code.
 - The provision recipe, live numbers, and env facts this session
   measured — collapsed into this plan's Context and C1 rather than
   re-derived.
+- dsh-layerfs (<https://github.com/Ephemeral-AI-Lab/dsh-layerfs>) —
+  the original's face itself: the Work and History tabs' content and
+  the recorded-run demos (Wayfare's 147-commit tree) that define
+  what this plan's destination owes the owner.
 - The `fleet install --lanes` phase — the precedent for a heavy
   optional machine step that names what it cannot build.
