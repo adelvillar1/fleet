@@ -1735,12 +1735,36 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
     // byte-identical to the one fleet always had (the plan's C3). A
     // knob set wrong is a named refusal here, before a route judgment
     // or a child session is spent on it, the way a bad role's is.
+    // The project the delegation works in: the test's thread-local
+    // override, the env knob (kept for operators), then the folder's
+    // registration — C1 reads the machine's map, C2 writes it on a
+    // miss. A registered folder needs no fact of its own: this is
+    // what makes the feature zero-step for the owner.
     let layerfs_project = match crate::layerfs_tools::project_name() {
-        Ok(project) => project,
+        Ok(Some(project)) => Some(project),
+        Ok(None) => std::env::current_dir()
+            .ok()
+            .and_then(|folder| crate::layerfs_tools::registration(&folder))
+            .map(|registration| registration.name.clone()),
         Err(reason) => {
             return SubagentResult::refused(format!("the delegated-workspaces knob: {reason}"))
         }
     };
+    // The machine's facts, applied once into the process: endpoint,
+    // daemon, image, store path — the seven manual exports retire. A
+    // test's `FLEET_LAYERFS_BIN` override carries its own
+    // environment, so the composition is skipped for it.
+    if std::env::var_os(crate::layerfs_tools::CLI_ENV)
+        .filter(|path| !path.is_empty())
+        .is_none()
+    {
+        if let Ok(machine) = crate::layerfs_tools::machine() {
+            let registration = std::env::current_dir()
+                .ok()
+                .and_then(|folder| crate::layerfs_tools::registration(&folder));
+            crate::layerfs_tools::apply_env(machine, registration);
+        }
+    }
     // The overlay rides the child's system prompt beside the compiled-in
     // one, delimited so the child knows what is standing instruction
     // for this delegation's role and what is the harness prompt.

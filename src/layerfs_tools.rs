@@ -31,7 +31,7 @@
 
 use std::ffi::OsString;
 use std::fmt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
@@ -187,6 +187,140 @@ fn validated(name: String) -> Result<Option<String>, String> {
             "{PROJECT_ENV} names `{name}`, which is not a LayerFS project name — 1 to 63 \
              lowercase letters, digits, `_`, `-` or `.`, starting and ending alphanumeric"
         ))
+    }
+}
+
+/// The machine's LayerFS substrate facts, recorded by `fleet install`
+/// under `<FLEET_HOME>/config.json`'s `layerfs` object: where the
+/// LayerFS home lives, which sealed bundle carries the CLI, the
+/// daemon and the worker, which runtime image the Sandboxes run. One
+/// resolution per process. A machine that has none gets the named
+/// absence with the provision command (the install phase's voice),
+/// never a guess.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Machine {
+    pub home: PathBuf,
+    pub bundle: PathBuf,
+    pub image: String,
+}
+
+/// One folder's registration — the name its LayerFS project answers
+/// to and the Store that project installed. Written by registration
+/// (the seamless plan's C2), read by the arm so a run launched in
+/// that folder needs no fact of its own.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Registration {
+    pub name: String,
+    pub store: PathBuf,
+}
+
+/// The machine's facts, read once per process from `<FLEET_HOME>`'s
+/// config. The named absence says what to run, the way a lane's
+/// absence names its home.
+pub fn machine() -> Result<&'static Machine, String> {
+    static MACHINE: std::sync::OnceLock<Result<Machine, String>> = std::sync::OnceLock::new();
+    MACHINE
+        .get_or_init(read_machine)
+        .as_ref()
+        .map_err(|reason| reason.clone())
+}
+
+fn read_machine() -> Result<Machine, String> {
+    let home = crate::home::fleet_home(
+        std::env::var("FLEET_HOME").ok().as_deref(),
+        std::env::var("HOME").ok().as_deref(),
+    )?;
+    let config = std::fs::read_to_string(home.join("config.json")).map_err(|_| {
+        "no <FLEET_HOME>/config.json — `fleet install` provisions the LayerFS substrate".to_string()
+    })?;
+    let document: serde_json::Value = serde_json::from_str(&config)
+        .map_err(|error| format!("config.json is not JSON: {error}"))?;
+    let layerfs = document.get("layerfs").ok_or_else(|| {
+        "config.json carries no `layerfs` section — `fleet install` provisions the substrate"
+            .to_string()
+    })?;
+    let text = |key: &str| {
+        layerfs
+            .get(key)
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .ok_or_else(|| format!("the `layerfs.{key}` fact is missing — re-run `fleet install`"))
+    };
+    Ok(Machine {
+        home: PathBuf::from(text("home")?),
+        bundle: PathBuf::from(text("bundle")?),
+        image: text("image")?,
+    })
+}
+
+/// Every folder the machine has registered, read once per process
+/// from the same config section's `projects` map (keyed by the
+/// folder's canonical path).
+pub fn registrations() -> &'static [(String, Registration)] {
+    static REGISTRATIONS: std::sync::OnceLock<Vec<(String, Registration)>> =
+        std::sync::OnceLock::new();
+    REGISTRATIONS.get_or_init(|| {
+        let Ok(machine_home) = crate::home::fleet_home(
+            std::env::var("FLEET_HOME").ok().as_deref(),
+            std::env::var("HOME").ok().as_deref(),
+        ) else {
+            return Vec::new();
+        };
+        let Ok(document) = serde_json::from_str::<serde_json::Value>(
+            &std::fs::read_to_string(machine_home.join("config.json")).unwrap_or_default(),
+        ) else {
+            return Vec::new();
+        };
+        let Some(projects) = document
+            .get("layerfs")
+            .and_then(|layerfs| layerfs.get("projects"))
+            .and_then(|projects| projects.as_object())
+        else {
+            return Vec::new();
+        };
+        projects
+            .iter()
+            .filter_map(|(folder, record)| {
+                let name = record.get("name")?.as_str()?.to_string();
+                let store = record.get("store")?.as_str().map(PathBuf::from)?;
+                Some((folder.clone(), Registration { name, store }))
+            })
+            .collect()
+    })
+}
+
+/// One folder's registration, matched on the canonical path (a
+/// symlinked visit registers once, not twice).
+pub fn registration(folder: &std::path::Path) -> Option<&'static Registration> {
+    let canonical = folder
+        .canonicalize()
+        .unwrap_or_else(|_| folder.to_path_buf());
+    registrations()
+        .iter()
+        .find(|(path, _)| Path::new(path) == &canonical)
+        .map(|(_, registration)| registration)
+}
+
+/// The composed environment the CLI needs — endpoint derived from
+/// the home, daemon from the bundle, image from the record, store
+/// path from the project's registration — set into the process once
+/// so every spawn inherits: the seven manual exports retire. Values
+/// are machine paths and a digest, never secrets.
+pub fn apply_env(machine: &Machine, registration: Option<&Registration>) {
+    let set = |name: &str, value: &std::path::Path| {
+        std::env::set_var(name, value.as_os_str());
+    };
+    set("LAYERFS_HOME", &machine.home);
+    set(
+        "LAYERFS_WORKER_ENDPOINT",
+        &machine.home.join("worker").join("endpoint.json"),
+    );
+    set("LAYERFS_IMAGE", Path::new(&machine.image));
+    set("LAYERFS_DAEMON", &machine.bundle.join("layerfs-daemon"));
+    if let Some(registration) = registration {
+        set("LAYERFS_STORE_PATH", &registration.store);
     }
 }
 
@@ -375,6 +509,10 @@ pub enum MergeOutcome {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Gate {
     cli: OsString,
+    /// The arguments that precede every call's own: empty for a
+    /// resolved executable, the bundle's CLI script for the
+    /// `node <bundle>/…/layerfs.js` production route.
+    prefix: Vec<String>,
 }
 
 impl Gate {
@@ -382,27 +520,53 @@ impl Gate {
     /// [`gate`] memoizes this once per process; doctor and the tests
     /// call it directly so a stub can be the CLI under test.
     pub fn resolve() -> Result<Gate, String> {
-        let cli = match std::env::var_os(CLI_ENV) {
-            Some(path) if !path.is_empty() => path,
-            _ => OsString::from("layerfs"),
+        // Two resolutions, one order: the `FLEET_LAYERFS_BIN` override
+        // (tests, and an operator pointing at a different checkout —
+        // it carries its own environment), else the machine's recorded
+        // facts, whose sealed bundle runs the CLI under `node` — the
+        // `/tmp` checkout retires here.
+        let (cli, prefix) = match std::env::var_os(CLI_ENV).filter(|path| !path.is_empty()) {
+            Some(path) => (path, Vec::new()),
+            None => {
+                let machine = machine()?;
+                let script = machine
+                    .bundle
+                    .join("api/agent/cli/src/layerfs.js")
+                    .to_string_lossy()
+                    .into_owned();
+                (OsString::from("node"), vec![script])
+            }
         };
-        let answered = run_version(&cli)?;
+        let answered = run_version(&cli, &prefix)?;
         if answered == SUPPORTED_WIRE {
-            Ok(Gate { cli })
+            Ok(Gate { cli, prefix })
         } else {
             Err(Error::Wire { answered }.to_string())
         }
+    }
+
+    /// One call's full argv: the prefix (the bundle's script) then the
+    /// call's own arguments.
+    fn argv<'a>(&'a self, args: &'a [&'a str]) -> Vec<&'a str> {
+        self.prefix
+            .iter()
+            .map(String::as_str)
+            .chain(args.iter().copied())
+            .collect()
     }
 
     /// A Gate over any executable, for the surfaces' tests: nothing
     /// resolves, nothing is spawned — the caller names the CLI.
     #[cfg(test)]
     pub fn for_test(cli: OsString) -> Gate {
-        Gate { cli }
+        Gate {
+            cli,
+            prefix: Vec::new(),
+        }
     }
 
     fn call(&self, call: &str, args: &[&str]) -> Result<serde_json::Value, Error> {
-        let body = spawn(&self.cli, call, args, CONTROL_BUDGET)?;
+        let body = spawn(&self.cli, call, &self.argv(args), CONTROL_BUDGET)?;
         match serde_json::from_str::<serde_json::Value>(body.trim()) {
             Ok(value) => Ok(value),
             Err(_) => Err(Error::Decode {
@@ -538,7 +702,13 @@ impl Gate {
         // The merge reads its own exit: a `Conflict` refusal is an
         // answer here, so it must reach this method's hands rather
         // than being mapped to an error inside the shared spawn.
-        let raw = spawn_with(&self.cli, "branch merge", &args, CONTROL_BUDGET, None)?;
+        let raw = spawn_with(
+            &self.cli,
+            "branch merge",
+            &self.argv(&args),
+            CONTROL_BUDGET,
+            None,
+        )?;
         if raw.success {
             return match serde_json::from_str::<serde_json::Value>(raw.stdout.trim()) {
                 Ok(value) => Ok(MergeOutcome::Merged(value)),
@@ -650,7 +820,7 @@ impl Gate {
         let raw = spawn_with(
             &self.cli,
             "fs write",
-            &[
+            &self.argv(&[
                 "--project",
                 project,
                 "fs",
@@ -659,7 +829,7 @@ impl Gate {
                 path,
                 "-m",
                 message,
-            ],
+            ]),
             CONTROL_BUDGET,
             Some(content),
         )?;
@@ -755,7 +925,7 @@ impl Gate {
         let raw = spawn_with(
             &self.cli,
             "workspace exec",
-            &["--project", project, "workspace", "exec", ws, command],
+            &self.argv(&["--project", project, "workspace", "exec", ws, command]),
             budget,
             None,
         )?;
@@ -850,16 +1020,17 @@ pub fn gate() -> &'static Result<Gate, String> {
 /// Read the CLI's wire version: the last `x.y.z` token of its first
 /// `--version` line. A CLI that answers nothing version-shaped is an
 /// absence, named.
-fn run_version(cli: &OsString) -> Result<String, String> {
-    let body =
-        spawn(cli, "--version", &["--version"], VERSION_BUDGET).map_err(|error| match error {
-            Error::Spawn(reason) => format!("the CLI could not be spawned: {reason}"),
-            Error::Timeout { .. } => format!(
-                "the CLI did not answer --version within {}s",
-                VERSION_BUDGET.as_secs()
-            ),
-            other => other.to_string(),
-        })?;
+fn run_version(cli: &OsString, prefix: &[String]) -> Result<String, String> {
+    let mut argv: Vec<&str> = prefix.iter().map(String::as_str).collect();
+    argv.push("--version");
+    let body = spawn(cli, "--version", &argv, VERSION_BUDGET).map_err(|error| match error {
+        Error::Spawn(reason) => format!("the CLI could not be spawned: {reason}"),
+        Error::Timeout { .. } => format!(
+            "the CLI did not answer --version within {}s",
+            VERSION_BUDGET.as_secs()
+        ),
+        other => other.to_string(),
+    })?;
     body.lines()
         .next()
         .unwrap_or_default()
@@ -1536,6 +1707,107 @@ esac
             error.contains("127") || error.contains("version"),
             "{error}"
         );
+    }
+
+    /// C1: the machine's facts, the folder map, and the composed
+    /// environment — read from `<FLEET_HOME>/config.json`'s `layerfs`
+    /// section, with every missing fact named by what provisions it.
+    #[test]
+    fn the_machine_facts_compose_the_clis_environment() {
+        let _lock = ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let home = std::env::temp_dir().join(format!(
+            "fleet-layerfs-machine-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        let layerfs_home = home.join("layerfs-home");
+        std::fs::create_dir_all(&layerfs_home).unwrap();
+        let bundle = home.join("bundle");
+        std::fs::create_dir_all(&bundle).unwrap();
+        let folder = home.join("repo");
+        std::fs::create_dir_all(&folder).unwrap();
+        // The registration map is keyed by the CANONICAL path — macOS's
+        // /var is a symlink to /private/var, and a registration written
+        // against the unresolved path would never match its own folder.
+        let folder = folder.canonicalize().unwrap();
+        let store = PathBuf::from("/var/lib/docker/volumes/v1/_data/global/store.sqlite");
+        std::fs::write(
+            home.join("config.json"),
+            serde_json::json!({
+                "layerfs": {
+                    "home": layerfs_home.display().to_string(),
+                    "bundle": bundle.display().to_string(),
+                    "image": "sha256:abc",
+                    "projects": {
+                        folder.display().to_string(): {
+                            "name": "shop",
+                            "store": store.display().to_string(),
+                        }
+                    }
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let _home_env = EnvGuard::set("FLEET_HOME", &home);
+        let facts = read_machine().expect("the facts parse");
+        assert_eq!(facts.home, layerfs_home);
+        assert_eq!(facts.bundle, bundle);
+        assert_eq!(facts.image, "sha256:abc");
+
+        // The folder's registration resolves; an unregistered folder
+        // is None, never a guess.
+        let reg = registration(&folder).expect("the registered folder");
+        assert_eq!(reg.name, "shop");
+        assert_eq!(reg.store, store);
+        assert!(registration(&home.join("elsewhere")).is_none());
+
+        // The composition: endpoint derived from the home, daemon from
+        // the bundle, image from the record, store path from the
+        // project's registration.
+        apply_env(&facts, Some(reg));
+        let read = |name: &str| std::env::var_os(name).map(|v| v.to_string_lossy().into_owned());
+        assert_eq!(
+            read("LAYERFS_HOME").as_deref(),
+            Some(layerfs_home.to_string_lossy().as_ref())
+        );
+        assert!(read("LAYERFS_WORKER_ENDPOINT")
+            .as_deref()
+            .is_some_and(|v| v.ends_with("worker/endpoint.json")));
+        assert_eq!(
+            read("LAYERFS_DAEMON").as_deref(),
+            Some(bundle.join("layerfs-daemon").to_string_lossy().as_ref())
+        );
+        assert_eq!(read("LAYERFS_IMAGE").as_deref(), Some("sha256:abc"));
+        assert_eq!(
+            read("LAYERFS_STORE_PATH").as_deref(),
+            Some(store.to_string_lossy().as_ref())
+        );
+        for name in [
+            "LAYERFS_HOME",
+            "LAYERFS_WORKER_ENDPOINT",
+            "LAYERFS_DAEMON",
+            "LAYERFS_IMAGE",
+            "LAYERFS_STORE_PATH",
+        ] {
+            std::env::remove_var(name);
+        }
+
+        // The named absence: no `layerfs` section says what to run —
+        // read through the uncached reader, since the process-level
+        // cache already holds this home's facts.
+        std::fs::write(home.join("config.json"), "{}").unwrap();
+        let reason = read_machine().err().expect("no section is named");
+        assert!(reason.contains("fleet install"), "{reason}");
+        std::fs::remove_dir_all(&home).ok();
     }
 
     /// C3's pin: the checkout identity names a 40-hex commit of the

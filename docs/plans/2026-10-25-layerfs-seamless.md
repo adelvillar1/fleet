@@ -201,7 +201,7 @@ proof: a run that needs **no environment at all**.
 
 ## Acceptance criteria
 
-- [ ] **C0 — a real project's cost, measured before auto-registration
+- [x] **C0 — a real project's cost, measured before auto-registration
       exists.** One representative real repository (not the scratch
       project) initialized through `@layerfs/runtime`'s `start_init`
       with wall time, entry/byte counts, and resulting volume size
@@ -209,7 +209,7 @@ proof: a run that needs **no environment at all**.
       tree present in the import names the bound's shape). The
       registration bound and this plan's Approach are set from those
       numbers, and the cleanup (volume + home entry) is recorded.
-- [ ] **C1 — the composed seam, no shell environment.** The driver
+- [x] **C1 — the composed seam, no shell environment.** The driver
       builds every LAYERFS_* value the CLI needs from the machine
       facts in `<FLEET_HOME>` plus a registration (endpoint, daemon,
       image, store path, home) and passes them to each spawn; the CLI
@@ -338,6 +338,45 @@ idempotence under the config lock); hermetic doctor evaluators; C0's
 measurement recorded against the real runtime; then the live close-out
 — clean-environment delegation on a fresh folder, the probe against
 the durable home, and the gate's four commands by exit code.
+
+## Status — 2026-10-25 (C0–C1 landed; C2–C6 to build)
+
+- **C0 — measured.** A real repository (zcode-router-kit: 1,236
+  entries / 946 files / 18.7 MB, `.git` included) initializes in
+  **2,511 ms** (scan 251 ms, import ~2.2 s), the volume 12 MB on
+  disk. The import swallows **everything present** — the listing
+  shows `.git/`, `node_modules/`, `.DS_Store` in the committed tree,
+  and the runtime's `scanSource` walks every entry with no exclude —
+  so the bound is entry/byte-shaped and mandatory: the fleet repo's
+  own 32 GB `target/` is exactly what it refuses. **The bound: 2 GiB
+  or 100,000 entries per registration** (both real-repo-scale
+  headroom and build-tree refusal), over-bound = the named fallback.
+- **C1 — landed, live-verified.** `Machine`/`Registration` +
+  `machine()`/`registration()/`apply_env()` read `<FLEET_HOME>/
+  config.json`'s `layerfs` section once per process and compose the
+  CLI's six values per spawn (endpoint from the home, daemon from the
+  bundle, image from the record, store path from the project's
+  registration) — the seven exports retire. `Gate::resolve` runs the
+  CLI from the **sealed bundle** under `node` (`FLEET_LAYERFS_BIN`
+  remains the test/operator override); the `/tmp` checkout is gone
+  from the runtime path. The arm resolves the project as
+  override → env knob → the folder's registration, so a registered
+  folder needs no fact of its own. Pinned by
+  `the_machine_facts_compose_the_clis_environment` (facts, the
+  canonical-path map, the composition, the named absence) and 16
+  pre-existing driver tests; the full lib suite is green (1540/0).
+- **The durable home, migrated.** `~/.fleet/layerfs-home` (0700) with
+  its worker started (1,397 ms) and both projects re-initialized
+  (probe 604 ms; kit 1,405 ms). The probe then ran the whole ladder
+  and lifecycle **exit 0 on the durable home**: fork 65 ms, sandbox
+  536 ms, mount 71 ms, exec 120 ms, write 74 ms, commit 70 ms,
+  unmount 71 ms, close 210 ms, two-clients 74 ms, idle-exit 121,137
+  ms, reclaim 470 ms reusing the number. One migration seam found
+  live: **sandbox container names are engine-global**
+  (`<prefix><project>-<n>`), so the retired home's still-running
+  sandbox held `layerfs-fleet-probe-1` and the new home's create
+  answered 409 until it was removed — C3's provision step must stop a
+  previous home's containers (or name them), never silently collide.
 
 ## Linked artifacts
 
