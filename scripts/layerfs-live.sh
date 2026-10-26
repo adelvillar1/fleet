@@ -143,5 +143,22 @@ grep -q "merge-fleet-child-" "$LOG" || {
 }
 say "— applied home: live-proof.txt —"
 
+# 5. the SECOND delegation sees the first one's work: the spawn sync
+#    carries the host's newer paths onto the fresh fork, so the child
+#    reads what the last delegation applied — the stale-base residue
+#    retired, repeatably.
+STAMP2=$(date -u +%FT%TZ)
+cd "$SRC" || exit 1
+"${CLEAN_ENV[@]}" "$BIN" run --yes \
+    "Delegate this to a subagent. The subagent's task: call read_file ONCE with path \
+live-proof.txt, then report the file's content verbatim. Nothing else." >> "$LOG" 2>&1 \
+    || { echo "layerfs-live: the second delegation failed (see $LOG)" >&2; exit 1; }
+grep -q "$STAMP" "$LOG" || {
+    echo "layerfs-live: the second child did not read the first one's work — \
+the fork base is stale" >&2
+    exit 1
+}
+say "— second child read the first one's work (sync at spawn) —"
+
 printf 'layerfs-live: ok — %s\n' "$LOG"
 exit 0

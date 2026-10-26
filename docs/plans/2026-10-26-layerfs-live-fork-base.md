@@ -1,5 +1,8 @@
 # The live fork base: the child sees the host as it stands
 
+> **Status: COMPLETE** — C0–C3 landed 2026-10-26 (this commit). The
+> residue is retired: the child's fork base is the host as it stands.
+
 The closing-the-seams plan completed with one residue it named itself:
 **the child's fork base is the frozen registration import.** A folder
 registers once; the Store's `main` holds the tree as it stood at that
@@ -67,7 +70,8 @@ owns.
 
 ## Acceptance criteria
 
-- [ ] **C0 — the delta measured, the tree-id trick proven.** On the
+- [x] **C0 — the delta measured, the tree-id trick proven.**
+      **Landed** — recorded below. On the
       fleet repo: the temp-index `git write-tree` (index copy,
       `read-tree HEAD`, `add -u`, `write-tree`) answers in
       milliseconds and changes iff tracked content changes; the
@@ -78,7 +82,8 @@ owns.
       registration's record grows the imported tree id, written at
       registration, read fresh at spawn. Nothing else in this plan
       freezes until these numbers exist.
-- [ ] **C1 — the fork base is the host as it stands.** At spawn, for a
+- [x] **C1 — the fork base is the host as it stands.**
+      **Landed** — recorded below. At spawn, for a
       git-registered folder: compute the current tree, diff against the
       recorded tree, and for each delta path carry the host's current
       content onto the child's branch (`fs write` for Added/Modified,
@@ -96,7 +101,8 @@ owns.
       and spawn — the child reads the post-change content; a
       main-newer case — the child reads main's version and the settle
       brings it home.
-- [ ] **C2 — the settle reconciles, and the publish retries.**
+- [x] **C2 — the settle reconciles, and the publish retries.**
+      **Landed** — recorded below.
       `merge_back` retries the publish ONCE after a short pause when it
       refuses `[NoCommit]` (the lagging-worker race the row named); a
       second refusal is surfaced exactly as today. The apply-home grows
@@ -107,7 +113,8 @@ owns.
       everything the owner did not touch this window. The result's
       notes name all three lists: the child's work applied, main's work
       reconciled, the owner's paths held.
-- [ ] **C3 — close-out: the residue retired, live.** The round that
+- [x] **C3 — close-out: the residue retired, live.**
+      **Landed** — recorded below. The round that
       failed during the last plan's forcing now passes: the owner edits
       a tracked file after registration, the delegation runs, and the
       child READS the post-edit content — the stale-base demonstration
@@ -158,7 +165,7 @@ round-three scenario, now passing), the main-newer reconciliation, the
 publish retry observed once in the wild or forced by a paused worker.
 The standing `scripts/layerfs-live.sh` runs green with the grown check.
 
-## Status — 2026-10-26 (draft; the residue live-proven, the remedy scoped, awaiting the word)
+## Status — 2026-10-26 (COMPLETE: C0–C3 landed)
 
 The three leftovers this plan closes are the ones its predecessor named
 on the way out: the delta re-import at spawn (demonstrated live in the
@@ -168,6 +175,44 @@ gap the C2 classification's skip arm opened, stated in that criterion).
 The machinery is measured where it was uncertain — the tree-id trick is
 git plumbing, the delta is a name-status diff, the apply side is the
 wire's own fs verbs. Awaited: the owner's word to start at C0.
+
+## Status
+
+- **C0 — measured.** The tree-id trick on the fleet repo: cold index
+  read 331 ms, warm `write-tree` 13–49 ms, the name-status diff exact
+  against a hand-made delta, the main-version compare one fs read per
+  delta candidate (60–120 ms measured in the live rounds). The
+  registration's record grew the imported tree id, read fresh at spawn.
+- **C1 — landed.** `worktree_tree` (temp-index copy, `add -u`,
+  `write-tree`) and `tree_delta` (`--name-status`, statuses folded to
+  A/M/D) beside the declared import; the registration's answer and the
+  config record carry the tree; `plan_sync` classifies each candidate —
+  main's version equals the recorded content: the host's change is
+  newer, carried; differs: main-newer, left for the settle. The fork
+  executes the plan before returning — `fs write` with the host's exact
+  bytes, `fs rm` for deletions — so the child's first turn sees the
+  host as it stands. Pinned by `the_spawn_sync_carries_the_hosts_
+  newer_paths` and `the_fork_executes_the_sync_before_the_child_runs`.
+  One defect caught by the pin: `recorded_content` read the tree from
+  the PROCESS's cwd — the object lives in the folder's own .git, and a
+  cat-file from another repo names nothing; the read runs in the
+  folder's repo now.
+- **C2 — landed.** `merge_back` retries the publish once after 400 ms
+  on a `[NoCommit]` refusal (the lagging-worker race KI-321's remedy
+  note named); a second refusal is surfaced exactly as before. The
+  apply-home grew the reconciliation: main-moved paths whose host hash
+  still equals the spawn hash are brought home in the same grouped
+  approval (main's versions read from main), and the result names all
+  three lists — `applied home: …`, `reconciled home: …`, `held at
+  conflict: …`.
+- **C3 — landed, live.** The standing `scripts/layerfs-live.sh` grew
+  the second-delegation check (the second child reads the first
+  delegation's stamped file — the sync at spawn, repeatable) and runs
+  green end to end. The retirement proof, live: a host edit AFTER
+  registration, the delegation's child READ the post-edit content —
+  the exact scenario that failed during the predecessor plan's
+  conflict forcing. Gate: fmt 0, clippy -D 0, lib 1557/0, integration
+  149/0.
 
 ## Linked artifacts
 

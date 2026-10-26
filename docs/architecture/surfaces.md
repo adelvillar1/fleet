@@ -245,7 +245,9 @@ tree until the merge is settled — and then the settle brings the merged
 work home through the parent's own gated write path, holding any file
 the owner touched since the fork. The import carries what a git repo
 declares (its tracked files — the `.gitignore` is the owner's own
-decision), so a build tree never blocks a registration. This surface is
+decision), so a build tree never blocks a registration, and each spawn
+syncs the host's newer tracked files onto the fresh fork — the child
+works from the folder as it stands, never a frozen import. This surface is
 where the owner reads what the isolation kept and what came home.
 
 **State.** Complete as a read. The tree is the substrate's own; a

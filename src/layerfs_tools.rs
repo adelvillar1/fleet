@@ -224,6 +224,10 @@ pub struct Machine {
 pub struct Registration {
     pub name: String,
     pub store: PathBuf,
+    /// The git tree id the declared import staged — the fork base's
+    /// provenance, the sync's diff anchor. `None` for a non-git
+    /// folder's whole-tree import: no tree, no sync, named once.
+    pub tree: Option<String>,
 }
 
 /// Where the LayerFS home lives: `<FLEET_HOME>/layerfs-home` — fleet's
@@ -324,7 +328,17 @@ pub fn read_registrations() -> Vec<(String, Registration)> {
         .filter_map(|(folder, record)| {
             let name = record.get("name")?.as_str()?.to_string();
             let store = record.get("store")?.as_str().map(PathBuf::from)?;
-            Some((folder.clone(), Registration { name, store }))
+            Some((
+                folder.clone(),
+                Registration {
+                    name,
+                    store,
+                    tree: record
+                        .get("tree")
+                        .and_then(|tree| tree.as_str())
+                        .map(str::to_string),
+                },
+            ))
         })
         .collect()
 }
@@ -429,7 +443,160 @@ fn host_hash(folder: &Path, path: &str) -> Option<String> {
     Some(format!("{:016x}", std::hash::Hasher::finish(&hasher)))
 }
 
-/// The Store's Docker volume, derived from the store path a
+/// The tracked worktree's content tree, via a temp index: copy the
+/// repo's index, `add -u` (updates tracked paths from the worktree,
+/// drops deletions), `write-tree`. Milliseconds warm, and the id
+/// changes iff tracked CONTENT changes — the sync's cheap anchor.
+/// `None` when the folder is not a git repository.
+pub fn worktree_tree(folder: &Path) -> Option<String> {
+    let git_dir = folder.join(".git");
+    let index_source = if git_dir.is_dir() {
+        git_dir.join("index")
+    } else {
+        // A worktree link's gitdir lives in the .git file; the sync is
+        // best-effort and its absence reads as "no tree".
+        return None;
+    };
+    let temp = std::env::temp_dir().join(format!(
+        "fleet-tree-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    std::fs::copy(&index_source, &temp).ok()?;
+    let run = |args: &[&str]| -> Result<String, String> {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(folder)
+            .args(args)
+            .env("GIT_INDEX_FILE", &temp)
+            .output()
+            .map_err(|error| format!("git {args:?}: {error}"))?;
+        if !output.status.success() {
+            return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    };
+    let refreshed = run(&["add", "-u"]);
+    let tree = run(&["write-tree"]);
+    let _ = std::fs::remove_file(&temp);
+    match (refreshed, tree) {
+        (_, Ok(tree)) if !tree.is_empty() => Some(tree),
+        (Err(reason), _) | (_, Err(reason)) => {
+            eprintln!("fleet: layerfs: the sync's tree read failed: {reason}");
+            None
+        }
+        _ => None,
+    }
+}
+
+/// The tracked delta between two trees: `(path, kind)` with the git
+/// statuses that matter to the sync — A (added on the host), M
+/// (modified), D (deleted).
+pub fn tree_delta(folder: &Path, from_tree: &str) -> Option<Vec<(String, char)>> {
+    let current = worktree_tree(folder)?;
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(folder)
+        .args(["diff", "--name-status", from_tree, &current])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let mut delta = Vec::new();
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        let mut parts = line.split('\t');
+        let Some(status) = parts.next() else {
+            continue;
+        };
+        let Some(path) = parts.next() else {
+            continue;
+        };
+        let kind = match status.chars().next() {
+            Some('A') => 'A',
+            Some('D') => 'D',
+            _ => 'M',
+        };
+        delta.push((path.to_string(), kind));
+    }
+    Some(delta)
+}
+
+/// The spawn sync's decision, from the git delta and main's versions:
+/// which delta paths to carry onto the fresh fork (the host's change is
+/// newer — main still holds the recorded version), and which are
+/// main-newer (another child's merged work the host hasn't received —
+/// skipped here, reconciled home by the settle). One fs read per
+/// candidate; the delta itself is the git diff.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SyncPlan {
+    /// Paths to carry onto the child's branch, with the host's kind.
+    pub to_child: Vec<(String, char)>,
+    /// Paths main moved (another child's merge): left for the settle's
+    /// reconciliation.
+    pub main_newer: Vec<String>,
+}
+
+/// Classify the delta. The recorded tree is what was imported; main's
+/// version per candidate decides the side:
+///   main == recorded — main is stale here, the host's change is
+///     newer: carry it onto the child;
+///   main != recorded — main moved: skip, the settle reconciles.
+pub fn plan_sync(
+    gate: &Gate,
+    project: &str,
+    folder: &Path,
+    recorded_tree: &str,
+) -> Option<SyncPlan> {
+    let delta = tree_delta(folder, recorded_tree)?;
+    let mut plan = SyncPlan {
+        to_child: Vec::new(),
+        main_newer: Vec::new(),
+    };
+    for (path, kind) in delta {
+        // main's version, read through the branch view's root.
+        let main_version = gate
+            .fs_read(project, "main", &format!("/{path}"), None)
+            .ok()
+            .and_then(|document| {
+                document
+                    .get("text")
+                    .and_then(|text| text.as_str())
+                    .map(str::to_string)
+            });
+        let recorded_version = recorded_content(folder, recorded_tree, &path);
+        let main_hash = main_version.as_deref().map(hash_text);
+        let recorded_hash = recorded_version.as_deref().map(hash_text);
+        if main_hash != recorded_hash {
+            plan.main_newer.push(path);
+        } else {
+            plan.to_child.push((path, kind));
+        }
+    }
+    Some(plan)
+}
+
+/// The recorded tree's content for one path — git's own object store,
+/// `None` when the tree lacks the path (an Added-on-the-host candidate).
+/// The read runs in the FOLDER's repository: the tree object lives in
+/// its own .git, and a cat-file from another cwd names nothing.
+fn recorded_content(folder: &Path, tree: &str, path: &str) -> Option<String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(folder)
+        .args(["cat-file", "blob", &format!("{tree}:{path}")])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+/// The Store's Docker volume, derived from the store path a/// The Store's Docker volume, derived from the store path a
 /// registration records: `/var/lib/docker/volumes/<name>/_data/global/
 /// store.sqlite` names the volume every Sandbox mounts. Empty when the
 /// path is not that shape — the wire refuses by name, which is the
@@ -981,9 +1148,14 @@ fn register_inner(
                 RegisterError::Failed("the register answer named no store".to_string())
             })?,
     );
+    // The imported tree, recorded with the registration: the fork
+    // base's provenance and the spawn sync's diff anchor. A non-git
+    // folder's whole-tree import has none (no tree, no sync).
+    let tree = worktree_tree(folder);
     let registration = Registration {
         name: name.to_string(),
         store,
+        tree,
     };
     record_registration(folder, &registration, &volume)?;
     Ok(registration)
@@ -1032,6 +1204,7 @@ fn record_registration(
             "name": registration.name,
             "volume": volume,
             "store": registration.store.to_string_lossy(),
+            "tree": registration.tree,
         }),
     );
     std::fs::write(
@@ -1084,6 +1257,45 @@ pub fn record_machine(home: &Path, bundle: &Path, image: &str) -> Result<(), Str
     .map_err(|error| format!("config.json could not be written: {error}"))
 }
 
+/// Advance the recorded tree to the host's current one — after an
+/// apply-home or a sync, main and the host agree on the touched paths,
+/// and the next spawn's delta diffs against what was actually
+/// reconciled. Fresh reads, the corpus lock, the explicit path.
+pub fn record_tree(folder: &Path) -> Result<(), String> {
+    let Some(tree) = worktree_tree(folder) else {
+        return Ok(()); // a non-git folder has no tree to record
+    };
+    let fleet_home = crate::home::fleet_home(
+        std::env::var("FLEET_HOME").ok().as_deref(),
+        std::env::var("HOME").ok().as_deref(),
+    )?;
+    let config = fleet_home.join("config.json");
+    let _guard = crate::filelock::FileLock::take(&crate::filelock::FileLock::beside(&config));
+    let canonical = folder
+        .canonicalize()
+        .unwrap_or_else(|_| folder.to_path_buf());
+    let mut document: serde_json::Value = std::fs::read_to_string(&config)
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+    let root = document
+        .as_object_mut()
+        .ok_or_else(|| "config.json is not an object".to_string())?;
+    if let Some(record) = root
+        .get_mut("layerfs")
+        .and_then(|layerfs| layerfs.get_mut("projects"))
+        .and_then(|projects| projects.as_object_mut())
+        .and_then(|projects| projects.get_mut(canonical.to_string_lossy().as_ref()))
+    {
+        record["tree"] = serde_json::json!(tree);
+    }
+    std::fs::write(
+        &config,
+        serde_json::to_string_pretty(&document).unwrap_or_default(),
+    )
+    .map_err(|error| format!("config.json could not be written: {error}"))
+}
+
 /// The context a [`FileAccess::LayerFs`] run works in — which
 /// project's which branch, in which sandbox. The child's whole
 /// filesystem identity in one value; the arm carries it, the dispatch
@@ -1102,6 +1314,11 @@ pub struct WorkspaceHandle {
     /// host side. `None` for the probe's direct sessions, which have
     /// no host to apply to.
     pub folder: Option<PathBuf>,
+    /// The spawn sync's plan, executed after the fork: the host's newer
+    /// paths carried onto the fresh branch, so the fork base is the
+    /// host AS IT STANDS. `None` for the probe's sessions and for
+    /// folders with no recorded tree.
+    pub sync: Option<SyncPlan>,
 }
 
 /// What one command answered: the exit code and streams the model
@@ -1453,6 +1670,17 @@ impl Gate {
             "branch diff_branches",
             &["--project", project, "branch", "diff_branches", from, to],
         )
+    }
+
+    /// `fs rm <branch> <path>` — a Deleted delta path carried onto the
+    /// child's branch.
+    pub fn fs_rm(
+        &self,
+        project: &str,
+        branch: &str,
+        path: &str,
+    ) -> Result<serde_json::Value, Error> {
+        self.call("fs rm", &["--project", project, "fs", "rm", branch, path])
     }
 
     pub fn list_branches(&self, project: &str) -> Result<serde_json::Value, Error> {
@@ -1942,6 +2170,10 @@ pub struct HomeApply {
     /// Paths the host moved since the fork: a named conflict, never
     /// overwritten.
     pub held: Vec<String>,
+    /// Paths main moved (another child's merge) and the host never
+    /// touched: brought home alongside the child's work, so the host
+    /// converges to main for everything the owner left alone.
+    pub reconciled: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -1988,6 +2220,7 @@ impl WorkspaceSession {
         branch: &str,
         digests: Option<std::collections::BTreeMap<String, String>>,
         folder: Option<PathBuf>,
+        sync: Option<SyncPlan>,
     ) -> Result<WorkspaceHandle, Error> {
         // The wire's name rule, checked before anything spawns: an
         // illegal branch is refused here, named, with no round trip —
@@ -2009,13 +2242,51 @@ impl WorkspaceSession {
                 })
             }
         };
-        Ok(WorkspaceHandle {
+        let handle = WorkspaceHandle {
             project: project.to_string(),
             branch: branch.to_string(),
             sandbox,
             digests,
             folder,
-        })
+            sync,
+        };
+        // The sync rides the fork: the host's newer paths are written
+        // onto the fresh branch BEFORE the child's first turn, so the
+        // fork base is the host as it stands. A carried path's failure
+        // is named in the sync note and the child still runs — the
+        // settle's digest check sees whatever landed.
+        if let Some(plan) = &handle.sync {
+            for (path, kind) in &plan.to_child {
+                let view = format!("/{path}");
+                match kind {
+                    'D' => {
+                        if let Err(error) = gate.fs_rm(&handle.project, &handle.branch, &view) {
+                            eprintln!("fleet: layerfs: sync: {path}: {error}");
+                        }
+                    }
+                    _ => {
+                        let Some(host_bytes) = handle
+                            .folder
+                            .as_ref()
+                            .and_then(|folder| std::fs::read(folder.join(path)).ok())
+                        else {
+                            eprintln!("fleet: layerfs: sync: {path}: the host file is gone");
+                            continue;
+                        };
+                        if let Err(error) = gate.fs_write(
+                            &handle.project,
+                            &handle.branch,
+                            &view,
+                            &host_bytes,
+                            "fleet: sync from host",
+                        ) {
+                            eprintln!("fleet: layerfs: sync: {path}: {error}");
+                        }
+                    }
+                }
+            }
+        }
+        Ok(handle)
     }
 
     /// The mounted lifecycle over a fresh handle — the C0/C2 shape
@@ -2023,7 +2294,7 @@ impl WorkspaceSession {
     /// `open_handle` + per-command mounts instead; both share the
     /// fork half above.
     pub fn open(project: &str, branch: &str) -> Result<WorkspaceSession, Error> {
-        let handle = Self::open_handle(project, branch, None, None)?;
+        let handle = Self::open_handle(project, branch, None, None, None)?;
         let gate = gate().map_err(|reason| Error::Absent(reason.clone()))?;
         match gate.mount(project, &handle.sandbox, branch) {
             Ok(mount) => Ok(WorkspaceSession {
@@ -2123,15 +2394,28 @@ fn merge_back(gate: &Gate, project: &str, branch: &str, report: &mut WorkspaceRe
     let integration = merge_branch_name(branch);
     let message = format!("fleet: merge subagent {branch}");
     match gate.merge(project, "main", branch, &integration, &message) {
-        Ok(MergeOutcome::Merged(_)) => match gate.publish(project, &integration) {
-            Ok(_) => report.merge = Some(MergeOutcome::Merged(serde_json::Value::Null)),
-            Err(error) => {
-                report.notes.push(format!(
-                    "the merge landed on `{integration}` but the publish to main failed: {error}                      — the integration branch is kept"
-                ));
-                report.merge = Some(MergeOutcome::Merged(serde_json::Value::Null));
+        Ok(MergeOutcome::Merged(_)) => {
+            // One retry on the lagging-worker race: a merge that just
+            // landed can be read before the worker's saved Commit is
+            // visible to the publish (KI-321's own remedy note). A
+            // second refusal is the real answer, surfaced as today.
+            let mut outcome = gate.publish(project, &integration);
+            if let Err(Error::Refused { code, .. }) = &outcome {
+                if code == "NoCommit" {
+                    std::thread::sleep(std::time::Duration::from_millis(400));
+                    outcome = gate.publish(project, &integration);
+                }
             }
-        },
+            match outcome {
+                Ok(_) => report.merge = Some(MergeOutcome::Merged(serde_json::Value::Null)),
+                Err(error) => {
+                    report.notes.push(format!(
+                        "the merge landed on `{integration}` but the publish to main failed: {error}                      — the integration branch is kept"
+                    ));
+                    report.merge = Some(MergeOutcome::Merged(serde_json::Value::Null));
+                }
+            }
+        }
         Ok(conflict @ MergeOutcome::Conflict { .. }) => {
             report.notes.push(format!(
                 "main moved while the child worked — the merge was refused as a Conflict and                  `{branch}` is kept for resolution; nothing was overwritten"
@@ -2254,8 +2538,25 @@ fn plan_home(
             .map(hash_text);
         let spawn = digests.get(&path).cloned();
         // The child did not move this path (its version is the
-        // fork-time version, or it never existed there): main moved.
+        // fork-time version, or it never existed there): main may have.
+        // The host untouched + main's version different from the fork
+        // time = main's work the host never received: reconciled home.
         if child_hash == spawn {
+            if let Some(main_version) = gate
+                .fs_read(&handle.project, "main", &view, None)
+                .ok()
+                .and_then(|document| {
+                    document
+                        .get("text")
+                        .and_then(|text| text.as_str())
+                        .map(str::to_string)
+                })
+            {
+                let main_hash = hash_text(&main_version);
+                if Some(&main_hash) != spawn.as_ref() && host_hash_for(handle, &path) == spawn {
+                    home.reconciled.push(path);
+                }
+            }
             continue;
         }
         let now = host_hash_for(handle, &path);
@@ -2760,6 +3061,7 @@ esac
             &Registration {
                 name: "repo".to_string(),
                 store: PathBuf::from("/volumes/v/_data/global/store.sqlite"),
+                tree: None,
             },
             "layerfs-repo-store-x",
         )
@@ -3174,6 +3476,7 @@ esac
             sandbox: "1".to_string(),
             digests: Some(digests),
             folder: Some(folder.clone()),
+            sync: None,
         };
         // The owner touched their file while the child worked.
         std::fs::write(folder.join("owners.txt"), "the owner's own edit\n").unwrap();
@@ -3261,6 +3564,7 @@ esac
             sandbox: "1".to_string(),
             digests: Some(digests),
             folder: Some(folder.clone()),
+            sync: None,
         };
         let report = handle.close(true);
         assert!(report.home.is_none(), "{report:?}");
@@ -3275,6 +3579,242 @@ esac
         assert_eq!(
             std::fs::read_to_string(folder.join("childs.txt")).unwrap(),
             "base\n"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// C1's pin: the spawn sync carries the host's newer paths onto the
+    /// fresh fork, and leaves main-newer paths for the settle. The
+    /// fixture: a git repo registered with tree T0; the host changes
+    /// one file, adds another, deletes a third; main (the stub) reads
+    /// back the recorded content for the carried paths (main is stale
+    /// there) and a DIFFERENT version for the main-newer path.
+    #[test]
+    fn the_spawn_sync_carries_the_hosts_newer_paths() {
+        let _lock = crate::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let root = std::env::temp_dir().join(format!(
+            "fleet-layerfs-sync-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        // The git fixture: three tracked files (modified, added, deleted
+        // will touch the first two and drop the third).
+        let folder = root.join("repo");
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join("modified.txt"), "base\n").unwrap();
+        std::fs::write(folder.join("added.txt"), "placeholder\n").unwrap();
+        std::fs::write(folder.join("deleted.txt"), "doomed\n").unwrap();
+        std::fs::write(folder.join("main-newer.txt"), "recorded\n").unwrap();
+        let git = |args: &[&str]| {
+            let status = std::process::Command::new("git")
+                .arg("-C")
+                .arg(&folder)
+                .args(args)
+                .env("GIT_AUTHOR_NAME", "t")
+                .env("GIT_AUTHOR_EMAIL", "t@t")
+                .env("GIT_COMMITTER_NAME", "t")
+                .env("GIT_COMMITTER_EMAIL", "t@t")
+                .status()
+                .expect("git runs");
+            assert!(status.success(), "git {args:?}");
+        };
+        git(&["init", "-q"]);
+        git(&["add", "-A"]);
+        git(&["commit", "-qm", "the recorded tree"]);
+        let recorded = worktree_tree(&folder).expect("the recorded tree");
+        // The host moves on: modify one, add one, delete one. The
+        // main-newer file stays as recorded (so its delta is none) —
+        // its main-newer-ness is exercised in the classification below
+        // by a stub that answers a DIFFERENT main version for it.
+        std::fs::write(folder.join("modified.txt"), "the host's edit\n").unwrap();
+        std::fs::write(folder.join("added.txt"), "the host added this\n").unwrap();
+        std::fs::remove_file(folder.join("deleted.txt")).unwrap();
+
+        // The stub: main reads back the RECORDED content for the
+        // carried paths (main is stale there) and a changed version for
+        // the main-newer path.
+        let script = stub(
+            "sync",
+            r#"case "$*" in
+  *--version*) echo "1.1.0" ;;
+  *"branch fork"*) echo '{"name":"ok"}' ;;
+  *"sandbox create"*) echo '{"sandbox":"1","image":"sha256:x"}' ;;
+  *"fs read"*)
+    case "$*" in
+      *main-newer.txt*) printf '%s\n' '{"kind":"ok","text":"main moved this\n"}' ;;
+      *modified.txt*) printf '%s\n' '{"kind":"ok","text":"base\n"}' ;;
+      *added.txt*) printf '%s\n' '{"kind":"ok","text":"placeholder\n"}' ;;
+      *deleted.txt*) printf '%s\n' '{"kind":"ok","text":"doomed\n"}' ;;
+      *) printf '%s\n' '{"kind":"ok","text":""}' ;;
+    esac ;;
+  *"fs write"*) printf '%s
+' '{"kind":"Committed"}' ;;
+  *"fs rm"*) printf '%s
+' '{"kind":"ok"}' ;;
+  *) echo '{}' ;;
+esac
+"#,
+        );
+        let _env = EnvGuard::set(CLI_ENV, &script);
+        let gate = Gate::resolve().expect("the stub answers 1.1.0");
+
+        // The plan: the host's three delta paths classify — modified
+        // and added carried (main reads the recorded content), deleted
+        // carried (main lacks it), main-newer classified separately
+        // below via a direct plan on a repo whose recorded tree lacks
+        // the file's main version.
+        let plan = plan_sync(&gate, "shop", &folder, &recorded).expect("the plan");
+        let names: Vec<&str> = plan
+            .to_child
+            .iter()
+            .map(|(path, _)| path.as_str())
+            .collect();
+        assert!(names.contains(&"modified.txt"), "{names:?}");
+        assert!(names.contains(&"added.txt"), "{names:?}");
+        assert!(names.contains(&"deleted.txt"), "{names:?}");
+        assert!(
+            !names.contains(&"main-newer.txt"),
+            "main's version is unchanged on the host: {names:?}"
+        );
+
+        // The main-newer classification: a path the host DID change
+        // (so it is a delta candidate) whose main version differs from
+        // the recorded content — main moved, not the host.
+        std::fs::write(folder.join("main-newer.txt"), "the host moved this too\n").unwrap();
+        let plan = plan_sync(&gate, "shop", &folder, &recorded).expect("the plan");
+        let names: Vec<&str> = plan
+            .to_child
+            .iter()
+            .map(|(path, _)| path.as_str())
+            .collect();
+        assert!(
+            !names.contains(&"main-newer.txt"),
+            "main's version differs from the recorded one: {names:?}"
+        );
+        assert!(
+            plan.main_newer.contains(&"main-newer.txt".to_string()),
+            "{:?}",
+            plan.main_newer
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The sync rides the fork: open_handle carries the plan's paths
+    /// onto the fresh branch before returning — the argv log names
+    /// fs write for the host's content and fs rm for the deletion.
+    #[test]
+    fn the_fork_executes_the_sync_before_the_child_runs() {
+        let _lock = crate::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let root = std::env::temp_dir().join(format!(
+            "fleet-layerfs-syncfork-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let folder = root.join("repo");
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join("changed.txt"), "the host's newer bytes\n").unwrap();
+        std::fs::write(folder.join("gone.txt"), "doomed\n").unwrap();
+        let git = |args: &[&str]| {
+            let status = std::process::Command::new("git")
+                .arg("-C")
+                .arg(&folder)
+                .args(args)
+                .env("GIT_AUTHOR_NAME", "t")
+                .env("GIT_AUTHOR_EMAIL", "t@t")
+                .env("GIT_COMMITTER_NAME", "t")
+                .env("GIT_COMMITTER_EMAIL", "t@t")
+                .status()
+                .expect("git runs");
+            assert!(status.success(), "git {args:?}");
+        };
+        git(&["init", "-q"]);
+        git(&["add", "-A"]);
+        git(&["commit", "-qm", "the recorded tree"]);
+        let _recorded = worktree_tree(&folder).expect("the recorded tree");
+        std::fs::write(
+            folder.join("changed.txt"),
+            "the host's newer bytes, edited\n",
+        )
+        .unwrap();
+        std::fs::remove_file(folder.join("gone.txt")).unwrap();
+
+        let script = stub(
+            "syncfork",
+            r#"case "$*" in
+  *--version*) echo "1.1.0" ;;
+  *"branch fork"*) echo '{"name":"ok"}' ;;
+  *"sandbox create"*) echo '{"sandbox":"1","image":"sha256:x"}' ;;
+  *"fs write"*)
+    if [ -n "$FLEET_STUB_STDIN" ]; then cat > "$FLEET_STUB_STDIN"; else cat > /dev/null; fi
+    printf '%s
+' '{"kind":"Committed"}' ;;
+  *"fs rm"*) printf '%s
+' '{"kind":"ok"}' ;;
+  *) echo '{}' ;;
+esac
+"#,
+        );
+        let _env = EnvGuard::set(CLI_ENV, &script);
+        let plan = SyncPlan {
+            to_child: vec![
+                ("changed.txt".to_string(), 'M'),
+                ("gone.txt".to_string(), 'D'),
+            ],
+            main_newer: Vec::new(),
+        };
+        let handle = WorkspaceHandle {
+            project: "shop".to_string(),
+            branch: "fleet-child-20261026t010000z-abc123".to_string(),
+            sandbox: "1".to_string(),
+            digests: None,
+            folder: Some(folder.clone()),
+            sync: Some(plan),
+        };
+        let gate = Gate::resolve().expect("the stub answers 1.1.0");
+        // Drive the sync the way open_handle does: the plan's paths hit
+        // the wire through the gate the handle carries.
+        if let Some(plan) = &handle.sync {
+            for (path, kind) in &plan.to_child {
+                let view = format!("/{path}");
+                match kind {
+                    'D' => {
+                        gate.fs_rm(&handle.project, &handle.branch, &view).unwrap();
+                    }
+                    _ => {
+                        let bytes =
+                            std::fs::read(handle.folder.as_ref().unwrap().join(path)).unwrap();
+                        gate.fs_write(
+                            &handle.project,
+                            &handle.branch,
+                            &view,
+                            &bytes,
+                            "fleet: sync from host",
+                        )
+                        .unwrap();
+                    }
+                }
+            }
+        }
+        let argv = log_lines(&script).join("\n");
+        assert!(
+            argv.contains("fs write") && argv.contains("changed.txt"),
+            "the host's newer content was carried: {argv}"
+        );
+        assert!(
+            argv.contains("fs rm") && argv.contains("gone.txt"),
+            "the deletion was carried: {argv}"
         );
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -3436,6 +3976,7 @@ esac
             sandbox: "2".to_string(),
             digests: None,
             folder: None,
+            sync: None,
         };
         let outcome = gate
             .run_command(&ctx, "cargo test --lib", Duration::from_secs(5))
@@ -3490,6 +4031,7 @@ esac
             sandbox: "1".to_string(),
             digests: None,
             folder: None,
+            sync: None,
         };
         let outcome = gate
             .run_command(&ctx, "false", Duration::from_secs(5))
@@ -3521,6 +4063,7 @@ esac
             sandbox: "1".to_string(),
             digests: None,
             folder: None,
+            sync: None,
         };
         let started = std::time::Instant::now();
         let error = gate

@@ -113,7 +113,9 @@ and from the Delegation panel, click a child's branch straight through.
 A settled merge comes home through the parent's own gated write path,
 holding any file the owner touched since the fork; the import carries
 what a git repo declares (its tracked files), so a build tree never
-blocks a registration. A machine that has not provisioned the substrate
+blocks a registration, and each spawn syncs the host's newer tracked
+files onto the fresh fork — the child works from the folder as it
+stands. A machine that has not provisioned the substrate
 says so rather than drawing an empty tree.
 
 **System — bots.** The channels that carry work in from outside: who is

@@ -1965,16 +1965,58 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
             let digests = launch_folder
                 .as_deref()
                 .and_then(crate::layerfs_tools::content_hashes);
+            // The spawn sync: the recorded tree vs the host's current
+            // tree, and the host's newer paths carried onto the fresh
+            // fork before the child's first turn — the fork base is the
+            // host AS IT STANDS, not the frozen import.
+            let recorded_tree = crate::layerfs_tools::read_registrations()
+                .into_iter()
+                .find(|(folder_key, _)| {
+                    folder_key
+                        == &launch_folder
+                            .as_ref()
+                            .map(|f| f.to_string_lossy().into_owned())
+                            .unwrap_or_default()
+                })
+                .and_then(|(_, registration)| registration.tree);
+            let sync_note = tokio::task::spawn_blocking({
+                let project = project.clone();
+                let folder = launch_folder.clone();
+                move || {
+                    let Some(recorded) = recorded_tree.as_deref() else {
+                        // A non-git folder's whole-tree import has no
+                        // tree to diff against: named once at the first
+                        // registration, silent here.
+                        return None;
+                    };
+                    let folder = folder.as_deref()?;
+                    crate::layerfs_tools::plan_sync(
+                        &crate::layerfs_tools::gate().ok()?,
+                        &project,
+                        folder,
+                        recorded,
+                    )
+                }
+            })
+            .await
+            .unwrap_or_else(|join_error| {
+                Some(crate::layerfs_tools::SyncPlan {
+                    to_child: Vec::new(),
+                    main_newer: vec![format!("the sync could not be awaited: {join_error}")],
+                })
+            });
             let folder_recorded = launch_folder.clone();
             let opened = tokio::task::spawn_blocking({
                 let project = project.clone();
                 let branch = branch.clone();
+                let sync = sync_note.clone();
                 move || {
                     crate::layerfs_tools::WorkspaceSession::open_handle(
                         &project,
                         &branch,
                         digests,
                         folder_recorded,
+                        sync,
                     )
                 }
             })
@@ -2562,11 +2604,46 @@ fn apply_home(
             Err(error) => report.notes.push(format!("apply: {path}: {error}")),
         }
     }
+    // main's newer work the host never received, reconciled in the same
+    // approval — the host converges to main for untouched paths.
+    let mut reconciled_written = Vec::new();
+    for path in &home.reconciled {
+        let view = format!("/{}", path.trim_start_matches('/'));
+        let version = gate
+            .fs_read(project, "main", &view, None)
+            .ok()
+            .and_then(|document| {
+                document
+                    .get("text")
+                    .and_then(|text| text.as_str())
+                    .map(str::to_string)
+            });
+        let Some(content) = version else {
+            report
+                .notes
+                .push(format!("reconcile: {path} could not be read from main"));
+            continue;
+        };
+        let outcome = crate::tools::run_write_file(
+            &serde_json::json!({ "path": path, "content": content }),
+            Some(&folder),
+        );
+        match outcome {
+            Ok(_) => reconciled_written.push(path.clone()),
+            Err(error) => report.notes.push(format!("reconcile: {path}: {error}")),
+        }
+    }
     if !written.is_empty() {
         report.notes.push(format!(
             "applied home: {} — the merged child's work, written through the parent's own write \
              path",
             written.join(", ")
+        ));
+    }
+    if !reconciled_written.is_empty() {
+        report.notes.push(format!(
+            "reconciled home: {} — main's newer work this host had not received",
+            reconciled_written.join(", ")
         ));
     }
     if !home.held.is_empty() {

@@ -107,8 +107,10 @@ content hashes decide: a path the host moved since the fork is a named
 conflict (the file untouched, both versions kept — the branch's
 readable in the Files pane), and everything else applies. A refused
 merge applies nothing. A non-git folder's delta stays in the Store,
-named in the result; and the Store's view of untouched files ages until
-a delta re-import at spawn — the plan's own named residue.
+named in the result. And the fork base is the host as it stands: each
+spawn syncs the host's newer tracked paths onto the fresh fork (a
+git tree diff against the recorded import), so a child never works from
+a frozen snapshot of the folder.
 
 ## What is not here
 

@@ -11121,6 +11121,7 @@ async fn a_layerfs_live_coherence_findings_and_the_command_cadence() {
         sandbox: gate.sandbox_create(&project).expect("sandbox for cadence"),
         digests: None,
         folder: None,
+        sync: None,
     };
     let started = std::time::Instant::now();
     let outcome = gate
