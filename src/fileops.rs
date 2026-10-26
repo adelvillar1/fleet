@@ -167,16 +167,35 @@ pub struct EditOutcome {
 /// both errors that name what to do next; a unique match is written
 /// atomically and returns a bounded diff.
 pub fn edit(path: &Path, old: &str, new: &str, replace_all: bool) -> Result<EditOutcome, String> {
+    let original = fs::read_to_string(path)
+        .map_err(|error| format!("{}: {error}; use read_file first", path.display()))?;
+    let (outcome, updated) = edit_text(path, &original, old, new, replace_all)?;
+    atomic_write(path, &updated)?;
+    Ok(outcome)
+}
+
+/// The whole of `edit` that does not touch the filesystem: count,
+/// name the misses with their lines and the closest line, replace,
+/// and build the diff. `path` appears only inside the messages, so
+/// the LayerFS route passes the VIEW path and writes the result back
+/// through its own wire — the contract (zero-match names the closest
+/// line, ambiguity names its lines, `replace_all` replaces) is one
+/// implementation either way.
+pub fn edit_text(
+    path: &Path,
+    original: &str,
+    old: &str,
+    new: &str,
+    replace_all: bool,
+) -> Result<(EditOutcome, String), String> {
     if old.is_empty() {
         return Err("`old_string` must not be empty".to_string());
     }
-    let original = fs::read_to_string(path)
-        .map_err(|error| format!("{}: {error}; use read_file first", path.display()))?;
     let replaced = original.matches(old).count();
     if replaced == 0 {
-        return Err(not_found(path, &original, old));
+        return Err(not_found(path, original, old));
     }
-    let (first_line, lines) = occurrence_lines(&original, old);
+    let (first_line, lines) = occurrence_lines(original, old);
     if replaced > 1 && !replace_all {
         let shown: Vec<String> = lines.iter().take(8).map(usize::to_string).collect();
         return Err(format!(
@@ -191,12 +210,14 @@ pub fn edit(path: &Path, old: &str, new: &str, replace_all: bool) -> Result<Edit
     } else {
         original.replacen(old, new, 1)
     };
-    atomic_write(path, &updated)?;
-    Ok(EditOutcome {
-        replaced,
-        first_line,
-        diff: diff_hunk(&original, &updated, first_line),
-    })
+    Ok((
+        EditOutcome {
+            replaced,
+            first_line,
+            diff: diff_hunk(original, &updated, first_line),
+        },
+        updated,
+    ))
 }
 
 /// The line numbers an exact passage starts on.

@@ -1,5 +1,5 @@
 ---
-status: active
+status: completed
 created: 2026-10-25
 updated: 2026-10-25
 slug: layerfs-child-execution-seam
@@ -109,7 +109,7 @@ occur, and `fs edit` keeps its own exactly-one-match).
 
 ## Acceptance criteria
 
-- [ ] **C0 — the cadence and the verbs.** `src/layerfs_tools.rs`
+- [x] **C0 — the cadence and the verbs.** `src/layerfs_tools.rs`
       gains `run_command` — mount → exec → commit → unmount per call,
       each step one attempt with the driver's typed custody — and the
       branch fs verbs (`read`, `list`, `write`, `edit`, `grep`,
@@ -118,7 +118,7 @@ occur, and `fs edit` keeps its own exactly-one-match).
       commit, unmount), the fs-call argv shapes, an unchanged-state
       commit reading as success, the refusal shapes, and the escape
       refusal.
-- [ ] **C1 — the arm.** `FileAccess::LayerFs` set at spawn in place
+- [x] **C1 — the arm.** `FileAccess::LayerFs` set at spawn in place
       of `Folder`-at-mount; the dispatch routes the fs-class to the
       driver, non-fs tools host-side, and the no-route tools to named
       refusals; the prompt names the working surface and the shell
@@ -129,13 +129,13 @@ occur, and `fs edit` keeps its own exactly-one-match).
       sequence** by argv: an `fs write`, then a bash call's
       mount/exec/commit/unmount, then an `fs read` seeing what the
       command wrote.
-- [ ] **C2 — the live run.** An `#[ignore]`d test against the
+- [x] **C2 — the live run.** An `#[ignore]`d test against the
       provisioned wire asserts the three reconciled findings (fresh
       mount = current head; a held view pins; command writes publish
       only through Commit) and runs the child-shaped workflow —
       `fs write`, mount sees it, exec mutates, commit, `fs read` sees
       the mutation — recording the per-command overhead in this plan.
-- [ ] **C3 — close-out.** The full gate green by exit code; KI-314
+- [x] **C3 — close-out.** The full gate green by exit code; KI-314
       closed with this plan's evidence; `status: completed` in the
       same commit that lands the work.
 
@@ -172,6 +172,63 @@ path rule); the stub integration's coherence sequence; the live run
 integration <name> -- --ignored --nocapture`) asserting the three
 wire findings and the workflow, its timings recorded here; then the
 gate's four commands by exit code, the ledger, and the status flip.
+
+## Status — 2026-10-25 (implemented; the wire findings re-asserted live)
+
+- **C0 — landed.** `run_command` walks mount → exec → commit →
+  unmount with each step one attempt and typed custody (a hung exec
+  is killed at its budget and its overlay discarded, pinned by
+  `a_hung_command_is_discarded_at_its_budget`; a command that exits 3
+  still checkpoints, pinned by `a_failing_command_still_checkpoints`);
+  the fs verbs (`read`, `list` with its page walk, `write` riding
+  stdin bytes exactly, `edit`, `grep`, `glob`) speak the CLI's own
+  grammar, and `view_path` re-roots and refuses escapes by name.
+  Eleven driver tests plus the pre-existing five keep them pinned.
+- **C1 — landed.** `FileAccess::LayerFs` (project/branch/sandbox)
+  carries the child; the dispatch routes the fs-class through
+  `Tool::execute_in_layerfs` (the sibling of the host wrappers, same
+  `bound_with_spill`), non-tree tools (`todo`) keep host behavior,
+  and `apply_patch`/`repo_map`/`file_change` answer named refusals.
+  `edit` reuses `fileops::edit_text` (extracted behavior-preserving)
+  so zero-match names the closest line and ambiguity names its lines
+  exactly as on the host. The prompt names the view and the terminal
+  contract (relative paths in shell commands). Three disclosures the
+  wire forced, implemented as footers rather than silence: grep is
+  literal and case-sensitive here with every dropped option named;
+  glob has no ignore filtering and no mtimes (branch order, said
+  plainly); read's totals header appears when the window reaches the
+  end (the wire carries no line totals otherwise). The coherence
+  sequence — `fs write` < mount < exec < commit < unmount < `fs read`,
+  no mount at spawn — is pinned by
+  `a_layerfs_child_walks_the_coherence_sequence`.
+- **C2 — the live run passed.**
+  `a_layerfs_live_coherence_findings_and_the_command_cadence`
+  (`#[ignore]`d, run against the provisioned env): the three
+  reconciled findings re-asserted ON the wire (fresh mount saw
+  `content-v1`; the held view stayed at v1 after the SDK wrote v2;
+  the command's file answered `NoSuchPath` until Commit and returned
+  after it); **one whole cadence for a trivial command: 267 ms**;
+  then the child-shaped workflow — write 19 bytes, a command read
+  ITS OWN file off a fresh mount, `read_file` saw the checkpoint, the
+  parent merged, and `fs read main /live-note.txt` proved the file on
+  `main`. Recorded here per C2.
+- **C3 — close-out: green by exit code over exactly this commit.**
+  The gate ran on the staged tree (their HEAD plus this plan's files,
+  the co-edited-tree recipe): `cargo fmt --all --check`,
+  `cargo clippy --all-targets -- -D warnings`, `cargo build
+  --release`, `cargo test` — **0, 0, 0, 0; 1712 passed, 0 failed,
+  4 ignored** (the live-API e2e, both `#[ignore]`d LayerFS live
+  roundtrips — which RAN on demand — and one pre-existing). The
+  ledger carries KI-314 closed with this plan's evidence, and this
+  status flips to completed in the same commit that lands the work.
+  For the record: a `cargo test` over the shared worktree alone shows
+  one red — `memory::tests::the_history_channel_separates_the_corpus_
+  that_saturated_it`, a pinned corpus count owned by the other
+  session's in-flight KI-249 corpus work (their committed HEAD passes
+  it, verified in a detached worktree; only their unstaged
+  `memories/*.md` turns it red; this plan touches neither, and the
+  owner confirmed that fix is already done).
+
 
 ## Linked artifacts
 

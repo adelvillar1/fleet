@@ -1851,7 +1851,11 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
     // silent fallback would re-open the exact collisions the knob
     // exists to close. The refusal is typed and lands a row, like any
     // other run that stopped before the loop.
-    let mut workspace: Option<crate::layerfs_tools::WorkspaceSession> = match &layerfs_project {
+    // The seam plan's shape: fork the branch and start the Sandbox,
+    // but mount NOTHING at spawn — a held view pins its base (the
+    // live run measured it), so each bash call mounts its own fresh
+    // view inside the cadence, and the file tools never need one.
+    let mut handle: Option<crate::layerfs_tools::WorkspaceHandle> = match &layerfs_project {
         None => None,
         Some(project) => {
             // The wire's name rule folded in: session stamps carry
@@ -1861,11 +1865,11 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
             let opened = tokio::task::spawn_blocking({
                 let project = project.clone();
                 let branch = branch.clone();
-                move || crate::layerfs_tools::WorkspaceSession::open(&project, &branch)
+                move || crate::layerfs_tools::WorkspaceSession::open_handle(&project, &branch)
             })
             .await;
             match opened {
-                Ok(Ok(workspace)) => Some(workspace),
+                Ok(Ok(handle)) => Some(handle),
                 Ok(Err(error)) => {
                     let result = SubagentResult {
                         summary: String::new(),
@@ -1940,13 +1944,13 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
         checkpoints: None,
         // The parent's access rides down with the rest of the run's
         // identity: the folder when there is one, and the refusal when
-        // there is not. A child whose Workspace opened gets the mount
-        // path instead — the plan's seam: `Folder` already confines
-        // bash and every relative path to one directory, and this
-        // directory is the Workspace, so the child cannot touch the
-        // parent's tree and two children cannot touch each other.
-        file_access: match &workspace {
-            Some(workspace) => FileAccess::Folder(workspace.path().to_path_buf()),
+        // there is not. A child whose branch opened gets the LayerFs
+        // view instead — its file tools read and write ITS branch and
+        // its bash runs per command through the mount cadence, so the
+        // child cannot touch the parent's tree and two children
+        // cannot touch each other (the seam plan, KI-314).
+        file_access: match &handle {
+            Some(handle) => FileAccess::LayerFs(handle.clone()),
             None => file_access,
         },
         plan_mode,
@@ -1979,12 +1983,12 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
                     },
                     workspace: None,
                 };
-                // A workspace that opened must be settled even though
-                // the loop never ran: nothing worth keeping, so it is
-                // discarded, unmounted, and its Sandbox closed — the
-                // same custody every completion path owes.
-                if let Some(workspace) = workspace.take() {
-                    let report = tokio::task::spawn_blocking(move || workspace.settle(false))
+                // A handle that opened must be settled even though
+                // the loop never ran: nothing worth keeping, so its
+                // Sandbox closes unmerged — the same custody every
+                // completion path owes.
+                if let Some(handle) = handle.take() {
+                    let report = tokio::task::spawn_blocking(move || handle.close(false))
                         .await
                         .unwrap_or_else(|join_error| crate::layerfs_tools::WorkspaceReport {
                             notes: vec![format!(
@@ -2080,16 +2084,17 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
             result.summary = words;
         }
     }
-    // C2's settlement, at every completion path: capture when the child
-    // stopped clean enough to keep its work (completed, or capped after
-    // doing some), discard when it died — then unmount, close the
-    // Sandbox, and merge the Branch back into main the parent's way.
-    // The report rides the result, so a Conflict is a line the parent
-    // reads beside its child's answer rather than a silent overwrite
-    // discovered later.
-    if let Some(workspace) = workspace.take() {
+    // The seam plan's settlement, at every completion path: the
+    // cadence already checkpointed each step as it ran, so this
+    // closes the Sandbox and — when the child stopped keepable
+    // (completed, or capped after doing some) — merges the branch
+    // back into main the parent's way; a child that died keeps its
+    // branch unmerged. The report rides the result, so a Conflict is
+    // a line the parent reads beside its child's answer rather than a
+    // silent overwrite discovered later.
+    if let Some(handle) = handle.take() {
         let keep = matches!(result.outcome, Outcome::Completed | Outcome::MaxTurns);
-        let report = tokio::task::spawn_blocking(move || workspace.settle(keep))
+        let report = tokio::task::spawn_blocking(move || handle.close(keep))
             .await
             .unwrap_or_else(|join_error| crate::layerfs_tools::WorkspaceReport {
                 notes: vec![format!(

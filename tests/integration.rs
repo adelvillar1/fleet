@@ -10364,6 +10364,14 @@ case "$*" in
   *"branch fork"*) echo '{"name":"ok"}' ;;
   *"workspace commit"*) echo '{"commit":"c-1"}' ;;
   *"workspace unmount"*|*"sandbox close"*|*"branch publish"*) echo '{}' ;;
+  *"workspace exec"*) printf '%s\n' '{"kind":"exit:0","exitCode":0,"stdout":"ran\n","stderr":"","message":null,"truncated":false}' ;;
+  *"fs read"*) printf '%s\n' '{"kind":"ok","text":"hello\n","startLine":1,"endLine":1,"truncated":false}' ;;
+  *"fs list"*) echo '{"items":[],"hasMore":false}' ;;
+  *"fs write"*)
+    if [ -n "$FLEET_STUB_STDIN" ]; then cat > "$FLEET_STUB_STDIN"; else cat > /dev/null; fi
+    echo '{"kind":"ok"}' ;;
+  *"fs edit"*) echo '{"kind":"ok"}' ;;
+  *"fs grep"*|*"fs glob"*) echo '{"items":[],"hasMore":false}' ;;
   *) echo '{"code":"Usage","message":"unknown command"}' >&2; exit 2 ;;
 esac
 "#;
@@ -10394,36 +10402,41 @@ fn shared_layerfs_stub() -> &'static std::path::Path {
     .as_path()
 }
 
-/// C2's happy path end to end: an opted-in delegation mounts one
-/// Workspace, the child's tools work AT THE MOUNT (never in the
-/// parent's tree), and the parent's tool result reads the branch, the
-/// capture, and the merge back into main — with every lifecycle call
-/// in the CLI's own grammar in the argv log.
-// The lock serializes the process's env against the other env
-// tests for the whole awaited run — the same deliberate hold the
-// ambient test documents.
+/// The seam plan's C1 pin — the coherence sequence a child's tools
+/// walk over the stub: an `fs write` (no mount needed), then one
+/// bash call's cadence (mount -> exec -> commit -> unmount), then an
+/// `fs read` that sees the branch the commands checkpointed. The
+/// child's answers render exactly as the host tools render (the
+/// bash `exit N` shape, the numbered read), the parent reads its
+/// branch and merge back, and the cadence's argv order is the plan's
+/// claim made visible.
 #[tokio::test]
 #[allow(clippy::await_holding_lock)]
-async fn a_layerfs_child_works_in_its_workspace_and_the_parent_reads_the_merge() {
+async fn a_layerfs_child_walks_the_coherence_sequence() {
     let mock = MockApi::start(vec![
         tool_call_stream(
             "call-1",
             "subagent",
-            &delegation_arguments("tidy the workspace"),
+            &delegation_arguments("write, run, and read in your workspace"),
         ),
-        tool_call_stream("child-1", "bash", r#"{"command":"pwd -P"}"#),
+        tool_call_stream(
+            "child-w",
+            "write_file",
+            r#"{"path":"/notes.txt","content":"from the child\n"}"#,
+        ),
+        tool_call_stream("child-b", "bash", r#"{"command":"cat notes.txt"}"#),
+        tool_call_stream("child-r", "read_file", r#"{"path":"/notes.txt"}"#),
         assistant_stream("the child is done"),
         assistant_stream("the parent wraps up"),
     ]);
-    let home = temp_home("layerfs-arm-home");
-    let mount = temp_home("layerfs-mount");
+    let home = temp_home("layerfs-seam-home");
     let mut session = Session::create(&home, "test-model").unwrap();
     let client = Client::new(mock.url(), "test-key");
     let options = AgentOptions {
         goal: None,
         model: "test-model".to_string(),
         identity: None,
-        max_turns: 8,
+        max_turns: 9,
         ui_tx: None,
         lane_specs: None,
         calib: None,
@@ -10439,26 +10452,24 @@ async fn a_layerfs_child_works_in_its_workspace_and_the_parent_reads_the_merge()
         file_access: FileAccess::Unrestricted,
         plan_mode: false,
     };
-    let argv = std::env::temp_dir().join(format!(
-        "fleet-layerfs-it-argv-happy-{}",
-        std::process::id()
-    ));
+    let argv =
+        std::env::temp_dir().join(format!("fleet-layerfs-it-argv-seam-{}", std::process::id()));
     let _ = std::fs::remove_file(&argv);
     {
         let _lock = AMBIENT_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let _bin = AmbientKey::set("FLEET_LAYERFS_BIN", shared_layerfs_stub().to_str().unwrap());
-        // The knob is per-test-thread (thread-local), never env: an
-        // env window would switch the arm on inside another test's
-        // delegation running concurrently.
         fleet::layerfs_tools::set_project_for_test("shop");
         let _mode = AmbientKey::set("FLEET_STUB_MODE", "happy");
         let _log = AmbientKey::set("FLEET_STUB_LOG", argv.to_str().unwrap());
+        let mount = std::env::temp_dir().join(format!(
+            "fleet-layerfs-it-mount-seam-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&mount);
         let _mount_path = AmbientKey::set("FLEET_TEST_MOUNT", mount.to_str().unwrap());
         let mut progress = Vec::new();
-        // The agent borrows the session mutably; scope it so the
-        // read-back below replays a session nothing holds.
         {
             let mut agent = Agent::new(
                 &client,
@@ -10468,27 +10479,32 @@ async fn a_layerfs_child_works_in_its_workspace_and_the_parent_reads_the_merge()
                 &mut progress,
             )
             .unwrap();
-            agent.run("delegate the tidying").await.unwrap();
+            agent.run("work in your workspace").await.unwrap();
         }
-    } // guards restore the env, then the lock releases — assertions below hold neither.
+        let _ = std::fs::remove_dir_all(&mount);
+    }
 
-    // The child worked at the mount: its pwd is the Workspace's path
-    // and never the process's directory — the collision the plan
-    // exists to prevent, absent by construction.
+    // The child's three answers, rendered the way the host tools
+    // render them.
     let child = child_summary(&home);
-    let child_records = session::replay(&child.path).unwrap();
-    let (pwd, _) = tool_result(&child_records, "bash");
-    let canonical = mount.canonicalize().unwrap();
+    let records = session::replay(&child.path).unwrap();
+    let (write_out, _) = tool_result(&records, "write_file");
     assert!(
-        pwd.contains(&canonical.display().to_string()),
-        "the child worked in its Workspace: {pwd}"
+        write_out.contains("wrote 15 bytes to /notes.txt"),
+        "the host's write line: {write_out}"
     );
+    let (bash_out, _) = tool_result(&records, "bash");
     assert!(
-        !pwd.contains(&std::env::current_dir().unwrap().display().to_string()),
-        "the child did not work in the parent's tree: {pwd}"
+        bash_out.contains("exit 0") && bash_out.contains("--- stdout ---\nran"),
+        "the host's bash shape over the cadence: {bash_out}"
+    );
+    let (read_out, _) = tool_result(&records, "read_file");
+    assert!(
+        read_out.contains("notes.txt") && read_out.contains("hello"),
+        "the host's numbered read over the branch: {read_out}"
     );
 
-    // The parent's tool result reads the workspace facts.
+    // The parent reads its branch and the merge back.
     let parent_records = session::replay(session.path()).unwrap();
     let (read_back, _) = tool_result(&parent_records, "subagent");
     assert!(
@@ -10497,45 +10513,44 @@ async fn a_layerfs_child_works_in_its_workspace_and_the_parent_reads_the_merge()
     );
     assert!(read_back.contains("merged to main"), "{read_back}");
 
-    // The CLI's own grammar, call by call: fork the child's branch,
-    // a sandbox, the mount, the capture, the teardown, then the
-    // parent's merge and publish — the child never appears as an
-    // actor in any of it.
+    // The coherence sequence, in argv order: the file write lands on
+    // the branch directly, ONE bash call walks the whole cadence
+    // around its exec, and the read comes after the command's
+    // checkpoint — the sequence the wire findings demanded.
     let calls = std::fs::read_to_string(&argv).expect("the stub was called");
+    let at = |needle: &str| {
+        calls
+            .find(needle)
+            .unwrap_or_else(|| panic!("`{needle}` in the argv: {calls}"))
+    };
+    let write = at("fs write");
+    let mount = at("workspace mount");
+    let exec = at("workspace exec");
+    let commit = at("workspace commit");
+    let unmount = at("workspace unmount");
+    let read = at("fs read");
+    assert!(
+        write < mount && mount < exec && exec < commit && commit < unmount && unmount < read,
+        "fs write < mount < exec < commit < unmount < fs read: {calls}"
+    );
     assert!(
         calls.contains("--project shop branch fork fleet-child-"),
         "the fork: {calls}"
     );
-    assert!(calls.contains("--project shop sandbox create"), "{calls}");
     assert!(
-        calls.contains("--project shop workspace mount 1 fleet-child-"),
-        "{calls}"
+        !calls[..write].contains("workspace mount"),
+        "no mount at spawn — only the bash call mounts: {calls}"
     );
     assert!(
-        calls.contains("--project shop workspace commit 1:"),
-        "the capture before unmount: {calls}"
-    );
-    assert!(calls.contains("workspace unmount 1:"), "{calls}");
-    assert!(calls.contains("sandbox close 1"), "{calls}");
-    assert!(
-        calls.contains("--project shop branch merge main fleet-child-"),
-        "the merge is the parent's act, main against the child's branch: {calls}"
+        calls.contains("branch merge main fleet-child-"),
+        "the parent's merge: {calls}"
     );
     assert!(
         calls.contains("branch publish merge-fleet-child-"),
         "{calls}"
     );
-    // Unmount comes after the commit — a Clean End refuses
-    // uncommitted state, so the order is custody, not convenience.
-    let commit_at = calls.find("workspace commit").expect("commit logged");
-    let unmount_at = calls.find("workspace unmount").expect("unmount logged");
-    assert!(
-        commit_at < unmount_at,
-        "capture first, unmount second: {calls}"
-    );
 
     std::fs::remove_dir_all(&home).ok();
-    std::fs::remove_dir_all(&mount).ok();
     std::fs::remove_file(&argv).ok();
 }
 
@@ -10841,4 +10856,252 @@ async fn a_layerfs_live_driver_roundtrip_against_the_real_wire() {
         .args(["--project", &project, "sandbox", "close", &report.sandbox])
         .output()
         .ok();
+}
+
+/// The seam plan's C2 — the live run. Part A asserts the three
+/// findings the plan reconciled before writing code (a fresh mount
+/// sees the branch head; a held view pins; command writes publish
+/// only through Commit) and times one whole cadence call. Part B
+/// walks the CHILD-shaped workflow against the real wire: a
+/// delegation whose child writes a file, runs a command that reads
+/// it, and reads it back — the coherence the stub only models.
+///
+/// Needs the provisioned environment (KI-313's recipe — see
+/// scripts/layerfs-probe.sh):
+///   LAYERFS_HOME=… LAYERFS_WORKER_ENDPOINT=… LAYERFS_IMAGE=… \
+///   LAYERFS_DAEMON=… LAYERFS_STORE_PATH=… FLEET_LAYERFS_BIN=… \
+///   cargo test --test integration a_layerfs_live_coherence -- --ignored --nocapture
+#[tokio::test]
+#[ignore = "needs the provisioned LayerFS environment (KI-313); see scripts/layerfs-probe.sh"]
+async fn a_layerfs_live_coherence_findings_and_the_command_cadence() {
+    let endpoint = std::env::var("LAYERFS_WORKER_ENDPOINT")
+        .expect("LAYERFS_WORKER_ENDPOINT — provision first (KI-313's recipe)");
+    assert!(
+        std::path::Path::new(&endpoint).exists(),
+        "the worker endpoint exists at {endpoint}"
+    );
+    std::env::var("FLEET_LAYERFS_BIN").expect("FLEET_LAYERFS_BIN");
+    let project =
+        std::env::var("LAYERFS_PROJECT_FOR_TEST").unwrap_or_else(|_| "fleet-probe".to_string());
+    let branch = format!("fleet-seam-{}", std::process::id());
+    let gate = fleet::layerfs_tools::gate()
+        .as_ref()
+        .expect("the real CLI resolves")
+        .clone();
+
+    // --- Part A: the three findings, on the wire ---
+    // Fresh mount sees the current head.
+    gate.fork(&project, &branch)
+        .expect("fork the coherence branch");
+    gate.fs_write(
+        &project,
+        &branch,
+        "/via-sdk.txt",
+        b"content-v1\n",
+        "live: finding 1",
+    )
+    .expect("sdk write");
+    let sandbox = gate.sandbox_create(&project).expect("sandbox");
+    let mount = gate
+        .mount(&project, &sandbox, &branch)
+        .expect("mount after the sdk write");
+    let out = gate
+        .exec(
+            &project,
+            &mount.ws,
+            "cat via-sdk.txt",
+            std::time::Duration::from_secs(30),
+        )
+        .await_exec_json("fresh mount");
+    assert_eq!(
+        out.get("stdout").and_then(|v| v.as_str()),
+        Some("content-v1\n"),
+        "FINDING 1: a fresh mount sees the branch's current head"
+    );
+
+    // A held view pins: an SDK write after the mount stays invisible.
+    gate.fs_write(
+        &project,
+        &branch,
+        "/via-sdk.txt",
+        b"content-v2\n",
+        "live: finding 2",
+    )
+    .expect("sdk write while mounted");
+    let pinned = gate
+        .exec(
+            &project,
+            &mount.ws,
+            "cat via-sdk.txt",
+            std::time::Duration::from_secs(30),
+        )
+        .await_exec_json("held view");
+    assert_eq!(
+        pinned.get("stdout").and_then(|v| v.as_str()),
+        Some("content-v1\n"),
+        "FINDING 2: the held view pins its base — the cadence must re-mount per command"
+    );
+
+    // Command writes publish only through Commit.
+    gate.exec(
+        &project,
+        &mount.ws,
+        "printf 'cmd-file\n' > cmd.txt && cat cmd.txt",
+        std::time::Duration::from_secs(30),
+    )
+    .await_exec_json("command write");
+    let before = gate.fs_read(&project, &branch, "/cmd.txt", None);
+    match before {
+        Err(fleet::layerfs_tools::Error::Refused { code, .. }) => {
+            assert_eq!(
+                code, "NoSuchPath",
+                "FINDING 3a: uncommitted writes are invisible to reads"
+            )
+        }
+        other => panic!("FINDING 3a: expected NoSuchPath before commit, got {other:?}"),
+    }
+    gate.commit(&project, &mount.ws, "live: finding 3")
+        .expect("the checkpoint");
+    let after = gate
+        .fs_read(&project, &branch, "/cmd.txt", None)
+        .expect("FINDING 3b: after commit the read returns the command's file");
+    assert!(
+        after
+            .get("text")
+            .and_then(|t| t.as_str())
+            .is_some_and(|t| t.contains("cmd-file")),
+        "FINDING 3b: {after}"
+    );
+    gate.unmount(&project, &mount.ws, false).expect("unmount");
+    gate.sandbox_close(&project, &sandbox).expect("close");
+
+    // One whole cadence, timed: mount -> exec -> commit -> unmount.
+    let ctx = fleet::layerfs_tools::WorkspaceHandle {
+        project: project.clone(),
+        branch: branch.clone(),
+        sandbox: gate.sandbox_create(&project).expect("sandbox for cadence"),
+    };
+    let started = std::time::Instant::now();
+    let outcome = gate
+        .run_command(
+            &ctx,
+            "echo cadence-probe",
+            std::time::Duration::from_secs(30),
+        )
+        .expect("the live cadence completes");
+    let cadence_ms = started.elapsed().as_millis();
+    assert_eq!(outcome.exit_code, 0);
+    assert_eq!(outcome.stdout, "cadence-probe\n");
+    assert_eq!(outcome.steps, vec!["mount", "exec", "commit", "unmount"]);
+    ctx.close(false);
+    println!(
+        "CADENCE (mount+exec+commit+unmount, trivial command): {cadence_ms}ms  branch={branch}"
+    );
+
+    // --- Part B: the child-shaped workflow on the real wire ---
+    let mock = MockApi::start(vec![
+        tool_call_stream(
+            "call-1",
+            "subagent",
+            &delegation_arguments("write, run, and read in your workspace"),
+        ),
+        tool_call_stream(
+            "child-w",
+            "write_file",
+            r#"{"path":"/live-note.txt","content":"the child was here\n"}"#,
+        ),
+        tool_call_stream("child-b", "bash", r#"{"command":"cat live-note.txt"}"#),
+        tool_call_stream("child-r", "read_file", r#"{"path":"/live-note.txt"}"#),
+        assistant_stream("the child is done"),
+        assistant_stream("the parent wraps up"),
+    ]);
+    let home = temp_home("layerfs-live-seam-home");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let client = Client::new(mock.url(), "test-key");
+    let options = AgentOptions {
+        goal: None,
+        model: "test-model".to_string(),
+        identity: None,
+        max_turns: 9,
+        ui_tx: None,
+        lane_specs: None,
+        calib: None,
+        skills: Vec::new(),
+        role_overlay: None,
+        memory: None,
+        scope: None,
+        improve_home: None,
+        route_home: None,
+        gui_prompt: None,
+        compact_now: false,
+        checkpoints: None,
+        file_access: FileAccess::Unrestricted,
+        plan_mode: false,
+    };
+    fleet::layerfs_tools::set_project_for_test(&project);
+    let mut progress = Vec::new();
+    {
+        let mut agent = Agent::new(
+            &client,
+            options,
+            &mut session,
+            Box::new(ApproveAll),
+            &mut progress,
+        )
+        .unwrap();
+        agent.run("work in your workspace").await.unwrap();
+    }
+
+    let child = child_summary(&home);
+    let records = session::replay(&child.path).unwrap();
+    let (write_out, _) = tool_result(&records, "write_file");
+    assert!(
+        write_out.contains("wrote 19 bytes to /live-note.txt"),
+        "the child's real write: {write_out}"
+    );
+    let (bash_out, _) = tool_result(&records, "bash");
+    assert!(
+        bash_out.contains("exit 0") && bash_out.contains("the child was here"),
+        "the child's command read ITS OWN file off the branch through a fresh mount: {bash_out}"
+    );
+    let (read_out, _) = tool_result(&records, "read_file");
+    assert!(
+        read_out.contains("the child was here"),
+        "read_file sees what the command checkpointed: {read_out}"
+    );
+    let parent_records = session::replay(session.path()).unwrap();
+    let (read_back, _) = tool_result(&parent_records, "subagent");
+    assert!(
+        read_back.contains("merged to main"),
+        "the parent merged the child's branch: {read_back}"
+    );
+
+    // The child's file is on main after the merge+publish: prove it
+    // through the wire, not through the render.
+    let published = gate
+        .fs_read(&project, "main", "/live-note.txt", None)
+        .expect("main carries the child's file after the parent's publish");
+    assert!(
+        published
+            .get("text")
+            .and_then(|t| t.as_str())
+            .is_some_and(|t| t.contains("the child was here")),
+        "published to main: {published}"
+    );
+
+    println!(
+        "LIVE COHERENCE: findings 1-3 asserted, cadence {cadence_ms}ms, child workflow on branch of {project} merged and published to main"
+    );
+    std::fs::remove_dir_all(&home).ok();
+}
+
+/// The one-call JSON shape helper for the live part A: parse the
+/// driver's answer or panic with it (a live test may not go quiet).
+trait LiveJson {
+    fn await_exec_json(self, what: &str) -> serde_json::Value;
+}
+impl LiveJson for Result<serde_json::Value, fleet::layerfs_tools::Error> {
+    fn await_exec_json(self, what: &str) -> serde_json::Value {
+        self.unwrap_or_else(|error| panic!("{what}: {error}"))
+    }
 }

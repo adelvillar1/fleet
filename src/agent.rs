@@ -239,6 +239,14 @@ pub enum FileAccess {
     /// One chat folder: `bash` starts there, a relative path resolves
     /// under it, and a path that leaves it is refused.
     Folder(std::path::PathBuf),
+    /// An opted-in delegation's LayerFS branch: the run's filesystem
+    /// IS the branch view — the file tools read and write it through
+    /// the `layerfs` CLI, and `bash` runs per command through the
+    /// workspace cadence (mount -> exec -> commit -> unmount). Set
+    /// only by the arm when `FLEET_LAYERFS_PROJECT` names a project;
+    /// no surface constructs it, so a run that never opts in cannot
+    /// meet it — the byte-identity tests keep pinning that.
+    LayerFs(crate::layerfs_tools::WorkspaceHandle),
     /// Nothing. A chat with no working folder may not touch the
     /// filesystem; the refusal tells the model to ask the owner for a
     /// folder, which is the only way access is granted.
@@ -1470,6 +1478,10 @@ impl<'a> Agent<'a> {
             FileAccess::Folder(folder) => prompt.push_str(&format!(
                 "\n\n## Working folder\n\nThis run works in `{}`. Every relative path you read, write, or list resolves there, and `bash` starts there. A path that leaves it \u{2014} a `..` walk, an absolute path outside, or a symlink resolving outside \u{2014} is refused by the tools, so name what you need relative to the folder.",
                 folder.display()
+            )),
+            FileAccess::LayerFs(ctx) => prompt.push_str(&format!(
+                "\n\n## Working folder\n\nThis run works on the LayerFS branch `{}` of project `{}` \u{2014} a view of the project's files whose root is `/`. Every path you read, write, or list is a path in that view (`src/main.rs` reaches the tools as `/src/main.rs`), and `bash` runs at the view's root: inside shell commands use paths RELATIVE to the root, because an absolute path in a shell command points at the machine, not the view, and will not find your files. A path that leaves the view \u{2014} a `..` walk past the root \u{2014} is refused by name. The view is yours alone for this delegation: nothing else writes this branch while you work, and your steps are checkpointed as you go.",
+                ctx.branch, ctx.project
             )),
             FileAccess::None => prompt.push_str(
                 "\n\n## Working folder\n\nThis chat has no working folder, so it has no filesystem access: `bash`, `read_file`, `write_file`, and `list_dir` are refused by name, and nothing is read, written, or executed. If the task needs files, say what you need and ask the owner to set a folder in the run bar; the next run works there. Do not retry a refused filesystem call in this run.",
@@ -3032,6 +3044,9 @@ impl<'a> Agent<'a> {
         let root = match &self.options.file_access {
             FileAccess::Folder(root) => root.clone(),
             FileAccess::Unrestricted => std::env::current_dir().unwrap_or_default(),
+            // A branch view has no host tree to capture — and these
+            // runs carry no checkpoint store (the arm passes None).
+            FileAccess::LayerFs(_) => return,
             FileAccess::None => return,
         };
         let session = self.session_id.clone();
@@ -3218,6 +3233,12 @@ impl<'a> Agent<'a> {
             // file is refused by name, and the bytes are capped. A
             // question with no readable image is a model-visible error
             // rather than a call that asks a model to look at nothing.
+            if let FileAccess::LayerFs(_) = &self.options.file_access {
+                return Ok(settled(
+                    "error: images are host files and the branch view's reads are text-only \u{2014}                      paste the text you need, or hand the image in from outside the workspace"
+                        .to_string(),
+                ));
+            }
             return Ok(match serde_json::from_str(&call.function.arguments) {
                 Err(error) => settled(format!("error: arguments were not valid JSON: {error}")),
                 Ok(arguments) => match vision_images(
@@ -3507,6 +3528,9 @@ impl<'a> Agent<'a> {
                             }
                         }
                     }
+                    FileAccess::LayerFs(_) => settled(format!(
+                        "error: `{name}` runs on host files; this run works on a LayerFS branch, where the view's reads are text-only through read_file \u{2014} ask for the content as text"
+                    )),
                     _ => settled(format!(
                         "error: `{name}` needs the chat's folder: a document read or a file handed over with no boundary is a path neither side chose"
                     )),
@@ -4323,6 +4347,12 @@ async fn run_work(work: Work) -> (String, bool) {
             // only the guard's own root.
             let guard_root = match &access {
                 FileAccess::Folder(root) => root.clone(),
+                // The vocabulary guard reads the HOST tree's names:
+                // the branch derives from this checkout, so the cwd's
+                // vocabulary is the right approximation — the guard is
+                // advisory drift detection, and the boundary is the
+                // view's path rule (the seam plan's named decision).
+                FileAccess::LayerFs(_) => std::env::current_dir().unwrap_or_default(),
                 FileAccess::Unrestricted | FileAccess::None => {
                     std::env::current_dir().unwrap_or_default()
                 }
@@ -4754,6 +4784,14 @@ async fn run_builtin(
             stop.as_ref(),
             processes.as_deref(),
         ),
+        // An opted-in child's branch: the SAME tools over the wire,
+        // the driver's gate resolved once per process. The gate's
+        // absence is the named answer — no fallback to a host tree
+        // the child was deliberately not given.
+        FileAccess::LayerFs(ctx) => match crate::layerfs_tools::gate() {
+            Ok(gate) => tool.execute_in_layerfs(&arguments, &ctx, gate, spill.as_deref()),
+            Err(reason) => Err(format!("layerfs: {reason}")),
+        },
         // No folder: the process's working directory, unrestricted.
         FileAccess::Unrestricted => tool.execute_without_folder_spill_stop(
             &arguments,
@@ -5387,6 +5425,10 @@ fn read_marker(access: &FileAccess, path: &str) -> Option<std::path::PathBuf> {
                 .filter(|resolved| resolved.starts_with(&canonical_root))
         }
         FileAccess::Unrestricted => std::path::Path::new(path).canonicalize().ok(),
+        // A branch view is child-exclusive: nothing else moves the
+        // file between a read and its edit, and `fs edit` keeps its
+        // own exactly-one-match — no marker is needed.
+        FileAccess::LayerFs(_) => None,
         FileAccess::None => None,
     }
 }

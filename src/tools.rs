@@ -1936,6 +1936,583 @@ impl Tool {
         };
         Ok(bound_with_spill(outcome, spill))
     }
+
+    /// KI-314's execution seam: the SAME tools over a LayerFS branch.
+    /// `bash` rides the per-command cadence (mount -> exec -> commit ->
+    /// unmount), the file verbs ride the SDK's branch reads and writes
+    /// (`edit` reuses `fileops::edit_text`, so zero-match names the
+    /// closest line and ambiguity names its lines exactly as on the
+    /// host), and a tool with no honest route over a branch is refused
+    /// by name rather than answered from the host tree the child does
+    /// not live in. Only called under `FileAccess::LayerFs`.
+    ///
+    /// The host path's background, stop-flag, and process-registry arms
+    /// do not exist here — a sandbox command's life ends with its call —
+    /// and each absence is named in the message the model reads.
+    pub fn execute_in_layerfs(
+        self,
+        arguments: &serde_json::Value,
+        ctx: &crate::layerfs_tools::WorkspaceHandle,
+        gate: &crate::layerfs_tools::Gate,
+        spill: Option<&Path>,
+    ) -> Result<ToolOutcome, String> {
+        let outcome = match self {
+            Tool::Bash => run_bash_layerfs(arguments, ctx, gate)?,
+            Tool::ReadFile => run_read_file_layerfs(arguments, ctx, gate)?,
+            Tool::WriteFile => run_write_file_layerfs(arguments, ctx, gate)?,
+            Tool::ListDir => run_list_dir_layerfs(arguments, ctx, gate)?,
+            Tool::Edit => run_edit_layerfs(arguments, ctx, gate)?,
+            Tool::Grep => run_grep_layerfs(arguments, ctx, gate)?,
+            Tool::Glob => run_glob_layerfs(arguments, ctx, gate)?,
+            Tool::Todo => run_todo(arguments)?,
+            Tool::ApplyPatch => return Err(
+                "apply_patch is not carried in a LayerFS workspace yet — the branch has no patch \
+                     verb; make each change with edit, or write the file whole"
+                    .to_string(),
+            ),
+            Tool::RepoMap => {
+                return Err(format!(
+                    "repo_map reads the host checkout; this run works on the LayerFS branch `{}` — \
+                     use list_dir, read_file, grep, or glob to see the tree",
+                    ctx.branch
+                ))
+            }
+            Tool::FileChange => return Err(
+                "file_change reads the host checkout's git state; a LayerFS branch carries its \
+                     history in the view itself (edit reports its own diff)"
+                    .to_string(),
+            ),
+        };
+        Ok(bound_with_spill(outcome, spill))
+    }
+}
+
+/// `bash` over the branch: the cadence, then the host render exactly
+/// — `exit N`, the stdout and stderr sections, `(no output)` — so a
+/// child reads the same shape whether or not its shell runs in a
+/// sandbox.
+fn run_bash_layerfs(
+    arguments: &serde_json::Value,
+    ctx: &crate::layerfs_tools::WorkspaceHandle,
+    gate: &crate::layerfs_tools::Gate,
+) -> Result<ToolOutcome, String> {
+    let command = string_arg(arguments, "command")?;
+    if bool_arg(arguments, "run_in_background").unwrap_or(false) {
+        return Err(
+            "run_in_background is not carried in a LayerFS workspace: the command lives in the \
+             sandbox and its output ends with the call — run it in the foreground and keep what \
+             matters in files on the branch"
+                .to_string(),
+        );
+    }
+    let timeout = integer_arg(arguments, "timeout_ms")
+        .map(|ms| Duration::from_millis(ms.clamp(1_000, 600_000) as u64))
+        .unwrap_or(BASH_TIMEOUT);
+    let outcome = gate
+        .run_command(ctx, &command, timeout)
+        .map_err(|error| match error {
+            crate::layerfs_tools::Error::Timeout { budget, .. } => format!(
+                "the command exceeded {}s and was stopped in the sandbox — the branch view has no \
+             background promotion (its output would die with the call): split the work, or write \
+             progress to the branch as you go",
+                budget.as_secs()
+            ),
+            other => other.to_string(),
+        })?;
+    let mut output = format!("exit {}\n", outcome.exit_code);
+    if !outcome.stdout.is_empty() {
+        output.push_str("--- stdout ---\n");
+        output.push_str(&outcome.stdout);
+    }
+    if !outcome.stderr.is_empty() {
+        output.push_str("--- stderr ---\n");
+        output.push_str(&outcome.stderr);
+    }
+    if outcome.stdout.is_empty() && outcome.stderr.is_empty() {
+        output.push_str("(no output)\n");
+    }
+    Ok(ToolOutcome {
+        output,
+        truncated: false,
+    })
+}
+
+/// One page of the branch's raw text — the wire's window fields,
+/// parsed once for `read` and `edit`'s full-file walk.
+fn layerfs_read_page(
+    ctx: &crate::layerfs_tools::WorkspaceHandle,
+    gate: &crate::layerfs_tools::Gate,
+    path: &str,
+    offset: u32,
+    limit: u32,
+) -> Result<layerfs_read_page::Page, String> {
+    let value = gate
+        .fs_read(
+            &ctx.project,
+            &ctx.branch,
+            path,
+            Some((offset, offset + limit - 1)),
+        )
+        .map_err(|error| error.to_string())?;
+    layerfs_read_page::Page::parse(value)
+}
+
+mod layerfs_read_page {
+    use serde_json::Value;
+    pub struct Page {
+        pub text: String,
+        pub start: u64,
+        pub end: Option<u64>,
+        pub next: Option<u64>,
+        pub size: i64,
+        pub line_truncated: bool,
+    }
+    impl Page {
+        pub fn parse(value: Value) -> Result<Page, String> {
+            let get = |key: &str| value.get(key).cloned();
+            let text = get("text")
+                .and_then(|value| value.as_str().map(str::to_string))
+                .unwrap_or_default();
+            let start = get("startLine")
+                .and_then(|value| value.as_u64())
+                .unwrap_or(1);
+            let end = get("endLine").and_then(|value| value.as_u64());
+            let next = get("nextLine").and_then(|value| value.as_u64());
+            let size = get("size").and_then(|value| value.as_i64()).unwrap_or(-1);
+            let line_truncated = get("lineTruncated")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false);
+            if !value.get("kind").is_some_and(|kind| kind == "ok") {
+                return Err(format!(
+                    "the branch read answered something this driver does not know: {value}"
+                ));
+            }
+            Ok(Page {
+                text,
+                start,
+                end,
+                next,
+                size,
+                line_truncated,
+            })
+        }
+    }
+}
+
+/// The read render, mirroring `run_read_file_window` over the wire's
+/// window: numbered lines in the host's exact format, the totals
+/// header when the window reached the end (the wire reports totals
+/// only by reaching them), `(empty file)` and the past-end answer by
+/// name.
+fn run_read_file_layerfs(
+    arguments: &serde_json::Value,
+    ctx: &crate::layerfs_tools::WorkspaceHandle,
+    gate: &crate::layerfs_tools::Gate,
+) -> Result<ToolOutcome, String> {
+    let raw_path = string_arg(arguments, "path")?;
+    let path = crate::layerfs_tools::view_path(&raw_path)?;
+    let offset = integer_arg(arguments, "offset").unwrap_or(1).max(1) as u32;
+    let limit = integer_arg(arguments, "limit")
+        .unwrap_or(crate::fileops::READ_DEFAULT_LINES as i64)
+        .clamp(1, crate::fileops::READ_MAX_LINES as i64) as u32;
+    let page = layerfs_read_page(ctx, gate, &path, offset, limit)?;
+    let total_reached = page.next.is_none();
+    if page.text.is_empty() && page.size == 0 {
+        return Ok(ToolOutcome {
+            output: format!("{raw_path} (0 lines)\n(empty file)\n"),
+            truncated: false,
+        });
+    }
+    if page.text.is_empty() {
+        return Ok(ToolOutcome {
+            output: format!(
+                "{raw_path}\n(offset {offset} is past the end of the file; {} bytes)\n",
+                page.size.max(0)
+            ),
+            truncated: false,
+        });
+    }
+    let mut output = String::new();
+    if total_reached {
+        let total = page.end.unwrap_or(page.start);
+        output.push_str(&format!("{raw_path} ({total} lines)\n"));
+    } else {
+        output.push_str(&format!("{raw_path}\n"));
+    }
+    let body = page.text.strip_suffix('\n').unwrap_or(&page.text);
+    let mut cut = page.line_truncated;
+    for (index, line) in body.split('\n').enumerate() {
+        let line_no = page.start as usize + index;
+        let mut shown: String = line.chars().take(crate::fileops::LINE_CHAR_CAP).collect();
+        if line.chars().count() > crate::fileops::LINE_CHAR_CAP {
+            shown.push('\u{2026}');
+            cut = true;
+        }
+        output.push_str(&format!("{line_no:>6}\t{shown}\n"));
+    }
+    if total_reached {
+        if let Some(end) = page.end {
+            if page.start > 1 {
+                output.push_str(&format!("(showing {}-{end}; end of file)\n", page.start));
+            }
+        }
+    } else if let Some(next) = page.next {
+        output.push_str(&format!(
+            "(showing {}-{}; continue with offset={next})\n",
+            page.start,
+            page.end.unwrap_or(page.start)
+        ));
+    }
+    Ok(ToolOutcome {
+        output,
+        truncated: cut,
+    })
+}
+
+/// `write_file` over the branch: the SDK's bytes route (no host
+/// lock — the Store's own single-writer lane is the lock), the
+/// host's exact result line.
+fn run_write_file_layerfs(
+    arguments: &serde_json::Value,
+    ctx: &crate::layerfs_tools::WorkspaceHandle,
+    gate: &crate::layerfs_tools::Gate,
+) -> Result<ToolOutcome, String> {
+    let raw_path = string_arg(arguments, "path")?;
+    let path = crate::layerfs_tools::view_path(&raw_path)?;
+    let content = string_arg(arguments, "content")?;
+    gate.fs_write(
+        &ctx.project,
+        &ctx.branch,
+        &path,
+        content.as_bytes(),
+        "fleet: write_file",
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(ToolOutcome {
+        output: format!("wrote {} bytes to {raw_path}\n", content.len()),
+        truncated: false,
+    })
+}
+
+/// `list_dir` over the branch: breadth-first through `fs list`
+/// pages, entries named exactly as the host renders them (relative
+/// to the listed directory, directories carrying `/`), sorted, and
+/// capped where the host caps.
+fn run_list_dir_layerfs(
+    arguments: &serde_json::Value,
+    ctx: &crate::layerfs_tools::WorkspaceHandle,
+    gate: &crate::layerfs_tools::Gate,
+) -> Result<ToolOutcome, String> {
+    let raw_path = string_arg(arguments, "path")?;
+    let view = crate::layerfs_tools::view_path(&raw_path)?;
+    let depth = integer_arg(arguments, "depth").unwrap_or(1).clamp(1, 8) as usize;
+    let mut names: Vec<String> = Vec::new();
+    let mut queue: Vec<(String, String, usize)> = vec![(view, String::new(), depth)];
+    'walk: while let Some((dir, prefix, remaining)) = queue.pop() {
+        let mut page_pos: u32 = 0;
+        loop {
+            let value = gate
+                .fs_list_page(&ctx.project, &ctx.branch, &dir, 1000, page_pos)
+                .map_err(|error| error.to_string())?;
+            let items = value
+                .get("items")
+                .and_then(|items| items.as_array())
+                .cloned()
+                .unwrap_or_default();
+            if items.is_empty() {
+                break;
+            }
+            for item in &items {
+                let name = item
+                    .get("name")
+                    .and_then(|name| name.as_str())
+                    .unwrap_or_default();
+                let is_dir = item.get("type").and_then(|t| t.as_str()) == Some("dir");
+                names.push(format!("{prefix}{name}{}", if is_dir { "/" } else { "" }));
+                if names.len() > MAX_DIR_ENTRIES * 4 {
+                    break 'walk;
+                }
+                if is_dir && remaining > 1 {
+                    let child = if dir == "/" {
+                        format!("/{name}")
+                    } else {
+                        format!("{dir}/{name}")
+                    };
+                    queue.push((child, format!("{prefix}{name}/"), remaining - 1));
+                }
+            }
+            let more = value.get("hasMore").and_then(|more| more.as_bool()) == Some(true);
+            match value.get("nextPagePos").and_then(|pos| pos.as_u64()) {
+                Some(pos) if more => page_pos = pos as u32,
+                _ => break,
+            }
+        }
+    }
+    names.sort();
+    let total = names.len();
+    names.truncate(MAX_DIR_ENTRIES);
+    let mut output = names.join("\n");
+    if total > MAX_DIR_ENTRIES {
+        output.push_str(&format!(
+            "\n\u{2026}[{total} entries, showing {}]",
+            MAX_DIR_ENTRIES
+        ));
+    }
+    output.push('\n');
+    Ok(ToolOutcome {
+        truncated: total > MAX_DIR_ENTRIES,
+        output,
+    })
+}
+
+/// `edit` over the branch: read the branch's full text, run the
+/// HOST's pure edit core over it (one implementation of zero-match's
+/// closest line, ambiguity's line list, and the diff), write the
+/// result back through the SDK — and render the host's exact line.
+fn run_edit_layerfs(
+    arguments: &serde_json::Value,
+    ctx: &crate::layerfs_tools::WorkspaceHandle,
+    gate: &crate::layerfs_tools::Gate,
+) -> Result<ToolOutcome, String> {
+    let raw_path = string_arg(arguments, "path")?;
+    let old = string_arg(arguments, "old_string")?;
+    let new = string_arg(arguments, "new_string")?;
+    let replace_all = bool_arg(arguments, "replace_all").unwrap_or(false);
+    let path = crate::layerfs_tools::view_path(&raw_path)?;
+    let original = layerfs_read_full(ctx, gate, &path)?;
+    let (outcome, updated) =
+        crate::fileops::edit_text(Path::new(&raw_path), &original, &old, &new, replace_all)?;
+    gate.fs_write(
+        &ctx.project,
+        &ctx.branch,
+        &path,
+        updated.as_bytes(),
+        "fleet: edit",
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(ToolOutcome {
+        output: format!(
+            "edited {raw_path}: {} occurrence(s), first at line {}\n{}",
+            outcome.replaced, outcome.first_line, outcome.diff
+        ),
+        truncated: false,
+    })
+}
+
+/// The whole branch file behind `path`, windowed by the wire's
+/// reads — a file too large (or one carrying a line past the wire's
+/// single-line window) is named rather than half-read, because the
+/// edit core needs the text whole to be exact.
+fn layerfs_read_full(
+    ctx: &crate::layerfs_tools::WorkspaceHandle,
+    gate: &crate::layerfs_tools::Gate,
+    path: &str,
+) -> Result<String, String> {
+    let mut whole = String::new();
+    let mut offset: u32 = 1;
+    const FULL_MAX_LINES: u32 = 100_000;
+    loop {
+        if offset > FULL_MAX_LINES {
+            return Err(format!(
+                "{path}: too large to edit through the branch view (past {FULL_MAX_LINES} \
+                 lines) — change it with bash in its workspace"
+            ));
+        }
+        let page = layerfs_read_page(ctx, gate, path, offset, 2000)?;
+        if page.line_truncated {
+            return Err(format!(
+                "{path}: a line exceeds the branch read's single-line window — edit it with bash \
+                 in its workspace"
+            ));
+        }
+        whole.push_str(&page.text);
+        match page.next {
+            Some(next) => {
+                let next = next as u32;
+                if page.text.is_empty() || next <= offset {
+                    break;
+                }
+                offset = next;
+            }
+            None => break,
+        }
+    }
+    Ok(whole)
+}
+
+/// `grep` over the branch: the three output modes composed from the
+/// wire's items (which always carry matching lines), the cap wired
+/// to the CLI's own page size, and one footer that corrects the
+/// declaration where the branch view cannot keep it — the pattern is
+/// literal and case-sensitive here (no regex engine rides the
+/// branch), and every option the wire drops is named, the way the
+/// rg fallback already names what it drops.
+fn run_grep_layerfs(
+    arguments: &serde_json::Value,
+    ctx: &crate::layerfs_tools::WorkspaceHandle,
+    gate: &crate::layerfs_tools::Gate,
+) -> Result<ToolOutcome, String> {
+    let pattern = string_arg(arguments, "pattern")?;
+    let asked = arguments
+        .get("path")
+        .and_then(|value| value.as_str())
+        .unwrap_or(".");
+    let view = crate::layerfs_tools::view_path(asked)?;
+    let mode = arguments
+        .get("output_mode")
+        .and_then(|value| value.as_str())
+        .unwrap_or("files");
+    let default_max: i64 = match mode {
+        "content" => 50,
+        "count" => 100,
+        _ => 100,
+    };
+    let max = integer_arg(arguments, "max")
+        .map(|value| value.clamp(1, 1000))
+        .unwrap_or(default_max) as u32;
+    let case_sensitive = bool_arg(arguments, "case_sensitive").unwrap_or(true);
+    let glob = arguments.get("glob").and_then(|value| value.as_str());
+    let context = integer_arg(arguments, "context").unwrap_or(0);
+    let file_type = arguments.get("type").and_then(|value| value.as_str());
+    let multiline = bool_arg(arguments, "multiline").unwrap_or(false);
+
+    let value = gate
+        .fs_grep(&ctx.project, &ctx.branch, &pattern, Some(&view), Some(max))
+        .map_err(|error| error.to_string())?;
+    let items = value
+        .get("items")
+        .and_then(|items| items.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let has_more = value.get("hasMore").and_then(|more| more.as_bool()) == Some(true);
+
+    let relative = |path: &str| path.strip_prefix('/').unwrap_or(path).to_string();
+    let mut output = String::new();
+    match mode {
+        "content" => {
+            for item in &items {
+                let path = item
+                    .get("path")
+                    .and_then(|path| path.as_str())
+                    .unwrap_or_default();
+                let line = item.get("line").and_then(|line| line.as_u64()).unwrap_or(0);
+                let text = item
+                    .get("text")
+                    .and_then(|text| text.as_str())
+                    .unwrap_or_default()
+                    .trim_end_matches('\n');
+                output.push_str(&format!("{}:{line}:{text}\n", relative(path)));
+            }
+        }
+        "count" => {
+            let mut per_file: Vec<(String, usize)> = Vec::new();
+            for item in &items {
+                let path = relative(item.get("path").and_then(|p| p.as_str()).unwrap_or(""));
+                match per_file.iter_mut().find(|(seen, _)| *seen == path) {
+                    Some((_, count)) => *count += 1,
+                    None => per_file.push((path, 1)),
+                }
+            }
+            for (path, count) in per_file {
+                output.push_str(&format!("{path}:{count}\n"));
+            }
+        }
+        _ => {
+            let mut seen: Vec<String> = Vec::new();
+            for item in &items {
+                let path = relative(item.get("path").and_then(|p| p.as_str()).unwrap_or(""));
+                if !seen.contains(&path) {
+                    seen.push(path);
+                }
+            }
+            for path in &seen {
+                output.push_str(&format!("{path}\n"));
+            }
+        }
+    }
+    if items.is_empty() {
+        output.push_str(&format!("no matches for `{pattern}`\n"));
+    }
+    let mut notes: Vec<String> = vec!["literal pattern — no regex, case-sensitive".to_string()];
+    if !case_sensitive {
+        notes.push("case-insensitive requested — not carried".to_string());
+    }
+    if glob.is_some() {
+        notes.push("file-glob filter — not carried; narrow the path instead".to_string());
+    }
+    if context > 0 {
+        notes.push("context lines — not carried".to_string());
+    }
+    if file_type.is_some() {
+        notes.push("type filter — not carried".to_string());
+    }
+    if multiline {
+        notes.push("multiline — not carried".to_string());
+    }
+    if has_more {
+        notes.push(format!("more matched — showing the first {max}"));
+    }
+    output.push_str(&format!("\n(branch grep: {})\n", notes.join("; ")));
+    Ok(ToolOutcome {
+        output,
+        truncated: has_more,
+    })
+}
+
+/// `glob` over the branch: the wire's page of paths, the host's cap
+/// and zero-case voice, and one footer naming the two view facts the
+/// declaration cannot keep — a LayerFS tree has no ignore filtering
+/// (git rules never filtered LayerFS state) and the wire carries no
+/// mtimes, so paths come in branch order, not newest first.
+fn run_glob_layerfs(
+    arguments: &serde_json::Value,
+    ctx: &crate::layerfs_tools::WorkspaceHandle,
+    gate: &crate::layerfs_tools::Gate,
+) -> Result<ToolOutcome, String> {
+    let pattern = string_arg(arguments, "pattern")?;
+    let asked = arguments
+        .get("path")
+        .and_then(|value| value.as_str())
+        .unwrap_or(".");
+    let view = crate::layerfs_tools::view_path(asked)?;
+    let effective = if pattern.starts_with('/') || asked == "." {
+        pattern.clone()
+    } else if view == "/" {
+        format!("/{pattern}")
+    } else {
+        format!("{}/{pattern}", view.trim_end_matches('/'))
+    };
+    let value = gate
+        .fs_glob(&ctx.project, &ctx.branch, &effective, Some(100))
+        .map_err(|error| error.to_string())?;
+    let items = value
+        .get("items")
+        .and_then(|items| items.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let has_more = value.get("hasMore").and_then(|more| more.as_bool()) == Some(true);
+    let mut output = String::new();
+    if items.is_empty() {
+        output.push_str(&format!("no files matched `{pattern}`\n"));
+    }
+    for item in &items {
+        let path = item.as_str().unwrap_or_default();
+        output.push_str(&format!("{}\n", path.strip_prefix('/').unwrap_or(path)));
+    }
+    if has_more {
+        output.push_str(&format!(
+            "(more matched; showing the first {})\n",
+            items.len()
+        ));
+    }
+    output.push_str(
+        "(branch view: no ignore filtering — gitignore does not apply; paths in branch order, \
+         not newest first)\n",
+    );
+    Ok(ToolOutcome {
+        output,
+        truncated: has_more,
+    })
 }
 
 fn string_arg(arguments: &serde_json::Value, key: &str) -> Result<String, String> {
