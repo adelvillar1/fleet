@@ -131,7 +131,7 @@ placements make the property feel native:
   FUNCTIONAL's delegation surface grow isolation as a property of
   fleet (the lanes' voice: what fleet does, substrate named), never a
   section titled "LayerFS integration"; the HOW has its own proper
-  home — `docs/features/layerfs.md` beside its siblings — under
+  home — `docs/features/workspace-history.md` beside its siblings — under
   knowledge's documentation, and install/doctor present the substrate
   as one more layer of the machine, in the same table and voice as
   the roster, the ledger, and MCP.
@@ -251,8 +251,14 @@ proof: a run that needs **no environment at all**.
       The face is **its own section under the GUI's `knowledge` group**
       — the fourth entry beside memory, skills, and second brain, the
       nav's four-groups-one-level shape untouched, named the way that
-      group's siblings are (the subsystem's own name, `layerfs`, the
-      same way the section named `memory` names the memory system) —
+      group's siblings are: **`workspace history`** (route
+      `workspace-history`) — chosen against `shared history` by the
+      house's own naming law, `fleet convention`: `workspace` and
+      `history` are both established terms in this tree (15 and 9
+      identifier files), `workspace history` stands on them, while
+      `shared history` would be two fresh coins AND the vendor's
+      tagline in fleet's mouth — fleet names the surface in its own
+      voice, the substrate named inside where precision needs it —
       not a fifth top-level destination bolted beside the rest. Its
       panes: **History** (the DAG: main trunk, branches at their fork
       points, commits with merge links and messages, click-through
@@ -260,7 +266,7 @@ proof: a run that needs **no environment at all**.
       with the session, sandbox/workspace state), the **Files**
       browser, and the **Storage** figures — genuinely visual,
       refreshable, honest empty states; `docs/architecture/
-      surfaces.md` gains `### LayerFS — *knowledge*` beside its
+      surfaces.md` gains `### Workspace history — *knowledge*` beside its
       siblings' sections and FUNCTIONAL's surface list ships with it
       (the docs gate's own rules); the endpoint's JSON is pinned by
       Rust tests over the stub reads — and any judgment, semantic, or
@@ -290,13 +296,13 @@ instead of the env; the named-fallback path) ·
 `src/layerfs_view.rs` (new: the tree/work reads, the view model, and
 the child↔branch join) · `src/gui/assets/app.js` + the GUI's
 endpoint surface (the knowledge-group section) · `docs/architecture/surfaces.md`
-(the knowledge family's new `### LayerFS — *knowledge*` section) · `src/install.rs` +
+(the knowledge family's new `### Workspace history — *knowledge*` section) · `src/install.rs` +
 `src/cli.rs` (the `--layerfs` phase) · `src/doctor.rs` +
 `src/main.rs` (the seven checks; the durable home's path resolves
 through `src/home.rs`'s own root) · `scripts/layerfs-probe.sh` (kept as the diagnostic; gains the
 derived-env mode so it validates what fleet will actually pass) ·
 `CLAUDE.local.md` (the recipe shrinks to one line) ·
-`docs/features/layerfs.md` (new: the HOW, beside its feature-doc
+`docs/features/workspace-history.md` (new: the HOW, beside its feature-doc
 siblings) + `README.md`'s delegation bullet (isolation as fleet's
 property, substrate in the lanes' voice) ·
 `FUNCTIONAL-SPECIFICATIONS.md` + `TECHNICAL-DOCUMENTATION.md` (the
