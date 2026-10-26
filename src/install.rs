@@ -912,6 +912,22 @@ pub fn layerfs_step(home: &Path) -> LayerfsStep {
             }),
     );
     let LayerfsStep::Provisioned { home: layerfs_home } = plan else {
+        // A verified machine gets the scripts too: the home's copies are
+        // what the driver resolves, and a home whose scripts are missing
+        // is a home whose registrations fail by name while the install
+        // answers Verified. Copy-if-absent, so a hand-updated copy in
+        // the home is never overwritten from the checkout.
+        if let Ok(home) = std::fs::read_to_string(home.join(CONFIG_FILE)) {
+            if let Ok(document) = serde_json::from_str::<serde_json::Value>(&home) {
+                if let Some(recorded) = document
+                    .get("layerfs")
+                    .and_then(|section| section.get("home"))
+                    .and_then(|home| home.as_str())
+                {
+                    install_layerfs_scripts(std::path::Path::new(recorded));
+                }
+            }
+        }
         return plan;
     };
     if let Err(error) = std::fs::create_dir_all(&layerfs_home) {
@@ -920,26 +936,13 @@ pub fn layerfs_step(home: &Path) -> LayerfsStep {
             provision: "check the home's permissions and retry".to_string(),
         };
     }
-    // The three scripts the driver spawns — the worker starter, the
-    // register script, the history script — installed from this
-    // checkout's own scripts/, the way the lanes' cores are carried:
-    // by name, never a directory sweep.
-    for script in [
-        "layerfs-worker.mjs",
-        "layerfs-register.mjs",
-        "layerfs-history.mjs",
-    ] {
-        let source = std::path::Path::new("scripts").join(script);
-        if source.is_file() {
-            let _ = std::fs::copy(&source, layerfs_home.join(script));
-        }
-    }
+    install_layerfs_scripts(&layerfs_home);
     // The worker, started through the bundle's runtime: a home whose
     // worker cannot answer is not a provisioned substrate, so a failed
     // start is a named skip and the facts stay unrecorded.
     let image = bundle.as_deref().and_then(bundle_image).unwrap_or_default();
     let started = std::process::Command::new("node")
-        .arg(layerfs_home.join("layerfs-worker.mjs"))
+        .arg(layerfs_home.join(crate::layerfs_tools::WORKER_SCRIPT))
         .args([
             layerfs_home.to_string_lossy().to_string(),
             bundle
@@ -1002,6 +1005,36 @@ fn node_present() -> bool {
                 .and_then(|major| major.parse::<u32>().ok())
         })
         .is_some_and(|major| major >= 20)
+}
+
+/// The three scripts the driver spawns, carried IN the binary the way
+/// the face's assets are: an install must work from any directory, and
+/// a checkout-relative copy silently installs nothing when the command
+/// runs from elsewhere (the live run's second finding). Copy-if-absent,
+/// so a copy the owner updated by hand is never overwritten. One name
+/// per script, shared with the driver through `layerfs_tools`'
+/// constants: the live run taught that a name the install copies and
+/// the driver does not resolve is a registration that fails by name.
+fn install_layerfs_scripts(layerfs_home: &std::path::Path) {
+    for (name, source) in [
+        (
+            crate::layerfs_tools::WORKER_SCRIPT,
+            include_str!("../scripts/layerfs-worker.mjs"),
+        ),
+        (
+            crate::layerfs_tools::REGISTER_SCRIPT,
+            include_str!("../scripts/layerfs-register.mjs"),
+        ),
+        (
+            crate::layerfs_tools::HISTORY_SCRIPT,
+            include_str!("../scripts/layerfs-history.mjs"),
+        ),
+    ] {
+        let target = layerfs_home.join(name);
+        if !target.is_file() {
+            let _ = std::fs::write(target, source);
+        }
+    }
 }
 
 /// The runtime image the sealed bundle recorded — the bundle's own

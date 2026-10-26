@@ -9525,12 +9525,14 @@
       'main is the trunk; a child\u2019s branch forks where it started and merges back when ' +
       'the parent settles it. Click a branch or a commit to browse it below.');
     var branches = (read.branches || []).slice();
-    var trunk = branches.filter(function (b) { return b.name === 'main'; })[0] ||
-      { name: 'main', commits: [] };
     var children = branches.filter(function (b) { return b.name !== 'main'; });
-    var trunkCommits = trunk.commits || [];
+    // The trunk's steps are its LAYERS, not commits: the live Store's
+    // main carries no commit of its own (its head stays null while the
+    // layers chain), so the spine is drawn from the layers, each naming
+    // the branch whose commit made it.
+    var layers = (read.layers || []).slice().reverse();
     var LANE_W = 250, SPINE_X = 130, ROW_H = 34, PAD = 18;
-    var rows = Math.max(trunkCommits.length, children.reduce(function (most, b) {
+    var rows = Math.max(layers.length, children.reduce(function (most, b) {
       return Math.max(most, (b.commits || []).length + 1);
     }, 1));
     var h = PAD * 2 + rows * ROW_H;
@@ -9544,13 +9546,13 @@
       class: 'dag-spine'
     }));
     plot.appendChild(label(SPINE_X - 52, PAD - 4, 'dag-lane-name', 'main', 'end'));
-    trunkCommits.forEach(function (commit, index) {
-      plot.appendChild(historyNode(SPINE_X - 46, PAD + index * ROW_H, commit, trunk.name, null));
+    layers.forEach(function (layer, index) {
+      plot.appendChild(historyLayer(SPINE_X - 46, PAD + index * ROW_H, layer));
     });
     children.forEach(function (branch, lane) {
       var x = SPINE_X + lane * LANE_W;
       var commits = branch.commits || [];
-      var forkY = PAD + Math.min(trunkCommits.length, rows - 1) * ROW_H - ROW_H / 2;
+      var forkY = PAD + Math.min(layers.length, rows - 1) * ROW_H - ROW_H / 2;
       var laneY = PAD;
       // The fork edge: from the trunk's last row out to the lane's head.
       plot.appendChild(svg('path', {
@@ -9583,7 +9585,7 @@
       head.addEventListener('click', function () { historyBrowse(branch.name); });
       plot.appendChild(head);
     });
-    if (!trunkCommits.length && !children.length) {
+    if (!layers.length && !children.length) {
       plot.appendChild(label(PAD, PAD + 18, 'dag-empty',
         'The Store holds its first layer and no commits yet.'));
     }
@@ -9615,6 +9617,25 @@
     made.appendChild(svg('title', null, said));
     made.style.cursor = 'pointer';
     made.addEventListener('click', function () { historyBrowse(branch); });
+    return made;
+  }
+
+  // One step on the trunk: a layer, with the branch whose commit made
+  // it named where a commit's message would be.
+  function historyLayer(x, y, layer) {
+    var made = svg('g', { class: 'dag-commit' });
+    made.appendChild(dot(x, y, 'ok'));
+    made.appendChild(label(x + 12, y + 4, 'dag-commit-id', layer.id));
+    var said = 'layer ' + layer.id + ' \u00b7 ' + bytes(layer.logical);
+    if (layer.source_branch) {
+      made.appendChild(label(x + 74, y + 4, 'dag-commit-msg',
+        clip('merged from ' + layer.source_branch, 34)));
+      said += '\nmerged from ' + layer.source_branch;
+    } else {
+      made.appendChild(label(x + 74, y + 4, 'dag-commit-msg', 'the import\u2019s own layer'));
+      said += '\nthe import\u2019s own layer';
+    }
+    made.appendChild(svg('title', null, said));
     return made;
   }
 
@@ -9709,7 +9730,7 @@
     items.forEach(function (item) {
       var line = node('tr');
       var name = item.name || item.path || '(no name)';
-      var isDir = !!(item.dir || item.kind === 'dir' || item.type === 'directory');
+      var isDir = !!(item.dir || item.kind === 'dir' || item.type === 'dir' || item.type === 'directory');
       var cell = node('td');
       var button = node('button', 'link', (isDir ? '\u{1f4c2} ' : '') + name);
       button.type = 'button';

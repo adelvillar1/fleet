@@ -30,6 +30,26 @@ SRC="$DIR/source"
 LOG="$DIR/run.log"
 RESULT="$DIR/result.json"
 CLI="${FLEET_LAYERFS_BIN:-layerfs}"
+# The sealed bundle: the operator's pin, else the directory the CLI
+# itself sits in (the CLI ships inside a sealed bundle's api/).
+BUNDLE="${FLEET_LAYERFS_BUNDLE:-}"
+if [ -z "$BUNDLE" ] && [ -f "$CLI" ]; then
+    # The CLI sits at <bundle>/api/agent/cli/src/layerfs.js, so the
+    # sealed bundle's root is four levels up from its own directory.
+    CAND="$(cd "$(dirname "$CLI")/../../../.." 2>/dev/null && pwd)"
+    [ -f "$CAND/layerfs-daemon" ] && BUNDLE="$CAND"
+fi
+# The runtime image: the operator's pin, else the sealed bundle's own
+# manifest — the same source `fleet install` records.
+if [ -z "${LAYERFS_IMAGE:-}" ] && [ -n "$BUNDLE" ] && [ -f "$BUNDLE/manifest.json" ]; then
+    LAYERFS_IMAGE=$(python3 -c "import json;print(json.load(open('$BUNDLE/manifest.json'))['images']['runtime'])" 2>/dev/null || true)
+    [ -n "$LAYERFS_IMAGE" ] && export LAYERFS_IMAGE
+fi
+# The daemon, the bundle's own: a Workspace's Sandbox is a container the
+# daemon starts, and the wire refuses without it.
+if [ -z "${LAYERFS_DAEMON:-}" ] && [ -n "$BUNDLE" ] && [ -f "$BUNDLE/layerfs-daemon" ]; then
+    export LAYERFS_DAEMON="$BUNDLE/layerfs-daemon"
+fi
 
 mkdir -p "$DIR" "$SRC"
 : >"$LOG"
@@ -86,7 +106,6 @@ if [ -z "${LAYERFS_WORKER_ENDPOINT:-}" ] && [ ! -f "$HOME_DIR/worker/endpoint.js
   esac
 fi
 export LAYERFS_HOME="$HOME_DIR"
-
 # ---- the loop --------------------------------------------------------------
 printf '# layerfs-probe  %s  cli=%s\n' "$(date -u +%FT%TZ)" "$("$CLI" --version 2>&1 | head -1)" >"$LOG"
 
@@ -100,9 +119,49 @@ mkdir -p "$SRC/sub" && printf 'nested\n' >"$SRC/sub/file.txt"
 # note records that the runtime's init already ran (its timing lands
 # in the plan's C0 section).
 if "$CLI" --project "$PROJ" project list_branches >"$DIR/exists.json" 2>/dev/null; then
-    printf '%-14s %s\n' "init" "skipped (project already initialized by the runtime)" >>"$LOG"
+    printf '%-14s %s\n' "init" "skipped (project already initialized)" >>"$LOG"
 else
-    step init        "$DIR/init.json"        "$CLI" --project "$PROJ" init "$PROJ" "$SRC"
+    # The sanctioned macOS route is the runtime's start_init, which
+    # fleet wraps in scripts/layerfs-register.mjs: it creates the
+    # Store's volume, records the deploy facts and answers the store
+    # path — the CLI's own `project init` needs a store path the
+    # environment cannot derive (it installs the Store wherever the
+    # client is pointed).
+    REGISTER="${FLEET_LAYERFS_REGISTER:-$(dirname "$0")/layerfs-register.mjs}"
+    # The runtime refuses a relative source, so the scratch tree is
+    # named absolutely.
+    SRC_ABS=$(cd "$SRC" && pwd)
+    if [ -f "$REGISTER" ] && [ -n "${LAYERFS_IMAGE:-}" ]; then
+        T0=$(date +%s%N)
+        if node "$REGISTER" "$PROJ" "$SRC_ABS" "$HOME_DIR" "$BUNDLE" "$LAYERFS_IMAGE" \
+             >"$DIR/init.json" 2>"$DIR/init.err"; then
+            T1=$(date +%s%N)
+            printf '%-14s %sms (the runtime start_init)\n' "init" "$(( (T1 - T0) / 1000000 ))" >>"$LOG"
+        else
+            step init  "$DIR/init.json"  "$CLI" --project "$PROJ" init "$PROJ" "$SRC"
+        fi
+    else
+        step init        "$DIR/init.json"        "$CLI" --project "$PROJ" init "$PROJ" "$SRC"
+    fi
+fi
+# The durable home's own endpoint, derived and exported AFTER the init
+# step: without it the CLI takes the in-process transport, and macOS
+# cannot load the sealed bundle's Linux addon (`api/binding/layerfs.node`
+# does not exist there — the worker carries `LAYERFS_NATIVE` instead).
+# The init itself rides the runtime, which must not see it.
+if [ -z "${LAYERFS_WORKER_ENDPOINT:-}" ] && [ -f "$HOME_DIR/worker/endpoint.json" ]; then
+  export LAYERFS_WORKER_ENDPOINT="$HOME_DIR/worker/endpoint.json"
+fi
+
+# The scratch project's Store, read from the register's answer (or the
+# operator's pin): every ladder step is a client call, and a client
+# needs the store path the project installed. The volume rides beside
+# it — a Sandbox mounts the Store's own volume.
+if [ -z "${LAYERFS_STORE_PATH:-}" ] && [ -f "$DIR/init.json" ]; then
+    PROBE_STORE=$(python3 -c "import json;print(json.load(open('$DIR/init.json')).get('store',''))" 2>/dev/null || true)
+    PROBE_VOLUME=$(python3 -c "import json;print(json.load(open('$DIR/init.json')).get('volume',''))" 2>/dev/null || true)
+    [ -n "$PROBE_STORE" ] && export LAYERFS_STORE_PATH="$PROBE_STORE"
+    [ -n "$PROBE_VOLUME" ] && export LAYERFS_VOLUME="$PROBE_VOLUME"
 fi
 BRANCH="probe-work-$(date +%s)"
 step fork        "$DIR/fork.json"        "$CLI" --project "$PROJ" branch fork "$BRANCH"

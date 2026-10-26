@@ -237,7 +237,11 @@ pub fn machine() -> Result<&'static Machine, String> {
         .map_err(|reason| reason.clone())
 }
 
-fn read_machine() -> Result<Machine, String> {
+/// The machine's facts, read FRESH from the config — the process
+/// cache answers whichever config the first caller saw, and a face
+/// serving several folders cannot afford that. Tests and the view's
+/// reads use this one.
+pub fn read_machine() -> Result<Machine, String> {
     let home = crate::home::fleet_home(
         std::env::var("FLEET_HOME").ok().as_deref(),
         std::env::var("HOME").ok().as_deref(),
@@ -361,7 +365,30 @@ pub fn apply_env(machine: &Machine, registration: Option<&Registration>) {
     set("LAYERFS_DAEMON", &machine.bundle.join("layerfs-daemon"));
     if let Some(registration) = registration {
         set("LAYERFS_STORE_PATH", &registration.store);
+        // The Store's Docker volume — the wire's `deploy.volume`, which
+        // a Workspace's Sandbox refuses to start without. It is the
+        // store path's own volume name, the same derivation the
+        // doctor's volume check makes.
+        set(
+            "LAYERFS_VOLUME",
+            Path::new(&store_volume(&registration.store)),
+        );
     }
+}
+
+/// The Store's Docker volume, derived from the store path a
+/// registration records: `/var/lib/docker/volumes/<name>/_data/global/
+/// store.sqlite` names the volume every Sandbox mounts. Empty when the
+/// path is not that shape — the wire refuses by name, which is the
+/// honest answer for a store path that is not a Docker volume's.
+pub fn store_volume(store: &Path) -> String {
+    store
+        .to_string_lossy()
+        .split("/volumes/")
+        .nth(1)
+        .and_then(|rest| rest.split('/').next())
+        .unwrap_or_default()
+        .to_string()
 }
 
 /// The wire's own name rule — `HistoryName` in layerfs-history: 1 to
@@ -620,6 +647,18 @@ fn project_name_for(folder: &Path, taken: &[String]) -> String {
     format!("{base}-{}", std::process::id())
 }
 
+/// The three scripts the driver spawns, by the name this repository
+/// ships them under in `scripts/` — the install copies them into the
+/// home by the SAME name and the driver resolves them by it. The live
+/// run taught why this is one constant rather than three literals: the
+/// install copied `layerfs-register.mjs` while the driver looked for
+/// `register.mjs`, so every clean-environment registration failed by
+/// name while the tests (which wrote their own fixture's short name)
+/// stayed green.
+pub const REGISTER_SCRIPT: &str = "layerfs-register.mjs";
+pub const HISTORY_SCRIPT: &str = "layerfs-history.mjs";
+pub const WORKER_SCRIPT: &str = "layerfs-worker.mjs";
+
 /// The register script's location: the home's own copy (install puts
 /// it there), with the override for tests and operators.
 fn register_script(machine: &Machine) -> Result<PathBuf, RegisterError> {
@@ -629,7 +668,7 @@ fn register_script(machine: &Machine) -> Result<PathBuf, RegisterError> {
     {
         return Ok(path);
     }
-    let script = machine.home.join("register.mjs");
+    let script = machine.home.join(REGISTER_SCRIPT);
     if script.is_file() {
         Ok(script)
     } else {
@@ -2348,7 +2387,7 @@ esac
         std::fs::write(folder.join("README.md"), "real\n").unwrap();
         let argv_log = home.join("register-argv.log");
         std::fs::write(
-            layerfs_home.join("register.mjs"),
+            layerfs_home.join(REGISTER_SCRIPT),
             r#"import { appendFileSync } from "node:fs";
 const name = process.argv[2];
 appendFileSync(process.env.FLEET_STUB_REGISTER_LOG, process.argv.slice(2).join(" ") + "\n");
@@ -2475,6 +2514,27 @@ console.log(JSON.stringify({
             "a full lowercase hex commit: {commit}"
         );
         assert!(CHECKOUT_PIN.contains(SUPPORTED_WIRE), "{CHECKOUT_PIN}");
+    }
+
+    /// The three script names are the names this repository ships: the
+    /// install copies `scripts/<name>` into the home by the constant,
+    /// and the driver resolves the home's copy by the same one. The
+    /// live run taught the cost of a mismatch — the install copied
+    /// `layerfs-register.mjs`, the driver looked for `register.mjs`,
+    /// and every clean-environment registration failed by name while
+    /// the tests (each writing its own fixture's short name) stayed
+    /// green.
+    #[test]
+    fn the_script_names_are_the_names_the_repository_ships() {
+        for name in [REGISTER_SCRIPT, HISTORY_SCRIPT, WORKER_SCRIPT] {
+            let shipped = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("scripts")
+                .join(name);
+            assert!(
+                shipped.is_file(),
+                "the driver spawns {name}, which scripts/ does not ship"
+            );
+        }
     }
 
     /// The live run's lesson, pinned: session stamps carry uppercase

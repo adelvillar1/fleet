@@ -35,6 +35,12 @@ pub struct LayerView {
     pub id: String,
     pub logical: u64,
     pub parent: Option<String>,
+    /// The branch whose commit made this layer — `merge-<child>` for a
+    /// parent's settlement. This is where the merge evidence lives: the
+    /// live Store's main carries no merge COMMIT (its head stays null
+    /// while the layers chain), so a branch's merged state is read off
+    /// the layers that name it.
+    pub source_branch: Option<String>,
 }
 
 /// One branch, its recent commits, and — when the name folds to a
@@ -87,7 +93,7 @@ fn history_script(home: &Path) -> Result<PathBuf, String> {
     {
         return Ok(path);
     }
-    let script = home.join("history.mjs");
+    let script = home.join(crate::layerfs_tools::HISTORY_SCRIPT);
     if script.is_file() {
         Ok(script)
     } else {
@@ -132,7 +138,11 @@ fn delegation_rows() -> Vec<(String, String, String)> {
     };
     let root = crate::calib::resolve_root(&home, std::env::var("HOME").ok().as_deref());
     let day = crate::calib::today();
-    crate::calib::read_day(&root, &day, 512)
+    // The OP-bounded reader, not the whole-stream tail: a busy day's
+    // file is mixed-op, and the last 512 rows of it can hold no
+    // delegation row at all — which is exactly how the live face lost
+    // its child join on a day the router had been busy.
+    crate::calib::read_op_day(&root, &day, crate::calib::OP_DELEGATION, 512)
         .into_iter()
         .filter(|row| row.op == crate::calib::OP_DELEGATION && !row.workspace_branch.is_empty())
         .map(|row| (row.session, row.workspace_branch, row.outcome))
@@ -158,14 +168,13 @@ pub fn session_branches() -> std::collections::HashMap<String, String> {
 /// was forked and never worked. The state is derived, never recorded:
 /// one writer for the fact (the substrate), one reader for the face.
 pub fn branch_state(view: &HistoryView, branch: &str) -> &'static str {
-    let trunk = view
-        .branches
-        .iter()
-        .find(|one| one.name == "main")
-        .map(|main| &main.commits)
-        .cloned()
-        .unwrap_or_default();
-    let merged = trunk.iter().any(|commit| commit.message.contains(branch));
+    let settled = format!("merge-{branch}");
+    let merged = view.layers.iter().any(|layer| {
+        layer
+            .source_branch
+            .as_deref()
+            .is_some_and(|source| source == branch || source == settled)
+    });
     if merged {
         return "merged";
     }
@@ -180,7 +189,6 @@ pub fn branch_state(view: &HistoryView, branch: &str) -> &'static str {
         "idle"
     }
 }
-
 /// The view, assembled: branches and their commits from the CLI,
 /// the Layers and figures from the backend script, the children from
 /// the day's rows. Two rules the live run taught: **main's commits are
@@ -193,19 +201,33 @@ pub fn history(
     registration: &Registration,
     home: &Path,
 ) -> Result<HistoryView, String> {
-    // The store path is the project's own — the one fact the home
-    // alone cannot give the CLI — composed before the reads so every
-    // spawn in this view hits the same Store the driver's do.
-    std::env::set_var("LAYERFS_STORE_PATH", &registration.store);
+    // The composed environment, the same one the arm's spawns set:
+    // the face runs in whatever env it was launched in (a clean one,
+    // live), so the machine's facts are composed here rather than
+    // assumed — home, endpoint, image, daemon, and the project's own
+    // store path and volume.
+    let machine = crate::layerfs_tools::read_machine();
+    if let Ok(machine) = &machine {
+        crate::layerfs_tools::apply_env(machine, Some(registration));
+    } else {
+        std::env::set_var("LAYERFS_STORE_PATH", &registration.store);
+    }
     let outcomes = delegation_outcomes();
 
     // The backend first: its answer carries main's commits beside the
     // Layers and the figures, and its absence is a note the branches
-    // survive.
-    let (layers, storage, note, trunk_commits) = match read_trunk(home, &registration.name) {
-        Ok(trunk) => (trunk.layers, trunk.storage, None, trunk.commits),
-        Err(reason) => (Vec::new(), None, Some(reason), Vec::new()),
-    };
+    // survive. The scripts live in the LAYERFS home, which is not the
+    // fleet home the caller handed us — the machine's own record says
+    // where, and a machine without facts falls back to the caller's.
+    let layerfs_home = machine
+        .as_ref()
+        .map(|machine| machine.home.clone())
+        .unwrap_or_else(|_| home.to_path_buf());
+    let (layers, storage, note, trunk_commits) =
+        match read_trunk(&layerfs_home, &machine, &registration.name) {
+            Ok(trunk) => (trunk.layers, trunk.storage, None, trunk.commits),
+            Err(reason) => (Vec::new(), None, Some(reason), Vec::new()),
+        };
 
     let branches_value = gate
         .list_branches(&registration.name)
@@ -309,11 +331,27 @@ fn parse_commits(document: &serde_json::Value) -> Vec<CommitView> {
 /// The trunk: main's Layers and commits and the Store's figures, read
 /// through the home's history script. A missing or failing script is
 /// a named reason, never an empty lie.
-fn read_trunk(home: &Path, project: &str) -> Result<Trunk, String> {
+fn read_trunk(
+    home: &Path,
+    machine: &Result<crate::layerfs_tools::Machine, String>,
+    project: &str,
+) -> Result<Trunk, String> {
     let script = history_script(home)?;
-    let bundle = std::env::var("FLEET_LAYERFS_BUNDLE").unwrap_or_default();
+    // The bundle is the machine's own record, never the process env: a
+    // face launched in a clean environment has no LAYERFS_* facts, and
+    // the env knob stays the operator's override on top of it.
+    let bundle = std::env::var("FLEET_LAYERFS_BUNDLE")
+        .ok()
+        .filter(|bundle| !bundle.is_empty())
+        .map(std::path::PathBuf::from)
+        .or_else(|| machine.as_ref().ok().map(|machine| machine.bundle.clone()))
+        .unwrap_or_default();
     let output = std::process::Command::new("node")
-        .args([script.to_string_lossy().as_ref(), project, &bundle])
+        .args([
+            script.to_string_lossy().as_ref(),
+            project,
+            bundle.to_string_lossy().as_ref(),
+        ])
         .output()
         .map_err(|error| format!("the history script could not run: {error}"))?;
     if !output.status.success() {
@@ -348,6 +386,10 @@ fn read_trunk(home: &Path, project: &str) -> Result<Trunk, String> {
                         .get("parent")
                         .and_then(|parent| parent.as_str())
                         .map(short),
+                    source_branch: layer
+                        .get("sourceBranch")
+                        .and_then(|branch| branch.as_str())
+                        .map(str::to_string),
                 })
                 .collect()
         })
@@ -368,12 +410,26 @@ fn read_trunk(home: &Path, project: &str) -> Result<Trunk, String> {
             .and_then(|v| v.as_f64())
             .unwrap_or(0.0),
     });
+    // main's own commits: the Store's commits are every branch's, and
+    // main's line is its layers — so main's commits are the ones whose
+    // branch IS main (usually none, which is why the spine is drawn
+    // from the layers).
+    let commits = document
+        .get("commits")
+        .and_then(serde_json::Value::as_array)
+        .map(|commits| {
+            commits
+                .iter()
+                .filter(|commit| {
+                    commit.get("branch").and_then(|branch| branch.as_str()) == Some("main")
+                })
+                .map(parse_commit)
+                .collect()
+        })
+        .unwrap_or_default();
     Ok(Trunk {
         layers,
-        commits: document
-            .get("commits")
-            .map(parse_commits)
-            .unwrap_or_default(),
+        commits,
         storage,
     })
 }
@@ -482,6 +538,7 @@ pub fn workspace_history(cwd: &Path) -> serde_json::Value {
                     "id": layer.id,
                     "logical": layer.logical,
                     "parent": layer.parent,
+                    "source_branch": layer.source_branch,
                 })).collect::<Vec<_>>(),
                 "storage": view.storage.as_ref().map(|storage| json!({
                     "logical": storage.logical,
@@ -573,11 +630,13 @@ mod tests {
 case "$*" in
   *--version*) echo "1.1.0" ;;
   *"project list_branches"*)
-    echo '{"items":[{"name":"main","base":"aa11","head":"bb22","forkedFrom":null},{"name":"fleet-child-20261026t010000z-abc123","base":"aa11","head":"cc33","forkedFrom":"aa11"}],"hasMore":false}' ;;
+    echo '{"items":[{"name":"main","base":"aa11","head":null,"forkedFrom":null},{"name":"fleet-child-20261026t010000z-abc123","base":"aa11","head":"cc33","forkedFrom":"aa11"}],"hasMore":false}' ;;
   *"branch list_commits main"*)
-    echo '{"items":[{"id":"1244ee6601","parent":null,"secondParent":null,"via":"fs","message":"fleet: write_file","time":1792975007476}],"hasMore":false}' ;;
+    # The live wire's own answer: main's commits are not CLI-reachable,
+    # which is the whole reason the backend script exists.
+    echo 'layerfs: [NoSuchBranch] Branch main does not exist' >&2; exit 3 ;;
   *"branch list_commits"*)
-    echo '{"items":[{"id":"12e968660147668df46ef623a1a28858b74736a2758ddaa5e51b19607d62104d4c","parent":"1244ee6601","secondParent":"aa11","via":"merge","message":"fleet: merge subagent fleet-child-x","time":1792975010000}],"hasMore":false}' ;;
+    echo '{"items":[{"id":"12e968660147668df46ef623a1a28858b74736a2758ddaa5e51b19607d62104d4c","parent":"1244ee6601","secondParent":null,"via":"fs","message":"fleet: write_file","time":1792975010000}],"hasMore":false}' ;;
   *) echo "layerfs: unknown" >&2; exit 2 ;;
 esac
 "#,
@@ -595,9 +654,19 @@ esac
         std::fs::create_dir_all(dir).unwrap();
         let script = dir.join("history.mjs");
         let body = if ok {
+            // The live Store's own shape: the trunk's layers carry the
+            // branch whose commit made them (`merge-<child>` for a
+            // parent's settlement), and the commits array is every
+            // branch's — the child's own `fs` commit sits here, with
+            // main's line empty because its steps are the layers.
             r#"console.log(JSON.stringify({
-  layers: [{ id: "323d354b0ca1efdc4cdea06cd168c12386b6eec9a3dee373768d1802bc41bb280b", logical: 18777528, parent: null }],
-  commits: [{ id: "1244ee6601", parent: null, secondParent: null, via: "fs", message: "fleet: write_file", time: 1792975007476 }],
+  layers: [
+    { id: "323d354b0ca1efdc4cdea06cd168c12386b6eec9a3dee373768d1802bc41bb280b", logical: 18777528, parent: null, sourceBranch: "merge-fleet-child-20261026t010000z-abc123" },
+    { id: "aa11bb22cc33", logical: 946, parent: null, sourceBranch: null }
+  ],
+  commits: [
+    { id: "12e968660147668df46ef623a1a28858b74736a2758ddaa5e51b19607d62104d4c", branch: "fleet-child-20261026t010000z-abc123", parent: "1244ee6601", secondParent: null, via: "fs", message: "fleet: write_file", time: 1792975010000 }
+  ],
   workspaces: [],
   storage: { logical: 18777528, canonical: 14955859, stored: 11229684, dedupe: 1.25553, compression: 1.331815 },
 }));"#
@@ -681,18 +750,48 @@ esac
         assert_eq!(view.branches.len(), 2);
         let main = &view.branches[0];
         assert_eq!(main.name, "main");
-        assert_eq!(main.commits.len(), 1);
-        // main's first Commit is the root: no parents.
-        assert_eq!(main.commits[0].parents, 0);
+        // main's own commits are the Store's commits ON main — the live
+        // Store carries none, because main's line is its layers.
+        assert!(main.commits.is_empty(), "{:?}", main.commits);
         let child = &view.branches[1];
-        // The child's merge-back Commit carries both parents — the
-        // edge the DAG draws.
-        assert_eq!(child.commits[0].parents, 2);
+        // The child's own commit, from the CLI's list_commits.
+        assert_eq!(child.commits.len(), 1);
+        assert_eq!(child.commits[0].message, "fleet: write_file");
         let link = child.child.as_ref().expect("the branch folds to a child");
         assert_eq!(link.session, "20261026T010000Z-abc123");
         assert_eq!(link.outcome, "completed");
-        assert_eq!(view.layers.len(), 1);
+        // The trunk's layers, and the merge evidence the live Store
+        // taught is the real one: the layer names the settlement.
+        assert_eq!(view.layers.len(), 2);
         assert_eq!(view.layers[0].logical, 18777528);
+        assert_eq!(
+            view.layers[0].source_branch.as_deref(),
+            Some("merge-fleet-child-20261026t010000z-abc123")
+        );
+        assert_eq!(branch_state(&view, &child.name), "merged");
+        // A branch the trunk never settled, with commits of its own:
+        // pushed into the view so the state reads it the way the face
+        // would.
+        let mut view = view;
+        view.branches.push(BranchView {
+            name: "fleet-child-20261026t010000z-def456".to_string(),
+            head: None,
+            forked_from: None,
+            commits: vec![CommitView {
+                id: "ab".to_string(),
+                message: "fleet: write_file".to_string(),
+                via: "fs".to_string(),
+                time: 0,
+                parents: 1,
+            }],
+            child: None,
+        });
+        assert_eq!(
+            branch_state(&view, "fleet-child-20261026t010000z-def456"),
+            "open"
+        );
+        // A forked branch that never worked.
+        assert_eq!(branch_state(&view, "fleet-child-never-worked"), "idle");
         let storage = view.storage.as_ref().expect("the figures");
         assert_eq!(storage.stored, 11229684);
         assert!(view.note.is_none(), "{:?}", view.note);

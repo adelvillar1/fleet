@@ -3503,7 +3503,7 @@ mod tests {
         std::fs::create_dir_all(&folder).unwrap();
         std::fs::write(folder.join("README.md"), "real\n").unwrap();
         std::fs::write(
-            layerfs_home.join("register.mjs"),
+            layerfs_home.join(crate::layerfs_tools::REGISTER_SCRIPT),
             r#"import { appendFileSync } from "node:fs";
 const name = process.argv[2];
 console.log(JSON.stringify({

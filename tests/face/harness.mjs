@@ -1959,7 +1959,10 @@ async function theWorkspaceHistorySectionDrawsTheTreeItRead() {
         commits: [{ id: '12e968660147', message: 'fleet: write_file', via: 'fs', time: 1792975010000, parents: 1 }],
       },
     ],
-    layers: [{ id: '323d354b0ca1', logical: 18777528, parent: null }],
+    layers: [
+      { id: '323d354b0ca1', logical: 18777528, parent: null, source_branch: 'merge-fleet-child-20261026t010000z-abc123' },
+      { id: 'aa11bb22cc33', logical: 946, parent: null, source_branch: null },
+    ],
     storage: { logical: 18777528, canonical: 14955859, stored: 11229684, dedupe: 1.25553, compression: 1.331815 },
     note: null,
     refused: [],
@@ -1994,10 +1997,11 @@ async function theWorkspaceHistorySectionDrawsTheTreeItRead() {
   // The surface announces itself once, above the cards.
   const title = page.rows('.surface-title').map((n) => n.textContent.trim());
   check('the section names itself workspace history', title.includes('Workspace history'), title.join(' | '));
-  // The DAG drew the trunk's commit, the child's lane, and the merge
-  // edge back to main — three edges and the head marker, by class.
+  // The DAG drew the trunk's two layers, the child's lane with its
+  // commit, and the merge edge back to main.
   const dag = page.rows('.dag-commit');
-  check('the dag draws every commit', dag.length === 2, String(dag.length));
+  check('the dag draws the trunk\u2019s layers and the child\u2019s commit',
+    dag.length === 3, String(dag.length));
   check('the dag draws the merge edge',
     page.rows('.dag-edge.is-merged').length === 2,
     String(page.rows('.dag-edge.is-merged').length));

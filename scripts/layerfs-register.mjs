@@ -27,11 +27,44 @@ if (!name || !source || !home || !bundle || !image) {
 // bundle's node_modules, and nothing is resolved from this file's
 // location (which has no node_modules of its own).
 const { LayerFSRuntime } = await import(join(bundle, "api/runtime/src/index.js"));
+// Init installs the Store, so it is the one route that must NOT ride
+// the home's worker: with LAYERFS_WORKER_ENDPOINT set the runtime's
+// client answers through the worker, which serves an already-installed
+// Store and refuses with `project.init installs the Store at the
+// client's storePath`. A provisioned machine's environment carries the
+// endpoint, so it is dropped here — the client made after the Init
+// rides it again.
+delete process.env.LAYERFS_WORKER_ENDPOINT;
 const runtime = await LayerFSRuntime.open({ home, image, bundle });
 try {
   const t0 = Date.now();
-  const job = await runtime.project.start_init(name, source);
+  // An already-installed project is the answer, not a failure: the
+  // register is idempotent by name, and the record below is what the
+  // driver writes either way. `start_init` answers Exists when the
+  // home already holds the project.
+  let job;
+  try {
+    job = await runtime.project.start_init(name, source);
+  } catch (error) {
+    if (error?.code !== "Exists") throw error;
+    job = null;
+  }
   const id = job?.id ?? job;
+  if (id == null) {
+    const there = (await runtime.project.list()).find((p) => p.name === name);
+    if (!there?.volume) {
+      console.log(JSON.stringify({ error: "the project exists but records no volume" }));
+      process.exit(1);
+    }
+    console.log(JSON.stringify({
+      name,
+      volume: there.volume,
+      store: `/var/lib/docker/volumes/${there.volume}/_data/global/store.sqlite`,
+      wallMs: 0,
+      scanned: null,
+    }));
+    process.exit(0);
+  }
   let last = null;
   for (let i = 0; i < 2400; i++) {
     const st = await runtime.project.get_init(id);

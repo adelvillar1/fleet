@@ -277,7 +277,8 @@ proof: a run that needs **no environment at all**.
       provider instead of growing a model-free imitation here, while
       the Delegation destination's rows carry each child's branch and
       merge state with the click-through into this section.
-- [ ] **C6 — close-out: the no-manual-steps proof.** A live run with
+- [x] **C6 — close-out: the no-manual-steps proof.** **Landed** —
+      recorded below. The plan is complete. A live run with
       a clean environment (no LAYERFS_* in the process env) registers
       a fresh folder and completes a delegation end to end, recorded
       here with its timings; the probe runs green against the durable
@@ -341,7 +342,7 @@ measurement recorded against the real runtime; then the live close-out
 — clean-environment delegation on a fresh folder, the probe against
 the durable home, and the gate's four commands by exit code.
 
-## Status — 2026-10-25 (C0–C4 landed; C5–C6 to build)
+## Status — 2026-10-26 (complete: C0–C6 landed)
 
 - **C2 — landed.** The arm's resolution is one path — override → env
   knob → the folder's registration → register-once — with the bound's
@@ -506,6 +507,76 @@ the durable home, and the gate's four commands by exit code.
   `setAttribute` did not map `class` onto `className`, so every SVG the
   face draws was invisible to a selector. Gate: fmt 0, clippy 0, lib
   1549/0, integration 178/0, face 227 checks across 27 cases.
+
+- **C6 — landed; the live run ran, and it found nine defects.** A
+  clean environment (`env -i` with HOME, FLEET_HOME and PATH only — no
+  LAYERFS_* fact in the process) ran a delegation in a fresh folder
+  (`/tmp/ws-c6/src`): the arm registered it (project `src`, volume
+  `layerfs-src-store-mvosffiz`), the child forked
+  `fleet-child-20261026t051905z-906573b2`, wrote and read back its file
+  inside its own workspace (5 turns, no host-visible write), the parent
+  settled it — Commit, unmount, merge onto `merge-<branch>`, publish —
+  and the destination rendered THAT tree live. Every one of these
+  failed first, and each failure is now structural:
+
+  1. **The register script's name.** The install copied
+     `layerfs-register.mjs`; the driver looked for `register.mjs`. One
+     constant per script, shared by the installer, the driver and a new
+     pin (`the_script_names_are_the_names_the_repository_ships`), so a
+     name the driver spawns is a name `scripts/` ships.
+  2. **The Sandbox's volume.** `deploy.volume` is the Store's own
+     Docker volume — the store path's volume name, now derived in one
+     place (`store_volume`) and composed beside the store path.
+  3. **The install's `Verified` arm never installed the scripts**, and
+     the copies were checkout-relative — an install from any other
+     directory silently installed nothing. The scripts are embedded in
+     the binary (the face's assets' own seam) and copy-if-absent.
+  4. **The register rode the worker's endpoint for its Init**, which
+     installs the Store and cannot answer through a worker that serves
+     an installed one; the script drops the endpoint for the Init and
+     the client after it rides it again. The register is also
+     idempotent by name now — `Exists` is the answer, not a failure.
+  5. **The view's reads assumed the process env.** A face launched
+     clean answered every read by name (honestly, but emptily). The
+     reads now compose the machine's facts — home, endpoint, image,
+     daemon, the project's store path and volume — the same composition
+     the arm's spawns use.
+  6. **The history script resolved against the fleet home**, not the
+     LayerFS home the install writes it into.
+  7. **The child join read the whole-stream tail.** On a busy day the
+     last 512 rows of a mixed-op file hold no delegation row at all —
+     the live face lost its join while the router was busy. The
+     op-bounded reader is the right one.
+  8. **The merge state read main's commits.** The live Store's main
+     carries no merge commit — its head stays null while the layers
+     chain — so the evidence is the layers' `sourceBranch`
+     (`merge-<child>`), and the DAG's spine is drawn from the layers,
+     not from commits.
+  9. **The probe was not self-sufficient.** It validated an endpoint it
+     never exported, and its init used the CLI's own verb, which needs
+     a store path the environment cannot derive. It now derives the
+     endpoint, image (the bundle's manifest), daemon and the scratch
+     project's store path from the register's own answer, and its init
+     rides the sanctioned runtime route.
+
+  **The probe, green on the durable home (exit 0):** init 38 ms (the
+  runtime's `start_init`, idempotent), fork 58 ms, sandbox 372 ms,
+  mount 104 ms, exec 128 ms, write 122 ms, commit 115 ms, unmount
+  140 ms, close 325 ms, two clients 233 ms; the lifecycle leg —
+  sandbox 804 ms, mount 225 ms, unmount 167 ms, idle-exit 121,117 ms
+  (the documented two-minute self-end, observed), reclaim 319 ms with
+  the same sandbox number reused, close 187 ms; removal is the
+  runtime's (no CLI verb). **The destination, live against that run:**
+  `GET /api/workspace-history` answers the project's branches with
+  their states (`merged` for the three settled children, `idle` for the
+  two that never worked), each child branch's session and outcome, the
+  trunk's four layers naming the settlement that made them, and the
+  Store's figures (198 logical, 2,513 stored, dedupe 0.039,
+  compression 1.997); the Files pane lists main's own tree —
+  `final.txt` beside `README.md`, the merged child's work on the trunk;
+  and the delegation panel's rows carry each child's branch with the
+  click-through. Gate: fmt 0, clippy 0, lib 1551/0, integration 178/0,
+  face 227 checks across 27 cases.
 
 ## Linked artifacts
 
