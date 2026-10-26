@@ -1,5 +1,5 @@
 ---
-status: active
+status: completed
 created: 2026-10-26
 updated: 2026-10-26
 slug: mcp-registry-named-absence
@@ -69,21 +69,21 @@ the github incident as its evidence.
 
 ## Acceptance criteria
 
-- [ ] **C0 — the contract.** `enabled_specs` resolves per entry and
+- [x] **C0 — the contract.** `enabled_specs` resolves per entry and
   returns the specs it could build beside the named absences; an entry
   whose env resolves to nothing is skipped WITH its reason while its
   peers still resolve; a registry file that cannot be read or parsed
   still fails loud. Pinned by unit tests over a registry with one
   unkeyed entry and over an unreadable one.
-- [ ] **C1 — the seeding tolerates it.** `seed_user_servers` over a
+- [x] **C1 — the seeding tolerates it.** `seed_user_servers` over a
   registry with one unkeyed enabled server returns `Ok` with the
   absence named, and the caller's startup line names the server and
   its missing env. Pinned by a unit test over `seed_user_servers`.
-- [ ] **C2 — the callers keep their honesty.** The cron catch-up prints
+- [x] **C2 — the callers keep their honesty.** The cron catch-up prints
   the absence per server and still refuses a job whose `--tool` names
   an absent server; the bridge's lane-call path resolves or falls
   through without a registry refusal. Pinned by tests over both paths.
-- [ ] **C3 — the run-level regression pin.** A run over a registry with
+- [x] **C3 — the run-level regression pin.** A run over a registry with
   one unkeyed enabled server completes — the memory load, the route,
   the answer — and its startup names the absence. Pinned by the
   scripted-lane run path (no paid call). KI-319 lands in the same
@@ -117,6 +117,21 @@ The tests named per criterion, then the whole gate — `cargo fmt --all
 --release`, `cargo test`. The incident itself is the acceptance case:
 with the four servers re-enabled and their env still unset, a run must
 complete with four named absences — that is the shape C3 pins.
+
+## Built 2026-10-26 — all four criteria landed, gate green
+
+`EnabledRegistry { specs, absent }` is the contract: `enabled_specs`
+resolves per entry, an unkeyed server drops into `absent` with its
+reason named, and only an unreadable or unparseable registry file still
+fails the call. `seed_user_servers` returns the absences and all four
+seeding sites (the CLI, the GUI face, the TUI, the cron catch-up)
+print one line each in the skills-skipping voice; the bridge's
+lane-call path resolves or falls through to the vendored lanes without
+a registry refusal. C3's pin is the incident's own shape: with the four
+servers re-enabled and their env still unset, a run seeds, completes,
+and answers, and the unkeyed server's tools are never declared.
+KI-319 files in the same commit. The four test pins: the contract's
+own, the corrupt-registry's, the seeding's, and the run-level one.
 
 ## Linked artifacts
 

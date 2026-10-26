@@ -2626,7 +2626,18 @@ async fn drive(
             .collect();
     let mut seed = AgentOptions::default();
     let lane_specs = match seed.seed_user_servers(home, &dotenv) {
-        Ok(()) => seed.lane_specs,
+        Ok(absent) => {
+            // The named absences (the 2026-10-26 plan): a server whose
+            // env resolves to nothing costs the run that server's tools,
+            // named here at startup the way the skills' skipped lines
+            // are — never the run itself.
+            for (server, reason) in absent {
+                eprintln!(
+                    "fleet: server `{server}`: {reason} — its tools are not declared this run"
+                );
+            }
+            seed.lane_specs
+        }
         Err(error) => return Err(AgentError::Registry(error)),
     };
     let options = AgentOptions {

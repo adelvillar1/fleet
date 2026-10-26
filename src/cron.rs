@@ -1393,7 +1393,18 @@ fn job_lane_specs(
                 .into_iter()
                 .collect();
         match crate::mcp_registry::enabled_specs(home, &dotenv) {
-            Ok(enabled) => {
+            Ok(registry) => {
+                let crate::mcp_registry::EnabledRegistry {
+                    specs: enabled,
+                    absent,
+                } = registry;
+                // The named absences (the 2026-10-26 plan): one line per
+                // unkeyed server, the run's own startup voice.
+                for (server, reason) in absent {
+                    eprintln!(
+                        "fleet: server `{server}`: {reason} — its tools are not declared this run"
+                    );
+                }
                 for (tool, server) in missed {
                     match enabled.get(&server) {
                         Some(spec) => {

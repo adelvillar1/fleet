@@ -143,12 +143,19 @@ pub fn read_server(home: &Path, name: &str) -> Result<Option<ServerEntry>, Strin
     }
 }
 
-/// The enabled servers' launch specs, keyed by name: what a run seeds
-/// into `AgentOptions.lane_specs` so the roster pre-joins them before
-/// the first request. Each env name resolves through the chain the
-/// lanes use — the process env first, then the home's dotenv — and an
-/// unresolved name fails the run start by name, the probe's way: a
-/// server whose env is missing must not half-join.
+/// The enabled servers' launch specs, keyed by name, beside the named
+/// absences: what a run seeds into `AgentOptions.lane_specs` so the
+/// roster pre-joins them before the first request. Each env name
+/// resolves through the chain the lanes use — the process env first,
+/// then the home's dotenv.
+///
+/// An entry whose env resolves to nothing is a NAMED ABSENCE, not a
+/// failed run start (the 2026-10-26 plan): the router's own pattern,
+/// where an unkeyed candidate is a per-candidate skip and the walk
+/// continues. A server that cannot resolve costs the run that server's
+/// tools — the absence names the server and its env — and never the
+/// run. Only a registry file that cannot be read or parsed fails the
+/// call: that is the owner's config being broken, not a missing key.
 ///
 /// `dotenv` carries the home's own `.env` as name → value, already
 /// loaded by the caller; the vault's names resolve through it too, the
@@ -156,8 +163,10 @@ pub fn read_server(home: &Path, name: &str) -> Result<Option<ServerEntry>, Strin
 pub fn enabled_specs(
     home: &Path,
     dotenv: &std::collections::BTreeMap<String, String>,
-) -> Result<std::collections::HashMap<String, crate::mcp::ServerSpec>, String> {
+) -> Result<EnabledRegistry, String> {
     let mut specs = std::collections::HashMap::new();
+    let mut absent: Vec<(String, String)> = Vec::new();
+    let _ = &mut absent;
     for (name, entry) in read_servers(home)? {
         if !entry.enabled {
             continue;
@@ -165,13 +174,25 @@ pub fn enabled_specs(
         // No passthrough: the child gets the base plus the resolved env
         // entries and nothing else, the same minimal child KI-031
         // already gives a lane.
-        let mut spec = spec_from_entry(&entry, dotenv)
-            .map_err(|reason| format!("server `{name}`: {reason}"))?;
-        spec.program = entry.program.clone();
-        spec.args = entry.args.clone();
-        specs.insert(name.clone(), spec);
+        match spec_from_entry(&entry, dotenv) {
+            Ok(mut spec) => {
+                spec.program = entry.program.clone();
+                spec.args = entry.args.clone();
+                specs.insert(name.clone(), spec);
+            }
+            Err(reason) => absent.push((name.clone(), reason)),
+        }
     }
-    Ok(specs)
+    Ok(EnabledRegistry { specs, absent })
+}
+
+/// The registry's enabled servers beside the named absences: what a run
+/// seeds (`specs`) and what it could not (`absent`, each naming its
+/// server and the env that resolved to nothing).
+#[derive(Debug, Default)]
+pub struct EnabledRegistry {
+    pub specs: std::collections::HashMap<String, crate::mcp::ServerSpec>,
+    pub absent: Vec<(String, String)>,
 }
 
 /// Validate one registry entry and return it parsed. The write path and
@@ -1629,21 +1650,54 @@ mod tests {
             "FLEET_TEST_MARKER_MISSING".to_string(),
             "from-dotenv".to_string(),
         );
-        let specs = enabled_specs(&home, &dotenv).expect("resolves");
+        let crate::mcp_registry::EnabledRegistry { specs, absent } =
+            enabled_specs(&home, &dotenv).expect("resolves");
         let spec = &specs["weather"];
         assert_eq!(spec.program, "python3");
         assert_eq!(spec.env[0].0, "FLEET_TEST_MARKER_KEY");
         assert_eq!(spec.env[0].1, "from-env", "the process env wins");
         assert_eq!(spec.env[1].1, "from-dotenv", "the home's dotenv answers");
-        // An unresolved name fails by name.
-        let specs = enabled_specs(&home, &std::collections::BTreeMap::new());
-        let error = specs.expect_err("refused");
-        assert!(error.contains("FLEET_TEST_MARKER_MISSING"), "{error}");
-        assert!(error.contains("resolves to nothing"), "{error}");
-        // A disabled server is absent from the specs.
+        assert!(absent.is_empty(), "every name resolved: {absent:?}");
+        // An unresolved name is a NAMED ABSENCE, not a failed resolution
+        // (the 2026-10-26 plan): the server drops out of the specs and
+        // its reason rides the second element, naming the env.
+        let crate::mcp_registry::EnabledRegistry { specs, absent } =
+            enabled_specs(&home, &std::collections::BTreeMap::new())
+                .expect("a missing key is an absence, not an error");
+        assert!(specs.is_empty(), "the unkeyed server seeds nothing");
+        assert_eq!(absent.len(), 1, "{absent:?}");
+        assert_eq!(absent[0].0, "weather");
+        assert!(
+            absent[0].1.contains("FLEET_TEST_MARKER_MISSING"),
+            "{:?}",
+            absent[0]
+        );
+        assert!(
+            absent[0].1.contains("resolves to nothing"),
+            "{:?}",
+            absent[0]
+        );
+        // A disabled server is absent from the specs, and absent from
+        // the absences: nothing names it at all.
         set_server_enabled(&home, "weather", false).expect("disables");
-        let specs = enabled_specs(&home, &dotenv).expect("resolves");
+        let crate::mcp_registry::EnabledRegistry { specs, absent } =
+            enabled_specs(&home, &dotenv).expect("resolves");
         assert!(specs.is_empty(), "disabled means absent");
+        assert!(absent.is_empty(), "disabled is not an absence: {absent:?}");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn a_registry_that_cannot_be_read_still_fails_loud() {
+        // C0's other half: the tolerance is for a missing KEY, never for
+        // the owner's config being broken. An unparseable registry file
+        // is a named failure, not a silent empty registry.
+        let home = scratch("corrupt");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::write(home.join("mcp.json"), "{not json at all").unwrap();
+        let error = enabled_specs(&home, &std::collections::BTreeMap::new())
+            .expect_err("a broken registry fails");
+        assert!(error.contains("not valid JSON"), "{error}");
         let _ = std::fs::remove_dir_all(&home);
     }
 

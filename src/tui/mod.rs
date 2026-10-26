@@ -845,7 +845,16 @@ fn spawn_agent(config: AgentConfig) -> thread::JoinHandle<()> {
                                 .collect();
                         let mut seed = AgentOptions::default();
                         let lane_specs = match seed.seed_user_servers(&home, &dotenv) {
-                            Ok(()) => seed.lane_specs,
+                            Ok(absent) => {
+                                // The named absences (the 2026-10-26
+                                // plan): one line per unkeyed server.
+                                for (server, reason) in absent {
+                                    eprintln!(
+                                        "fleet: server `{server}`: {reason} — its tools are not declared this run"
+                                    );
+                                }
+                                seed.lane_specs
+                            }
                             Err(error) => {
                                 let _ = ui_tx.send(UiEvent::Failed(format!(
                                     "the MCP registry refused this run: {error}"

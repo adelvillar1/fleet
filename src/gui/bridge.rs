@@ -1297,9 +1297,14 @@ impl Bridge {
                 crate::home::read_dotenv_with_process_vault(&self.home)
                     .into_iter()
                     .collect();
-            let mut spec = crate::mcp_registry::enabled_specs(&self.home, &dotenv)
-                .map_err(|reason| format!("the registry refused: {reason}"))?;
-            let spec = match spec.remove(&lane_key) {
+            // The 2026-10-26 plan: the registry's named absence is not a
+            // failed call — an unkeyed server costs its own tools, and a
+            // name the registry cannot serve falls through to the
+            // vendored lanes exactly as an unknown name does.
+            let mut registry = crate::mcp_registry::enabled_specs(&self.home, &dotenv)
+                .map_err(|reason| format!("the registry refused: {reason}"))?
+                .specs;
+            let spec = match registry.remove(&lane_key) {
                 Some(spec) => spec,
                 None => crate::lanes::spec_for(&lane_key)?,
             };
@@ -6507,7 +6512,18 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
                                 .collect();
                         let mut seed = AgentOptions::default();
                         let lane_specs = match seed.seed_user_servers(&home, &dotenv) {
-                            Ok(()) => seed.lane_specs,
+                            Ok(absent) => {
+                                // The named absences (the 2026-10-26
+                                // plan): one line per unkeyed server, the
+                                // run's own startup voice — the face's
+                                // stderr is where its runs print.
+                                for (server, reason) in absent {
+                                    eprintln!(
+                                        "fleet: server `{server}`: {reason} — its tools are not declared this run"
+                                    );
+                                }
+                                seed.lane_specs
+                            }
                             Err(error) => {
                                 let _ = ui_tx.send(UiEvent::Failed(format!(
                                     "the run did not start: {error}"

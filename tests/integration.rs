@@ -9984,6 +9984,91 @@ async fn a_registry_server_declares_from_the_first_request() {
     std::fs::remove_dir_all(&home).ok();
 }
 
+#[tokio::test]
+async fn a_run_completes_over_a_registry_whose_server_is_unkeyed() {
+    // C3 (the 2026-10-26 plan): the incident's own shape, pinned end
+    // to end. One enabled registry server whose env resolves to
+    // nothing: the run seeds, completes, and answers — and the
+    // server's tools are simply not declared. Before the plan, this
+    // registry refused the run before its memory load, which is how
+    // one unkeyed imported server stopped every headless run on
+    // 2026-10-25.
+    let home = temp_home("registry-unkeyed-run");
+    let fake = FakeMcp::start(vec![]);
+    let entry = serde_json::json!({
+        "program": env!("CARGO_BIN_EXE_mock-mcp"),
+        "args": [fake.scratch.join("script.jsonl").to_string_lossy().into_owned()],
+        "env_names": ["FLEET_TEST_REGISTRY_UNKEYED"],
+        "enabled": true,
+    });
+    std::fs::write(
+        home.join("mcp.json"),
+        serde_json::to_string(&serde_json::json!({ "servers": { "regtime": entry } })).unwrap(),
+    )
+    .unwrap();
+    // No `.env` line and no process env: the name resolves to
+    // nothing, which is the whole point.
+
+    let mock = MockApi::start(vec![assistant_stream("The run answered anyway.")]);
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let mut progress = Vec::new();
+    let client = Client::new(mock.url(), "test-key");
+    let mut options = AgentOptions {
+        goal: None,
+        model: "test-model".to_string(),
+        identity: None,
+        max_turns: 5,
+        ui_tx: None,
+        lane_specs: None,
+        calib: None,
+        skills: Vec::new(),
+        role_overlay: None,
+        memory: None,
+        scope: None,
+        improve_home: None,
+        route_home: None,
+        gui_prompt: None,
+        compact_now: false,
+        checkpoints: None,
+        file_access: FileAccess::Unrestricted,
+        plan_mode: false,
+    };
+    let dotenv: std::collections::BTreeMap<String, String> =
+        fleet::home::read_dotenv_with_process_vault(&home)
+            .into_iter()
+            .collect();
+    // The seeding tolerates the unkeyed server and names it.
+    let absent = options
+        .seed_user_servers(&home, &dotenv)
+        .expect("an unkeyed server is an absence, not a failed run");
+    assert_eq!(absent.len(), 1, "{absent:?}");
+    assert_eq!(absent[0].0, "regtime");
+    {
+        let mut agent = Agent::new(
+            &client,
+            options,
+            &mut session,
+            Box::new(ApproveAll),
+            &mut progress,
+        )
+        .unwrap();
+        agent.run("embed x").await.unwrap();
+    }
+    // The run's own answer landed, and the unkeyed server's tool was
+    // never declared — its absence cost exactly its tools.
+    let bodies = mock.bodies();
+    assert!(
+        !declared_tools(&bodies[0]).contains(&"mcp__regtime__embed".to_string()),
+        "the unkeyed server's tools are not declared: {:?}",
+        declared_tools(&bodies[0])
+    );
+    let report = std::fs::read_to_string(session.path()).unwrap();
+    assert!(
+        report.contains("The run answered anyway."),
+        "the run completed: {report}"
+    );
+}
+
 /// A server whose tools/list carries two tools of one short name
 /// declares two DISTINCT names — the `unique_name` rule (C5) — so no two
 /// declarations ever share a name, and both calls reach their tool.

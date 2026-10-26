@@ -379,19 +379,24 @@ impl AgentOptions {
     /// needs them nor pays their spawn cost. A name the env chain
     /// cannot resolve fails here, by name: a server whose env is
     /// missing must not half-join.
+    /// The registry's enabled servers seeded into the run's lane specs,
+    /// beside the named absences: a server whose env resolves to
+    /// nothing costs the run that server's tools, named — the 2026-10-26
+    /// plan's whole shape. The caller prints one line per absence at
+    /// startup, the way the skills' skipped lines print.
     pub fn seed_user_servers(
         &mut self,
         home: &std::path::Path,
         dotenv: &std::collections::BTreeMap<String, String>,
-    ) -> Result<(), String> {
-        let specs = crate::mcp_registry::enabled_specs(home, dotenv)?;
-        if specs.is_empty() {
-            return Ok(());
+    ) -> Result<Vec<(String, String)>, String> {
+        let registry = crate::mcp_registry::enabled_specs(home, dotenv)?;
+        let crate::mcp_registry::EnabledRegistry { specs, absent } = registry;
+        if !specs.is_empty() {
+            let mut merged = self.lane_specs.clone().unwrap_or_default();
+            merged.extend(specs);
+            self.lane_specs = Some(merged);
         }
-        let mut merged = self.lane_specs.clone().unwrap_or_default();
-        merged.extend(specs);
-        self.lane_specs = Some(merged);
-        Ok(())
+        Ok(absent)
     }
 }
 
@@ -7425,6 +7430,46 @@ mod tests {
     /// `tool_search`. A surface that silently crosses a bound changes
     /// what every run declares, so the crossing is a test failure rather
     /// than a number nobody read.
+    #[test]
+    fn a_run_seeds_around_an_unkeyed_server_and_names_it() {
+        // C1 (the 2026-10-26 plan): the seeding tolerates a server whose
+        // env resolves to nothing — the run starts, the server's tools
+        // are simply not declared, and the absence rides out named so
+        // the caller can print it. This is the test that would have
+        // caught the 2026-10-25 incident, where one unkeyed imported
+        // server refused every headless run.
+        let home = scratch("seed-unkeyed");
+        crate::settings::set_server(
+            &home,
+            "weather",
+            &serde_json::json!({
+                "program": "python3",
+                "args": ["-m", "weather"],
+                "env_names": ["FLEET_TEST_UNKEYED_MISSING"],
+                "enabled": true,
+            }),
+        )
+        .expect("writes");
+        let mut seed = AgentOptions::default();
+        let absent = seed
+            .seed_user_servers(&home, &std::collections::BTreeMap::new())
+            .expect("a missing key is an absence, not a failed run");
+        assert_eq!(absent.len(), 1, "{absent:?}");
+        assert_eq!(absent[0].0, "weather");
+        assert!(
+            absent[0].1.contains("FLEET_TEST_UNKEYED_MISSING"),
+            "{:?}",
+            absent[0]
+        );
+        // The run seeds anyway: its lane specs are simply empty, and the
+        // roster joins what it has.
+        assert!(seed
+            .lane_specs
+            .as_ref()
+            .is_none_or(|specs| specs.is_empty()));
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
     #[test]
     fn the_native_surface_fits_its_own_bounds() {
         let mut specs = Agent::base_declarations(&[]);
