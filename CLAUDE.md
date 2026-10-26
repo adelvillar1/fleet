@@ -88,6 +88,7 @@ src/bin/mock-mcp.rs     the scripted fake MCP stdio server the integration tests
 memories/               the repo's own fact corpus: one markdown file per fact; the recall-count bump and the lifecycle stamps are its runtime edits
 services/               the five vendored Python lane cores with VENDOR.json; services/README.md documents the launch
 scripts/cache-sweep.sh  the recap step's sweep: stale target/debug artifacts pruned by age (7d), a 15 GiB tiered backstop, target/release never touched
+scripts/daily-maintenance.sh  the machine's daily upkeep (LaunchAgent local.fleet-maintenance, 09:20): the sweep, tmp/ entries older than 14d retired, the memories/ churn committed under chore(memories), untracked top-level orphans NAMED in ~/Library/Logs/fleet-maintenance.log and never deleted
 tests/integration.rs    end-to-end tests: parser, client, tool loop, log, real sem1 lane via MCP
 docs/plans/             plan-as-contract, YYYY-MM-DD-<slug>.md (slice records + dashboards record inherited from the fork)
 docs/recaps/            session recaps, YYYY-MM-DD-<slug>.md
@@ -147,7 +148,7 @@ Single branch `master` → `origin/master`. No staging/production split: solo to
 
 ## Session protocol
 
-warmup (this file → latest recap → active plans) → plan (`docs/plans/`) → build (run the gate locally) → recap (`docs/recaps/` — the ledger must be well-formed before the document is generated: `python3 scripts/ki_ledger.py docs/known-issues.md` reports zero problems, since a malformed row shifts its cells and misreports the open count; then `scripts/cache-sweep.sh`, the recap step's closing sweep, because cargo never prunes: KI-279, 159 GiB of dead test binaries) → commit with explicit paths.
+warmup (this file → latest recap → active plans) → plan (`docs/plans/`) → build (run the gate locally) → recap (`docs/recaps/` — the ledger must be well-formed before the document is generated: `python3 scripts/ki_ledger.py docs/known-issues.md` reports zero problems, since a malformed row shifts its cells and misreports the open count; then `scripts/cache-sweep.sh`, the recap step's closing sweep, because cargo never prunes: KI-279, 159 GiB of dead test binaries — automated daily by `scripts/daily-maintenance.sh` (the LaunchAgent), so a missed recap no longer means an unbounded target) → commit with explicit paths.
 
 ## Ecosystem at a glance
 
