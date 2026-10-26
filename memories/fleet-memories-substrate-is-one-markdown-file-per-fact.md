@@ -8,7 +8,7 @@ tier: durable
 shape: []
 phrases: ["the shape partitions the pool and the words rank within it", "direction outranks proximity", "the recall index is keyed by a digest of the indexed text", "one bounded hop over the frontmatter's own edges"]
 missing: []
-recall-count: 256
+recall-count: 262
 superseded-by:
 valid-until:
 ---

@@ -1,0 +1,16 @@
+---
+name: layerfs-child-work-verification
+description: "A LayerFS child's reported paths are sandbox-relative AND its write can sit in the store unpublished — `fs read main` answering kind:ok does not prove publication: check `project list_branches` heads (main head null = never published; the [NoCommit] shape is KI-321) and treat the result header's `merged to main` as a claim, not a fact."
+type: project
+date: 2026-10-26
+basis: inferred
+tier: durable
+shape: [state-sync]
+phrases: [subagent created the file but it is not on the host, /workspaces/1 ENOENT, merged to main but git shows nothing, layerfs fs read main, verify delegated child work, fleet-child branch]
+missing: []
+recall-count: 0
+superseded-by:
+valid-until:
+---
+
+A LayerFS-delegated child's report — and the delegation result's own header (`workspace: fleet-child-… · committed · merged to main`) — are claims about the sandbox and the store, not about the host. Two independent verification gates, both required: ADDRESS (where the work is) and PUBLICATION (whether main carries it). Verified 2026-10-26 across three live children: 20261026T104335Z-6892fd0 (KI-320, clean publish, sandbox-relative paths), 20261026T131239Z-4cdedd8e (KI-321, [NoCommit] refusal), plus siblings 4477212d (settled) and c7d1699a (same mid-shape). RESOLUTION (unchanged, still valid): the project name and bundle come from ~/.fleet/config.json → layerfs.projects[<folder>].name / .bundle (fresh-src run: project "fresh-src", bundle ~/.cache/layerfs-worktrees/layerfs-study-c159d7ad3b45/artifacts/build-linux-25b0bed7197842688bed6e1364c9b25e); read the work back with `node <bundle>/api/agent/cli/src/layerfs.js --project <name> fs read main /<child-relative-path>`; branch audit with `project list_branches`; env for the CLI: LAYERFS_HOME=<FLEET_HOME>/layerfs-home, LAYERFS_WORKER_ENDPOINT=<FLEET_HOME>/layerfs-home/worker/endpoint.json, plus LAYERFS_IMAGE/LAYERFS_DAEMON/LAYERFS_STORE_PATH/LAYERFS_VOLUME from the project's registration (scripts/layerfs-live.sh lines 81–118 are the working invocation). PUBLICATION GATE (the correction): `fs read main` answering {"kind":"ok"} proves only that the file is IN THE STORE, never that it published — on the [NoCommit] run the same read answered kind:ok at "main@d7cb4abc38cb" while `project list_branches` showed main head null, the child branch head null, and the merge branch head null, and the host tree was untouched (ls ENOENT, git status clean); compare the read's snapshot against the fork base (d7cb4abc38… = the fork point = nothing published) versus a distinct hash (the settled run read "main@6898f652a082" with branch heads set). The [NoCommit] shape: result warning "layerfs refused [NoCommit]: merge-fleet-child-<id> has no saved Commit to publish — the integration branch is kept", all three heads null, child innocent and work intact in the store — retry the delegation or inspect the worker; do not blame the child (KI-321's named fix: the settle→publish leg should retry/wait once before surfacing). Git-side: the host repo carries NO fleet-child-* branches by design (KI-314/315 — the child filesystem is the store, not the working tree). Never restate a child-reported or header-claimed path as a host path; run both gates first.
