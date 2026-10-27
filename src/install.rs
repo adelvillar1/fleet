@@ -1304,7 +1304,17 @@ fn install_layerfs_scripts(layerfs_home: &std::path::Path) {
         ),
     ] {
         let target = layerfs_home.join(name);
-        if !target.is_file() {
+        // Copy-if-different, not copy-if-absent: the scripts are
+        // fleet's own provisioned assets and they EVOLVE (the history
+        // script's one-read rewrite shipped new behavior under the
+        // same name), so an installed home must pick the new copy up
+        // on the next install. An operator who wants their own version
+        // overrides with the env seam the readers honor
+        // (FLEET_LAYERFS_HISTORY), not by editing the home's copy.
+        let differs = std::fs::read_to_string(&target)
+            .map(|installed| installed != source)
+            .unwrap_or(true);
+        if differs {
             let _ = std::fs::write(target, source);
         }
     }

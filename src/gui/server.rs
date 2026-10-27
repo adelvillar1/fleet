@@ -277,9 +277,13 @@ async fn serve_connection(
         // and the Files pane's one page of a branch. Both read the
         // substrate through the same composed environment the arm
         // spawns with, and both name an absence rather than answering
-        // an empty list that would read as "nothing here".
+        // an empty list that would read as "nothing here". The tree
+        // read takes the last `version` it saw: a substrate that still
+        // holds it current answers `unchanged` in 1 ms.
         ("GET", "/api/workspace-history") => {
-            write_reply(&mut stream, api(200, bridge.workspace_history().await)).await
+            let since = decode_query(&request.query, "since");
+            let since = (!since.is_empty()).then_some(since);
+            write_reply(&mut stream, api(200, bridge.workspace_history(since).await)).await
         }
         ("GET", "/api/workspace-history/files") => {
             let branch = decode_query(&request.query, "branch");

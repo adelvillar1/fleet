@@ -916,15 +916,20 @@ impl Bridge {
     }
 
     /// The workspace-history section's document: the launch folder's
-    /// project as one tree — the branches and their commits, main's
-    /// Layers, the Store's figures, and each child branch's state and
-    /// session. The read is the substrate's own, so an unprovisioned
-    /// machine or an unregistered folder names itself here rather than
-    /// drawing an empty tree.
-    pub async fn workspace_history(&self) -> Value {
+    /// project as one tree — the branches with their fork bases, their
+    /// newest commits, main's Layers, the Store's figures, and each
+    /// child branch's state and session, all from ONE backend read that
+    /// carries a `version`. A `since` version the substrate still holds
+    /// current answers `unchanged` and the caller's view stands. The
+    /// read is the substrate's own, so an unprovisioned machine or an
+    /// unregistered folder names itself here rather than drawing an
+    /// empty tree.
+    pub async fn workspace_history(&self, since: Option<String>) -> Value {
         let cwd = self.cwd.clone();
-        match tokio::task::spawn_blocking(move || crate::layerfs_view::workspace_history(&cwd))
-            .await
+        match tokio::task::spawn_blocking(move || {
+            crate::layerfs_view::workspace_history(&cwd, since.as_deref())
+        })
+        .await
         {
             Ok(document) => document,
             Err(_) => json!({

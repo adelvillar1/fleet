@@ -186,7 +186,7 @@ named absence, never an empty lie.
 
 ## Acceptance criteria
 
-- [ ] **C0 — the one read; the cut named.**
+- [x] **C0 — the one read; the cut named. Landed 2026-10-26.**
       `history()` makes ONE backend call (`get_history(0)`) and ZERO
       CLI calls; the store figures come from that answer's
       `store.stats` (the separate `get_storage` call goes).
@@ -337,6 +337,28 @@ name · `docs/features/workspace-history.md`,
 - **The trace's daemon phase timing** (`daemon[].timing`) — the feed
   carries `ms` and `sizes`; the nested phase breakdown stays in the
   substrate's own observe skill.
+
+## Status record
+
+- **C0 — landed 2026-10-26.** `scripts/layerfs-history.mjs` passes the
+  whole `get_history` answer through (the separate `get_storage` call
+  gone; `LAYERFS_TRACE` stripped so the face's reads never land in a
+  child's feed), and `history()` parses it whole — branches with
+  `base`, commits with all nineteen fields, layers with
+  `sourceCommit` and `overwroteCount`, the nine figures plus the Init
+  record, `version`, `moreBranches`/`moreLayers`/`more`. The `since`
+  version rides the call and the unchanged answer returns
+  `{unchanged: true, version}`. The cut is named in words
+  (`truncated`) when branches or layers were left out or a branch's
+  chain was cut. Measured live on the fleet store (65 branches /
+  1 commit / 2 layers): the old fan-out answered in 4,808 ms; the one
+  read answers in **116–165 ms warm** (cold first read 693 ms —
+  worker and node startup, not the read), under the 250 ms bound.
+  Zero CLI calls pinned by a stub that fails every real call; the
+  one-call count pinned by a script-side call log. The installer went
+  copy-if-absent → copy-if-different: the scripts are fleet's own
+  assets and evolve in place (the operator's override seam is the
+  env, not the home's copy).
 
 ## Verification
 
