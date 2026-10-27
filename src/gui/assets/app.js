@@ -9392,12 +9392,18 @@
     var now = Date.now();
     if (!force && face.history && now - face.historyAt < 5000) return Promise.resolve();
     face.historyAt = now;
-    return fetch('/api/workspace-history', { headers: { accept: 'application/json' } })
+    // The refresh rides the version the last read named: a substrate
+    // that still holds it current answers unchanged in one flag and the
+    // view stands — no repaint, no re-read of the files pane.
+    var since = (face.history && face.history.version)
+      ? '?since=' + encodeURIComponent(face.history.version) : '';
+    return fetch('/api/workspace-history' + since, { headers: { accept: 'application/json' } })
       .then(function (reply) {
         if (reply.status === 401) throw new Error('token');
         return reply.json();
       })
       .then(function (doc) {
+        if (doc.unchanged) return;
         face.history = doc;
         // The Files pane's branch follows the tree: the first branch
         // that is not main, or main itself, so a fresh read lands
@@ -9443,12 +9449,6 @@
       .catch(function () { });
   }
 
-  var HISTORY_STATE_WORD = {
-    merged: 'merged to main',
-    open: 'open \u00b7 not merged',
-    idle: 'forked, no work'
-  };
-
   function paintWorkspaceHistory() {
     var read = face.history;
     el.workspaceHistoryBoard.textContent = '';
@@ -9465,9 +9465,7 @@
     }
     var branches = read.branches || [];
     var layers = read.layers || [];
-    var commits = branches.reduce(function (sum, branch) {
-      return sum + (branch.commits || []).length;
-    }, 0);
+    var commits = (read.commits || []).length;
     var storage = read.storage || null;
     var instrument = surfaceInstrument('the store',
       read.registered === false ? 'no project' : (read.project || 'the project'),
@@ -9516,127 +9514,490 @@
     el.workspaceHistoryBoard.appendChild(historyStorage(read));
   }
 
-  // The DAG: main's trunk as the spine on the left, each child branch
-  // as a lane forking from it, and a merge edge back to the trunk for
-  // every branch the parent settled. Clicking a commit or a branch
-  // points the Files pane at that branch.
+  // The tree: the substrate's history as the reference draws it —
+  // main's spine carries a BAND for every Layer, each branch with work
+  // is a lane sprouting from a fork node at its actual base, every
+  // Commit is a leaf on its lane, a publish grafts a leaf back to the
+  // band it made with a dashed stem and a ring, and a branch nobody
+  // worked is one idle chip — never eighty empty columns. Time is the
+  // order of events, not the wall clock; sideways by default, upright
+  // on the toggle; zoom 25\u2013200% + fit; pan by drag or scroll; a
+  // minimap with the visible window; a hover card per node; clicking a
+  // node points the Files pane at that ref.
+  function historyLayout(read) {
+    var layers = (read.layers || []).slice().reverse(); // the answer is newest first
+    var layerIndex = {};
+    layers.forEach(function (layer, index) { layerIndex[layer.id] = index; });
+    var commits = (read.commits || []).slice().sort(function (a, b) {
+      return (a.time || 0) - (b.time || 0);
+    });
+    var ordinal = {};
+    commits.forEach(function (commit, index) { ordinal[commit.id] = index + 1; });
+    // Commits group under the Layer they forked from; a commit whose
+    // base is not a Layer id rides at the end, named in its hover.
+    var byBase = {};
+    commits.forEach(function (commit) {
+      var base = (commit.base && layerIndex[commit.base] !== undefined) ? commit.base : null;
+      (byBase[base] = byBase[base] || []).push(commit);
+    });
+    // Slots: the layer chain is the backbone; each layer's forked
+    // commits sit between it and the next layer, in time order.
+    var slot = {}, next = 0;
+    layers.forEach(function (layer) {
+      slot[layer.id] = next++;
+      (byBase[layer.id] || []).forEach(function (commit) { slot[commit.id] = next++; });
+    });
+    commits.forEach(function (commit) {
+      if (slot[commit.id] === undefined) slot[commit.id] = next++;
+    });
+    var totalSlots = Math.max(1, next);
+    // The branches with work, in fork order, one lane each — the free
+    // lane nearest the spine, alternating sides.
+    var worked = (read.branches || []).filter(function (branch) {
+      return branch.name !== 'main' && branch.head;
+    });
+    worked.sort(function (a, b) {
+      var ai = (a.base && layerIndex[a.base] !== undefined) ? layerIndex[a.base] : 999;
+      var bi = (b.base && layerIndex[b.base] !== undefined) ? layerIndex[b.base] : 999;
+      return ai - bi || (a.name < b.name ? -1 : 1);
+    });
+    var lane = {}, up = 0, down = 0;
+    worked.forEach(function (branch, index) {
+      lane[branch.name] = (index % 2 === 0) ? (++down) : (-(++up));
+    });
+    // The grafts: every published Layer names the Commit it was made
+    // from — the dashed stem back to the band.
+    var grafts = layers.filter(function (layer) {
+      return layer.source_commit && slot[layer.source_commit] !== undefined;
+    });
+    var idle = (read.branches || []).filter(function (branch) {
+      return branch.name !== 'main' && !branch.head;
+    });
+    return {
+      layers: layers, layerIndex: layerIndex, commits: commits, ordinal: ordinal,
+      slot: slot, totalSlots: totalSlots, worked: worked, lane: lane,
+      grafts: grafts, idle: idle,
+      totalNodes: layers.length + commits.length
+    };
+  }
+
+  // One branch's lane colour: the categorical palette, by lane order —
+  // the semantic tones (accent/ok/down/warn) stay semantic and are
+  // never spent on lanes.
+  function historyLaneColor(index) {
+    return 'var(--lane-' + (index % 6) + ')';
+  }
+
+  function historyStateWord(state) {
+    return { merged: 'merged to main', open: 'open \u00b7 not merged', idle: 'forked, no work' }[state] || state;
+  }
+
   function historyDag(read) {
     var card = boardCard(12, 'the tree', null,
-      'main is the trunk; a child\u2019s branch forks where it started and merges back when ' +
-      'the parent settles it. Click a branch or a commit to browse it below.');
-    var branches = (read.branches || []).slice();
-    var children = branches.filter(function (b) { return b.name !== 'main'; });
-    // The trunk's steps are its LAYERS, not commits: the live Store's
-    // main carries no commit of its own (its head stays null while the
-    // layers chain), so the spine is drawn from the layers, each naming
-    // the branch whose commit made it.
-    var layers = (read.layers || []).slice().reverse();
-    var LANE_W = 250, SPINE_X = 130, ROW_H = 34, PAD = 18;
-    var rows = Math.max(layers.length, children.reduce(function (most, b) {
-      return Math.max(most, (b.commits || []).length + 1);
-    }, 1));
-    var h = PAD * 2 + rows * ROW_H;
-    var w = SPINE_X + children.length * LANE_W;
-    if (children.length === 0) w = SPINE_X + LANE_W;
-    var wide = cardWide(el.workspaceHistoryBoard, 12);
-    var plot = svgPlot(Math.min(w, Math.max(wide, 420)), h, 'the workspace history tree');
-    // The trunk's spine.
-    plot.appendChild(svg('line', {
-      x1: SPINE_X - 46, y1: PAD, x2: SPINE_X - 46, y2: PAD + rows * ROW_H - ROW_H / 2,
-      class: 'dag-spine'
-    }));
-    plot.appendChild(label(SPINE_X - 52, PAD - 4, 'dag-lane-name', 'main', 'end'));
-    layers.forEach(function (layer, index) {
-      plot.appendChild(historyLayer(SPINE_X - 46, PAD + index * ROW_H, layer));
-    });
-    children.forEach(function (branch, lane) {
-      var x = SPINE_X + lane * LANE_W;
-      var commits = branch.commits || [];
-      var forkY = PAD + Math.min(layers.length, rows - 1) * ROW_H - ROW_H / 2;
-      var laneY = PAD;
-      // The fork edge: from the trunk's last row out to the lane's head.
-      plot.appendChild(svg('path', {
-        d: 'M' + (SPINE_X - 46) + ' ' + forkY + ' C' + (x - 60) + ' ' + forkY + ', ' +
-           (x - 60) + ' ' + laneY + ', ' + x + ' ' + laneY,
-        class: 'dag-edge' + (branch.state === 'merged' ? ' is-merged' : '')
-      }));
-      // The merge edge back, one row under the fork.
-      if (branch.state === 'merged') {
-        plot.appendChild(svg('path', {
-          d: 'M' + x + ' ' + (laneY + ROW_H) + ' C' + (x - 60) + ' ' + (laneY + ROW_H) + ', ' +
-             (x - 60) + ' ' + (forkY + ROW_H) + ', ' + (SPINE_X - 46) + ' ' + (forkY + ROW_H),
-          class: 'dag-edge is-merged'
-        }));
-      }
-      plot.appendChild(label(x + 6, PAD - 4, 'dag-lane-name',
-        clip(branch.name, Math.floor(LANE_W / 7))));
-      commits.forEach(function (commit, index) {
-        plot.appendChild(historyNode(x, PAD + (index + 1) * ROW_H, commit, branch.name, branch));
-      });
-      // The lane's head marker: the state the parent settled it in.
-      var head = svg('g', { class: 'dag-head', 'data-tone': branch.state });
-      head.appendChild(svg('circle', {
-        cx: x, cy: PAD, r: 5,
-        class: 'dag-head-dot', 'data-state': branch.state
-      }));
-      head.appendChild(svg('title', null,
-        branch.name + ' \u00b7 ' + (HISTORY_STATE_WORD[branch.state] || branch.state)));
-      head.style.cursor = 'pointer';
-      head.addEventListener('click', function () { historyBrowse(branch.name); });
-      plot.appendChild(head);
-    });
-    if (!layers.length && !children.length) {
-      plot.appendChild(label(PAD, PAD + 18, 'dag-empty',
+      'main is the trunk: a band for every Layer, a lane for every branch that has work, ' +
+      'a leaf for every commit, a dashed stem where a publish grafted work back. Click a node ' +
+      'to read Files there; drag or scroll to pan; a branch nobody worked is one idle chip.');
+    var layout = historyLayout(read);
+    if (!layout.totalNodes) {
+      card.appendChild(node('p', 'board-empty',
         'The Store holds its first layer and no commits yet.'));
+      return card;
     }
-    var wrap = node('div', 'chart');
-    wrap.appendChild(plot);
+    var wide = cardWide(el.workspaceHistoryBoard, 12);
+    var fit = Math.max(10, Math.min(64, (wide - 200) / layout.totalSlots));
+    var zoom = face.historyZoom || 1;
+    var px = Math.max(3, Math.round(fit * zoom));
+    var mode = face.historyUpright ? 'upright' : 'sideways';
+    var plot = historyPlot(read, layout, px, mode);
+    // The controls: zoom out / fit / zoom in, and the orientation
+    // toggle. The zoom is a factor over fit, held across repaints.
+    var controls = node('div', 'dag-controls');
+    var note = node('span', 'dag-zoom-note',
+      Math.round(zoom * 100) + '% \u00b7 ' + (mode === 'upright' ? 'upright' : 'sideways'));
+    function repaint() { paintWorkspaceHistory(); }
+    var zoomOut = node('button', 'dag-zoom', '\u2212');
+    zoomOut.type = 'button';
+    zoomOut.title = 'zoom out (25% floor)';
+    zoomOut.addEventListener('click', function () {
+      face.historyZoom = Math.max(0.25, (face.historyZoom || 1) * 0.75);
+      repaint();
+    });
+    var fitBtn = node('button', 'dag-zoom', 'fit');
+    fitBtn.type = 'button';
+    fitBtn.title = 'fit the whole run to the card';
+    fitBtn.addEventListener('click', function () {
+      face.historyZoom = 1;
+      repaint();
+    });
+    var zoomIn = node('button', 'dag-zoom', '+');
+    zoomIn.type = 'button';
+    zoomIn.title = 'zoom in (200% ceiling)';
+    zoomIn.addEventListener('click', function () {
+      face.historyZoom = Math.min(2, (face.historyZoom || 1) * 1.3334);
+      repaint();
+    });
+    var orient = node('button', 'dag-zoom', mode === 'upright' ? 'sideways' : 'upright');
+    orient.type = 'button';
+    orient.title = 'time runs right (sideways) or up (upright)';
+    orient.addEventListener('click', function () {
+      face.historyUpright = !face.historyUpright;
+      repaint();
+    });
+    [zoomOut, fitBtn, zoomIn, orient, note].forEach(function (piece) {
+      controls.appendChild(piece);
+    });
+    // The plot in its scroll: pan by wheel or drag; the minimap jumps.
+    var scroll = node('div', 'dag-scroll');
+    scroll.appendChild(plot.svg);
+    var dragging = null;
+    scroll.addEventListener('pointerdown', function (event) {
+      if (event.target.closest('.dag-node')) return;
+      dragging = { x: event.clientX, left: scroll.scrollLeft };
+      scroll.classList.add('is-dragging');
+    });
+    scroll.addEventListener('pointermove', function (event) {
+      if (!dragging) return;
+      scroll.scrollLeft = dragging.left - (event.clientX - dragging.x);
+    });
+    ['pointerup', 'pointerleave'].forEach(function (name) {
+      scroll.addEventListener(name, function () {
+        dragging = null;
+        scroll.classList.remove('is-dragging');
+      });
+    });
+    var minimap = historyMinimap(layout);
+    scroll.addEventListener('scroll', function () {
+      historyMinimapWindow(scroll, minimap);
+    });
+    var wrap = node('div', 'chart dag-wrap');
+    wrap.appendChild(controls);
+    wrap.appendChild(scroll);
+    wrap.appendChild(minimap);
+    // The hover card, one per plot, filled by the nodes.
+    var hover = node('div', 'dag-hover');
+    hover.hidden = true;
+    wrap.appendChild(hover);
+    plot.bindHover(scroll, wrap, hover);
+    // The idle branches: one chip, never one column each.
+    if (layout.idle.length) {
+      var idle = node('div', 'dag-idle');
+      var chip = node('button', 'chip',
+        layout.idle.length + ' idle \u00b7 forked, no work');
+      chip.type = 'button';
+      chip.title = 'branches that were forked and never worked';
+      idle.appendChild(chip);
+      if (face.historyIdleOpen) {
+        var names = node('p', 'board-note', layout.idle.map(function (branch) {
+          return branch.name;
+        }).join(' \u00b7 '));
+        idle.appendChild(names);
+      }
+      chip.addEventListener('click', function () {
+        face.historyIdleOpen = !face.historyIdleOpen;
+        repaint();
+      });
+      wrap.appendChild(idle);
+    }
+    if (read.truncated) {
+      wrap.appendChild(node('p', 'dag-truncated', 'showing ' + read.truncated));
+    }
     card.appendChild(wrap);
+    // Restore the pan the owner had, then show the newest end.
+    if (face.historyScroll) scroll.scrollLeft = face.historyScroll;
+    else scroll.scrollLeft = scroll.scrollWidth;
+    scroll.addEventListener('scroll', function () {
+      face.historyScroll = scroll.scrollLeft;
+    });
     return card;
   }
 
-  // One commit on the DAG: the short id, the message, and the merge's
-  // second parent where there is one. Clicking it browses its branch.
-  function historyNode(x, y, commit, branch, branchRow) {
-    var made = svg('g', { class: 'dag-commit' });
-    var tone = commit.parents >= 2 ? 'acc' : 'idle';
-    made.appendChild(dot(x, y, tone));
-    var text = clip(commit.message || '(no message)', 34);
-    made.appendChild(label(x + 12, y + 4, 'dag-commit-id', commit.id));
-    made.appendChild(label(x + 74, y + 4, 'dag-commit-msg', text));
-    if (commit.parents >= 2) {
-      made.appendChild(label(x + 12, y + 18, 'dag-commit-merge', 'merge \u00b7 2 parents'));
+  // The plot: one svg whose viewBox is the CONTENT's size — the card
+  // scrolls, nothing clips. Builds nodes and edges from the layout;
+  // `mode` picks the orientation (time right, or time up).
+  function historyPlot(read, layout, px, mode) {
+    var ROW = 34, COL = 44, PAD = 26, TAG = 150;
+    var rowsUp = Math.max(0, -Math.min.apply(null, [0].concat(layout.worked.map(function (b) {
+      return layout.lane[b.name];
+    }))));
+    var rowsDown = Math.max(0, Math.max.apply(null, [0].concat(layout.worked.map(function (b) {
+      return layout.lane[b.name];
+    }))));
+    var sideways = mode !== 'upright';
+    var w, h, spineAt;
+    if (sideways) {
+      w = PAD + layout.totalSlots * px + TAG;
+      h = PAD * 2 + (rowsUp + rowsDown + 1) * ROW;
+      spineAt = PAD + rowsUp * ROW + ROW / 2;
+    } else {
+      w = PAD * 2 + (rowsUp + rowsDown + 1) * COL + 120;
+      h = PAD + layout.totalSlots * px + 56;
+      spineAt = PAD + rowsUp * COL + COL / 2;
     }
-    var said = (commit.message || '(no message)') +
-      '\n' + commit.id + ' \u00b7 via ' + (commit.via || '?') +
-      ' \u00b7 ' + historyTime(commit.time) +
-      (commit.parents >= 2 ? '\na merge: two parents, the edge the DAG draws' : '');
-    if (branchRow && branchRow.child) {
-      said += '\nchild session ' + branchRow.child.session + ' \u00b7 ' + branchRow.child.outcome;
+    function pos(t, lane) {
+      if (sideways) return { x: PAD + t * px, y: spineAt + lane * ROW };
+      return { x: spineAt + lane * COL, y: h - 56 - t * px };
     }
-    made.appendChild(svg('title', null, said));
-    made.style.cursor = 'pointer';
-    made.addEventListener('click', function () { historyBrowse(branch); });
-    return made;
+    var plot = svg('svg', {
+      width: Math.max(w, 320), height: h,
+      viewBox: '0 0 ' + Math.max(w, 320) + ' ' + h,
+      role: 'img',
+      'aria-label': 'the workspace history tree'
+    });
+    // The spine: main's own line, a little thicker than the rest.
+    var first = pos(0, 0), last = pos(layout.totalSlots - 1, 0);
+    if (sideways) {
+      plot.appendChild(svg('line', {
+        x1: first.x - 14, y1: first.y, x2: last.x + 14, y2: last.y, class: 'dag-spine'
+      }));
+      plot.appendChild(label(first.x - 18, first.y + 3, 'dag-lane-name', 'main', 'end'));
+    } else {
+      plot.appendChild(svg('line', {
+        x1: first.x, y1: first.y + 14, x2: last.x, y2: last.y - 14, class: 'dag-spine'
+      }));
+      plot.appendChild(label(first.x + 8, first.y + 20, 'dag-lane-name', 'main'));
+    }
+    // The bands: one per Layer, coloured by the branch that published
+    // it (the import's own layer stays neutral).
+    var laneColor = {};
+    layout.worked.forEach(function (branch, index) {
+      laneColor[branch.name] = historyLaneColor(index);
+      var merged = 'merge-' + branch.name;
+      laneColor[merged] = historyLaneColor(index);
+    });
+    var nodes = [];
+    layout.layers.forEach(function (layer, index) {
+      var at = pos(layout.slot[layer.id], 0);
+      var band = svg('rect', {
+        x: sideways ? at.x - 5 : at.x - 9,
+        y: sideways ? at.y - 9 : at.y - 5,
+        width: sideways ? 10 : 18,
+        height: sideways ? 18 : 10,
+        rx: 2, class: 'dag-band',
+        fill: laneColor[layer.source_branch] || 'var(--dsw-alias-surface-raised)'
+      });
+      bindNode(band, nodes, {
+        kind: 'layer', id: layer.id, at: at,
+        title: 'Layer ' + layer.id.slice(0, 12) +
+          (layer.source_branch ? ' \u00b7 published from ' + layer.source_branch.replace(/^merge-/, '') : ' \u00b7 the import\u2019s own layer'),
+        lines: [
+          'layer ' + layer.id.slice(0, 12) + (index === 0 ? ' \u00b7 the root' : ''),
+          bytes(layer.logical) + ' logical' +
+            (layer.source_commit ? ' \u00b7 from commit ' + layer.source_commit.slice(0, 12) : '')
+        ],
+        ref: layer.id, label: 'layer ' + layer.id.slice(0, 12)
+      });
+      plot.appendChild(band);
+    });
+    // The lanes and their leaves.
+    layout.worked.forEach(function (branch) {
+      var lane = layout.lane[branch.name], color = laneColor[branch.name];
+      var mine = layout.commits.filter(function (commit) {
+        return commit.branch === branch.name;
+      });
+      var baseSlot = (branch.base && layout.slot[branch.base] !== undefined)
+        ? layout.slot[branch.base] : 0;
+      var fork = pos(baseSlot, 0);
+      var headAt = mine.length
+        ? pos(layout.slot[mine[mine.length - 1].id], lane)
+        : fork;
+      // The sprout: from the fork node on the spine out to the lane.
+      plot.appendChild(svg('path', {
+        d: bend(fork, headAt, sideways), class: 'dag-lane', stroke: color
+      }));
+      // The lane's body through its commits.
+      if (mine.length > 1) {
+        var points = mine.map(function (commit) {
+          var at = pos(layout.slot[commit.id], lane);
+          return at.x + ' ' + at.y;
+        }).join(' L ');
+        var start = pos(layout.slot[mine[0].id], lane);
+        plot.appendChild(svg('path', {
+          d: 'M ' + start.x + ' ' + start.y + ' L ' + points, class: 'dag-lane', stroke: color
+        }));
+      }
+      // The fork node at the branch's actual base.
+      var forkNode = svg('rect', {
+        x: fork.x - (sideways ? 3 : 4), y: fork.y - (sideways ? 4 : 3),
+        width: sideways ? 6 : 8, height: sideways ? 8 : 6,
+        rx: 1.5, class: 'dag-fork'
+      });
+      bindNode(forkNode, nodes, {
+        kind: 'fork', id: branch.name, at: fork,
+        title: 'fork \u2190 ' + branch.name,
+        lines: ['fork: ' + branch.name, 'from ' + (branch.base || 'main').slice(0, 12) +
+          (branch.child ? ' \u00b7 child session ' + branch.child.session : '')],
+        ref: branch.name, label: branch.name
+      });
+      plot.appendChild(forkNode);
+      // The leaves.
+      mine.forEach(function (commit) {
+        var at = pos(layout.slot[commit.id], lane);
+        var leaf = svg('circle', {
+          cx: at.x, cy: at.y, r: 3.5, class: 'dag-leaf', fill: color
+        });
+        bindNode(leaf, nodes, {
+          kind: 'commit', id: commit.id, at: at,
+          title: 'C' + layout.ordinal[commit.id] + ' \u00b7 ' + branch.name,
+          lines: [
+            'C' + layout.ordinal[commit.id] + ' \u00b7 ' + (commit.message || '(no message)'),
+            commit.id.slice(0, 12) + ' \u00b7 via ' + (commit.via || '?') +
+              ' \u00b7 ' + historyTime(commit.time),
+            bytes(commit.logical) + ' tree \u00b7 +' + bytes(commit.new_stored) + ' stored'
+          ],
+          ref: commit.id, label: 'commit ' + commit.id.slice(0, 12)
+        });
+        plot.appendChild(leaf);
+      });
+      // The head: the state dot and the name tag.
+      var headDot = svg('circle', {
+        cx: headAt.x, cy: headAt.y, r: 5, class: 'dag-head-dot', 'data-state': branch.state,
+        fill: color
+      });
+      plot.appendChild(headDot);
+      var tagAt = sideways
+        ? { x: headAt.x + 9, y: headAt.y + 3 }
+        : { x: headAt.x + 9, y: headAt.y + 3 };
+      var tag = label(tagAt.x, tagAt.y, 'dag-tag', clip(branch.name, 18));
+      tag.setAttribute('fill', color);
+      bindNode(tag, nodes, {
+        kind: 'branch', id: branch.name, at: headAt,
+        title: branch.name + ' \u00b7 ' + historyStateWord(branch.state) +
+          (branch.child ? ' \u00b7 child session ' + branch.child.session + ' \u00b7 ' + branch.child.outcome : ''),
+        lines: [branch.name, historyStateWord(branch.state) +
+          (branch.child ? ' \u00b7 ' + branch.child.session + ' \u00b7 ' + branch.child.outcome : '')],
+        ref: branch.name, label: branch.name
+      });
+      plot.appendChild(tag);
+    });
+    // The grafts: a dashed stem from the leaf a publish carried up to
+    // the band it made, with a ring at the stem's foot.
+    layout.grafts.forEach(function (layer) {
+      var from = pos(layout.slot[layer.source_commit], layout.lane[layer.source_branch.replace(/^merge-/, '')] || 0);
+      var to = pos(layout.slot[layer.id], 0);
+      plot.appendChild(svg('path', {
+        d: bend(from, to, sideways), class: 'dag-graft', stroke: laneColor[layer.source_branch] || 'var(--dsw-alias-ink-tertiary)'
+      }));
+      plot.appendChild(svg('circle', {
+        cx: from.x, cy: from.y, r: 6, class: 'dag-ring',
+        stroke: laneColor[layer.source_branch] || 'var(--dsw-alias-ink-tertiary)'
+      }));
+    });
+    if (!layout.layers.length && !layout.commits.length) {
+      plot.appendChild(label(PAD, h / 2, 'dag-empty',
+        'The Store holds its first layer and no commits yet.'));
+    }
+    // A node is anything clickable; the hover card and the click
+    //through hang off this list.
+    function bindNode(elt, list, fact) {
+      elt.classList.add('dag-node');
+      elt.style.cursor = 'pointer';
+      var said = svg('title', null, fact.title);
+      elt.appendChild(said);
+      elt.addEventListener('click', function () {
+        historyBrowse(fact.ref, fact.label);
+      });
+      list.push({ elt: elt, fact: fact });
+    }
+    function bindHover(scroll, wrap, hover) {
+      nodes.forEach(function (one) {
+        one.elt.addEventListener('mouseenter', function () {
+          hover.textContent = '';
+          var title = node('div', null, one.fact.title);
+          hover.appendChild(title);
+          one.fact.lines.forEach(function (line) {
+            hover.appendChild(node('div', 'dag-hover-id', line));
+          });
+          hover.hidden = false;
+          var host = scroll.getBoundingClientRect();
+          var box = one.elt.getBoundingClientRect();
+          var left = box.left - host.left + scroll.scrollLeft + 14;
+          hover.style.left = Math.min(left, host.width - 240) + 'px';
+          hover.style.top = (box.top - host.top + scroll.scrollTop - 8) + 'px';
+        });
+        one.elt.addEventListener('mouseleave', function () {
+          hover.hidden = true;
+        });
+      });
+    }
+    return {
+      svg: plot, width: w, height: h,
+      bindHover: bindHover
+    };
   }
 
-  // One step on the trunk: a layer, with the branch whose commit made
-  // it named where a commit's message would be.
-  function historyLayer(x, y, layer) {
-    var made = svg('g', { class: 'dag-commit' });
-    made.appendChild(dot(x, y, 'ok'));
-    made.appendChild(label(x + 12, y + 4, 'dag-commit-id', layer.id));
-    var said = 'layer ' + layer.id + ' \u00b7 ' + bytes(layer.logical);
-    if (layer.source_branch) {
-      made.appendChild(label(x + 74, y + 4, 'dag-commit-msg',
-        clip('merged from ' + layer.source_branch, 34)));
-      said += '\nmerged from ' + layer.source_branch;
-    } else {
-      made.appendChild(label(x + 74, y + 4, 'dag-commit-msg', 'the import\u2019s own layer'));
-      said += '\nthe import\u2019s own layer';
+  // A bend that runs about as far along time as the rows it crosses
+  // (near 45\u00b0), so a sprout or a graft stays where its event is.
+  function bend(from, to, sideways) {
+    var run = Math.abs(sideways ? (to.x - from.x) : (to.y - from.y));
+    var rise = Math.abs(sideways ? (to.y - from.y) : (to.x - from.x));
+    var reach = Math.min(run, Math.max(14, rise * 1.1));
+    if (sideways) {
+      var dx = Math.sign(to.x - from.x) * reach;
+      return 'M' + from.x + ' ' + from.y +
+        ' C' + (from.x + dx) + ' ' + from.y + ', ' +
+        (to.x - dx) + ' ' + to.y + ', ' + to.x + ' ' + to.y;
     }
-    made.appendChild(svg('title', null, said));
-    return made;
+    var dy = Math.sign(to.y - from.y) * reach;
+    return 'M' + from.x + ' ' + from.y +
+      ' C' + from.x + ' ' + (from.y + dy) + ', ' +
+      to.x + ' ' + (to.y - dy) + ', ' + to.x + ' ' + to.y;
+  }
+
+  // The minimap: the whole run compressed, one bar per slot (its height
+  // the nodes at that slot), and the visible window. Click or drag
+  // jumps; scrolling moves the window.
+  function historyMinimap(layout) {
+    var minimap = node('div', 'dag-minimap');
+    minimap.setAttribute('role', 'scrollbar');
+    minimap.setAttribute('aria-label', 'the whole run; click to jump');
+    for (var t = 0; t < layout.totalSlots; t++) (function (t) {
+      var bar = node('span', 'dag-minimap-bar');
+      bar.style.left = (t / layout.totalSlots * 100) + '%';
+      bar.style.height = Math.min(20, 4 + 5 * (countsBySlot(layout)[t] || 0)) + 'px';
+      minimap.appendChild(bar);
+    })(t);
+    var window_ = node('span', 'dag-minimap-window');
+    minimap.appendChild(window_);
+    minimap.addEventListener('pointerdown', function (event) {
+      var jump = function (event) {
+        var box = minimap.getBoundingClientRect();
+        var fraction = Math.max(0, Math.min(1, (event.clientX - box.left) / box.width));
+        var scroll = minimap.parentNode.querySelector('.dag-scroll');
+        if (scroll) scroll.scrollLeft = fraction * scroll.scrollWidth - scroll.clientWidth / 2;
+      };
+      jump(event);
+      var move = function (event) { jump(event); };
+      var up = function () {
+        document.removeEventListener('pointermove', move);
+        document.removeEventListener('pointerup', up);
+      };
+      document.addEventListener('pointermove', move);
+      document.addEventListener('pointerup', up);
+    });
+    minimap._window = window_;
+    return minimap;
+  }
+
+  function countsBySlot(layout) {
+    if (layout._counts) return layout._counts;
+    var counts = {};
+    layout.layers.forEach(function (layer) {
+      counts[layout.slot[layer.id]] = (counts[layout.slot[layer.id]] || 0) + 1;
+    });
+    layout.commits.forEach(function (commit) {
+      counts[layout.slot[commit.id]] = (counts[layout.slot[commit.id]] || 0) + 1;
+    });
+    layout._counts = counts;
+    return counts;
+  }
+
+  function historyMinimapWindow(scroll, minimap) {
+    var win = minimap._window;
+    if (!win) return;
+    var left = scroll.scrollLeft / Math.max(1, scroll.scrollWidth);
+    var width = scroll.clientWidth / Math.max(1, scroll.scrollWidth);
+    win.style.left = (left * 100) + '%';
+    win.style.width = (Math.min(1, width) * 100) + '%';
   }
 
   function historyTime(unixMillis) {
@@ -9645,11 +10006,12 @@
     return made.toISOString().slice(0, 16).replace('T', ' ');
   }
 
-  function historyBrowse(branch) {
-    face.historyBranch = branch;
+  function historyBrowse(ref, label) {
+    face.historyBranch = ref;
+    face.historyRefLabel = label || ref;
     face.historyPath = '';
     face.historyPage = 0;
-    readWorkspaceFiles(branch, '', true);
+    readWorkspaceFiles(ref, '', true);
     paintWorkspaceHistory();
   }
 
@@ -9685,9 +10047,12 @@
       line.appendChild(node('td', null, branch.child.outcome || '?'));
       var state = node('td');
       state.appendChild(node('span', 'chip' + (branch.state === 'merged' ? ' is-ok' : ''),
-        HISTORY_STATE_WORD[branch.state] || branch.state));
+        historyStateWord(branch.state)));
       line.appendChild(state);
-      line.appendChild(node('td', null, String((branch.commits || []).length)));
+      var mine = (read.commits || []).filter(function (commit) {
+        return commit.branch === branch.name;
+      });
+      line.appendChild(node('td', null, String(mine.length)));
       table.appendChild(line);
     });
     card.appendChild(table);
@@ -9718,7 +10083,8 @@
       return card;
     }
     var where = node('p', 'board-path',
-      (face.historyPath || '/') + '  \u00b7  ' + face.historyBranch);
+      (face.historyPath || '/') + '  \u00b7  ' +
+      (face.historyRefLabel || face.historyBranch));
     card.appendChild(where);
     var items = doc.items || [];
     if (!items.length) {

@@ -1942,37 +1942,57 @@ async function theStripsLinesOpenTheirRecord() {
 // bars. An unregistered folder names itself instead of drawing an
 // empty tree.
 async function theWorkspaceHistorySectionDrawsTheTreeItRead() {
+  // The one-read payload: branches with their fork bases, the commits
+  // flat (each naming its branch and base), the layers with their
+  // publish evidence, the nine figures with the Init record.
   const doc = {
     type: 'workspace-history',
     registered: true,
     folder: '/Users/owner/Projects/fleet',
     project: 'fleet',
+    version: '1b70c3e210460f57',
     branches: [
+      { name: 'main', base: '326898f652a0', head: null, forked_from: null, state: 'idle', child: null },
       {
-        name: 'main', head: 'aa11', forked_from: null, state: 'open', child: null,
-        commits: [{ id: '1244ee6601', message: 'fleet: merge subagent fleet-child-20261026t010000z-abc123', via: 'merge', time: 1792975007476, parents: 2 }],
-      },
-      {
-        name: 'fleet-child-20261026t010000z-abc123', head: 'cc33', forked_from: 'aa11',
+        name: 'fleet-child-20261026t010000z-abc123', base: 'aa11bb22cc33',
+        head: '12e968660147', forked_from: 'aa11bb22cc33',
         state: 'merged',
         child: { session: '20261026T010000Z-abc123', outcome: 'completed' },
-        commits: [{ id: '12e968660147', message: 'fleet: write_file', via: 'fs', time: 1792975010000, parents: 1 }],
       },
+      { name: 'fleet-child-20261026t010000z-idl000', base: 'aa11bb22cc33', head: null, forked_from: 'aa11bb22cc33', state: 'idle', child: null },
+      { name: 'fleet-child-20261026t010000z-idl001', base: 'aa11bb22cc33', head: null, forked_from: 'aa11bb22cc33', state: 'idle', child: null },
     ],
+    commits: [{
+      id: '12e968660147668df46ef623a1a28858b74736a2758ddaa5e51b19607d62104d4c',
+      branch: 'fleet-child-20261026t010000z-abc123',
+      parent: null, second_parent: null, base: 'aa11bb22cc33',
+      merged_from: null, displaced: null, lww: [], lww_truncated: false,
+      logical: 18777528, new_canonical: 10120, new_stored: 836, new_metadata: 791,
+      via: 'fs', message: 'fleet: write_file', time: 1792975010000,
+      root: 'ace414acc7c6',
+    }],
     layers: [
-      { id: '323d354b0ca1', logical: 18777528, parent: null, source_branch: 'merge-fleet-child-20261026t010000z-abc123' },
-      { id: 'aa11bb22cc33', logical: 946, parent: null, source_branch: null },
+      { id: '323d354b0ca1', logical: 18777528, parent: 'aa11bb22cc33', root: null,
+        source_branch: 'merge-fleet-child-20261026t010000z-abc123',
+        source_commit: '12e968660147668df46ef623a1a28858b74736a2758ddaa5e51b19607d62104d4c',
+        overwrote_count: 0 },
+      { id: 'aa11bb22cc33', logical: 946, parent: null, root: null,
+        source_branch: null, source_commit: null, overwrote_count: 0 },
     ],
-    storage: { logical: 18777528, canonical: 14955859, stored: 11229684, dedupe: 1.25553, compression: 1.331815 },
-    note: null,
-    refused: [],
+    storage: {
+      logical: 46549294, canonical: 15562812, stored: 7388596, metadata: 500678,
+      file: 7860224, free: 0, dedupe: 2.991059, compression: 2.106329,
+      init: { entries: 510, files: 448, bytes: 15516426, canonical: 15552692, stored: 7387760, metadata: 447475, millis: 525 },
+    },
+    cut_branches: [], truncated: null,
+    note: null, refused: [],
   };
   const page = boot({
     hash: '#/workspace-history',
     documents: {
       'workspace-history': doc,
       'workspace-history/files': {
-        type: 'workspace-files', branch: 'fleet-child-202paceholder', path: '/', items: [],
+        type: 'workspace-files', branch: 'fleet-child-20261026t010000z-abc123', path: '/', items: [],
       },
     },
   });
@@ -1997,29 +2017,93 @@ async function theWorkspaceHistorySectionDrawsTheTreeItRead() {
   // The surface announces itself once, above the cards.
   const title = page.rows('.surface-title').map((n) => n.textContent.trim());
   check('the section names itself workspace history', title.includes('Workspace history'), title.join(' | '));
-  // The DAG drew the trunk's two layers, the child's lane with its
-  // commit, and the merge edge back to main.
-  const dag = page.rows('.dag-commit');
-  check('the dag draws the trunk\u2019s layers and the child\u2019s commit',
-    dag.length === 3, String(dag.length));
-  check('the dag draws the merge edge',
-    page.rows('.dag-edge.is-merged').length === 2,
-    String(page.rows('.dag-edge.is-merged').length));
-  // The Work table: the child's session and its state, with the
-  // branch's own commits counted.
+  // The tree: a band per layer, a leaf for the commit, the fork node
+  // at the branch's actual base, and the dashed graft from the leaf a
+  // publish carried back to the band it made.
+  check('the tree draws a band for every layer',
+    page.rows('.dag-band').length === 2, String(page.rows('.dag-band').length));
+  check('the tree draws a leaf for the commit',
+    page.rows('.dag-leaf').length === 1, String(page.rows('.dag-leaf').length));
+  check('the tree draws the fork node at the branch\u2019s base',
+    page.rows('.dag-fork').length === 1, String(page.rows('.dag-fork').length));
+  check('the tree draws the publish graft',
+    page.rows('.dag-graft').length === 1 && page.rows('.dag-ring').length === 1,
+    page.rows('.dag-graft').length + ' / ' + page.rows('.dag-ring').length);
+  check('the tree labels the lane with the branch name',
+    page.rows('.dag-tag').some((t) => /abc123/.test(t.textContent)),
+    page.rows('.dag-tag').map((t) => t.textContent).join(' | '));
+  // The instrument's controls and the minimap.
+  check('the tree carries zoom, fit and orientation controls',
+    page.rows('.dag-zoom').length === 4, String(page.rows('.dag-zoom').length));
+  check('the tree carries the minimap with its window',
+    page.rows('.dag-minimap').length === 1 && page.rows('.dag-minimap-window').length === 1,
+    'minimap / window');
+  // A branch nobody worked is one idle chip, never a column.
+  const idleChip = page.rows('.dag-idle .chip').map((n) => n.textContent.trim());
+  check('the idle branches are one chip with a count',
+    idleChip.some((t) => /2 idle/.test(t)), idleChip.join(' | '));
+  // The Work pane: the child's session and its state.
   const workText = page.rows('.board-card').map((c) => c.textContent).join(' ');
   check('the work pane names the child session',
     workText.includes('20261026T010000Z-abc123'), workText.slice(0, 200));
   check('the work pane names the merged state', /merged to main/.test(workText), workText.slice(0, 200));
-  // The Files pane's tabs: the branch the read picked is on.
+  // The Files pane's tabs: every branch, and the where line names the read.
   const tabs = page.rows('.board-tab').map((t) => t.textContent.trim());
   check('the files pane offers every branch',
-    tabs.length === 2 && tabs.includes('main'), tabs.join(' | '));
-  // The Store's figures: three bars against the logical size.
-  check('the store draws its three bars',
-    page.rows('.figure-bar').length === 3, String(page.rows('.figure-bar').length));
-  const stored = page.rows('.figure-bar-value').map((n) => n.textContent.trim());
-  check('the bars name the stored size', stored.includes('10.7 MB'), stored.join(' | '));
+    tabs.length === 4 && tabs.includes('main'), tabs.join(' | '));
+  // The truncation, named where the tree would be.
+  const cut = boot({
+    hash: '#/workspace-history',
+    documents: {
+      'workspace-history': Object.assign({}, doc, {
+        truncated: '3 branches shown, more remain in the Store',
+        branches: doc.branches.slice(0, 2),
+      }),
+    },
+  });
+  await flush();
+  cut.open();
+  await flush();
+  check('the cut is named in words',
+    cut.rows('.dag-truncated').some((n) => /more remain in the Store/.test(n.textContent)),
+    cut.rows('.dag-truncated').map((n) => n.textContent).join(' | '));
+  // Bounds: more worked branches make the plot TALLER (or wider), the
+  // viewBox is the content's size, and the card scrolls — no node sits
+  // outside the plot's bounds because the bounds ARE the content.
+  const busyBranches = [];
+  for (let i = 0; i < 6; i++) {
+    busyBranches.push({
+      name: 'fleet-child-20261026t02000' + i + 'z-busy' + i, base: 'aa11bb22cc33',
+      head: '12e9686601' + i, forked_from: 'aa11bb22cc33', state: 'open', child: null,
+    });
+  }
+  const busy = boot({
+    hash: '#/workspace-history',
+    documents: {
+      'workspace-history': Object.assign({}, doc, {
+        branches: [doc.branches[0]].concat(busyBranches),
+        commits: busyBranches.map((branch, i) => Object.assign({}, doc.commits[0], {
+          id: '12e9686601' + i, branch: branch.name, time: 1792975010000 + i,
+        })),
+      }),
+    },
+  });
+  await flush();
+  busy.open();
+  await flush();
+  const plotOf = (aPage) => aPage.rows('svg')
+    .find((svgEl) => svgEl.getAttribute('aria-label') === 'the workspace history tree');
+  const busyPlot = plotOf(busy);
+  const onePlot = plotOf(page);
+  check('a busy tree grows the plot instead of clipping it',
+    !!busyPlot && !!onePlot &&
+      Number(busyPlot.getAttribute('viewBox').split(' ')[3]) >
+      Number(onePlot.getAttribute('viewBox').split(' ')[3]),
+    busyPlot && onePlot
+      ? busyPlot.getAttribute('viewBox') + ' vs ' + onePlot.getAttribute('viewBox')
+      : 'missing plot');
+  check('a busy tree draws one leaf per commit',
+    busy.rows('.dag-leaf').length === 6, String(busy.rows('.dag-leaf').length));
   // The honest empty state: a folder with no project says so.
   const empty = boot({
     hash: '#/workspace-history',
@@ -2037,8 +2121,9 @@ async function theWorkspaceHistorySectionDrawsTheTreeItRead() {
   check('the unregistered folder names its absence',
     empty.rows('.board-empty').some((n) => /no LayerFS project/.test(n.textContent)),
     empty.rows('.board-empty').map((n) => n.textContent.trim().slice(0, 60)).join(' | '));
-  check('the unregistered folder draws no dag',
-    empty.rows('.dag-commit').length === 0, String(empty.rows('.dag-commit').length));
+  check('the unregistered folder draws no tree',
+    empty.rows('.dag-band').length === 0 && empty.rows('.dag-leaf').length === 0,
+    String(empty.rows('.dag-band').length));
 }
 
 const cases = [

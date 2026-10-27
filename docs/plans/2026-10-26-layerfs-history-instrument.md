@@ -205,7 +205,7 @@ named absence, never an empty lie.
       `truncated` and names the cut; an unchanged `since` answer changes
       nothing; the live fleet answer parses 65 branches and 2 layers
       with no field left null-by-omission.
-- [ ] **C1 — the graph is a tree.**
+- [x] **C1 — the graph is a tree. Landed 2026-10-26.**
       Nodes: layer (band), commit (leaf), fork (synthetic, at
       `forkedFrom`/`base`), merge graft (from `layer.sourceCommit`),
       bare twig (a branch with no `head`). Edges: the layer parent
@@ -359,6 +359,33 @@ name · `docs/features/workspace-history.md`,
   copy-if-absent → copy-if-different: the scripts are fleet's own
   assets and evolve in place (the operator's override seam is the
   env, not the home's copy).
+
+- **C1 — landed 2026-10-26.** `historyDag` is now the tree: bands for
+  the Layers on main's spine (coloured by the branch that published
+  each, neutral for the import's own), one lane per branch with work
+  sprouting from a fork node at its ACTUAL base (`base`/`forkedFrom`,
+  which the old face parsed and never drew), a leaf per commit with a
+  dashed graft stem from the leaf a publish carried back to the band
+  it made (`layer.sourceCommit` — the merge evidence lives in the
+  layer), the head dot in the lane colour with the branch's name tag,
+  and idle branches as ONE chip with a count — never one column each.
+  Lanes packed nearest the spine alternating sides; time is event
+  slots (the layer chain interleaved with each layer's forked commits
+  in time order); sideways by default, upright on the toggle; zoom
+  25–200% over fit with the buttons and the percentage named; pan by
+  drag or scroll; a minimap with one bar per slot and the visible
+  window (click or drag jumps); a hover card per node carrying the
+  ordinal, message, id, via, time and sizes; the truncation line names
+  the cut where the tree stands. The `--lane-0…5` palette is defined in
+  all four theme blocks (light, contrast, console, graphite); the
+  semantic tones stay semantic. The plot's viewBox is the CONTENT's
+  size and the card scrolls — pinned by the busy fixture (6 worked
+  branches) growing the plot instead of clipping it. Click-through:
+  every node browses Files at its ref (commit id, layer id, or branch
+  name). The refresh rides `since`: an unchanged answer leaves the
+  view standing. Face cases: 234 checks across 27 (bands, leaves,
+  fork, graft, tag, controls, minimap, idle chip, the cut named, the
+  bounds, the empty state).
 
 ## Verification
 

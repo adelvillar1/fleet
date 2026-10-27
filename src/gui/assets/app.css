@@ -100,6 +100,12 @@
   --dsw-alias-down: rgb(176, 36, 32);
   --dsw-alias-warn: rgb(122, 82, 8);
   --dsw-alias-gradient: linear-gradient(135deg, rgb(63, 108, 218), rgb(37, 78, 176));
+  --lane-0: rgb(13, 118, 110);
+  --lane-1: rgb(109, 58, 216);
+  --lane-2: rgb(176, 84, 10);
+  --lane-3: rgb(190, 24, 93);
+  --lane-4: rgb(12, 116, 150);
+  --lane-5: rgb(84, 124, 12);
 
   --shadow-1: 0 1px 2px rgb(24 26 29 / 6%), 0 1px 1px rgb(24 26 29 / 4%);
   --shadow-2: 0 18px 40px -24px rgb(24 26 29 / 30%), 0 2px 6px rgb(24 26 29 / 6%);
@@ -183,6 +189,12 @@
   --dsw-alias-down: rgb(240, 106, 99);
   --dsw-alias-warn: rgb(220, 166, 66);
   --dsw-alias-gradient: linear-gradient(135deg, rgb(96, 143, 255), rgb(66, 112, 230));
+  --lane-0: rgb(45, 212, 191);
+  --lane-1: rgb(167, 139, 250);
+  --lane-2: rgb(251, 191, 36);
+  --lane-3: rgb(251, 113, 133);
+  --lane-4: rgb(56, 189, 248);
+  --lane-5: rgb(163, 230, 53);
   --shadow-1: 0 1px 2px rgb(0 0 0 / 30%);
   --shadow-2: 0 18px 40px -20px rgb(0 0 0 / 65%), 0 2px 6px rgb(0 0 0 / 25%);
   --shadow-3: 0 32px 80px -28px rgb(0 0 0 / 80%), 0 8px 24px -12px rgb(0 0 0 / 45%);
@@ -209,6 +221,12 @@
   --dsw-alias-down: rgb(240, 106, 99);
   --dsw-alias-warn: rgb(220, 166, 66);
   --dsw-alias-gradient: linear-gradient(135deg, rgb(94, 148, 255), rgb(62, 112, 232));
+  --lane-0: rgb(94, 210, 190);
+  --lane-1: rgb(158, 134, 240);
+  --lane-2: rgb(235, 180, 60);
+  --lane-3: rgb(240, 120, 135);
+  --lane-4: rgb(90, 180, 235);
+  --lane-5: rgb(150, 210, 70);
   --shadow-1: 0 1px 2px rgb(0 0 0 / 32%);
   --shadow-2: 0 18px 40px -20px rgb(0 0 0 / 70%), 0 2px 6px rgb(0 0 0 / 28%);
   --shadow-3: 0 32px 80px -28px rgb(0 0 0 / 85%), 0 8px 24px -12px rgb(0 0 0 / 50%);
@@ -235,6 +253,12 @@
   --dsw-alias-down: rgb(176, 20, 20);
   --dsw-alias-warn: rgb(124, 82, 6);
   --dsw-alias-gradient: linear-gradient(135deg, rgb(20, 60, 150), rgb(16, 48, 122));
+  --lane-0: rgb(0, 150, 136);
+  --lane-1: rgb(122, 48, 226);
+  --lane-2: rgb(190, 88, 0);
+  --lane-3: rgb(200, 16, 96);
+  --lane-4: rgb(0, 118, 172);
+  --lane-5: rgb(96, 138, 0);
   --shadow-1: 0 1px 2px rgb(0 0 0 / 12%);
   --shadow-2: 0 12px 28px -20px rgb(0 0 0 / 30%);
   --shadow-3: 0 24px 60px -28px rgb(0 0 0 / 35%);
@@ -6868,18 +6892,51 @@ body[data-work="collapsed"] .work-list { display: none; }
    make a merge legible: the fork out and the merge back. The colors
    are the surface's own — a merged lane reads ok, an open one reads
    the idle tertiary — so the state is legible without a legend. */
-.dag-spine { stroke: var(--dsw-alias-hairline-strong); stroke-width: 1.5; }
-.dag-edge { fill: none; stroke: var(--dsw-alias-ink-tertiary); stroke-width: 1; }
-.dag-edge.is-merged { stroke: var(--dsw-alias-ok); }
+/* The history instrument's tree: main's spine and its bands, one lane
+   per branch with work, leaves, fork nodes, graft stems, a minimap with
+   the visible window, and the hover card. */
+.dag-wrap { position: relative; }
+.dag-spine { stroke: var(--dsw-alias-ok); stroke-width: 3; stroke-linecap: round; }
+.dag-lane { fill: none; stroke-width: 1.5; }
+.dag-graft { fill: none; stroke-width: 1; stroke-dasharray: 3 3; }
+.dag-band { stroke: var(--dsw-alias-hairline-strong); stroke-width: 0.75; }
+.dag-leaf { stroke: var(--dsw-alias-page); stroke-width: 1; }
+.dag-fork { fill: var(--dsw-alias-surface-raised); stroke: var(--dsw-alias-ink-tertiary); stroke-width: 1; }
+.dag-ring { fill: none; stroke-width: 1.5; }
+.dag-head-dot { stroke: var(--dsw-alias-page); stroke-width: 1.5; }
 .dag-lane-name { fill: var(--dsw-alias-ink-secondary); font-family: var(--font-mono); font-size: 9.5px; }
-.dag-commit { cursor: pointer; }
-.dag-commit:hover .dag-commit-msg { fill: var(--dsw-alias-accent); }
-.dag-commit-id { fill: var(--dsw-alias-ink-tertiary); font-family: var(--font-mono); font-size: 9px; }
-.dag-commit-msg { fill: var(--dsw-alias-ink); font-family: var(--font-text); font-size: 10px; }
-.dag-commit-merge { fill: var(--dsw-alias-warn); font-family: var(--font-mono); font-size: 8.5px; }
-.dag-head-dot[data-state="merged"] { fill: var(--dsw-alias-ok); }
-.dag-head-dot[data-state="open"] { fill: var(--dsw-alias-accent); }
-.dag-head-dot[data-state="idle"] { fill: var(--dsw-alias-ink-tertiary); }
+.dag-tag { font-family: var(--font-mono); font-size: 9.5px; }
+.dag-node:hover { filter: brightness(1.15); }
+.dag-controls { display: flex; align-items: center; gap: 6px; margin: 0 0 8px; }
+.dag-zoom {
+  font: inherit; font-size: 11px; border: 1px solid var(--dsw-alias-hairline-strong);
+  background: var(--dsw-alias-surface); color: var(--dsw-alias-ink);
+  border-radius: 6px; padding: 1px 8px; cursor: pointer;
+}
+.dag-zoom:hover { border-color: var(--dsw-alias-accent); }
+.dag-zoom-note { color: var(--dsw-alias-ink-tertiary); font-size: 10.5px; }
+.dag-scroll { overflow-x: auto; overflow-y: hidden; cursor: grab; }
+.dag-scroll.is-dragging { cursor: grabbing; }
+.dag-scroll svg { display: block; }
+.dag-hover {
+  position: absolute; pointer-events: none; z-index: 30;
+  background: var(--dsw-alias-surface-overlay); color: var(--dsw-alias-ink);
+  border: 1px solid var(--dsw-alias-hairline-strong); border-radius: 8px;
+  box-shadow: var(--shadow-2); padding: 7px 10px; font-size: 11px; max-width: 340px;
+}
+.dag-hover-id { color: var(--dsw-alias-ink-tertiary); font-size: 10px; margin-top: 1px; }
+.dag-minimap {
+  position: relative; height: 26px; margin-top: 8px; overflow: hidden; cursor: crosshair;
+  border: 1px solid var(--dsw-alias-hairline); border-radius: 6px;
+  background: var(--dsw-alias-surface-raised);
+}
+.dag-minimap-bar { position: absolute; bottom: 2px; width: 2px; background: var(--dsw-alias-ink-tertiary); opacity: 0.5; }
+.dag-minimap-window {
+  position: absolute; top: 0; bottom: 0; border-radius: 4px;
+  background: var(--dsw-alias-accent-wash); border: 1px solid var(--dsw-alias-accent);
+}
+.dag-idle { margin-top: 8px; }
+.dag-truncated { margin: 6px 0 0; color: var(--dsw-alias-warn); font-size: 11px; }
 .dag-empty { fill: var(--dsw-alias-ink-tertiary); font-size: 10px; }
 
 /* The Store's figures: three bars against the logical size, so the
