@@ -9,7 +9,7 @@ shape: [state-sync]
 phrases: [blend1 refresh mahjong-vtt, spawn route: blend1 lane child over stdio JSON-RPC, BLEND1_SEM1_PYTHONPATH, sources as absolute globs: mahjong-vtt/docs/**/*.md, action: unchanged, manifest.json entries 618]
 missing: []
 recall-count: 0
-superseded-by:
+superseded-by: mahjong-vtt-corpus-rebuilt-2026-10-27
 valid-until:
 ---
 
