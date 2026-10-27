@@ -698,7 +698,6 @@
     historyPath: '',
     historyFiles: null,
     historyFilesAt: 0,
-    historyPick: null,
     // The settings surface's read and its clock.
     settings: null,
     settingsAt: 0,
@@ -10467,6 +10466,30 @@
       })
       .catch(function () { });
   }
+
+  // The tree's keyboard follow: F reads the NEWEST node — the trunk's
+  // head Layer (the answer carries layers newest first), or the newest
+  // commit when the Store holds no Layer yet. The reference's own
+  // binding; a node's hover card names it.
+  window.addEventListener('keydown', function (event) {
+    if (face.panel !== 'workspace-history' || event.metaKey || event.ctrlKey || event.altKey) return;
+    if (event.key !== 'f' && event.key !== 'F') return;
+    var tag = (event.target && event.target.tagName) || '';
+    if (tag === 'INPUT' || tag === 'TEXTAREA' ||
+        (event.target && event.target.isContentEditable)) return;
+    var read = face.history;
+    if (!read) return;
+    var layers = read.layers || [];
+    var commits = (read.commits || []).slice().sort(function (a, b) {
+      return (b.time || 0) - (a.time || 0);
+    });
+    var newest = layers[0] || commits[0];
+    if (!newest) return;
+    event.preventDefault();
+    historyBrowse(newest.id, layers[0]
+      ? 'layer ' + newest.id.slice(0, 12)
+      : 'commit ' + newest.id.slice(0, 12));
+  });
 
   // The Store's accounting, in the substrate's own terms: what it
   // holds on disk, what main's head would cost as plain files, the

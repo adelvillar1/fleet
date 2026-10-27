@@ -480,7 +480,21 @@ name · `docs/features/workspace-history.md`,
   either absent or words, the feed's route answering with its
   `refused` field, and the delegation's stamp through the file route.
   The graph's node-count pin (bands = layers, leaves = commits) lives
-  in the face harness where the graph is drawn. Docs landed in the
+  in the face harness where the graph is drawn. Two criterion lines
+  left undone mid-increment were closed here rather than papered over:
+  C1's **`f` follows the newest node** (the key binding is on the
+  panel: the trunk's head Layer, or the newest commit when the Store
+  holds no Layer) and C3's **three untested pins** — a path not in the
+  tree refused by the wire's own `NoSuchPath`, the 256 KB text cut
+  reporting itself, and the 2,000-line blame cap reporting itself (a
+  2,001-line fixture). The text cap's fixture exposed a **driver
+  defect the pins exist to catch**: `spawn_with` waited with
+  `try_wait()` while the child wrote into a piped stdout nobody read,
+  so any answer past the OS pipe buffer (64 KiB) blocked the child and
+  burned the whole 120 s budget on a call that answers in
+  milliseconds — an `fs read` window or a big `fs list` would hit it
+  live. The pipes are drained while the child runs now; the same
+  fixture's run went from 120 s to 1.3 s. Docs landed in the
   same commit: the feature doc rewritten as the instrument's HOW
   (the five cards, the one read, the named cuts), surfaces.md and
   FUNCTIONAL-SPECIFICATIONS.md and README.md describing the tree in

@@ -2037,16 +2037,22 @@ appendFileSync({count:?}, JSON.stringify(process.argv.slice(2)) + \"\\n\");
             r#"#!/bin/sh
 case "$*" in
   *--version*) echo "1.1.0" ;;
-  *"fs stat"*"/notes.txt"*)
+  *"fs stat"*"/notes.txt"*|*"fs stat"*big.txt*|*"fs stat"*many.txt*)
     printf '%s\n' '{"kind":"ok","type":"file","size":8542}' ;;
   *"fs stat"*binary.bin*)
     printf '%s\n' '{"kind":"ok","type":"file","size":11}' ;;
+  *"fs stat"*"/missing.txt"*)
+    printf '%s\n' '{"code":"NoSuchPath","message":"/missing.txt does not exist on that ref"}' >&2; exit 3 ;;
   *"fs stat"*)
     printf '%s\n' '{"kind":"ok","type":"directory","size":0}' ;;
   *"fs read"*"/notes.txt"*)
     printf '%s\n' '{"kind":"ok","path":"/notes.txt","text":"line one\nline two\n","startLine":1,"endLine":2,"nextLine":3,"truncated":false,"size":8542}' ;;
   *"fs read"*binary.bin*)
     printf '%s\n' '{"kind":"ok","path":"/binary.bin","text":"a\u0000b","startLine":1,"endLine":1,"nextLine":null,"truncated":false,"size":11}' ;;
+  *"fs read"*big.txt*)
+    python3 -c 'import json; print(json.dumps({"kind":"ok","path":"/big.txt","text":"a"*300000,"startLine":1,"endLine":1,"nextLine":None,"truncated":False,"size":300000}))' ;;
+  *"fs blame"*many.txt*)
+    python3 -c 'import json; print(json.dumps({"kind":"ok","path":"/many.txt","lines":[{"n":i,"text":"line %d" % i,"commit":"12e968660147668df46ef623a1a28858b74736a2758ddaa5e51b19607d6210","message":"fleet: write_file"} for i in range(1,2002)]}))' ;;
   *"fs blame"*)
     printf '%s\n' '{"kind":"ok","path":"/notes.txt","lines":[{"n":1,"text":"line one","commit":"12e968660147668df46ef623a1a28858b74736a2758ddaa5e51b19607d62104d","message":"fleet: write_file"},{"n":2,"text":"line two","commit":"12e968660147668df46ef623a1a28858b74736a2758ddaa5e51b19607d62104d","message":"fleet: write_file"}]}' ;;
   *"branch diff_commits"*)
@@ -2134,6 +2140,21 @@ if (process.argv[4] === "--comparable") {
             doc["note"].as_str().unwrap().contains("binary, 11 bytes"),
             "{doc}"
         );
+        // A path not in the tree is refused by the wire's own name.
+        let doc = workspace_file(cwd, "main", "/missing.txt", "text", None, None, 0);
+        let refused = doc["refused"].as_array().expect("the refusal");
+        assert!(refused[0].as_str().unwrap().contains("NoSuchPath"), "{doc}");
+        // The 256 KB text cap reports that it cut.
+        let doc = workspace_file(cwd, "main", "/big.txt", "text", None, None, 0);
+        let note = doc["note"].as_str().expect("the cut is named");
+        assert!(note.contains("cut at 256 KB"), "{note}");
+        assert_eq!(doc["text"].as_str().unwrap().len(), 256 * 1024, "{doc}");
+        // The 2,000-line blame cap reports that it cut.
+        let doc = workspace_file(cwd, "main", "/many.txt", "blame", None, None, 0);
+        let lines = doc["lines"].as_array().expect("the lines");
+        assert_eq!(lines.len(), 2_000, "{} lines", lines.len());
+        let note = doc["note"].as_str().expect("the cut is named");
+        assert!(note.contains("first 2,000 of 2001 lines"), "{note}");
         // Blame: every line with its commit.
         let doc = workspace_file(cwd, "main", "/notes.txt", "blame", None, None, 0);
         let lines = doc["lines"].as_array().expect("the lines");

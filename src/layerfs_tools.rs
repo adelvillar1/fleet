@@ -2191,20 +2191,24 @@ fn spawn_with(
             .map_err(|error| Error::Spawn(format!("{call}: stdin: {error}")))?;
         drop(pipe);
     }
+    // The pipes are drained WHILE the child runs: an `fs read` window or
+    // a big `fs list` answer exceeds the OS pipe buffer (64 KiB), and a
+    // child blocked writing to a pipe nobody reads never exits — the
+    // wait loop would burn the whole budget on a call that answered in
+    // milliseconds. The readers are the reason it cannot.
+    fn drain<R: std::io::Read + Send + 'static>(mut pipe: R) -> std::thread::JoinHandle<Vec<u8>> {
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = pipe.read_to_end(&mut buf);
+            buf
+        })
+    }
+    let out = child.stdout.take().map(drain);
+    let err = child.stderr.take().map(drain);
     let deadline = std::time::Instant::now() + budget;
-    loop {
+    let status = loop {
         match child.try_wait() {
-            Ok(Some(status)) => {
-                let output = child
-                    .wait_with_output()
-                    .map_err(|error| Error::Spawn(format!("{call}: {error}")))?;
-                return Ok(Raw {
-                    success: status.success(),
-                    exit: status.code().unwrap_or(-1),
-                    stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-                    stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-                });
-            }
+            Ok(Some(status)) => break status,
             Ok(None) => {
                 if std::time::Instant::now() >= deadline {
                     let _ = child.kill();
@@ -2218,7 +2222,19 @@ fn spawn_with(
             }
             Err(error) => return Err(Error::Spawn(format!("{call}: {error}"))),
         }
-    }
+    };
+    let stdout = out
+        .map(|handle| handle.join().unwrap_or_default())
+        .unwrap_or_default();
+    let stderr = err
+        .map(|handle| handle.join().unwrap_or_default())
+        .unwrap_or_default();
+    Ok(Raw {
+        success: status.success(),
+        exit: status.code().unwrap_or(-1),
+        stdout: String::from_utf8_lossy(&stdout).to_string(),
+        stderr: String::from_utf8_lossy(&stderr).to_string(),
+    })
 }
 
 /// One spawn, one attempt: run the CLI with no body and map its exit
