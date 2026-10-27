@@ -146,7 +146,7 @@ are the owner's history to keep or rewrite, not this plan's.
       (repo, total, .git, artifacts, last commit, churn) lands in this
       plan file as measured 2026-10-27, so every later number has a
       before.
-- [ ] **C1 — the stale artifacts are swept, by name.** The exact dirs
+- [x] **C1 — the stale artifacts are swept, by name. Landed 2026-10-27.** The exact dirs
       listed in Context (Class 1) plus `fleet-remote`'s target via
       `cargo clean` are removed; the sweep script prints each dir's
       size as it goes and a before/after total; every repo's `git
@@ -202,6 +202,20 @@ commits where a commit is made (C4), explicit paths everywhere, never
 - **Deleting whole repos** (including `synapticweb-tmp`, listed for
   the owner instead) and **retiring or archiving stale projects** —
   a separate ruling.
+
+## Status record
+
+- **C0 — landed 2026-10-27.** The 39-row survey table is in this file
+  above.
+- **C1 — landed 2026-10-27.** The measured list went through
+  `repo-hygiene.sh --purge` (each dir name-verified against the closed
+  list before removal, each size logged): 23 artifact dirs totalling
+  ~14.6 GB, plus `cargo clean` on the fleet-remote worktree — cargo
+  reports **25.9 GiB removed** (du had shown 7.7 GB of it; APFS clone
+  accounting undercounts). **~/Projects: 60.4 GB → 38.2 GB.** The pin
+  held: all twelve swept repos' `git status --porcelain` counts are
+  byte-identical before and after, and the active repos' sizes are
+  unchanged (design-canvas 2.1 G, synapticweb 591 M, mahjong-vtt 1.4 G).
 
 ## Verification
 
