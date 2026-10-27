@@ -1952,6 +1952,17 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
     let mut handle: Option<crate::layerfs_tools::WorkspaceHandle> = match &layerfs_project {
         None => None,
         Some(project) => {
+            // The live feed's source: this child's substrate calls ride
+            // the trace the observe contract defines — one JSON line
+            // per agent and backend call, read when the client opens.
+            // The file is the child's own (the actor the face's tail
+            // reads is the file's name), and the read paths strip the
+            // variable, so only this delegation's work lands here.
+            if let Ok(machine) = crate::layerfs_tools::read_machine() {
+                let traces = machine.home.join("traces");
+                let _ = std::fs::create_dir_all(&traces);
+                std::env::set_var("LAYERFS_TRACE", traces.join(format!("{session}.jsonl")));
+            }
             // The wire's name rule folded in: session stamps carry
             // uppercase and `fleet/` a slash, both refused live — so
             // the branch is valid by construction (layerfs_tools).

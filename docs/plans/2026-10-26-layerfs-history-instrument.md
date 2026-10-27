@@ -228,7 +228,7 @@ named absence, never an empty lie.
       `fresh-src` answer (8 layers, 9 commits, 27 branches) draws 8
       bands, 9 leaves and 7 grafts; a fixture with 89 branches puts no
       node outside the plot's bounds.
-- [ ] **C2 — the work lanes and the live calls.**
+- [x] **C2 — the work lanes and the live calls. Landed 2026-10-26.**
       The Work pane shows every branch as `name · C<n> · ↓ L<k>`
       (commit count; the layer it forked from, by logical index) with
       its state (merged / open / idle), its last activity from its
@@ -386,6 +386,31 @@ name · `docs/features/workspace-history.md`,
   view standing. Face cases: 234 checks across 27 (bands, leaves,
   fork, graft, tag, controls, minimap, idle chip, the cut named, the
   bounds, the empty state).
+
+- **C2 — landed 2026-10-26.** The arm sets
+  `LAYERFS_TRACE=<layerfs-home>/traces/<session>.jsonl` inside the
+  delegation arm before the fork opens — the sync, the child's calls
+  and the settle all land in the child's own file (the actor the tail
+  reads is the file's name), and the read paths strip the variable so
+  the face's reads never land there. The Rust tail
+  (`workspace_calls`) reads `<home>/traces/*.jsonl` with per-file
+  offsets, truncation reset (`size < offset`) and a held-prefix
+  verification (a file rewritten under the tail re-reads whole), the
+  torn trailing line held until its newline, project and `since`
+  filters, newest last across files (the feed is a timeline, not a
+  file order), capped at 200 with `more: true` and the drop named.
+  `GET /api/workspace-history/calls` serves it; traces off is the
+  named absence ("traces are off"), never "no activity". The Work
+  pane became the lanes: every branch with work as `name · C<ordinal>
+  · ↓ L<k>` (the head commit's ordinal in the global time order; the
+  base layer's logical index), its state, its last activity, and the
+  child session joined from the day's rows, sorted by activity. The
+  feed card rides beside it: when, actor, call, ms, made (the commit,
+  the kind, or `refused`). Pinned by five tail tests (torn-line append
+  completion — the fixture caught that a whole-file rewrite is not the
+  substrate's append contract, which produced the prefix verification
+  — shrink reset, project/since filters, the refused call riding the
+  feed, the cap, the empty dir), the route test, and four face cases.
 
 ## Verification
 

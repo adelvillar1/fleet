@@ -326,6 +326,10 @@ pub struct Bridge {
     /// and the port it reaches it on. Attached at launch, because the
     /// pairing card has to know whether a code can be redeemed at all.
     remote: Mutex<Option<(std::net::IpAddr, u16)>>,
+    /// The workspace-calls feed's tail state: per-trace-file read
+    /// offsets, so a poll answers only what moved. Shared because the
+    /// reads run on blocking workers while the bridge answers requests.
+    trace_tail: Arc<std::sync::Mutex<crate::layerfs_view::TraceTail>>,
 }
 
 impl Bridge {
@@ -391,6 +395,9 @@ impl Bridge {
             home_cache: Arc::new(Mutex::new(None)),
             channels: Mutex::new(None),
             remote: Mutex::new(None),
+            trace_tail: Arc::new(std::sync::Mutex::new(
+                crate::layerfs_view::TraceTail::default(),
+            )),
             related,
             usage,
             commands: None,
@@ -935,6 +942,28 @@ impl Bridge {
             Err(_) => json!({
                 "type": "workspace-history",
                 "refused": ["the workspace-history read did not land"],
+            }),
+        }
+    }
+
+    /// The live feed's read: the substrate's calls, tailed from the
+    /// machine's traces. The tail state is this bridge's own, so a poll
+    /// answers only what moved since the last one.
+    pub async fn workspace_calls(&self, since: Option<String>) -> Value {
+        let cwd = self.cwd.clone();
+        let tail = Arc::clone(&self.trace_tail);
+        match tokio::task::spawn_blocking(move || {
+            let mut tail = tail
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            crate::layerfs_view::workspace_calls(&cwd, since.as_deref(), &mut tail)
+        })
+        .await
+        {
+            Ok(document) => document,
+            Err(_) => json!({
+                "type": "workspace-calls",
+                "refused": ["the workspace-calls read did not land"],
             }),
         }
     }

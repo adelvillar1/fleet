@@ -9421,6 +9421,34 @@
       .catch(function () { });
   }
 
+  // The live feed's page: one read per refresh, riding `since` so a
+  // poll answers only what moved. Traces off is a named absence.
+  function readWorkspaceCalls(force) {
+    var now = Date.now();
+    if (!force && face.calls && now - face.callsAt < 5000) return;
+    face.callsAt = now;
+    var since = (face.callsLastStart)
+      ? '?since=' + encodeURIComponent(face.callsLastStart) : '';
+    return fetch('/api/workspace-history/calls' + since, { headers: { accept: 'application/json' } })
+      .then(function (reply) {
+        if (reply.status === 401) throw new Error('token');
+        return reply.json();
+      })
+      .then(function (doc) {
+        var calls = doc.calls || [];
+        if (calls.length) {
+          face.callsLastStart = calls[calls.length - 1].start || face.callsLastStart;
+          face.calls = face.calls && !force
+            ? { type: 'workspace-calls', calls: (face.calls.calls || []).concat(calls).slice(-200), more: doc.more, note: doc.note, refused: doc.refused }
+            : doc;
+        } else if (!face.calls || force) {
+          face.calls = doc;
+        }
+        if (face.panel === 'workspace-history') paintWorkspaceHistory();
+      })
+      .catch(function () { });
+  }
+
   // The Files pane's page. One read per (branch, path, page), cached on
   // the face so a repaint does not re-ask for the listing the owner is
   // reading.
@@ -9478,6 +9506,7 @@
         label: 'refresh',
         run: function () {
           readWorkspaceHistory(true).then(paintWorkspaceHistory);
+          readWorkspaceCalls(true);
           readWorkspaceFiles(face.historyBranch, face.historyPath || '', true);
         }
       }]);
@@ -9510,6 +9539,7 @@
     }
     el.workspaceHistoryBoard.appendChild(historyDag(read));
     el.workspaceHistoryBoard.appendChild(historyWork(read));
+    el.workspaceHistoryBoard.appendChild(face.calls ? historyCalls(face.calls) : historyCalls({ calls: [] }));
     el.workspaceHistoryBoard.appendChild(historyFiles(read));
     el.workspaceHistoryBoard.appendChild(historyStorage(read));
   }
@@ -10015,14 +10045,38 @@
     paintWorkspaceHistory();
   }
 
-  // The Work pane: one lane per child branch — its session, the outcome
-  // the arm recorded, the state the tree carries, and the commits it
-  // stands on. The session link opens the run in the work surface.
+  // The Work pane: every branch with work as one row — its head
+  // commit's ordinal (C<n>), the layer it forked from (↓ L<k>), the
+  // state the tree carries, its last activity, and the child session
+  // the delegation rows join. Sorted by activity; the idle branches
+  // live in the tree's chip. The session link opens the run in the
+  // work surface.
   function historyWork(read) {
     var card = boardCard(12, 'the work', null,
-      'Every branch a delegated child worked, against the tree: its run, its outcome, and ' +
-      'whether the parent merged it back.');
-    var rows = (read.branches || []).filter(function (b) { return b.child; });
+      'Every branch a delegated child worked, against the tree: its head commit, the layer ' +
+      'it forked from, its state, and whether the parent merged it back.');
+    var layers = (read.layers || []).slice(); // newest first
+    var ordinal = {};
+    (read.commits || []).slice().sort(function (a, b) {
+      return (a.time || 0) - (b.time || 0);
+    }).forEach(function (commit, index) { ordinal[commit.id] = index + 1; });
+    var layerAt = {};
+    layers.forEach(function (layer, index) { layerAt[layer.id] = index; });
+    var rows = (read.branches || []).filter(function (branch) {
+      return branch.name !== 'main' && branch.head;
+    });
+    rows.forEach(function (branch) {
+      var base = layerAt[branch.base || branch.forked_from];
+      branch.layerBase = base !== undefined ? layers.length - base : null;
+      var mine = (read.commits || []).filter(function (commit) {
+        return commit.branch === branch.name;
+      });
+      branch.lastAt = mine.reduce(function (most, commit) {
+        return Math.max(most, commit.time || 0);
+      }, 0);
+      branch.commitCount = mine.length;
+    });
+    rows.sort(function (a, b) { return (b.lastAt || 0) - (a.lastAt || 0); });
     if (!rows.length) {
       card.appendChild(node('p', 'board-empty',
         'No delegated child has worked a branch on this Store yet. A delegation that ran ' +
@@ -10031,7 +10085,7 @@
     }
     var table = node('table', 'board-table');
     var head = node('tr');
-    ['branch', 'child session', 'outcome', 'state', 'commits'].forEach(function (name) {
+    ['branch', 'head', 'forked from', 'state', 'last activity', 'child session'].forEach(function (name) {
       head.appendChild(node('th', null, name));
     });
     table.appendChild(head);
@@ -10043,16 +10097,77 @@
       link.addEventListener('click', function () { historyBrowse(branch.name); });
       branchCell.appendChild(link);
       line.appendChild(branchCell);
-      line.appendChild(node('td', null, clip(branch.child.session, 26)));
-      line.appendChild(node('td', null, branch.child.outcome || '?'));
+      line.appendChild(node('td', null,
+        'C' + (ordinal[branch.head] || '?') + ' \u00b7 ' + branch.commitCount +
+        (branch.commitCount === 1 ? ' commit' : ' commits')));
+      line.appendChild(node('td', null,
+        branch.layerBase ? ('\u2193 L' + branch.layerBase) : '\u2193 ?'));
       var state = node('td');
       state.appendChild(node('span', 'chip' + (branch.state === 'merged' ? ' is-ok' : ''),
         historyStateWord(branch.state)));
       line.appendChild(state);
-      var mine = (read.commits || []).filter(function (commit) {
-        return commit.branch === branch.name;
-      });
-      line.appendChild(node('td', null, String(mine.length)));
+      line.appendChild(node('td', null, historyTime(branch.lastAt)));
+      line.appendChild(node('td', null,
+        branch.child ? clip(branch.child.session, 26) + ' \u00b7 ' + (branch.child.outcome || '?') : '\u2014'));
+      table.appendChild(line);
+    });
+    card.appendChild(table);
+    return card;
+  }
+
+  // The live feed: the substrate's own call trace, tailed from the
+  // machine's traces — the actor (the trace file, one per agent), the
+  // call, its cost, whether it landed, and the commit it made. Traces
+  // off is named, never read as "no activity".
+  function historyCalls(read) {
+    var card = boardCard(12, 'the calls', null,
+      'What the substrate is doing right now: every call an agent or the backend made, ' +
+      'as the trace recorded it. A delegation\u2019s child traces to its own file, so its ' +
+      'work shows under its session.');
+    if (read.note) {
+      card.appendChild(node('p', 'board-note', read.note));
+    }
+    if ((read.refused || []).length) {
+      card.appendChild(refusedCard(read.refused));
+      return card;
+    }
+    var calls = read.calls || [];
+    if (!calls.length) {
+      if (!read.note) {
+        card.appendChild(node('p', 'board-empty',
+          'No calls recorded in this window yet. The feed moves as the substrate is used.'));
+      }
+      return card;
+    }
+    if (read.more) {
+      card.appendChild(node('p', 'board-note', 'showing the newest 200 ' + (read.note || '')));
+    }
+    var table = node('table', 'board-table');
+    var head = node('tr');
+    ['when', 'actor', 'call', 'ms', 'made'].forEach(function (name) {
+      head.appendChild(node('th', null, name));
+    });
+    table.appendChild(head);
+    calls.forEach(function (call) {
+      var line = node('tr');
+      line.appendChild(node('td', null, clip(String(call.start || '').replace('T', ' ').slice(11, 19), 8)));
+      line.appendChild(node('td', null, clip(String(call.actor || ''), 24)));
+      var method = node('td');
+      method.appendChild(node('span', 'board-path', String(call.method || '?')));
+      line.appendChild(method);
+      line.appendChild(node('td', null,
+        call.ms != null ? Math.round(call.ms * 10) / 10 + ' ms' : '\u2014'));
+      var made = node('td');
+      if (call.ok === false) {
+        made.appendChild(node('span', 'chip', 'refused'));
+      } else if (call.commit) {
+        made.appendChild(node('span', 'board-path', clip(String(call.commit), 12)));
+      } else if (call.kind) {
+        made.appendChild(node('span', null, String(call.kind)));
+      } else {
+        made.appendChild(node('span', null, call.ok === true ? 'ok' : '\u2014'));
+      }
+      line.appendChild(made);
       table.appendChild(line);
     });
     card.appendChild(table);
@@ -13231,6 +13346,7 @@
       'workspace-history': function () {
         paintWorkspaceHistory();
         readWorkspaceHistory(true).then(paintWorkspaceHistory);
+        readWorkspaceCalls(true);
       },
       vault: function () { paintVault(); readSettings(true).then(paintVault); },
       settings: function () { paintSettings(); readSettings(true).then(paintSettings); }

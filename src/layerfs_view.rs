@@ -684,6 +684,180 @@ pub fn workspace_history(cwd: &Path, since: Option<&str>) -> serde_json::Value {
     }
 }
 
+/// The live feed's tail state: per-file read offsets and the partial
+/// trailing line each file held back, so a poll answers only what moved
+/// and never a torn line.
+#[derive(Default)]
+pub struct TraceTail {
+    offsets: std::collections::HashMap<PathBuf, (u64, String)>,
+}
+
+/// The workspace-calls read: the day's substrate activity, tailed from
+/// `<layerfs-home>/traces/*.jsonl` — one JSON line per agent and
+/// backend call, the observe contract's own format. The actor is the
+/// trace file's name (one per agent; the arm names each child's file
+/// for its session). Filters: the launch folder's project, and `since`
+/// — an ISO start time; the comparison is lexicographic on the ISO
+/// form the substrate writes, which orders correctly for one format.
+/// Newest last, capped at 200 lines with `more: true` when older lines
+/// were dropped. A machine without traces names the absence — "traces
+/// are off" — never "no activity".
+pub fn workspace_calls(cwd: &Path, since: Option<&str>, tail: &mut TraceTail) -> serde_json::Value {
+    let machine = match crate::layerfs_tools::read_machine() {
+        Ok(machine) => machine,
+        Err(reason) => {
+            return json!({
+                "type": "workspace-calls",
+                "refused": [format!("the substrate is not provisioned: {reason}")],
+            })
+        }
+    };
+    let project = registered_folder(cwd).map(|(name, _)| name);
+    let traces = machine.home.join("traces");
+    let Ok(entries) = std::fs::read_dir(&traces) else {
+        return json!({
+            "type": "workspace-calls",
+            "calls": [],
+            "more": false,
+            "note": "traces are off — no LayerFS process on this machine has LAYERFS_TRACE set, so there is nothing live to show",
+        });
+    };
+    let mut files: Vec<PathBuf> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "jsonl")
+        })
+        .collect();
+    files.sort();
+    let mut calls: Vec<serde_json::Value> = Vec::new();
+    for path in files {
+        let Ok(meta) = std::fs::metadata(&path) else {
+            continue;
+        };
+        let size = meta.len();
+        let entry = tail.offsets.entry(path.clone()).or_default();
+        let mut offset = entry.0;
+        let mut rest = entry.1.clone();
+        // A file that shrank was truncated or replaced: start over.
+        if size < offset {
+            offset = 0;
+            rest.clear();
+        }
+        // A file rewritten under us (grew, but its content moved): the
+        // held rest must still match the bytes just before the offset —
+        // a mismatch is a wholesale change, and the only honest answer
+        // is a full re-read.
+        if offset > 0 && !rest.is_empty() {
+            use std::io::{Read, Seek, SeekFrom};
+            let mut probe = vec![0u8; rest.len()];
+            let rewritten = std::fs::File::open(&path).is_ok_and(|mut file| {
+                file.seek(SeekFrom::Start(offset - rest.len() as u64))
+                    .is_ok()
+                    && file.read_exact(&mut probe).is_ok()
+                    && String::from_utf8_lossy(&probe) != rest
+            });
+            if rewritten {
+                offset = 0;
+                rest.clear();
+            }
+        }
+        let mut fresh = Vec::new();
+        {
+            use std::io::{Read, Seek, SeekFrom};
+            let Ok(mut file) = std::fs::File::open(&path) else {
+                continue;
+            };
+            if offset > 0 && file.seek(SeekFrom::Start(offset)).is_err() {
+                continue;
+            }
+            if file.read_to_end(&mut fresh).is_err() {
+                continue;
+            }
+        }
+        offset += fresh.len() as u64;
+        let actor = path
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let text = rest + &String::from_utf8_lossy(&fresh);
+        let mut lines = text.split('\n').collect::<Vec<_>>();
+        // The trailing fragment is held until its newline arrives —
+        // a torn line is never answered.
+        rest = lines.pop().unwrap_or_default().to_string();
+        entry.0 = offset;
+        entry.1 = rest;
+        for line in lines {
+            if line.trim().is_empty() {
+                continue;
+            }
+            let Ok(event) = serde_json::from_str::<serde_json::Value>(line) else {
+                continue;
+            };
+            if event
+                .get("layerfs_trace")
+                .and_then(serde_json::Value::as_i64)
+                != Some(1)
+            {
+                continue;
+            }
+            if let Some(line_project) = event.get("project").and_then(serde_json::Value::as_str) {
+                if let Some(watched) = &project {
+                    if line_project != watched {
+                        continue;
+                    }
+                }
+            }
+            let start = event
+                .get("start")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            if let Some(since) = since {
+                if !since.is_empty() && start.as_str() < since {
+                    continue;
+                }
+            }
+            calls.push(json!({
+                "actor": actor,
+                "method": event.get("method").cloned().unwrap_or(json!(null)),
+                "args": event.get("args").cloned().unwrap_or(json!(null)),
+                "start": start,
+                "ms": event.get("ms").cloned().unwrap_or(json!(null)),
+                "ok": event.get("ok").cloned().unwrap_or(json!(null)),
+                "kind": event.get("kind").cloned().unwrap_or(json!(null)),
+                "commit": event.get("commit").cloned().unwrap_or(json!(null)),
+                "sizes": event.get("sizes").cloned().unwrap_or(json!(null)),
+            }));
+        }
+    }
+    // The feed is a timeline, whatever order the files were read in:
+    // sort by the ISO start, keep the newest 200, name the drop.
+    fn start_of(call: &serde_json::Value) -> &str {
+        call.get("start")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+    }
+    calls.sort_by(|a, b| start_of(a).cmp(start_of(b)));
+    let total = calls.len();
+    let more = total > 200;
+    calls.reverse();
+    calls.truncate(200);
+    calls.reverse();
+    json!({
+        "type": "workspace-calls",
+        "calls": calls,
+        "more": more,
+        "note": if more {
+            json!(format!("{total} calls in the window; the oldest {} dropped", total - 200))
+        } else {
+            json!(null)
+        },
+        "refused": [],
+    })
+}
+
 /// The Files pane's one page of a branch's tree at a path — the CLI's
 /// own listing, shaped for the browser. Every absence (an unregistered
 /// folder, a CLI that cannot answer, a path the branch does not hold)
@@ -1231,5 +1405,380 @@ appendFileSync({count:?}, JSON.stringify(process.argv.slice(2)) + \"\\n\");
             elapsed < std::time::Duration::from_millis(250),
             "the one read answers under 250 ms, took {elapsed:?}"
         );
+    }
+
+    /// A scratch machine whose traces dir the test fills: the config's
+    /// `layerfs` facts point at real dirs (the reader refuses a home or
+    /// a bundle that is gone), so the tail has a world to read.
+    fn tail_home(root: &std::path::Path) -> (std::path::PathBuf, std::path::PathBuf) {
+        let fleet_home = root.join("fleet-home");
+        let layerfs_home = root.join("layerfs-home");
+        let bundle = root.join("bundle");
+        std::fs::create_dir_all(&fleet_home).unwrap();
+        std::fs::create_dir_all(layerfs_home.join("traces")).unwrap();
+        std::fs::create_dir_all(&bundle).unwrap();
+        std::fs::write(
+            fleet_home.join("config.json"),
+            serde_json::json!({
+                "layerfs": {
+                    "home": layerfs_home.display().to_string(),
+                    "bundle": bundle.display().to_string(),
+                    "image": "image",
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+        (fleet_home, layerfs_home)
+    }
+
+    fn trace_line(method: &str, start: &str, project: &str) -> String {
+        serde_json::json!({
+            "layerfs_trace": 1,
+            "id": "c5c6a04c-1",
+            "method": method,
+            "args": { "path": "/notes.txt" },
+            "start": start,
+            "ms": 9.265,
+            "ok": true,
+            "kind": "Committed",
+            "commit": "12c20c75063c",
+            "sizes": { "logical": 124, "newStored": 1508 },
+            "project": project,
+        })
+        .to_string()
+    }
+
+    /// C2's tail: complete lines answered once, the torn trailing line
+    /// held until its newline, a second poll answering only what moved.
+    #[test]
+    fn the_tail_answers_complete_lines_once() {
+        let _lock = crate::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let root = std::env::temp_dir().join(format!(
+            "fleet-tail-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let (fleet_home, layerfs_home) = tail_home(&root);
+        let _home = EnvGuard::set("FLEET_HOME", &fleet_home);
+        let traces = layerfs_home.join("traces");
+        // Two agents: one file with two complete lines, one whose last
+        // line is torn mid-write.
+        std::fs::write(
+            traces.join("20261026T100000Z-aaaaaa.jsonl"),
+            trace_line("fs.write", "2026-10-26T10:00:00.000Z", "fleet")
+                + "\n"
+                + &trace_line("fs.read", "2026-10-26T10:00:01.000Z", "fleet")
+                + "\n",
+        )
+        .unwrap();
+        let complete = trace_line("fs.write", "2026-10-26T10:00:03.000Z", "fleet");
+        let torn = &complete[..complete.len() - 12]; // cut mid-JSON, no newline yet
+        std::fs::write(
+            traces.join("20261026T100001Z-bbbbbb.jsonl"),
+            trace_line("workspace.mount", "2026-10-26T10:00:02.000Z", "fleet") + "\n" + torn,
+        )
+        .unwrap();
+
+        let mut tail = TraceTail::default();
+        let doc = workspace_calls(Path::new("/nowhere"), None, &mut tail);
+        let calls = doc
+            .get("calls")
+            .and_then(serde_json::Value::as_array)
+            .unwrap();
+        assert_eq!(calls.len(), 3, "{doc}");
+        // Newest last — the timeline sorts across files; the torn line
+        // is not among them.
+        assert_eq!(
+            calls[2].get("method").and_then(|m| m.as_str()),
+            Some("workspace.mount")
+        );
+        assert!(calls[2]
+            .get("start")
+            .and_then(|s| s.as_str())
+            .unwrap()
+            .ends_with(".000Z"));
+        assert_eq!(
+            calls[0].get("actor").and_then(|a| a.as_str()),
+            Some("20261026T100000Z-aaaaaa")
+        );
+        assert!(
+            doc.get("note")
+                .and_then(serde_json::Value::as_str)
+                .is_none(),
+            "{doc}"
+        );
+
+        // A second poll: only what moved — nothing, until the torn line
+        // finishes. The partial fragment is answered as a whole line
+        // once its newline lands.
+        let doc = workspace_calls(Path::new("/nowhere"), None, &mut tail);
+        assert!(
+            doc.get("calls")
+                .and_then(serde_json::Value::as_array)
+                .unwrap()
+                .is_empty(),
+            "{doc}"
+        );
+        // The torn line completes the way the substrate writes: an
+        // append of the missing tail and its newline.
+        {
+            use std::io::Write;
+            let mut file = std::fs::OpenOptions::new()
+                .append(true)
+                .open(traces.join("20261026T100001Z-bbbbbb.jsonl"))
+                .unwrap();
+            file.write_all(&complete.as_bytes()[complete.len() - 12..])
+                .unwrap();
+            file.write_all(b"\n").unwrap();
+        }
+        let doc = workspace_calls(Path::new("/nowhere"), None, &mut tail);
+        let calls = doc
+            .get("calls")
+            .and_then(serde_json::Value::as_array)
+            .unwrap();
+        assert_eq!(calls.len(), 1, "{doc}");
+        assert_eq!(
+            calls[0].get("method").and_then(|m| m.as_str()),
+            Some("fs.write")
+        );
+        assert_eq!(
+            calls[0].get("start").and_then(|s| s.as_str()),
+            Some("2026-10-26T10:00:03.000Z")
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A file that shrank was truncated or replaced: the tail starts
+    /// over rather than answering from a stale offset.
+    #[test]
+    fn the_tail_resets_when_a_file_shrinks() {
+        let _lock = crate::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let root = std::env::temp_dir().join(format!(
+            "fleet-tail-shrink-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let (fleet_home, layerfs_home) = tail_home(&root);
+        let _home = EnvGuard::set("FLEET_HOME", &fleet_home);
+        let traces = layerfs_home.join("traces");
+        let file = traces.join("20261026T100000Z-cccccc.jsonl");
+        std::fs::write(
+            &file,
+            trace_line("fs.write", "2026-10-26T10:00:00.000Z", "fleet")
+                + "\n"
+                + &trace_line("fs.rm", "2026-10-26T10:00:01.000Z", "fleet")
+                + "\n",
+        )
+        .unwrap();
+        let mut tail = TraceTail::default();
+        let doc = workspace_calls(Path::new("/nowhere"), None, &mut tail);
+        assert_eq!(
+            doc.get("calls")
+                .and_then(serde_json::Value::as_array)
+                .unwrap()
+                .len(),
+            2,
+            "{doc}"
+        );
+        // The file replaced by a shorter one: the tail re-reads whole.
+        std::fs::write(
+            &file,
+            trace_line("workspace.mount", "2026-10-26T10:00:02.000Z", "fleet") + "\n",
+        )
+        .unwrap();
+        let doc = workspace_calls(Path::new("/nowhere"), None, &mut tail);
+        let calls = doc
+            .get("calls")
+            .and_then(serde_json::Value::as_array)
+            .unwrap();
+        assert_eq!(calls.len(), 1, "{doc}");
+        assert_eq!(
+            calls[0].get("method").and_then(|m| m.as_str()),
+            Some("workspace.mount")
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The filters: another project's lines never answer, and `since`
+    /// keeps everything at or after the named start.
+    #[test]
+    fn the_tail_filters_by_project_and_since() {
+        let _lock = crate::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let root = std::env::temp_dir().join(format!(
+            "fleet-tail-filter-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let (fleet_home, layerfs_home) = tail_home(&root);
+        // The launch folder is a registered project, so the project
+        // filter has a name to hold the lines to.
+        let cwd = std::env::temp_dir().join(format!(
+            "fleet-tail-folder-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&cwd).unwrap();
+        let config: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(fleet_home.join("config.json")).unwrap())
+                .unwrap();
+        let mut with_projects = config.clone();
+        with_projects["layerfs"]["projects"] = serde_json::json!({
+            cwd.display().to_string(): {
+                "name": "fleet",
+                "store": "/volumes/v/_data/global/store.sqlite",
+            }
+        });
+        std::fs::write(fleet_home.join("config.json"), with_projects.to_string()).unwrap();
+        let _home = EnvGuard::set("FLEET_HOME", &fleet_home);
+        let traces = layerfs_home.join("traces");
+        std::fs::write(
+            traces.join("20261026T100000Z-dddddd.jsonl"),
+            trace_line("fs.write", "2026-10-26T10:00:00.000Z", "other")
+                + "\n"
+                + &trace_line("fs.write", "2026-10-26T10:00:01.000Z", "fleet")
+                + "\n"
+                + &trace_line("fs.read", "2026-10-26T10:00:02.000Z", "fleet")
+                + "\n",
+        )
+        .unwrap();
+        let mut tail = TraceTail::default();
+        let doc = workspace_calls(&cwd, Some("2026-10-26T10:00:02.000Z"), &mut tail);
+        let calls = doc
+            .get("calls")
+            .and_then(serde_json::Value::as_array)
+            .unwrap();
+        assert_eq!(calls.len(), 1, "{doc}");
+        assert_eq!(
+            calls[0].get("method").and_then(|m| m.as_str()),
+            Some("fs.read")
+        );
+        // A refused call rides the feed as refused, never as work.
+        std::fs::write(
+            traces.join("20261026T100000Z-dddddd.jsonl"),
+            trace_line("fs.write", "2026-10-26T10:00:00.000Z", "other")
+                + "\n"
+                + &trace_line("fs.write", "2026-10-26T10:00:01.000Z", "fleet")
+                + "\n"
+                + &trace_line("fs.read", "2026-10-26T10:00:02.000Z", "fleet")
+                + "\n"
+                + &trace_line("fs.write", "2026-10-26T10:00:03.000Z", "fleet")
+                    .replace("\"ok\":true", "\"ok\":false")
+                + "\n",
+        )
+        .unwrap();
+        tail.offsets.clear();
+        let doc = workspace_calls(&cwd, None, &mut tail);
+        let calls = doc
+            .get("calls")
+            .and_then(serde_json::Value::as_array)
+            .unwrap();
+        let refused = calls
+            .iter()
+            .find(|call| call.get("ok").and_then(serde_json::Value::as_bool) == Some(false))
+            .expect("the refused call rides the feed");
+        assert_eq!(
+            refused.get("ok").and_then(serde_json::Value::as_bool),
+            Some(false)
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&cwd);
+    }
+
+    /// The cap: past 200 lines the newest 200 answer and the drop is
+    /// named.
+    #[test]
+    fn the_tail_caps_at_200_and_names_the_drop() {
+        let _lock = crate::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let root = std::env::temp_dir().join(format!(
+            "fleet-tail-cap-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let (fleet_home, layerfs_home) = tail_home(&root);
+        let _home = EnvGuard::set("FLEET_HOME", &fleet_home);
+        let traces = layerfs_home.join("traces");
+        let mut body = String::new();
+        for index in 0..250 {
+            body.push_str(&trace_line(
+                "fs.write",
+                &format!("2026-10-26T10:{:02}:{:02}.000Z", index / 60, index % 60),
+                "fleet",
+            ));
+            body.push('\n');
+        }
+        std::fs::write(traces.join("20261026T100000Z-eeeeee.jsonl"), body).unwrap();
+        let mut tail = TraceTail::default();
+        let doc = workspace_calls(Path::new("/nowhere"), None, &mut tail);
+        assert_eq!(
+            doc.get("calls")
+                .and_then(serde_json::Value::as_array)
+                .unwrap()
+                .len(),
+            200,
+            "{doc}"
+        );
+        assert_eq!(
+            doc.get("more").and_then(serde_json::Value::as_bool),
+            Some(true)
+        );
+        let note = doc.get("note").and_then(serde_json::Value::as_str).unwrap();
+        assert!(note.contains("250 calls"), "{note}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The named absence: no traces dir is "traces are off", never
+    /// "no activity".
+    #[test]
+    fn an_empty_traces_dir_names_the_absence() {
+        let _lock = crate::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let root = std::env::temp_dir().join(format!(
+            "fleet-tail-empty-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let (fleet_home, layerfs_home) = tail_home(&root);
+        std::fs::remove_dir_all(layerfs_home.join("traces")).unwrap();
+        let _home = EnvGuard::set("FLEET_HOME", &fleet_home);
+        let mut tail = TraceTail::default();
+        let doc = workspace_calls(Path::new("/nowhere"), None, &mut tail);
+        let note = doc
+            .get("note")
+            .and_then(serde_json::Value::as_str)
+            .expect("named");
+        assert!(note.contains("traces are off"), "{note}");
+        assert!(doc
+            .get("calls")
+            .and_then(serde_json::Value::as_array)
+            .unwrap()
+            .is_empty());
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

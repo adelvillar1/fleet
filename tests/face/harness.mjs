@@ -298,6 +298,14 @@ function boot(options) {
         json: () => Promise.resolve(documents['workspace-history'] || {}),
       });
     }
+    if (pathOnly === '/api/workspace-history/calls') {
+      return Promise.resolve({
+        status: 200,
+        json: () => Promise.resolve(documents['workspace-history/calls'] || {
+          type: 'workspace-calls', calls: [], more: false, note: null, refused: [],
+        }),
+      });
+    }
     if (pathOnly === '/api/workspace-history/files') {
       return Promise.resolve({
         status: 200,
@@ -1955,7 +1963,7 @@ async function theWorkspaceHistorySectionDrawsTheTreeItRead() {
       { name: 'main', base: '326898f652a0', head: null, forked_from: null, state: 'idle', child: null },
       {
         name: 'fleet-child-20261026t010000z-abc123', base: 'aa11bb22cc33',
-        head: '12e968660147', forked_from: 'aa11bb22cc33',
+        head: '12e968660147668df46ef623a1a28858b74736a2758ddaa5e51b19607d62104d4c', forked_from: 'aa11bb22cc33',
         state: 'merged',
         child: { session: '20261026T010000Z-abc123', outcome: 'completed' },
       },
@@ -2042,11 +2050,59 @@ async function theWorkspaceHistorySectionDrawsTheTreeItRead() {
   const idleChip = page.rows('.dag-idle .chip').map((n) => n.textContent.trim());
   check('the idle branches are one chip with a count',
     idleChip.some((t) => /2 idle/.test(t)), idleChip.join(' | '));
-  // The Work pane: the child's session and its state.
+  // The Work pane: the head commit's ordinal, the layer it forked
+  // from, and the child session.
   const workText = page.rows('.board-card').map((c) => c.textContent).join(' ');
   check('the work pane names the child session',
     workText.includes('20261026T010000Z-abc123'), workText.slice(0, 200));
   check('the work pane names the merged state', /merged to main/.test(workText), workText.slice(0, 200));
+  const workCard = page.rows('.board-card')
+    .find((c) => /Every branch a delegated child worked/.test(c.textContent));
+  const workRow = workCard ? workCard.textContent : '';
+  check('the work row names the head commit and its fork layer',
+    workRow.includes('C1') && workRow.includes('\u2193 L1'),
+    workRow.slice(0, 300));
+  // The live feed: rows with the actor, the call and its cost; a
+  // refused call renders as refused; traces off is named.
+  const feedDoc = {
+    type: 'workspace-calls', calls: [
+      { actor: '20261026T010000Z-abc123', method: 'fs.write', start: '2026-10-26T10:00:01.000Z', ms: 9.3, ok: true, kind: 'Committed', commit: '12c20c75063c' },
+      { actor: '20261026T010000Z-abc123', method: 'fs.read', start: '2026-10-26T10:00:02.000Z', ms: 2.1, ok: false },
+    ], more: false, note: null, refused: [],
+  };
+  const fed = boot({
+    hash: '#/workspace-history',
+    documents: {
+      'workspace-history': doc,
+      'workspace-history/calls': feedDoc,
+    },
+  });
+  await flush();
+  fed.open();
+  await flush();
+  const feedText = fed.rows('.board-card').map((c) => c.textContent).join(' ');
+  check('the feed names the actor and the call',
+    feedText.includes('20261026T010000Z-abc123') && feedText.includes('fs.write'),
+    feedText.slice(0, 300));
+  check('a refused call renders as refused',
+    fed.rows('.board-card .chip').some((n) => n.textContent === 'refused'),
+    fed.rows('.board-card .chip').map((n) => n.textContent).join(' | '));
+  const quiet = boot({
+    hash: '#/workspace-history',
+    documents: {
+      'workspace-history': doc,
+      'workspace-history/calls': {
+        type: 'workspace-calls', calls: [], more: false, refused: [],
+        note: 'traces are off \u2014 no LayerFS process on this machine has LAYERFS_TRACE set',
+      },
+    },
+  });
+  await flush();
+  quiet.open();
+  await flush();
+  check('traces off is named, never read as no activity',
+    quiet.rows('.board-note').some((n) => /traces are off/.test(n.textContent)),
+    quiet.rows('.board-note').map((n) => n.textContent.slice(0, 60)).join(' | '));
   // The Files pane's tabs: every branch, and the where line names the read.
   const tabs = page.rows('.board-tab').map((t) => t.textContent.trim());
   check('the files pane offers every branch',

@@ -285,6 +285,11 @@ async fn serve_connection(
             let since = (!since.is_empty()).then_some(since);
             write_reply(&mut stream, api(200, bridge.workspace_history(since).await)).await
         }
+        ("GET", "/api/workspace-history/calls") => {
+            let since = decode_query(&request.query, "since");
+            let since = (!since.is_empty()).then_some(since);
+            write_reply(&mut stream, api(200, bridge.workspace_calls(since).await)).await
+        }
         ("GET", "/api/workspace-history/files") => {
             let branch = decode_query(&request.query, "branch");
             let path = decode_query(&request.query, "path");
@@ -2977,6 +2982,25 @@ mod tests {
         );
         let note = document["note"].as_str().unwrap_or_default();
         assert!(note.contains("no LayerFS project"), "{document}");
+        // The live feed's route: the same absence, named — a machine
+        // with no substrate refuses the read rather than answering an
+        // empty feed that would read as "nothing is happening".
+        let calls = get(port, "/api/workspace-history/calls", &token);
+        assert!(calls.starts_with("HTTP/1.1 200"), "{calls}");
+        let body = calls
+            .split("\r\n\r\n")
+            .nth(1)
+            .expect("a body past the head");
+        let document: serde_json::Value = serde_json::from_str(body).expect("a JSON document");
+        assert_eq!(document["type"], "workspace-calls", "{document}");
+        let refused = document["refused"].as_array().expect("the refusal");
+        assert!(
+            refused[0]
+                .as_str()
+                .unwrap_or_default()
+                .contains("not provisioned"),
+            "{document}"
+        );
         // The Files pane's page: the same absence, named.
         let files = get(
             port,
