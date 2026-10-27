@@ -153,11 +153,11 @@ are the owner's history to keep or rewrite, not this plan's.
       status --porcelain` count is unchanged after its sweep (churn
       preserved); active repos (design-canvas, synapticweb,
       mahjong-vtt, fleet) are untouched. Reclaimed: ~21.7 GB.
-- [ ] **C2 — the neglected stores are packed.** `git gc` on
+- [x] **C2 — the neglected stores are packed. Landed 2026-10-27.** `git gc` on
       simcityclone and deepseek-harness; `count-objects -v` before and
       after recorded here. simcityclone's 819 MB of loose objects
       packs down (~500 M expected).
-- [ ] **C3 — the permanent pass runs daily.**
+- [x] **C3 — the permanent pass runs daily. Landed 2026-10-27.**
       `scripts/repo-hygiene.sh` (dry-run and live modes) is invoked
       from `scripts/daily-maintenance.sh` and the LaunchAgent picks it
       up; a dry run answers the survey table; the live rules are: last
@@ -216,6 +216,21 @@ commits where a commit is made (C4), explicit paths everywhere, never
   held: all twelve swept repos' `git status --porcelain` counts are
   byte-identical before and after, and the active repos' sizes are
   unchanged (design-canvas 2.1 G, synapticweb 591 M, mahjong-vtt 1.4 G).
+
+- **C2 — landed 2026-10-27, and the plan's expectation was WRONG.**
+  simcityclone: 1,194 loose objects (838,964 KiB) packed to an
+  835,970 KiB pack — **819 MB → 816 MB, ~3 MB back**. The objects were
+  already-compressed game assets; packing consolidated them (0 loose,
+  fsck clean) but did not shrink. deepseek-harness: 1,489 loose packed,
+  size-pack 291,470 → 248,818 KiB (~42 MB). Both fsck clean. Recorded
+  as measured: the loose-object problem was ORDER, not size.
+- **C3 — landed 2026-10-27.** `scripts/repo-hygiene.sh` (report /
+  dry-run / live / purge / --root) behind `daily-maintenance.sh`'s new
+  leg 5. Proven live on a stale/active fixture: the stale repo (commit
+  30 d, dir mtime 37 d) is pruned by the dry-run's own naming and the
+  live run, the active repo (commit and dir fresh) is left, and the
+  stale repo's committed source survives. The LaunchAgent picks leg 5
+  up at the next 09:20 with the rest of the maintenance.
 
 ## Verification
 

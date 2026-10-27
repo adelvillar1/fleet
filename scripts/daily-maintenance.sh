@@ -22,6 +22,12 @@
 #      question for the owner, not a file a script may remove.
 #      (generated/ taught this: what read as an orphan was the corpus
 #      refresh jobs' working driver, named checked-in in a memory fact.)
+#   5. the repo hygiene pass (scripts/repo-hygiene.sh --live) — the same
+#      upkeep for every repository under ~/Projects: stale repos'
+#      regenerable artifact dirs pruned by the closed list and the two
+#      age guards, neglected loose objects packed weekly, everything
+#      logged with sizes. C3 of docs/plans/2026-10-27-projects-repo-
+#      hygiene.md.
 #
 # Never fails the machine: every leg's failure is logged and the run
 # exits 0, so a locked index or a busy corpus waits for tomorrow.
@@ -61,6 +67,10 @@ if [ -n "$(git status --porcelain -- memories/ 2>/dev/null)" ]; then
         fi
     fi
 fi
+
+# 5. the repo hygiene pass — its own voice, its own log, its own guards.
+say "— repo hygiene —"
+"$REPO/scripts/repo-hygiene.sh" --live >>"$LOG" 2>&1 || say "the hygiene pass failed; tomorrow retries"
 
 # 4. the orphan naming — read-only, always.
 orphans=$(git ls-files --others --exclude-standard 2>/dev/null | cut -d/ -f1 | sort -u | tr '\n' ' ')
