@@ -89,6 +89,7 @@ memories/               the repo's own fact corpus: one markdown file per fact; 
 services/               the five vendored Python lane cores with VENDOR.json; services/README.md documents the launch
 scripts/cache-sweep.sh  the recap step's sweep: stale target/debug artifacts pruned by age (7d), a 15 GiB tiered backstop, target/release never touched
 scripts/daily-maintenance.sh  the machine's daily upkeep (LaunchAgent local.fleet-maintenance, 09:20): the sweep, tmp/ entries older than 14d retired, the memories/ churn committed under chore(memories), untracked top-level orphans NAMED in ~/Library/Logs/fleet-maintenance.log and never deleted
+scripts/repo-hygiene.sh  the projects-wide habit (daily-maintenance leg 5): stale repos' regenerable artifact dirs pruned by a CLOSED list (21d commit + 14d mtime guards), loose objects packed weekly, `--report` answers the machine-wide survey, unknowns NAMED in ~/Library/Logs/repo-hygiene.log and never deleted
 tests/integration.rs    end-to-end tests: parser, client, tool loop, log, real sem1 lane via MCP
 docs/plans/             plan-as-contract, YYYY-MM-DD-<slug>.md (slice records + dashboards record inherited from the fork)
 docs/recaps/            session recaps, YYYY-MM-DD-<slug>.md

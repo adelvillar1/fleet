@@ -1,5 +1,5 @@
 ---
-status: draft
+status: completed
 created: 2026-10-27
 updated: 2026-10-27
 slug: projects-repo-hygiene
@@ -7,7 +7,7 @@ slug: projects-repo-hygiene
 
 # Projects repo hygiene: the measured sweep, and the permanent habit
 
-> **Status: DRAFT** — awaiting the owner's word to start at C0.
+> **Status: COMPLETE** — C0–C5 landed 2026-10-27.
 
 The fleet cleanup (2026-10-26, `4612e8d`) fixed one repo's bloat with a
 standing rule: a daily sweep that prunes build artifacts past 7 days,
@@ -166,13 +166,13 @@ are the owner's history to keep or rewrite, not this plan's.
       non-list top-level dirs NAMED in the log; loose-object gc
       weekly past 500. Proven live: a stale repo's artifact dir is
       pruned by the run, an active repo's is left.
-- [ ] **C4 — the history stops growing.** dnd-vtt and mahjong-vtt
+- [x] **C4 — the history stops growing. Landed 2026-10-27.** dnd-vtt and mahjong-vtt
       carry the untrack + ignore for `docs/e2e-review/` (local files
       kept); the next review written there stays on disk and out of
       the pack (verified by a commit that does not pick the dir up).
       cruisingintelligence's media is named as the owner's residual
       decision in this plan, untouched.
-- [ ] **C5 — the instrument is kept.** The survey lives as
+- [x] **C5 — the instrument is kept. Landed 2026-10-27.** The survey lives as
       `scripts/repo-hygiene.sh --report`; `CLAUDE.md`'s scripts list
       names it beside the maintenance script. The gate is green (the
       change is shell-only; fmt/clippy/test run anyway, by exit code)
@@ -231,6 +231,18 @@ commits where a commit is made (C4), explicit paths everywhere, never
   live run, the active repo (commit and dir fresh) is left, and the
   stale repo's committed source survives. The LaunchAgent picks leg 5
   up at the next 09:20 with the rest of the maintenance.
+
+- **C4 — landed 2026-10-27.** dnd-vtt untracked 525 files under
+  `docs/e2e-review` (269 MB of reviews that will never re-enter a
+  pack), mahjong-vtt 188 (218 MB); both committed with explicit paths
+  (`.gitignore` + the dir), local files kept on disk, `git status` on
+  the dir answers empty (ignored), `check-ignore` confirms, and the
+  ignore entry names this plan's C4 in its comment. cruisingintelligence's
+  media stays named as the owner's residual decision.
+- **C5 — landed 2026-10-27.** `--report` is the kept instrument (the
+  survey re-run is one command); `CLAUDE.md`'s scripts list names the
+  script beside the maintenance script with its guards; the gate runs
+  by exit code; this status flips in the landing commit.
 
 ## Verification
 
