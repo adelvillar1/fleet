@@ -105,11 +105,20 @@ person kept beside them. Fleet surfaces what the tool publishes and
 forwards its actions; it does not reimplement the tool.
 
 **Knowledge — workspace history.** The LayerFS substrate's tree as
-fleet's own history: main's trunk, every branch a delegated child
-worked at its fork point, the merge edges back, and the Store's figures
-behind them. Read the tree; open a branch's files; follow a commit to
-its branch; see which children merged back and which are still open —
-and from the Delegation panel, click a child's branch straight through.
+fleet's own history, drawn the way the substrate talks about it: a band
+per published layer, a lane per branch that has work, a leaf per
+commit, a dashed stem where a publish grafted work back, and one chip
+for the branches nobody worked. Beside the tree sit the work (each
+branch's head, fork layer, state and the child session that worked it),
+the substrate's live call feed, a file's own instruments (its text, its
+blame, its revisions, and the diff it last took), and the Store's
+accounting — on disk, unique, compressed, the metadata subset, the
+SQLite overhead named apart, the Import record, and what each commit
+cost. The whole thing answers from one backend read in under a
+quarter-second, and a refresh that found nothing moved re-reads
+nothing. Read the tree; follow a commit to its branch; see which
+children merged back and which are still open — and from the
+Delegation panel, click a child's branch straight through.
 A settled merge comes home through the parent's own gated write path,
 holding any file the owner touched since the fork; the import carries
 what a git repo declares (its tracked files), so a build tree never

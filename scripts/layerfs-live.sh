@@ -1,5 +1,7 @@
 #!/bin/bash
-# layerfs-live.sh — C3 of docs/plans/2026-10-26-layerfs-closing-the-seams.md.
+# layerfs-live.sh — the standing seam diagnostic (C3 of
+# docs/plans/2026-10-26-layerfs-closing-the-seams.md, grown by C5 of
+# docs/plans/2026-10-26-layerfs-history-instrument.md).
 #
 # The standing seam diagnostic: one delegation end to end in a clean
 # environment (no LAYERFS_* fact in the process), against the durable
@@ -15,7 +17,13 @@
 #   3. the destination renders THAT run: the branches with their states,
 #      the trunk's layers, the figures, and the applied file in main's
 #      own listing;
-#   4. the host tree is untouched except by the applied merge.
+#   4. the host tree is untouched except by the applied merge;
+#   5. the second delegation reads the first one's work (the spawn sync);
+#   6. the INSTRUMENT reads it: the face's one read answers warm under
+#      250 ms with its version, the branches carry their states, the
+#      merge's layer carries the commit it was published from (the
+#      graft's data), the nine figures are whole, the live feed answers,
+#      and the file's text reads through the file route.
 #
 #   usage: scripts/layerfs-live.sh
 #
@@ -159,6 +167,90 @@ the fork base is stale" >&2
     exit 1
 }
 say "— second child read the first one's work (sync at spawn) —"
+
+# 6. the INSTRUMENT: the face's reads against this run's Store — one
+#    warm read under the bound, the whole payload the graph draws, the
+#    live feed's route, and the file's text through the file route.
+#    A face is the reader, so a face is what answers here.
+PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
+"${CLEAN_ENV[@]}" "$BIN" gui --port "$PORT" --no-open >> "$LOG" 2>&1 &
+GUI_PID=$!
+cleanup() { kill "$GUI_PID" 2>/dev/null || true; wait "$GUI_PID" 2>/dev/null || true; }
+trap cleanup EXIT
+python3 - "$PORT" "$PROJECT" "$SRC" <<'PY' || exit 1
+import json, sys, time, urllib.request
+
+port, project, folder = sys.argv[1], sys.argv[2], sys.argv[3]
+base = "http://127.0.0.1:" + port
+
+def get(path, deadline=40.0):
+    started = time.time()
+    while True:
+        try:
+            with urllib.request.urlopen(base + path, timeout=30) as reply:
+                return json.loads(reply.read() or b"{}"), time.time() - started
+        except Exception:
+            if time.time() - started > deadline:
+                raise
+            time.sleep(0.5)
+
+fail = lambda said: sys.exit("layerfs-live: instrument: " + said)
+
+# A cold read warms the worker and node; the BOUND is the warm read's.
+doc, _ = get("/api/workspace-history")
+if doc.get("type") != "workspace-history" or doc.get("registered") is not True:
+    fail("the tree read is not the registered view: " + str(doc)[:200])
+doc, warm = get("/api/workspace-history")
+if warm >= 0.25:
+    fail("the one read took %.3fs warm (bound 250ms)" % warm)
+if not doc.get("version"):
+    fail("the read carried no version token")
+branches, layers, commits = doc.get("branches") or [], doc.get("layers") or [], doc.get("commits") or []
+if not any(b.get("state") == "merged" for b in branches):
+    fail("no branch reads merged (the graft data is missing)")
+if not commits:
+    fail("the read carried no commits")
+for commit in commits:
+    # The substrate's own id range (its comparable regex): 64..68 hex.
+    ident = str(commit.get("id") or "")
+    if len(ident) < 64 or len(ident) > 68 or any(ch not in "0123456789abcdef" for ch in ident):
+        fail("a commit id is not a full ref: " + ident[:20])
+grafts = [l for l in layers if l.get("source_commit")]
+if not grafts:
+    fail("no layer names the commit it was published from")
+storage = doc.get("storage") or {}
+missing = [k for k in ("logical","canonical","stored","metadata","file","free",
+                       "dedupe","compression","init") if k not in storage]
+if missing:
+    fail("the storage figures are not whole; missing " + ", ".join(missing))
+# The cut, when there is one, is a string of words — never a bare bool
+# and never a silent drop.
+truncated = doc.get("truncated")
+if truncated is not None and not (isinstance(truncated, str) and truncated):
+    fail("the truncation flag is not words: " + repr(truncated))
+# The live feed answers (the delegation just traced its own calls).
+calls, _ = get("/api/workspace-history/calls")
+if calls.get("type") != "workspace-calls":
+    fail("the calls feed did not answer: " + str(calls)[:200])
+if "refused" not in calls:
+    fail("the calls feed named no refusal field")
+# The file instrument: the stamp the delegation wrote, read as text.
+stamp = open(folder + "/live-proof.txt").read().strip()
+with urllib.request.urlopen(
+    base + "/api/workspace-history/file?ref=main&path=/live-proof.txt&mode=text&from=&to=&page=0",
+    timeout=30,
+) as reply:
+    text = json.loads(reply.read() or b"{}")
+if text.get("mode") != "text" or text.get("refused"):
+    fail("the text read did not answer: " + str(text)[:200])
+if stamp.split(" ")[0] not in (text.get("text") or ""):
+    fail("the text read does not carry the delegation's stamp")
+print("instrument: warm read %.0f ms, %d branches, %d layers (%d grafts), %d commits"
+      % (warm * 1000, len(branches), len(layers), len(grafts), len(commits)))
+PY
+trap - EXIT
+cleanup
+say "— the instrument read it: one warm read, the graft data, the feed, the text —"
 
 printf 'layerfs-live: ok — %s\n' "$LOG"
 exit 0

@@ -107,8 +107,12 @@ Collision-free delegation is built on
 delegated child works in its own writable workspace over one shared
 committed history, so concurrent agents answer a named conflict
 instead of stepping on each other's code, and the **workspace history**
-surface reads that tree — main's trunk, every child branch at its fork
-point, the merges back, and the Store's figures. Fleet drives LayerFS
+surface reads that tree as an instrument — a band for every published
+layer, a lane for every branch at its actual fork, a leaf per commit, a
+dashed stem where a publish grafted work back, the substrate's live
+call feed, a file's text/blame/revisions/diff, and the Store's own
+accounting — all from one backend read that answers warm in under a
+quarter-second. Fleet drives LayerFS
 the way it drives the vendored lanes — an external tool reached through
 its `layerfs` command, with nothing of it vendored and no runtime
 entering the binary. `fleet install` provisions the substrate as a

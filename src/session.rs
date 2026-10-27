@@ -547,6 +547,45 @@ pub fn summarize(path: &Path) -> Option<SessionSummary> {
     })
 }
 
+/// The log's last `bound` bytes, split into whole JSONL lines. The
+/// reader seeks to `len - bound` (never before 0), drops the partial
+/// first line the seek may land inside, and returns the rest — so a
+/// caller parses the newest records without replaying the whole log.
+/// An empty or short log returns every line it has.
+pub fn tail_lines(path: &Path, bound: u64) -> Vec<String> {
+    let Ok(file) = File::open(path) else {
+        return Vec::new();
+    };
+    let len = match file.metadata() {
+        Ok(meta) => meta.len(),
+        Err(_) => return Vec::new(),
+    };
+    if len == 0 {
+        return Vec::new();
+    }
+    let start = len.saturating_sub(bound);
+    let mut text = String::new();
+    {
+        use std::io::{Read, Seek, SeekFrom};
+        let mut handle = file;
+        if handle.seek(SeekFrom::Start(start)).is_err() {
+            return Vec::new();
+        }
+        if handle.read_to_string(&mut text).is_err() {
+            return Vec::new();
+        }
+    }
+    let mut lines: Vec<String> = text.lines().map(String::from).collect();
+    // The seek landed mid-line unless the read started at the file's
+    // head: the first fragment is the tail of a record the bound cut,
+    // and parsing it would be parsing half a lie. Drop it.
+    if start > 0 && !lines.is_empty() {
+        lines.remove(0);
+    }
+    lines.retain(|line| !line.trim().is_empty());
+    lines
+}
+
 /// The project a log's own paths name: the first `/Projects/<name>` in
 /// the head of the file. Bounded, because a long log's paths repeat and
 /// the first one is the run's own working directory often enough to be
@@ -1988,5 +2027,36 @@ mod tests {
         // The summary, the tail's eight messages, and the interrupted
         // turn's own two.
         assert_eq!(conversation.messages.len(), 11);
+    }
+
+    #[test]
+    fn tail_lines_reads_whole_lines_within_the_bound() {
+        let home = std::env::temp_dir().join(format!("fleet-tail-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).expect("a temp home");
+        let path = home.join("log.jsonl");
+        // Three records, each well over any byte bound that would cut
+        // into the middle one.
+        let lines = [
+            r#"{"type":"user","content":"first"}"#,
+            r#"{"type":"assistant","content":"second"}"#,
+            r#"{"type":"user","content":"third"}"#,
+        ];
+        std::fs::write(&path, lines.join("\n")).unwrap();
+        // A bound past the whole file reads every line.
+        let tail = tail_lines(&path, 10_000);
+        assert_eq!(tail.len(), 3);
+        assert!(tail[2].contains("third"));
+        // A bound that cuts mid-second-line drops the partial fragment
+        // and keeps the whole rest — never half a record.
+        let len = std::fs::metadata(&path).unwrap().len();
+        let cut = len - 12; // lands inside the last line
+        let tail = tail_lines(&path, cut);
+        assert_eq!(tail.len(), 2, "{tail:?}");
+        assert!(tail[0].contains("second"), "{tail:?}");
+        assert!(tail[1].contains("third"));
+        // A missing log is an empty tail, not an error.
+        assert!(tail_lines(&home.join("absent.jsonl"), 1_000).is_empty());
+        std::fs::remove_dir_all(&home).ok();
     }
 }

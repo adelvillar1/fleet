@@ -1369,6 +1369,58 @@ impl Bridge {
         }
     }
 
+    /// The bot inbox (B2): the archive's newest rows, in the bot's four
+    /// words, each with the last line its log carries.
+    ///
+    /// One derivation, not two: the state words come from the same
+    /// `sessions_read` the console's work list reads — this method maps
+    /// them into the bot's vocabulary (`needs-approval` → `seat`,
+    /// `working` → `running`, a failed/owner-stopped/capped end →
+    /// `failed`, otherwise `finished`) and adds nothing of its own. A
+    /// second state machine here would be a second answer to the
+    /// question the head already answers (KI-300's rule, carried to the
+    /// bot surface before it could be violated there).
+    ///
+    /// The last line is a bounded tail read per row (last 16 KiB, the
+    /// newest assistant message or failure record parsed backwards). A
+    /// row whose tail cannot be read carries `refused` naming why —
+    /// never a blank that reads as finished. The seat summary rides the
+    /// bridge's own attached state, which is the same summary the seat
+    /// card renders.
+    pub async fn inbox(&self, bound: usize) -> Value {
+        // The seat map is process truth, the same way `sessions` takes
+        // it: session id → the pending call's summary.
+        let (live, seats) = {
+            let state = lock(&self.state);
+            let seats: std::collections::HashMap<String, String> = state
+                .sessions
+                .iter()
+                .filter_map(|(id, attached)| {
+                    attached
+                        .seat
+                        .as_ref()
+                        .map(|seat| (id.clone(), seat.summary.clone()))
+                })
+                .collect();
+            let live = LiveFace {
+                driving: state.driving.clone(),
+                seats: seats.keys().cloned().collect(),
+            };
+            (live, seats)
+        };
+        let home = self.home.clone();
+        match tokio::task::spawn_blocking(move || inbox_document(&home, &live, &seats, bound)).await
+        {
+            Ok(document) => document,
+            Err(_) => json!({
+                "type": "inbox",
+                "read_at": epoch_millis(),
+                "bound": bound,
+                "refused": ["the archive read did not land"],
+            }),
+        }
+    }
+
     /// One recorded call, re-run (D11): through the tools' own executor
     /// — the same bound, the same approval classes — with the result
     /// landing in the reply the drawer reads, never in the session log:
@@ -4200,6 +4252,53 @@ fn paused_by_owner(home: &std::path::Path, id: &str) -> bool {
 /// pass would be a classifier nobody measured against ground truth.
 pub const SEARCH_BOUND: usize = 200;
 
+/// The inbox tail read's per-row byte bound (B2): the last 16 KiB of a
+/// session log, parsed backwards for the newest sayable line. 50 rows ×
+/// 16 KiB is the read's whole worst case, named in the plan and bounded
+/// here.
+pub(crate) const TAIL_BYTES: u64 = 16 * 1024;
+
+/// The inbox row's last line: the newest thing in the log's tail a
+/// phone can read as "what did it say" — the newest assistant message,
+/// else the newest user message (a working conversation's honest last
+/// word is the instruction it is executing). A row that yields no line
+/// — a missing log, a torn tail whose only whole record is the start
+/// stamp, a conversation not yet used — is refused by name: a blank
+/// under a finished-looking state is the lie AC4 forbids.
+fn last_line(tail: &[String]) -> (Option<String>, Option<String>) {
+    if tail.is_empty() {
+        return (None, Some("the log's tail could not be read".to_string()));
+    }
+    let mut newest_user: Option<String> = None;
+    for line in tail.iter().rev() {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        match value.get("type").and_then(|kind| kind.as_str()) {
+            Some("assistant") => {
+                if let Some(said) = value.get("content").and_then(|c| c.as_str()) {
+                    if !said.trim().is_empty() {
+                        let clipped: String = said.chars().take(200).collect();
+                        return (Some(clipped), None);
+                    }
+                }
+            }
+            Some("user") => {
+                if newest_user.is_none() {
+                    if let Some(said) = value.get("content").and_then(|c| c.as_str()) {
+                        newest_user = Some(said.chars().take(200).collect());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    match newest_user {
+        Some(said) => (Some(said), None),
+        None => (None, Some("no readable line in the log's tail".to_string())),
+    }
+}
+
 fn session_match(home: &std::path::Path, id: &str, needle: &str) -> Option<String> {
     let path = home.join("sessions").join(format!("{id}.jsonl"));
     let text = std::fs::read_to_string(&path).ok()?;
@@ -4224,6 +4323,94 @@ fn session_match(home: &std::path::Path, id: &str, needle: &str) -> Option<Strin
         }
     }
     None
+}
+
+/// The bot inbox document (B2): the archive's newest rows projected
+/// into the bot's four words, each with the last line its log carries.
+/// The pure half of `Bridge::inbox` — the async method gathers the live
+/// facts and hands them here, so tests can drive the whole derivation
+/// over a fabricated home.
+///
+/// One derivation, not two: the state words come from the same
+/// `sessions_read` the console's work list reads — this function maps
+/// them into the bot's vocabulary in the archive's own words (there is
+/// no `failed` word there: the interrupted shape a hard failure ages
+/// into is the end-less log) and adds nothing of its own. A second
+/// state machine here would be a second answer to the question the
+/// head already answers (KI-300's rule, carried to the bot surface
+/// before it could be violated there). If `work_state`'s vocabulary
+/// grows, this match grows in the same commit — the plan's own risk
+/// note.
+fn inbox_document(
+    home: &std::path::Path,
+    live: &LiveFace,
+    seats: &std::collections::HashMap<String, String>,
+    bound: usize,
+) -> Value {
+    let document = sessions_read(home, "", live, "");
+    let rows = document
+        .get("sessions")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    // Rows land newest-first from `sessions_read`; the bound is the
+    // plan's own (`sessions: 50`), applied before any tail read so the
+    // cost is rows × 16 KiB, named and bounded.
+    let rows: Vec<Value> = rows.into_iter().take(bound).collect();
+    let mut out = Vec::with_capacity(rows.len());
+    for row in &rows {
+        let id = row.get("id").and_then(Value::as_str).unwrap_or_default();
+        let archive_state = row
+            .get("state")
+            .and_then(Value::as_str)
+            .unwrap_or("interrupted");
+        let state = if seats.contains_key(id) {
+            "seat"
+        } else {
+            match archive_state {
+                "needs-approval" => "seat",
+                "working" | "active" => "running",
+                "capped" | "stopped" | "interrupted" => "failed",
+                _ => "finished",
+            }
+        };
+        let path = home.join("sessions").join(format!("{id}.jsonl"));
+        let tail = session::tail_lines(&path, TAIL_BYTES);
+        let (last, refused) = last_line(&tail);
+        let mut out_row = json!({
+            "id": id,
+            "workspace": row.get("workspace"),
+            "created": row.get("created"),
+            "ended": row.get("ended"),
+            "channel": row.get("channel"),
+            "model": row.get("model"),
+            "state": state,
+            "at": row.get("last_write"),
+            "last": last,
+        });
+        if let Some(summary) = seats.get(id) {
+            out_row["seat"] = json!(summary);
+        }
+        if let Some(why) = refused {
+            out_row["refused"] = json!(why);
+        }
+        out.push(out_row);
+    }
+    // Seats first (the bot taps the approval, not the transcript), then
+    // the archive's own order — newest first — within each state. A
+    // stable partition, not a re-sort.
+    out.sort_by_key(|row| match row.get("state").and_then(Value::as_str) {
+        Some("seat") => 0,
+        Some("running") => 1,
+        Some("failed") => 2,
+        _ => 3,
+    });
+    json!({
+        "type": "inbox",
+        "read_at": epoch_millis(),
+        "bound": bound,
+        "sessions": out,
+    })
 }
 
 fn sessions_read(home: &std::path::Path, current: &str, live: &LiveFace, query: &str) -> Value {
@@ -8498,6 +8685,180 @@ mod tests {
         };
         assert_eq!(work_state(&fresh, &driving, false), "working");
         assert_eq!(work_state(&capped, &driving, false), "capped");
+    }
+
+    #[test]
+    fn the_inbox_maps_the_archive_words_into_the_bots_four() {
+        let home = std::env::temp_dir().join(format!("fleet-gui-inbox-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).expect("a temp home");
+        // finished: a completed run whose assistant had the last word.
+        let mut done = crate::session::Session::create(&home, "deepseek-flash").unwrap();
+        done.record(&crate::session::Record::User {
+            content: "the task".into(),
+        })
+        .unwrap();
+        done.record(&crate::session::Record::Assistant {
+            content: Some("the plan is drafted; three files carry it".into()),
+            tool_calls: Vec::new(),
+        })
+        .unwrap();
+        done.record(&crate::session::Record::End {
+            stop_reason: "completed".into(),
+            turns: 2,
+            served_model: None,
+        })
+        .unwrap();
+        let done_id = done.id().to_string();
+        // failed: the owner stopped it mid-run — the wire's own shape
+        // (`agent.rs` records the end before returning Stopped).
+        let mut stopped = crate::session::Session::create(&home, "deepseek-flash").unwrap();
+        stopped
+            .record(&crate::session::Record::User {
+                content: "run the gate".into(),
+            })
+            .unwrap();
+        stopped
+            .record(&crate::session::Record::End {
+                stop_reason: "stopped by the owner".into(),
+                turns: 1,
+                served_model: None,
+            })
+            .unwrap();
+        let stopped_id = stopped.id().to_string();
+        // failed: the hard shape — a log with no end record whose last
+        // write has aged out of the live window (the interrupted read).
+        let mut hard = crate::session::Session::create(&home, "deepseek-flash").unwrap();
+        hard.record(&crate::session::Record::User {
+            content: "the doomed task".into(),
+        })
+        .unwrap();
+        let hard_id = hard.id().to_string();
+        drop(hard);
+        let log_path = crate::home::sessions_dir(&home).join(format!("{hard_id}.jsonl"));
+        let aged = std::time::SystemTime::now() - std::time::Duration::from_secs(6 * 3600);
+        std::fs::File::options()
+            .append(true)
+            .open(&log_path)
+            .unwrap()
+            .set_modified(aged)
+            .unwrap();
+        // failed: capped at the turn limit, an end record on the log.
+        let mut capped = crate::session::Session::create(&home, "deepseek-flash").unwrap();
+        capped
+            .record(&crate::session::Record::User {
+                content: "the long task".into(),
+            })
+            .unwrap();
+        capped
+            .record(&crate::session::Record::End {
+                stop_reason: "max-turns".into(),
+                turns: 8,
+                served_model: None,
+            })
+            .unwrap();
+        let capped_id = capped.id().to_string();
+
+        let live = LiveFace {
+            driving: None,
+            seats: Default::default(),
+        };
+        let seats = std::collections::HashMap::new();
+        let document = inbox_document(&home, &live, &seats, 50);
+        let rows = document["sessions"].as_array().expect("rows");
+        let row = |id: &str| {
+            rows.iter()
+                .find(|row| row["id"] == id)
+                .cloned()
+                .unwrap_or_else(|| panic!("{id} in {document}"))
+        };
+        // The mapping: the archive's own words, projected once.
+        assert_eq!(row(&done_id)["state"], "finished");
+        assert_eq!(
+            row(&done_id)["last"],
+            "the plan is drafted; three files carry it"
+        );
+        assert!(row(&done_id).get("seat").is_none());
+        assert_eq!(row(&stopped_id)["state"], "failed");
+        // The stopped log's last line is the instruction it was
+        // executing — honest, not a blank.
+        assert_eq!(row(&stopped_id)["last"], "run the gate");
+        assert_eq!(row(&capped_id)["state"], "failed");
+        // The hard shape: end-less and aged, the interrupted read.
+        assert_eq!(row(&hard_id)["state"], "failed");
+        // The document names its bound.
+        assert_eq!(document["bound"], 50);
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn the_inbox_puts_the_seat_first_and_never_renders_a_blank() {
+        let home = std::env::temp_dir().join(format!("fleet-gui-inbox-2-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).expect("a temp home");
+        let mut waiting = crate::session::Session::create(&home, "deepseek-flash").unwrap();
+        waiting
+            .record(&crate::session::Record::User {
+                content: "write the file".into(),
+            })
+            .unwrap();
+        let waiting_id = waiting.id().to_string();
+        let mut done = crate::session::Session::create(&home, "deepseek-flash").unwrap();
+        done.record(&crate::session::Record::Assistant {
+            content: Some("answered".into()),
+            tool_calls: Vec::new(),
+        })
+        .unwrap();
+        done.record(&crate::session::Record::End {
+            stop_reason: "completed".into(),
+            turns: 1,
+            served_model: None,
+        })
+        .unwrap();
+        let done_id = done.id().to_string();
+        // A seat waits on the older conversation, the way a real seat
+        // would: the write was proposed, and nothing moved since.
+        let mut seats = std::collections::HashMap::new();
+        seats.insert(
+            waiting_id.clone(),
+            "write_file \u{b7} docs/example.md".to_string(),
+        );
+        let live = LiveFace {
+            driving: None,
+            seats: [waiting_id.clone()].into_iter().collect(),
+        };
+        let document = inbox_document(&home, &live, &seats, 50);
+        let rows = document["sessions"].as_array().expect("rows");
+        assert_eq!(rows[0]["id"], waiting_id, "the seat is the first row");
+        assert_eq!(rows[0]["state"], "seat");
+        assert_eq!(
+            rows[0]["seat"], "write_file \u{b7} docs/example.md",
+            "the row carries the pending call's summary"
+        );
+        assert_eq!(rows[0]["last"], "write the file");
+        assert_eq!(row_of(rows, &done_id)["state"], "finished");
+        // A row whose log carries nothing readable refuses by name —
+        // never a blank that reads as finished (AC4).
+        let bare = crate::session::Session::create(&home, "deepseek-flash").unwrap();
+        let bare_id = bare.id().to_string();
+        drop(bare);
+        let document = inbox_document(&home, &live, &seats, 50);
+        let rows = document["sessions"].as_array().expect("rows");
+        let bare_row = row_of(rows, &bare_id);
+        assert!(
+            bare_row
+                .get("refused")
+                .and_then(|why| why.as_str())
+                .is_some(),
+            "the un-readable row names why: {bare_row}"
+        );
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    fn row_of<'a>(rows: &'a [Value], id: &str) -> &'a Value {
+        rows.iter()
+            .find(|row| row["id"] == id)
+            .unwrap_or_else(|| panic!("{id} in the rows"))
     }
 
     #[test]

@@ -228,16 +228,25 @@ shows, with its own freshness stamp.
 ### Workspace history — *knowledge*
 
 **What it is.** The LayerFS substrate's tree, read as fleet's own
-history: main's trunk, every branch a delegated child worked at its
-fork point, the merge edges back, and the Store's figures behind them
-— logical, canonical, stored, dedupe, compression. Branches, commits,
-layers, storage; each child branch carries its session, its outcome
-and its merge state.
+history, in the substrate's own vocabulary: a **band** for every Layer
+on main's spine, a **lane** for every branch with work sprouting from
+its actual fork, a **leaf** for every commit, a **dashed stem** where
+a publish grafted work back, and one idle chip for the branches nobody
+worked. Beside it: the work those branches carried (`C<ordinal> ·
+↓ L<k>` with state, activity and the child session), the substrate's
+**live call feed** (every call the trace recorded, with its actor and
+cost), a **file's own instruments** (text, blame, revisions, diff), and
+the Store's **accounting** — on disk, unique, compressed, the metadata
+subset, the SQLite overhead named separately, the Init record, and what
+each commit cost. One backend read answers all of it in under 250 ms,
+and a read whose version still holds answers "unchanged" in 1 ms.
 
-**What you do.** Read the tree as it stands; open a branch's own files;
-follow a commit to the branch it belongs to; see which children merged
-back and which are still open. The Delegation panel's rows carry each
-child's branch and click straight through.
+**What you do.** Read the tree as it stands — zoom, pan, follow the
+minimap, hover a node for its record; click a node and the file
+instruments read at that ref (branch, commit or layer); watch what the
+substrate is doing in the feed; see which children merged back and
+which are still open. The Delegation panel's rows carry each child's
+branch and click straight through.
 
 **Why.** Isolation is fleet's property, not a substrate's: a delegated
 child's writes land on its own branch and nothing reaches the working
@@ -253,7 +262,9 @@ where the owner reads what the isolation kept and what came home.
 **State.** Complete as a read. The tree is the substrate's own; a
 machine that has not provisioned, or a folder no delegation has
 registered, says so where the tree would be rather than drawing an
-empty one.
+empty one — and the same rule holds in the small: a cut branch is named
+in words, a binary file is named rather than rendered, and traces that
+are off say so instead of reading as "no activity".
 
 ### Bots — *system*
 

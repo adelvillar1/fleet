@@ -5525,8 +5525,20 @@ fn an_env_write_is_readable_by_the_runtime() {
         Some("http://127.0.0.1:9999/v1/embeddings"),
         "the runtime reads what the writer wrote"
     );
-    let resolved =
-        endpoint_from(|name| std::env::var(name).ok().or_else(|| read.get(name).cloned()));
+    // The round-trip "runs with no process environment involved" (the
+    // comment above is the premise): a machine that exports the var —
+    // this one live-serves the embedder with it set — would otherwise
+    // answer from its ambient value and the test would pin the env's
+    // precedence instead of the write. The lookup shadows only the var
+    // under test, keeping the resolver's env-first shape intact for
+    // every other name.
+    let resolved = endpoint_from(|name| {
+        if name == EMBEDDING_ENDPOINT_VAR {
+            read.get(name).cloned()
+        } else {
+            std::env::var(name).ok().or_else(|| read.get(name).cloned())
+        }
+    });
     assert_eq!(resolved, "http://127.0.0.1:9999/v1/embeddings");
     let _ = std::fs::remove_dir_all(&home);
 }

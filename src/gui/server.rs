@@ -856,6 +856,10 @@ async fn serve_connection(
             )
             .await
         }
+        // The bot inbox (B2): the archive's newest rows in the bot's
+        // four words, each with its last line. One polling read; the
+        // conversation itself still rides /events.
+        ("GET", "/api/inbox") => write_reply(&mut stream, api(200, bridge.inbox(50).await)).await,
         // Who may reach this face, and the revocation that forgets one.
         // A loopback read and write only: the remote face's allowlist
         // keeps both closed, because a phone that could revoke devices is
@@ -1362,7 +1366,7 @@ fn usage_event_of(body: &str) -> Result<(String, String, String), String> {
 /// The text a steer's body carries. The bridge owns the rule that an
 /// empty steer is refused; this only reads the one string the body
 /// holds, so a malformed body is a 400 before any control is written.
-fn steer_of(body: &str) -> Result<String, String> {
+pub(crate) fn steer_of(body: &str) -> Result<String, String> {
     let parsed: serde_json::Value = serde_json::from_str(body)
         .map_err(|e| format!("fleet gui could not read the steer's body: {e}"))?;
     parsed
@@ -3814,6 +3818,32 @@ mod tests {
         assert!(
             !reply.contains("deepseek-flash"),
             "the nominal stamp never renders: {reply}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_inbox_answers_the_bots_words_over_http() {
+        let (home, ids) = archive_home();
+        let (bridge, _) =
+            Bridge::detached(home, "deepseek-flash".to_string(), Some(ids[0].clone()));
+        let (mut server, port) = Server::bind("127.0.0.1", 0, Arc::new(bridge))
+            .await
+            .expect("bind");
+        server.heartbeat = Duration::from_millis(20);
+        let token = String::new();
+        tokio::spawn(async move {
+            let _ = server.serve().await;
+        });
+        let reply = get(port, "/api/inbox", &token);
+        assert!(reply.starts_with("HTTP/1.1 200"), "{reply}");
+        assert!(reply.contains("\"type\":\"inbox\""), "{reply}");
+        assert!(reply.contains("\"bound\":50"), "{reply}");
+        // The archive's rows ride in the bot's four words.
+        assert!(reply.contains("\"state\":\"finished\""), "{reply}");
+        // The rows carry a last line or name why they cannot.
+        assert!(
+            reply.contains("\"last\""),
+            "every row answers what it said: {reply}"
         );
     }
 

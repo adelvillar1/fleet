@@ -33,7 +33,7 @@ use tokio::net::TcpListener;
 
 use crate::gui::bridge::Bridge;
 use crate::gui::server::{
-    api, decode_query, query_value, read_body, read_head, write_reply, Reply, Request,
+    api, decode_query, query_value, read_body, read_head, steer_of, write_reply, Reply, Request,
 };
 use crate::remote::pairing::{DeviceStore, PairingWindow};
 use crate::remote::RemoteAddress;
@@ -69,11 +69,25 @@ const ALLOWED_GET: &[&str] = &[
     "/events",
     "/api/state",
     "/api/sessions",
+    // The bot inbox (B2): one polling read; the conversation rides
+    // /events, which is already here.
+    "/api/inbox",
     "/api/session",
     "/api/checkpoints",
     "/api/diff",
 ];
-const ALLOWED_POST: &[&str] = &["/api/run", "/api/plan", "/api/approve", "/api/resume"];
+// The bot verbs (B3 and AC5's controls): a phone starts a conversation
+// the same way the console does, and stops or steers a run it can see
+// is in flight — the same four routes the console's composer speaks.
+const ALLOWED_POST: &[&str] = &[
+    "/api/run",
+    "/api/plan",
+    "/api/approve",
+    "/api/resume",
+    "/api/session/new",
+    "/api/stop",
+    "/api/steer",
+];
 
 /// The remote face: the listener, the address it was given, and the
 /// bridge to the agent thread its actions speak to. Deliberately not
@@ -507,6 +521,7 @@ async fn route_with(
             let q = decode_query(&request.query, "q");
             api(200, bridge.sessions(&session, &q).await)
         }
+        ("GET", "/api/inbox") => api(200, bridge.inbox(50).await),
         ("GET", "/api/session") => {
             let asked = decode_query(&request.query, "id");
             api(200, bridge.replay(&asked).await)
@@ -575,6 +590,28 @@ async fn route_with(
                     }
                 }
                 Err(message) => bad_request(&message),
+            }
+        }
+        ("POST", "/api/session/new") => match bridge.new_session() {
+            Ok(id) => api(200, json!({"type": "session", "id": id, "created": true})),
+            Err(message) => api(409, json!({"error": message})),
+        },
+        ("POST", "/api/stop") => match bridge.stop(None) {
+            Ok(control) => api(200, control),
+            Err(message) => api(409, json!({"error": message})),
+        },
+        ("POST", "/api/steer") => {
+            let body = match read_body(stream, request, rest).await {
+                Ok(body) => body,
+                Err(message) => return bad_request(&message),
+            };
+            let text = match steer_of(&body) {
+                Ok(text) => text,
+                Err(message) => return bad_request(&message),
+            };
+            match bridge.stop(Some(&text)) {
+                Ok(control) => api(200, control),
+                Err(message) => api(409, json!({"error": message})),
             }
         }
         ("POST", "/api/resume") => {
@@ -1238,10 +1275,47 @@ mod tests {
 
         // What a paired device may do — the face itself first, because a
         // shell with no script is a shell that does nothing.
-        for path in ["/", "/app.css", "/app.js", "/api/state", "/api/sessions"] {
+        for path in [
+            "/",
+            "/app.css",
+            "/app.js",
+            "/api/state",
+            "/api/sessions",
+            "/api/inbox",
+        ] {
             let reply = get(port, path, &token);
             assert!(reply.starts_with("HTTP/1.1 200"), "{path}: {reply}");
         }
+
+        // The bot verbs (B3, AC5): a paired phone starts a conversation
+        // and stops a run through the same routes the console speaks.
+        // The new-session reply answers the id, and the log exists.
+        let raw = format!(
+            "POST /api/session/new HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 2\r\nCookie: {DEVICE_COOKIE}={token}\r\n\r\n{{}}"
+        );
+        let reply = ask(port, &raw);
+        assert!(reply.starts_with("HTTP/1.1 200"), "{reply}");
+        assert!(reply.contains("\"created\":true"), "{reply}");
+        assert!(
+            reply.contains("\"id\":\""),
+            "the reply answers the id: {reply}"
+        );
+
+        // A steer with a malformed body is a 400 before any control is
+        // written; the route itself is admitted.
+        let body = "{\"text\":\"take the other road\"}";
+        let raw = format!(
+            "POST /api/steer HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: {}\r\nCookie: {DEVICE_COOKIE}={token}\r\n\r\n{body}",
+            body.len()
+        );
+        let reply = ask(port, &raw);
+        // No run is in flight in this test's bridge, so the control
+        // write refuses with 409 and names it — the admission is what
+        // this asserts; 400 would also prove the route is reachable.
+        assert!(
+            reply.starts_with("HTTP/1.1 409") || reply.starts_with("HTTP/1.1 400"),
+            "{reply}"
+        );
 
         // What it may not: the loopback face's own routes, refused by
         // name so a later addition there stays closed here.

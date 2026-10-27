@@ -1,5 +1,5 @@
 ---
-status: draft
+status: completed
 created: 2026-10-26
 updated: 2026-10-26
 slug: layerfs-history-instrument
@@ -225,9 +225,12 @@ named absence, never an empty lie.
       **Pinned:** the live fleet answer (2 layers, 1 commit, 65
       branches — main, one worked, 63 idle) draws 2 bands, 1 leaf and
       one idle chip of 63; the
-      `fresh-src` answer (8 layers, 9 commits, 27 branches) draws 8
-      bands, 9 leaves and 7 grafts; a fixture with 89 branches puts no
-      node outside the plot's bounds.
+      `fresh-src` answer (8 layers, 9 commits, 27 branches at planning
+      time; grown to 10 layers / 11 commits / 35 branches by close-out)
+      draws bands for its layers, leaves for its commits and a graft
+      per published layer — the standing script asserts the invariant
+      against whatever the store now holds; a fixture with 89
+      branches puts no node outside the plot's bounds.
 - [x] **C2 — the work lanes and the live calls. Landed 2026-10-26.**
       The Work pane shows every branch as `name · C<n> · ↓ L<k>`
       (commit count; the layer it forked from, by logical index) with
@@ -287,7 +290,7 @@ named absence, never an empty lie.
       file 7,860,224; free 0; dedupe 2.99×; compression 2.11× — and the
       row arithmetic equals the substrate's (`file - free - stored` =
       471,628); a store with `init: null` names the absence.
-- [ ] **C5 — close-out.**
+- [x] **C5 — close-out. Landed 2026-10-26.**
       `scripts/layerfs-live.sh` grows the instrument check: the
       endpoint answers under the bound on the `fresh-src` store (8
       layers, 27 branches), the graph's node count equals layers +
@@ -463,6 +466,27 @@ name · `docs/features/workspace-history.md`,
   fixture: seven rows by name, the overhead computing to 461 kB
   (471,628), the Init line, the per-commit cost, the ratios, and the
   two named absences (no Init record; no figures).
+
+- **C5 — landed 2026-10-26.** `scripts/layerfs-live.sh` runs the
+  whole seam and then reads it back THROUGH the instrument (step 6, a
+  face on a scratch port, clean env): a warm read under the 250 ms
+  bound (**56 ms** measured at close-out, against the fan-out's 4,808
+  ms), the version token present, every branch carrying a state, a
+  merged branch present, full ids inside the substrate's own 64–68
+  range (the check's first run demanded exactly 64 and caught real
+  66-char ids), every layer that was published naming its commit (9
+  grafts at close-out on a store that has since grown to 10 layers /
+  11 commits / 35 branches), all nine figures present, the truncation
+  either absent or words, the feed's route answering with its
+  `refused` field, and the delegation's stamp through the file route.
+  The graph's node-count pin (bands = layers, leaves = commits) lives
+  in the face harness where the graph is drawn. Docs landed in the
+  same commit: the feature doc rewritten as the instrument's HOW
+  (the five cards, the one read, the named cuts), surfaces.md and
+  FUNCTIONAL-SPECIFICATIONS.md and README.md describing the tree in
+  the substrate's own vocabulary. The gate runs on the STAGED tree
+  (the tree is co-edited: this session staged only its own files and
+  verified the index in a detached worktree).
 
 ## Verification
 
