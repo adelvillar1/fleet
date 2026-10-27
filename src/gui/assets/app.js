@@ -10174,20 +10174,71 @@
     return card;
   }
 
-  // The Files pane: a branch's tree at a path, one page at a time.
-  // Directories navigate; a file's text is read through the same route.
+  // The Files instrument: a ref's tree at a path, and the file's own
+  // instruments beside it — text (the file's text, a window at a time),
+  // blame (every line with the Commit that last changed it), revisions
+  // (the file's history), and diff (the changed set between two
+  // commits, or one changed file's hunks). A ref is a branch name, a
+  // commit id or a layer id — clicking a tree node reads there.
   function historyFiles(read) {
-    var card = boardCard(12, 'the files', null, null);
+    if (!face.historyMode) face.historyMode = 'text';
+    var card = boardCard(12, 'the files', null,
+      'A ref\u2019s tree at a path \u2014 branch name, commit id or layer id \u2014 and, once a ' +
+      'file is open: its text, its blame, its revisions, and the diff it last took.');
     var branches = (read.branches || []).map(function (b) { return b.name; });
     if (!branches.length) return card;
+    // The tabs: every branch, plus the ref a tree node clicked (when it
+    // is not itself a branch — a commit or a layer).
     var tabs = node('div', 'board-tabs');
+    var at = face.historyBranch || 'main';
     branches.forEach(function (name) {
-      var tab = node('button', 'board-tab' + (name === face.historyBranch ? ' is-on' : ''), name);
+      var tab = node('button', 'board-tab' + (name === at ? ' is-on' : ''), name);
       tab.type = 'button';
       tab.addEventListener('click', function () { historyBrowse(name); });
       tabs.appendChild(tab);
     });
+    if (face.historyRefLabel && branches.indexOf(at) < 0) {
+      var nodeTab = node('button', 'board-tab is-on',
+        '\u25c6 ' + face.historyRefLabel);
+      nodeTab.type = 'button';
+      tabs.appendChild(nodeTab);
+    }
     card.appendChild(tabs);
+    // The modes: the file's instruments. Diff stands on the ref's own
+    // ends (the commit's parent or base), so it is offered only when
+    // the read knows them.
+    var modes = node('div', 'board-tabs');
+    var ends = historyDiffEnds(read, at);
+    [['text', 'text'], ['blame', 'blame'], ['revisions', 'revisions'],
+     ['diff', 'diff']].forEach(function (pair) {
+      var mode = pair[0];
+      var tab = node('button', 'board-tab' + (mode === face.historyMode ? ' is-on' : ''),
+        pair[1]);
+      tab.type = 'button';
+      if (mode === 'diff' && !ends) {
+        tab.disabled = true;
+        tab.title = 'a diff needs the ref\u2019s own parent or base';
+      }
+      tab.addEventListener('click', function () {
+        face.historyMode = mode;
+        face.historyDiffPath = '';
+        face.historyFilePage = 0;
+        face.historyPath = mode === 'diff' ? '' : (face.historyPath || '');
+        if (mode !== 'diff' && !face.historyPath) {
+          // The file's instruments stand on an open file; the listing
+          // stays the landing.
+          return paintWorkspaceHistory();
+        }
+        readWorkspaceFile(true);
+      });
+      modes.appendChild(tab);
+    });
+    card.appendChild(modes);
+    var where = node('p', 'board-path',
+      (face.historyPath || '/') + '  \u00b7  ' +
+      (face.historyRefLabel || face.historyBranch));
+    card.appendChild(where);
+    // The listing: navigate folders, read files.
     var doc = face.historyFiles;
     if (!doc || doc.branch !== face.historyBranch) {
       card.appendChild(node('p', 'board-empty', 'reading ' + face.historyBranch + ' \u2026'));
@@ -10197,16 +10248,7 @@
       card.appendChild(refusedCard(doc.refused));
       return card;
     }
-    var where = node('p', 'board-path',
-      (face.historyPath || '/') + '  \u00b7  ' +
-      (face.historyRefLabel || face.historyBranch));
-    card.appendChild(where);
     var items = doc.items || [];
-    if (!items.length) {
-      card.appendChild(node('p', 'board-empty',
-        'Nothing at this path on ' + face.historyBranch + '.'));
-      return card;
-    }
     var table = node('table', 'board-table');
     items.forEach(function (item) {
       var line = node('tr');
@@ -10223,7 +10265,11 @@
           readWorkspaceFiles(face.historyBranch, next, true);
           paintWorkspaceHistory();
         } else {
-          face.historyPick = { branch: face.historyBranch, path: name };
+          face.historyPath = (face.historyPath || '/').replace(/\/$/, '') + '/' + name;
+          face.historyMode = 'text';
+          face.historyFilePage = 0;
+          face.historyDiffPath = '';
+          readWorkspaceFile(true);
           paintWorkspaceHistory();
         }
       });
@@ -10232,15 +10278,194 @@
       line.appendChild(node('td', null, isDir ? 'dir' : (item.size != null ? bytes(item.size) : '')));
       table.appendChild(line);
     });
-    card.appendChild(table);
-    if (face.historyPick && face.historyPick.branch === face.historyBranch) {
-      var detail = boardCard(12, 'selected', null, face.historyPick.path);
-      detail.appendChild(node('p', 'board-empty',
-        'The branch view\u2019s reads are text-only, the way a delegated child\u2019s are: a ' +
-        'file\u2019s text is what the model saw.'));
-      card.appendChild(detail);
+    if (items.length) card.appendChild(table);
+    if (doc.has_more) {
+      card.appendChild(node('p', 'board-note', 'more entries below \u2014 the page is cut at 200'));
+    }
+    // The instrument: the active mode's answer.
+    if (face.historyMode !== 'diff' && !face.historyPath) return card;
+    var instrument = face.historyFile;
+    if (!instrument || instrument.key !== historyFileKey()) {
+      card.appendChild(node('p', 'board-empty',
+        'reading ' + face.historyMode + ' of ' + (face.historyPath || face.historyRefLabel) + ' \u2026'));
+      return card;
+    }
+    if ((instrument.refused || []).length) {
+      card.appendChild(refusedCard(instrument.refused));
+      return card;
+    }
+    if (instrument.note) {
+      card.appendChild(node('p', 'board-note', instrument.note));
+    }
+    if (instrument.mode === 'text') {
+      if (instrument.binary) {
+        card.appendChild(node('p', 'board-empty', instrument.note));
+        return card;
+      }
+      var pre = node('pre', 'history-code');
+      var numbered = String(instrument.text || '').split('\n').map(function (line, index) {
+        return String(instrument.start_line + index) + '  ' + line;
+      }).join('\n');
+      pre.textContent = numbered;
+      card.appendChild(pre);
+      var window_ = node('div', 'board-tabs');
+      if (face.historyFilePage > 0) {
+        var back = node('button', 'board-tab', '\u2190 window');
+        back.type = 'button';
+        back.addEventListener('click', function () {
+          face.historyFilePage -= 1;
+          readWorkspaceFile(true);
+          paintWorkspaceHistory();
+        });
+        window_.appendChild(back);
+      }
+      if (instrument.next_line) {
+        var next = node('button', 'board-tab', 'window \u2192');
+        next.type = 'button';
+        next.addEventListener('click', function () {
+          face.historyFilePage += 1;
+          readWorkspaceFile(true);
+          paintWorkspaceHistory();
+        });
+        window_.appendChild(next);
+      }
+      if (window_.children.length) card.appendChild(window_);
+      return card;
+    }
+    if (instrument.mode === 'blame') {
+      var blame = node('table', 'board-table');
+      (instrument.lines || []).forEach(function (row) {
+        var line = node('tr');
+        line.appendChild(node('td', null, String(row.n)));
+        var commitCell = node('td');
+        var commitLink = node('button', 'link', clip(String(row.commit || '\u2014'), 12));
+        commitLink.type = 'button';
+        commitLink.addEventListener('click', function () {
+          historyBrowse(row.commit, 'commit ' + clip(String(row.commit), 12));
+        });
+        commitCell.appendChild(commitLink);
+        line.appendChild(commitCell);
+        var text = node('td', 'history-blame-text', row.text == null ? '' : row.text);
+        line.appendChild(text);
+        blame.appendChild(line);
+      });
+      card.appendChild(blame);
+      return card;
+    }
+    if (instrument.mode === 'revisions') {
+      var revisions = node('table', 'board-table');
+      (instrument.items || []).forEach(function (row) {
+        var line = node('tr');
+        var cell = node('td');
+        var link = node('button', 'link', clip(String(row.commit || row.object || '\u2014'), 12));
+        link.type = 'button';
+        link.addEventListener('click', function () {
+          historyBrowse(row.commit, 'commit ' + clip(String(row.commit || ''), 12));
+        });
+        cell.appendChild(link);
+        line.appendChild(cell);
+        line.appendChild(node('td', null, row.change || '\u2014'));
+        line.appendChild(node('td', null, row.message || '\u2014'));
+        line.appendChild(node('td', null, row.size != null ? bytes(row.size) : ''));
+        revisions.appendChild(line);
+      });
+      card.appendChild(revisions);
+      if (instrument.has_more) {
+        card.appendChild(node('p', 'board-note', 'more revisions below \u2014 the page is cut at 50'));
+      }
+      return card;
+    }
+    if (instrument.mode === 'diff') {
+      if (instrument.hunks) {
+        var hunks = node('div', 'history-diff');
+        (instrument.changes || []).forEach(function (row) {
+          var line = node('div', 'history-diff-line history-diff-' +
+            (row.op === '+' ? 'add' : row.op === '-' ? 'del' : 'ctx'));
+          line.textContent = (row.op || ' ') + ' ' + (row.text || '');
+          hunks.appendChild(line);
+        });
+        card.appendChild(hunks);
+        return card;
+      }
+      var paths = node('table', 'board-table');
+      (instrument.items || []).forEach(function (row) {
+        var line = node('tr');
+        var cell = node('td');
+        var link = node('button', 'link', row.path + ' \u00b7 ' + (row.kind || ''));
+        link.type = 'button';
+        link.addEventListener('click', function () {
+          face.historyDiffPath = row.path;
+          face.historyPath = row.path;
+          readWorkspaceFile(true);
+          paintWorkspaceHistory();
+        });
+        cell.appendChild(link);
+        line.appendChild(cell);
+        paths.appendChild(line);
+      });
+      card.appendChild(paths);
+      return card;
     }
     return card;
+  }
+
+  // The diff's ends: the ref's own parent or base — the commit's
+  // parent when it is in the answer, else the layer (or first commit)
+  // it stands on. Both ids ride the server, which resolves a layer
+  // through the substrate's own comparable mapping and names a
+  // NotComparable layer (the import's own) by refusal.
+  function historyDiffEnds(read, ref) {
+    var commits = read.commits || [];
+    var layers = read.layers || [];
+    var byId = {};
+    commits.forEach(function (commit) { byId[commit.id] = commit; });
+    layers.forEach(function (layer) { byId[layer.id] = layer; });
+    var branch = (read.branches || []).find(function (one) { return one.name === ref; });
+    var to = branch ? branch.head : ref;
+    var node_ = byId[to];
+    if (!node_) return null;
+    var from = node_.parent || node_.base || null;
+    return (from && from !== to) ? { from: from, to: to } : null;
+  }
+
+  function historyFileKey() {
+    return [face.historyBranch, face.historyPath, face.historyMode,
+      face.historyDiffPath || '', face.historyFilePage || 0].join('\u0000');
+  }
+
+  // The instrument's page: one read per (ref, path, mode, page),
+  // cached on the face so a repaint does not re-ask.
+  function readWorkspaceFile(force) {
+    var ref = face.historyBranch;
+    if (!ref) return;
+    var read = face.history;
+    var ends = historyDiffEnds(read || {}, ref) || {};
+    var key = historyFileKey();
+    var now = Date.now();
+    if (!force && face.historyFile && face.historyFileKey === key &&
+        now - face.historyFileAt < 5000) {
+      return;
+    }
+    face.historyFileAt = now;
+    var asked = '/api/workspace-history/file?ref=' + encodeURIComponent(ref) +
+      '&path=' + encodeURIComponent(
+        face.historyMode === 'diff' ? (face.historyDiffPath || '') : (face.historyPath || '')) +
+      '&mode=' + encodeURIComponent(face.historyMode) +
+      '&from=' + encodeURIComponent(ends.from || '') +
+      '&to=' + encodeURIComponent(ends.to || '') +
+      '&page=' + (face.historyFilePage || 0);
+    return fetch(asked, { headers: { accept: 'application/json' } })
+      .then(function (reply) {
+        if (reply.status === 401) throw new Error('token');
+        return reply.json();
+      })
+      .then(function (doc) {
+        doc.key = key;
+        face.historyFile = doc;
+        face.historyFileKey = key;
+        if (face.panel === 'workspace-history') paintWorkspaceHistory();
+      })
+      .catch(function () { });
   }
 
   // The Storage pane: the Store's own figures, and the layers the

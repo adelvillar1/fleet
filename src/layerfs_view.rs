@@ -264,46 +264,8 @@ pub fn history(
         std::env::set_var("LAYERFS_STORE_PATH", &registration.store);
     }
 
-    // The scripts live in the LAYERFS home, which is not the fleet
-    // home the caller handed us — the machine's own record says where,
-    // and a machine without facts falls back to the caller's.
-    let layerfs_home = machine
-        .as_ref()
-        .map(|machine| machine.home.clone())
-        .unwrap_or_else(|_| home.to_path_buf());
-    let script = history_script(&layerfs_home)?;
-    // The bundle is the machine's own record, never the process env: a
-    // face launched in a clean environment has no LAYERFS_* facts, and
-    // the env knob stays the operator's override on top of it.
-    let bundle = std::env::var("FLEET_LAYERFS_BUNDLE")
-        .ok()
-        .filter(|bundle| !bundle.is_empty())
-        .map(std::path::PathBuf::from)
-        .or_else(|| machine.as_ref().ok().map(|machine| machine.bundle.clone()))
-        .unwrap_or_default();
-    let mut command = std::process::Command::new("node");
-    command.args([
-        script.to_string_lossy().as_ref(),
-        &registration.name,
-        bundle.to_string_lossy().as_ref(),
-    ]);
-    if let Some(since) = since {
-        command.arg(since);
-    }
-    let output = command
-        .output()
-        .map_err(|error| format!("the history script could not run: {error}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "the history script failed: {}",
-            bounded_stderr(&output.stderr)
-        ));
-    }
-    let document: serde_json::Value = serde_json::from_slice(&output.stdout)
-        .map_err(|error| format!("the history answer was not JSON: {error}"))?;
-    if let Some(error) = document.get("error").and_then(|error| error.as_str()) {
-        return Err(error.to_string());
-    }
+    let args: Vec<&str> = since.into_iter().collect();
+    let document = backend_answer(home, registration, &args)?;
     // The unchanged answer: the version token and nothing else — the
     // caller's view stands.
     if document.get("kind").and_then(|kind| kind.as_str()) == Some("unchanged") {
@@ -858,6 +820,316 @@ pub fn workspace_calls(cwd: &Path, since: Option<&str>, tail: &mut TraceTail) ->
     })
 }
 
+/// One answer from the backend script: the machine's facts composed,
+/// the home's script run with the given extra arguments, and its one
+/// JSON line parsed. A failed script is a named reason, never an
+/// empty answer.
+fn backend_answer(
+    home: &Path,
+    registration: &Registration,
+    args: &[&str],
+) -> Result<serde_json::Value, String> {
+    let machine = crate::layerfs_tools::read_machine();
+    if let Ok(machine) = &machine {
+        crate::layerfs_tools::apply_env(machine, Some(registration));
+    } else {
+        std::env::set_var("LAYERFS_STORE_PATH", &registration.store);
+    }
+    // The scripts live in the LAYERFS home, which is not the fleet
+    // home the caller handed us — the machine's own record says where,
+    // and a machine without facts falls back to the caller's.
+    let layerfs_home = machine
+        .as_ref()
+        .map(|machine| machine.home.clone())
+        .unwrap_or_else(|_| home.to_path_buf());
+    let script = history_script(&layerfs_home)?;
+    // The bundle is the machine's own record, never the process env: a
+    // face launched in a clean environment has no LAYERFS_* facts, and
+    // the env knob stays the operator's override on top of it.
+    let bundle = std::env::var("FLEET_LAYERFS_BUNDLE")
+        .ok()
+        .filter(|bundle| !bundle.is_empty())
+        .map(std::path::PathBuf::from)
+        .or_else(|| machine.as_ref().ok().map(|machine| machine.bundle.clone()))
+        .unwrap_or_default();
+    let mut command = std::process::Command::new("node");
+    command.args([
+        script.to_string_lossy().as_ref(),
+        &registration.name,
+        bundle.to_string_lossy().as_ref(),
+    ]);
+    command.args(args);
+    let output = command
+        .output()
+        .map_err(|error| format!("the history script could not run: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "the script failed: {}",
+            bounded_stderr(&output.stderr)
+        ));
+    }
+    let document: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|error| format!("the script's answer was not JSON: {error}"))?;
+    if let Some(error) = document.get("error").and_then(|error| error.as_str()) {
+        return Err(error.to_string());
+    }
+    Ok(document)
+}
+
+/// The instrument's file reads: one route, four modes — text (a
+/// windowed read; a binary is named, never rendered), blame (every
+/// line with the Commit that last changed it), revisions (the file's
+/// revisions, newest first), and a node's diff (the changed set
+/// between two refs, or one changed file's hunks). Caps are named when
+/// they bite: 400 lines / 256 KB of text per window, 2,000 blame
+/// lines, 50 revisions per page.
+pub fn workspace_file(
+    cwd: &Path,
+    ref_: &str,
+    path: &str,
+    mode: &str,
+    from: Option<&str>,
+    to: Option<&str>,
+    page: u32,
+) -> serde_json::Value {
+    let Some((_, registration)) = registered_folder(cwd) else {
+        return json!({
+            "type": "workspace-file",
+            "refused": ["this folder has no LayerFS project"],
+        });
+    };
+    let Ok(home) = crate::home::fleet_home(
+        std::env::var("FLEET_HOME").ok().as_deref(),
+        std::env::var("HOME").ok().as_deref(),
+    ) else {
+        return json!({ "type": "workspace-file", "refused": ["no fleet home is known"] });
+    };
+    let gate = match crate::layerfs_tools::gate() {
+        Ok(gate) => gate,
+        Err(reason) => return json!({ "type": "workspace-file", "refused": [reason.clone()] }),
+    };
+    let refused = |reason: String| {
+        json!({
+            "type": "workspace-file",
+            "project": registration.name,
+            "ref": ref_,
+            "path": path,
+            "mode": mode,
+            "refused": [reason],
+        })
+    };
+    // The entry's kind and size, read where the content is read: a
+    // folder is not a file, and a binary is named, never rendered.
+    // Revisions and the diff stand on the ref itself, not an entry.
+    let entry = |path: &str| -> Result<(u64, bool), String> {
+        gate.fs_stat(&registration.name, ref_, path)
+            .map_err(|error| error.to_string())
+            .map(|document| {
+                (
+                    document
+                        .get("size")
+                        .and_then(serde_json::Value::as_u64)
+                        .unwrap_or(0),
+                    document
+                        .get("type")
+                        .and_then(serde_json::Value::as_str)
+                        .is_some_and(|kind| kind == "file"),
+                )
+            })
+    };
+    match mode {
+        "blame" => match entry(path) {
+            Err(reason) => refused(reason),
+            Ok((_, false)) => refused(format!("{path} is not a file on {ref_}")),
+            Ok((size, true)) => match gate.fs_blame(&registration.name, ref_, path, 0) {
+                Ok(document) => {
+                    let lines = document
+                        .get("lines")
+                        .and_then(serde_json::Value::as_array)
+                        .cloned()
+                        .unwrap_or_default();
+                    let total = lines.len();
+                    let cut = total > 2_000;
+                    let kept: Vec<serde_json::Value> = lines.into_iter().take(2_000).collect();
+                    json!({
+                        "type": "workspace-file",
+                        "mode": "blame",
+                        "ref": ref_,
+                        "path": path,
+                        "size": size,
+                        "lines": kept,
+                        "note": if cut {
+                            json!(format!("showing the first 2,000 of {total} lines"))
+                        } else {
+                            json!(null)
+                        },
+                        "refused": [],
+                    })
+                }
+                Err(error) => refused(error.to_string()),
+            },
+        },
+        "revisions" => {
+            let offset = page.to_string();
+            let size_text = "50".to_string();
+            match backend_answer(
+                &home,
+                &registration,
+                &["--revisions", ref_, path, &size_text, &offset],
+            ) {
+                Ok(document) => json!({
+                    "type": "workspace-file",
+                    "mode": "revisions",
+                    "ref": ref_,
+                    "path": path,
+                    "items": document.get("items").cloned().unwrap_or(json!([])),
+                    "has_more": document.get("hasMore").and_then(serde_json::Value::as_bool).unwrap_or(false),
+                    "refused": [],
+                }),
+                Err(reason) => refused(reason),
+            }
+        }
+        "diff" => {
+            let Some(from) = from.filter(|from| !from.is_empty()) else {
+                return refused("a diff needs the ref it stands on".to_string());
+            };
+            let Some(to) = to.filter(|to| !to.is_empty()) else {
+                return refused("a diff needs the ref it compares".to_string());
+            };
+            // The wire diffs Commits. A Layer is resolved through the
+            // backend's own comparable mapping; a Layer with no Commit
+            // of the same files (the import's own, or a publish that
+            // merged) is the named NotComparable refusal.
+            let resolve = |which: &str, id: &str| -> Result<String, String> {
+                backend_answer(&home, &registration, &["--comparable", id]).and_then(|answer| {
+                    match answer.get("code").and_then(serde_json::Value::as_str) {
+                        Some(code) => Err(format!(
+                            "{which} {id} cannot ride a diff: [{code}] {}",
+                            answer
+                                .get("message")
+                                .and_then(serde_json::Value::as_str)
+                                .unwrap_or_default()
+                        )),
+                        None => answer
+                            .get("commit")
+                            .and_then(serde_json::Value::as_str)
+                            .map(str::to_string)
+                            .ok_or_else(|| format!("{which} {id} resolved to nothing")),
+                    }
+                })
+            };
+            let left = match resolve("the left ref", from) {
+                Ok(commit) => commit,
+                Err(reason) => return refused(reason),
+            };
+            let right = match resolve("the right ref", to) {
+                Ok(commit) => commit,
+                Err(reason) => return refused(reason),
+            };
+            // One changed file's hunks, when the pane names a path;
+            // the changed set otherwise.
+            let result = if path.is_empty() {
+                gate.diff_commits(&registration.name, &left, &right, true)
+                    .map(|document| {
+                        json!({
+                            "type": "workspace-file",
+                            "mode": "diff",
+                            "ref": ref_,
+                            "path": path,
+                            "from": from,
+                            "to": to,
+                            "from_commit": left,
+                            "to_commit": right,
+                            "items": document.get("items").cloned().unwrap_or(json!([])),
+                            "hunks": false,
+                            "refused": [],
+                        })
+                    })
+            } else {
+                gate.fs_diff_files(&registration.name, &left, path, &right, path)
+                    .map(|document| {
+                        json!({
+                            "type": "workspace-file",
+                            "mode": "diff",
+                            "ref": ref_,
+                            "path": path,
+                            "from": from,
+                            "to": to,
+                            "from_commit": left,
+                            "to_commit": right,
+                            "hunks": true,
+                            "changes": document.get("changes").cloned()
+                                .or_else(|| document.get("hunks").cloned())
+                                .unwrap_or(json!([])),
+                            "left": document.get("left").cloned(),
+                            "right": document.get("right").cloned(),
+                            "refused": [],
+                        })
+                    })
+            };
+            match result {
+                Ok(document) => document,
+                Err(error) => refused(error.to_string()),
+            }
+        }
+        _ => match entry(path) {
+            Err(reason) => refused(reason),
+            Ok((_, false)) => refused(format!("{path} is not a file on {ref_}")),
+            Ok((size, true)) => {
+                // The text mode: one 400-line window at a time, cut at
+                // 256 KB, with the binary named rather than rendered.
+                let start = page * 400 + 1;
+                let end = start + 399;
+                match gate.fs_read_window(&registration.name, ref_, path, start, end) {
+                    Ok(document) => {
+                        let text = document
+                            .get("text")
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or_default()
+                            .to_string();
+                        if text.contains('\u{0}') {
+                            return json!({
+                                "type": "workspace-file",
+                                "mode": "text",
+                                "ref": ref_,
+                                "path": path,
+                                "size": size,
+                                "binary": true,
+                                "note": format!("binary, {size} bytes"),
+                                "refused": [],
+                            });
+                        }
+                        let mut text = text;
+                        let mut cut = None;
+                        if text.len() > 256 * 1024 {
+                            let mut at = 256 * 1024;
+                            while !text.is_char_boundary(at) {
+                                at -= 1;
+                            }
+                            cut = Some(format!("cut at 256 KB; {} bytes held", at));
+                            text.truncate(at);
+                        }
+                        json!({
+                            "type": "workspace-file",
+                            "mode": "text",
+                            "ref": ref_,
+                            "path": path,
+                            "size": size,
+                            "text": text,
+                            "start_line": document.get("startLine").and_then(serde_json::Value::as_u64).unwrap_or(1),
+                            "end_line": document.get("endLine").and_then(serde_json::Value::as_u64).unwrap_or(0),
+                            "next_line": document.get("nextLine").and_then(serde_json::Value::as_u64),
+                            "note": cut.map(|said| json!(said)).unwrap_or(json!(null)),
+                            "refused": [],
+                        })
+                    }
+                    Err(error) => refused(error.to_string()),
+                }
+            }
+        },
+    }
+}
+
 /// The Files pane's one page of a branch's tree at a path — the CLI's
 /// own listing, shaped for the browser. Every absence (an unregistered
 /// folder, a CLI that cannot answer, a path the branch does not hold)
@@ -1043,8 +1315,13 @@ appendFileSync({count:?}, JSON.stringify(process.argv.slice(2)) + \"\\n\");
         // The home points the stream at the fixture root.
         std::fs::write(
             home.join("config.json"),
-            serde_json::json!({ "calib": { "log_root": calib_root.display().to_string() } })
-                .to_string(),
+            serde_json::json!({
+                "calib": { "log_root": calib_root.display().to_string() },
+                "layerfs": { "projects": {
+                    "/nowhere": { "name": "fleet", "store": "/volumes/v/_data/global/store.sqlite" },
+                } },
+            })
+            .to_string(),
         )
         .unwrap();
         // One delegation row: the child's session and its branch.
@@ -1304,7 +1581,7 @@ appendFileSync({count:?}, JSON.stringify(process.argv.slice(2)) + \"\\n\");
         );
         let _history = EnvGuard::set("FLEET_LAYERFS_HISTORY", &script);
         let error = history(&registration(), &home, None).expect_err("the failure is named");
-        assert!(error.contains("history script failed"), "{error}");
+        assert!(error.contains("script failed"), "{error}");
         assert!(error.contains("worker down"), "{error}");
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -1746,6 +2023,180 @@ appendFileSync({count:?}, JSON.stringify(process.argv.slice(2)) + \"\\n\");
         );
         let note = doc.get("note").and_then(serde_json::Value::as_str).unwrap();
         assert!(note.contains("250 calls"), "{note}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A stub CLI for the instrument: fs stat, fs read (a window),
+    /// fs blame, and the diff verbs — the answer shapes measured live
+    /// on the wire.
+    fn stub_cli_instrument(dir: &std::path::Path) -> std::path::PathBuf {
+        std::fs::create_dir_all(dir).unwrap();
+        let script = dir.join("layerfs");
+        std::fs::write(
+            &script,
+            r#"#!/bin/sh
+case "$*" in
+  *--version*) echo "1.1.0" ;;
+  *"fs stat"*"/notes.txt"*)
+    printf '%s\n' '{"kind":"ok","type":"file","size":8542}' ;;
+  *"fs stat"*binary.bin*)
+    printf '%s\n' '{"kind":"ok","type":"file","size":11}' ;;
+  *"fs stat"*)
+    printf '%s\n' '{"kind":"ok","type":"directory","size":0}' ;;
+  *"fs read"*"/notes.txt"*)
+    printf '%s\n' '{"kind":"ok","path":"/notes.txt","text":"line one\nline two\n","startLine":1,"endLine":2,"nextLine":3,"truncated":false,"size":8542}' ;;
+  *"fs read"*binary.bin*)
+    printf '%s\n' '{"kind":"ok","path":"/binary.bin","text":"a\u0000b","startLine":1,"endLine":1,"nextLine":null,"truncated":false,"size":11}' ;;
+  *"fs blame"*)
+    printf '%s\n' '{"kind":"ok","path":"/notes.txt","lines":[{"n":1,"text":"line one","commit":"12e968660147668df46ef623a1a28858b74736a2758ddaa5e51b19607d62104d","message":"fleet: write_file"},{"n":2,"text":"line two","commit":"12e968660147668df46ef623a1a28858b74736a2758ddaa5e51b19607d62104d","message":"fleet: write_file"}]}' ;;
+  *"branch diff_commits"*)
+    printf '%s\n' '{"kind":"ok","from":{"commit":"aaaa"},"to":{"commit":"bbbb"},"items":[{"path":"/live-proof.txt","kind":"Modified","type":"file"}]}' ;;
+  *"fs diff_files"*)
+    printf '%s\n' '{"kind":"Text","left":{"path":"/notes.txt"},"right":{"path":"/notes.txt"},"hunks":[{"op":"-","text":"old"},{"op":"+","text":"new"}]}' ;;
+  *) echo "layerfs: unknown" >&2; exit 2 ;;
+esac
+"#,
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        script
+    }
+
+    /// C3's four modes: text names its window and its cut, a binary is
+    /// named rather than rendered, blame answers the lines with their
+    /// commits, revisions ride the backend, and a diff resolves its
+    /// layers through the comparable mapping — with a NotComparable
+    /// layer refused by name.
+    #[test]
+    fn the_files_instrument_reads_four_modes_with_named_caps() {
+        let _lock = crate::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let root = std::env::temp_dir().join(format!(
+            "fleet-files-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let home = view_home(&root);
+        let _home = EnvGuard::set("FLEET_HOME", &home);
+        let cli = stub_cli_instrument(&root.join("stub"));
+        let _cli = EnvGuard::set("FLEET_LAYERFS_BIN", &cli);
+        // The script answers the comparable mapping (a Layer id to its
+        // Commit) and the revisions page; everything else is CLI.
+        let (script, _count) = stub_history(
+            &root.join("history"),
+            r#""use strict";
+if (process.argv[4] === "--comparable") {
+  const ref = process.argv[5] || "";
+  if (ref === "initlayer000000000000000000000000000000000000000000000000000000") {
+    console.log(JSON.stringify({ code: "NotComparable", message: "LayerFS compares Commits, and this Layer has no Commit with the same files" }));
+  } else {
+    console.log(JSON.stringify({ commit: "aaaa0000000000000000000000000000000000000000000000000000000000", root: "ace414", exact: true }));
+  }
+} else if (process.argv[4] === "--revisions") {
+  console.log(JSON.stringify({ items: [
+    { commit: "aaaa", message: "fleet: write_file", change: "Added", size: 12 },
+  ], hasMore: false }));
+} else {
+  console.log(JSON.stringify({ kind: "ok", version: "v9", store: { stats: {} }, project: "fleet",
+    branches: [], moreBranches: false, commits: [], more: {}, layers: [], moreLayers: false, workspaces: [] }));
+}"#,
+        );
+        let _history = EnvGuard::set("FLEET_LAYERFS_HISTORY", &script);
+
+        let cwd = Path::new("/nowhere");
+        // Text: the window's own lines and the next-window cursor.
+        let doc = workspace_file(cwd, "main", "/notes.txt", "text", None, None, 0);
+        assert_eq!(doc["mode"], "text", "{doc}");
+        assert_eq!(doc["text"], "line one\nline two\n");
+        assert_eq!(doc["start_line"], 1);
+        assert_eq!(doc["end_line"], 2);
+        assert_eq!(doc["next_line"], 3);
+        assert_eq!(doc["size"], 8542);
+        // A folder is named, never read as an empty file.
+        let doc = workspace_file(cwd, "main", "/", "text", None, None, 0);
+        let refused = doc["refused"].as_array().expect("the refusal");
+        assert!(
+            refused[0].as_str().unwrap().contains("is not a file"),
+            "{doc}"
+        );
+        // A binary is named, never rendered.
+        let doc = workspace_file(cwd, "main", "/binary.bin", "text", None, None, 0);
+        assert_eq!(doc["binary"], true, "{doc}");
+        assert!(
+            doc["note"].as_str().unwrap().contains("binary, 11 bytes"),
+            "{doc}"
+        );
+        // Blame: every line with its commit.
+        let doc = workspace_file(cwd, "main", "/notes.txt", "blame", None, None, 0);
+        let lines = doc["lines"].as_array().expect("the lines");
+        assert_eq!(lines.len(), 2, "{doc}");
+        assert_eq!(lines[0]["commit"].as_str().unwrap().len(), 64, "{doc}");
+        assert_eq!(lines[1]["text"], "line two");
+        // Revisions: the backend's page, newest first.
+        let doc = workspace_file(cwd, "main", "/notes.txt", "revisions", None, None, 0);
+        let items = doc["items"].as_array().expect("the revisions");
+        assert_eq!(items[0]["change"], "Added", "{doc}");
+        assert_eq!(doc["has_more"], false, "{doc}");
+        // Diff: two layers resolved through the comparable mapping,
+        // then the changed set — one CLI call after the two resolves.
+        let doc = workspace_file(
+            cwd,
+            "main",
+            "",
+            "diff",
+            Some("aa11layer"),
+            Some("bb22layer"),
+            0,
+        );
+        assert_eq!(doc["mode"], "diff", "{doc}");
+        assert_eq!(
+            doc["from_commit"],
+            "aaaa0000000000000000000000000000000000000000000000000000000000"
+        );
+        assert_eq!(doc["hunks"], false, "{doc}");
+        let items = doc["items"].as_array().expect("the changed set");
+        assert_eq!(items[0]["path"], "/live-proof.txt", "{doc}");
+        // One changed file's hunks, when the pane names the path.
+        let doc = workspace_file(
+            cwd,
+            "main",
+            "/notes.txt",
+            "diff",
+            Some("aa11layer"),
+            Some("bb22layer"),
+            0,
+        );
+        assert_eq!(doc["hunks"], true, "{doc}");
+        let hunks = doc["changes"].as_array().expect("the hunks");
+        assert_eq!(hunks[0]["op"], "-", "{doc}");
+        // A layer with no Commit of the same files — the import's own —
+        // is the named NotComparable refusal.
+        let doc = workspace_file(
+            cwd,
+            "main",
+            "",
+            "diff",
+            Some("initlayer000000000000000000000000000000000000000000000000000000"),
+            Some("bb22layer"),
+            0,
+        );
+        let refused = doc["refused"].as_array().expect("the refusal");
+        assert!(
+            refused[0].as_str().unwrap().contains("NotComparable"),
+            "{doc}"
+        );
+        // A diff with no ends is refused by name.
+        let doc = workspace_file(cwd, "main", "", "diff", None, None, 0);
+        let refused = doc["refused"].as_array().expect("the refusal");
+        assert!(refused[0].as_str().unwrap().contains("stands on"), "{doc}");
         let _ = std::fs::remove_dir_all(&root);
     }
 

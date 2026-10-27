@@ -1742,6 +1742,105 @@ impl Gate {
         )
     }
 
+    /// `fs read <ref> <path> [--start-line --end-line]` — a file's
+    /// text, a window of lines at a time. The instrument's text mode.
+    pub fn fs_read_window(
+        &self,
+        project: &str,
+        ref_: &str,
+        path: &str,
+        start_line: u32,
+        end_line: u32,
+    ) -> Result<serde_json::Value, Error> {
+        let start = start_line.to_string();
+        let end = end_line.to_string();
+        self.call(
+            "fs read",
+            &[
+                "--project",
+                project,
+                "fs",
+                "read",
+                ref_,
+                path,
+                "--start-line",
+                &start,
+                "--end-line",
+                &end,
+            ],
+        )
+    }
+
+    /// `fs stat <ref> <path>` — one entry's type and size, read before
+    /// the text: a binary is named, never rendered.
+    pub fn fs_stat(
+        &self,
+        project: &str,
+        ref_: &str,
+        path: &str,
+    ) -> Result<serde_json::Value, Error> {
+        self.call("fs stat", &["--project", project, "fs", "stat", ref_, path])
+    }
+
+    /// `fs blame <ref> <path>` — every line with the Commit that last
+    /// changed it. The instrument's blame mode.
+    pub fn fs_blame(
+        &self,
+        project: &str,
+        ref_: &str,
+        path: &str,
+        from_line: u32,
+    ) -> Result<serde_json::Value, Error> {
+        let from = from_line.to_string();
+        let mut args = vec!["--project", project, "fs", "blame", ref_, path];
+        if from_line > 0 {
+            args.extend(["--from-line", &from]);
+        }
+        self.call("fs blame", &args)
+    }
+
+    /// `branch diff_commits <from> <to>` — two saved Commits' changed
+    /// set (the wire takes Commits: the face resolves a Layer through
+    /// the backend before it gets here). `--no-hunks` lists paths only.
+    pub fn diff_commits(
+        &self,
+        project: &str,
+        from: &str,
+        to: &str,
+        paths_only: bool,
+    ) -> Result<serde_json::Value, Error> {
+        let mut args = vec!["--project", project, "branch", "diff_commits", from, to];
+        if paths_only {
+            args.push("--no-hunks");
+        }
+        self.call("branch diff_commits", &args)
+    }
+
+    /// `fs diff_files <left-ref> <left-path> <right-ref> <right-path>`
+    /// — one changed file's line changes between two refs.
+    pub fn fs_diff_files(
+        &self,
+        project: &str,
+        left_ref: &str,
+        left_path: &str,
+        right_ref: &str,
+        right_path: &str,
+    ) -> Result<serde_json::Value, Error> {
+        self.call(
+            "fs diff_files",
+            &[
+                "--project",
+                project,
+                "fs",
+                "diff_files",
+                left_ref,
+                left_path,
+                right_ref,
+                right_path,
+            ],
+        )
+    }
+
     /// `fs write <branch> <path>` with the body on stdin — exactly
     /// the bytes the caller sends, text or binary alike (the CLI's
     /// own bytes route).

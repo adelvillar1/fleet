@@ -1,26 +1,31 @@
-// layerfs-history.mjs — C0 of docs/plans/2026-10-26-layerfs-history-instrument.md.
+// layerfs-history.mjs — C0/C3 of docs/plans/2026-10-26-layerfs-history-instrument.md.
 //
-// The face's ONE read: `backend.store.project.get_history` passed through
-// whole. One call carries the branches (name, base, forkedFrom, head),
-// their newest commits, main's Layers, the Store's nine figures
-// (store.stats, with the Init record) and a `version` — so the face's
-// refresh is a single 8 ms backend call instead of the per-branch CLI
-// fan-out this script's first draft served. A read whose `version` is
-// still current answers `{ kind: "unchanged", version }` in 1 ms.
+// The face's reads through the bundle's BACKEND package — the one route
+// to what the agent CLI cannot answer:
+//   (default)      the whole `store.project.get_history` answer: the
+//                  branches, their newest commits, main's Layers, the
+//                  Store's nine figures (store.stats, with the Init
+//                  record) and a `version` — ONE call for the whole view,
+//                  or `{ kind: "unchanged", version }` for a `since`
+//                  version that still holds.
+//   --revisions    `store.fs.list_revisions <ref> <path>`: a file's
+//                  revisions, newest first, one page.
+//   --comparable   `store.project.get_comparable <ref>`: the Commit with
+//                  the same files as a saved Commit or Layer id, so a
+//                  Layer can ride a diff that takes Commits.
 //
-// Prints one JSON line — the backend's own answer, unpicked:
-//   { kind: "ok", version, store: { stats }, project, branches,
-//     moreBranches, commits, more, layers, moreLayers, workspaces }
-//   — or { kind: "unchanged", version } when nothing moved.
+// Prints one JSON line — the backend's own answer, unpicked.
 //
 // Usage (the driver spawns it; the environment carries the composed
 // LAYERFS_* facts and the worker's endpoint):
 //   node layerfs-history.mjs <project> <bundle> [<since-version>]
+//   node layerfs-history.mjs <project> <bundle> --revisions <ref> <path> [<pageSize>] [<pagePos>]
+//   node layerfs-history.mjs <project> <bundle> --comparable <ref>
 import { join } from "node:path";
 
-const [project, bundle, since] = process.argv.slice(2);
+const [project, bundle, ...rest] = process.argv.slice(2);
 if (!project || !bundle) {
-  console.log(JSON.stringify({ error: "usage: node layerfs-history.mjs <project> <bundle> [<since-version>]" }));
+  console.log(JSON.stringify({ error: "usage: node layerfs-history.mjs <project> <bundle> [<since-version> | --revisions <ref> <path> [<pageSize>] [<pagePos>] | --comparable <ref>]" }));
   process.exit(2);
 }
 // The face's reads are not the delegation's activity: a trace file left
@@ -39,8 +44,31 @@ const { LayerFSBackend } = await import(
 const client = await LayerFS.open(project);
 try {
   const backend = LayerFSBackend.of(client);
-  const history = await backend.store.project.get_history(since ? since : 0);
-  console.log(JSON.stringify(history));
+  let mode = rest[0];
+  if (mode === "--revisions") {
+    const [, ref, path, pageSize, pagePos] = rest;
+    if (!ref || !path) {
+      console.log(JSON.stringify({ error: "usage: --revisions <ref> <path> [<pageSize>] [<pagePos>]" }));
+      process.exit(2);
+    }
+    console.log(JSON.stringify(
+      await backend.store.fs.list_revisions(ref, path, pageSize ? Number(pageSize) : 50, pagePos ? Number(pagePos) : 0)));
+  } else if (mode === "--comparable") {
+    const ref = rest[1];
+    if (!ref) {
+      console.log(JSON.stringify({ error: "usage: --comparable <ref>" }));
+      process.exit(2);
+    }
+    try {
+      console.log(JSON.stringify(await backend.store.project.get_comparable(ref)));
+    } catch (error) {
+      console.log(JSON.stringify({ code: error.code || "Refused", message: error.message || String(error) }));
+    }
+  } else {
+    const since = mode && !mode.startsWith("--") ? mode : undefined;
+    const history = await backend.store.project.get_history(since ? since : 0);
+    console.log(JSON.stringify(history));
+  }
 } finally {
   await client.close();
 }

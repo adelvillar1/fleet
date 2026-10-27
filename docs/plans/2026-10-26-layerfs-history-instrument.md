@@ -252,7 +252,7 @@ named absence, never an empty lie.
       partial line; a second call with `since` returns only newer
       lines; an empty folder answers the named absence; a refused call
       (`ok: false`) renders as refused, not as work.
-- [ ] **C3 — the files instrument.**
+- [x] **C3 — the files instrument. Landed 2026-10-26.**
       One route, four modes: text (`fs read` with line windows), blame
       (`fs blame` — line → commit, 24 ms), revisions
       (`fs list_revisions` — 47 ms), and a node's diff
@@ -411,6 +411,35 @@ name · `docs/features/workspace-history.md`,
   substrate's append contract, which produced the prefix verification
   — shrink reset, project/since filters, the refused call riding the
   feed, the cap, the empty dir), the route test, and four face cases.
+
+- **C3 — landed 2026-10-26.** One route, four modes:
+  `GET /api/workspace-history/file?ref=&path=&mode=&from=&to=&page=`.
+  **Text**: `fs stat` first (a folder is refused by name; a binary is
+  "binary, N bytes", never rendered), then a 400-line window
+  (`--start-line/--end-line`) with the next-window cursor, cut at
+  256 KB with the cut named. **Blame**: `fs blame`, every line with the
+  Commit that last changed it, capped at 2,000 lines with the cap
+  named. **Revisions**: `store.fs.list_revisions` through the script's
+  new `--revisions` mode (backend-only: the CLI has no such verb), 50
+  per page. **Diff**: the wire takes Commits, so both ends resolve
+  through the substrate's own `get_comparable` (the script's
+  `--comparable` mode) — a Layer with no Commit of the same files is
+  the named NotComparable refusal (the import's own layer), and a
+  missing end is named too; the changed set is `branch diff_commits
+  --no-hunks`, one changed file's hunks `fs diff_files`. The face
+  computes the diff's ends from the read it already holds (the
+  commit's parent or base), offers the four modes beside the branch
+  tabs, reads on file click and mode click, renders text with line
+  numbers and window buttons, blame per line with its commit linked
+  back into the tree, revisions with their change kinds, the changed
+  set with a click into one file's hunks colored by op. Gate wrappers:
+  `fs_read_window`/`fs_stat`/`fs_blame`/`diff_commits`/`fs_diff_files`.
+  Pinned by one view test across all four modes (window, binary, dir
+  refusal, blame lines, revisions, layer resolve, NotComparable,
+  missing ends — the stub caught the shell's echo-eating-`
+` trap
+  again, and the `printf` fix is in place) and two face cases. One
+  route test asserts the folder-absence rides the new route.
 
 ## Verification
 

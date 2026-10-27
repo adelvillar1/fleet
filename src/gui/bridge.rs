@@ -946,6 +946,42 @@ impl Bridge {
         }
     }
 
+    /// The instrument's file read: text, blame, revisions, or a node's
+    /// diff — one route, four modes, caps named when they bite.
+    pub async fn workspace_file(
+        &self,
+        ref_: &str,
+        path: &str,
+        mode: &str,
+        from: Option<String>,
+        to: Option<String>,
+        page: u32,
+    ) -> Value {
+        let cwd = self.cwd.clone();
+        let ref_ = ref_.to_string();
+        let path = path.to_string();
+        let mode = mode.to_string();
+        match tokio::task::spawn_blocking(move || {
+            crate::layerfs_view::workspace_file(
+                &cwd,
+                &ref_,
+                &path,
+                &mode,
+                from.as_deref(),
+                to.as_deref(),
+                page,
+            )
+        })
+        .await
+        {
+            Ok(document) => document,
+            Err(_) => json!({
+                "type": "workspace-file",
+                "refused": ["the workspace-file read did not land"],
+            }),
+        }
+    }
+
     /// The live feed's read: the substrate's calls, tailed from the
     /// machine's traces. The tail state is this bridge's own, so a poll
     /// answers only what moved since the last one.

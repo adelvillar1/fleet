@@ -6936,6 +6936,23 @@ body[data-work="collapsed"] .work-list { display: none; }
   background: var(--dsw-alias-accent-wash); border: 1px solid var(--dsw-alias-accent);
 }
 .dag-idle { margin-top: 8px; }
+/* The files instrument: a file's text with its lines, its blame, and
+   the diff's hunks. */
+.history-code {
+  margin: 8px 0 0; padding: 8px 10px; overflow-x: auto;
+  background: var(--dsw-alias-surface-raised); border-radius: 8px;
+  font-family: var(--font-mono); font-size: 11px; line-height: 1.5;
+  white-space: pre; color: var(--dsw-alias-ink);
+}
+.history-blame-text { font-family: var(--font-mono); font-size: 11px; white-space: pre-wrap; }
+.history-diff { margin-top: 8px; }
+.history-diff-line {
+  font-family: var(--font-mono); font-size: 11px; line-height: 1.5;
+  white-space: pre-wrap; padding: 0 6px;
+}
+.history-diff-add { background: color-mix(in srgb, var(--dsw-alias-ok) 12%, transparent); }
+.history-diff-del { background: color-mix(in srgb, var(--dsw-alias-down) 12%, transparent); }
+.history-diff-ctx { color: var(--dsw-alias-ink-secondary); }
 .dag-truncated { margin: 6px 0 0; color: var(--dsw-alias-warn); font-size: 11px; }
 .dag-empty { fill: var(--dsw-alias-ink-tertiary); font-size: 10px; }
 

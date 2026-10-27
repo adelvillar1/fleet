@@ -290,6 +290,28 @@ async fn serve_connection(
             let since = (!since.is_empty()).then_some(since);
             write_reply(&mut stream, api(200, bridge.workspace_calls(since).await)).await
         }
+        ("GET", "/api/workspace-history/file") => {
+            let ref_ = decode_query(&request.query, "ref");
+            let path = decode_query(&request.query, "path");
+            let mode = decode_query(&request.query, "mode");
+            let from = decode_query(&request.query, "from");
+            let from = (!from.is_empty()).then_some(from);
+            let to = decode_query(&request.query, "to");
+            let to = (!to.is_empty()).then_some(to);
+            let page = decode_query(&request.query, "page")
+                .parse::<u32>()
+                .unwrap_or(0);
+            write_reply(
+                &mut stream,
+                api(
+                    200,
+                    bridge
+                        .workspace_file(&ref_, &path, &mode, from, to, page)
+                        .await,
+                ),
+            )
+            .await
+        }
         ("GET", "/api/workspace-history/files") => {
             let branch = decode_query(&request.query, "branch");
             let path = decode_query(&request.query, "path");

@@ -306,6 +306,14 @@ function boot(options) {
         }),
       });
     }
+    if (pathOnly === '/api/workspace-history/file') {
+      return Promise.resolve({
+        status: 200,
+        json: () => Promise.resolve(documents['workspace-history/file'] || {
+          type: 'workspace-file', mode: 'text', refused: [], note: null,
+        }),
+      });
+    }
     if (pathOnly === '/api/workspace-history/files') {
       return Promise.resolve({
         status: 200,
@@ -2103,10 +2111,88 @@ async function theWorkspaceHistorySectionDrawsTheTreeItRead() {
   check('traces off is named, never read as no activity',
     quiet.rows('.board-note').some((n) => /traces are off/.test(n.textContent)),
     quiet.rows('.board-note').map((n) => n.textContent.slice(0, 60)).join(' | '));
-  // The Files pane's tabs: every branch, and the where line names the read.
+  // The Files pane: every branch among its tabs, and the four modes.
   const tabs = page.rows('.board-tab').map((t) => t.textContent.trim());
   check('the files pane offers every branch',
-    tabs.length === 4 && tabs.includes('main'), tabs.join(' | '));
+    ['main', 'fleet-child-20261026t010000z-abc123'].every((n) => tabs.includes(n)) &&
+      tabs.length === 8, tabs.join(' | '));
+  check('the files pane offers the four modes',
+    ['text', 'blame', 'revisions', 'diff'].every((n) => tabs.includes(n)),
+    tabs.join(' | '));
+  // The files instrument: the four modes read and render — text with
+  // its line numbers and window buttons, blame with its per-line
+  // commits, revisions with their changes, and a diff's changed set.
+  const instrument = boot({
+    hash: '#/workspace-history',
+    documents: {
+      'workspace-history': doc,
+      'workspace-history/files': {
+        type: 'workspace-files', branch: 'fleet-child-20261026t010000z-abc123', path: '/',
+        items: [
+          { name: 'notes.txt', type: 'file', size: 12 },
+          { name: 'src', type: 'directory' },
+        ],
+      },
+      'workspace-history/file': {
+        type: 'workspace-file', mode: 'text', ref: 'fleet-child-20261026t010000z-abc123',
+        path: '/notes.txt', size: 12, text: 'line one\nline two\n',
+        start_line: 1, end_line: 2, next_line: null, note: null, refused: [],
+      },
+    },
+  });
+  await flush();
+  instrument.open();
+  await flush();
+  check('the files pane lists the folder',
+    instrument.rows('.board-table td').some((n) => n.textContent === 'notes.txt'),
+    'the listing');
+  // Click a file: the text instrument reads and renders its lines.
+  const fileLink = instrument.rows('.board-table button.link')
+    .find((b) => b.textContent === 'notes.txt');
+  check('the listing offers the file', !!fileLink, String(!!fileLink));
+  if (fileLink) {
+    fileLink.fire('click', {});
+    await flush();
+    const code = instrument.rows('.history-code').map((n) => n.textContent).join('\n');
+    check('the text mode renders the file with its line numbers',
+      /1  line one/.test(code) && /2  line two/.test(code), code.slice(0, 120));
+  }
+  // Blame: every line with the commit that last changed it.
+  const blamed = boot({
+    hash: '#/workspace-history',
+    documents: {
+      'workspace-history': doc,
+      'workspace-history/files': {
+        type: 'workspace-files', branch: 'fleet-child-20261026t010000z-abc123', path: '/',
+        items: [{ name: 'notes.txt', type: 'file' }],
+      },
+      'workspace-history/file': {
+        type: 'workspace-file', mode: 'blame', ref: 'fleet-child-20261026t010000z-abc123', path: '/notes.txt',
+        lines: [
+          { n: 1, text: 'line one', commit: '12e968660147668df46ef623a1a28858b74736a2758ddaa5e51b19607d6210' },
+          { n: 2, text: 'line two', commit: '12e968660147668df46ef623a1a28858b74736a2758ddaa5e51b19607d6210' },
+        ], note: null, refused: [],
+      },
+    },
+  });
+  await flush();
+  blamed.open();
+  await flush();
+  // Open the file first — the file's instruments stand on an open
+  // file — then switch the mode.
+  const blameFile = blamed.rows('.board-table button.link')
+    .find((b) => b.textContent === 'notes.txt');
+  if (blameFile) blameFile.fire('click', {});
+  await flush();
+  const blameMode = blamed.rows('.board-tab').find((t) => t.textContent.trim() === 'blame');
+  check('the blame mode is offered', !!blameMode, String(!!blameMode));
+  if (blameMode) {
+    blameMode.fire('click', {});
+    await flush();
+    const text = blamed.rows('.board-card').map((c) => c.textContent).join(' ');
+        check('the blame mode names the commit that last changed the line',
+      /line one/.test(text) && /12e96866014/.test(text), text.slice(0, 200));
+  }
   // The truncation, named where the tree would be.
   const cut = boot({
     hash: '#/workspace-history',
