@@ -1,7 +1,7 @@
 ---
 status: active
 created: 2026-10-19
-updated: 2026-10-25
+updated: 2026-10-26
 slug: sys1-extraction-leg
 ---
 
@@ -218,6 +218,17 @@ Per increment:
 - E6 is verified live against a fetched page, the raw path unchanged.
 
 ## E0 status — blocked on credentials, harness committed (2026-10-25; SUPERSEDED the same day by the re-point below)
+
+**Measured 2026-10-26** (`scripts/extract-probe.sh ~/.fleet/.env`): locate
+200 in **1.26 s** (fastino/gliner2.5-multi-v1 entities), verify 200 in
+**0.57 s** (fastino/glide on /v1/systemone), all four fields answered —
+`invoice_id` @0.98, `total_due` @0.94, `due_date` @0.99, `net_terms` @0.94
+(verified). The captured shapes (`tmp/extract-probe/`, never committed)
+reconcile against the client exactly: entities keyed `entities.{field}`
+with `{text, confidence, start, end}`, verify keyed `answers.{name}` with
+`type/noul/confidence`, `p_true` reads `noul` first — no delta the stub
+tests left open. E0-C1/C2/C3 **met**, recorded in the same turn the
+measurement ran.
 
 The wire contract is documented and reconciled from the announcement
 and the Workers AI REST docs: POST
