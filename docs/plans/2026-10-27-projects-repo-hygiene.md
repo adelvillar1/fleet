@@ -62,6 +62,53 @@ never deleted; `generated/`'s lesson — check what a directory is
 before judging it dead — is why the sweep list is closed, not a
 pattern match.
 
+## Baseline — measured 2026-10-27 (C0)
+
+```
+REPO                        TOTAL       GIT  ARTIFACTS  LASTCOMM  CHURN  ARTIFACT-DIRS
+TTESS                    1790.0M      37M   1675.5M  2026-09-28     9   node_modules(869M) .next(807M)
+agnostic-router-kit       583.3M      16M      0.0M  2026-10-24     7  
+blend1                     31.1M       1M     14.4M  2026-10-24     1   .venv(14M)
+catan                     304.4M       9M    263.3M  2026-09-12     5   node_modules(264M)
+codebuddy2openai           24.4M       0M     23.3M  2026-06-19     3   .venv(24M)
+commissiontracker        3213.3M       5M   3197.7M  2026-09-21     7   node_modules(1.2G) .next(2.0G) out(3.4M)
+cruiserintelligence      2119.9M       0M      0.0M  2026-05-29     6  
+cruisingintelligence     9313.3M    1652M   2907.7M  2026-09-22    30   node_modules(2.1G) .next(749M)
+deepseek-harness         2837.7M     301M   2102.2M  2026-10-13     4   node_modules(2.0G) coverage(61M)
+design-canvas            2116.6M       5M   2053.3M  2026-10-26     8   node_modules(874M) .next(1.2G)
+dev-decisions              12.2M       5M      0.0M  2026-10-14     2  
+dnd-vtt                  1631.1M     364M    459.9M  2026-09-21     6   node_modules(459M)
+elo-scenario-lab         2813.3M       6M   1576.6M  2026-09-12     8   node_modules(743M) .cache(115M) .venv(335M) venv(383M)
+fleet-remote             7925.5M       0M   7915.5M  no-git            target(7.7G)
+fleet                   14857.7M     119M  14719.9M  2026-10-27    23   target(14G) tmp(20M)
+fuiz                        0.0M       0M      0.0M  no-git           
+gen1                       98.8M       0M     93.3M  2026-10-09     2   .venv(94M)
+helmsman                  306.6M       7M    290.0M  2026-10-09     2   node_modules(290M)
+jobhound-reference        128.8M       0M      0.0M  no-git           
+jobhound                 1117.7M       7M      0.0M  2026-10-26     0  
+keydock                     0.0M       0M      0.0M  no-git           
+llmtests                  395.5M       0M      0.0M  no-git           
+mahjong-vtt              1396.6M     262M    584.4M  2026-10-26    35   node_modules(584M)
+metaskillsdb                0.0M       0M      0.0M  no-git           
+openship                   95.5M       0M      0.0M  no-git           
+pampa-wineclub            569.9M      22M    323.3M  2026-10-22     2   node_modules(323M)
+pmocockpit               1081.1M       7M   1067.7M  2026-09-12     2   node_modules(872M) .next(195M)
+riderscout-saas-migrated    324.4M      12M      0.0M  2026-09-12    10  
+sdm1                       54.4M       1M     50.0M  2026-10-09     2   .venv(51M)
+second-brain               66.6M       2M     32.2M  2026-10-09     8   .venv(32M)
+sem1                      898.8M       1M      0.0M  2026-10-24     4  
+simcityclone             2461.1M     819M    726.6M  2026-08-26     1   node_modules(164M) dist(562M)
+synapticweb-tmp             0.0M       0M      0.0M  2026-08-06    20  
+synapticweb               590.0M       4M    582.2M  2026-10-26     2   node_modules(441M) .next(142M)
+sys1                       43.3M       2M     31.1M  2026-10-24    10   .venv(32M)
+three-lanes               270.0M       0M      0.0M  no-git           
+threeui                   432.2M      52M    237.7M  2026-08-23     1   node_modules(153M) dist(85M)
+zcode-router-kit           20.0M      10M      0.0M  2026-10-14     3
+```
+
+(The columns: total du; `.git` du; regenerable-artifact du; last
+commit; `git status --porcelain` lines; the artifact dirs over 1 MB.)
+
 ## Approach
 
 Three legs, in dependency order.
