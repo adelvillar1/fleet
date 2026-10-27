@@ -2193,6 +2193,53 @@ async function theWorkspaceHistorySectionDrawsTheTreeItRead() {
         check('the blame mode names the commit that last changed the line',
       /line one/.test(text) && /12e96866014/.test(text), text.slice(0, 200));
   }
+  // The Store's accounting: the substrate's own rows — on disk, main's
+  // latest, every snapshot, unique, compressed, the metadata subset,
+  // and the SQLite overhead named separately — then the Init record
+  // and the per-commit costs.
+  const storeCard = page.rows('.board-card')
+    .find((c) => c.textContent.startsWith('the store'));
+  const storeText = storeCard ? storeCard.textContent : '';
+  check('the store names every row of the accounting',
+    ['on disk', 'main\u2019s latest, raw', 'every snapshot, raw', 'unique',
+     'compressed', 'of which metadata', 'SQLite overhead']
+      .every((name) => storeText.includes(name)), storeText.slice(0, 300));
+  check('the store computes the SQLite overhead from the bytes',
+    storeText.includes('461 kB'), storeText.slice(0, 500));
+  check('the store names the Init record', /init: 448 files/.test(storeText),
+    storeText.slice(0, 500));
+  check('the store names the per-commit cost', /per commit: 836 B average/.test(storeText),
+    storeText.slice(0, 500));
+  check('the store draws the commit and names how it was made',
+    /via fs/.test(storeText), storeText.slice(-300));
+  check('the store computes its ratios from the bytes', /2\.99\u00d7 dedupe/.test(storeText),
+    storeText.slice(0, 500));
+  // A store with no Init record says so; a read without the figures
+  // says so too — neither invents.
+  const noInit = boot({
+    hash: '#/workspace-history',
+    documents: {
+      'workspace-history': Object.assign({}, doc, {
+        storage: Object.assign({}, doc.storage, { init: null }),
+      }),
+    },
+  });
+  await flush();
+  noInit.open();
+  await flush();
+  check('a store with no Init record names the absence',
+    noInit.rows('.board-note').some((n) => /no Init record/.test(n.textContent)),
+    noInit.rows('.board-note').map((n) => n.textContent.slice(0, 50)).join(' | '));
+  const noFigures = boot({
+    hash: '#/workspace-history',
+    documents: { 'workspace-history': Object.assign({}, doc, { storage: null }) },
+  });
+  await flush();
+  noFigures.open();
+  await flush();
+  check('a read without figures names its absence',
+    noFigures.rows('.board-empty').some((n) => /figures have not landed/.test(n.textContent)),
+    noFigures.rows('.board-empty').map((n) => n.textContent.slice(0, 40)).join(' | '));
   // The truncation, named where the tree would be.
   const cut = boot({
     hash: '#/workspace-history',

@@ -10468,12 +10468,20 @@
       .catch(function () { });
   }
 
-  // The Storage pane: the Store's own figures, and the layers the
-  // content-addressed tree is made of.
+  // The Store's accounting, in the substrate's own terms: what it
+  // holds on disk, what main's head would cost as plain files, the
+  // whole history's raw size, the unique content, its packed form, the
+  // metadata subset (a SUBSET of the packed bytes — never added), and
+  // the SQLite overhead named separately (file − free − stored). The
+  // ratios are computed from the bytes, never trusted as strings. The
+  // Init record says what the import carried. Per-commit costs come
+  // from the history's own commits — average, largest, and one bar
+  // per commit oldest→newest, coloured by how it was made.
   function historyStorage(read) {
     var card = boardCard(12, 'the store', null,
-      'What the substrate holds: the logical size of the tree, the canonical form it ' +
-      'commits, and what the Store actually keeps after dedupe and compression.');
+      'What the substrate holds, in its own terms: on disk, main\u2019s latest as plain ' +
+      'files, every snapshot raw, the unique content, its packed form — and what each ' +
+      'commit cost.');
     var storage = read.storage;
     if (!storage) {
       card.appendChild(node('p', 'board-empty',
@@ -10481,18 +10489,26 @@
         'one route to the Store\u2019s accounting.'));
       return card;
     }
-    var logical = Math.max(1, storage.logical);
+    var layers = (read.layers || []).slice(); // newest first
+    var latest = layers.length ? layers[0].logical : 0;
+    var overhead = storage.file - storage.free - storage.stored;
+    var rows = [
+      ['on disk', storage.file, 'what the Store\u2019s database occupies'],
+      ['main\u2019s latest, raw', latest, 'one plain copy of main\u2019s head'],
+      ['every snapshot, raw', storage.logical, 'the whole history as plain files'],
+      ['unique', storage.canonical, 'each distinct file and chunk once'],
+      ['compressed', storage.stored, 'that content packed'],
+      ['of which metadata', storage.metadata, 'a subset of the packed bytes \u2014 not additional'],
+      ['SQLite overhead', overhead, 'file \u2212 free \u2212 stored, named separately'],
+    ];
+    var widest = rows.reduce(function (most, row) { return Math.max(most, row[1]); }, 1);
     var bars = node('div', 'figure-bars');
-    [
-      ['logical', storage.logical, 'the tree as it stands'],
-      ['canonical', storage.canonical, 'the committed form'],
-      ['stored', storage.stored, 'what the Store keeps']
-    ].forEach(function (row) {
+    rows.forEach(function (row) {
       var line = node('div', 'figure-bar');
       line.appendChild(node('span', 'figure-bar-name', row[0]));
       var track = node('span', 'figure-bar-track');
       var fill = node('span', 'figure-bar-fill');
-      fill.style.width = Math.max(2, Math.round((row[1] / logical) * 100)) + '%';
+      fill.style.width = Math.max(2, Math.round((row[1] / widest) * 100)) + '%';
       track.appendChild(fill);
       line.appendChild(track);
       line.appendChild(node('span', 'figure-bar-value', bytes(row[1])));
@@ -10500,17 +10516,81 @@
       bars.appendChild(line);
     });
     card.appendChild(bars);
+    // The ratios, computed from the byte figures the answer carried.
+    var dedupe = storage.canonical > 0 ? storage.logical / storage.canonical : null;
+    var compression = storage.stored > 0 ? storage.canonical / storage.stored : null;
     card.appendChild(node('p', 'board-note',
-      'dedupe ' + storage.dedupe + '\u00d7 \u00b7 compression ' + storage.compression +
-      '\u00d7 \u2014 the canonical tree shared between branches is kept once.'));
-    var layers = read.layers || [];
+      (dedupe != null ? Math.round(dedupe * 100) / 100 + '\u00d7 dedupe' : 'dedupe \u2014') +
+      ' \u00b7 ' +
+      (compression != null ? Math.round(compression * 100) / 100 + '\u00d7 compression' :
+        'compression \u2014') +
+      ' \u2014 the canonical tree shared between branches is kept once.'));
+    // The Init record: what the import carried and what it cost, or
+    // the named absence of it.
+    if (storage.init) {
+      card.appendChild(node('p', 'board-note',
+        'init: ' + storage.init.files + ' files \u00b7 ' + bytes(storage.init.bytes) +
+        ' imported from ' + storage.init.entries + ' entries in ' + storage.init.millis +
+        ' ms.'));
+    } else {
+      card.appendChild(node('p', 'board-note',
+        'the Store carries no Init record (it was built before Init recorded one).'));
+    }
+    // The per-commit costs: the history's own commits carry what each
+    // Save added. `store.branch.list_commit_storage` refuses main —
+    // main is a Layer chain — so main's per-commit figures ride the
+    // layers, and the bars here are every commit the read carried.
+    var commits = (read.commits || []).slice().sort(function (a, b) {
+      return (a.time || 0) - (b.time || 0);
+    });
+    var costed = commits.filter(function (commit) { return commit.new_stored > 0; });
+    if (costed.length) {
+      var sum = costed.reduce(function (total, commit) { return total + commit.new_stored; }, 0);
+      var largest = costed.reduce(function (most, commit) {
+        return Math.max(most, commit.new_stored);
+      }, 0);
+      card.appendChild(node('p', 'board-note',
+        'per commit: ' + bytes(Math.round(sum / costed.length)) + ' average \u00b7 ' +
+        bytes(largest) + ' largest \u2014 from the ' + costed.length +
+        (costed.length === 1 ? ' commit' : ' commits') + ' the read carried.'));
+      var tall = Math.max.apply(null, costed.map(function (commit) { return commit.new_stored; }));
+      var chart = node('div', 'figure-bars');
+      costed.forEach(function (commit) {
+        var line = node('div', 'figure-bar');
+        line.appendChild(node('span', 'figure-bar-name',
+          clip(commit.id, 8)));
+        var track = node('span', 'figure-bar-track');
+        var fill = node('span', 'figure-bar-fill');
+        fill.style.width = Math.max(2, Math.round((commit.new_stored / tall) * 100)) + '%';
+        fill.dataset.via = commit.via || '?';
+        track.appendChild(fill);
+        line.appendChild(track);
+        line.appendChild(node('span', 'figure-bar-value', bytes(commit.new_stored)));
+        line.appendChild(node('span', 'figure-bar-note',
+          (commit.message || '(no message)') + ' \u00b7 via ' + (commit.via || '?')));
+        line.title = 'commit ' + commit.id + '\n' + bytes(commit.logical) + ' tree \u00b7 +' +
+          bytes(commit.new_canonical) + ' canonical \u00b7 +' + bytes(commit.new_stored) +
+          ' stored';
+        chart.appendChild(line);
+      });
+      card.appendChild(chart);
+    } else {
+      card.appendChild(node('p', 'board-note',
+        'no commit\u2019s own cost was carried in this read \u2014 per-commit figures ride the ' +
+        'commits, and main\u2019s layers carry theirs.'));
+    }
+    // The layers as the store's own accounting: what each publish cost.
     if (layers.length) {
       var table = node('table', 'board-table');
       layers.forEach(function (layer) {
         var line = node('tr');
-        line.appendChild(node('td', null, layer.id));
+        line.appendChild(node('td', null, layer.id.slice(0, 12)));
         line.appendChild(node('td', null, bytes(layer.logical)));
-        line.appendChild(node('td', null, layer.parent ? layer.parent : 'the root'));
+        line.appendChild(node('td', null, layer.parent ? layer.parent.slice(0, 12) : 'the root'));
+        line.appendChild(node('td', null,
+          layer.source_branch ? layer.source_branch.replace(/^merge-/, '') : 'the import'));
+        line.appendChild(node('td', null,
+          layer.overwrote_count ? layer.overwrote_count + ' replaced' : ''));
         table.appendChild(line);
       });
       card.appendChild(table);
@@ -10518,8 +10598,6 @@
     return card;
   }
 
-  // The week grid: one row per series, one cell per week, the cell's
-  // intensity the week's value against the row's own maximum.
   function weekGrid(series, weeks) {
     var wrap = node('div', 'week-grid');
     series.forEach(function (row) {

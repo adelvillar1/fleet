@@ -6953,6 +6953,11 @@ body[data-work="collapsed"] .work-list { display: none; }
 .history-diff-add { background: color-mix(in srgb, var(--dsw-alias-ok) 12%, transparent); }
 .history-diff-del { background: color-mix(in srgb, var(--dsw-alias-down) 12%, transparent); }
 .history-diff-ctx { color: var(--dsw-alias-ink-secondary); }
+/* The per-commit histogram's legend: the bar's hue is how the commit
+   was made. */
+.figure-bar-fill[data-via="fs"] { background: var(--dsw-alias-accent); }
+.figure-bar-fill[data-via="merge"] { background: var(--dsw-alias-ok); }
+.figure-bar-fill[data-via="workspace"] { background: var(--dsw-alias-warn); }
 .dag-truncated { margin: 6px 0 0; color: var(--dsw-alias-warn); font-size: 11px; }
 .dag-empty { fill: var(--dsw-alias-ink-tertiary); font-size: 10px; }
 

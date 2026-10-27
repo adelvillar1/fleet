@@ -265,7 +265,7 @@ named absence, never an empty lie.
       **Pinned:** a fixture ref/path answers its text, blame and
       revisions; a path not in the tree is refused by name; each cap
       reports that it cut.
-- [ ] **C4 — the storage accounting.**
+- [x] **C4 — the storage accounting. Landed 2026-10-26.**
       The pane prints the substrate's own terms, and the arithmetic is
       the substrate doc's, not an invention:
       **on disk = `file`**; **main's latest, raw = the newest layer's
@@ -440,6 +440,29 @@ name · `docs/features/workspace-history.md`,
 ` trap
   again, and the `printf` fix is in place) and two face cases. One
   route test asserts the folder-absence rides the new route.
+
+- **C4 — landed 2026-10-26.** The pane prints the substrate's own
+  arithmetic: **on disk = `file`** (the database's committed pages),
+  **main's latest, raw** = the newest layer's `logical`, **every
+  snapshot, raw** = `logical`, **unique** = `canonical`,
+  **compressed** = `stored`, **of which metadata** = `metadata` (a
+  subset, labelled as such — never added), **SQLite overhead** =
+  `file − free − stored` named separately. The ratios are COMPUTED from
+  the byte figures (dedupe = logical/canonical, compression =
+  canonical/stored), never trusted as the strings one route returns —
+  2.99× and 2.11× on the live figures. The Init record is named with
+  its entries/files/bytes/millis; `init: null` says the Store carries
+  no record rather than inventing one. Per-commit costs come from the
+  history's OWN commits (`newStored`) — average, largest, one bar per
+  commit oldest→newest coloured by `via` (fs/merge/workspace tones
+  riding the semantic tokens) — because `list_commit_storage` refuses
+  main by name (a Layer chain), and the pane says the figures ride the
+  commits when none carried. The layer table shows each publish's
+  logical size, its parent, the branch it came from and any
+  `overwrote_count`. Pinned by the face case against the live-shaped
+  fixture: seven rows by name, the overhead computing to 461 kB
+  (471,628), the Init line, the per-commit cost, the ratios, and the
+  two named absences (no Init record; no figures).
 
 ## Verification
 
