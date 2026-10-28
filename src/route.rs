@@ -2810,9 +2810,10 @@ async fn prepare_walk(
         // reason, so a later reader sees why the walk was ordered as it
         // was rather than having to infer it.
         decision.reason.push_str(&format!(
-            "; demoted {} ({} consecutive failures today)",
+            "; demoted {} ({} consecutive failures in the last {} days)",
             demoted.join(", "),
-            calib::DEMOTION_THRESHOLD
+            calib::DEMOTION_THRESHOLD,
+            calib::DEMOTION_WINDOW_DAYS
         ));
     }
     // The calibration's ride-back: the day's judged rows name the
@@ -4341,6 +4342,99 @@ mod tests {
             .map(|(provider, _)| provider.as_str())
             .collect();
         assert_eq!(ids, vec!["deepseek", "zai-coding-plan", "xiaomi-mimo"]);
+    }
+
+    /// The note rides a real walk, not a copied format string: the
+    /// demotion rows are planted in the run's own home stream, the
+    /// router prepares through its full path (`prepare`), and the
+    /// decision's reason must name the window the demotion actually
+    /// reads (KI-342) — provable only because the scratch home's own
+    /// stream is the one that resolved (KI-341). The verdict rides the
+    /// router's own cache (KI-230), so no lane spawns for this test.
+    #[tokio::test]
+    async fn the_walks_note_names_the_window_the_demotion_reads() {
+        let home = std::env::temp_dir().join(format!(
+            "fleet-route-window-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+
+        let mut cache = crate::route_cache::Cache::load(&home);
+        cache.put(
+            calib::hash16("route through the router"),
+            crate::route_cache::Verdict {
+                workload: "hard".to_string(),
+                confidence: 0.9,
+                verdict: "pass".to_string(),
+                execution: None,
+            },
+        );
+        let judge_spec = lanes::spec_for(JUDGE_LANE).expect("the vendored sys1 lane resolves");
+        cache.flush(&crate::route_cache::Cache::key_for(&judge_spec));
+        let mut specs = HashMap::new();
+        specs.insert(JUDGE_LANE.to_string(), judge_spec);
+
+        // The demotion rows, planted as the stream writes them, in the
+        // home this run resolves — the failover tail with only failed
+        // attempts behind it, today.
+        let root = calib::resolve_root(&home, std::env::var("HOME").ok().as_deref());
+        let day = calib::today();
+        let day_file = calib::day_path(&root, &day);
+        std::fs::create_dir_all(day_file.parent().unwrap()).unwrap();
+        let rows: Vec<String> = (0..calib::DEMOTION_THRESHOLD)
+            .map(|index| {
+                json!({
+                    "op": calib::OP_ROUTE,
+                    "ts": format!("{day}T00:0{index}:00Z"),
+                    "provider": "deepseek",
+                    "how": "judged",
+                    "workload": "quick",
+                    "reason": "the lane judged the workload",
+                    "model": "deepseek-flash",
+                    "providers_used": ["deepseek"],
+                    "attempts": [{"provider": "deepseek", "outcome": "failed"}],
+                    "input_chars": 4,
+                    "input_hash": "0123456789abcdef",
+                    "latency_ms": 500,
+                    "judged_from": "fresh",
+                })
+                .to_string()
+            })
+            .collect();
+        std::fs::write(&day_file, format!("{}\n", rows.join("\n"))).unwrap();
+
+        let prepared = prepare(&home, &HashMap::new(), "route through the router", &specs)
+            .await
+            .unwrap();
+
+        // C1: the scratch home's own stream is the one that resolved —
+        // the note below can only come from the rows planted there.
+        assert_eq!(prepared.calib.root(), home.join("logs"));
+        // C2: the note names the window, never the day.
+        assert!(
+            prepared
+                .decision
+                .reason
+                .ends_with("; demoted deepseek (3 consecutive failures in the last 3 days)"),
+            "{}",
+            prepared.decision.reason
+        );
+        // The demoted tail stays last; the walk still carries it.
+        assert_eq!(
+            prepared
+                .decision
+                .order
+                .last()
+                .map(|(provider, _)| provider.as_str()),
+            Some("deepseek")
+        );
+
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     /// One resolved candidate for the reorder tests.

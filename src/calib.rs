@@ -1044,11 +1044,14 @@ pub fn devdec_log_root(user_home: Option<&str>) -> Option<PathBuf> {
 ///
 /// 1. `<FLEET_HOME>/config.json`'s `calib.log_root` — an explicit override,
 ///    for a machine that keeps its dev-decisions tree elsewhere.
-/// 2. dev-decisions' own convention, [`devdec_log_root`]. This is the
-///    default because the point of the stream is that the external `devdec`
-///    CLI reads Fleet's rows beside its own.
-/// 3. `<FLEET_HOME>/logs` — the fallback when no user home is known, so the
-///    root always resolves.
+/// 2. dev-decisions' own convention, [`devdec_log_root`] — but only when
+///    `home` **is** the user's fleet home (KI-341: the convention names the
+///    user's own stream, and a scratch test home falling through to it
+///    wrote 237 test rows into the owner's real stream over three days).
+///    The comparison is canonical, so a symlinked spelling of the same
+///    home still matches.
+/// 3. `<home>/logs` — the fallback every other home takes, so the root
+///    always resolves.
 ///
 /// An override that cannot be created is not a resolution failure: the
 /// writer counts the append failure and the run continues (see
@@ -1057,7 +1060,30 @@ pub fn resolve_root(home: &Path, user_home: Option<&str>) -> PathBuf {
     if let Some(root) = crate::route::calib_log_root(home) {
         return root;
     }
-    devdec_log_root(user_home).unwrap_or_else(|| home.join("logs"))
+    if is_the_user_fleet_home(home, user_home) {
+        if let Some(root) = devdec_log_root(user_home) {
+            return root;
+        }
+    }
+    home.join("logs")
+}
+
+/// Whether `home` is the user's own fleet home — the one home allowed to
+/// fall through to the user's dev-decisions stream. Canonical where both
+/// sides resolve; literal where either does not, because a path that does
+/// not exist yet is still that path.
+fn is_the_user_fleet_home(home: &Path, user_home: Option<&str>) -> bool {
+    let Some(user_home) = user_home else {
+        return false;
+    };
+    let fleet_home = Path::new(user_home).join(".fleet");
+    match (
+        std::fs::canonicalize(home),
+        std::fs::canonicalize(&fleet_home),
+    ) {
+        (Ok(home), Ok(fleet_home)) => home == fleet_home,
+        _ => home == fleet_home,
+    }
 }
 
 /// One day's file under `root`: `<root>/<YYYY>/<MM>/<DD>/events.jsonl`, the
@@ -3661,6 +3687,34 @@ mod tests {
         // No config.json in the scratch home, and no user home: the
         // FLEET_HOME fallback applies.
         assert_eq!(resolve_root(home, None), Path::new("/fleet/logs"));
+    }
+
+    #[test]
+    fn the_devdec_fall_through_is_the_user_fleet_homes_alone() {
+        // KI-341's gate: the user's own fleet home reaches the user's
+        // dev-decisions stream, a foreign home keeps its rows beside
+        // itself, and no user home at all still resolves somewhere.
+        let base = scratch("resolve-identity");
+        let user_home = base.join("user");
+        let fleet = user_home.join(".fleet");
+        std::fs::create_dir_all(&fleet).unwrap();
+        let devdec = devdec_log_root(user_home.to_str()).unwrap();
+
+        assert_eq!(resolve_root(&fleet, user_home.to_str()), devdec);
+
+        #[cfg(unix)]
+        {
+            let link = base.join("fleet-link");
+            std::os::unix::fs::symlink(&fleet, &link).unwrap();
+            assert_eq!(resolve_root(&link, user_home.to_str()), devdec);
+        }
+
+        let foreign = base.join("scratch-home");
+        std::fs::create_dir_all(&foreign).unwrap();
+        assert_eq!(resolve_root(&foreign, user_home.to_str()), foreign.join("logs"));
+        assert_eq!(resolve_root(&foreign, None), foreign.join("logs"));
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     // --- the queue ---
