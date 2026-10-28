@@ -516,7 +516,7 @@ _VISION_QC = Task(
 # registry for them to name, so the router keeps topology to workload +
 # execution until it does.
 
-ROUTE_WORKLOAD_LABELS = ["quick", "standard_code", "hard", "prose", "deep_context"]
+ROUTE_WORKLOAD_LABELS = ["quick", "standard_code", "frontend", "hard", "prose", "deep_context"]
 ROUTE_EXECUTION_LABELS = ["single", "mixture", "swarm"]
 
 _ROUTE = Task(
@@ -537,6 +537,7 @@ _ROUTE = Task(
             descriptions={
                 "quick": "Small self-contained work: quick answers, tiny edits, formatting, or simple extraction from short text",
                 "standard_code": "Routine software work: writing or modifying features, normal debugging, running tools",
+                "frontend": "Frontend and UX/UI work: building or changing what the user sees and interacts with — components, styling, layout, visual states, responsiveness, design-system consistency, accessibility. The deliverable is interface surface, judged by how it reads and behaves for a user, not only by what the code does",
                 "hard": "Hard engineering: architecture and design, intricate multi-step reasoning, large refactors, subtle bugs",
                 "prose": "Writing and synthesis: documentation, prose, summaries, explanations, reports",
                 "deep_context": "Broad analysis of large material: connecting many files or working through very long documents",
@@ -602,7 +603,7 @@ def heads_for(task: Task | str, provider: str) -> list[Head]:
     t = _TASKS.get(task) if isinstance(task, str) else task
     if t is None:
         raise KeyError(f"unknown task {task!r}; known: {sorted(_TASKS)}")
-    if provider in ("drex", "glide", "julia", "liquid", "scaledown", "typellm") and provider not in t.provider_heads:
+    if provider in ("drex", "glide", "julia", "liquid", "scaledown", "typellm", "clef") and provider not in t.provider_heads:
         provider = "jev"
     return t.provider_heads.get(provider, t.heads)
 

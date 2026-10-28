@@ -1,13 +1,15 @@
 # The surfaces: what each is for, and why
 
 A read of the browser face as a user meets it, taken live on
-2026-10-21 against every destination in the rail. This is the what and
+2026-10-21 against every destination in the rail — eleven then;
+**workspace history** joined the knowledge group when the LayerFS
+instrument landed, making twelve. This is the what and
 the why of each surface — the terms the README and the functional
 specification should speak. The how stays in the code.
 
 ## The shape every surface shares
 
-Eleven destinations in four groups — **work** (conversation, sessions),
+Twelve destinations in four groups — **work** (conversation, sessions),
 **intelligence** (router, delegation), **knowledge** (memory, skills,
 second brain), **system** (bots, vault, settings, calibration) — one
 flat level, reachable from the rail or the ⌘K palette by name. Every

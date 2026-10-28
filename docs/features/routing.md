@@ -43,10 +43,15 @@ without ever overriding sys1's judgment.
 ## Selection
 
 Before a run, `route::select` asks `sys1_classify` (task `route`) over the
-slice-4 MCP client for a workload verdict (`quick`, `standard_code`, `hard`,
-`prose`, `deep_context`) and maps it to a candidate. Every workload's own
-candidate list is the walk, and stepfun heads five of the six in the
-compiled-in table. An unusable, absent, or
+slice-4 MCP client for a workload verdict (`quick`, `standard_code`,
+`frontend`, `hard`, `prose`, `deep_context`) and maps it to a candidate.
+Every workload's own
+candidate list is the walk. `frontend` — user-facing interface surface:
+components, styling, layout, visual states, accessibility — routes to
+**deepseek-flash** first (the API reserve's one ruled first-choice; its
+failover-tail role everywhere else is unchanged), `zai-coding-plan/GLM-5.3-Flash`
+second, `ollama-cloud/glm-5.3-flash` third — three hosts for one walk.
+An unusable, absent, or
 failed verdict — or a mapped candidate with no key — falls back to the
 declared HEAD and says so. Routing never blocks a run: sys1 that cannot
 launch or cannot judge is a fallback, not an error. A configured `pin`

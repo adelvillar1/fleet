@@ -35,10 +35,18 @@ every non-trivial piece of work is a plan with acceptance criteria, and
 the plan is the source of truth for whether it is done.
 
 **The solution.** A language model is one component, not the harness.
-sys1 judges what the work says; sdm1 scores what the work measures;
-sem1 indexes what the work looks like; gen1 renders it; blend1 composes
-all three so a cheap model's reasoning stands on computed facts rather
-than invented ones. Hallucination is controlled by construction — closed
+Five specialized services do the work a model would only guess at, and
+the language model speaks last:
+
+| Lane | What it does | What it returns |
+|---|---|---|
+| **sys1** — judgment | classifies the work: which workload tier, which execution shape, is this diff risky, did the run land | a label from a closed set, with a confidence — it cannot invent a category |
+| **sdm1** — tabular | computes a number from rows: classification or regression over a table | a score with an interval — arithmetic is never generated |
+| **sem1** — embeddings | similarity and recall: which fact, which skill, which session means this | vectors in, vectors out — never verdicts |
+| **gen1** — media | renders images to a brief, and judges images against one | pixels, and a verdict on pixels |
+| **blend1** — composition | composes the three siblings under one grounded answer, with the language model speaking last | an answer whose reasoning stands on computed facts |
+
+Hallucination is controlled by construction — closed
 output spaces, confidence gates in the path rather than in the prompt, a
 generative leg that is bounded and validated before it ships, and
 outcomes that are graded before they may change behavior. That is what
@@ -68,8 +76,18 @@ named, not implied — see Sequencing in
   one, is [docs/architecture/surfaces.md](docs/architecture/surfaces.md).
 - **A router that owns its decisions** — the owner's declared chain,
   sys1-judged per task, failover by failure class, and deepseek-flash as
-  the tail every walk closes on. Nothing is hardcoded: the router
-  decides unless you pin, and `--model` is a pin resolved by name.
+  the tail every walk closes on. Work is judged into tiers — quick,
+  standard code, **frontend** (interface surface routes to
+  deepseek-flash first, GLM behind it across two more hosts), hard,
+  prose, deep context — and nothing is hardcoded: the router decides
+  unless you pin, and `--model` is a pin resolved by name.
+- **Sessions that end only by archive** — the work list shows what is
+  alive (`handed back`, `capped`, `working`), not what merely stopped;
+  archiving is the owner's verb, and archived sessions gather in one
+  collapsed group, restorable on demand.
+- **A working folder that is a default** — set it once; every chat
+  without its own choice works in it, and the face shows the folder the
+  run will use.
 - **Memory that reads and edits** — one markdown fact per file,
   recalled by meaning, with the corpus and its recall counts both
   inspectable.
@@ -92,8 +110,26 @@ The console, surface by surface — every destination a user lands on:
 | ![sessions](docs/images/surface-sessions.jpg) | ![delegation](docs/images/surface-delegation.jpg) |
 | ![memory](docs/images/surface-memory.jpg) | ![skills](docs/images/surface-skills.jpg) |
 | ![second brain](docs/images/surface-second-brain.jpg) | ![bots](docs/images/surface-bots.jpg) |
-| ![vault](docs/images/surface-vault.jpg) | ![settings](docs/images/surface-settings.jpg) |
-| ![calibration](docs/images/surface-calibration.jpg) | |
+| ![workspace history](docs/images/surface-workspace-history.jpg) | ![vault](docs/images/surface-vault.jpg) |
+| ![settings](docs/images/surface-settings.jpg) | ![calibration](docs/images/surface-calibration.jpg) |
+
+- **Collision-free delegation, on LayerFS** — each delegated child works
+  in its own writable workspace over one shared committed history, so
+  concurrent agents answer a named conflict instead of stepping on each
+  other's code. Fleet drives
+  [LayerFS](https://github.com/Ephemeral-AI-Lab/layerfs) (MIT) the way
+  it drives the vendored lanes — an external tool reached through its
+  `layerfs` command, with nothing of it vendored and no runtime entering
+  the binary. `fleet install` provisions the substrate as a standard
+  phase, and a folder's first delegation registers it with no manual
+  step; the merged child's work is applied home through a named
+  conflict path, never silently.
+- **The workspace history instrument** — the LayerFS tree read as a
+  surface: a band for every published layer, a lane for every branch at
+  its actual fork, a leaf per commit, a dashed stem where a publish
+  grafted work back, the substrate's live call feed, a file's
+  text/blame/revisions/diff, and the Store's own accounting — all from
+  one backend read that answers warm in under a quarter-second.
 
 ## What is next
 
@@ -101,24 +137,6 @@ Effort levels per workload (research done, plan not written); the
 `composed` workload's reachability by judgment; the bot-first phone
 shell; the cron corpus-refresh repair. Each is named with its reason in
 the technical document's Sequencing section.
-
-Collision-free delegation is built on
-[LayerFS](https://github.com/Ephemeral-AI-Lab/layerfs) (MIT): each
-delegated child works in its own writable workspace over one shared
-committed history, so concurrent agents answer a named conflict
-instead of stepping on each other's code, and the **workspace history**
-surface reads that tree as an instrument — a band for every published
-layer, a lane for every branch at its actual fork, a leaf per commit, a
-dashed stem where a publish grafted work back, the substrate's live
-call feed, a file's text/blame/revisions/diff, and the Store's own
-accounting — all from one backend read that answers warm in under a
-quarter-second. Fleet drives LayerFS
-the way it drives the vendored lanes — an external tool reached through
-its `layerfs` command, with nothing of it vendored and no runtime
-entering the binary. `fleet install` provisions the substrate as a
-standard phase, and a folder's first delegation registers it with no
-manual step. The contract is
-[docs/plans/2026-10-25-layerfs-delegated-workspaces.md](docs/plans/2026-10-25-layerfs-delegated-workspaces.md).
 
 ## Start here
 
@@ -145,7 +163,7 @@ harness's checkout.
 - [FUNCTIONAL-SPECIFICATIONS.md](FUNCTIONAL-SPECIFICATIONS.md) — what
   the product does, surface by surface, in the user's terms.
 - [docs/architecture/surfaces.md](docs/architecture/surfaces.md) · the
-  what and why of all eleven destinations.
+  what and why of all twelve destinations.
   [docs/architecture/lanes.md](docs/architecture/lanes.md) — the five-lane
   case.
 - `CLAUDE.md` — the house rules, the pointer index, and the session

@@ -31,8 +31,8 @@ renders it.* The language model is not in that sentence on purpose.
 ### Where the owner meets them
 
 sys1 is the most visible: it is the judge behind the router's workload
-verdicts (quick, standard code, hard, prose, deep context — and the
-chain each gets), behind the delegation graph's order, behind
+verdicts (quick, standard code, frontend, hard, prose, deep context — and
+the chain each gets), behind the delegation graph's order, behind
 `fleet judge` grading the day's routes and `fleet delegate` grading its
 delegations, and behind the Router board's "ask sys1 for a judgment."
 sem1 is behind memory's recall, the skills search, and the sessions

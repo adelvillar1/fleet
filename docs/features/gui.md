@@ -166,10 +166,18 @@ every visible `.tile`, `.badge`, `.rrow`, `.rank-row`, `.cal-cell`,
   address of the open row and survives a reload; `#/chat` is the
   new-work front door. Rows are grouped by what needs the owner
   (*needs you*, *working*, *background* closed behind one line that
-  names its run count, *earlier* per project), and the state words come
+  names its run count, *earlier* per project, and **archived** closed
+  behind one line of its own at the bottom), and the state words come
   from the bridge's derivation:
-  `needs-approval`, `paused`, `working`, `active`, `completed`,
-  `capped`, `stopped`, `interrupted`, `new`. Where there is no room for
+  `needs-approval`, `paused`, `working`, `active`, `handed back`,
+  `completed`, `capped`, `stopped`, `archived`, `interrupted`, `new`.
+  Sessions end only when the owner archives them: a run that stopped —
+  the model handed the conversation back, or the turn cap hit — reads
+  as open (`handed back`, `capped`), never as finished, and every row
+  carries an **archive** chip (an archived row's chip reads
+  **unarchive**). The conversation head carries the same verb for the
+  session it anchors. Archiving a run in flight is refused by name —
+  stop it first. Where there is no room for
   the column it overlays as a sheet, opened from the conversation's
   title or back control and closed by picking a row. The column folds
   too: one control in its head closes it to a 48px strip — the control

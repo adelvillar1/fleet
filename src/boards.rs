@@ -3685,6 +3685,7 @@ mod tests {
             vec![
                 "quick",
                 "standard_code",
+                "frontend",
                 "hard",
                 "prose",
                 "deep_context",
@@ -3960,16 +3961,17 @@ mod tests {
     #[test]
     fn the_payg_guard_names_the_reserve_and_what_may_serve() {
         // The reserve is payg: it may not serve unless the owner pinned it
-        // or a workload names it. No workload in the compiled-in table
-        // names deepseek, and nothing is pinned, so the guard says payg is
-        // off and names deepseek as the payg candidate.
+        // or a workload names it. The frontend workload names deepseek —
+        // the owner's 2026-10-27 ruling makes the reserve the FIRST choice
+        // for interface work only — so the guard reads payg as allowed and
+        // names deepseek as the candidate a workload authorized.
         let scratch = Scratch::new("router-payg");
         let state = state(&scratch);
 
         let snapshot = read_router(&state, "2026-10-16");
 
         let (allowed, providers) = snapshot.payg.expect("the guard reads");
-        assert!(!allowed, "no workload names a payg candidate");
+        assert!(allowed, "the frontend workload names the payg candidate");
         assert_eq!(providers, vec!["deepseek".to_string()]);
     }
 

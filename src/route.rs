@@ -404,6 +404,22 @@ pub fn default_preferences() -> Vec<Preference> {
             ],
         },
         Preference {
+            // The frontend workload: user-facing interface surface —
+            // components, styling, layout, visual states, accessibility.
+            // The owner's 2026-10-27 ruling puts deepseek-flash (the API
+            // reserve — first choice for THIS workload only; the tail
+            // role is unchanged everywhere else) ahead of the
+            // zai-coding-plan GLM backup.
+            workload: "frontend",
+            candidates: vec![
+                ("deepseek", "deepseek-flash"),
+                ("zai-coding-plan", "GLM-5.3-Flash"),
+                // The final fallback: the same GLM model on the Ollama
+                // cloud account — a different host for the same family.
+                ("ollama-cloud", "glm-5.3-flash"),
+            ],
+        },
+        Preference {
             workload: "hard",
             candidates: vec![
                 ("stepfun", "step-5-preview"),
@@ -3499,9 +3515,19 @@ mod tests {
         // The composed workload targets the grounding provider.
         let composed = preference_for(&table, "composed").expect("composed");
         assert_eq!(composed.candidates[0], ("blend1", "blend1"));
-        // No default workload targets the payg reserve, so deepseek
-        // cannot serve unpinned.
+        // No default workload targets the payg reserve — deepseek cannot
+        // serve unpinned — except the frontend workload, where the
+        // owner's 2026-10-27 ruling makes the reserve the FIRST choice
+        // (the tail role is unchanged everywhere else).
         for preference in &table {
+            if preference.workload == "frontend" {
+                assert_eq!(
+                    preference.candidates[0],
+                    ("deepseek", "deepseek-flash"),
+                    "the frontend workload's first choice is the reserve, by ruling"
+                );
+                continue;
+            }
             assert!(
                 !preference
                     .candidates
@@ -3996,9 +4022,11 @@ mod tests {
         assert_eq!(roster.pin, None);
         // The preference table and the gates are the compiled-in
         // defaults when no routing.json names any.
-        // Seven, the vision workload among them: a task that carries an
-        // image is its own shape, not a guess at a text workload.
-        assert_eq!(roster.preferences.len(), 7);
+        // Eight, the vision workload and the owner's frontend workload
+        // among them: a task that carries an image is its own shape, not
+        // a guess at a text workload, and interface work is its own tier
+        // (the owner's 2026-10-27 ruling).
+        assert_eq!(roster.preferences.len(), 8);
         assert!((roster.gates.min_confidence - 0.6).abs() < 1e-9);
         let _ = std::fs::remove_dir_all(&home);
     }

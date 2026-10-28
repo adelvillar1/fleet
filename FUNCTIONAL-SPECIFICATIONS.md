@@ -60,8 +60,10 @@ this home, grouped by what needs the owner rather than by project:
 *background* — one quiet line, closed by default, naming how many of the
 app's own runs (scheduled jobs, delegated children, peer conversations)
 are behind it, which opens to the family lines and then the runs — then
-*earlier*, grouped by the project each run was born in. A row says its state in words — *completed*, *capped*,
-*stopped by you*, *interrupted*, *active* — with its age, its project,
+*earlier*, grouped by the project each run was born in, and *archived* —
+one closed line at the bottom, the sessions the owner ended. A row says
+its state in words — *handed back*, *completed*, *capped*,
+*stopped by you*, *archived*, *interrupted*, *active* — with its age, its project,
 and, for background work, the job's name. One verb: opening a row loads
 that conversation in place, beside the list, with its composer, so
 reading and continuing are the same act. **New** writes a real
@@ -265,7 +267,9 @@ head, the rail and the panels keep the measure they have.
 - A run that stops after tool work with no message — or a bare "done" —
   is asked once for its closing report; the ask is visible on every
   surface, and a second silent stop ends with the stop reason
-  `completed without a report`. A run that executed no tools is never
+  `handed back without a report` (scheduled and delegated runs stamp
+  `completed without a report` — their stop is the completion it claims).
+  A run that executed no tools is never
   repaired.
 - Every tool call goes through the approval gate one call at a time; a
   denial is a model-visible result, not a panic. An answer lands as a line
@@ -279,9 +283,12 @@ head, the rail and the panels keep the measure they have.
   tools resolve under it, a path that leaves the folder is refused by
   name, a reload restores the choice, a deleted folder falls back with a
   line in the run's first transcript event, and a subagent inherits the
-  access. A chat with no folder has no filesystem access at all — the
-  four built-ins are refused by name — and full access is not offered
-  until a folder is set. The folder picker browses the whole hierarchy
+  access. The folder is a default, not a per-session ritual: a chat that
+  never chose one works in the fleet default — the folder the owner set —
+  and the face shows the folder the run will use; a chat's own choice
+  always wins, and where no folder exists anywhere the four built-ins
+  are refused by name until one is set. The folder picker browses the
+  whole hierarchy
   and takes a typed path; the choice applies to the next run, never the
   one in flight.
 
@@ -292,6 +299,12 @@ head, the rail and the panels keep the measure they have.
   the fold is logged; consolidation runs on its hourly timer in chat and
   the TUI; cron jobs fire on schedule, catch up exactly one missed
   window, and run through the same loop with their own session log.
+- A run's end is the loop stopping, not the session ending: when the
+  model hands the conversation back (or the turn cap hits), the session
+  reads as open — `handed back`, `capped` — and stays in the work list.
+  The only end is the owner archiving the session, from the row's chip
+  or the conversation head; archived sessions gather in a collapsed
+  Archived group and restore on demand.
 - Exit codes: `0` completed, `1` runtime failure, `2` usage or
   configuration, `3` the turn cap was reached (resume with
   `--session <id>`).
@@ -308,7 +321,8 @@ head, the rail and the panels keep the measure they have.
 | `tool` | a built-in or lane tool returned an `error:` result |
 | `approval` | a tool call was denied |
 | `max-turns` | the turn cap was reached |
-| `completed without a report` | the run ended silently after tool work and the one repair ask did not land |
+| `handed back` | the model handed an interactive conversation back — the session stays open, awaiting the owner |
+| `handed back without a report` | the run ended silently after tool work and the one repair ask did not land (interactive) |
 | `failed` | an unclassified terminal failure |
 
 The eval corpus is fixed and deterministic — session-corpus replay,
