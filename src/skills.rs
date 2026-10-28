@@ -2367,6 +2367,7 @@ mod tests {
         Record::Assistant {
             content: None,
             tool_calls: calls,
+            persona: None,
         }
     }
 

@@ -1189,6 +1189,11 @@ pub struct Agent<'a> {
     checkpoints: Option<std::path::PathBuf>,
     /// The session id the checkpoint store keys on, the log's own stem.
     session_id: String,
+    /// The persona authoring this run's turns — the lead of the
+    /// session's persona set, resolved once from the log's own records
+    /// (the bot plan's P2 stream half). `None` on a pre-P2 log, a
+    /// subagent, and a scheduled run, whose records stamp no author.
+    lead_persona: Option<String>,
     /// Plan mode: the write-class tools are refused at the gate.
     plan_mode: bool,
     /// The API-reported `prompt_tokens` of the last response, or `None`
@@ -1283,6 +1288,31 @@ impl<'a> Agent<'a> {
             .file_stem()
             .map(|stem| stem.to_string_lossy().into_owned())
             .unwrap_or_default();
+        // The lead persona, from the records in hand: the start record's
+        // set, folded with every join and leave — the same derivation
+        // the summary applies, computed once per run rather than per
+        // message.
+        let mut personas: Vec<String> = records
+            .iter()
+            .find_map(|record| match record {
+                Record::Start { personas, .. } => personas.clone(),
+                _ => None,
+            })
+            .unwrap_or_default();
+        for record in &records {
+            match record {
+                Record::Join { persona, .. } => {
+                    if !personas.contains(persona) {
+                        personas.push(persona.clone());
+                    }
+                }
+                Record::Leave { persona, .. } => {
+                    personas.retain(|name| name != persona);
+                }
+                _ => {}
+            }
+        }
+        let lead_persona = personas.first().cloned();
         // An injected spec map wins for the lanes it names; every other
         // lane resolves through the vendored registry at call time, with
         // its named reason when it cannot launch.
@@ -1349,6 +1379,7 @@ impl<'a> Agent<'a> {
             compact_now,
             checkpoints,
             session_id,
+            lead_persona,
             plan_mode,
             last_prompt_tokens: None,
             pending_hits: None,
@@ -4178,6 +4209,7 @@ impl<'a> Agent<'a> {
             Role::Assistant => Record::Assistant {
                 content: message.content.clone(),
                 tool_calls: message.tool_calls.clone(),
+                persona: self.lead_persona.clone(),
             },
             Role::Tool => Record::ToolResult {
                 call_id: message.tool_call_id.clone().unwrap_or_default(),
@@ -9556,12 +9588,14 @@ You are auditing a change. Read the diff before you judge it.
             .record(&Record::Assistant {
                 content: Some("first".into()),
                 tool_calls: Vec::new(),
+                persona: None,
             })
             .unwrap();
         written
             .record(&Record::Assistant {
                 content: Some("second".into()),
                 tool_calls: Vec::new(),
+                persona: None,
             })
             .unwrap();
         let path = written.path().to_path_buf();
@@ -9613,6 +9647,7 @@ You are auditing a change. Read the diff before you judge it.
                             arguments: "{}".to_string(),
                         },
                     }],
+                    persona: None,
                 })
                 .unwrap();
             written

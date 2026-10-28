@@ -79,6 +79,13 @@ pub enum Record {
         content: Option<String>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         tool_calls: Vec<ToolCall>,
+        /// The persona that authored this turn — the lead of the
+        /// session's persona set when the run started (the bot plan's
+        /// P2 stream half). Absent on logs written before the field
+        /// existed; a tolerant reader takes that as "the session's
+        /// lead", which is what the surface shows anyway.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        persona: Option<String>,
     },
     /// The model's thinking for one response, when the provider streams it
     /// (`reasoning_content`). Display material: it rides the transcript
@@ -930,6 +937,7 @@ pub fn conversation(records: &[Record]) -> Conversation {
             Record::Assistant {
                 content,
                 tool_calls,
+                ..
             } => {
                 messages.push(Message {
                     role: Role::Assistant,
@@ -1137,6 +1145,48 @@ mod tests {
         let _ = fs::remove_dir_all(&home);
     }
 
+    /// P2's stream half: the agent stamps each Assistant record with
+    /// the session's lead persona, so a shared conversation's transcript
+    /// bylines every turn instead of letting a surface guess from the
+    /// header. A pre-P2 log carries no field, and the summary's fold is
+    /// what names its author.
+    #[test]
+    fn an_assistant_record_stamps_its_author_when_the_log_carries_one() {
+        let home = temp_home("persona-stamp");
+        let mut session =
+            Session::create_with_persona(&home, "m", Some(vec!["tower".to_string()])).unwrap();
+        let path = session.path().to_path_buf();
+        session
+            .record(&Record::User {
+                content: "the brief".to_string(),
+            })
+            .unwrap();
+        session
+            .record(&Record::Assistant {
+                content: Some("the answer".to_string()),
+                tool_calls: Vec::new(),
+                persona: Some("tower".to_string()),
+            })
+            .unwrap();
+        session
+            .record(&Record::Assistant {
+                content: Some("a pre-P2 turn".to_string()),
+                tool_calls: Vec::new(),
+                persona: None,
+            })
+            .unwrap();
+        let records = replay(&path).unwrap();
+        let stamped: Vec<Option<String>> = records
+            .iter()
+            .filter_map(|record| match record {
+                Record::Assistant { persona, .. } => Some(persona.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(stamped, vec![Some("tower".to_string()), None]);
+        let _ = fs::remove_dir_all(&home);
+    }
+
     /// KI-056: the summary is a head-and-tail read that answers the same
     /// five fields the full replay did, without materializing every
     /// record — and a log that cannot be summarized reads as `None`
@@ -1202,6 +1252,7 @@ mod tests {
             .record(&Record::Assistant {
                 content: Some("three".into()),
                 tool_calls: Vec::new(),
+                persona: None,
             })
             .unwrap();
         session
@@ -1462,6 +1513,7 @@ mod tests {
             Record::Assistant {
                 content: Some("running".into()),
                 tool_calls: vec![],
+                persona: None,
             },
             Record::ToolResult {
                 call_id: "call-1".into(),
@@ -1520,6 +1572,7 @@ mod tests {
             Record::Assistant {
                 content: None,
                 tool_calls: Vec::new(),
+                persona: None,
             },
             Record::End {
                 stop_reason: "completed".into(),
@@ -1614,6 +1667,7 @@ mod tests {
             Record::Assistant {
                 content: Some("done".into()),
                 tool_calls: vec![],
+                persona: None,
             },
             Record::End {
                 stop_reason: "completed".into(),
@@ -1706,6 +1760,7 @@ mod tests {
             Record::Assistant {
                 content: Some("checking".into()),
                 tool_calls: Vec::new(),
+                persona: None,
             },
             Record::End {
                 stop_reason: "completed".into(),
@@ -2009,6 +2064,7 @@ mod tests {
                         arguments: "{}".to_string(),
                     },
                 }],
+                persona: None,
             });
             records.push(Record::ToolResult {
                 call_id: format!("call-{index}"),
@@ -2094,6 +2150,7 @@ mod tests {
             records.push(Record::Assistant {
                 content: Some(format!("answer {index}")),
                 tool_calls: Vec::new(),
+                persona: None,
             });
         }
         records.push(Record::Compaction {
@@ -2204,6 +2261,7 @@ mod tests {
         records.push(Record::Assistant {
             content: None,
             tool_calls: Vec::new(),
+            persona: None,
         });
         records.push(Record::ToolResult {
             call_id: "call-9".to_string(),

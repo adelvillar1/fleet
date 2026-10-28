@@ -3096,14 +3096,17 @@ mod tests {
             Record::Assistant {
                 content: Some("first try".to_string()),
                 tool_calls: vec![],
+                persona: None,
             },
             Record::Assistant {
                 content: None,
                 tool_calls: vec![],
+                persona: None,
             },
             Record::Assistant {
                 content: Some("last words".to_string()),
                 tool_calls: vec![],
+                persona: None,
             },
             Record::End {
                 stop_reason: "max-turns".to_string(),
@@ -3376,6 +3379,7 @@ mod tests {
                 &serde_json::to_string(&Record::Assistant {
                     content: None,
                     tool_calls: vec![],
+                    persona: None,
                 })
                 .unwrap(),
             );
@@ -3540,6 +3544,7 @@ mod tests {
                         arguments: r#"{"command":"ls"}"#.to_string(),
                     },
                 }],
+                persona: None,
             });
             records.push(Record::ToolResult {
                 call_id: format!("call-{index}"),

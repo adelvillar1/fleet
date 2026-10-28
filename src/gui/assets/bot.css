@@ -427,6 +427,11 @@ button {
   white-space: nowrap;
   overflow: hidden;
 }
+.goal {
+  width: calc(100% - var(--gutter) * 2);
+  text-align: left;
+}
+.goal:active { opacity: 0.7; }
 .goal b {
   flex: 0 0 auto;
   color: var(--accent-deep);

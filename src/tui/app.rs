@@ -3076,6 +3076,7 @@ fn entry_of(record: &Record) -> Option<Entry> {
         Record::Assistant {
             content,
             tool_calls,
+            ..
         } => {
             let text = content.clone().unwrap_or_default();
             if text.trim().is_empty() && tool_calls.is_empty() {
@@ -4069,6 +4070,7 @@ mod tests {
                         arguments: r#"{"name":"bash-recovery"}"#.to_string(),
                     },
                 }],
+                persona: None,
             },
             Record::ToolResult {
                 call_id: "call-1".to_string(),
@@ -4365,10 +4367,12 @@ mod tests {
             Record::Assistant {
                 content: Some(String::new()),
                 tool_calls: vec![],
+                persona: None,
             },
             Record::Assistant {
                 content: Some("done".to_string()),
                 tool_calls: vec![],
+                persona: None,
             },
             Record::ToolResult {
                 call_id: "c1".to_string(),
@@ -4519,6 +4523,7 @@ mod tests {
             Record::Assistant {
                 content: None,
                 tool_calls: Vec::new(),
+                persona: None,
             },
             Record::Compaction {
                 summary: "- did the thing".to_string(),
@@ -4530,6 +4535,7 @@ mod tests {
             Record::Assistant {
                 content: Some("carried on".to_string()),
                 tool_calls: Vec::new(),
+                persona: None,
             },
         ]);
         assert_eq!(

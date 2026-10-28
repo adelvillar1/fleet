@@ -4087,9 +4087,17 @@ fn cards_from_records(records: &[session::Record]) -> (Vec<Value>, usize) {
             session::Record::Assistant {
                 content,
                 tool_calls,
+                persona,
+                ..
             } => {
                 if let Some(text) = content {
-                    cards.push(json!({"type": "message", "role": "assistant", "text": text}));
+                    cards.push(json!({
+                        "type": "message", "role": "assistant", "text": text,
+                        // The turn's author (P2's stream half): the face
+                        // bylines it; a pre-P2 log's card carries none and
+                        // the face falls back to the lead.
+                        "persona": persona,
+                    }));
                 }
                 // The calls the answer requested, before their results:
                 // the replay shows the same pair the live stream does, and
@@ -7952,14 +7960,37 @@ mod tests {
             state: Arc::clone(&bridge.state),
         });
         bridge.run(&id, "go").expect("the run is accepted");
-        // The run's teardown removes the control file; under a loaded
-        // suite that can outrun a three-second poll, and a bound the
-        // machine cannot meet is a flake, not a failure.
-        for _ in 0..1500 {
-            if !control.exists() {
+        // KI-340: the poll's wall clock was the flake — a loaded machine
+        // outran fifteen seconds and the test red with no regression.
+        // The signal replaces the clock: the thread's own `finished` or
+        // `failed` event says the run ended, and the teardown the test
+        // pins runs before either is emitted. The events channel is the
+        // same one the faces read, so the test waits on the product's
+        // own seam rather than a private one.
+        let mut events = bridge.subscribe();
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(120);
+        loop {
+            let ended = !control.exists();
+            if ended {
                 break;
             }
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            let wait = tokio::time::timeout_at(deadline, events.recv()).await;
+            match wait {
+                Ok(Ok(event)) => {
+                    let text = event.to_string();
+                    if text.contains("\"finished\"") || text.contains("\"failed\"") {
+                        // The run's own end: give the teardown one poll.
+                        if !control.exists() {
+                            break;
+                        }
+                    }
+                }
+                _ => {
+                    // A closed channel is the thread's end too; the file
+                    // check above still decides.
+                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                }
+            }
         }
         assert!(
             !control.exists(),
@@ -9106,6 +9137,7 @@ mod tests {
         done.record(&crate::session::Record::Assistant {
             content: Some("the plan is drafted; three files carry it".into()),
             tool_calls: Vec::new(),
+            persona: None,
         })
         .unwrap();
         done.record(&crate::session::Record::End {
@@ -9353,6 +9385,7 @@ mod tests {
         done.record(&crate::session::Record::Assistant {
             content: Some("answered".into()),
             tool_calls: Vec::new(),
+            persona: None,
         })
         .unwrap();
         done.record(&crate::session::Record::End {
@@ -9926,6 +9959,7 @@ mod tests {
         let records = vec![session::Record::Assistant {
             content: Some("running it".to_string()),
             tool_calls: vec![call("bash", "{\"command\":\"echo hi\"}")],
+            persona: None,
         }];
         let (cards, _) = cards_from_records(&records);
         assert_eq!(cards[0]["type"], "message", "{cards:?}");

@@ -364,6 +364,7 @@ mod tests {
                 .record(&Record::Assistant {
                     content: None,
                     tool_calls,
+                    persona: None,
                 })
                 .unwrap();
         }

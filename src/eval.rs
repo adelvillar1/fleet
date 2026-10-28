@@ -1558,7 +1558,7 @@ async fn session_corpus_replay(mock_bin: PathBuf) -> ScenarioOutcome {
                         .rposition(|record| {
                             matches!(
                                 record,
-                                Record::Assistant { content, tool_calls }
+                                Record::Assistant { content, tool_calls, .. }
                                     if tool_calls.is_empty() && content.is_some()
                             )
                         })

@@ -1053,6 +1053,7 @@ async fn a_forced_fold_carries_the_todo_list() {
                     r#"{"command":"true"}"#,
                 ))
                 .unwrap()],
+                persona: None,
             })
             .unwrap();
         session
@@ -2457,6 +2458,7 @@ async fn streamed_tokens_reach_progress_before_the_run_ends() {
         Record::Assistant {
             content,
             tool_calls,
+            ..
         } => {
             assert_eq!(content.as_deref(), Some("Writing tokens."));
             assert!(tool_calls.is_empty());
@@ -6255,6 +6257,7 @@ fn assistant_calls(calls: Vec<(&str, &str, &str)>) -> Record {
                 serde_json::from_value::<ToolCall>(tool_call(id, name, arguments)).unwrap()
             })
             .collect(),
+        persona: None,
     }
 }
 
@@ -6440,6 +6443,7 @@ async fn a_sessions_failure_then_correction_drafts_a_proposal() {
         .record(&Record::Assistant {
             content: Some("done".to_string()),
             tool_calls: vec![],
+            persona: None,
         })
         .unwrap();
 
@@ -8261,7 +8265,7 @@ async fn a_blank_stop_is_asked_once_for_its_report() {
     assert!(
         !records.iter().any(|record| matches!(
             record,
-            Record::Assistant { content, tool_calls }
+            Record::Assistant { content, tool_calls, .. }
                 if tool_calls.is_empty()
                     && content.as_deref().map(str::trim).unwrap_or("").is_empty()
         )),
@@ -8701,7 +8705,8 @@ async fn a_failed_child_returns_its_partial_result_and_its_reason() {
     );
     assert!(child_records.iter().any(|record| matches!(
         record,
-        Record::Assistant { content: Some(text), .. } if text.contains("checked one of five")
+        Record::Assistant { content: Some(text), .. }
+        if text.contains("checked one of five")
     )));
 
     // The parent's result is the typed failure: the reason, the log path,
@@ -8931,7 +8936,7 @@ fn before_final_answer(records: &[Record]) -> &[Record] {
         .rposition(|record| {
             matches!(
                 record,
-                Record::Assistant { content, tool_calls } if tool_calls.is_empty() && content.is_some()
+                Record::Assistant { content, tool_calls, .. } if tool_calls.is_empty() && content.is_some()
             )
         })
         .expect("the final answer's record");

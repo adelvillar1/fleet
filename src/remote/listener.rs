@@ -89,6 +89,10 @@ const ALLOWED_POST: &[&str] = &[
     // adds the auditor to the conversation it is reading.
     "/api/session/join",
     "/api/session/leave",
+    // The goal is the owner's to change — the explicit, recorded verb
+    // (the plan's open question answered: a change is an owner act, never
+    // a join's side effect).
+    "/api/goal",
     "/api/stop",
     "/api/steer",
 ];
@@ -642,6 +646,25 @@ async fn route_with(
             };
             match bridge.leave(&session, &persona) {
                 Ok(document) => api(200, document),
+                Err(message) => api(409, json!({"error": message})),
+            }
+        }
+        ("POST", "/api/goal") => {
+            let body = match read_body(stream, request, rest).await {
+                Ok(body) => body,
+                Err(message) => return bad_request(&message),
+            };
+            let parsed: serde_json::Value = match serde_json::from_str(&body) {
+                Ok(value) => value,
+                Err(error) => return bad_request(&format!("the goal's body is not JSON: {error}")),
+            };
+            let session = parsed
+                .get("session")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("");
+            let text = parsed.get("text").and_then(serde_json::Value::as_str);
+            match bridge.set_goal(session, text) {
+                Ok(reply) => api(200, reply),
                 Err(message) => api(409, json!({"error": message})),
             }
         }

@@ -433,9 +433,10 @@ function transcriptHtml(conversation) {
           sawOwner = true;
           parts.push(`<div class="turn you"><div class="bubble">${escapeHtml(card.text)}</div></div>`);
         } else if (card.text) {
+          const author = card.persona || personaFor();
           parts.push(`
             <div class="turn fleet">
-              <div class="byline">${mark(personaFor(), 'sm')}<span>${escapeHtml(personaFor())}</span></div>
+              <div class="byline">${mark(author, 'sm')}<span>${escapeHtml(author)}</span></div>
               <p>${escapeHtml(card.text)}</p>
             </div>`);
         }

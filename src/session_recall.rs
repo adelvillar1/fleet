@@ -943,6 +943,7 @@ mod tests {
             Record::Assistant {
                 content: None,
                 tool_calls: vec![call(id, name, arguments)],
+                persona: None,
             },
             Record::ToolResult {
                 call_id: id.to_string(),
@@ -1913,6 +1914,7 @@ pub fn render_detail(id: &str, created: &str, records: &[crate::session::Record]
             Record::Assistant {
                 content,
                 tool_calls,
+                ..
             } => {
                 if let Some(content) = content {
                     let text: String = content.chars().take(CARD_WIDTH - 6).collect();

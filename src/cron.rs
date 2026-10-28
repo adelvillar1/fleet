@@ -770,7 +770,12 @@ pub const SEED_MANIFEST: &[(&str, &str, &str)] = &[
     (
         "lifecycle-sweep",
         "30 2 * * *",
-        "task:Run `fleet tools sweep --apply` with bash, then report each tool it          disabled (with the sweep's reason) and each it skipped, and stop. If the          verb refuses, report the refusal.",
+        // KI-329: bare `fleet` is not on this machine's PATH (KI-007) —
+        // every scheduled execution shells out, and the sweep's verb
+        // must name the binary where the machine actually builds it.
+        // $HOME expands at run time, so the declaration stays
+        // home-shaped rather than hardcoding one user.
+        "task:Run `$HOME/Projects/fleet/target/release/fleet tools sweep --apply` with bash, then          report each tool it disabled (with the sweep's reason) and each it skipped, and stop.          If the verb refuses, report the refusal.",
     ),
     ("corpus-refresh-fleet", "10 0 * * *", "fleet"),
     ("corpus-refresh-sys1", "15 0 * * *", "sys1"),
