@@ -210,6 +210,7 @@ fn child_start(parent: &str) -> Record {
         kind: Some(session::SUBAGENT_KIND.to_string()),
         parent: Some(parent.to_string()),
         workspace: None,
+        personas: None,
     }
 }
 
@@ -222,6 +223,7 @@ fn parent_start() -> Record {
         kind: None,
         parent: None,
         workspace: None,
+        personas: None,
     }
 }
 
@@ -408,6 +410,7 @@ async fn the_delegate_beat_opens_the_shared_session_once() {
                     kind: None,
                     parent: None,
                     workspace: None,
+                    personas: None,
                 }],
             );
             let _ = log;

@@ -1,0 +1,652 @@
+<!doctype html>
+<html lang="en" data-theme="paper">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>fleet bot — conversation (B0 mockup)</title>
+<link rel="stylesheet" href="mockup.css">
+<style>
+  /* Screen 2: the conversation. Same stream, same single answer as the
+     console — the phone changes the chrome, never the contract. One goal,
+     one log, and any number of personas working inside it. */
+
+  .scn { display: flex; flex: 1 1 auto; min-height: 0; flex-direction: column; }
+
+  .conv .app-head h2 { font-size: 20px; }
+
+  /* the participant stack: overlapping marks, so two personas read as two */
+  .stack { display: flex; align-items: center; flex: 0 0 auto; }
+  .stack .mark + .mark { margin-left: -9px; box-shadow: 0 0 0 2px var(--page); }
+  .stack .mark.extra { display: none; }
+  .phone[data-state="multi"] .stack .mark.extra,
+  .phone[data-state="add"] .stack .mark.extra { display: grid; }
+
+  .stack-add {
+    flex: 0 0 44px;
+    width: 44px;
+    height: 44px;
+    display: grid;
+    place-items: center;
+    border: 0;
+    background: transparent;
+    color: var(--ink-3);
+    cursor: pointer;
+  }
+
+  .stack-add span {
+    width: 24px;
+    height: 24px;
+    display: grid;
+    place-items: center;
+    border: 1px dashed var(--hairline-strong);
+    border-radius: 50%;
+    font-size: 15px;
+    line-height: 1;
+  }
+
+  .stack-add:hover { color: var(--accent); }
+  .stack-add:hover span { border-color: var(--accent); }
+
+  .head-state { display: inline-flex; align-items: center; gap: 6px; }
+  .head-state .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ink-3); }
+  .phone[data-state="live"] .head-state .dot { background: var(--accent); animation: breathe 1.6s var(--ease) infinite; }
+  .phone[data-state="seat"] .head-state .dot { background: var(--down); }
+  .phone[data-state="failed"] .head-state .dot { background: var(--down); }
+  .phone[data-state="stopped"] .head-state .dot { background: var(--warn); }
+  .phone[data-state="multi"] .head-state .dot { background: var(--accent); animation: breathe 1.6s var(--ease) infinite; }
+  .phone[data-state="add"] .head-state .dot { background: var(--ink-3); }
+
+  .scroll { padding-top: 4px; }
+
+  /* the goal: the one thing a conversation may not quietly change */
+  /* the goal is chrome, not content: it sits between the header and the
+     stream, so it can never scroll away — it is the one thing the
+     conversation may not quietly change */
+  .conv .meta {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    margin: 0;
+    padding: 0 var(--gutter) 10px;
+    border-bottom: 1px solid var(--hairline);
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--ink-3);
+    white-space: nowrap;
+    overflow: hidden;
+  }
+
+  .conv .meta b {
+    flex: 0 0 auto;
+    color: var(--accent-deep);
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .conv .meta .goal { color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; }
+
+  /* a scenario-only block: the endings, and the two new states */
+  .when { display: none; }
+  .phone[data-state="seat"] .when.seat,
+  .phone[data-state="failed"] .when.failed,
+  .phone[data-state="stopped"] .when.stopped,
+  .phone[data-state="multi"] .when.multi,
+  .phone[data-state="add"] .when.add { display: block; }
+
+  .phone[data-state="live"] .working.when.live,
+  .phone[data-state="multi"] .working.when.multi { display: flex; }
+
+  .dock .primary-act.stop-act,
+  .dock .primary-act.send-act { display: none; }
+  .phone[data-state="live"] .dock .stop-act,
+  .phone[data-state="multi"] .dock .stop-act { display: grid; }
+  .phone:not([data-state="live"]):not([data-state="multi"]) .dock .send-act { display: grid; }
+
+  .mono { font-family: var(--mono); font-size: 15px; }
+
+  /* the composer */
+  .composer {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+    padding: 8px 8px 8px 12px;
+    border: 1px solid var(--hairline-strong);
+    border-radius: 16px;
+    background: var(--surface);
+    box-shadow: var(--shadow-1);
+    transition: border-color var(--fast) var(--ease);
+  }
+
+  .composer:focus-within { border-color: color-mix(in srgb, var(--accent) 42%, var(--hairline-strong)); }
+
+  .composer .plus {
+    flex: 0 0 auto;
+    width: 44px;
+    height: 44px;
+    margin: 0 -2px 0 -4px;
+    display: grid;
+    place-items: center;
+    border: 0;
+    border-radius: var(--pill);
+    background: transparent;
+    color: var(--ink-3);
+    cursor: pointer;
+  }
+
+  .composer .plus:hover { color: var(--ink); }
+
+  .composer textarea {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 38px;
+    max-height: 132px;
+    padding: 9px 0;
+    border: 0;
+    outline: none;
+    resize: none;
+    background: transparent;
+    color: var(--ink);
+    font: inherit;
+    font-size: 16px; /* 16px floor: iOS zooms the page under anything smaller */
+    line-height: 1.4;
+  }
+
+  .composer textarea::placeholder { color: var(--ink-3); }
+
+  .dock .primary-act {
+    flex: 0 0 auto;
+    width: 44px;
+    height: 44px;
+    display: grid;
+    place-items: center;
+    border: 0;
+    border-radius: var(--pill);
+    background: var(--accent);
+    color: var(--on-accent);
+    cursor: pointer;
+    transition: transform var(--fast) var(--ease);
+  }
+
+  .dock .primary-act:active { transform: scale(0.95); }
+
+  .hint { margin: 8px 0 0; text-align: center; font-size: 11px; color: var(--ink-3); }
+
+  /* a persona joining is an event in the log, not a silent change of voice */
+  .join {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 18px var(--gutter);
+    padding: 9px 11px;
+    border: 1px dashed var(--hairline-strong);
+    border-radius: var(--r-md);
+    font-size: 12px;
+    color: var(--ink-3);
+  }
+
+  .join b { color: var(--ink-2); font-weight: 650; }
+  .join .age { margin-left: auto; font-variant-numeric: tabular-nums; }
+
+  .goal-line { margin: 10px 0 0; font-size: 11.5px; line-height: 1.45; color: var(--ink-3); }
+  .goal-line b { color: var(--ok); font-weight: 650; }
+
+  /* the add-a-persona sheet */
+  .sheet .pick {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    width: 100%;
+    min-height: 56px;
+    padding: 8px 10px;
+    border: 1px solid var(--hairline);
+    border-radius: var(--r-md);
+    background: var(--surface);
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    margin-bottom: 8px;
+  }
+
+  .sheet .pick[aria-pressed="true"] {
+    border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+    background: var(--accent-wash);
+  }
+
+  .sheet .pick .n { font-size: 14.5px; font-weight: 650; }
+  .sheet .pick .d { margin-top: 2px; font-size: 12px; color: var(--ink-3); }
+  .sheet .pick .tick { margin-left: auto; color: var(--accent); }
+
+  .sheet .sheet-goal {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    margin: 0 0 10px;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--ink-3);
+  }
+
+  .sheet .sheet-goal b {
+    color: var(--accent-deep);
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .sheet .sheet-goal .goal { color: var(--ink-2); }
+
+  .sheet .policy { margin: 4px 0 14px; font-size: 12px; line-height: 1.5; color: var(--ink-2); }
+  .sheet .policy b { color: var(--ink); }
+
+  .sheet .add {
+    width: 100%;
+    min-height: 46px;
+    margin-top: 4px;
+    border: 0;
+    border-radius: 12px;
+    background: var(--accent);
+    color: var(--on-accent);
+    font: inherit;
+    font-size: 15px;
+    font-weight: 650;
+    cursor: pointer;
+  }
+
+  @container (min-width: 720px) {
+    .phone { --gutter: 26px; }
+
+    .conv .app-head,
+    .conv .scroll,
+    .conv .dock { max-width: 680px; margin-left: auto; margin-right: auto; width: 100%; }
+
+    .conv .app-head { padding-bottom: 16px; }
+    .conv .dock { border-top: 1px solid var(--hairline); }
+
+    .sheet {
+      left: 50%;
+      right: auto;
+      bottom: auto;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      width: min(520px, calc(100% - 96px));
+      border-radius: var(--r-xl);
+    }
+    .sheet .grab { display: none; }
+  }
+</style>
+</head>
+<body>
+<div class="review">
+  <div class="review-head">
+    <h1>Conversation</h1>
+    <p>screen 2 of 4 · plan <code>2026-10-20-bot-pwa.md</code> · B0</p>
+  </div>
+
+  <div class="controls">
+    <label>State</label>
+    <div class="seg" data-role="state">
+      <button data-state="live" aria-pressed="true">Live stream</button>
+      <button data-state="seat" aria-pressed="false">Destructive seat</button>
+      <button data-state="multi" aria-pressed="false">Two personas</button>
+      <button data-state="add" aria-pressed="false">Add a persona</button>
+      <button data-state="failed" aria-pressed="false">Failed run</button>
+      <button data-state="stopped" aria-pressed="false">Stopped run</button>
+    </div>
+    <label>Width</label>
+    <div class="seg" data-role="width">
+      <button data-w="430" aria-pressed="true">430</button>
+      <button data-w="900" aria-pressed="false">900</button>
+    </div>
+    <div class="w-slider">
+      <input id="wslider" type="range" min="430" max="900" step="1" value="430" aria-label="Frame width">
+      <output id="wout">430 px</output>
+    </div>
+    <label>Theme</label>
+    <div class="seg" data-role="theme">
+      <button data-theme="paper" aria-pressed="true">Paper</button>
+      <button data-theme="console" aria-pressed="false">Console</button>
+      <button data-theme="graphite" aria-pressed="false">Graphite</button>
+    </div>
+  </div>
+
+  <p class="caption" id="caption"></p>
+
+  <div class="stage">
+    <div class="phone conv" id="phone" data-state="live">
+      <div class="statusbar">
+        <span>9:41</span>
+        <span class="glyphs">
+          <svg width="17" height="11" viewBox="0 0 17 11" fill="currentColor" aria-hidden="true"><rect x="0" y="7" width="3" height="4" rx="1"/><rect x="4.7" y="5" width="3" height="6" rx="1"/><rect x="9.4" y="2.6" width="3" height="8.4" rx="1"/><rect x="14.1" y="0" width="3" height="11" rx="1"/></svg>
+          <svg width="16" height="11" viewBox="0 0 16 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M1 4.3a10 10 0 0 1 14 0"/><path d="M3.6 7a6.4 6.4 0 0 1 8.8 0"/><path d="M6.2 9.6a2.7 2.7 0 0 1 3.6 0"/></svg>
+          <svg width="25" height="12" viewBox="0 0 25 12" fill="none" aria-hidden="true"><rect x="0.6" y="0.6" width="21" height="10.8" rx="3" stroke="currentColor" stroke-opacity="0.4"/><rect x="2.2" y="2.2" width="15" height="7.6" rx="1.8" fill="currentColor"/><path d="M23.4 4.2v3.6a2 2 0 0 0 0-3.6Z" fill="currentColor" fill-opacity="0.5"/></svg>
+        </span>
+      </div>
+
+      <div class="screen">
+        <div class="app-head">
+          <button class="lead" aria-label="Back to the inbox">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12.4 4.5 6 10.5l6.4 6"/></svg>
+          </button>
+          <span class="stack">
+            <span class="mark md" data-p="tower">t</span>
+            <span class="mark md extra" data-p="auditor">a</span>
+          </span>
+          <button class="stack-add" data-open-add aria-label="Add a persona to this conversation"><span>+</span></button>
+          <div class="titles">
+            <h2 id="headname">tower</h2>
+            <p class="sub head-state">
+              <span class="dot"></span>
+              <span id="headstate">runs the work · working · 1:12</span>
+            </p>
+          </div>
+          <button class="act" aria-label="Session actions">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><circle cx="4.5" cy="10" r="1.6"/><circle cx="10" cy="10" r="1.6"/><circle cx="15.5" cy="10" r="1.6"/></svg>
+          </button>
+        </div>
+
+        <p class="meta"><b>goal</b><span class="goal">close KI-339 and run the gate</span></p>
+
+        <div class="scroll">
+          <div class="turn you">
+            <div class="bubble">close KI-339 and run the gate</div>
+          </div>
+
+          <div class="turn fleet">
+            <div class="byline"><span class="mark" data-p="tower">t</span>tower · 2m</div>
+            <p>Reading the ledger first. Three rows are open against this area: KI-339, KI-249, and the browser lane's certificate row.</p>
+
+            <div class="tools">
+              <button class="tools-head">
+                <span>Ran 2 commands</span>
+                <span class="elapsed">26s</span>
+                <svg class="chev" width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m5 12 5-5 5 5" stroke-linecap="round"/></svg>
+              </button>
+              <div class="tool">
+                <span class="done">✓</span>
+                <span><span class="name">bash</span> cargo fmt --all --check</span>
+                <span class="ms">0.8s</span>
+              </div>
+              <div class="tool">
+                <span class="bad">!</span>
+                <span><span class="name">bash</span> cargo clippy --all-targets</span>
+                <span class="ms">24s</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="turn fleet">
+            <div class="byline"><span class="mark" data-p="tower">t</span>tower · 1m</div>
+            <p>Format is clean. Clippy is red on three needless borrows in <span class="mono">src/gui/bridge.rs</span> — fixing those now.</p>
+
+            <div class="tools">
+              <div class="tool">
+                <span class="live">●</span>
+                <span><span class="name">edit_file</span> src/gui/bridge.rs</span>
+                <span class="ms">+12 −9</span>
+              </div>
+              <div class="tool">
+                <span class="done">✓</span>
+                <span><span class="name">write_file</span> docs/known-issues.md</span>
+                <span class="ms">+6 · appended</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- a second persona joins: an event in the log, then a turn -->
+          <div class="when multi">
+            <div class="join">
+              <span class="mark sm" data-p="auditor">a</span>
+              <span><b>auditor</b> joined · checks what changed</span>
+              <span class="age">0:41</span>
+            </div>
+          </div>
+
+          <div class="turn fleet when multi">
+            <div class="byline"><span class="mark" data-p="auditor">a</span>auditor · 0:32</div>
+            <p>Read the diff before the ledger write: three borrows corrected in <span class="mono">src/gui/bridge.rs</span>, nothing else moved. The gate result is the only claim I would put in the row.</p>
+          </div>
+
+          <div class="turn fleet when multi">
+            <div class="byline"><span class="mark" data-p="tower">t</span>tower · 0:20</div>
+            <p>Then the row is six lines: the fix, the sha, and the gate. I am not touching the goal.</p>
+          </div>
+
+          <!-- the destructive seat -->
+          <div class="when seat">
+            <div class="seat-card destructive">
+              <div class="head">
+                <span class="badge destructive"><span class="warn">&#9888;</span>destructive</span>
+                <span class="target">write_file · docs/known-issues.md — overwrite</span>
+              </div>
+              <p class="summary">Replace the six KI-339 lines with a condensed version. The text that is there now is not kept.</p>
+              <div class="diff">
+                <div class="ctx">@@ KI-339 · the row as written 4 minutes ago</div>
+                <div class="del">- status: fixed at ec79da3 · sources declared</div>
+                <div class="del">- the cron jobs declare their sources now: …</div>
+                <div class="ctx">… and four more lines</div>
+              </div>
+              <p class="goal-line"><b>keeps the goal</b> · close KI-339 and run the gate</p>
+              <div class="seat-actions">
+                <button class="btn">Cancel</button>
+                <button class="btn danger">Overwrite</button>
+              </div>
+              <p class="irreversible">Held every time — there is no always-allow for a destructive act. The append above did not ask: it kept what was there.</p>
+            </div>
+          </div>
+
+          <!-- failed -->
+          <div class="when failed">
+            <div class="end-card bad">
+              <div class="line">
+                <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15"/></svg>
+                failed · max-turns
+              </div>
+              <p>The run hit its 24-turn cap while fixing the clippy warnings. Three edits are on disk; the gate was not re-run.</p>
+              <div class="acts">
+                <button class="btn primary">Resume from here</button>
+                <button class="btn">Open the log</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- stopped -->
+          <div class="when stopped">
+            <div class="end-card stopped">
+              <div class="line">
+                <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="5.5" y="5.5" width="9" height="9" rx="1.6"/></svg>
+                stopped by you · 14m
+              </div>
+              <p>Stopped after the third edit. The working tree holds the change; nothing was reverted.</p>
+              <div class="acts">
+                <button class="btn primary">Resume</button>
+                <button class="btn">Review the diff</button>
+              </div>
+            </div>
+          </div>
+
+          <div style="height:8px"></div>
+        </div>
+
+        <div class="dock">
+          <div class="working when live">
+            <span class="pulse"></span>
+            <span class="what">Editing src/gui/bridge.rs</span>
+            <span class="clock">1:12</span>
+            <button class="stop">Stop</button>
+          </div>
+
+          <div class="working when multi">
+            <span class="pulse"></span>
+            <span class="what">auditor is reading src/gui/bridge.rs</span>
+            <span class="clock">0:41</span>
+            <button class="stop">Stop</button>
+          </div>
+
+          <div class="composer">
+            <button class="plus" aria-label="Attach">
+              <svg width="17" height="17" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><path d="M10 4.5v11M4.5 10h11"/></svg>
+            </button>
+            <textarea rows="1" enterkeyhint="send" aria-label="Message the conversation">steer or answer…</textarea>
+            <button class="primary-act stop-act" aria-label="Stop the run">
+              <svg width="15" height="15" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><rect x="5.5" y="5.5" width="9" height="9" rx="1.6"/></svg>
+            </button>
+            <button class="primary-act send-act" aria-label="Send">
+              <svg width="17" height="17" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><path d="M10 15.5V4.5M10 4.5 5.5 9M10 4.5l4.5 4.5"/></svg>
+            </button>
+          </div>
+
+          <p class="hint when live">Stop ends the turn. Steer sends mid-run.</p>
+          <p class="hint when multi">Non-destructive work runs; destructive acts are held and flagged.</p>
+          <p class="hint when seat">Held for you — and only destructive acts are held.</p>
+          <p class="hint when failed">Resume continues the same log, not a copy.</p>
+          <p class="hint when stopped">Stopped runs keep their work.</p>
+        </div>
+      </div>
+
+      <!-- the add-a-persona sheet -->
+      <div class="when add">
+        <div class="scrim"></div>
+        <div class="sheet">
+          <div class="grab"></div>
+          <div class="sheet-head">
+            <h3>Add a persona</h3>
+            <button class="x" data-close-add aria-label="Close">
+              <svg width="17" height="17" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15"/></svg>
+            </button>
+          </div>
+          <div class="sheet-body">
+            <p class="sheet-goal"><b>goal</b><span class="goal">close KI-339 and run the gate</span></p>
+            <p class="policy">Adding someone does not change the goal. <b>Non-destructive work runs without asking</b> — reads, searches, appends, edits with a diff. Only <b>destructive</b> acts are held for you, and they are flagged as such.</p>
+
+            <button class="pick" aria-pressed="true">
+              <span class="mark md" data-p="auditor">a</span>
+              <span>
+                <span class="n">auditor</span>
+                <div class="d">checks what changed · reads, reports, never writes</div>
+              </span>
+              <span class="tick">
+                <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4.5 10.5 3.5 3.5 7.5-8"/></svg>
+              </span>
+            </button>
+
+            <button class="pick" aria-pressed="false">
+              <span class="mark md" data-p="scholar">s</span>
+              <span>
+                <span class="n">scholar</span>
+                <div class="d">knowledge work · reads and cites</div>
+              </span>
+            </button>
+
+            <button class="pick" aria-pressed="false">
+              <span class="mark md" data-p="presenter">p</span>
+              <span>
+                <span class="n">presenter</span>
+                <div class="d">presentations · builds pages, writes files</div>
+              </span>
+            </button>
+
+            <button class="add" data-close-add>Add auditor to this conversation</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="home-indicator"><span></span></div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const phone = document.getElementById('phone');
+  const caption = document.getElementById('caption');
+  const headstate = document.getElementById('headstate');
+  const headname = document.getElementById('headname');
+  const slider = document.getElementById('wslider');
+  const wout = document.getElementById('wout');
+
+  const NAMES = {
+    live: 'tower',
+    seat: 'tower',
+    failed: 'tower',
+    stopped: 'tower',
+    multi: 'tower + auditor',
+    add: 'tower + auditor'
+  };
+
+  const HEADS = {
+    live: 'runs the work · working · 1:12',
+    seat: 'destructive · held for you',
+    failed: 'runs the work · failed · max-turns · 3h',
+    stopped: 'runs the work · stopped by you · 14m',
+    multi: 'two personas · working · 0:41',
+    add: 'two personas · adding'
+  };
+
+  const CAPTIONS = {
+    live: '<b>A live run.</b> Tool activity is a collapsed row naming the command and its clock, and the run keeps a floating chip with its elapsed time and its own Stop. The goal sits above the stream, because it is what the conversation may not quietly change.',
+    seat: '<b>Only destructive acts are held.</b> The rule is binary: non-destructive work runs — the append above wrote six lines into the ledger and never asked. An <i>overwrite</i> would lose what is there, so it is held and it is flagged: red hairline, red badge, the warning glyph, the lines that will go, and a filled red action. There is no always-allow on this card; the note says the append did not ask, so the contrast is visible.',
+    multi: '<b>More than one persona.</b> The goal stays pinned: <i>close KI-339 and run the gate</i>. auditor joined as a read-only reviewer, and the join is a row in the log — not a silent change of voice — because anything the model saw must be reconstructable. auditor reads and reports without asking; nothing it does needs a seat, and the working chip names who is working.',
+    add: '<b>Adding a persona.</b> The sheet restates the goal before it offers anyone, says the policy in one line — non-destructive runs, destructive is held and flagged — and shows what each persona is (auditor reads and never writes). Adding a persona is never how the goal changes.',
+    failed: '<b>A failed run is not a finished answer.</b> It ends the transcript with a card that names the stop reason, says what state the work is in, and offers Resume — the same log, not a copy. The header dot is red; a failure never wears the finished row\'s hollow ring.',
+    stopped: '<b>Stopped by you.</b> Amber, not red: nothing went wrong. The card says the working tree still holds the change, because the fear after a stop is silent loss, and offers the diff beside Resume.'
+  };
+
+  const params = new URLSearchParams(location.search);
+
+  function setState(name) {
+    phone.dataset.state = name;
+    headstate.textContent = HEADS[name];
+    headname.textContent = NAMES[name];
+    document.querySelectorAll('[data-role="state"] button').forEach(b =>
+      b.setAttribute('aria-pressed', String(b.dataset.state === name)));
+    caption.innerHTML = CAPTIONS[name];
+    requestAnimationFrame(() => {
+      const sc = document.querySelector('.scroll');
+      if (sc) sc.scrollTop = sc.scrollHeight;
+    });
+    const url = new URL(location.href);
+    url.searchParams.set('state', name);
+    history.replaceState(null, '', url);
+  }
+
+  function setWidth(px) {
+    px = Math.min(900, Math.max(430, Number(px)));
+    phone.style.setProperty('--frame-w', px + 'px');
+    wout.textContent = px + ' px';
+    slider.value = px;
+    document.querySelectorAll('[data-role="width"] button').forEach(b =>
+      b.setAttribute('aria-pressed', String(Number(b.dataset.w) === px)));
+    const url = new URL(location.href);
+    url.searchParams.set('w', px);
+    history.replaceState(null, '', url);
+  }
+
+  function setTheme(name) {
+    phone.dataset.theme = name;
+    document.querySelectorAll('[data-role="theme"] button').forEach(b =>
+      b.setAttribute('aria-pressed', String(b.dataset.theme === name)));
+    const url = new URL(location.href);
+    url.searchParams.set('theme', name);
+    history.replaceState(null, '', url);
+  }
+
+  document.querySelectorAll('[data-role="state"] button').forEach(b =>
+    b.addEventListener('click', () => setState(b.dataset.state)));
+  document.querySelectorAll('[data-role="width"] button').forEach(b =>
+    b.addEventListener('click', () => setWidth(b.dataset.w)));
+  document.querySelectorAll('[data-role="theme"] button').forEach(b =>
+    b.addEventListener('click', () => setTheme(b.dataset.theme)));
+  slider.addEventListener('input', e => setWidth(e.target.value));
+  document.querySelectorAll('[data-open-add]').forEach(b =>
+    b.addEventListener('click', () => setState('add')));
+  document.querySelectorAll('[data-close-add]').forEach(b =>
+    b.addEventListener('click', () => setState('multi')));
+
+  setState(params.get('state') || 'live');
+  setWidth(params.get('w') || 430);
+  setTheme(params.get('theme') || 'paper');
+</script>
+</body>
+</html>

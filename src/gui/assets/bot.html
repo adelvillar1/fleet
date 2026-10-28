@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- viewport-fit=cover is what makes env(safe-area-inset-*) non-zero;
+     without it the home indicator and the notch are the app's problem. -->
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>fleet bot</title>
+<meta name="theme-color" content="#f6f4ef">
+<link rel="manifest" href="/bot.webmanifest">
+<link rel="apple-touch-icon" sizes="192x192" href="/bot-icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="fleet bot">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="stylesheet" href="/bot.css?v=__FLEET_ASSET_HASH__">
+<script>
+  // The theme is set before the first paint, from the same storage the
+  // console writes — the bot speaks the console's three themes.
+  try {
+    document.documentElement.dataset.theme =
+      window.localStorage.getItem('fleet-theme-2') || 'paper';
+  } catch (error) {
+    document.documentElement.dataset.theme = 'paper';
+  }
+</script>
+</head>
+<body>
+<div id="app"></div>
+<script src="/bot.js?v=__FLEET_ASSET_HASH__" defer></script>
+</body>
+</html>

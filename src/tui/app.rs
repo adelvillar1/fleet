@@ -3056,8 +3056,10 @@ fn entry_of(record: &Record) -> Option<Entry> {
         // (C3), and the route strip names it — not a conversation block.
         Record::Routed { .. } => None,
         // Bookkeeping: the channel a peer arrived on is not a
-        // conversation block.
-        Record::Channel { .. } => None,
+        // conversation block. A persona's join and leave are the same
+        // kind of staffing fact; the TUI's transcript grows the join
+        // row with the bot face, not here.
+        Record::Channel { .. } | Record::Join { .. } | Record::Leave { .. } => None,
         // Bookkeeping: how a call was resolved is audit material, not a
         // conversation block.
         Record::ToolResolution { .. } => None,
@@ -4040,6 +4042,7 @@ mod tests {
         let mut app = app();
         app.seed(&[
             Record::Start {
+                personas: None,
                 v: 1,
                 model: "m".to_string(),
                 created: "c".to_string(),
@@ -4348,6 +4351,7 @@ mod tests {
         app.apply_ui_event(UiEvent::Failed("boom".to_string()));
         let records = vec![
             Record::Start {
+                personas: None,
                 v: 1,
                 model: "m".to_string(),
                 created: "c".to_string(),
@@ -4396,6 +4400,7 @@ mod tests {
     fn summary(id: &str) -> SessionSummary {
         SessionSummary {
             first_text: None,
+            personas: Vec::new(),
             id: id.to_string(),
             model: "deepseek-flash".to_string(),
             created: "2026-10-13T00:00:00Z".to_string(),

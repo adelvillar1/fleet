@@ -285,7 +285,7 @@ digest. Nothing from outside reaches the agent without a person letting
 it in. All of it is off by default.
 
 **State.** The pairing and device model are complete; the channel service
-is idle in this home until turned on, and the bot-first phone shell is
+is idle in this home until turned on, and the bot-first phone shell — the remote root since the 2026-10-28 pivot, serving `fleet bot` (see `docs/features/bot-app.md`) is
 planned, not built.
 
 ### Vault — *system*

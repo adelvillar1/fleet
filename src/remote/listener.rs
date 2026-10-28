@@ -55,17 +55,17 @@ const HEARTBEAT: std::time::Duration = std::time::Duration::from_secs(5);
 const ALLOWED_GET: &[&str] = &[
     // The face itself: the page and its assets are the app a paired
     // device opened, and a shell with no script is a shell that does
-    // nothing.
+    // nothing. The root is the BOT shell (D2, the 2026-10-28 pivot): a
+    // phone gets the persona-first app, the console keeps loopback.
     "/",
-    "/app.css",
-    "/app.js",
+    "/bot.css",
+    "/bot.js",
     // The install surface. No data in any of them: the manifest names the
     // app, the worker caches two public assets, the icons are a mark.
-    "/manifest.webmanifest",
-    "/sw.js",
-    "/icon-192.png",
-    "/icon-512.png",
-    "/apple-touch-icon.png",
+    "/bot.webmanifest",
+    "/bot-sw.js",
+    "/bot-icon-192.png",
+    "/bot-icon-512.png",
     "/events",
     "/api/state",
     "/api/sessions",
@@ -85,6 +85,10 @@ const ALLOWED_POST: &[&str] = &[
     "/api/approve",
     "/api/resume",
     "/api/session/new",
+    // Who works a conversation is a paired-device verb (P2): a phone
+    // adds the auditor to the conversation it is reading.
+    "/api/session/join",
+    "/api/session/leave",
     "/api/stop",
     "/api/steer",
 ];
@@ -252,7 +256,7 @@ async fn serve_connection(
     // are written directly. The allowlist above already admitted them, and
     // a paired device is the only caller that gets this far.
     if request.method == "GET" {
-        if let Some(icon) = crate::gui::server::icon_for(&request.path) {
+        if let Some(icon) = crate::gui::server::bot_icon_for(&request.path) {
             return crate::gui::server::write_blob(
                 &mut stream,
                 "image/png",
@@ -447,7 +451,7 @@ fn presented_tokens(request: &Request) -> Vec<String> {
 /// Whether a GET path is the page or one of its assets, which is what a
 /// browser asks for when it has not paired yet.
 fn is_page(path: &str) -> bool {
-    matches!(path, "/" | "/app.css" | "/app.js")
+    matches!(path, "/" | "/bot.css" | "/bot.js")
 }
 
 /// The allowlist check, method-aware. A path may be readable and not
@@ -474,27 +478,30 @@ async fn route_with(
     device_name: &str,
 ) -> Reply {
     match (request.method.as_str(), request.path.as_str()) {
-        ("GET", "/") => page(),
-        ("GET", "/manifest.webmanifest") => crate::gui::server::manifest(),
-        ("GET", "/sw.js") => crate::gui::server::worker(),
-        ("GET", "/app.css") => {
+        ("GET", "/") => crate::gui::server::bot_page(),
+        ("GET", "/bot.webmanifest") => crate::gui::server::bot_manifest(),
+        ("GET", "/bot-sw.js") => crate::gui::server::bot_worker(),
+        ("GET", "/bot.css") => {
             if query_value(&request.query, "v") == Some(crate::gui::server::ASSET_HASH) {
                 crate::gui::server::versioned_asset(
                     "text/css; charset=utf-8",
-                    crate::gui::server::STYLES,
+                    crate::gui::server::BOT_STYLES,
                 )
             } else {
-                asset("text/css; charset=utf-8", crate::gui::server::STYLES)
+                asset("text/css; charset=utf-8", crate::gui::server::BOT_STYLES)
             }
         }
-        ("GET", "/app.js") => {
+        ("GET", "/bot.js") => {
             if query_value(&request.query, "v") == Some(crate::gui::server::ASSET_HASH) {
                 crate::gui::server::versioned_asset(
                     "text/javascript; charset=utf-8",
-                    crate::gui::server::SCRIPT,
+                    crate::gui::server::BOT_SCRIPT,
                 )
             } else {
-                asset("text/javascript; charset=utf-8", crate::gui::server::SCRIPT)
+                asset(
+                    "text/javascript; charset=utf-8",
+                    crate::gui::server::BOT_SCRIPT,
+                )
             }
         }
         ("GET", "/events") => {
@@ -592,10 +599,52 @@ async fn route_with(
                 Err(message) => bad_request(&message),
             }
         }
-        ("POST", "/api/session/new") => match bridge.new_session() {
-            Ok(id) => api(200, json!({"type": "session", "id": id, "created": true})),
-            Err(message) => api(409, json!({"error": message})),
-        },
+        ("POST", "/api/session/new") => {
+            // The body is optional: a bare post creates an ordinary
+            // session; the bot names a persona and a goal.
+            let body = match read_body(stream, request, rest).await {
+                Ok(body) if body.trim().is_empty() => serde_json::Value::Null,
+                Ok(body) => match serde_json::from_str(&body) {
+                    Ok(value) => value,
+                    Err(_) => return bad_request("the creation body is not JSON"),
+                },
+                Err(message) => return bad_request(&message),
+            };
+            let persona = body.get("persona").and_then(serde_json::Value::as_str);
+            let goal = body.get("goal").and_then(serde_json::Value::as_str);
+            match bridge.new_session_with(persona, goal) {
+                Ok(id) => api(200, json!({"type": "session", "id": id, "created": true})),
+                Err(message) => api(409, json!({"error": message})),
+            }
+        }
+        ("POST", "/api/session/join") => {
+            let body = match read_body(stream, request, rest).await {
+                Ok(body) => body,
+                Err(message) => return bad_request(&message),
+            };
+            let (session, persona) = match crate::gui::server::session_persona_of(&body) {
+                Ok(pair) => pair,
+                Err(message) => return bad_request(&message),
+            };
+            match bridge.join(&session, &persona) {
+                Ok(document) => api(200, document),
+                Err(message) => api(409, json!({"error": message})),
+            }
+        }
+        ("POST", "/api/session/leave") => {
+            let body = match read_body(stream, request, rest).await {
+                Ok(body) => body,
+                Err(message) => return bad_request(&message),
+            };
+            let (session, persona) = match crate::gui::server::session_persona_of(&body) {
+                Ok(pair) => pair,
+                Err(message) => return bad_request(&message),
+            };
+            match bridge.leave(&session, &persona) {
+                Ok(document) => api(200, document),
+                Err(message) => api(409, json!({"error": message})),
+            }
+        }
         ("POST", "/api/stop") => match bridge.stop(None) {
             Ok(control) => api(200, control),
             Err(message) => api(409, json!({"error": message})),
@@ -780,16 +829,6 @@ fn pairing_page() -> Reply {
         content_type: "text/html; charset=utf-8",
         extra: Vec::new(),
         body: PAIR_PAGE.to_string(),
-    }
-}
-
-/// The page and its assets, the loopback face's own, served unchanged.
-fn page() -> Reply {
-    Reply {
-        status: "200 OK",
-        content_type: "text/html; charset=utf-8",
-        extra: vec![("Cache-Control".to_string(), "no-cache".to_string())],
-        body: crate::gui::server::index_page(),
     }
 }
 
@@ -1122,18 +1161,21 @@ mod tests {
         // The shell is installable from a paired device: the page asks for
         // the build's own asset URLs, and the manifest, worker, and icon
         // are reachable — none of them carries data.
+        // The root is the bot shell (D2): it asks for the bot's own
+        // versioned assets, and the bot's install set answers.
         let shell = get(port, "/", &token);
         assert!(
-            shell.contains(&format!("/app.js?v={}", crate::gui::server::ASSET_HASH)),
+            shell.contains(&format!("/bot.js?v={}", crate::gui::server::ASSET_HASH)),
             "{shell}"
         );
+        assert!(shell.contains("fleet bot"), "{shell}");
         for (path, content_type) in [
             (
-                "/manifest.webmanifest",
+                "/bot.webmanifest",
                 "Content-Type: application/manifest+json",
             ),
-            ("/sw.js", "Content-Type: text/javascript"),
-            ("/icon-192.png", "Content-Type: image/png"),
+            ("/bot-sw.js", "Content-Type: text/javascript"),
+            ("/bot-icon-192.png", "Content-Type: image/png"),
         ] {
             let reply = get(port, path, &token);
             assert!(reply.starts_with("HTTP/1.1 200"), "{path}: {reply}");
@@ -1143,7 +1185,7 @@ mod tests {
         // gets the 401 it gets for every non-page route.
         let unpaired = ask(
             port,
-            "GET /manifest.webmanifest HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            "GET /bot.webmanifest HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
         );
         assert!(unpaired.starts_with("HTTP/1.1 401"), "{unpaired}");
 
@@ -1187,7 +1229,7 @@ mod tests {
             body: String::new(),
         };
         // The face the relay exists to carry.
-        for path in ["/", "/app.css", "/app.js", "/api/state", "/api/sessions"] {
+        for path in ["/", "/bot.css", "/bot.js", "/api/state", "/api/sessions"] {
             let reply = answer_frame(&frame("GET", path), &bridge, "a relayed phone").await;
             assert_eq!(reply.status, "200 OK", "{path}");
         }
@@ -1246,8 +1288,42 @@ mod tests {
     /// answer to a phone as a 500 with a correct body under it — so this
     /// pins the number, not the body.
     #[test]
+    fn the_bot_shell_carries_its_install_set_and_cache_headers() {
+        // C15/C16 as raw replies: the shell names the app and asks for
+        // the versioned assets; the manifest is the manifest type; the
+        // worker is revalidated and allowed at the root; the versioned
+        // assets are immutable; and the console's assets are gone from
+        // the face entirely.
+        assert!(crate::gui::server::bot_page().body.contains("fleet bot"));
+        assert!(crate::gui::server::bot_page()
+            .body
+            .contains(&format!("/bot.css?v={}", crate::gui::server::ASSET_HASH)));
+        let manifest = crate::gui::server::bot_manifest();
+        assert_eq!(manifest.content_type, "application/manifest+json");
+        assert!(manifest.body.contains("\"name\": \"fleet bot\""));
+        let worker = crate::gui::server::bot_worker();
+        assert!(worker
+            .extra
+            .iter()
+            .any(|(name, value)| name == "Service-Worker-Allowed" && value == "/"));
+        let versioned = crate::gui::server::versioned_asset("text/css; charset=utf-8", "x");
+        assert!(versioned
+            .extra
+            .iter()
+            .any(|(name, value)| name == "Cache-Control" && value.contains("immutable")));
+        // The worker's boundary names the bot's own two assets and
+        // bypasses the stream and the API — C16, pinned against the
+        // worker's own source.
+        assert!(crate::gui::server::BOT_WORKER.contains("'/bot.css'"));
+        assert!(crate::gui::server::BOT_WORKER.contains("'/bot.js'"));
+        assert!(crate::gui::server::BOT_WORKER.contains("'/events'"));
+        assert!(crate::gui::server::BOT_WORKER.contains("'/api/'"));
+        assert!(!crate::gui::server::BOT_WORKER.contains("'/app.css'"));
+    }
+
+    #[test]
     fn the_relay_frame_carries_the_numeric_status() {
-        assert_eq!(status_of(&page()), 200);
+        assert_eq!(status_of(&crate::gui::server::bot_page()), 200);
         assert_eq!(status_of(&asset("text/css; charset=utf-8", "body")), 200);
         assert_eq!(status_of(&api(200, json!({"type": "x"}))), 200);
         assert_eq!(status_of(&unauthorized()), 401);
@@ -1277,8 +1353,8 @@ mod tests {
         // shell with no script is a shell that does nothing.
         for path in [
             "/",
-            "/app.css",
-            "/app.js",
+            "/bot.css",
+            "/bot.js",
             "/api/state",
             "/api/sessions",
             "/api/inbox",

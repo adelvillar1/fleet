@@ -551,6 +551,100 @@ impl Bridge {
         Ok(created.id().to_string())
     }
 
+    /// The bot's creation: the conversation names who takes it (the
+    /// lead persona, on the start record — P2) and the goal it serves
+    /// (the goals sidecar's own seam). Both optional, so the console's
+    /// plain `new_session` contract holds; a persona that no role file
+    /// carries is refused by name, because an inbox grouped by personas
+    /// cannot hold a conversation whose persona does not resolve.
+    pub fn new_session_with(
+        &self,
+        persona: Option<&str>,
+        goal: Option<&str>,
+    ) -> Result<String, String> {
+        let personas: Option<Vec<String>> = match persona.map(str::trim) {
+            Some(name) if !name.is_empty() => {
+                let role = crate::roles::load(&self.home, name)
+                    .map_err(|error| format!("the persona `{name}` does not resolve: {error}"))?;
+                Some(vec![role.name])
+            }
+            _ => None,
+        };
+        let created = session::Session::create_with_persona(&self.home, &self.model, personas)
+            .map_err(|error| format!("could not create a conversation: {error}"))?;
+        let id = created.id().to_string();
+        if let Some(text) = goal.map(str::trim).filter(|text| !text.is_empty()) {
+            let mut goals = load_goals(&self.home);
+            goals.insert(id.clone(), text.to_string());
+            save_goals(&self.home, &goals);
+        }
+        Ok(id)
+    }
+
+    /// One persona joins this conversation — the 2026-10-28 ruling that
+    /// a conversation may hold more than one persona, recorded as a row
+    /// in the log (`join`), never a silent change of voice. The role's
+    /// description rides the record, so a replay can say what the
+    /// joiner was. A persona that does not resolve is refused by name;
+    /// a persona already in the set is refused as already-here.
+    pub fn join(&self, session: &str, persona: &str) -> Result<Value, String> {
+        let role = crate::roles::load(&self.home, persona)
+            .map_err(|error| format!("the persona `{persona}` does not resolve: {error}"))?;
+        let summary = session::summarize(&session::session_path(&self.home, session))
+            .ok_or_else(|| format!("the session `{session}` could not be read"))?;
+        if summary.personas.contains(&role.name) {
+            return Err(format!(
+                "`{}` is already working this conversation",
+                role.name
+            ));
+        }
+        let mut log = session::Session::open(&session::session_path(&self.home, session))
+            .map_err(|error| format!("could not open the conversation: {error}"))?;
+        log.record(&session::Record::Join {
+            persona: role.name.clone(),
+            role: Some(role.description.clone()),
+            at: crate::boards::now_stamp(),
+        })
+        .map_err(|error| format!("could not write the join: {error}"))?;
+        Ok(json!({
+            "type": "join",
+            "session": session,
+            "persona": role.name,
+            "role": role.description,
+        }))
+    }
+
+    /// One persona leaves this conversation. The set shrinks; the log
+    /// does not — the join row stays, and this says when it ended. The
+    /// lead (the first persona) cannot leave while others remain: a
+    /// conversation without a lead has no owner of its goal.
+    pub fn leave(&self, session: &str, persona: &str) -> Result<Value, String> {
+        let summary = session::summarize(&session::session_path(&self.home, session))
+            .ok_or_else(|| format!("the session `{session}` could not be read"))?;
+        if !summary.personas.iter().any(|name| name == persona) {
+            return Err(format!("`{persona}` is not working this conversation"));
+        }
+        if summary.personas.first().map(String::as_str) == Some(persona)
+            && summary.personas.len() > 1
+        {
+            return Err(format!(
+                "`{persona}` leads this conversation — reassign the lead before the leave"
+            ));
+        }
+        let mut log = session::Session::open(&session::session_path(&self.home, session))
+            .map_err(|error| format!("could not open the conversation: {error}"))?;
+        log.record(&session::Record::Leave {
+            persona: persona.to_string(),
+            at: crate::boards::now_stamp(),
+        })
+        .map_err(|error| format!("could not write the leave: {error}"))?;
+        Ok(json!({
+            "type": "leave",
+            "session": session,
+            "persona": persona,
+        }))
+    }
+
     /// One session's live state as one document: the session, the model,
     /// the context budget the meter divides by, the ordered log, the
     /// seat, and the remembered rules. Everything the header derives —
@@ -627,12 +721,15 @@ impl Bridge {
                     // document's copy has to as well, or an answer to a
                     // seat that arrived by the state read posts
                     // session-less and is answered against the launch
-                    // session (KI-286).
+                    // session (KI-286). `destructive` rides both copies
+                    // (R5): the face renders the cue from what the gate
+                    // decided, never from a guess about the tool.
                     "session": key,
                     "since": attached.seat_at,
                     "tool": seat.call.function.name,
                     "summary": seat.summary,
                     "label": approvals::Rule::for_call(&seat.call).label(),
+                    "destructive": approvals::Gate::is_destructive(&seat.call),
                     "allowlistable": approvals::allowlistable(&seat.call),
                 })
             }),
@@ -3930,7 +4027,20 @@ fn cards_from_records(records: &[session::Record]) -> (Vec<Value>, usize) {
             | session::Record::ToolResolution { .. }
             | session::Record::LaneFailed { .. }
             | session::Record::Declarations { .. }
-            | session::Record::Routed { .. } => {}
+            | session::Record::Routed { .. }
+            // A leave only ends a participation the join row opened;
+            // the join row itself is what the transcript shows.
+            | session::Record::Leave { .. } => {}
+            // A persona joining the conversation is a row the owner
+            // reads — the 2026-10-28 ruling's own words — so the
+            // replay surfaces it the way it surfaces a channel.
+            session::Record::Join { persona, role, .. } => {
+                cards.push(json!({
+                    "type": "join",
+                    "persona": persona,
+                    "role": role,
+                }));
+            }
             // Bookkeeping, like start and end — it replays to no message
             // — but it carries the facts the inbox shows, so the replay
             // surfaces it rather than dropping it.
@@ -4531,6 +4641,14 @@ fn inbox_document(
             .get("state")
             .and_then(Value::as_str)
             .unwrap_or("interrupted");
+        // The bot's four words, mapped from the archive's own vocabulary
+        // (D5 — one derivation, never a second state machine). Two arms
+        // the 2026-10-27 archive verb added: `archived` is the owner's
+        // own end, so it carries its own word here — the phone's filter
+        // presents it, and folding it into `finished` would read a put-
+        // away conversation as a done one. `handed back` is an
+        // interactive conversation that stopped, which for the phone is
+        // finished — nothing failed, and nothing is held.
         let state = if seats.contains_key(id) {
             "seat"
         } else {
@@ -4538,6 +4656,7 @@ fn inbox_document(
                 "needs-approval" => "seat",
                 "working" | "active" => "running",
                 "capped" | "stopped" | "interrupted" => "failed",
+                "archived" => "archived",
                 _ => "finished",
             }
         };
@@ -4554,6 +4673,12 @@ fn inbox_document(
             "state": state,
             "at": row.get("last_write"),
             "last": last,
+            // Who works this conversation (join order, lead first) and
+            // the goal it serves: the two facts the bot's persona-first
+            // surface groups by, taken from the row the archive already
+            // derived — never a second derivation (P4).
+            "personas": row.get("personas"),
+            "goal": row.get("goal"),
         });
         if let Some(summary) = seats.get(id) {
             out_row["seat"] = json!(summary);
@@ -4570,6 +4695,8 @@ fn inbox_document(
         Some("seat") => 0,
         Some("running") => 1,
         Some("failed") => 2,
+        // Archived and finished share the tail: neither needs the
+        // owner, and the archive is a put-away, not a priority.
         _ => 3,
     });
     json!({
@@ -4645,6 +4772,14 @@ fn sessions_read(home: &std::path::Path, current: &str, live: &LiveFace, query: 
                 "channel": entry.channel,
                 "compacted": entry.compacted,
                 "current": entry.id == current,
+                // Who works this conversation, in join order — the lead
+                // first (P2) — and the standing objective it serves (the
+                // goals sidecar; the log's own Goal record is per-run and
+                // the sidecar is the session's standing one). Both absent
+                // on a pre-P2 log, which reads as unassigned rather than
+                // being invented into a persona.
+                "personas": entry.personas,
+                "goal": session_goal(home, &entry.id),
                 // Whose work this is, and — for a scheduled run — which
                 // job, so the background group can be one line per job
                 // instead of a pile of anonymous runs.
@@ -6573,6 +6708,15 @@ fn describe_seat(call: &ToolCall, summary: &str) -> Value {
         "tool": call.function.name,
         "summary": summary,
         "label": approvals::Rule::for_call(call).label(),
+        // The bot plan's R5: a destructive act is held every time and
+        // flagged — this is the flag as data, so the face renders the
+        // cue (the red hairline, the badge, no always-allow) from what
+        // the gate decided rather than from a guess about the tool.
+        "destructive": approvals::Gate::is_destructive(call),
+        // `allowlistable` is carried so the page can hide the choice
+        // honestly rather than offer a button the writer would refuse —
+        // and it is already false for a destructive call, which is why
+        // the bot's seat never shows an Always on one.
         "allowlistable": approvals::allowlistable(call),
     })
 }
@@ -8797,6 +8941,7 @@ mod tests {
             id: id.to_string(),
             model: "deepseek-flash".to_string(),
             first_text: first_text.map(str::to_string),
+            personas: Vec::new(),
             created: "2026-10-23T00:00:00Z".to_string(),
             ended,
             kind: kind.map(str::to_string),
@@ -9049,6 +9194,147 @@ mod tests {
         // The document names its bound.
         assert_eq!(document["bound"], 50);
         std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn the_inbox_carries_the_persona_facts_and_the_archived_word() {
+        let home = std::env::temp_dir().join(format!("fleet-gui-inbox-3-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).expect("a temp home");
+        // A conversation with a persona and a goal (P2's facts), ended
+        // and then archived by the owner (the 2026-10-27 verb).
+        let mut archived = crate::session::Session::create_with_persona(
+            &home,
+            "deepseek-flash",
+            Some(vec!["tower".to_string()]),
+        )
+        .unwrap();
+        archived
+            .record(&crate::session::Record::User {
+                content: "close the row".into(),
+            })
+            .unwrap();
+        archived
+            .record(&crate::session::Record::End {
+                stop_reason: "handed back".into(),
+                turns: 1,
+                served_model: None,
+            })
+            .unwrap();
+        let archived_id = archived.id().to_string();
+        let mut registry = load_archived(&home);
+        registry.insert(archived_id.clone(), "2026-10-28T12:00:00Z".into());
+        save_archived(&home, &registry);
+        // The goal rides the sidecar the way the face writes it.
+        let mut goals = load_goals(&home);
+        goals.insert(archived_id.clone(), "close KI-339 and run the gate".into());
+        save_goals(&home, &goals);
+
+        let live = LiveFace::default();
+        let seats = std::collections::HashMap::new();
+        let document = inbox_document(&home, &live, &seats, 50);
+        let rows = document["sessions"].as_array().expect("rows");
+        let row = rows
+            .iter()
+            .find(|row| row["id"] == archived_id)
+            .expect("the archived row is in the inbox");
+        // The archive is its own word, not `finished`: a put-away
+        // conversation must not read as a done one (P4).
+        assert_eq!(row["state"], "archived");
+        // The persona and the goal ride the row: the facts the bot
+        // groups by, from the log and the sidecar, never re-derived.
+        assert_eq!(row["personas"], json!(["tower"]));
+        assert_eq!(row["goal"], "close KI-339 and run the gate");
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[tokio::test]
+    async fn a_persona_joins_through_the_bridge_and_the_log_carries_it() {
+        let home = std::env::temp_dir().join(format!("fleet-gui-join-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).expect("a temp home");
+        // The role the join names must exist: the repo's own personas
+        // are the fixture (P1's files, C2's resolution).
+        let repo_roles = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("roles");
+        std::fs::create_dir_all(crate::roles::roles_dir(&home)).unwrap();
+        for entry in std::fs::read_dir(&repo_roles).unwrap() {
+            let entry = entry.unwrap();
+            std::fs::copy(
+                entry.path(),
+                crate::roles::roles_dir(&home).join(entry.file_name()),
+            )
+            .unwrap();
+        }
+        let (bridge, _sources) = Bridge::detached(home.clone(), "deepseek-flash".to_string(), None);
+        let id = bridge
+            .new_session_with(Some("tower"), Some("close KI-339 and run the gate"))
+            .expect("the creation names its persona and goal");
+        // The start record says who the conversation belongs to.
+        let summary = crate::session::summarize(&session::session_path(&home, &id))
+            .expect("the log summarizes");
+        assert_eq!(summary.personas, vec!["tower".to_string()]);
+        assert_eq!(
+            session_goal(&home, &id).as_deref(),
+            Some("close KI-339 and run the gate")
+        );
+        // A persona joins: a row in the log, and the set grows.
+        bridge.join(&id, "auditor").expect("the join");
+        let summary = crate::session::summarize(&session::session_path(&home, &id))
+            .expect("the log summarizes");
+        assert_eq!(
+            summary.personas,
+            vec!["tower".to_string(), "auditor".to_string()]
+        );
+        // A second join of the same persona is refused as already-here;
+        // an unknown persona is refused by name; the lead cannot leave
+        // while others remain.
+        let again = bridge.join(&id, "auditor").unwrap_err();
+        assert!(again.contains("already"), "{again}");
+        let unknown = bridge.join(&id, "nonpersona").unwrap_err();
+        assert!(unknown.contains("does not resolve"), "{unknown}");
+        let lead = bridge.leave(&id, "tower").unwrap_err();
+        assert!(lead.contains("leads this conversation"), "{lead}");
+        // The leave writes its record; the set shrinks, the log stays.
+        bridge.leave(&id, "auditor").expect("the leave");
+        let summary = crate::session::summarize(&session::session_path(&home, &id))
+            .expect("the log summarizes");
+        assert_eq!(summary.personas, vec!["tower".to_string()]);
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn the_seat_names_its_destructive_class() {
+        // R5 as data: a write_file call is destructive, a read is not,
+        // and the flag is the gate's own decision carried to the face —
+        // the same value on both delivery paths (the event and the
+        // state document share `describe_seat`'s computation).
+        let write = crate::api::FunctionCall {
+            name: "write_file".to_string(),
+            arguments: r#"{"path":"docs/x.md","content":"new"}"#.to_string(),
+        };
+        let destructive = describe_seat(
+            &crate::api::ToolCall {
+                id: "a".into(),
+                function: write,
+                kind: String::new(),
+            },
+            "rewrite docs/x.md",
+        );
+        assert_eq!(destructive["destructive"], json!(true));
+        assert_eq!(destructive["allowlistable"], json!(false));
+        let read = crate::api::FunctionCall {
+            name: "read_file".to_string(),
+            arguments: r#"{"path":"docs/x.md"}"#.to_string(),
+        };
+        let plain = describe_seat(
+            &crate::api::ToolCall {
+                id: "b".into(),
+                function: read,
+                kind: String::new(),
+            },
+            "read docs/x.md",
+        );
+        assert_eq!(plain["destructive"], json!(false));
     }
 
     #[test]

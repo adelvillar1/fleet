@@ -74,6 +74,17 @@ pub(crate) const SCRIPT: &str = include_str!("assets/app.js");
 /// The install surface: the manifest, the shell worker, and the icons.
 pub(crate) const MANIFEST: &str = include_str!("assets/manifest.webmanifest");
 const WORKER: &str = include_str!("assets/sw.js");
+// The bot shell (B1): the remote face's own app, embedded the way the
+// console's is. The loopback face never serves these — its root stays
+// the console — but the constants live beside their siblings so there
+// is one include site per asset.
+pub(crate) const BOT_SHELL: &str = include_str!("assets/bot.html");
+pub(crate) const BOT_STYLES: &str = include_str!("assets/bot.css");
+pub(crate) const BOT_SCRIPT: &str = include_str!("assets/bot.js");
+pub(crate) const BOT_MANIFEST: &str = include_str!("assets/bot.webmanifest");
+pub(crate) const BOT_WORKER: &str = include_str!("assets/bot-sw.js");
+const BOT_ICON_192: &[u8] = include_bytes!("assets/bot-icon-192.png");
+const BOT_ICON_512: &[u8] = include_bytes!("assets/bot-icon-512.png");
 const ICON_192: &[u8] = include_bytes!("assets/icon-192.png");
 const ICON_512: &[u8] = include_bytes!("assets/icon-512.png");
 
@@ -683,16 +694,67 @@ async fn serve_connection(
         // Create a conversation: the New control writes a real session,
         // so the work list holds it before its first message and the
         // next run posted with this id lands in it.
-        ("POST", "/api/session/new") => match bridge.new_session() {
-            Ok(id) => {
-                write_reply(
-                    &mut stream,
-                    api(200, json!({"type": "session", "id": id, "created": true})),
-                )
-                .await
+        ("POST", "/api/session/new") => {
+            // The body is optional: the console posts none and gets the
+            // plain contract; the bot names a persona and a goal.
+            let body = match read_body(&mut stream, &request, rest).await {
+                Ok(body) if body.trim().is_empty() => serde_json::Value::Null,
+                Ok(body) => match serde_json::from_str(&body) {
+                    Ok(value) => value,
+                    Err(_) => {
+                        return write_reply(
+                            &mut stream,
+                            bad_request("the creation body is not JSON"),
+                        )
+                        .await
+                    }
+                },
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            let persona = body.get("persona").and_then(serde_json::Value::as_str);
+            let goal = body.get("goal").and_then(serde_json::Value::as_str);
+            match bridge.new_session_with(persona, goal) {
+                Ok(id) => {
+                    write_reply(
+                        &mut stream,
+                        api(200, json!({"type": "session", "id": id, "created": true})),
+                    )
+                    .await
+                }
+                Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
             }
-            Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
-        },
+        }
+        // One persona joins the conversation (P2): a row in the log,
+        // refused by name when the persona does not resolve or is
+        // already here.
+        ("POST", "/api/session/join") => {
+            let body = match read_body(&mut stream, &request, rest).await {
+                Ok(body) => body,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            let (session, persona) = match session_persona_of(&body) {
+                Ok(pair) => pair,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            match bridge.join(&session, &persona) {
+                Ok(document) => write_reply(&mut stream, api(200, document)).await,
+                Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
+            }
+        }
+        ("POST", "/api/session/leave") => {
+            let body = match read_body(&mut stream, &request, rest).await {
+                Ok(body) => body,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            let (session, persona) = match session_persona_of(&body) {
+                Ok(pair) => pair,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            match bridge.leave(&session, &persona) {
+                Ok(document) => write_reply(&mut stream, api(200, document)).await,
+                Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
+            }
+        }
         // Name a session: the owner's title for the archive.
         ("POST", "/api/session/title") => {
             let body = match read_body(&mut stream, &request, rest).await {
@@ -1399,6 +1461,26 @@ fn usage_event_of(body: &str) -> Result<(String, String, String), String> {
 /// The text a steer's body carries. The bridge owns the rule that an
 /// empty steer is refused; this only reads the one string the body
 /// holds, so a malformed body is a 400 before any control is written.
+/// The `session` + `persona` pair the join and leave verbs post. A
+/// missing either is a named 400, not a guess.
+pub(crate) fn session_persona_of(body: &str) -> Result<(String, String), String> {
+    let value: serde_json::Value =
+        serde_json::from_str(body).map_err(|_| "the body is not JSON".to_string())?;
+    let session = value
+        .get("session")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .ok_or("the body carries no session")?;
+    let persona = value
+        .get("persona")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .ok_or("the body carries no persona")?;
+    Ok((session.to_string(), persona.to_string()))
+}
+
 pub(crate) fn steer_of(body: &str) -> Result<String, String> {
     let parsed: serde_json::Value = serde_json::from_str(body)
         .map_err(|e| format!("fleet gui could not read the steer's body: {e}"))?;
@@ -1720,22 +1802,54 @@ fn asset(content_type: &'static str, body: &'static str) -> Reply {
     }
 }
 
+/// The bot shell and its assets: the same cache grammar the console's
+/// builders answer with, at the bot's own paths. The remote face's
+/// root is the bot shell (D2), so `bot_page` is what `/` serves there.
+pub(crate) fn bot_page() -> Reply {
+    Reply {
+        status: "200 OK",
+        content_type: "text/html; charset=utf-8",
+        extra: cache_control("no-cache"),
+        body: BOT_SHELL.replace("__FLEET_ASSET_HASH__", ASSET_HASH),
+    }
+}
+
+pub(crate) fn bot_manifest() -> Reply {
+    Reply {
+        status: "200 OK",
+        content_type: "application/manifest+json",
+        extra: cache_control("no-cache"),
+        body: BOT_MANIFEST.to_string(),
+    }
+}
+
+pub(crate) fn bot_worker() -> Reply {
+    Reply {
+        status: "200 OK",
+        content_type: "text/javascript; charset=utf-8",
+        extra: vec![
+            ("Cache-Control".to_string(), "no-cache".to_string()),
+            ("Service-Worker-Allowed".to_string(), "/".to_string()),
+            ("X-Content-Type-Options".to_string(), "nosniff".to_string()),
+        ],
+        body: BOT_WORKER.to_string(),
+    }
+}
+
+pub(crate) fn bot_icon_for(path: &str) -> Option<&'static [u8]> {
+    match path {
+        "/bot-icon-192.png" => Some(BOT_ICON_192),
+        "/bot-icon-512.png" => Some(BOT_ICON_512),
+        _ => None,
+    }
+}
+
 pub(crate) fn versioned_asset(content_type: &'static str, body: &'static str) -> Reply {
     Reply {
         status: "200 OK",
         content_type,
         extra: cache_control("public, max-age=31536000, immutable"),
         body: body.to_string(),
-    }
-}
-
-/// The icon a PWA path names. One function, so a path the loopback face
-/// serves cannot 404 on the remote face or the other way round.
-pub(crate) fn icon_for(path: &str) -> Option<&'static [u8]> {
-    match path {
-        "/icon-192.png" | "/apple-touch-icon.png" | "/favicon.ico" => Some(ICON_192),
-        "/icon-512.png" => Some(ICON_512),
-        _ => None,
     }
 }
 

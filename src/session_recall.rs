@@ -927,6 +927,7 @@ mod tests {
     /// The log's own first line.
     fn start() -> Record {
         Record::Start {
+            personas: None,
             v: 1,
             model: "m".to_string(),
             created: "2026-10-15T00:00:00Z".to_string(),
@@ -1649,6 +1650,7 @@ mod tests {
     fn row(id: &str, workspace: Option<&str>) -> crate::session::SessionSummary {
         crate::session::SessionSummary {
             first_text: None,
+            personas: Vec::new(),
             id: id.to_string(),
             model: "deepseek-flash".to_string(),
             created: "2026-10-15T00:00:00Z".to_string(),
@@ -1884,6 +1886,7 @@ pub fn render_detail(id: &str, created: &str, records: &[crate::session::Record]
     for record in records {
         match record {
             Record::Start {
+                personas: None,
                 model,
                 kind,
                 parent,

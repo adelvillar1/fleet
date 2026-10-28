@@ -1067,6 +1067,7 @@ fn parent_of(sessions_dir: &std::path::Path, session: &str) -> Option<String> {
     let records = crate::session::replay(&log).ok()?;
     records.first().and_then(|record| match record {
         Record::Start {
+            personas: None,
             parent: Some(parent),
             workspace: None,
             ..
@@ -3081,6 +3082,7 @@ mod tests {
     fn the_last_words_of_a_log_are_the_last_assistant_text() {
         let records = vec![
             Record::Start {
+                personas: None,
                 v: 1,
                 model: "m".to_string(),
                 created: "c".to_string(),
@@ -3358,6 +3360,7 @@ mod tests {
             kind: kind.map(str::to_string),
             parent: parent.map(str::to_string),
             workspace: None,
+            personas: None,
         })
         .unwrap();
         text.push('\n');

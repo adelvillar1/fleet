@@ -1,0 +1,16 @@
+{
+  "name": "fleet bot",
+  "short_name": "fleet bot",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f6f4ef",
+  "theme_color": "#f6f4ef",
+  "description": "fleet's pocket surface: personas, their conversations, and the goals they serve.",
+  "icons": [
+    { "src": "/bot-icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/bot-icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/bot-icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

@@ -1,0 +1,424 @@
+<!doctype html>
+<html lang="en" data-theme="paper">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>fleet bot — dispatch (B0 mockup)</title>
+<link rel="stylesheet" href="mockup.css">
+<style>
+  /* Screen 3: dispatch. One bottom sheet over the inbox — a scoped task,
+     sized to the keyboard, not a second screen. */
+
+  .bg-list { padding-top: 6px; }
+
+  .bg-list .row { pointer-events: none; }
+
+  .sheet.dispatch-sheet { border-radius: var(--r-xl) var(--r-xl) 0 0; }
+
+  .ask {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+    margin: 0 0 4px;
+    padding: 10px 10px 10px 14px;
+    border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--hairline-strong));
+    border-radius: 16px;
+    background: var(--surface);
+    box-shadow: var(--shadow-1);
+  }
+
+  .ask textarea {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 44px;
+    max-height: 150px;
+    padding: 11px 0;
+    border: 0;
+    outline: none;
+    resize: none;
+    background: transparent;
+    color: var(--ink);
+    font: inherit;
+    font-size: 16.5px;
+    line-height: 1.4;
+  }
+
+  .ask textarea::placeholder { color: var(--ink-3); }
+
+  .ask .primary-act {
+    flex: 0 0 auto;
+    width: 44px;
+    height: 44px;
+    display: grid;
+    place-items: center;
+    border: 0;
+    border-radius: var(--pill);
+    background: var(--accent);
+    color: var(--on-accent);
+    cursor: pointer;
+    transition: opacity var(--fast) var(--ease), transform var(--fast) var(--ease);
+  }
+
+  .ask .primary-act[disabled] {
+    background: var(--raised);
+    color: var(--ink-3);
+    cursor: default;
+  }
+
+  /* who takes it: the first choice a bot-first composer asks, before the brief */
+  .who { margin: 0 0 12px; }
+
+  .who .label {
+    display: block;
+    margin-bottom: 7px;
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+
+  .who-row { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
+  .who-row::-webkit-scrollbar { display: none; }
+
+  .who-row .choice {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    min-height: 44px;
+    padding: 0 14px 0 7px;
+    border: 1px solid var(--hairline);
+    border-radius: var(--pill);
+    background: var(--surface);
+    color: var(--ink-2);
+    font: inherit;
+    font-size: 13.5px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .who-row .choice[aria-pressed="true"] {
+    border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+    background: var(--accent-wash);
+    color: var(--accent-deep);
+  }
+
+  .where {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0 0 12px;
+    padding: 0 2px;
+    font-size: 12px;
+    color: var(--ink-3);
+  }
+
+  .where .path {
+    padding: 3px 9px;
+    border: 1px solid var(--hairline);
+    border-radius: var(--pill);
+    background: var(--surface);
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--ink-2);
+  }
+
+  .starters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 14px 0 0;
+  }
+
+  .starter {
+    min-height: 44px;
+    padding: 0 13px;
+    border: 1px solid var(--hairline);
+    border-radius: var(--pill);
+    background: var(--surface);
+    color: var(--ink-2);
+    font: inherit;
+    font-size: 13px;
+    cursor: pointer;
+    transition: border-color var(--fast) var(--ease), color var(--fast) var(--ease);
+  }
+
+  .starter:hover { border-color: color-mix(in srgb, var(--accent) 38%, var(--hairline)); color: var(--accent-deep); }
+
+  .foot {
+    margin: 14px 0 0;
+    padding-top: 12px;
+    border-top: 1px solid var(--hairline);
+    font-size: 11.5px;
+    line-height: 1.5;
+    color: var(--ink-3);
+  }
+
+  .foot b { color: var(--ink-2); font-weight: 600; }
+
+  @container (min-width: 720px) {
+    .phone { --gutter: 24px; }
+
+    .sheet.dispatch-sheet {
+      left: 50%;
+      right: auto;
+      bottom: auto;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      width: min(560px, calc(100% - 120px));
+      border-radius: var(--r-xl);
+    }
+
+    .sheet.dispatch-sheet .grab { display: none; }
+  }
+</style>
+</head>
+<body>
+<div class="review">
+  <div class="review-head">
+    <h1>Dispatch</h1>
+    <p>screen 3 of 4 · plan <code>2026-10-20-bot-pwa.md</code> · B0</p>
+  </div>
+
+  <div class="controls">
+    <label>State</label>
+    <div class="seg" data-role="state">
+      <button data-state="empty" aria-pressed="true">Empty</button>
+      <button data-state="typed" aria-pressed="false">Typed</button>
+    </div>
+    <label>Width</label>
+    <div class="seg" data-role="width">
+      <button data-w="430" aria-pressed="true">430</button>
+      <button data-w="900" aria-pressed="false">900</button>
+    </div>
+    <div class="w-slider">
+      <input id="wslider" type="range" min="430" max="900" step="1" value="430" aria-label="Frame width">
+      <output id="wout">430 px</output>
+    </div>
+    <label>Theme</label>
+    <div class="seg" data-role="theme">
+      <button data-theme="paper" aria-pressed="true">Paper</button>
+      <button data-theme="console" aria-pressed="false">Console</button>
+      <button data-theme="graphite" aria-pressed="false">Graphite</button>
+    </div>
+  </div>
+
+  <p class="caption" id="caption"></p>
+
+  <div class="stage">
+    <div class="phone" id="phone" data-state="empty">
+      <div class="statusbar">
+        <span>9:41</span>
+        <span class="glyphs">
+          <svg width="17" height="11" viewBox="0 0 17 11" fill="currentColor" aria-hidden="true"><rect x="0" y="7" width="3" height="4" rx="1"/><rect x="4.7" y="5" width="3" height="6" rx="1"/><rect x="9.4" y="2.6" width="3" height="8.4" rx="1"/><rect x="14.1" y="0" width="3" height="11" rx="1"/></svg>
+          <svg width="16" height="11" viewBox="0 0 16 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M1 4.3a10 10 0 0 1 14 0"/><path d="M3.6 7a6.4 6.4 0 0 1 8.8 0"/><path d="M6.2 9.6a2.7 2.7 0 0 1 3.6 0"/></svg>
+          <svg width="25" height="12" viewBox="0 0 25 12" fill="none" aria-hidden="true"><rect x="0.6" y="0.6" width="21" height="10.8" rx="3" stroke="currentColor" stroke-opacity="0.4"/><rect x="2.2" y="2.2" width="15" height="7.6" rx="1.8" fill="currentColor"/><path d="M23.4 4.2v3.6a2 2 0 0 0 0-3.6Z" fill="currentColor" fill-opacity="0.5"/></svg>
+        </span>
+      </div>
+
+      <div class="screen">
+        <div class="app-head">
+          <div class="titles">
+            <h2>fleet</h2>
+            <p class="sub">6 personas · 10 conversations</p>
+          </div>
+          <span class="count"><span class="dot"></span>2</span>
+          <button class="act" aria-label="Search conversations">
+            <svg width="19" height="19" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="9" cy="9" r="5.6"/><path d="m13.3 13.3 3.4 3.4" stroke-linecap="round"/></svg>
+          </button>
+        </div>
+
+        <div class="scroll bg-list">
+          <div class="waiting">
+            <div class="bar">Needs you · 3</div>
+            <button class="row seat triage" tabindex="-1">
+              <span class="mark sm" data-p="tower">t</span>
+              <span class="title">overwrite the KI-339 rows</span>
+              <span class="age"><span class="state-dot"></span>2m</span>
+            </button>
+            <button class="row seat triage" tabindex="-1">
+              <span class="mark sm" data-p="advocate">v</span>
+              <span class="title">send the CV to Northwind</span>
+              <span class="age"><span class="state-dot"></span>12m</span>
+            </button>
+            <button class="row failed triage" tabindex="-1">
+              <span class="mark sm" data-p="tower">t</span>
+              <span class="title">the embedder went quiet</span>
+              <span class="age"><span class="state-dot"></span>1h</span>
+            </button>
+          </div>
+
+          <div class="persona-rail">
+            <button class="persona" aria-pressed="true"><span class="mark sm">f</span>Everyone <span class="n">10</span></button>
+            <button class="persona" aria-pressed="false"><span class="mark sm" data-p="tower">t</span>tower <span class="n">2</span></button>
+            <button class="persona" aria-pressed="false"><span class="mark sm" data-p="scholar">s</span>scholar <span class="n">2</span></button>
+            <button class="persona" aria-pressed="false"><span class="mark sm" data-p="presenter">p</span>presenter <span class="n">2</span></button>
+            <button class="persona" aria-pressed="false"><span class="mark sm" data-p="advocate">v</span>advocate <span class="n">2</span></button>
+            <button class="persona" aria-pressed="false"><span class="mark sm" data-p="clerk">c</span>clerk <span class="n">1</span></button>
+          </div>
+
+          <div class="section-head"><span class="who">tower <span class="role">runs the work</span></span><span class="n">2</span></div>
+          <div class="rows">
+            <button class="row running" tabindex="-1">
+              <span class="mark sm" data-p="tower">t</span>
+              <span>
+                <p class="title">the gate on the fix</p>
+                <p class="last">Running cargo test — 1,591 passed, 3 still running.</p>
+              </span>
+              <span class="age"><span class="state-dot"></span>14m</span>
+            </button>
+          </div>
+          <div class="section-head"><span class="who">presenter <span class="role">presentations</span></span><span class="n">2</span></div>
+          <div class="rows">
+            <button class="row running" tabindex="-1">
+              <span class="mark sm" data-p="presenter">p</span>
+              <span>
+                <p class="title">the estate readout</p>
+                <p class="last">Laying out the twelve surfaces; one needs a screenshot.</p>
+              </span>
+              <span class="age"><span class="state-dot"></span>8m</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="scrim"></div>
+
+        <div class="sheet dispatch-sheet">
+          <div class="grab"></div>
+          <div class="sheet-head">
+            <h3>New conversation</h3>
+            <button class="x" aria-label="Close">
+              <svg width="17" height="17" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15"/></svg>
+            </button>
+          </div>
+          <div class="sheet-body">
+            <div class="who">
+              <span class="label">Who takes it</span>
+              <div class="who-row">
+                <button class="choice" aria-pressed="true"><span class="mark sm" data-p="tower">t</span>tower</button>
+                <button class="choice" aria-pressed="false"><span class="mark sm" data-p="scholar">s</span>scholar</button>
+                <button class="choice" aria-pressed="false"><span class="mark sm" data-p="presenter">p</span>presenter</button>
+                <button class="choice" aria-pressed="false"><span class="mark sm" data-p="advocate">v</span>advocate</button>
+                <button class="choice" aria-pressed="false"><span class="mark sm" data-p="auditor">a</span>auditor</button>
+                <button class="choice" aria-pressed="false"><span class="mark sm" data-p="clerk">c</span>clerk</button>
+              </div>
+            </div>
+
+            <div class="where">
+              <span>runs in</span>
+              <span class="path">~/Projects/fleet</span>
+            </div>
+
+            <div class="ask">
+              <textarea id="askfield" rows="1" enterkeyhint="send" aria-label="Message tower">ask tower…</textarea>
+              <button class="primary-act" id="send" disabled aria-label="Send">
+                <svg width="17" height="17" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><path d="M10 15.5V4.5M10 4.5 5.5 9M10 4.5l4.5 4.5"/></svg>
+              </button>
+            </div>
+
+            <div class="starters" id="starters">
+              <button class="starter">run the gate</button>
+              <button class="starter">review the diff</button>
+              <button class="starter">what's open in the ledger</button>
+            </div>
+
+            <p class="foot">The persona gets the brief; the run happens in the folder above. The log is created on send and rides <b>/api/run</b> — the same route the console speaks. A workspace picker is the next increment.</p>
+          </div>
+        </div>
+      </div>
+      <div class="home-indicator"><span></span></div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const phone = document.getElementById('phone');
+  const caption = document.getElementById('caption');
+  const field = document.getElementById('askfield');
+  const send = document.getElementById('send');
+  const starters = document.getElementById('starters');
+  const slider = document.getElementById('wslider');
+  const wout = document.getElementById('wout');
+
+  const TYPED = 'close KI-339 and run the gate';
+  const PLACEHOLDER = 'ask tower…';
+
+  const CAPTIONS = {
+    empty: '<b>Dispatch, empty.</b> The first choice is <b>who</b>, because this is an assistant app: six personas — three of them domains (scholar, presenter, advocate) — one tap each, the last one remembered. Then the brief, then the folder it will run in. Three starters drawn from fleet\u2019s own verbs, and a send that stays visibly disabled until there is something to send.',
+    typed: '<b>Dispatch, typed.</b> The persona you chose stays visible above the brief, because who takes it is the decision that shapes everything after — its tools, its skills, what it recalls. The starters step out of the way once there is a sentence to send; they are a cold-start aid, not a permanent toolbar.'
+  };
+
+  const params = new URLSearchParams(location.search);
+
+  // The textarea is a real one: typing works, and the send button follows
+  // the content, so review can try the interaction instead of reading it.
+  function syncSend() {
+    const has = field.value.trim().length > 0 && field.value !== PLACEHOLDER;
+    send.disabled = !has;
+    starters.style.display = has ? 'none' : 'flex';
+  }
+
+  function setState(name) {
+    phone.dataset.state = name;
+    if (name === 'empty') {
+      field.value = '';
+      field.setAttribute('placeholder', PLACEHOLDER);
+    } else {
+      field.value = TYPED;
+      field.setAttribute('placeholder', PLACEHOLDER);
+    }
+    syncSend();
+    document.querySelectorAll('[data-role="state"] button').forEach(b =>
+      b.setAttribute('aria-pressed', String(b.dataset.state === name)));
+    caption.innerHTML = CAPTIONS[name];
+    const url = new URL(location.href);
+    url.searchParams.set('state', name);
+    history.replaceState(null, '', url);
+  }
+
+  function setWidth(px) {
+    px = Math.min(900, Math.max(430, Number(px)));
+    phone.style.setProperty('--frame-w', px + 'px');
+    wout.textContent = px + ' px';
+    slider.value = px;
+    document.querySelectorAll('[data-role="width"] button').forEach(b =>
+      b.setAttribute('aria-pressed', String(Number(b.dataset.w) === px)));
+    const url = new URL(location.href);
+    url.searchParams.set('w', px);
+    history.replaceState(null, '', url);
+  }
+
+  function setTheme(name) {
+    phone.dataset.theme = name;
+    document.querySelectorAll('[data-role="theme"] button').forEach(b =>
+      b.setAttribute('aria-pressed', String(b.dataset.theme === name)));
+    const url = new URL(location.href);
+    url.searchParams.set('theme', name);
+    history.replaceState(null, '', url);
+  }
+
+  document.querySelectorAll('[data-role="state"] button').forEach(b =>
+    b.addEventListener('click', () => setState(b.dataset.state)));
+  document.querySelectorAll('[data-role="width"] button').forEach(b =>
+    b.addEventListener('click', () => setWidth(b.dataset.w)));
+  document.querySelectorAll('[data-role="theme"] button').forEach(b =>
+    b.addEventListener('click', () => setTheme(b.dataset.theme)));
+  slider.addEventListener('input', e => setWidth(e.target.value));
+  field.addEventListener('input', syncSend);
+  document.querySelectorAll('.starter').forEach(b =>
+    b.addEventListener('click', () => { field.value = b.textContent; field.focus(); syncSend(); }));
+
+  setState(params.get('state') || 'empty');
+  setWidth(params.get('w') || 430);
+  setTheme(params.get('theme') || 'paper');
+  // the placeholder is shown as text in the empty state so a screenshot
+  // reads the way a thumb would find it
+  if (phone.dataset.state === 'empty') {
+    field.value = '';
+    field.setAttribute('placeholder', PLACEHOLDER);
+    syncSend();
+  }
+</script>
+</body>
+</html>

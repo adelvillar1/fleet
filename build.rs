@@ -22,6 +22,16 @@ const ASSETS: &[&str] = &[
     "src/gui/assets/sw.js",
     "src/gui/assets/icon-192.png",
     "src/gui/assets/icon-512.png",
+    // The bot shell (the 2026-10-20 plan's B1): a second app over the
+    // same bridge, stamped by the same hash so both faces' coordinates
+    // move together.
+    "src/gui/assets/bot.html",
+    "src/gui/assets/bot.css",
+    "src/gui/assets/bot.js",
+    "src/gui/assets/bot.webmanifest",
+    "src/gui/assets/bot-sw.js",
+    "src/gui/assets/bot-icon-192.png",
+    "src/gui/assets/bot-icon-512.png",
 ];
 
 fn main() {

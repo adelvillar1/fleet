@@ -670,4 +670,62 @@ mod tests {
         assert!(catalog(&home).is_empty());
         let _ = std::fs::remove_dir_all(&home);
     }
+
+    /// The bot personas (the 2026-10-20 plan's P1) live in the repo and
+    /// are installed into the fleet home; their `skills:` names must all
+    /// resolve in the canonical skills folder, so a typo cannot ship
+    /// silently — C2 of the plan, enforced here rather than by an owner
+    /// who happens to notice a persona that loads with nothing to load.
+    #[test]
+    fn the_bot_personas_name_skills_that_resolve() {
+        let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        const PERSONAS: &[&str] = &[
+            "scholar",
+            "presenter",
+            "advocate",
+            "tower",
+            "auditor",
+            "clerk",
+        ];
+        for name in PERSONAS {
+            let role = load(repo, name).unwrap_or_else(|error| {
+                panic!("the {name} persona loads from the repo's roles/: {error}")
+            });
+            assert_eq!(role.name, *name);
+            assert!(!role.description.is_empty());
+            assert!(!role.tools.is_empty(), "{name} names its tools");
+            assert!(!role.skills.is_empty(), "{name} names its skills");
+            assert!(!role.overlay.trim().is_empty(), "{name} states its voice");
+        }
+        // The lead persona reads; the reviewer persona must not: the
+        // read-only contract is a fact the file declares, not a habit.
+        let auditor = load(repo, "auditor").unwrap();
+        assert!(!auditor.admits("write_file"), "auditor never writes");
+        assert!(!auditor.admits("edit"), "auditor never edits");
+        let tower = load(repo, "tower").unwrap();
+        assert!(tower.admits("bash"), "tower runs the work");
+        // The canonical skills folder, when this machine carries it (the
+        // gate runs where the machine is provisioned), holds every skill
+        // the personas name.
+        let canonical = dirs_home().join(".agents/skills");
+        if canonical.is_dir() {
+            for name in PERSONAS {
+                let role = load(repo, name).unwrap();
+                for skill in &role.skills {
+                    assert!(
+                        canonical.join(skill).is_dir(),
+                        "the {name} persona names `{skill}`, which the canonical folder does not carry"
+                    );
+                }
+            }
+        }
+    }
+
+    /// The owner's home — the same resolution `crate::home` uses, so the
+    /// test agrees with the product about where the canonical folder is.
+    fn dirs_home() -> std::path::PathBuf {
+        std::env::var_os("HOME")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::PathBuf::from("/tmp"))
+    }
 }

@@ -1,0 +1,546 @@
+<!doctype html>
+<html lang="en" data-theme="paper">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>fleet bot — install (B0 mockup)</title>
+<link rel="stylesheet" href="mockup.css">
+<style>
+  /* Screen 4: install. What the phone does before the app is installed,
+     what changes once it is, and what it says when the machine is gone. */
+
+  .scn { display: none; flex: 1 1 auto; min-height: 0; flex-direction: column; }
+  .scn.on { display: flex; }
+
+  /* the browser's own strips, drawn for context and labelled as not ours */
+  .browser-bar {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 2px var(--gutter) 8px;
+    padding: 9px 12px;
+    border-radius: var(--r-md);
+    background: var(--raised);
+    color: var(--ink-3);
+    font-family: var(--mono);
+    font-size: 11.5px;
+    white-space: nowrap;
+    overflow: hidden;
+  }
+
+  .browser-bar .lock { flex: 0 0 auto; color: var(--ink-3); }
+  .browser-bar .addr { overflow: hidden; text-overflow: ellipsis; }
+  .browser-bar .reload { margin-left: auto; flex: 0 0 auto; }
+
+  .browser-tools {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 26px max(10px, env(safe-area-inset-bottom));
+    border-top: 1px solid var(--hairline);
+    background: var(--raised);
+    color: var(--ink-2);
+  }
+
+  .browser-tools .point {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 11px;
+    color: var(--accent-deep);
+    font-weight: 650;
+    letter-spacing: 0.02em;
+  }
+
+  /* the Add to Home Screen coach mark: the only install prompt iOS allows */
+  .coach {
+    position: absolute;
+    left: var(--gutter);
+    right: var(--gutter);
+    bottom: calc(max(10px, env(safe-area-inset-bottom)) + 58px);
+    z-index: 6;
+    display: flex;
+    gap: 12px;
+    padding: 13px 14px;
+    border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+    border-radius: var(--r-lg);
+    background: var(--surface);
+    box-shadow: var(--shadow-3);
+  }
+
+  .coach .icon {
+    flex: 0 0 auto;
+    width: 34px;
+    height: 34px;
+    display: grid;
+    place-items: center;
+    border-radius: 9px;
+    background: var(--gradient);
+    color: #fff;
+    font-family: var(--serif);
+    font-size: 20px;
+    font-weight: 600;
+  }
+
+  .coach .body { flex: 1 1 auto; min-width: 0; }
+  .coach .t { margin: 0; font-size: 13.5px; font-weight: 650; color: var(--ink); }
+  .coach .p { margin: 3px 0 0; font-size: 12.5px; line-height: 1.45; color: var(--ink-2); }
+
+  .coach .x {
+    flex: 0 0 auto;
+    width: 44px;
+    height: 44px;
+    margin: -6px -6px 0 0;
+    display: grid;
+    place-items: center;
+    border: 0;
+    border-radius: var(--pill);
+    background: transparent;
+    color: var(--ink-3);
+    cursor: pointer;
+  }
+
+  /* ---------- the retry page ---------- */
+
+  .retry {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    padding: 0 34px 40px;
+    text-align: center;
+  }
+
+  .retry .icon-xl {
+    width: 62px;
+    height: 62px;
+    display: grid;
+    place-items: center;
+    margin-bottom: 4px;
+    border-radius: 18px;
+    background: var(--raised);
+    color: var(--ink-3);
+    font-family: var(--serif);
+    font-size: 32px;
+    font-weight: 600;
+  }
+
+  .retry h3 { margin: 0; font-family: var(--serif); font-size: 24px; font-weight: 500; letter-spacing: -0.01em; }
+  .retry p { margin: 0; max-width: 32ch; font-size: 14.5px; line-height: 1.55; color: var(--ink-2); }
+
+  .retry .addr {
+    margin-top: 2px;
+    padding: 4px 10px;
+    border: 1px solid var(--hairline);
+    border-radius: var(--pill);
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--ink-3);
+  }
+
+  .retry .try {
+    min-width: 168px;
+    min-height: 46px;
+    margin-top: 4px;
+    border: 0;
+    border-radius: 12px;
+    background: var(--accent);
+    color: var(--on-accent);
+    font: inherit;
+    font-size: 15px;
+    font-weight: 650;
+    cursor: pointer;
+  }
+
+  .retry .fine { margin-top: 6px; font-size: 11px; line-height: 1.5; color: var(--ink-3); }
+
+  /* ---------- the icon sheet under the phone (review chrome, not the app) ---------- */
+
+  .icon-sheet {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    gap: 16px;
+    margin-top: 22px;
+    padding: 18px;
+    border: 1px solid rgb(24 26 29 / 9%);
+    border-radius: 12px;
+    background: #fbfaf7;
+  }
+
+  .icon-cell { display: flex; align-items: center; gap: 14px; }
+  .icon-cell .lab { font-size: 12px; line-height: 1.45; color: #5b6067; }
+  .icon-cell .lab b { display: block; color: #23262a; font-size: 12.5px; }
+
+  .mark-tile {
+    position: relative;
+    display: grid;
+    place-items: center;
+    background: linear-gradient(135deg, rgb(63, 108, 218), rgb(37, 78, 176));
+    color: #fff;
+    font-family: var(--serif);
+    font-weight: 600;
+    box-shadow: 0 10px 24px -12px rgb(37, 78, 176 / 60%);
+  }
+
+  .mark-tile.big { width: 84px; height: 84px; border-radius: 19px; font-size: 46px; }
+  .mark-tile.small { width: 44px; height: 44px; border-radius: 10px; font-size: 24px; }
+  .mark-tile.guide::after {
+    content: "";
+    position: absolute;
+    inset: 20%;
+    border: 1px dashed rgb(255 255 255 / 55%);
+    border-radius: 50%;
+  }
+
+  @container (min-width: 720px) {
+    .phone { --gutter: 26px; }
+  }
+</style>
+</head>
+<body>
+<div class="review">
+  <div class="review-head">
+    <h1>Install</h1>
+    <p>screen 4 of 4 · plan <code>2026-10-20-bot-pwa.md</code> · B0</p>
+  </div>
+
+  <div class="controls">
+    <label>State</label>
+    <div class="seg" data-role="state">
+      <button data-state="browser" aria-pressed="false">In the browser</button>
+      <button data-state="installed" aria-pressed="true">Installed</button>
+      <button data-state="offline" aria-pressed="false">Unreachable</button>
+    </div>
+    <label>Width</label>
+    <div class="seg" data-role="width">
+      <button data-w="430" aria-pressed="true">430</button>
+      <button data-w="900" aria-pressed="false">900</button>
+    </div>
+    <div class="w-slider">
+      <input id="wslider" type="range" min="430" max="900" step="1" value="430" aria-label="Frame width">
+      <output id="wout">430 px</output>
+    </div>
+    <label>Theme</label>
+    <div class="seg" data-role="theme">
+      <button data-theme="paper" aria-pressed="true">Paper</button>
+      <button data-theme="console" aria-pressed="false">Console</button>
+      <button data-theme="graphite" aria-pressed="false">Graphite</button>
+    </div>
+  </div>
+
+  <p class="caption" id="caption"></p>
+
+  <div class="stage">
+    <div class="phone" id="phone" data-state="installed">
+      <div class="statusbar">
+        <span>9:41</span>
+        <span class="glyphs">
+          <svg width="17" height="11" viewBox="0 0 17 11" fill="currentColor" aria-hidden="true"><rect x="0" y="7" width="3" height="4" rx="1"/><rect x="4.7" y="5" width="3" height="6" rx="1"/><rect x="9.4" y="2.6" width="3" height="8.4" rx="1"/><rect x="14.1" y="0" width="3" height="11" rx="1"/></svg>
+          <svg width="16" height="11" viewBox="0 0 16 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M1 4.3a10 10 0 0 1 14 0"/><path d="M3.6 7a6.4 6.4 0 0 1 8.8 0"/><path d="M6.2 9.6a2.7 2.7 0 0 1 3.6 0"/></svg>
+          <svg width="25" height="12" viewBox="0 0 25 12" fill="none" aria-hidden="true"><rect x="0.6" y="0.6" width="21" height="10.8" rx="3" stroke="currentColor" stroke-opacity="0.4"/><rect x="2.2" y="2.2" width="15" height="7.6" rx="1.8" fill="currentColor"/><path d="M23.4 4.2v3.6a2 2 0 0 0 0-3.6Z" fill="currentColor" fill-opacity="0.5"/></svg>
+        </span>
+      </div>
+
+      <div class="screen">
+
+        <!-- ══ in the browser (before install) ═══════════════════════ -->
+        <div class="scn" data-scn="browser">
+          <div class="browser-bar">
+            <span class="lock">
+              <svg width="11" height="13" viewBox="0 0 12 14" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="1.2" y="6" width="9.6" height="6.6" rx="1.6"/><path d="M3.6 6V4.2a2.4 2.4 0 0 1 4.8 0V6"/></svg>
+            </span>
+            <span class="addr">mac-mini.tail9a1f.ts.net</span>
+            <span class="reload">
+              <svg width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="M16 10a6 6 0 1 1-1.8-4.3"/><path d="M16 3v4h-4"/></svg>
+            </span>
+          </div>
+
+          <div class="app-head">
+            <div class="titles">
+              <h2>fleet</h2>
+              <p class="sub">6 personas · 10 conversations</p>
+            </div>
+            <span class="count"><span class="dot"></span>3</span>
+          </div>
+
+          <div class="scroll">
+            <div class="waiting">
+              <div class="bar">Needs you · 3</div>
+              <button class="row seat triage">
+                <span class="mark sm" data-p="tower">t</span>
+                <span class="title">overwrite the KI-339 rows</span>
+                <span class="age"><span class="state-dot"></span>2m</span>
+              </button>
+              <button class="row seat triage">
+                <span class="mark sm" data-p="advocate">v</span>
+                <span class="title">send the CV to Northwind</span>
+                <span class="age"><span class="state-dot"></span>12m</span>
+              </button>
+              <button class="row failed triage">
+                <span class="mark sm" data-p="tower">t</span>
+                <span class="title">the embedder went quiet</span>
+                <span class="age"><span class="state-dot"></span>1h</span>
+              </button>
+            </div>
+
+            <div class="persona-rail">
+              <button class="persona" aria-pressed="true"><span class="mark sm">f</span>Everyone <span class="n">10</span></button>
+              <button class="persona" aria-pressed="false"><span class="mark sm" data-p="tower">t</span>tower <span class="n">2</span></button>
+              <button class="persona" aria-pressed="false"><span class="mark sm" data-p="scholar">s</span>scholar <span class="n">2</span></button>
+              <button class="persona" aria-pressed="false"><span class="mark sm" data-p="presenter">p</span>presenter <span class="n">2</span></button>
+              <button class="persona" aria-pressed="false"><span class="mark sm" data-p="advocate">v</span>advocate <span class="n">2</span></button>
+            </div>
+
+            <div class="section-head"><span class="who">tower <span class="role">runs the work</span></span><span class="n">2</span></div>
+            <div class="rows">
+              <button class="row running">
+                <span class="mark sm" data-p="tower">t</span>
+                <span>
+                  <p class="title">the gate on the fix</p>
+                  <p class="last">Running cargo test — 1,591 passed, 3 still running.</p>
+                </span>
+                <span class="age"><span class="state-dot"></span>14m</span>
+              </button>
+              <button class="row running">
+                <span class="mark sm" data-p="tower">t</span>
+                <span>
+                  <p class="title">the rail's cap, again</p>
+                  <p class="last">The cap takes from the tail; I want your eyes on the test name.</p>
+                </span>
+                <span class="age"><span class="state-dot"></span>2m</span>
+              </button>
+            </div>
+
+            <div class="section-head"><span class="who">presenter <span class="role">presentations</span></span><span class="n">2</span></div>
+            <div class="rows">
+              <button class="row running">
+                <span class="mark sm" data-p="presenter">p</span>
+                <span>
+                  <p class="title">the estate readout</p>
+                  <p class="last">Laying out the twelve surfaces; one needs a screenshot.</p>
+                </span>
+                <span class="age"><span class="state-dot"></span>8m</span>
+              </button>
+              <button class="row finished">
+                <span class="mark sm" data-p="presenter">p</span>
+                <span>
+                  <p class="title">the investor deck, restructured</p>
+                  <p class="last">Nineteen pages to twelve; the argument is on page three.</p>
+                </span>
+                <span class="age"><span class="state-dot"></span>2h</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="coach">
+            <span class="icon">f</span>
+            <div class="body">
+              <p class="t">Add fleet bot to your Home Screen</p>
+              <p class="p">Tap Share, then <b>Add to Home Screen</b>. It opens full screen, offline-aware, and keeps its own icon.</p>
+            </div>
+            <button class="x" aria-label="Dismiss">
+              <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15"/></svg>
+            </button>
+          </div>
+
+          <div class="browser-tools">
+            <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 10.5 16 5l-4.4 10.4-2.1-4.2-5.5-.7Z"/></svg>
+            <span class="point">share sits here — the arrow up</span>
+            <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="M5 7.5h10M5 10h10M5 12.5h10"/></svg>
+          </div>
+        </div>
+
+        <!-- ══ installed: standalone, no browser chrome ══════════════ -->
+        <div class="scn on" data-scn="installed">
+          <div class="app-head">
+            <div class="titles">
+              <h2>fleet</h2>
+              <p class="sub">6 personas · 10 conversations</p>
+            </div>
+            <span class="count"><span class="dot"></span>3</span>
+            <button class="act" aria-label="Search conversations">
+              <svg width="19" height="19" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="9" cy="9" r="5.6"/><path d="m13.3 13.3 3.4 3.4" stroke-linecap="round"/></svg>
+            </button>
+          </div>
+
+          <div class="scroll">
+            <div class="waiting">
+              <div class="bar">Needs you · 3</div>
+              <button class="row seat triage">
+                <span class="mark sm" data-p="tower">t</span>
+                <span class="title">overwrite the KI-339 rows</span>
+                <span class="age"><span class="state-dot"></span>2m</span>
+              </button>
+              <button class="row seat triage">
+                <span class="mark sm" data-p="advocate">v</span>
+                <span class="title">send the CV to Northwind</span>
+                <span class="age"><span class="state-dot"></span>12m</span>
+              </button>
+              <button class="row failed triage">
+                <span class="mark sm" data-p="tower">t</span>
+                <span class="title">the embedder went quiet</span>
+                <span class="age"><span class="state-dot"></span>1h</span>
+              </button>
+            </div>
+
+            <div class="persona-rail">
+              <button class="persona" aria-pressed="true"><span class="mark sm">f</span>Everyone <span class="n">10</span></button>
+              <button class="persona" aria-pressed="false"><span class="mark sm" data-p="tower">t</span>tower <span class="n">2</span></button>
+              <button class="persona" aria-pressed="false"><span class="mark sm" data-p="scholar">s</span>scholar <span class="n">2</span></button>
+              <button class="persona" aria-pressed="false"><span class="mark sm" data-p="presenter">p</span>presenter <span class="n">2</span></button>
+              <button class="persona" aria-pressed="false"><span class="mark sm" data-p="advocate">v</span>advocate <span class="n">2</span></button>
+            </div>
+
+            <div class="section-head"><span class="who">tower <span class="role">runs the work</span></span><span class="n">2</span></div>
+            <div class="rows">
+              <button class="row running">
+                <span class="mark sm" data-p="tower">t</span>
+                <span>
+                  <p class="title">the gate on the fix</p>
+                  <p class="last">Running cargo test — 1,591 passed, 3 still running.</p>
+                </span>
+                <span class="age"><span class="state-dot"></span>14m</span>
+              </button>
+              <button class="row running">
+                <span class="mark sm" data-p="tower">t</span>
+                <span>
+                  <p class="title">the rail's cap, again</p>
+                  <p class="last">The cap takes from the tail; I want your eyes on the test name.</p>
+                </span>
+                <span class="age"><span class="state-dot"></span>2m</span>
+              </button>
+            </div>
+
+            <div class="section-head"><span class="who">advocate <span class="role">job hunting</span></span><span class="n">2</span></div>
+            <div class="rows">
+              <button class="row seat">
+                <span class="mark sm" data-p="advocate">v</span>
+                <span>
+                  <p class="title">the CV, rewritten for the platform role</p>
+                  <p class="last">Ready to send — held until you say go.</p>
+                  <span class="tag needs">needs you</span>
+                </span>
+                <span class="age"><span class="state-dot"></span>12m</span>
+              </button>
+              <button class="row finished">
+                <span class="mark sm" data-p="advocate">v</span>
+                <span>
+                  <p class="title">outreach, week three</p>
+                  <p class="last">Nine follow-ups drafted; three await your signature.</p>
+                </span>
+                <span class="age"><span class="state-dot"></span>Mon</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="dock">
+            <button class="dispatch">
+              <span class="grow">say something to fleet…</span>
+              <span class="send">
+                <svg width="17" height="17" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><path d="M10 15.5V4.5M10 4.5 5.5 9M10 4.5l4.5 4.5"/></svg>
+              </span>
+            </button>
+          </div>
+        </div>
+
+        <!-- ══ unreachable: the worker's own retry page ══════════════ -->
+        <div class="scn" data-scn="offline">
+          <div class="retry">
+            <span class="icon-xl">f</span>
+            <h3>Can't reach fleet</h3>
+            <p>The machine is offline, or the tailnet dropped. Nothing was lost — the run keeps going without you.</p>
+            <span class="addr">mac-mini.tail9a1f.ts.net</span>
+            <button class="try">Try again</button>
+            <p class="fine">This page came from the app itself, not the network.<br>Only the two versioned assets are cached; no session data is.</p>
+          </div>
+        </div>
+
+      </div>
+      <div class="home-indicator"><span></span></div>
+    </div>
+  </div>
+
+  <!-- the icon pair, at the sizes the plan owes (review chrome, not the app) -->
+  <div class="icon-sheet">
+    <div class="icon-cell">
+      <span class="mark-tile big">f</span>
+      <span class="lab"><b>Icon · 512 &amp; 192</b>
+        The serif <i>f</i> on the accent gradient — the console's own mark, not a new logo. Paper is the app's surface; the icon carries the accent so it reads on a home screen.</span>
+    </div>
+    <div class="icon-cell">
+      <span class="mark-tile small">f</span>
+      <span class="lab"><b>Home-screen size</b>
+        At 44 px the counter of the <i>f</i> still resolves; the glyph is sized to the tile, not scaled down from the big one.</span>
+    </div>
+    <div class="icon-cell">
+      <span class="mark-tile big guide">f</span>
+      <span class="lab"><b>Maskable safe area</b>
+        The dashed circle is the 40% safe zone Android crops to. The mark sits inside it; the gradient bleeds to the edge.</span>
+    </div>
+  </div>
+</div>
+
+<script>
+  const phone = document.getElementById('phone');
+  const caption = document.getElementById('caption');
+  const slider = document.getElementById('wslider');
+  const wout = document.getElementById('wout');
+
+  const CAPTIONS = {
+    browser: '<b>Before install: the only prompt iOS allows.</b> iOS has no install API, so the app asks once, in its own voice, and points at the browser\u2019s Share control. The URL bar and the bottom tool strip are the browser\u2019s chrome, drawn here so the difference is visible — the app does not style them and must not pretend to.',
+    installed: '<b>Installed: standalone.</b> No address bar, no browser tools — the status bar tints to the page and the app owns the bottom edge. Same assistant-first inbox, one chrome lighter: this is the surface B1 is judged against, including the job-hunting persona\u2019s CV waiting for a read.',
+    offline: '<b>Unreachable, and honest about it.</b> The worker serves its own retry page, so the app never shows the browser\u2019s dinosaur: it names the tailnet address, says the run continues without you (true — the agent lives on the machine, not the phone), and states that no session data is cached.'
+  };
+
+  const params = new URLSearchParams(location.search);
+
+  function setState(name) {
+    phone.dataset.state = name;
+    document.querySelectorAll('.scn').forEach(s => s.classList.toggle('on', s.dataset.scn === name));
+    document.querySelectorAll('[data-role="state"] button').forEach(b =>
+      b.setAttribute('aria-pressed', String(b.dataset.state === name)));
+    caption.innerHTML = CAPTIONS[name];
+    const url = new URL(location.href);
+    url.searchParams.set('state', name);
+    history.replaceState(null, '', url);
+  }
+
+  function setWidth(px) {
+    px = Math.min(900, Math.max(430, Number(px)));
+    phone.style.setProperty('--frame-w', px + 'px');
+    wout.textContent = px + ' px';
+    slider.value = px;
+    document.querySelectorAll('[data-role="width"] button').forEach(b =>
+      b.setAttribute('aria-pressed', String(Number(b.dataset.w) === px)));
+    const url = new URL(location.href);
+    url.searchParams.set('w', px);
+    history.replaceState(null, '', url);
+  }
+
+  function setTheme(name) {
+    phone.dataset.theme = name;
+    document.querySelectorAll('[data-role="theme"] button').forEach(b =>
+      b.setAttribute('aria-pressed', String(b.dataset.theme === name)));
+    const url = new URL(location.href);
+    url.searchParams.set('theme', name);
+    history.replaceState(null, '', url);
+  }
+
+  document.querySelectorAll('[data-role="state"] button').forEach(b =>
+    b.addEventListener('click', () => setState(b.dataset.state)));
+  document.querySelectorAll('[data-role="width"] button').forEach(b =>
+    b.addEventListener('click', () => setWidth(b.dataset.w)));
+  document.querySelectorAll('[data-role="theme"] button').forEach(b =>
+    b.addEventListener('click', () => setTheme(b.dataset.theme)));
+  slider.addEventListener('input', e => setWidth(e.target.value));
+
+  setState(params.get('state') || 'installed');
+  setWidth(params.get('w') || 430);
+  setTheme(params.get('theme') || 'paper');
+</script>
+</body>
+</html>

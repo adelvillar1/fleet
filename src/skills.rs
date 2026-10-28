@@ -2396,6 +2396,7 @@ mod tests {
     fn a_failure_that_was_corrected_drafts_a_create_with_the_records_cited() {
         let records = vec![
             Record::Start {
+                personas: None,
                 v: 1,
                 model: "m".into(),
                 created: "c".into(),

@@ -171,6 +171,10 @@ pub const DESTRUCTIVE: &[&str] = &[
 /// set is out of the class by construction rather than by inspection.
 const BASH_TOOL: &str = "bash";
 
+/// The write tool's name, as the API declares it. R5 puts it in the
+/// destructive class: its ordinary work is an overwrite.
+const WRITE_TOOL: &str = "write_file";
+
 /// The call as the gate reads it, whatever name it arrived under: the
 /// `subagent → ` label — one per delegation level — is stripped, and a
 /// labelled call's wrapper arguments (`goal`, `tool`, `arguments`) are
@@ -308,18 +312,26 @@ impl Gate {
     /// without saying which class the call fell into is a prompt the
     /// owner has to re-derive, and the answer is already computed here.
     ///
-    /// Non-bash tools are never destructive — there is no command to
-    /// match, so there is nothing to over-match either. A `bash` call
-    /// whose arguments cannot be read into a command string **is**
-    /// destructive: an argument blob we cannot parse is a command we
-    /// cannot vouch for, and the fail-closed reading is the only one
-    /// that does not require the gate to guess.
+    /// Non-bash tools are destructive only by what their arguments
+    /// do, never by reach: the shell's class is bash's alone, but the
+    /// bot plan's ruling (2026-10-28, R5) adds the one non-bash tool
+    /// whose ordinary work is an overwrite — `write_file` discards
+    /// whatever is at the path, with no diff shown before the fact, so
+    /// it is held every time and flagged. A `bash` call whose arguments
+    /// cannot be read into a command string **is** destructive: an
+    /// argument blob we cannot parse is a command we cannot vouch for,
+    /// and the fail-closed reading is the only one that does not
+    /// require the gate to guess. The same fail-closed reading covers a
+    /// `write_file` whose arguments cannot be read.
     pub fn is_destructive(call: &ToolCall) -> bool {
         // `file_change` is the other tool whose argument picks the
         // operation, and two of its four ops cannot be undone from the
         // result. `copy` and `make_dir` add; `move` and `delete`
         // subtract, so they ask in every mode.
         if destructive_file_change(call).is_some() {
+            return true;
+        }
+        if call.function.name == WRITE_TOOL {
             return true;
         }
         let Some(command) = bash_command(call) else {
@@ -896,15 +908,22 @@ mod tests {
     }
 
     #[test]
-    fn a_non_bash_tool_is_never_destructive() {
-        // `write_file` can overwrite a path, but the path is the run's
-        // own business: the class is about the shell's reach, and only
-        // bash has it.
-        assert!(!Gate::is_destructive(&call(
+    fn read_shaped_tools_are_never_destructive_but_the_write_is() {
+        // R5 (the 2026-10-20 bot plan): a write is an overwrite that
+        // discards whatever is at the path, so it is held every time
+        // and the seat is flagged. The older pin — "only bash has
+        // reach" — named the shell's class; the owner's ruling added
+        // the one tool whose ordinary work discards content.
+        assert!(Gate::is_destructive(&call(
             "write_file",
             r#"{"path":"/etc/passwd","content":"x"}"#
         )));
-        // Even a tool whose own arguments name a credential file.
+        // Fail-closed, the same as bash: arguments the gate cannot read
+        // are an overwrite it cannot vouch for.
+        assert!(Gate::is_destructive(&call("write_file", "not json")));
+        // The read-shaped tools stay out of the class: reading, listing
+        // and searching never discard anything, even when the path
+        // names a credential.
         assert!(!Gate::is_destructive(&call(
             "read_file",
             r#"{"path":"~/.ssh/id_rsa"}"#
@@ -913,10 +932,6 @@ mod tests {
             "list_dir",
             r#"{"path":"/srv/.env"}"#
         )));
-        // And unreadable arguments on a non-bash tool are not
-        // destructive either: there is no command to misread, which is
-        // the distinction the two branches of `is_destructive` turn on.
-        assert!(!Gate::is_destructive(&call("write_file", "not json")));
     }
 
     #[test]

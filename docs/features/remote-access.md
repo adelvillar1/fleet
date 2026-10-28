@@ -19,6 +19,14 @@ pair. The TUI, the `fleet gui` browser tab, a paired phone, and a
 Telegram chat are all endpoints of the same session. The agent core is
 untouched by any of it — a surface is a bridge, not an agent.
 
+**The remote face is the bot app** (plan
+[`../plans/2026-10-20-bot-pwa.md`](../plans/2026-10-20-bot-pwa.md),
+feature doc [`bot-app.md`](bot-app.md)): a paired phone's root serves
+`fleet bot` — the assistant-first shell whose personas, goal and
+destructive flag are described there — while loopback keeps the console.
+The allowlist admits the bot's own assets and the routes it speaks; the
+console's assets are no longer served to a paired device.
+
 The bridge is a registry of attached sessions, each with its own
 transcript, running flag, and seat. A command may name a session, or name
 none — which is the face's own launch session, created on the first task

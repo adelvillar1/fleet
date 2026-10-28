@@ -267,13 +267,20 @@ Escape clears the object, never the dock.
 | `GET /api/channels` | the channel control plane: the service's status (and whether its heartbeat still beats), every channel's paired and pending peers, and the newest fifty activity lines with the bound named |
 | `POST /api/channels/{start,stop,pair,capability,revoke,forget}` | the control plane's writes. `pair` answers with the token exactly once; there is no read that returns it again |
 | `GET /api/access`, `POST /api/access/revoke` | the paired devices and channel peers, by name and digest only, and the revocation that forgets one |
-| `POST /api/session/new` | create a conversation: the log exists before its first message, and the next run posted with its id lands in it |
+| `POST /api/session/new` | create a conversation: the log exists before its first message, and the next run posted with its id lands in it. The body may carry `{persona, goal}` — the bot's creation (see [`bot-app.md`](bot-app.md)); a persona that no role file carries is refused by name |
+| `POST /api/session/join`, `/api/session/leave` | one persona joins or leaves a conversation: a row in the log, refused by name when the persona does not resolve, is already present, or is the lead others still follow |
 | `POST /api/fact`, `/api/skill`, `/api/resume`, `/api/rewind`, `/api/diff/reject`, `/api/settings`, `/api/deck/render` | the writes, each through the writer the substrate already owns |
 
 The channel control plane's routes are **not** on the remote face's
 allowlist: a paired phone answers 403 by name, the same rule settings
 has. A phone that could pair a peer would be a phone that can widen the
 door it came through.
+
+**Two shells, one bridge.** The loopback root serves this console; the
+remote root serves `fleet bot` — the assistant-first PWA whose personas,
+goal, and destructive seat are specified in [`bot-app.md`](bot-app.md).
+Both faces read the same logs and answer the same seat: a phone and the
+desktop are two clients of one conversation.
 
 ## The surfaces
 

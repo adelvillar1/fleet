@@ -62,6 +62,14 @@ pub enum Record {
         /// project recorded" rather than as corruption.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         workspace: Option<String>,
+        /// The personas working this conversation, in join order — the
+        /// first is the lead (the 2026-10-20 bot plan's P2). A set, not
+        /// a single: two personas share one conversation and one log.
+        /// Absent on logs written before the field existed; joins after
+        /// creation arrive as `join` records, which the summary folds
+        /// into the same set.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        personas: Option<Vec<String>>,
     },
     User {
         content: String,
@@ -181,6 +189,25 @@ pub enum Record {
     Routed {
         execution: crate::route::ExecutionHead,
     },
+    /// One persona joining this conversation after its start — the bot
+    /// plan's P2, the 2026-10-28 ruling that a conversation may hold
+    /// more than one persona and that a join is a row in the log, not a
+    /// silent change of voice. `role` is the persona's own description
+    /// at join time, so a replay can say what the joiner was. Bookkeeping:
+    /// it replays to no message.
+    Join {
+        persona: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        role: Option<String>,
+        at: String,
+    },
+    /// One persona leaving this conversation. The set shrinks; the log
+    /// does not — the join stays, and the leave says when it ended.
+    /// Bookkeeping: it replays to no message.
+    Leave {
+        persona: String,
+        at: String,
+    },
     /// The memory one run's turn context carried, recorded once at run
     /// start. The assembled block is dynamic two ways over — the
     /// corpus's files change between runs and the block depends on the
@@ -277,7 +304,20 @@ impl Session {
     /// clock's sub-second bits and the process id.
     pub fn create(home: &Path, model: &str) -> io::Result<Session> {
         let dir = crate::home::ensure_sessions_dir(home)?;
-        Session::open_new(&dir, model, None, None)
+        Session::open_new(&dir, model, None, None, None)
+    }
+
+    /// The owner-facing creation that names who takes the conversation:
+    /// the bot plan's P2. `persona` is the lead's name — written on the
+    /// start record, so the log itself says who the conversation
+    /// belongs to — and `None` is an ordinary session with no persona.
+    pub fn create_with_persona(
+        home: &Path,
+        model: &str,
+        personas: Option<Vec<String>>,
+    ) -> io::Result<Session> {
+        let dir = crate::home::ensure_sessions_dir(home)?;
+        Session::open_new(&dir, model, None, None, personas)
     }
 
     /// Create a delegated child's log under `home` — the same convention
@@ -291,7 +331,7 @@ impl Session {
     /// session, not a side channel.
     pub fn create_subagent(home: &Path, model: &str, parent: &str) -> io::Result<Session> {
         let dir = crate::home::ensure_sessions_dir(home)?;
-        Session::open_new(&dir, model, Some(SUBAGENT_KIND), Some(parent))
+        Session::open_new(&dir, model, Some(SUBAGENT_KIND), Some(parent), None)
     }
 
     /// Create a scheduled run's log under `sessions_dir(home)`, marked
@@ -304,7 +344,7 @@ impl Session {
     /// and replay treat it as real work in a real session.
     pub fn create_scheduled(home: &Path, model: &str) -> io::Result<Session> {
         let dir = crate::home::ensure_sessions_dir(home)?;
-        Session::open_new(&dir, model, Some(SCHEDULED_KIND), None)
+        Session::open_new(&dir, model, Some(SCHEDULED_KIND), None, None)
     }
 
     /// The one place a log is created: the id, the file, and the `start`
@@ -314,6 +354,7 @@ impl Session {
         model: &str,
         kind: Option<&str>,
         parent: Option<&str>,
+        personas: Option<Vec<String>>,
     ) -> io::Result<Session> {
         let id = format!(
             "{}-{:06x}",
@@ -348,6 +389,7 @@ impl Session {
             kind: kind.map(str::to_string),
             parent: parent.map(str::to_string),
             workspace,
+            personas,
         })?;
         Ok(session)
     }
@@ -473,6 +515,7 @@ pub fn summarize(path: &Path) -> Option<SessionSummary> {
         created,
         kind,
         workspace,
+        personas,
         ..
     } = serde_json::from_str(first.trim()).ok()?
     else {
@@ -547,6 +590,24 @@ pub fn summarize(path: &Path) -> Option<SessionSummary> {
             None => (None, false),
         },
     };
+    // The persona set: the start record's own, then every `join` the log
+    // carries (a persona may re-join; the set is a set) and every
+    // `leave`. Join order — lead first — is the start record's order,
+    // then first-join order; the scan is one pass over text already read.
+    let mut persona_set: Vec<String> = personas.unwrap_or_default();
+    for line in text.lines() {
+        match serde_json::from_str::<Record>(line.trim()) {
+            Ok(Record::Join { persona, .. }) => {
+                if !persona_set.contains(&persona) {
+                    persona_set.push(persona);
+                }
+            }
+            Ok(Record::Leave { persona, .. }) => {
+                persona_set.retain(|name| name != &persona);
+            }
+            _ => {}
+        }
+    }
     Some(SessionSummary {
         id,
         model,
@@ -557,6 +618,7 @@ pub fn summarize(path: &Path) -> Option<SessionSummary> {
         workspace,
         workspace_inferred,
         channel,
+        personas: persona_set,
         compacted,
         served_model,
         stop_reason,
@@ -670,6 +732,12 @@ pub struct SessionSummary {
     /// owner started themselves. The first and third are what a surface
     /// shows; the second is what matches a conversation back to a peer.
     pub channel: Option<(String, String, String)>,
+    /// The personas working this conversation, in join order — the
+    /// start record's set with every later `join` folded in and every
+    /// `leave` removed. Empty on logs written before the field existed;
+    /// the bot inbox groups by it, and a shared conversation shows every
+    /// name. The log is the source: a surface never invents a persona.
+    pub personas: Vec<String>,
     /// True when the log carries a `compaction` record: the conversation
     /// outgrew the window and was folded at least once. The picker and
     /// `fleet sessions` mark it, because a compacted session's replay is
@@ -762,6 +830,7 @@ pub fn list(home: &Path) -> io::Result<Vec<SessionSummary>> {
                     id,
                     model: "unreadable".to_string(),
                     first_text: None,
+                    personas: Vec::new(),
                     created: String::new(),
                     ended: false,
                     kind: None,
@@ -851,8 +920,9 @@ pub fn conversation(records: &[Record]) -> Conversation {
             // applied, and a plan rides the assistant message beside it.
             Record::Rewind { .. } | Record::Plan { .. } | Record::Reasoning { .. } => {}
             // Bookkeeping: which channel the peer arrived on replays to
-            // no message.
-            Record::Channel { .. } => {}
+            // no message. A persona's join and leave are the same kind
+            // of fact about the conversation's staffing, not its content.
+            Record::Channel { .. } | Record::Join { .. } | Record::Leave { .. } => {}
             Record::User { content } => {
                 messages.push(Message::text(Role::User, content.clone()));
                 turns.push(next_turn);
@@ -1005,6 +1075,66 @@ mod tests {
         ));
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    /// P2 of the 2026-10-20 bot plan: a conversation carries its
+    /// personas — the lead on the start record, later joins as `join`
+    /// records — and the summary folds them into one set in join order.
+    /// A leave shrinks the set; the log does not lose the join. A log
+    /// written before the field existed reads as an empty set, never as
+    /// an invented persona.
+    #[test]
+    fn personas_ride_the_log_and_the_summary_folds_them() {
+        let home = temp_home("personas");
+        let mut session =
+            Session::create_with_persona(&home, "m", Some(vec!["tower".to_string()])).unwrap();
+        let path = session.path().to_path_buf();
+        session
+            .record(&Record::Join {
+                persona: "auditor".to_string(),
+                role: Some("checks what changed".to_string()),
+                at: "2026-10-28T12:00:00Z".to_string(),
+            })
+            .unwrap();
+        session
+            .record(&Record::Join {
+                persona: "auditor".to_string(),
+                role: None,
+                at: "2026-10-28T12:01:00Z".to_string(),
+            })
+            .unwrap();
+        session
+            .record(&Record::Leave {
+                persona: "auditor".to_string(),
+                at: "2026-10-28T12:02:00Z".to_string(),
+            })
+            .unwrap();
+        session
+            .record(&Record::User {
+                content: "the brief".to_string(),
+            })
+            .unwrap();
+        let summary = summarize(&path).expect("the log summarizes");
+        assert_eq!(summary.personas, vec!["tower".to_string()]);
+        // A re-join re-adds; the set is a set, and join order holds.
+        let mut session = Session::open(&path).unwrap();
+        session
+            .record(&Record::Join {
+                persona: "auditor".to_string(),
+                role: None,
+                at: "2026-10-28T12:03:00Z".to_string(),
+            })
+            .unwrap();
+        let summary = summarize(&path).expect("the log summarizes");
+        assert_eq!(
+            summary.personas,
+            vec!["tower".to_string(), "auditor".to_string()]
+        );
+        // A pre-P2 log: no field, no joins — an empty set, not a guess.
+        let bare = Session::create(&home, "m").unwrap();
+        let summary = summarize(bare.path()).expect("the plain log summarizes");
+        assert!(summary.personas.is_empty());
+        let _ = fs::remove_dir_all(&home);
     }
 
     /// KI-056: the summary is a head-and-tail read that answers the same
@@ -1318,6 +1448,7 @@ mod tests {
     fn messages_skip_bookkeeping_records() {
         let records = vec![
             Record::Start {
+                personas: None,
                 v: 1,
                 model: "m".into(),
                 created: "c".into(),
@@ -1374,6 +1505,7 @@ mod tests {
         // said.
         let records = vec![
             Record::Start {
+                personas: None,
                 v: 1,
                 model: "m".into(),
                 created: "c".into(),
@@ -1467,6 +1599,7 @@ mod tests {
         // anything the model said.
         let records = vec![
             Record::Start {
+                personas: None,
                 v: 1,
                 model: "m".into(),
                 created: "c".into(),
@@ -1558,6 +1691,7 @@ mod tests {
         // model said.
         let records = vec![
             Record::Start {
+                personas: None,
                 v: 1,
                 model: "m".into(),
                 created: "c".into(),
@@ -1652,6 +1786,7 @@ mod tests {
     /// the model, the `kind` marker, and the delegating session's id.
     fn subagent_start() -> Record {
         Record::Start {
+            personas: None,
             v: 1,
             model: "test-model".to_string(),
             created: "2026-10-14T00:00:00Z".to_string(),
@@ -1697,6 +1832,7 @@ mod tests {
         let records = replay(child.path()).unwrap();
         match &records[0] {
             Record::Start {
+                personas: None,
                 v,
                 model,
                 kind,
