@@ -867,6 +867,7 @@ async fn gui_command(options: &cli::GuiOptions) -> ExitCode {
         remote: fleet::remote::RemoteOptions {
             enabled: options.remote,
             host: options.remote_host.clone(),
+            bot_port: options.bot_port,
         },
         channels: options.channels,
         relay: options.relay.clone(),

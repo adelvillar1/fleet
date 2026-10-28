@@ -239,6 +239,7 @@ fn child_log(dir: &Path, session: &str) -> PathBuf {
             Record::Assistant {
                 content: None,
                 tool_calls: vec![call("c1", "write_file", r#"{"path":"src/delegate.rs"}"#)],
+                persona: None,
             },
             Record::ToolResult {
                 call_id: "c1".to_string(),
@@ -250,6 +251,7 @@ fn child_log(dir: &Path, session: &str) -> PathBuf {
             Record::Assistant {
                 content: None,
                 tool_calls: vec![call("c2", "bash", r#"{"command":"cargo build"}"#)],
+                persona: None,
             },
             Record::ToolResult {
                 call_id: "c2".to_string(),
@@ -276,6 +278,7 @@ fn parent_log(dir: &Path, session: &str, child: &str, continued: bool) -> PathBu
         Record::Assistant {
             content: None,
             tool_calls: vec![call("p1", "subagent", r#"{"goal":"land the beat"}"#)],
+            persona: None,
         },
         Record::ToolResult {
             call_id: "p1".to_string(),
@@ -289,6 +292,7 @@ fn parent_log(dir: &Path, session: &str, child: &str, continued: bool) -> PathBu
         records.push(Record::Assistant {
             content: None,
             tool_calls: vec![call("p2", "write_file", r#"{"path":"src/delegate.rs"}"#)],
+            persona: None,
         });
         records.push(Record::ToolResult {
             call_id: "p2".to_string(),
@@ -752,6 +756,7 @@ fn the_grade_is_wrong_when_the_childs_log_contradicts_the_claimed_outcome() {
             Record::Assistant {
                 content: None,
                 tool_calls: vec![call("c1", "write_file", r#"{"path":"src/delegate.rs"}"#)],
+                persona: None,
             },
             Record::End {
                 stop_reason: "max-turns".to_string(),
@@ -793,6 +798,7 @@ fn the_grade_is_wrong_when_the_row_claims_more_turns_than_the_log_holds() {
             Record::Assistant {
                 content: None,
                 tool_calls: vec![call("c1", "bash", r#"{"command":"cargo build"}"#)],
+                persona: None,
             },
             Record::End {
                 stop_reason: "completed".to_string(),
@@ -868,6 +874,7 @@ fn the_grade_is_insufficient_when_the_child_stopped_at_max_turns_naming_the_comp
             Record::Assistant {
                 content: None,
                 tool_calls: vec![call("c1", "write_file", r#"{"path":"src/delegate.rs"}"#)],
+                persona: None,
             },
             Record::End {
                 stop_reason: "max-turns".to_string(),
@@ -911,6 +918,7 @@ fn the_grade_is_insufficient_when_the_run_failed_and_names_what_the_step_needed(
             Record::Assistant {
                 content: None,
                 tool_calls: vec![call("c1", "bash", r#"{"command":"cargo build"}"#)],
+                persona: None,
             },
             Record::End {
                 stop_reason: "failed".to_string(),
@@ -1014,6 +1022,7 @@ fn a_wrong_claim_outranks_a_missing_companion() {
             Record::Assistant {
                 content: None,
                 tool_calls: vec![call("c1", "write_file", r#"{"path":"src/delegate.rs"}"#)],
+                persona: None,
             },
             Record::End {
                 stop_reason: "max-turns".to_string(),
@@ -1097,6 +1106,7 @@ fn a_log_that_recorded_no_ending_is_absent_evidence_not_a_contradiction() {
             Record::Assistant {
                 content: None,
                 tool_calls: vec![call("c1", "write_file", r#"{"path":"src/delegate.rs"}"#)],
+                persona: None,
             },
         ],
     );

@@ -132,10 +132,45 @@ pub async fn serve(options: GuiOptions) -> Result<(), String> {
     // desktop are two clients of one conversation.
     let remote = if options.remote.enabled {
         let address = crate::remote::resolve_address(&options.remote)?;
-        let (listener, port) =
-            listener::Listener::bind(&address, options.port, home.clone(), Arc::clone(&bridge))
-                .await?;
+        // Two faces, one bridge (the owner's 2026-10-28 correction): the
+        // remote console face keeps the work experience on the origin
+        // the owner's PWA was installed from, and the bot face — the
+        // persona experience — is a second window on its own port.
+        let (listener, port) = listener::Listener::bind(
+            &address,
+            options.port,
+            listener::RemoteFace::Console,
+            home.clone(),
+            Arc::clone(&bridge),
+        )
+        .await?;
         bridge.attach_remote(address.address, port);
+        let bot_address = crate::remote::RemoteAddress {
+            address: address.address,
+            kind: address.kind,
+        };
+        let (bot_listener, bot_port) = listener::Listener::bind(
+            &bot_address,
+            options.remote.bot_port,
+            listener::RemoteFace::Bot,
+            home.clone(),
+            Arc::clone(&bridge),
+        )
+        .await?;
+        tokio::spawn(async move {
+            if let Err(error) = bot_listener.serve().await {
+                eprintln!("fleet remote: the bot face stopped: {error}");
+            }
+        });
+        let bot_url = format!(
+            "http://{}:{bot_port}",
+            match bot_address.address {
+                std::net::IpAddr::V4(ip) => ip.to_string(),
+                std::net::IpAddr::V6(ip) => ip.to_string(),
+            }
+        );
+        println!("fleet gui — the bot face is live on the same address, port {bot_port}");
+        println!("  bot:   {bot_url}  (the persona experience; pair it the same way)");
         let (_window, code) = crate::remote::pairing::PairingWindow::mint(&home)
             .map_err(|error| format!("could not mint a pairing code: {error}"))?;
         // The explicit public URL is used when the owner has set one; the
@@ -255,6 +290,7 @@ pub async fn serve(options: GuiOptions) -> Result<(), String> {
         let handler = Arc::new(listener::RelayHandler::new(
             Arc::clone(&bridge),
             "a relayed phone".to_string(),
+            listener::RemoteFace::Console,
         ));
         let (shutdown, shutdown_rx) = tokio::sync::watch::channel(false);
         _relay_shutdown = Some(shutdown);

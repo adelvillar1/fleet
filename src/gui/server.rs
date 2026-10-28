@@ -1757,7 +1757,7 @@ fn cache_control(value: &str) -> Vec<(String, String)> {
     vec![("Cache-Control".to_string(), value.to_string())]
 }
 
-fn page() -> Reply {
+pub(crate) fn page() -> Reply {
     Reply {
         status: "200 OK",
         content_type: "text/html; charset=utf-8",
@@ -1835,6 +1835,16 @@ pub(crate) fn bot_worker() -> Reply {
             ("X-Content-Type-Options".to_string(), "nosniff".to_string()),
         ],
         body: BOT_WORKER.to_string(),
+    }
+}
+
+/// The console face's icons — the work PWA's install surface, restored
+/// beside the bot's when the owner split the faces (2026-10-28).
+pub(crate) fn console_icon_for(path: &str) -> Option<&'static [u8]> {
+    match path {
+        "/icon-192.png" | "/apple-touch-icon.png" | "/favicon.ico" => Some(ICON_192),
+        "/icon-512.png" => Some(ICON_512),
+        _ => None,
     }
 }
 

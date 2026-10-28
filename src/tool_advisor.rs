@@ -662,6 +662,7 @@ mod tests {
             .record(&Record::Assistant {
                 content: None,
                 tool_calls: tool_calls.clone(),
+                persona: None,
             })
             .unwrap();
         for (index, (name, _, output)) in calls.iter().enumerate() {

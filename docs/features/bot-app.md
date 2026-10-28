@@ -48,9 +48,28 @@ built against live in `docs/plans/mockups/2026-10-20-bot-pwa/`.
 | Dispatch | who takes it, then the goal, then send — the persona is the first choice because it decides tools, skills, and recall |
 | Install | the tailnet origin installs **fleet bot** (its own manifest, worker, icons); the worker's offline retry page says what is true |
 
+## Two windows, one bridge
+
+The owner's 2026-10-28 ruling: this is a **second window into fleet**,
+not a replacement for the work face. Both faces serve from the same
+process, sharing one bridge, one agent thread, and one seat:
+
+| window | where | shell |
+|---|---|---|
+| The work experience | the console face — loopback `:3080`, and the paired-device face on the machine's address `:3080` | `fleet` — the console, the origin the owner's phone PWA was installed from |
+| The persona experience | the bot face, its own port (`--bot-port`, default **3081**) | `fleet bot` — the assistant-first shell |
+
+The two ports are two origins, which is what keeps them two installs —
+the PWA identity includes the origin (the plan's D3), so the console's
+home-screen app and `fleet bot`'s coexist without touching each other.
+Each face carries its own shell and assets and refuses the other's by
+name (403 by route); the API is shared, because the phone and the desk
+are two clients of one conversation. Pairing is home-level: one device
+token works on either face.
+
 ## The routes
 
-The remote face's allowlist admits exactly: the bot shell and its assets
+The bot face's allowlist admits exactly: the bot shell and its assets
 (`/`, `/bot.css`, `/bot.js`, `/bot.webmanifest`, `/bot-sw.js`,
 `/bot-icon-*.png`), the stream, and the API the app uses — including
 `/api/inbox`, `/api/session/new` (with an optional `{persona, goal}`

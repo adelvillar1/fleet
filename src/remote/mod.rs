@@ -33,6 +33,12 @@ pub struct RemoteOptions {
     /// one. A hostname is resolved; anything unresolvable is an error
     /// named at the prompt rather than at bind time.
     pub host: Option<String>,
+    /// The port the bot face binds — the persona experience's own
+    /// origin, one port beside the remote console face (the owner's
+    /// 2026-10-28 correction: the work experience stays the console
+    /// where it already was; the bot is a second window, not a
+    /// replacement). Zero asks the operating system for a free one.
+    pub bot_port: u16,
 }
 
 /// The address the remote face binds, and how it was chosen — which the
@@ -365,6 +371,7 @@ mod tests {
     #[test]
     fn a_named_literal_ip_is_taken_as_it_is() {
         let options = RemoteOptions {
+            bot_port: 3081,
             enabled: true,
             host: Some("192.168.1.50".to_string()),
         };
@@ -380,6 +387,7 @@ mod tests {
     #[test]
     fn a_named_tailnet_address_is_recognised_as_one() {
         let options = RemoteOptions {
+            bot_port: 3081,
             enabled: true,
             host: Some("100.101.102.103".to_string()),
         };
@@ -390,6 +398,7 @@ mod tests {
     #[test]
     fn a_named_host_that_resolves_nowhere_is_an_error_naming_the_flag() {
         let options = RemoteOptions {
+            bot_port: 3081,
             enabled: true,
             host: Some("no-such-host.invalid".to_string()),
         };
@@ -401,6 +410,7 @@ mod tests {
     #[test]
     fn an_empty_named_host_is_refused_before_a_socket_exists() {
         let options = RemoteOptions {
+            bot_port: 3081,
             enabled: true,
             host: Some("   ".to_string()),
         };
@@ -410,6 +420,7 @@ mod tests {
     #[test]
     fn localhost_resolves_to_a_name_but_it_is_not_a_tailnet() {
         let options = RemoteOptions {
+            bot_port: 3081,
             enabled: true,
             host: Some("localhost".to_string()),
         };

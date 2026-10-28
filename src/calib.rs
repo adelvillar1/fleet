@@ -3711,7 +3711,10 @@ mod tests {
 
         let foreign = base.join("scratch-home");
         std::fs::create_dir_all(&foreign).unwrap();
-        assert_eq!(resolve_root(&foreign, user_home.to_str()), foreign.join("logs"));
+        assert_eq!(
+            resolve_root(&foreign, user_home.to_str()),
+            foreign.join("logs")
+        );
         assert_eq!(resolve_root(&foreign, None), foreign.join("logs"));
 
         let _ = std::fs::remove_dir_all(&base);

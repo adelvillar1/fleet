@@ -36,6 +36,20 @@ use crate::gui::server::{
     api, decode_query, query_value, read_body, read_head, steer_of, write_reply, Reply, Request,
 };
 use crate::remote::pairing::{DeviceStore, PairingWindow};
+
+/// Which shell this listener serves at its root — the owner's
+/// 2026-10-28 correction to the bot plan's D2: the work experience
+/// stays the console where it already was (the phone's own PWA
+/// origin), and the persona experience is a second window on its own
+/// port, not a replacement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoteFace {
+    /// The console: the work experience, what a paired device had
+    /// before the bot existed.
+    Console,
+    /// The bot: the persona-first experience, on its own port.
+    Bot,
+}
 use crate::remote::RemoteAddress;
 
 /// The cookie a paired device's browser keeps. Its own name, so a phone
@@ -52,20 +66,9 @@ const HEARTBEAT: std::time::Duration = std::time::Duration::from_secs(5);
 /// reach, and adding one here is a decision rather than an oversight.
 /// The stream and the state ride the same document the page already
 /// reduces, so a phone and the desktop see the same conversation.
-const ALLOWED_GET: &[&str] = &[
-    // The face itself: the page and its assets are the app a paired
-    // device opened, and a shell with no script is a shell that does
-    // nothing. The root is the BOT shell (D2, the 2026-10-28 pivot): a
-    // phone gets the persona-first app, the console keeps loopback.
-    "/",
-    "/bot.css",
-    "/bot.js",
-    // The install surface. No data in any of them: the manifest names the
-    // app, the worker caches two public assets, the icons are a mark.
-    "/bot.webmanifest",
-    "/bot-sw.js",
-    "/bot-icon-192.png",
-    "/bot-icon-512.png",
+// The API a paired device may read — shared by both faces, because the
+// phone and the desktop are two clients of one conversation.
+const ALLOWED_GET_API: &[&str] = &[
     "/events",
     "/api/state",
     "/api/sessions",
@@ -76,6 +79,35 @@ const ALLOWED_GET: &[&str] = &[
     "/api/checkpoints",
     "/api/diff",
 ];
+
+// The shell each face serves: the face's own page and assets, and the
+// install surface — no data in any of them.
+const ALLOWED_GET_CONSOLE: &[&str] = &[
+    "/",
+    "/app.css",
+    "/app.js",
+    "/manifest.webmanifest",
+    "/sw.js",
+    "/icon-192.png",
+    "/icon-512.png",
+    "/apple-touch-icon.png",
+];
+const ALLOWED_GET_BOT: &[&str] = &[
+    "/",
+    "/bot.css",
+    "/bot.js",
+    "/bot.webmanifest",
+    "/bot-sw.js",
+    "/bot-icon-192.png",
+    "/bot-icon-512.png",
+];
+
+fn allowed_get(face: RemoteFace) -> &'static [&'static str] {
+    match face {
+        RemoteFace::Console => ALLOWED_GET_CONSOLE,
+        RemoteFace::Bot => ALLOWED_GET_BOT,
+    }
+}
 // The bot verbs (B3 and AC5's controls): a phone starts a conversation
 // the same way the console does, and stops or steers a run it can see
 // is in flight — the same four routes the console's composer speaks.
@@ -104,6 +136,7 @@ const ALLOWED_POST: &[&str] = &[
 pub struct Listener {
     address: IpAddr,
     port: u16,
+    face: RemoteFace,
     home: std::path::PathBuf,
     listener: TcpListener,
     bridge: Arc<Bridge>,
@@ -120,6 +153,7 @@ impl Listener {
     pub async fn bind(
         remote: &RemoteAddress,
         port: u16,
+        face: RemoteFace,
         home: std::path::PathBuf,
         bridge: Arc<Bridge>,
     ) -> Result<(Listener, u16), String> {
@@ -132,6 +166,7 @@ impl Listener {
         let server = Listener {
             address: remote.address,
             port: bound.port(),
+            face,
             home,
             listener,
             bridge,
@@ -179,9 +214,10 @@ impl Listener {
                     Ok((stream, _from)) => {
                         let home = self.home.clone();
                         let bridge = Arc::clone(&self.bridge);
+                        let face = self.face;
                         tokio::spawn(async move {
                             if let Err(error) =
-                                serve_connection(stream, &home, &bridge).await
+                                serve_connection(stream, &home, &bridge, face).await
                             {
                                 eprintln!("fleet remote: {error}");
                             }
@@ -203,6 +239,7 @@ async fn serve_connection(
     mut stream: tokio::net::TcpStream,
     home: &std::path::Path,
     bridge: &Arc<Bridge>,
+    face: RemoteFace,
 ) -> Result<(), String> {
     let (head, rest) = read_head(&mut stream).await?;
     let request = Request::parse(&head)?;
@@ -252,7 +289,7 @@ async fn serve_connection(
     // Paired, and the route is now checked against the allowlist. A 403
     // names the route and the rule, because "forbidden" with no reason
     // is a surface that lies about what it checked.
-    if !allowed(&request) {
+    if !allowed(&request, face) {
         return write_reply(&mut stream, forbidden(&request.method, &request.path)).await;
     }
 
@@ -260,7 +297,11 @@ async fn serve_connection(
     // are written directly. The allowlist above already admitted them, and
     // a paired device is the only caller that gets this far.
     if request.method == "GET" {
-        if let Some(icon) = crate::gui::server::bot_icon_for(&request.path) {
+        let icon = match face {
+            RemoteFace::Bot => crate::gui::server::bot_icon_for(&request.path),
+            RemoteFace::Console => crate::gui::server::console_icon_for(&request.path),
+        };
+        if let Some(icon) = icon {
             return crate::gui::server::write_blob(
                 &mut stream,
                 "image/png",
@@ -271,7 +312,7 @@ async fn serve_connection(
         }
     }
 
-    let answer = route_with(&request, rest, &mut stream, bridge, &device.name).await;
+    let answer = route_with(&request, rest, &mut stream, bridge, &device.name, face).await;
     // The device was heard from: a display stamp, written off the
     // request's path so a slow disk never holds the answer.
     let home = home.to_path_buf();
@@ -286,14 +327,18 @@ async fn serve_connection(
 pub struct RelayHandler {
     bridge: Arc<Bridge>,
     device_name: String,
+    /// The face this relay answers as: the relay carries the owner's
+    /// work traffic, so it speaks for the console face.
+    face: RemoteFace,
 }
 
 impl RelayHandler {
     /// A handler answering as the named paired device.
-    pub fn new(bridge: Arc<Bridge>, device_name: String) -> RelayHandler {
+    pub fn new(bridge: Arc<Bridge>, device_name: String, face: RemoteFace) -> RelayHandler {
         RelayHandler {
             bridge,
             device_name,
+            face,
         }
     }
 }
@@ -307,7 +352,7 @@ impl crate::remote::relay::Handler for RelayHandler {
     > {
         let frame = frame.clone();
         Box::pin(async move {
-            let reply = answer_frame(&frame, &self.bridge, &self.device_name).await;
+            let reply = answer_frame(&frame, &self.bridge, &self.device_name, self.face).await;
             crate::remote::relay::Answer {
                 id: frame.id,
                 status: status_of(&reply),
@@ -348,6 +393,7 @@ async fn answer_frame(
     frame: &crate::remote::relay::Frame,
     bridge: &Arc<Bridge>,
     device_name: &str,
+    face: RemoteFace,
 ) -> Reply {
     // Re-parse the frame's head the way a socket's head is parsed: one
     // parser, one shape.
@@ -377,7 +423,7 @@ async fn answer_frame(
     // name rather than by falling off the end of the router as a 404: a
     // route that is closed only because nothing matches it is a route
     // that opens the day somebody adds a match.
-    if !allowed(&request) {
+    if !allowed(&request, face) {
         return forbidden(&request.method, &request.path);
     }
     if request.path == "/events" {
@@ -387,7 +433,7 @@ async fn answer_frame(
     // frame's body rather than the socket's.
     let mut cursor = std::io::Cursor::new(frame.body.clone().into_bytes());
     let rest = cursor.get_ref().to_vec();
-    route_with(&request, rest, &mut cursor, bridge, device_name).await
+    route_with(&request, rest, &mut cursor, bridge, device_name, face).await
 }
 
 /// The stream's stand-in behind a relay: the session's current tail, with
@@ -455,15 +501,18 @@ fn presented_tokens(request: &Request) -> Vec<String> {
 /// Whether a GET path is the page or one of its assets, which is what a
 /// browser asks for when it has not paired yet.
 fn is_page(path: &str) -> bool {
-    matches!(path, "/" | "/bot.css" | "/bot.js")
+    matches!(path, "/" | "/app.css" | "/app.js" | "/bot.css" | "/bot.js")
 }
 
 /// The allowlist check, method-aware. A path may be readable and not
 /// writable, which is the difference between `/api/state` and
 /// `/api/settings` here.
-fn allowed(request: &Request) -> bool {
+fn allowed(request: &Request, face: RemoteFace) -> bool {
     match request.method.as_str() {
-        "GET" => ALLOWED_GET.contains(&request.path.as_str()),
+        "GET" => {
+            ALLOWED_GET_API.contains(&request.path.as_str())
+                || allowed_get(face).contains(&request.path.as_str())
+        }
         "POST" => ALLOWED_POST.contains(&request.path.as_str()),
         _ => false,
     }
@@ -480,12 +529,46 @@ async fn route_with(
     // The name the paired device gave itself, which is who an approval
     // from this connection is answered by.
     device_name: &str,
+    face: RemoteFace,
 ) -> Reply {
     match (request.method.as_str(), request.path.as_str()) {
-        ("GET", "/") => crate::gui::server::bot_page(),
-        ("GET", "/bot.webmanifest") => crate::gui::server::bot_manifest(),
-        ("GET", "/bot-sw.js") => crate::gui::server::bot_worker(),
-        ("GET", "/bot.css") => {
+        // The root is the face's shell (the owner's 2026-10-28
+        // correction): the console face serves the work experience the
+        // owner's PWA was installed from; the bot face serves the
+        // persona experience. One router, the shell branches by face.
+        ("GET", "/") => match face {
+            RemoteFace::Console => crate::gui::server::page(),
+            RemoteFace::Bot => crate::gui::server::bot_page(),
+        },
+        ("GET", "/manifest.webmanifest") if face == RemoteFace::Console => {
+            crate::gui::server::manifest()
+        }
+        ("GET", "/sw.js") if face == RemoteFace::Console => crate::gui::server::worker(),
+        ("GET", "/app.css") if face == RemoteFace::Console => {
+            if query_value(&request.query, "v") == Some(crate::gui::server::ASSET_HASH) {
+                crate::gui::server::versioned_asset(
+                    "text/css; charset=utf-8",
+                    crate::gui::server::STYLES,
+                )
+            } else {
+                asset("text/css; charset=utf-8", crate::gui::server::STYLES)
+            }
+        }
+        ("GET", "/app.js") if face == RemoteFace::Console => {
+            if query_value(&request.query, "v") == Some(crate::gui::server::ASSET_HASH) {
+                crate::gui::server::versioned_asset(
+                    "text/javascript; charset=utf-8",
+                    crate::gui::server::SCRIPT,
+                )
+            } else {
+                asset("text/javascript; charset=utf-8", crate::gui::server::SCRIPT)
+            }
+        }
+        ("GET", "/bot.webmanifest") if face == RemoteFace::Bot => {
+            crate::gui::server::bot_manifest()
+        }
+        ("GET", "/bot-sw.js") if face == RemoteFace::Bot => crate::gui::server::bot_worker(),
+        ("GET", "/bot.css") if face == RemoteFace::Bot => {
             if query_value(&request.query, "v") == Some(crate::gui::server::ASSET_HASH) {
                 crate::gui::server::versioned_asset(
                     "text/css; charset=utf-8",
@@ -495,7 +578,7 @@ async fn route_with(
                 asset("text/css; charset=utf-8", crate::gui::server::BOT_STYLES)
             }
         }
-        ("GET", "/bot.js") => {
+        ("GET", "/bot.js") if face == RemoteFace::Bot => {
             if query_value(&request.query, "v") == Some(crate::gui::server::ASSET_HASH) {
                 crate::gui::server::versioned_asset(
                     "text/javascript; charset=utf-8",
@@ -1152,6 +1235,14 @@ mod tests {
     /// window in the home. Returns the port, the home, and the code the
     /// window holds — the same code the terminal would have printed.
     async fn live(home: std::path::PathBuf) -> (u16, String) {
+        live_face(home, RemoteFace::Bot).await
+    }
+
+    async fn live_console(home: std::path::PathBuf) -> (u16, String) {
+        live_face(home, RemoteFace::Console).await
+    }
+
+    async fn live_face(home: std::path::PathBuf, face: RemoteFace) -> (u16, String) {
         let (_window, code) = PairingWindow::mint(&home).expect("a window");
         let (bridge, _) = Bridge::detached(
             home.clone(),
@@ -1162,7 +1253,7 @@ mod tests {
             address: IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
             kind: crate::remote::AddressKind::Detected,
         };
-        let (listener, port) = Listener::bind(&remote, 0, home, Arc::new(bridge))
+        let (listener, port) = Listener::bind(&remote, 0, face, home, Arc::new(bridge))
             .await
             .expect("bind");
         tokio::spawn(async move {
@@ -1287,9 +1378,17 @@ mod tests {
             headers: vec![("host".to_string(), "127.0.0.1".to_string())],
             body: String::new(),
         };
-        // The face the relay exists to carry.
-        for path in ["/", "/bot.css", "/bot.js", "/api/state", "/api/sessions"] {
-            let reply = answer_frame(&frame("GET", path), &bridge, "a relayed phone").await;
+        // The face the relay exists to carry: the console. Its shell
+        // paths are the console's; the bot face answers its own shell
+        // on its own listener.
+        for path in ["/", "/app.css", "/app.js", "/api/state", "/api/sessions"] {
+            let reply = answer_frame(
+                &frame("GET", path),
+                &bridge,
+                "a relayed phone",
+                RemoteFace::Console,
+            )
+            .await;
             assert_eq!(reply.status, "200 OK", "{path}");
         }
         // A frame's body is the frame's: a POST reaches the router with
@@ -1305,7 +1404,7 @@ mod tests {
             ],
             body: "{\"task\":\"say hello\"}".to_string(),
         };
-        let accepted = answer_frame(&posted, &bridge, "a relayed phone").await;
+        let accepted = answer_frame(&posted, &bridge, "a relayed phone", RemoteFace::Console).await;
         // A detached bridge has no agent thread, so the run is refused —
         // but refused by the *router*, which means the body was read and
         // parsed. A body that never arrived fails earlier, with the
@@ -1331,7 +1430,13 @@ mod tests {
             ("POST", "/api/pair/window"),
             ("POST", "/api/settings"),
         ] {
-            let reply = answer_frame(&frame(method, path), &bridge, "a relayed phone").await;
+            let reply = answer_frame(
+                &frame(method, path),
+                &bridge,
+                "a relayed phone",
+                RemoteFace::Console,
+            )
+            .await;
             assert_eq!(reply.status, "403 Forbidden", "{method} {path}");
             assert!(
                 reply.body.contains(path),
@@ -1346,6 +1451,42 @@ mod tests {
     /// carries the number. Reading the word after the number handed every
     /// answer to a phone as a 500 with a correct body under it — so this
     /// pins the number, not the body.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_console_face_serves_the_work_experience_again() {
+        // The owner's 2026-10-28 correction: the remote face at :3080
+        // keeps the console — the origin their work PWA was installed
+        // from — and the bot is a second window on its own port. The
+        // console face's root is the console shell; the bot's assets
+        // are not on it.
+        let home = fresh_home();
+        let (port, code) = live_console(home.clone()).await;
+        let (_redeemed, token) = pair(port, &code);
+        let shell = get(port, "/", &token);
+        assert!(shell.contains("fleet"), "{shell}");
+        assert!(
+            shell.contains(&format!("/app.js?v={}", crate::gui::server::ASSET_HASH)),
+            "{shell}"
+        );
+        assert!(!shell.contains("bot.js"), "{shell}");
+        for path in [
+            "/app.css",
+            "/app.js",
+            "/manifest.webmanifest",
+            "/sw.js",
+            "/icon-192.png",
+        ] {
+            let reply = get(port, path, &token);
+            assert!(reply.starts_with("HTTP/1.1 200"), "{path}: {reply}");
+        }
+        // The bot's assets are not on the work face — and the refusal is
+        // named (403 by route), the same rule every closed route answers.
+        for path in ["/bot.css", "/bot.js", "/bot.webmanifest"] {
+            let reply = get(port, path, &token);
+            assert!(reply.starts_with("HTTP/1.1 403"), "{path}: {reply}");
+        }
+        std::fs::remove_dir_all(&home).ok();
+    }
+
     #[test]
     fn the_bot_shell_carries_its_install_set_and_cache_headers() {
         // C15/C16 as raw replies: the shell names the app and asks for

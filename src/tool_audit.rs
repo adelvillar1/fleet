@@ -252,6 +252,7 @@ mod tests {
             .record(&Record::Assistant {
                 content: None,
                 tool_calls: calls,
+                persona: None,
             })
             .unwrap();
         session

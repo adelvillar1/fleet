@@ -1252,6 +1252,7 @@ mod tests {
         log.record(&crate::session::Record::Assistant {
             content: Some("all 1238 tests pass".to_string()),
             tool_calls: Vec::new(),
+            persona: None,
         })
         .expect("the record lands");
         drop(log);

@@ -276,11 +276,13 @@ allowlist: a paired phone answers 403 by name, the same rule settings
 has. A phone that could pair a peer would be a phone that can widen the
 door it came through.
 
-**Two shells, one bridge.** The loopback root serves this console; the
-remote root serves `fleet bot` — the assistant-first PWA whose personas,
-goal, and destructive seat are specified in [`bot-app.md`](bot-app.md).
-Both faces read the same logs and answer the same seat: a phone and the
-desktop are two clients of one conversation.
+**Two shells, two ports, one bridge.** Every face serves this console:
+the loopback root and the paired-device face on the machine's address.
+The bot face — `fleet bot`, the assistant-first PWA whose personas, goal
+and destructive seat are specified in [`bot-app.md`](bot-app.md) — binds
+its own port (`--bot-port`, default 3081) as a second window. Both faces
+read the same logs and answer the same seat: a phone and the desktop are
+two clients of one conversation.
 
 ## The surfaces
 
