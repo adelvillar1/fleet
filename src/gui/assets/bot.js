@@ -378,7 +378,7 @@ function renderConversation() {
       } else {
         await post(`/api/run?session=${encodeURIComponent(state.session)}`, {
           task: text,
-          mode: 'guarded', // R5: non-destructive runs; destructive is held
+          mode: 'yes-guarded', // R5: non-destructive runs; destructive is held
         });
       }
       refreshConversation(state.session);

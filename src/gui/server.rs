@@ -1361,7 +1361,9 @@ fn with_attachments(body: &str, task: &str) -> Result<String, String> {
 /// The run's two standing choices: how its tool calls are approved, and
 /// the provider its route is pinned to. A body that names neither is the
 /// safe pair — `ask` and `auto` — so an older page keeps working.
-fn run_policy_of(body: &str) -> Result<(crate::approvals::Mode, Option<String>), String> {
+pub(crate) fn run_policy_of(
+    body: &str,
+) -> Result<(crate::approvals::Mode, Option<String>), String> {
     let parsed: serde_json::Value = serde_json::from_str(body)
         .map_err(|e| format!("fleet gui could not read the run's body: {e}"))?;
     let mode = match parsed
@@ -1370,7 +1372,7 @@ fn run_policy_of(body: &str) -> Result<(crate::approvals::Mode, Option<String>),
         .unwrap_or("ask")
     {
         "full" | "yes" => crate::approvals::Mode::Yes,
-        "auto" | "yes-guarded" => crate::approvals::Mode::YesGuarded,
+        "auto" | "yes-guarded" | "guarded" => crate::approvals::Mode::YesGuarded,
         _ => crate::approvals::Mode::Ask,
     };
     let pin = parsed
@@ -1396,7 +1398,7 @@ fn task_of(body: &str) -> Result<String, String> {
 /// Absent or null is the home's config value; a number is this run's
 /// cap, clamped at the bridge the way the config value is; anything
 /// else is malformed.
-fn turn_budget_of(body: &str) -> Result<Option<usize>, String> {
+pub(crate) fn turn_budget_of(body: &str) -> Result<Option<usize>, String> {
     let parsed: serde_json::Value = serde_json::from_str(body)
         .map_err(|e| format!("fleet gui could not read the run's body: {e}"))?;
     match parsed.get("budget_turns") {
@@ -1415,7 +1417,7 @@ fn turn_budget_of(body: &str) -> Result<Option<usize>, String> {
 /// The folder a run's body names, when it names one. Absent or null
 /// means "whatever this chat already chose"; the empty string is the
 /// reset to no folder; anything that is not a string is malformed.
-fn folder_of(body: &str) -> Result<Option<String>, String> {
+pub(crate) fn folder_of(body: &str) -> Result<Option<String>, String> {
     let parsed: serde_json::Value = serde_json::from_str(body)
         .map_err(|e| format!("fleet gui could not read the run's body: {e}"))?;
     match parsed.get("folder") {

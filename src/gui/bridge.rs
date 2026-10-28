@@ -7168,6 +7168,26 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
                                 continue;
                             }
                         };
+                        // The lead persona's overlay rides the run: the
+                        // conversation says who works it, so the model
+                        // hears the voice the record names (D7 — the
+                        // same seam a delegation's role overlay uses).
+                        // A persona that does not resolve runs unnamed
+                        // rather than failing the run; the record still
+                        // says whose turn it is.
+                        let role_overlay = {
+                            let lead = session::summarize(
+                                &session::session_path(&home, &driving),
+                            )
+                            .and_then(|summary| summary.personas.first().cloned());
+                            match lead {
+                                Some(name) => crate::roles::load(&home, &name)
+                                    .ok()
+                                    .map(|role| crate::roles::overlay_prompt(&role))
+                                    .filter(|frame| !frame.is_empty()),
+                                None => None,
+                            }
+                        };
                         let options = AgentOptions {
                             // The session's standing objective, read per
                             // run so a change reaches the next run with
@@ -7180,7 +7200,7 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
                             lane_specs,
                             calib: Some(prepared.calib.clone()),
                             skills: declared_skills(),
-                            role_overlay: None,
+                            role_overlay,
                             memory,
                             scope: None,
                             // The self-maintenance tool rides the

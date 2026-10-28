@@ -1205,6 +1205,27 @@ impl Store {
         Ok(removed)
     }
 
+    /// Stamp a window as served, at dispatch. `record_run` writes only
+    /// when a run *ends*, so a catch-up run killed mid-flight — a gui
+    /// restart, a crash — used to leave `last_run` stale and every
+    /// restart re-served every window whose run died, multiplying the
+    /// queue by the restart count (89 open scheduled logs from four
+    /// rapid restarts, the interactive run starved behind them). The
+    /// window is served the moment the run starts: one honest attempt
+    /// per window, and a run that dies still records its outcome as a
+    /// failure on the job's own accounting. The outcome write below is
+    /// unchanged — it overwrites the stamp with the same minute plus
+    /// how it ended.
+    pub fn mark_dispatched(&mut self, name: &str, minute: Minute) -> Result<(), CronError> {
+        let job = self
+            .jobs
+            .iter_mut()
+            .find(|job| job.name == name)
+            .ok_or_else(|| CronError::Missing(name.to_string()))?;
+        job.last_run = Some(minute.stamp());
+        self.save()
+    }
+
     /// Record one fire: the minute it ran for and how it ended. This is
     /// the only writer of `last_run`/`last_outcome`, and it is what
     /// keeps a restart from catching up on a window already served.
@@ -2401,6 +2422,17 @@ async fn fire_one(
     } else {
         format!("at {}", due.minute.stamp())
     };
+    // The window is served at dispatch, not at the end: a fire killed
+    // mid-flight (a restart, a crash) must not look like a window never
+    // served, or every restart re-fires every window whose run died and
+    // the interactive queue starves behind the multiplication.
+    let stamped = Store::open(&home).and_then(|mut store| store.mark_dispatched(&name, due.minute));
+    if let Err(error) = stamped {
+        // A failed dispatch stamp is named and the fire carries on: the
+        // outcome write at the end still lands, and the worst case is
+        // the pre-fix behavior (one refire), not a lost window.
+        eprintln!("fleet: cron: the dispatch stamp for {name} failed: {error}");
+    }
     // The panic is caught here rather than unwinding through the
     // scheduler thread's `block_on`: a panicking fire is one named line
     // and the loop carries on, never a dead tick loop.
@@ -3419,6 +3451,50 @@ mod tests {
         assert!(scheduler
             .catch_up_due(&served, minute(2026, 10, 14, 12, 30))
             .is_empty());
+        fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn a_window_stamped_at_dispatch_is_not_refired_by_a_restart() {
+        // The restart-storm defect, pinned: a catch-up run killed
+        // mid-flight used to leave `last_run` stale (record_run writes
+        // only on the end), so every restart re-served every window
+        // whose run died — 89 open scheduled logs from four rapid
+        // restarts, the interactive queue starved behind them. The
+        // dispatch stamp is the fix: the window is served the moment
+        // the fire starts, and a restart does not multiply it.
+        let home = temp_home("catch-up-dispatch");
+        seed_job(&home, "hourly", "0 * * * *");
+        Store::open(&home)
+            .unwrap()
+            .record_run("hourly", minute(2026, 10, 14, 11, 0), Outcome::Completed)
+            .unwrap();
+        // The 12:00 window was missed and the fire dispatched, then the
+        // process died before the run ended: the dispatch stamp is in
+        // the store, and the outcome never landed.
+        Store::open(&home)
+            .unwrap()
+            .mark_dispatched("hourly", minute(2026, 10, 14, 12, 0))
+            .unwrap();
+        // The caller re-reads the store at restart: the jobs it hands
+        // the decision carry the dispatch stamp, not the pre-fire one.
+        let jobs = vec![job("hourly", "0 * * * *", Some("2026-10-14T12:00Z"))];
+        let mut scheduler = test_scheduler(home.clone());
+        assert!(
+            scheduler
+                .catch_up_due(&jobs, minute(2026, 10, 14, 12, 30))
+                .is_empty(),
+            "a window whose run was dispatched is served, however it ended"
+        );
+        // The store's stamp is the dispatch fact a later process reads.
+        let store = Store::open(&home).unwrap();
+        let stamped = store
+            .jobs()
+            .iter()
+            .find(|job| job.name == "hourly")
+            .and_then(|job| job.last_run.clone())
+            .expect("the dispatch stamp landed");
+        assert_eq!(stamped, "2026-10-14T12:00Z");
         fs::remove_dir_all(&home).ok();
     }
 

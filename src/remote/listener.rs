@@ -554,13 +554,49 @@ async fn route_with(
             };
             let session = asked_session(bridge, request);
             match task_of(&body) {
-                Ok(task) => match bridge.run(&session, &task) {
-                    Ok(()) => api(
-                        200,
-                        json!({"type": "run", "task": task, "accepted": true, "from": "device"}),
-                    ),
-                    Err(message) => api(409, json!({"error": message})),
-                },
+                Ok(task) => {
+                    // The run's policy rides the body the same way the
+                    // console's does — this was the defect the dogfood
+                    // caught: the remote face never parsed the mode, so
+                    // every bot run asked on every call (Ask) while the
+                    // plan's C7 said non-destructive work runs.
+                    let (mode, pin) = match crate::gui::server::run_policy_of(&body) {
+                        Ok(policy) => policy,
+                        Err(message) => return bad_request(&message),
+                    };
+                    let budget = match crate::gui::server::turn_budget_of(&body) {
+                        Ok(budget) => budget,
+                        Err(message) => return bad_request(&message),
+                    };
+                    let folder = match crate::gui::server::folder_of(&body) {
+                        Ok(folder) => folder,
+                        Err(message) => return bad_request(&message),
+                    };
+                    if let Some(asked) = folder.as_deref() {
+                        if let Err(message) = bridge.chat_folder(asked) {
+                            return bad_request(&message);
+                        }
+                    }
+                    match bridge.run_with_budget(
+                        &session,
+                        &task,
+                        mode,
+                        pin,
+                        folder.as_deref(),
+                        budget,
+                    ) {
+                        Ok(()) => api(
+                            200,
+                            json!({"type": "run", "task": task, "accepted": true, "from": "device"}),
+                        ),
+                        Err(crate::gui::bridge::RunError::BadRequest(message)) => {
+                            bad_request(&message)
+                        }
+                        Err(crate::gui::bridge::RunError::Refused(message)) => {
+                            api(409, json!({"error": message}))
+                        }
+                    }
+                }
                 Err(message) => bad_request(&message),
             }
         }
