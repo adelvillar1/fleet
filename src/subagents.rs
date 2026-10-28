@@ -66,7 +66,7 @@ use crate::session::{Record, Session};
 use crate::skills::Skill;
 use crate::tools::{self, ToolOutcome};
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -1622,7 +1622,7 @@ pub struct Delegation<'a> {
 /// substrate isn't on this machine, the default-off boundary — or
 /// one owner-facing notice naming the reason and the way on; never a
 /// failed delegation, never a silent import.
-fn resolve_project(progress: &mut dyn Write) -> Option<String> {
+fn resolve_project(progress: &mut dyn Write, run_home: &Path) -> Option<String> {
     if let Some(name) = crate::layerfs_tools::test_project() {
         return Some(name);
     }
@@ -1631,9 +1631,14 @@ fn resolve_project(progress: &mut dyn Write) -> Option<String> {
     // resolves against is whatever the environment names NOW — the
     // live registration taught that a cached machine hands one
     // caller's substrate to another's world.
-    let Ok(ref machine) = crate::layerfs_tools::read_machine() else {
-        // No machine facts: the substrate isn't provisioned. A run
-        // that never opted in never learns the difference.
+    // The substrate is the run's OWN home's provisioning (KI-335's
+    // rule, one seam over; KI-336's closure): a scratch-home run — the
+    // eval corpus's, any test's — finds none and runs plain, whatever
+    // the machine that executes it has provisioned.
+    let Ok(ref machine) = crate::layerfs_tools::read_machine_at(run_home) else {
+        // No machine facts in the run's home: the substrate isn't
+        // provisioned there. A run that never opted in never learns
+        // the difference.
         return None;
     };
     if let Some(name) = std::env::var_os(crate::layerfs_tools::PROJECT_ENV)
@@ -1827,7 +1832,16 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
     // byte-identical to the one fleet always had (the plan's C3). A
     // knob set wrong is a named refusal here, before a route judgment
     // or a child session is spent on it, the way a bad role's is.
-    let layerfs_project = resolve_project(progress);
+    // The run's own home: the sessions directory's parent IS the home
+    // by the layout's own convention (the child's log lands beside the
+    // parent's), so the substrate the child engages is the one this
+    // run's home provisions — never the executing machine's fallback
+    // (KI-336).
+    let run_home = home
+        .clone()
+        .or_else(|| sessions_dir.parent().map(|parent| parent.to_path_buf()))
+        .unwrap_or_else(|| sessions_dir.clone());
+    let layerfs_project = resolve_project(progress, &run_home);
     // The overlay rides the child's system prompt beside the compiled-in
     // one, delimited so the child knows what is standing instruction
     // for this delegation's role and what is the harness prompt.
@@ -1892,13 +1906,9 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
 
     let child_route = child_route(&model, route.as_ref());
     // KI-072: every constructor takes a home. A run with no home of its
-    // own still lands its child's log beside the parent's: the sessions
-    // directory's parent IS the home by the layout's own convention, so
-    // resolving it back puts the child exactly where it was.
-    let child_home = home
-        .clone()
-        .or_else(|| sessions_dir.parent().map(|parent| parent.to_path_buf()))
-        .unwrap_or_else(|| sessions_dir.clone());
+    // own still lands its child's log beside the parent's — the run's
+    // own home, resolved once at the substrate read above.
+    let child_home = run_home.clone();
     let mut child = match Session::create_subagent(&child_home, &child_route.model, &parent_session)
     {
         Ok(child) => child,
@@ -1958,7 +1968,7 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
             // The file is the child's own (the actor the face's tail
             // reads is the file's name), and the read paths strip the
             // variable, so only this delegation's work lands here.
-            if let Ok(machine) = crate::layerfs_tools::read_machine() {
+            if let Ok(machine) = crate::layerfs_tools::read_machine_at(&run_home) {
                 let traces = machine.home.join("traces");
                 let _ = std::fs::create_dir_all(&traces);
                 std::env::set_var("LAYERFS_TRACE", traces.join(format!("{session}.jsonl")));
@@ -2676,6 +2686,27 @@ mod tests {
     /// KI-075: the recorded preview carries the goal — a resumed session
     /// replays this result as an ordinary tool card, and the card must
     /// name what the child was asked to do, the way the live card does.
+    #[test]
+    fn a_delegation_resolves_no_substrate_outside_its_own_home() {
+        // KI-336's pin: the substrate a delegation engages is its own
+        // home's provisioning. This machine's fleet home IS provisioned;
+        // the scratch home is not — and the run reads its own, so the
+        // resolution finds none whatever the machine that executes it
+        // carries.
+        let dir = std::env::temp_dir().join(format!(
+            "fleet-subagents-substrate-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut progress = Vec::new();
+        assert_eq!(resolve_project(&mut progress, &dir), None);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
     #[test]
     fn the_recorded_preview_carries_the_goal() {
         let result = SubagentResult {
@@ -3785,7 +3816,10 @@ console.log(JSON.stringify({
         crate::layerfs_tools::set_folder_for_test(&folder);
 
         let mut progress: Vec<u8> = Vec::new();
-        let resolved = resolve_project(&mut progress);
+        // The run-scoped read: this test's run home IS the env-armed
+        // home, so the substrate resolves from the same config the
+        // registration lands in.
+        let resolved = resolve_project(&mut progress, &home);
         let project = resolved.expect("the folder registers");
         let canonical = folder.canonicalize().unwrap();
         let document: serde_json::Value =

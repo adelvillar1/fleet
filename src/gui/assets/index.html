@@ -268,6 +268,11 @@
         <span class="conv-state" id="conv-state" data-state="idle" hidden></span>
         <button class="conv-act" id="conv-rename" type="button" title="rename this conversation"
                 aria-label="rename this conversation">&#9998;</button>
+        <!-- The archive: the one end a conversation can come to. The
+             agent never ends the owner's work on its own — a handback
+             and a cap are pauses — so the owner's verb does. -->
+        <button class="conv-act" id="conv-archive" type="button" title="archive or restore this conversation"
+                aria-label="archive or restore this conversation">&#128230;</button>
         <button class="conv-act conv-new" id="conv-new" type="button"
                 title="new conversation" aria-label="new conversation">+</button>
         <!-- The conversation's text size: the one reading surface the

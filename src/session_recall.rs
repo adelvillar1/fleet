@@ -240,6 +240,10 @@ fn outcome_word(records: &[Record]) -> &'static str {
     match records.last() {
         Some(Record::End { stop_reason, .. }) => match stop_reason.as_str() {
             "completed" => memory::Sign::Resolution.word(),
+            // A handback is the loop's own stop word for the owner's
+            // conversation: real work done, the rest awaiting the
+            // owner — unfinished, never a divergence.
+            reason if reason.starts_with("handed back") => memory::Sign::Incomplete.word(),
             "max-turns" => memory::Sign::Incomplete.word(),
             // `failed`, `stopped by the owner`, and any word a later
             // format adds: the conservative answer, because a
@@ -865,6 +869,34 @@ fn hit_of(scored: &memory::ScoredFact) -> ScoredHit {
 mod tests {
     use super::*;
     use std::sync::Arc;
+
+    #[test]
+    fn a_handback_signs_incomplete_never_a_divergence() {
+        let records = vec![
+            Record::User {
+                content: "the task".into(),
+            },
+            Record::End {
+                stop_reason: "handed back".into(),
+                turns: 4,
+                served_model: None,
+            },
+        ];
+        assert_eq!(outcome_word(&records), memory::Sign::Incomplete.word());
+        let silent = vec![Record::End {
+            stop_reason: "handed back without a report".into(),
+            turns: 4,
+            served_model: None,
+        }];
+        assert_eq!(outcome_word(&silent), memory::Sign::Incomplete.word());
+        // A bounded run's completion still signs the resolution it is.
+        let done = vec![Record::End {
+            stop_reason: "completed".into(),
+            turns: 4,
+            served_model: None,
+        }];
+        assert_eq!(outcome_word(&done), memory::Sign::Resolution.word());
+    }
 
     /// A scratch directory, unique per call — a sessions directory for
     /// the index's tests, a home for the derivation's.

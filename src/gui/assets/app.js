@@ -393,6 +393,7 @@
     convState: document.getElementById('conv-state'),
     convNew: document.getElementById('conv-new'),
     convRename: document.getElementById('conv-rename'),
+    convArchive: document.getElementById('conv-archive'),
     panelCalibration: document.getElementById('panel-calibration'),
     panelSecondBrain: document.getElementById('panel-second-brain'),
     panelWorkspaceHistory: document.getElementById('panel-workspace-history'),
@@ -6526,6 +6527,14 @@
         }).catch(function () { });
     });
   }
+  if (el.convArchive) {
+    el.convArchive.addEventListener('click', function () {
+      if (!face.session) return;
+      var row = workSelected();
+      var archivedNow = !!(row && row.state === 'archived');
+      archiveSession(face.session, !archivedNow);
+    });
+  }
   [el.routePill, el.statePill].forEach(function (pill) {
     pill.tabIndex = 0;
     pill.setAttribute('role', 'button');
@@ -7413,6 +7422,8 @@
     completed: 'completed',
     capped: 'capped',
     stopped: 'stopped by you',
+    'handed back': 'handed back',
+    archived: 'archived',
     interrupted: 'interrupted',
     new: 'new'
   };
@@ -7424,6 +7435,21 @@
 
   function workStateWord(state) {
     return WORK_STATE_WORD[state] || state || 'unknown';
+  }
+
+  // The archive: the owner's one end for a session. The loop's stops
+  // (a handback, a cap) are pauses; this is the verb that ends one.
+  function archiveSession(id, archived) {
+    post('/api/session/archive', { session: id, archived: !!archived })
+      .then(function (reply) {
+        if (reply.status !== 200) {
+          notice('the archive was refused',
+            (reply.body && reply.body.error) || 'the face said no without a reason');
+          return;
+        }
+        face.sessions = null;
+        readSessions(true);
+      }).catch(function () { });
   }
 
   // The archive read: the log heads as summaries, newest first, with the
@@ -7622,11 +7648,12 @@
     var groups = {
       needs: shown.filter(function (row) { return workNeeds(row.state); }),
       working: shown.filter(function (row) { return row.state === 'working'; }),
+      archived: shown.filter(function (row) { return row.state === 'archived'; }),
       background: shown.filter(function (row) {
         return row.class === 'background' || row.class === 'delegated' || row.class === 'channel';
       }),
       earlier: shown.filter(function (row) {
-        return !workNeeds(row.state) && row.state !== 'working' &&
+        return !workNeeds(row.state) && row.state !== 'working' && row.state !== 'archived' &&
           row.class !== 'background' && row.class !== 'delegated' && row.class !== 'channel';
       })
     };
@@ -7685,6 +7712,31 @@
         if (!folded) group.rows.forEach(function (row) { el.workList.appendChild(workRow(row)); });
       });
     }
+    if (groups.archived.length) {
+      // One quiet line, closed by default, like the background runs: the
+      // archive is the one end a session comes to, and its rows stay
+      // findable — never invisible.
+      var archivedCount = groupCount('archived', groups.archived);
+      var archivedOpen = !!face.showArchived;
+      var archivedToggle = node('button', 'work-background');
+      archivedToggle.type = 'button';
+      archivedToggle.setAttribute('aria-expanded', archivedOpen ? 'true' : 'false');
+      archivedToggle.title = archivedOpen ? 'hide archived sessions' : 'show archived sessions';
+      archivedToggle.appendChild(node('span', null, archivedOpen ? '\u25be' : '\u25b8'));
+      var archivedLabel = node('span');
+      archivedLabel.appendChild(node('b', null, 'archived'));
+      archivedLabel.appendChild(document.createTextNode(' \u00b7 ' + archivedCount +
+        (archivedCount === 1 ? ' session' : ' sessions')));
+      archivedToggle.appendChild(archivedLabel);
+      archivedToggle.addEventListener('click', function () {
+        face.showArchived = !face.showArchived;
+        paintWork();
+      });
+      el.workList.appendChild(archivedToggle);
+      if (archivedOpen) {
+        groups.archived.forEach(function (row) { el.workList.appendChild(workRow(row)); });
+      }
+    }
     if (!shown.length) {
       el.workList.appendChild(node('p', 'board-empty',
         'Nothing under this home matches' +
@@ -7739,6 +7791,25 @@
       meta.appendChild(node('span', 'work-badge', row.channel[0]));
     }
     body.appendChild(meta);
+    // The owner's end: archive on any live row, unarchive on an
+    // archived one. A chip, not a state change of the row's own click —
+    // opening the conversation stays the row's primary act.
+    var archive = node('span', 'work-archive',
+      row.state === 'archived' ? 'unarchive' : 'archive');
+    archive.setAttribute('role', 'button');
+    archive.tabIndex = 0;
+    var archiveAsk = function (event) {
+      event.stopPropagation();
+      archiveSession(row.id, row.state !== 'archived');
+    };
+    archive.addEventListener('click', archiveAsk);
+    archive.addEventListener('keydown', function (event) {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        archiveAsk(event);
+      }
+    });
+    body.appendChild(archive);
     button.appendChild(body);
     button.addEventListener('click', function () { openWork(row.id); });
     return button;

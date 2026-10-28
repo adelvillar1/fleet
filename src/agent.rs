@@ -109,6 +109,22 @@ pub fn is_silent_stop(content: &str, ran_tools: bool) -> bool {
     )
 }
 
+/// The end record's word for a model stop, by the session's own kind.
+/// The owner's conversation (no kind) is not over because the model
+/// stopped talking — the loop records the handback and the session
+/// awaits its owner; the rail renders it open, and only the owner's
+/// archive ends a session. A scheduled run or a delegated child is
+/// bounded work whose report is consumed by its caller, so there the
+/// same stop is the completion it claims to be.
+pub fn end_stop_word(kind: Option<&str>, no_report: bool) -> &'static str {
+    match (kind, no_report) {
+        (None, false) => "handed back",
+        (None, true) => "handed back without a report",
+        (_, false) => "completed",
+        (_, true) => "completed without a report",
+    }
+}
+
 /// Turn cap when the caller does not choose one.
 ///
 /// 25 was the silent wall the chat-UX contract (D4) ruled against: a
@@ -1275,9 +1291,19 @@ impl<'a> Agent<'a> {
             .improve_home
             .clone()
             .or_else(crate::lanes::fleet_home_path);
-        let disabled: std::collections::BTreeSet<String> = lanes
-            .home
-            .as_deref()
+        // The disabled set is the run's own home's config — the session's
+        // log lives beside it — so a run is governed by the machine it
+        // serves, and a test over a scratch home is hermetic by
+        // construction (KI-335): the fleet-home fallback read machine
+        // sweep state into every scratch-home test. Production paths all
+        // pass their own home as `improve_home`, and the sessions live
+        // under that same home, so this reads the same file the old
+        // fallback did — the surface the tests pin is the one that
+        // shipped, and the sweep cannot reach a test through it.
+        let disabled: std::collections::BTreeSet<String> = session
+            .path()
+            .parent()
+            .and_then(|sessions| sessions.parent())
             .map(crate::settings::tools_disabled)
             .unwrap_or_default()
             .into_iter()
@@ -2372,11 +2398,7 @@ impl<'a> Agent<'a> {
                     let _ = writeln!(self.progress, "\u{2192} the run ended without a report");
                     let _ = self.progress.flush();
                 }
-                let stop_reason = if no_report {
-                    "completed without a report"
-                } else {
-                    "completed"
-                };
+                let stop_reason = end_stop_word(self.session.kind(), no_report);
                 // A plan-mode run's answer is a plan: it rides its own
                 // record beside the assistant message, so the browser's
                 // plan card reads the log rather than a face-local
@@ -5466,7 +5488,9 @@ fn tier_declarations(
 /// profile does not name.
 fn profile_rank(workload: &str, name: &str) -> usize {
     let order: &[&str] = match workload {
-        "standard_code" => &[
+        // The frontend workload reads code the same way standard_code
+        // does — its difference is the routed model, not the tool order.
+        "standard_code" | "frontend" => &[
             "read_file",
             "edit",
             "grep",
@@ -7385,6 +7409,9 @@ mod tests {
         root: &std::path::Path,
         approver: Box<dyn Approver>,
     ) -> Agent<'static> {
+        // The machine's sweep state stays outside: the declared surface
+        // these tests pin is the compiled-in one, whole.
+        crate::settings::set_tools_disabled_for_test(Vec::new());
         // The client is never called by these tests: they drive
         // `execute_call` directly, the way the loop does.
         let client = Box::leak(Box::new(Client::new("http://127.0.0.1:9", "k")));
@@ -7415,14 +7442,18 @@ mod tests {
             file_access: FileAccess::Unrestricted,
             plan_mode: false,
         };
-        Agent::new(
+        let agent = Agent::new(
             client,
             options,
             session,
             approver,
             Box::leak(Box::new(Vec::new())),
         )
-        .unwrap()
+        .unwrap();
+        // The set rode into the Agent at construction; the thread reads
+        // the config again, so the pin cannot outlive this test.
+        crate::settings::clear_tools_disabled_for_test();
+        agent
     }
 
     /// The native surface, memory included, must fit inside the two
@@ -7497,6 +7528,10 @@ mod tests {
         // event named.
         let home = scratch("execution-prompt");
         let root = corpus("execution-prompt-corpus", &[]);
+        // The machine's sweep state stays outside, the agent_over
+        // helper's rule: the surface these assertions read is the
+        // compiled-in one.
+        crate::settings::set_tools_disabled_for_test(Vec::new());
         let decision_with = |label: Option<&'static str>| {
             let mut decision =
                 crate::route::workload_decision("hard").expect("hard maps a preference");
@@ -7543,14 +7578,18 @@ mod tests {
                 file_access: FileAccess::Unrestricted,
                 plan_mode: false,
             };
-            Agent::new(
+            let agent = Agent::new(
                 client,
                 options,
                 session,
                 Box::new(ApproveAll),
                 Box::leak(Box::new(Vec::new())),
             )
-            .unwrap()
+            .unwrap();
+            // The set rode into the Agent at construction; the thread
+            // reads the config again.
+            crate::settings::clear_tools_disabled_for_test();
+            agent
         };
 
         // mixture and swarm carry the line; single and the absent head
@@ -7660,6 +7699,11 @@ mod tests {
             plan_mode: false,
         };
         let mut progress = Vec::new();
+        // The machine's sweep state stays outside — the agent_over
+        // helper's rule: the surface this test reads is the compiled-in
+        // one, and the pin clears once the set has ridden into the
+        // Agent at construction.
+        crate::settings::set_tools_disabled_for_test(Vec::new());
         let plain = Agent::new(
             &client,
             options,
@@ -7668,6 +7712,7 @@ mod tests {
             &mut progress,
         )
         .unwrap();
+        crate::settings::clear_tools_disabled_for_test();
         // The deck rides it too: pure computation over a value the model
         // writes, with nothing outside itself, and the deliverable it
         // produces is the one thing a terminal cannot show.
@@ -7679,6 +7724,66 @@ mod tests {
         assert_eq!(plain.system_prompt(None), default_prompt());
         let _ = std::fs::remove_dir_all(&home);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_disabled_set_reads_the_run_s_own_home() {
+        // KI-335's structural half: a run is governed by the home its
+        // session lives in — its config's `tools.disabled` — so a
+        // machine's sweep state (a different home's config) cannot reach
+        // a scratch-home test, and the run's own home's list does.
+        let home = scratch("disabled-home");
+        crate::settings::set_tool_disabled(&home, "bash", true).unwrap();
+        let mut session = crate::session::Session::create(&home, "m").unwrap();
+        let client = Client::new("http://127.0.0.1:9", "k");
+        let options = AgentOptions {
+            goal: None,
+            model: "m".to_string(),
+            identity: None,
+            max_turns: 1,
+            ui_tx: None,
+            lane_specs: None,
+            calib: None,
+            skills: Vec::new(),
+            role_overlay: None,
+            memory: None,
+            scope: None,
+            improve_home: None,
+            route_home: None,
+            gui_prompt: None,
+            compact_now: false,
+            checkpoints: None,
+            file_access: FileAccess::Unrestricted,
+            plan_mode: false,
+        };
+        let mut progress = Vec::new();
+        let agent = Agent::new(
+            &client,
+            options,
+            &mut session,
+            Box::new(ApproveAll),
+            &mut progress,
+        )
+        .unwrap();
+        let names: Vec<String> = agent
+            .declarations()
+            .iter()
+            .map(|spec| {
+                serde_json::to_value(spec).unwrap()["function"]["name"]
+                    .as_str()
+                    .unwrap()
+                    .to_string()
+            })
+            .collect();
+        assert!(
+            !names.contains(&"bash".to_string()),
+            "the run's own home disables bash: {names:?}"
+        );
+        assert!(
+            names.contains(&"list_dir".to_string()),
+            "only the named tool is disabled: {names:?}"
+        );
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     #[test]
@@ -7947,6 +8052,11 @@ You are auditing a change. Read the diff before you judge it.
             plan_mode: false,
         };
         let mut progress = Vec::new();
+        // The machine's sweep state stays outside — the agent_over
+        // helper's rule: the surface this test reads is the compiled-in
+        // one, and the pin clears once the set has ridden into the
+        // Agent at construction.
+        crate::settings::set_tools_disabled_for_test(Vec::new());
         let plain = Agent::new(
             &client,
             options,
@@ -7955,6 +8065,7 @@ You are auditing a change. Read the diff before you judge it.
             &mut progress,
         )
         .unwrap();
+        crate::settings::clear_tools_disabled_for_test();
         assert_eq!(plain.system_prompt(None), default_prompt());
         let _ = std::fs::remove_dir_all(&home);
     }
@@ -8028,6 +8139,11 @@ You are auditing a change. Read the diff before you judge it.
             plan_mode: false,
         };
         let mut progress = Vec::new();
+        // The machine's sweep state stays outside — the agent_over
+        // helper's rule: the surface this test reads is the compiled-in
+        // one, and the pin clears once the set has ridden into the
+        // Agent at construction.
+        crate::settings::set_tools_disabled_for_test(Vec::new());
         let plain = Agent::new(
             &client,
             options,
@@ -8036,6 +8152,7 @@ You are auditing a change. Read the diff before you judge it.
             &mut progress,
         )
         .unwrap();
+        crate::settings::clear_tools_disabled_for_test();
         assert_eq!(plain.system_prompt(None), default_prompt());
         let _ = std::fs::remove_dir_all(&home);
     }
@@ -8193,6 +8310,22 @@ You are auditing a change. Read the diff before you judge it.
             true
         ));
         assert!(!is_silent_stop("Yes.", false));
+    }
+
+    #[test]
+    fn the_end_word_names_the_kind_the_log_was_born_with() {
+        // The owner's conversation: the model stopping is a handback,
+        // never a completion — only the owner's archive ends a session.
+        assert_eq!(end_stop_word(None, false), "handed back");
+        assert_eq!(end_stop_word(None, true), "handed back without a report");
+        // A scheduled run and a delegated child are bounded work whose
+        // report is consumed by the caller: the same stop is the
+        // completion it claims.
+        assert_eq!(end_stop_word(Some("scheduled"), false), "completed");
+        assert_eq!(
+            end_stop_word(Some("subagent"), true),
+            "completed without a report"
+        );
     }
 
     #[test]

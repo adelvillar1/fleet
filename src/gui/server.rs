@@ -720,6 +720,39 @@ async fn serve_connection(
                 Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
             }
         }
+        // Archive or restore a session: the owner's one end for a
+        // session. The loop never ends the owner's conversation on its
+        // own — a handback and a cap are pauses — so the archive is the
+        // verb that does. An absent `archived` reads as archive.
+        ("POST", "/api/session/archive") => {
+            let body = match read_body(&mut stream, &request, rest).await {
+                Ok(body) => body,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            let parsed: serde_json::Value = match serde_json::from_str(&body) {
+                Ok(value) => value,
+                Err(error) => {
+                    return write_reply(
+                        &mut stream,
+                        bad_request(&format!("an archive's body is not JSON: {error}")),
+                    )
+                    .await
+                }
+            };
+            let session = parsed
+                .get("session")
+                .and_then(|value| value.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let archived = parsed
+                .get("archived")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(true);
+            match bridge.session_archive(&session, archived) {
+                Ok(reply) => write_reply(&mut stream, api(200, reply)).await,
+                Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
+            }
+        }
         ("POST", "/api/goal") => {
             let body = match read_body(&mut stream, &request, rest).await {
                 Ok(body) => body,

@@ -44,5 +44,11 @@ def embed(items, provider: str = "llama-server", **kw) -> EmbedResult:
 
 
 def probe(provider: str, endpoint: str | None = None, battery: bool = False, **kw) -> dict:
-    from .probe import run_probe
+    # The implementation lives in the `probing` submodule — named so no
+    # submodule can shadow this function: importing `sem1.probe` (the
+    # old submodule's name) bound the module over this function inside
+    # any process that called probe() twice, and the second call died
+    # with "'module' object is not callable" (blend1's semantic lane
+    # carried it for days).
+    from .probing import run_probe
     return run_probe(provider, endpoint=endpoint, battery=battery, **kw)

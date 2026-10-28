@@ -652,6 +652,32 @@ mod tests {
     }
 
     #[test]
+    fn the_disabled_pin_overrides_then_clears_back_to_the_config() {
+        // The machine's sweep state must not reach a test that builds
+        // an Agent over a scratch home: the thread reads the pin while
+        // it stands — an empty pin included — and the config again once
+        // it clears.
+        let home = scratch("disabled-pin");
+        std::fs::write(
+            home.join("config.json"),
+            r#"{"tools": {"disabled": ["list_dir"]}}"#,
+        )
+        .unwrap();
+        assert_eq!(tools_disabled(&home), vec!["list_dir".to_string()]);
+        set_tools_disabled_for_test(Vec::new());
+        assert!(tools_disabled(&home).is_empty(), "an empty pin pins");
+        set_tools_disabled_for_test(vec!["deck".to_string()]);
+        assert_eq!(tools_disabled(&home), vec!["deck".to_string()]);
+        clear_tools_disabled_for_test();
+        assert_eq!(
+            tools_disabled(&home),
+            vec!["list_dir".to_string()],
+            "cleared, the config reads again"
+        );
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
     fn the_thresholds_default_and_read_the_overrides() {
         let home = std::env::temp_dir().join(format!("fleet-life-th-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&home);
@@ -3096,8 +3122,37 @@ pub fn lifecycle_thresholds(home: &Path) -> LifecycleThresholds {
     }
 }
 
+thread_local! {
+    /// The calling test thread's pin on the sweep's disabled list. The
+    /// real list is machine state (`config.json` in the fleet home), and
+    /// a test that builds an Agent over a scratch home must not inherit
+    /// it — the 2026-10-27 gate reddened a declarations test because the
+    /// sweep had disabled `list_dir` on the machine that ran it.
+    /// Production never sets this, so the read falls through to the
+    /// config exactly as before.
+    static TOOLS_DISABLED_OVERRIDE: std::cell::RefCell<Option<Vec<String>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Pin the disabled list for the calling test thread. An empty vec is a
+/// pin too — no tool disabled — which is what a hermetic surface test
+/// asserts against. Threads that never call this read the config.
+pub fn set_tools_disabled_for_test(list: Vec<String>) {
+    TOOLS_DISABLED_OVERRIDE.with(|slot| *slot.borrow_mut() = Some(list));
+}
+
+/// Drop the pin, so the thread reads the config again. A test that pins
+/// clears before it returns: the test threads are pooled, and a pin
+/// that outlives its test is the same leak in the other direction.
+pub fn clear_tools_disabled_for_test() {
+    TOOLS_DISABLED_OVERRIDE.with(|slot| *slot.borrow_mut() = None);
+}
+
 /// The tools the owner (or the sweep) disabled, from `tools.disabled`.
 pub fn tools_disabled(home: &Path) -> Vec<String> {
+    if let Some(pinned) = TOOLS_DISABLED_OVERRIDE.with(|slot| slot.borrow().clone()) {
+        return pinned;
+    }
     read_json(&home.join("config.json"))
         .unwrap_or_default()
         .get("tools")

@@ -208,6 +208,12 @@ function boot(options) {
     if (pathOnly === '/api/sessions') {
       return Promise.resolve({ status: 200, json: () => Promise.resolve(documents.sessions || emptySessions()) });
     }
+    if (pathOnly === '/api/session/archive') {
+      return Promise.resolve({
+        status: opts.archiveStatus || 200,
+        json: () => Promise.resolve(opts.archiveReply || { type: 'archive', session: 'x', archived: true }),
+      });
+    }
     if (pathOnly === '/api/home') {
       return Promise.resolve({ status: 200, json: () => Promise.resolve(documents.home || {}) });
     }
@@ -2315,6 +2321,122 @@ async function theWorkspaceHistorySectionDrawsTheTreeItRead() {
     String(empty.rows('.dag-band').length));
 }
 
+// The archive: the one end a session can come to. A handback reads as
+// the open state it is, the owner's verb sits on every row and in the
+// head, and the archived group is one collapsed line that keeps its
+// rows findable.
+async function theArchiveIsTheOneEndAndTheOwnersVerb() {
+  const page = boot({
+    hash: '#/sessions',
+    documents: {
+      sessions: {
+        type: 'sessions', read_at: 'now', current: '',
+        counts: { needs: 0, working: 1, background: 0, archived: 2, earlier: 1, total: 4 },
+        sessions: [
+          row('live-1', 'handed back', { title: 'the handed-back one' }),
+          row('live-2', 'working', { title: 'the working one' }),
+          row('gone-1', 'archived', { title: 'the first ended' }),
+          row('gone-2', 'archived', { title: 'the second ended' }),
+        ],
+      },
+      state: (asked) => ({ ...emptyState(asked), session: asked, events: [{ type: 'message', role: 'owner', text: 'the task' }] }),
+    },
+  });
+  await flush();
+  page.open();
+  await flush();
+
+  // The handback is a word the row wears, and it is not "completed".
+  const handed = page.rows('.work-row').find((r) => r.dataset.state === 'handed back');
+  check('ARCH the handback row exists', !!handed, String(page.rows('.work-row').length));
+  const handedWord = handed && handed.querySelector('.work-state');
+  check('ARCH the handback reads open',
+    !!handedWord && handedWord.textContent === 'handed back',
+    handedWord && handedWord.textContent);
+
+  // The archived group is one collapsed line, closed by default.
+  const archivedToggle = page.rows('.work-background')
+    .find((t) => String(t.textContent).includes('archived'));
+  check('ARCH the archived group is one quiet line', !!archivedToggle,
+    page.text('work-list').slice(0, 80));
+  check('ARCH it is closed by default',
+    !!archivedToggle && archivedToggle.getAttribute('aria-expanded') === 'false',
+    archivedToggle && archivedToggle.getAttribute('aria-expanded'));
+
+  // Opening it shows the rows; their chips offer the way back.
+  if (archivedToggle) archivedToggle.click();
+  await flush();
+  const goneRows = page.rows('.work-row').filter((r) => r.dataset.state === 'archived');
+  check('ARCH opening shows the archived rows', goneRows.length === 2,
+    String(goneRows.length));
+  const back = goneRows[0] && goneRows[0].querySelector('.work-archive');
+  check('ARCH an archived row offers unarchive',
+    !!back && back.textContent === 'unarchive',
+    back && back.textContent);
+  if (back) back.click();
+  await flush();
+  const restores = page.calls.filter((c) => {
+    if (c.url !== '/api/session/archive' || !c.body) return false;
+    const parsed = JSON.parse(c.body);
+    return parsed.session === 'gone-1' && parsed.archived === false;
+  });
+  check('ARCH unarchive posts the restore', restores.length === 1,
+    JSON.stringify(page.calls.filter((c) => c.url === '/api/session/archive').map((c) => c.body)));
+
+  // The row chip archives a live conversation; the head button speaks
+  // for the conversation the face anchors.
+  const chip = handed && handed.querySelector('.work-archive');
+  check('ARCH the live row carries the archive chip',
+    !!chip && chip.textContent === 'archive', chip && chip.textContent);
+  if (chip) chip.click();
+  await flush();
+  const posted = page.calls.filter((c) => {
+    if (c.url !== '/api/session/archive' || !c.body) return false;
+    const parsed = JSON.parse(c.body);
+    return parsed.session === 'live-1' && parsed.archived === true;
+  });
+  check('ARCH the chip posts the archive', posted.length === 1,
+    JSON.stringify(page.calls.filter((c) => c.url === '/api/session/archive').map((c) => c.body)));
+
+  handed.click();
+  await flush();
+  page.fireOn('conv-archive', 'click');
+  await flush();
+  const heads = page.calls.filter((c) => {
+    if (c.url !== '/api/session/archive' || !c.body) return false;
+    const parsed = JSON.parse(c.body);
+    return parsed.session === 'live-1' && parsed.archived === true;
+  });
+  check('ARCH the head button archives the open conversation', heads.length >= 1,
+    JSON.stringify(page.calls.filter((c) => c.url === '/api/session/archive').map((c) => c.body)));
+
+  // A refusal names itself where the owner reads.
+  const refused = boot({
+    hash: '#/sessions',
+    archiveStatus: 409,
+    archiveReply: { error: '`x` has a run in flight — stop it first, then archive' },
+    documents: {
+      sessions: {
+        type: 'sessions', read_at: 'now', current: '',
+        counts: { needs: 0, working: 0, background: 0, archived: 0, earlier: 1, total: 1 },
+        sessions: [row('busy-1', 'working', { title: 'the busy one' })],
+      },
+      state: (asked) => ({ ...emptyState(asked), session: asked, events: [] }),
+    },
+  });
+  await flush();
+  refused.open();
+  await flush();
+  const busyChip = refused.rows('.work-row')[0] &&
+    refused.rows('.work-row')[0].querySelector('.work-archive');
+  if (busyChip) busyChip.click();
+  await flush();
+  check('ARCH a refusal names itself in the stream',
+    refused.text('log').includes('the archive was refused') &&
+    refused.text('log').includes('in flight'),
+    refused.text('log').slice(0, 120));
+}
+
 const cases = [
   ['C1/C8 the list groups by attention and counts what the server counted', theListGroupsByAttentionAndCountsWhatTheServerCounted],
   ['C2 every state opens through one verb', everyStateOpensThroughOneVerb],
@@ -2343,6 +2465,7 @@ const cases = [
   ['C3 a command row names what ran', aCommandRowNamesWhatRan],
   ['C4 the strip lines open their record', theStripsLinesOpenTheirRecord],
   ['C5 the workspace-history section draws the tree it read', theWorkspaceHistorySectionDrawsTheTreeItRead],
+  ['ARCH the archive is the one end and the owner\u2019s verb', theArchiveIsTheOneEndAndTheOwnersVerb],
 ];
 
 for (const [name, run] of cases) {

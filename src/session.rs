@@ -14,7 +14,7 @@
 use crate::api::{Message, Role, ToolCall};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, Write};
+use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -264,6 +264,11 @@ pub enum Record {
 pub struct Session {
     path: PathBuf,
     log: File,
+    /// The kind the start record declares (`scheduled`, `subagent`, or
+    /// none for the owner's own conversation) — carried so the loop's
+    /// end stamp names the same kind the log was born with, recovered
+    /// from the log's own first line on open.
+    kind: Option<String>,
 }
 
 impl Session {
@@ -320,7 +325,11 @@ impl Session {
             .create_new(true)
             .append(true)
             .open(&path)?;
-        let mut session = Session { path, log };
+        let mut session = Session {
+            path,
+            log,
+            kind: kind.map(str::to_string),
+        };
         let created = iso_utc_stamp(SystemTime::now())?;
         // The project this session belongs to, recorded at the one moment
         // it is unambiguous: the process's own working directory when the
@@ -343,13 +352,23 @@ impl Session {
         Ok(session)
     }
 
-    /// Open an existing log in append mode.
+    /// Open an existing log in append mode. The kind is the start
+    /// record's own — a resumed log answers for the kind it was born
+    /// with, not for whatever resumed it.
     pub fn open(path: &Path) -> io::Result<Session> {
         let log = OpenOptions::new().append(true).open(path)?;
+        let kind = start_kind(path);
         Ok(Session {
             path: path.to_path_buf(),
             log,
+            kind,
         })
+    }
+
+    /// The kind the start record declares, when this log carries one —
+    /// none is the owner's own conversation.
+    pub fn kind(&self) -> Option<&str> {
+        self.kind.as_deref()
     }
 
     /// This log's path; the file stem is the session id.
@@ -694,6 +713,19 @@ impl SessionSummary {
             (true, None) => Some(&self.model),
             (false, _) => None,
         }
+    }
+}
+
+/// The start record's kind, read from a log's first line — the kind a
+/// log was born with, recovered on open. A head that cannot be parsed
+/// reads as the owner's own (no kind).
+fn start_kind(path: &Path) -> Option<String> {
+    let file = File::open(path).ok()?;
+    let mut first = String::new();
+    BufRead::read_line(&mut std::io::BufReader::new(file), &mut first).ok()?;
+    match serde_json::from_str::<Record>(first.trim()).ok()? {
+        Record::Start { kind, .. } => kind,
+        _ => None,
     }
 }
 
@@ -1088,6 +1120,29 @@ mod tests {
             &records[0],
             Record::Start { v: 1, model, .. } if model == "deepseek-flash"
         ));
+        fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn an_opened_log_answers_for_the_kind_it_was_born_with() {
+        let home = temp_home("kind");
+        let mut child = Session::create_subagent(&home, "m", "parent-1").unwrap();
+        assert_eq!(child.kind(), Some(SUBAGENT_KIND));
+        child
+            .record(&Record::User {
+                content: "child work".into(),
+            })
+            .unwrap();
+        let path = child.path().to_path_buf();
+        drop(child);
+        // A resumed log reads the kind off its own start record — it
+        // answers for what it was born as, not for whatever opened it.
+        let reopened = Session::open(&path).unwrap();
+        assert_eq!(reopened.kind(), Some(SUBAGENT_KIND));
+        let plain = Session::create(&home, "m").unwrap();
+        assert_eq!(plain.kind(), None);
+        let scheduled = Session::create_scheduled(&home, "m").unwrap();
+        assert_eq!(scheduled.kind(), Some(SCHEDULED_KIND));
         fs::remove_dir_all(&home).ok();
     }
 

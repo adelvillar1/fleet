@@ -255,6 +255,21 @@ impl GuiState {
         self.workdirs.get(&self.key(session)).cloned()
     }
 
+    /// The folder a run in this chat would work in: the chat's own
+    /// choice, else the fleet default — the folder the owner set
+    /// without naming a chat, wherever the launch's naming has since
+    /// moved it (KI-337). The state documents read this too, so what
+    /// the face shows is what the run will use.
+    fn effective_folder(&self, session: &str) -> Option<String> {
+        self.workdir_of(session).or_else(|| {
+            self.workdirs.get("").cloned().or_else(|| {
+                self.launch
+                    .as_deref()
+                    .and_then(|id| self.workdirs.get(id).cloned())
+            })
+        })
+    }
+
     /// Set or clear a chat's folder. `None` is no folder — and
     /// therefore no filesystem access — which is the absence of an
     /// entry rather than an entry naming one.
@@ -568,7 +583,7 @@ impl Bridge {
                 "session": key,
                 "model": self.model,
                 "workspace": self.cwd.display().to_string(),
-                "folder": folder_value(state.workdir_of(session).as_deref(), &self.cwd),
+                "folder": folder_value(state.effective_folder(session).as_deref(), &self.cwd),
             "goal": session_goal(&self.home, &key),
                 "budget": crate::compaction::COMPACTION_TOKEN_BUDGET,
                 "turn_budget": crate::route::run_config(&self.home).max_turns,
@@ -593,7 +608,7 @@ impl Bridge {
             "session": key,
             "model": self.model,
             "workspace": self.cwd.display().to_string(),
-            "folder": folder_value(state.workdir_of(session).as_deref(), &self.cwd),
+            "folder": folder_value(state.effective_folder(session).as_deref(), &self.cwd),
             "goal": session_goal(&self.home, &key),
             "budget": crate::compaction::COMPACTION_TOKEN_BUDGET,
             "turn_budget": crate::route::run_config(&self.home).max_turns,
@@ -2256,17 +2271,38 @@ impl Bridge {
             self.folder_event(session, folder.as_deref(), None);
             return Ok(folder);
         }
-        let Some(stored) = lock(&self.state).workdir_of(session) else {
+        // The chat's own folder, when it chose one; otherwise the
+        // owner's fleet default — the folder they set without naming a
+        // chat, wherever the launch's naming has since moved it
+        // (KI-337: a default is a default, not a per-session ritual;
+        // the workdirs doc has promised "an absent entry is the launch
+        // folder" all along). A chat that never chose works in the
+        // workspace the owner declared; a chat that chose keeps its
+        // choice.
+        let (stored, from_default) = {
+            let state = lock(&self.state);
+            match state.workdir_of(session) {
+                Some(stored) => (Some(stored), false),
+                None => (state.effective_folder(session), true),
+            }
+        };
+        let Some(stored) = stored else {
             return Ok(None);
         };
         match resolve_folder(&self.cwd, &stored) {
             Ok(path) => Ok(Some(path)),
             Err(reason) => {
-                {
-                    let mut state = lock(&self.state);
-                    state.set_workdir(session, None);
+                // A chat's own folder that no longer resolves is gone
+                // and is cleared, as before. The fleet default stays
+                // armed: a transient failure must not erase the owner's
+                // default for every chat that relies on it.
+                if !from_default {
+                    {
+                        let mut state = lock(&self.state);
+                        state.set_workdir(session, None);
+                    }
+                    self.persist_workdirs();
                 }
-                self.persist_workdirs();
                 self.folder_event(session, None, Some((&stored, &reason)));
                 Ok(None)
             }
@@ -2453,6 +2489,61 @@ impl Bridge {
             "type": "goal",
             "session": session,
             "text": text,
+        }))
+    }
+
+    /// Archive or restore a session — the one end a session can come
+    /// to, and the owner's own verb: a handback and a cap are pauses,
+    /// never ends, so the loop has no word that ends the owner's work.
+    /// Refused while the session's run is in flight (the stop verb is
+    /// for that) and for a name the archive does not hold. Opening an
+    /// archived session still works — an end, not a deletion — and
+    /// archiving clears the session's standing goal: a goal on an ended
+    /// session is debris.
+    pub fn session_archive(&self, asked: &str, archived: bool) -> Result<Value, String> {
+        let session = asked.trim();
+        if session.is_empty() {
+            return Err("no session named".to_string());
+        }
+        let path = session::session_path(&self.home, session);
+        if !path.exists() {
+            return Err(format!("no session named `{session}`"));
+        }
+        {
+            let state = lock(&self.state);
+            let running = state
+                .attached_if(session)
+                .map(|attached| attached.running)
+                .unwrap_or(false);
+            if running {
+                return Err(format!(
+                    "`{session}` has a run in flight — stop it first, then archive"
+                ));
+            }
+        }
+        let mut archived_map = load_archived(&self.home);
+        if archived {
+            archived_map.insert(session.to_string(), crate::boards::now_stamp());
+        } else {
+            archived_map.remove(session);
+        }
+        save_archived(&self.home, &archived_map);
+        if archived {
+            let mut goals = load_goals(&self.home);
+            if goals.remove(session).is_some() {
+                save_goals(&self.home, &goals);
+            }
+        }
+        record(
+            &self.state,
+            &self.events,
+            session,
+            json!({"type": "archive", "session": session, "archived": archived}),
+        );
+        Ok(json!({
+            "type": "archive",
+            "session": session,
+            "archived": archived,
         }))
     }
 
@@ -3356,8 +3447,17 @@ fn folder_name(path: &std::path::Path) -> String {
 /// workdirs' pattern, one file beside the other fleet-owned sidecars.
 const TITLES_FILE: &str = "sessions-titles.json";
 
+/// The sidecar naming the sessions the owner archived — the one end a
+/// session can come to, and the owner's own verb: the loop never ends
+/// the owner's conversation on its own. `id → the archived stamp`.
+const ARCHIVED_FILE: &str = "sessions-archived.json";
+
 fn titles_path(home: &std::path::Path) -> PathBuf {
     home.join(TITLES_FILE)
+}
+
+fn archived_path(home: &std::path::Path) -> PathBuf {
+    home.join(ARCHIVED_FILE)
 }
 
 fn load_titles(home: &std::path::Path) -> std::collections::HashMap<String, String> {
@@ -3380,6 +3480,39 @@ fn save_titles(home: &std::path::Path, titles: &std::collections::HashMap<String
         return;
     }
     let Ok(text) = serde_json::to_string_pretty(titles) else {
+        return;
+    };
+    let temp = path.with_extension(format!("{}.tmp", std::process::id()));
+    if std::fs::write(&temp, text).is_err() {
+        return;
+    }
+    let _ = std::fs::rename(&temp, &path);
+}
+
+/// Read the archived set: `id → the stamp the owner archived it`. An
+/// entry whose session log is gone is dropped, like the titles map.
+fn load_archived(home: &std::path::Path) -> std::collections::HashMap<String, String> {
+    let text = match std::fs::read_to_string(archived_path(home)) {
+        Ok(text) => text,
+        Err(_) => return std::collections::HashMap::new(),
+    };
+    let stored: std::collections::HashMap<String, String> =
+        serde_json::from_str(&text).unwrap_or_default();
+    stored
+        .into_iter()
+        .filter(|(id, _)| session::session_path(home, id).exists())
+        .collect()
+}
+
+/// Write the archived set, atomically and with a writer-unique temp
+/// name, the titles' own rules.
+fn save_archived(home: &std::path::Path, archived: &std::collections::HashMap<String, String>) {
+    let path = archived_path(home);
+    if archived.is_empty() {
+        let _ = std::fs::remove_file(&path);
+        return;
+    }
+    let Ok(text) = serde_json::to_string_pretty(archived) else {
         return;
     };
     let temp = path.with_extension(format!("{}.tmp", std::process::id()));
@@ -3471,7 +3604,14 @@ fn load_workdirs(home: &std::path::Path) -> std::collections::HashMap<String, St
         serde_json::from_str(&text).unwrap_or_default();
     stored
         .into_iter()
-        .filter(|(id, _)| session::session_path(home, id).exists())
+        // The pending key never has a log of its own — it is the folder
+        // waiting for the launch to name its session, and the fleet
+        // default every un-choosing chat falls back to (KI-337) — so it
+        // survives the prune every real session id meets, exactly as
+        // the goals sidecar's pending key does. A load that dropped it
+        // armed the file but never the memory: every restart stranded
+        // the owner's default until they set the folder again.
+        .filter(|(id, _)| id.is_empty() || session::session_path(home, id).exists())
         .collect()
 }
 
@@ -4169,9 +4309,21 @@ struct LiveFace {
 
 /// A row's work state, derived once here so the page never guesses:
 /// what needs the owner first, then what is running, then how it ended.
-fn work_state(entry: &session::SessionSummary, live: &LiveFace, paused: bool) -> &'static str {
+fn work_state(
+    entry: &session::SessionSummary,
+    live: &LiveFace,
+    paused: bool,
+    archived: bool,
+) -> &'static str {
     if live.seats.contains(&entry.id) {
         return "needs-approval";
+    }
+    // The owner's end: an archived session reads archived whatever the
+    // log says — archive is the one end a session can come to — unless
+    // a run is actually in flight in it (a resume), in which case the
+    // live word wins until that run is back.
+    if archived && live.driving.as_deref() != Some(entry.id.as_str()) {
+        return "archived";
     }
     if paused {
         return "paused";
@@ -4182,6 +4334,12 @@ fn work_state(entry: &session::SessionSummary, live: &LiveFace, paused: bool) ->
         return match entry.stop_reason.as_deref() {
             Some("max-turns") => "capped",
             Some(reason) if reason.starts_with("stopped") => "stopped",
+            // The owner's conversation does not end because the model
+            // stopped talking: the handback stamp — and the interactive
+            // "completed" the loop stamped before it existed — reads as
+            // the open state it is. Scheduled and delegated runs keep
+            // the word: there the run's bounded shape makes it true.
+            Some(reason) if entry.kind.is_none() && handback_reason(reason) => "handed back",
             _ => "completed",
         };
     }
@@ -4202,6 +4360,15 @@ fn work_state(entry: &session::SessionSummary, live: &LiveFace, paused: bool) ->
         Some(write) if now.saturating_sub(write) <= LIVE_WINDOW_SECS => "active",
         _ => "interrupted",
     }
+}
+
+/// The end words that mean "the model handed the conversation back":
+/// the handback stamp the loop writes now, and the interactive
+/// "completed" it stamped before the word existed.
+fn handback_reason(reason: &str) -> bool {
+    reason == "completed"
+        || reason == "completed without a report"
+        || reason.starts_with("handed back")
 }
 
 /// Whose work a row is: the owner's own conversation, a scheduled job's
@@ -4415,6 +4582,7 @@ fn inbox_document(
 
 fn sessions_read(home: &std::path::Path, current: &str, live: &LiveFace, query: &str) -> Value {
     let titles = load_titles(home);
+    let archived = load_archived(home);
     let entries = match session::list(home) {
         Ok(entries) => entries,
         Err(error) => {
@@ -4432,13 +4600,20 @@ fn sessions_read(home: &std::path::Path, current: &str, live: &LiveFace, query: 
     } else {
         Some(query.trim().to_string())
     };
-    let entries: Vec<_> = entries.into_iter().take(SEARCH_BOUND).collect();
+    // The cap keeps the NEWEST SEARCH_BOUND logs: the list arrives
+    // oldest-first (session::list sorts by id), so the bound takes from
+    // the tail and the order is restored for the reverse render below.
+    let mut entries = entries;
+    entries.reverse();
+    entries.truncate(SEARCH_BOUND);
+    entries.reverse();
     let searched = needle.as_ref().map(|_| entries.len());
     let sessions = entries
         .iter()
         .rev()
         .map(|entry| {
             let paused = paused_by_owner(home, &entry.id);
+            let is_archived = archived.contains_key(&entry.id);
             json!({
                 "id": entry.id,
                 // The owner's title when one is set, else the session's
@@ -4476,7 +4651,7 @@ fn sessions_read(home: &std::path::Path, current: &str, live: &LiveFace, query: 
                 "class": work_class(entry),
                 "job": scheduled_job(entry),
                 // The one derived word the list groups by.
-                "state": work_state(entry, live, paused),
+                "state": work_state(entry, live, paused, is_archived),
                 // The content match's line, when a query asked for one
                 // (D9): the row names why it matched, the whole line
                 // clipped, never a summary a model wrote.
@@ -4511,8 +4686,9 @@ fn sessions_read(home: &std::path::Path, current: &str, live: &LiveFace, query: 
             )
         })
         .count();
+    let archived_count = count(&["archived"]);
     let total = sessions.len();
-    let earlier = total.saturating_sub(needs + working + background);
+    let earlier = total.saturating_sub(needs + working + background + archived_count);
     // The owner's own conversations: what the work list shows by default.
     // The app's background work is counted separately so the head can
     // name the owner's work without the page subtracting anything itself.
@@ -4530,6 +4706,7 @@ fn sessions_read(home: &std::path::Path, current: &str, live: &LiveFace, query: 
             "needs": needs,
             "working": working,
             "background": background,
+            "archived": archived_count,
             "earlier": earlier,
             "yours": yours,
             "total": total,
@@ -7268,9 +7445,20 @@ mod tests {
         let state = reloaded.state(&id);
         assert_eq!(state["folder"]["name"], "docs", "{state}");
         let other = Session::create(&home, "m").unwrap();
+        // KI-337: a chat that never chose works in the fleet default —
+        // the launch chat's folder, wherever the naming has moved it —
+        // not in the refusal. The choice itself is still per session:
+        // this chat shows the default, its own entry stays absent.
+        let other_state = reloaded.state(other.id());
+        assert_eq!(other_state["folder"]["name"], "docs", "{other_state}");
+
+        // The deny floor holds where the owner left no folder at all:
+        // no own entry, no pending key, no launch folder — no access.
+        let bare = Session::create(&home, "m").unwrap();
+        let (bare_bridge, _sources) = Bridge::detached(home.clone(), "m".to_string(), None);
         assert!(
-            reloaded.state(other.id())["folder"].is_null(),
-            "a second chat starts with no folder"
+            bare_bridge.state(bare.id())["folder"].is_null(),
+            "with no default armed, an un-choosing chat has no folder"
         );
 
         std::fs::remove_dir_all(&root).ok();
@@ -8643,7 +8831,11 @@ mod tests {
             Some("t"),
             Some(now_secs()),
         );
-        assert_eq!(work_state(&done, &live, false), "completed");
+        // The owner's conversation does not end because the model
+        // stopped: the legacy "completed" stamp reads as the handback
+        // it is.
+        assert_eq!(work_state(&done, &live, false, false), "handed back");
+        assert_eq!(work_state(&done, &live, false, true), "archived");
         let capped = row(
             "b",
             None,
@@ -8653,7 +8845,7 @@ mod tests {
             Some("t"),
             Some(now_secs()),
         );
-        assert_eq!(work_state(&capped, &live, false), "capped");
+        assert_eq!(work_state(&capped, &live, false, false), "capped");
         let stopped = row(
             "c",
             None,
@@ -8663,28 +8855,96 @@ mod tests {
             Some("t"),
             Some(now_secs()),
         );
-        assert_eq!(work_state(&stopped, &live, false), "stopped");
+        assert_eq!(work_state(&stopped, &live, false, false), "stopped");
+        // The handback stamp the loop writes now, and the silent one.
+        let handed = row(
+            "g",
+            None,
+            None,
+            true,
+            Some("handed back"),
+            Some("t"),
+            Some(now_secs()),
+        );
+        assert_eq!(work_state(&handed, &live, false, false), "handed back");
+        let handed_silent = row(
+            "h",
+            None,
+            None,
+            true,
+            Some("handed back without a report"),
+            Some("t"),
+            Some(now_secs()),
+        );
+        assert_eq!(
+            work_state(&handed_silent, &live, false, false),
+            "handed back"
+        );
+        // A scheduled run's stop is the completion it claims: bounded
+        // work, the report consumed by its caller.
+        let scheduled = row(
+            "i",
+            Some(session::SCHEDULED_KIND),
+            None,
+            true,
+            Some("completed"),
+            Some("t"),
+            Some(now_secs()),
+        );
+        assert_eq!(work_state(&scheduled, &live, false, false), "completed");
+        let child = row(
+            "j",
+            Some(session::SUBAGENT_KIND),
+            None,
+            true,
+            Some("completed"),
+            Some("t"),
+            Some(now_secs()),
+        );
+        assert_eq!(work_state(&child, &live, false, false), "completed");
         // Unfinished and recently written is active; stale is interrupted.
         let fresh = row("d", None, None, false, None, Some("t"), Some(now_secs()));
-        assert_eq!(work_state(&fresh, &live, false), "active");
+        assert_eq!(work_state(&fresh, &live, false, false), "active");
         let stale = row("e", None, None, false, None, Some("t"), Some(1));
-        assert_eq!(work_state(&stale, &live, false), "interrupted");
+        assert_eq!(work_state(&stale, &live, false, false), "interrupted");
         // A log with no owner message is a conversation created and unused.
         let created = row("f", None, None, false, None, None, Some(now_secs()));
-        assert_eq!(work_state(&created, &live, false), "new");
+        assert_eq!(work_state(&created, &live, false, false), "new");
         // The owner's pause outranks the log; an approval outranks both.
-        assert_eq!(work_state(&fresh, &live, true), "paused");
+        assert_eq!(work_state(&fresh, &live, true, false), "paused");
         let mut seated = LiveFace::default();
         seated.seats.insert("d".to_string());
-        assert_eq!(work_state(&fresh, &seated, true), "needs-approval");
+        assert_eq!(work_state(&fresh, &seated, true, false), "needs-approval");
+        // The archive is the end — but a run actually in flight in an
+        // archived session (a resume) reads working, and an approval
+        // still outranks everything.
+        assert_eq!(work_state(&fresh, &live, false, true), "archived");
+        let resumed = row("k", None, None, false, None, Some("t"), Some(now_secs()));
+        let driving_k = LiveFace {
+            driving: Some("k".to_string()),
+            seats: Default::default(),
+        };
+        assert_eq!(work_state(&resumed, &driving_k, false, true), "working");
+        let mut seated_archived = LiveFace::default();
+        seated_archived.seats.insert("k".to_string());
+        assert_eq!(
+            work_state(&resumed, &seated_archived, false, true),
+            "needs-approval"
+        );
         // A run this face drives is working — but the log's own end wins
-        // over a stale flag for the instant between.
+        // over a stale flag for the instant between, archive included.
         let driving = LiveFace {
             driving: Some("d".to_string()),
             seats: Default::default(),
         };
-        assert_eq!(work_state(&fresh, &driving, false), "working");
-        assert_eq!(work_state(&capped, &driving, false), "capped");
+        assert_eq!(work_state(&fresh, &driving, false, false), "working");
+        assert_eq!(work_state(&capped, &driving, false, false), "capped");
+        let driving_a = LiveFace {
+            driving: Some("a".to_string()),
+            seats: Default::default(),
+        };
+        assert_eq!(work_state(&done, &driving_a, false, true), "handed back");
+        assert_eq!(work_state(&done, &driving, false, true), "archived");
     }
 
     #[test]
@@ -8972,6 +9232,281 @@ mod tests {
         assert!(capped["last_write"].as_u64().is_some(), "{capped}");
         assert_eq!(row(&paused_id)["state"], "paused");
         assert_eq!(row(&working_id)["state"], "working");
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn the_rail_keeps_the_newest_search_bound_logs() {
+        let home = std::env::temp_dir().join(format!("fleet-gui-cap-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).expect("a temp home");
+        // SEARCH_BOUND + 1 logs: the cap keeps the newest, so the oldest
+        // log falls past the bound and the newest leads the rows.
+        for _ in 0..=SEARCH_BOUND {
+            let mut log = crate::session::Session::create(&home, "deepseek-flash").unwrap();
+            log.record(&crate::session::Record::User {
+                content: "filler".into(),
+            })
+            .unwrap();
+        }
+        let mut ids: Vec<String> = std::fs::read_dir(crate::home::sessions_dir(&home))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("jsonl"))
+            .map(|path| path.file_stem().unwrap().to_string_lossy().to_string())
+            .collect();
+        ids.sort();
+        let oldest = ids[0].clone();
+        let newest = ids[ids.len() - 1].clone();
+
+        let document = sessions_read(&home, "", &LiveFace::default(), "");
+        let rows = document["sessions"].as_array().expect("rows");
+        assert_eq!(rows.len(), SEARCH_BOUND);
+        assert_eq!(rows[0]["id"], newest.as_str(), "the newest log leads");
+        assert!(
+            !rows.iter().any(|row| row["id"] == oldest.as_str()),
+            "the oldest log fell past the bound"
+        );
+
+        // The content pass rides the same slice: a needle in the newest
+        // log is found, and the bound is named honestly.
+        let mut log = crate::session::Session::open(
+            crate::home::sessions_dir(&home)
+                .join(format!("{newest}.jsonl"))
+                .as_path(),
+        )
+        .unwrap();
+        log.record(&crate::session::Record::User {
+            content: "the needle-zqxv marker".into(),
+        })
+        .unwrap();
+        drop(log);
+        let document = sessions_read(&home, "", &LiveFace::default(), "needle-zqxv");
+        let rows = document["sessions"].as_array().expect("rows");
+        let found = row_of(rows, &newest);
+        assert_eq!(
+            found["matched"]
+                .as_str()
+                .map(|line| line.contains("needle-zqxv")),
+            Some(true),
+            "{found}"
+        );
+        assert_eq!(document["search"]["searched"], SEARCH_BOUND);
+        assert_eq!(document["search"]["bound"], SEARCH_BOUND);
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn archiving_is_the_one_end_and_the_owners_verb() {
+        let home = std::env::temp_dir().join(format!("fleet-gui-archive-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).expect("a temp home");
+        let mut log = crate::session::Session::create(&home, "deepseek-flash").unwrap();
+        log.record(&crate::session::Record::User {
+            content: "the work".into(),
+        })
+        .unwrap();
+        let id = log.id().to_string();
+        drop(log);
+
+        let (mut bridge, _sources) =
+            Bridge::detached(home.clone(), "deepseek-flash".to_string(), None);
+        let _door = bridge.connect();
+
+        // A standing goal rides the session; the archive clears it — a
+        // goal on an ended session is debris.
+        bridge
+            .set_goal(&id, Some("the objective"))
+            .expect("goal set");
+
+        let archived = bridge.session_archive(&id, true).expect("archived");
+        assert_eq!(archived["archived"], true);
+        let live = LiveFace::default();
+        let document = sessions_read(&home, "", &live, "");
+        let rows = document["sessions"].as_array().expect("rows");
+        assert_eq!(row_of(rows, &id)["state"], "archived");
+        assert_eq!(document["counts"]["archived"], 1);
+        assert!(archived_path(&home).exists(), "the registry is on disk");
+        assert!(
+            !load_goals(&home).contains_key(&id),
+            "the goal went with the archive"
+        );
+
+        // Unarchive restores the computed state and empties the registry.
+        bridge.session_archive(&id, false).expect("restored");
+        let document = sessions_read(&home, "", &live, "");
+        let rows = document["sessions"].as_array().expect("rows");
+        assert_eq!(row_of(rows, &id)["state"], "active");
+        assert_eq!(document["counts"]["archived"], 0);
+        assert!(
+            !archived_path(&home).exists(),
+            "an empty registry is no file"
+        );
+
+        // Refusals name themselves.
+        let nobody = bridge.session_archive("nobody", true);
+        assert!(nobody.unwrap_err().contains("no session named"));
+
+        // The one hard refusal: a run in flight. The stop verb is for that.
+        let mut second = crate::session::Session::create(&home, "deepseek-flash").unwrap();
+        second
+            .record(&crate::session::Record::User {
+                content: "second".into(),
+            })
+            .unwrap();
+        let second_id = second.id().to_string();
+        drop(second);
+        bridge.run(&second_id, "work in flight").expect("accepted");
+        bridge.drive(&second_id);
+        let in_flight = bridge.session_archive(&second_id, true);
+        let refusal = in_flight.unwrap_err();
+        assert!(refusal.contains("in flight"), "{refusal}");
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_chat_without_its_own_folder_works_in_the_fleet_default() {
+        let home =
+            std::env::temp_dir().join(format!("fleet-gui-default-ws-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).expect("a temp home");
+        let default_ws =
+            std::env::temp_dir().join(format!("fleet-gui-default-ws-dir-{}", std::process::id()));
+        let own_ws =
+            std::env::temp_dir().join(format!("fleet-gui-default-own-{}", std::process::id()));
+        for dir in [&default_ws, &own_ws] {
+            let _ = std::fs::remove_dir_all(dir);
+            std::fs::create_dir_all(dir).expect("a workspace dir");
+        }
+        // The stored and resolved values are canonical (the temp roots
+        // are symlinked on macOS): compare against the canonical forms.
+        let default_ws = default_ws.canonicalize().unwrap();
+        let own_ws = own_ws.canonicalize().unwrap();
+
+        let (mut bridge, _sources) =
+            Bridge::detached(home.clone(), "deepseek-flash".to_string(), None);
+        let _door = bridge.connect();
+
+        // The owner sets the folder without naming a chat: it lands on
+        // the pending key, the fleet default.
+        bridge
+            .store_folder("", Some(default_ws.to_string_lossy().as_ref()))
+            .expect("the default stored");
+        // A chat that never chose a folder works in the default (KI-337)
+        // — and the state document agrees with the run, so the face
+        // shows the folder the run will use.
+        let resolved = bridge.run_folder("bare-chat", None).expect("resolved");
+        assert_eq!(resolved.as_deref(), Some(default_ws.as_path()));
+        let doc = bridge.state("bare-chat");
+        let shown = doc["folder"]["path"].as_str();
+        assert_eq!(shown, Some(default_ws.to_string_lossy().as_ref()));
+
+        // A chat's own choice wins over the default.
+        bridge
+            .store_folder("own-chat", Some(own_ws.to_string_lossy().as_ref()))
+            .expect("the own folder stored");
+        let resolved = bridge.run_folder("own-chat", None).expect("resolved");
+        assert_eq!(resolved.as_deref(), Some(own_ws.as_path()));
+
+        // After the launch is named, the default moves with it — and a
+        // bare chat still works in it.
+        {
+            let mut state = lock(&bridge.state);
+            state.name_launch("launch-1");
+        }
+        let resolved = bridge.run_folder("bare-chat-2", None).expect("resolved");
+        assert_eq!(resolved.as_deref(), Some(default_ws.as_path()));
+
+        std::fs::remove_dir_all(&home).ok();
+        std::fs::remove_dir_all(&default_ws).ok();
+        std::fs::remove_dir_all(&own_ws).ok();
+    }
+
+    #[test]
+    fn the_pending_folder_survives_the_load_prune() {
+        // KI-337's root: the pending key has no log of its own, so the
+        // prune that drops dead session ids must not drop it — the
+        // goals sidecar learned this first, the workdirs sidecar now
+        // too. A load that dropped it armed the file but never the
+        // memory: every restart stranded the owner's default.
+        let home = std::env::temp_dir().join(format!(
+            "fleet-gui-workdirs-prune-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(crate::home::sessions_dir(&home)).unwrap();
+        std::fs::write(
+            workdirs_path(&home),
+            r#"{"": "/Users/owner/fleet", "20260101T000000Z-dead": "/gone"}"#,
+        )
+        .unwrap();
+        let loaded = load_workdirs(&home);
+        assert_eq!(
+            loaded.get("").map(String::as_str),
+            Some("/Users/owner/fleet"),
+            "the pending folder is the fleet default: the load keeps it"
+        );
+        assert!(
+            !loaded.contains_key("20260101T000000Z-dead"),
+            "a dead session's folder is still pruned"
+        );
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_fleet_default_survives_a_failed_resolve_but_a_chat_s_own_does_not() {
+        let home =
+            std::env::temp_dir().join(format!("fleet-gui-default-gone-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).expect("a temp home");
+        let gone_own =
+            std::env::temp_dir().join(format!("fleet-gui-gone-own-{}", std::process::id()));
+        let gone_default =
+            std::env::temp_dir().join(format!("fleet-gui-gone-default-{}", std::process::id()));
+        for dir in [&gone_own, &gone_default] {
+            std::fs::create_dir_all(dir).expect("a dir to later remove");
+        }
+
+        let (mut bridge, _sources) =
+            Bridge::detached(home.clone(), "deepseek-flash".to_string(), None);
+        let _door = bridge.connect();
+
+        // The chat's own folder that no longer resolves is gone and is
+        // cleared, the long-standing behavior.
+        bridge
+            .store_folder("own-chat", Some(gone_own.to_string_lossy().as_ref()))
+            .expect("stored while it exists");
+        std::fs::remove_dir_all(&gone_own).unwrap();
+        let resolved = bridge
+            .run_folder("own-chat", None)
+            .expect("the run accepted");
+        assert!(resolved.is_none(), "a dead folder serves nothing");
+        {
+            let state = lock(&bridge.state);
+            assert!(
+                state.workdir_of("own-chat").is_none(),
+                "the dead choice is cleared"
+            );
+        }
+
+        // The fleet default that no longer resolves serves nothing but
+        // stays armed: a transient failure must not erase the owner's
+        // default for every chat that relies on it.
+        bridge
+            .store_folder("", Some(gone_default.to_string_lossy().as_ref()))
+            .expect("stored while it exists");
+        std::fs::remove_dir_all(&gone_default).unwrap();
+        let resolved = bridge
+            .run_folder("bare-chat", None)
+            .expect("the run accepted");
+        assert!(resolved.is_none(), "a dead default serves nothing");
+        {
+            let state = lock(&bridge.state);
+            assert!(state.workdirs.contains_key(""), "the default stays armed");
+        }
         std::fs::remove_dir_all(&home).ok();
     }
 

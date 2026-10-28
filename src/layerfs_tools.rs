@@ -262,8 +262,19 @@ pub fn read_machine() -> Result<Machine, String> {
         std::env::var("FLEET_HOME").ok().as_deref(),
         std::env::var("HOME").ok().as_deref(),
     )?;
+    read_machine_at(&home)
+}
+
+/// The machine's facts as ONE home carries them — the run-scoped read
+/// (KI-335's rule, one seam over, KI-336's closure): a delegation
+/// engages the substrate its own home provisions, so a scratch-home
+/// run — the eval corpus's, any test's — finds none and runs plain,
+/// whatever the machine that executes it has provisioned. Production
+/// passes the fleet home, the same file the global read always
+/// answered, so the wired behavior is identical.
+pub fn read_machine_at(home: &Path) -> Result<Machine, String> {
     let config = std::fs::read_to_string(home.join("config.json")).map_err(|_| {
-        "no <FLEET_HOME>/config.json — `fleet install` provisions the LayerFS substrate".to_string()
+        "no <home>/config.json — `fleet install` provisions the LayerFS substrate".to_string()
     })?;
     let document: serde_json::Value = serde_json::from_str(&config)
         .map_err(|error| format!("config.json is not JSON: {error}"))?;

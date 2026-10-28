@@ -845,7 +845,7 @@ async fn run_completes_a_two_turn_tool_loop() {
     ));
     assert!(matches!(
         records.last(),
-        Some(Record::End { stop_reason, turns: 2, .. }) if stop_reason == "completed"
+        Some(Record::End { stop_reason, turns: 2, .. }) if stop_reason == "handed back"
     ));
 
     std::fs::remove_dir_all(&home).ok();
@@ -2917,7 +2917,7 @@ async fn ui_events_arrive_in_order_and_beside_the_log() {
                 completion_tokens: 5,
             },
             UiEvent::Finished {
-                stop_reason: "completed".to_string()
+                stop_reason: "handed back".to_string()
             },
         ]
     );
@@ -4102,7 +4102,7 @@ async fn a_full_run_calls_the_real_sem1_lane_through_the_mock_api() {
     }
     assert!(matches!(
         records.last(),
-        Some(Record::End { stop_reason, turns: 2, .. }) if stop_reason == "completed"
+        Some(Record::End { stop_reason, turns: 2, .. }) if stop_reason == "handed back"
     ));
 
     // And the headless surface said the lane joined.
@@ -4296,7 +4296,7 @@ async fn a_lane_joining_is_visible_and_its_child_is_closed() {
                 completion_tokens: 5,
             },
             UiEvent::Finished {
-                stop_reason: "completed".to_string()
+                stop_reason: "handed back".to_string()
             },
         ]
     );
@@ -4808,7 +4808,7 @@ async fn a_failed_head_fails_over_to_the_next_candidate() {
     // the ordinary turn and its orderly end.
     let records = session::replay(session.path()).unwrap();
     assert!(records.iter().any(
-        |record| matches!(record, Record::End { stop_reason, .. } if stop_reason == "completed")
+        |record| matches!(record, Record::End { stop_reason, .. } if stop_reason == "handed back")
     ));
 
     std::fs::remove_dir_all(&home).ok();
@@ -8267,7 +8267,7 @@ async fn a_blank_stop_is_asked_once_for_its_report() {
         )),
         "no empty assistant turn is in the log"
     );
-    assert_eq!(end_reason(&records).as_deref(), Some("completed"));
+    assert_eq!(end_reason(&records).as_deref(), Some("handed back"));
     std::fs::remove_dir_all(&home).ok();
 }
 
@@ -8374,7 +8374,7 @@ async fn a_second_silent_stop_ends_the_run_with_no_report() {
     let records = session::replay(session.path()).unwrap();
     assert_eq!(
         end_reason(&records).as_deref(),
-        Some("completed without a report")
+        Some("handed back without a report")
     );
     std::fs::remove_dir_all(&home).ok();
 }

@@ -6448,6 +6448,29 @@ body[data-work="collapsed"] .work-list { display: none; }
 .work-row[data-state="paused"] .work-bar { background: var(--dsw-alias-warn); }
 .work-row[data-state="working"] .work-bar { background: var(--dsw-alias-ok); }
 .work-row[data-state="interrupted"] .work-bar { background: var(--dsw-alias-down); }
+/* A handback is the conversation waiting on its owner: the accent,
+   quiet — it is not an end, and the row must not read like one. */
+.work-row[data-state="handed back"] .work-bar { background: var(--dsw-alias-accent); }
+
+/* The archive chip: the owner's one end for a session, carried by the
+   row it ends. Small, out of the way, keyboard-reachable. */
+.work-row .work-archive {
+  justify-self: start;
+  margin-top: 5px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--dsw-alias-hairline-strong);
+  color: var(--dsw-alias-ink-tertiary);
+  font-size: 10px;
+  line-height: 1.6;
+  cursor: pointer;
+  user-select: none;
+}
+.work-row .work-archive:hover,
+.work-row .work-archive:focus-visible {
+  color: var(--dsw-alias-ink);
+  background: var(--dsw-alias-surface);
+}
 
 .work-row .work-name {
   display: -webkit-box;
