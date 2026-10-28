@@ -812,6 +812,13 @@ pub const SEED_MANIFEST: &[(&str, &str, &str)] = &[
 /// vendored lane child launched with fleet's own launch spec and its
 /// stdio JSON-RPC driven by hand, which is the route this machine's own
 /// runs proved reaches the same capability.
+///
+/// KI-339: the arguments also carry the explicit absolute `sources`
+/// globs. The refresh's default source set is cwd-relative and over MCP
+/// the child's cwd is the lane home (`services/blend1/`, which has no
+/// `docs/`), so a project-only call derives zero files and reports
+/// `action: no-source` — the 2026-10-28T00:30Z `corpus-refresh-gen1`
+/// run reproduced it and completed only through the explicit set.
 pub fn seed_task(project: &str) -> String {
     // A manifest entry may carry a whole task rather than a project:
     // the lifecycle sweep is fleet's own maintenance, not a corpus
@@ -826,8 +833,12 @@ pub fn seed_task(project: &str) -> String {
          env BLEND1_PYTHONPATH plus the four sibling *_PYTHONPATH vars — the launch spec \
          src/lanes.rs produces) and drive its stdio JSON-RPC by hand: initialize \
          (protocolVersion 2024-11-05), notifications/initialized, then tools/call with \
-         name \"refresh\" with the project {project}. It replies with project, \
-         source_files, items, changed, action, and store."
+         name \"refresh\" with the arguments {{\"project\": \"{project}\", \"sources\": \
+         [\"<repo home>/{project}/docs/**/*.md\", \"<repo home>/{project}/*.md\"]}} — \
+         <repo home> is the parent directory of <fleet repo>, and every project's \
+         corpus is its docs tree plus root .md files. It replies with project, \
+         source_files, items, dropped_duplicates, changed, action, store, and \
+         missing_sources."
     )
 }
 
