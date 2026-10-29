@@ -225,7 +225,15 @@ every visible `.tile`, `.badge`, `.rrow`, `.rank-row`, `.cal-cell`,
   attach and plan: the **steering wheel** fills the composer with
   `/steer` and the **bifurcation** with `/btw` — the owner types the
   instruction, and the slash parser, the only parser, takes it from
-  there.
+  there. The icon buttons carry the face's own hover tooltip — instant
+  and themed, the words in `data-tip`, the accessible name in
+  `aria-label` — where the native title needed a long hover and
+  rendered browser-default. A send beside driving work queues above the
+  composer, and each queued row carries its three verbs as icons the
+  reply footer's way: **send** moves the message to the head (the head
+  is what the next run sends), **edit** returns its words to the
+  composer and takes the row out, **drop** removes it; rows still drag
+  to reorder, and an emptied queue leaves no rows behind.
 - **The activity rows.** One line per thing the run did, each opening on
   a press: `Thought · Ns` (the provider's `reasoning_content`, kept in a
   `reasoning` log record and never sent back), and a tool call, whose

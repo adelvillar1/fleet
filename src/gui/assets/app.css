@@ -878,6 +878,42 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
 }
 .queue-row button:hover { color: var(--dsw-alias-ink); border-color: var(--dsw-alias-hairline-strong); }
 .queue-row button:disabled { opacity: 0.45; cursor: default; }
+/* The queue's verbs as icons: the reply footer's square, one rule so
+   the two cannot drift apart. */
+.queue-row .row-rewind.msg-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  font-size: 0;
+}
+.queue-row .row-rewind.msg-icon svg {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
+}
+/* The composer's hover tooltip: the face's own, instant and themed —
+   the native title needed a long hover and rendered browser-default.
+   The accessible name stays in aria-label; this is the sighted hover. */
+.foot-btn[data-tip] { position: relative; }
+.foot-btn[data-tip]:hover::after,
+.foot-btn[data-tip]:focus-visible::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 7px);
+  right: 0;
+  padding: 4px 8px;
+  border: 1px solid var(--dsw-alias-hairline-strong);
+  border-radius: 6px;
+  background: var(--dsw-alias-surface-raised);
+  color: var(--dsw-alias-ink);
+  font-size: 10.5px;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 30;
+}
 
 /* The composer's button is the run's control: Send when idle, Stop
    while a run is in flight — the arrow gives way to a square, drawn in

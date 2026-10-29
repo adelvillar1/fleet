@@ -963,7 +963,11 @@
       '<circle cx="18" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle>' +
       '<path d="M18 9a9 9 0 0 1-9 9"></path>',
     hook: '<circle cx="12" cy="5" r="3"></circle><line x1="12" y1="22" x2="12" y2="8"></line>' +
-      '<path d="M5 12H2a10 10 0 0 0 20 0h-3"></path>'
+      '<path d="M5 12H2a10 10 0 0 0 20 0h-3"></path>',
+    pencil: '<path d="M12 20h9"></path>' +
+      '<path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"></path>',
+    x: '<line x1="6" y1="6" x2="18" y2="18"></line><line x1="18" y1="6" x2="6" y2="18"></line>',
+    send: '<path d="M5 12h13"></path><path d="M13 7l5 5-5 5"></path>'
   };
 
   function iconSvg(paths) {
@@ -2488,7 +2492,12 @@
     if (!el.queueChip || !el.queueList) return;
     var items = face.queued || [];
     el.queueChip.hidden = !items.length;
-    if (!items.length) return;
+    if (!items.length) {
+      // An empty queue leaves no rows behind: the chip hides and the
+      // list empties, so a stale row never survives its own removal.
+      el.queueList.textContent = '';
+      return;
+    }
     el.queueCount.textContent = 'queued \u00b7 ' + items.length;
     if (el.queueNote) {
       el.queueNote.textContent = (face.driving && face.driving !== face.session)
@@ -2505,17 +2514,31 @@
       row.title = 'drag to reorder \u00b7 alt+\u2191\u2193 moves it too';
       row.appendChild(node('span', 'queue-handle', '\u28ff'));
       row.appendChild(node('span', 'queue-text', text));
-      var first = node('button', 'queue-first', index === 0 ? 'first' : 'send first');
-      first.type = 'button';
+      // The row's three verbs as icons, the reply footer's own approach:
+      // the words in the tooltip and the accessible name, the glyph in
+      // the row. Send moves the message to the head — the head is what
+      // the next run sends; edit returns the words to the composer and
+      // takes the row out; drop removes it.
+      var first = iconButton(MSG_ICONS.send, 'row-rewind queue-send', 'send first',
+        index === 0
+          ? 'already first in line — the next run sends it'
+          : 'move to the head of the queue — the next run sends it');
       first.disabled = index === 0;
-      first.title = index === 0
-        ? 'already first in line'
-        : 'move this message to the head of the queue';
       first.addEventListener('click', function () { moveQueued(index, 0); });
       row.appendChild(first);
-      var drop = node('button', 'queue-drop', '\u00d7');
-      drop.type = 'button';
-      drop.title = 'drop the queued message';
+      var edit = iconButton(MSG_ICONS.pencil, 'row-rewind queue-edit', 'edit',
+        'edit this message — its words return to the composer');
+      edit.addEventListener('click', function () {
+        face.queued.splice(index, 1);
+        el.task.value = text;
+        saveDraft();
+        grow();
+        el.task.focus();
+        paintQueue();
+      });
+      row.appendChild(edit);
+      var drop = iconButton(MSG_ICONS.x, 'row-rewind queue-drop', 'drop',
+        'drop the queued message');
       drop.addEventListener('click', function () {
         face.queued.splice(index, 1);
         paintQueue();

@@ -2861,6 +2861,15 @@ async function theComposerVerbsAreIcons() {
     (steer && 'elements present') + ' / markup ' +
       HTML.includes('aria-label="steer the run in flight"'));
 
+  // The hover tooltip is the face's own: instant and themed, the words
+  // in data-tip, the accessible name in aria-label.
+  check('verbs the composer icons carry the house tooltip',
+    HTML.includes('data-tip="steer the run in flight (/steer)"') &&
+      HTML.includes('data-tip="ask beside the run (/btw)"') &&
+      HTML.includes('data-tip="attach a document from the workspace"') &&
+      CSS.includes('.foot-btn[data-tip]:hover::after') &&
+      CSS.includes('content: attr(data-tip)'),
+    'data-tip / css');
   const task = page.rows('#task')[0];
   steer.click();
   check('verbs the steering wheel prefills the steer command',
@@ -3003,6 +3012,65 @@ async function theRailBadgeSaysWhereTheWorkIs() {
     qbadge ? qbadge.hidden + ' / ' + JSON.stringify(qbadge.textContent) : 'no badge');
 }
 
+
+// The queued messages carry their three verbs as icons — send to the
+// head, edit back into the composer, drop out — the reply footer's own
+// approach, with the words as tooltips and accessible names.
+async function theQueuedMessagesCarryTheirActions() {
+  const page = boot({
+    width: 1440,
+    hash: '#/sessions/this-one',
+    documents: {
+      sessions: {
+        type: 'sessions', read_at: 'now', current: '',
+        counts: { needs: 0, working: 0, background: 0, earlier: 2, total: 2 },
+        sessions: [
+          row('other-one', 'working', { title: 'corpus-refresh-fleet — approval' }),
+          row('this-one', 'completed', { title: 'this conversation' }),
+        ],
+      },
+      state: (asked) => ({ ...emptyState(asked), session: asked, driving: 'other-one', running: false }),
+    },
+  });
+  await flush();
+  page.open();
+  await flush();
+  page.IDS.task.value = 'the first queued';
+  page.fireOn('composer', 'submit', {});
+  await flush();
+  page.IDS.task.value = 'the second queued';
+  page.fireOn('composer', 'submit', {});
+  await flush();
+  const rows = () => page.rows('.queue-row');
+  check('Q two messages queued', rows().length === 2, String(rows().length));
+  check('Q each row carries the three icon verbs with the head disabled',
+    rows().every((r) => r.querySelectorAll('.queue-send').length === 1 &&
+        r.querySelectorAll('.queue-edit').length === 1 &&
+        r.querySelectorAll('.queue-drop').length === 1) &&
+      rows()[0].querySelector('.queue-send').disabled === true &&
+      rows()[1].querySelector('.queue-send').disabled === false,
+    String(rows().length));
+  // Send on the second moves it to the head — the head is what the next
+  // run sends.
+  rows()[1].querySelector('.queue-send').click();
+  await flush();
+  check('Q send moves the message to the head',
+    rows()[0].querySelector('.queue-text').textContent === 'the second queued',
+    rows()[0].querySelector('.queue-text').textContent);
+  // Edit returns the words to the composer and takes the row out.
+  rows()[0].querySelector('.queue-edit').click();
+  await flush();
+  check('Q edit returns the words to the composer',
+    page.IDS.task.value === 'the second queued' && rows().length === 1,
+    JSON.stringify(page.IDS.task.value) + ' / ' + rows().length);
+  // Drop removes what is left, and the chip hides with an empty queue.
+  rows()[0].querySelector('.queue-drop').click();
+  await flush();
+  check('Q drop empties the queue and hides the chip',
+    rows().length === 0 && page.IDS['queue-chip'].hidden === true,
+    String(rows().length));
+}
+
 const cases = [
   ['C1/C8 the list groups by attention and counts what the server counted', theListGroupsByAttentionAndCountsWhatTheServerCounted],
   ['C2 every state opens through one verb', everyStateOpensThroughOneVerb],
@@ -3039,6 +3107,7 @@ const cases = [
   ['N1 the home is always reachable', theHomeIsAlwaysReachable],
   ['N2 New mints nothing until words exist', newMintsNothingUntilWordsExist],
   ['N3 the rail badge says where the work is', theRailBadgeSaysWhereTheWorkIs],
+  ['Q the queued messages carry their actions', theQueuedMessagesCarryTheirActions],
 ];
 
 for (const [name, run] of cases) {
