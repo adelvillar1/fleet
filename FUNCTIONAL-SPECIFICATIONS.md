@@ -62,7 +62,7 @@ app's own runs (scheduled jobs, delegated children, peer conversations)
 are behind it, which opens to the family lines and then the runs — then
 *earlier*, grouped by the project each run was born in, and *archived* —
 one closed line at the bottom, the sessions the owner ended. A row says
-its state in words — *handed back*, *completed*, *capped*,
+its state in words — *handed back*, *resumed*, *completed*, *capped*,
 *stopped by you*, *archived*, *interrupted*, *active* — with its age, its project,
 and, for background work, the job's name. One verb: opening a row loads
 that conversation in place, beside the list, with its composer, so
@@ -302,9 +302,11 @@ head, the rail and the panels keep the measure they have.
 - A run's end is the loop stopping, not the session ending: when the
   model hands the conversation back (or the turn cap hits), the session
   reads as open — `handed back`, `capped` — and stays in the work list.
-  The only end is the owner archiving the session, from the row's chip
-  or the conversation head; archived sessions gather in a collapsed
-  Archived group and restore on demand.
+  A conversation continued after its last end is a resumed session: the
+  log carries a `resume` record, and the row reads `resumed` — open,
+  never terminated. The only end is the owner archiving the session,
+  from the row's chip or the conversation head; archived sessions
+  gather in a collapsed Archived group and restore on demand.
 - Exit codes: `0` completed, `1` runtime failure, `2` usage or
   configuration, `3` the turn cap was reached (resume with
   `--session <id>`).
