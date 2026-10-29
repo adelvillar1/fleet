@@ -6478,6 +6478,14 @@ fn record(state: &Mutex<GuiState>, events: &broadcast::Sender<Value>, session: &
     let mut value = value;
     if !session.is_empty() {
         if let Some(object) = value.as_object_mut() {
+            // A delegation names its CHILD in `session` — the branch the
+            // process card keys on — so the conversation the event rides
+            // has to travel beside it: without `parent`, the face
+            // watching the parent drops the card at the session filter
+            // and the documented live branches never render.
+            if object.get("type").and_then(Value::as_str) == Some("delegation") {
+                object.insert("parent".to_string(), Value::String(session.to_string()));
+            }
             object
                 .entry("session")
                 .or_insert_with(|| Value::String(session.to_string()));
@@ -10037,5 +10045,31 @@ mod tests {
                 .expect("one event logged")
         };
         assert!(untagged.get("session").is_none(), "{untagged}");
+    }
+
+    #[test]
+    fn a_delegation_event_carries_the_conversation_it_rides() {
+        let state = Mutex::new(GuiState {
+            pending_replay: None,
+            sessions: Default::default(),
+            launch: Some("s".to_string()),
+            driving: Some("s".to_string()),
+            permissions: crate::approvals::Mode::Ask,
+            provider_pin: None,
+            turn_budget: 0,
+            workdirs: Default::default(),
+        });
+        let (events, mut seen) = broadcast::channel(4);
+        record(
+            &state,
+            &events,
+            "s",
+            json!({"type": "delegation", "session": "child-1"}),
+        );
+        let streamed = seen.try_recv().expect("one event broadcast");
+        // The child stays the branch key; the parent rides beside it, or
+        // the face watching the parent filters the card away.
+        assert_eq!(streamed["session"], "child-1", "{streamed}");
+        assert_eq!(streamed["parent"], "s", "{streamed}");
     }
 }

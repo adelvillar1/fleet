@@ -925,15 +925,53 @@
     return made;
   }
 
+  // One exchange is one owner message and the harness's answer to it —
+  // the unit the conversation counts in. Steer frames and scheduled
+  // prompts ride the log as user records, but a reseed turns them into
+  // owner cards while the live stream never carried them: excluding
+  // their frames keeps the count the same before and after a reload.
+  function systemFrame(text) {
+    var s = String(text || '');
+    return s.indexOf('[the owner of this run steered it through its control file') === 0 ||
+      s.indexOf('[scheduled run ') === 0;
+  }
+  function exchangesIn(list) {
+    var n = 0;
+    for (var i = 0; i < (list || []).length; i += 1) {
+      var one = list[i];
+      if (one && one.type === 'message' && one.role === 'owner' && !systemFrame(one.text)) n += 1;
+    }
+    return n;
+  }
+  function exchanges() { return exchangesIn(face.events); }
+
+  // A message's own copy control, its label flip the visible trace —
+  // an effect with no visible trace reads as broken.
+  function makeCopy(getText, title) {
+    var button = node('button', 'row-rewind msg-copy', 'copy');
+    button.type = 'button';
+    button.title = title;
+    button.addEventListener('click', function () {
+      if (navigator.clipboard) navigator.clipboard.writeText(getText()).catch(function () { });
+      button.textContent = 'copied';
+      window.setTimeout(function () { button.textContent = 'copy'; }, 1200);
+    });
+    return button;
+  }
+
   function ownerRow(event) {
     var el0 = node('div', 'owner');
     el0.appendChild(node('span', 'owner-tag', 'you'));
-    el0.appendChild(node('span', 'owner-text', event.text));
-    // The owner's own words are correctable in place (D3): the edit
-    // affordance rides the bubble on hover, the rewind button's grammar.
-    // Pressing it fills the composer; sending rewinds to the turn before
-    // the run those words launched and posts the edit as a new run —
-    // the log keeps both, append-only.
+    // The words render once, below: the session-ref branch and the plain
+    // branch between them own the whole text. The original one-line body
+    // appended the raw text here first, and survived the branches — so
+    // every owner message printed its text twice.
+    // The owner's own words are correctable in place (D3), the affordance
+    // in the reply row's grammar: a quiet footer on the bubble itself,
+    // visible without a hover — a hover-only control does not exist on
+    // a touch face. Pressing edit fills the composer; sending rewinds to
+    // the turn before the run those words launched and posts the edit as
+    // a new run — the log keeps both, append-only.
     var text = event.text || '';
     var refs = face.sessionRefs || {};
     var tokens = Object.keys(refs).filter(function (token) { return text.indexOf(token) !== -1; });
@@ -953,7 +991,10 @@
     edit.type = 'button';
     edit.title = 'edit this message and re-run from before its run';
     edit.addEventListener('click', function () { startEdit(event); });
-    el0.appendChild(edit);
+    var tools = node('div', 'msg-tools');
+    tools.appendChild(edit);
+    tools.appendChild(makeCopy(function () { return event.text || ''; }, 'copy this message'));
+    el0.appendChild(tools);
     return row(el0, event);
   }
 
@@ -1138,6 +1179,9 @@
     el0.classList.add('md-rendered');
     el0.textContent = '';
     if (text) el0.appendChild(markdown(text));
+    var replyTools = node('div', 'msg-tools');
+    replyTools.appendChild(makeCopy(function () { return text; }, 'copy this reply'));
+    el0.appendChild(replyTools);
   }
 
   // The value a call actually names — the command, the path, the content.
@@ -1665,7 +1709,9 @@
         'work \u00b7 ' + bits.join(' \u00b7 ')));
     }
     var evidence = [];
-    if (face.turn) evidence.push(face.turn + (face.turn === 1 ? ' turn' : ' turns'));
+    var ex = exchanges();
+    if (ex) evidence.push(ex + (ex === 1 ? ' exchange' : ' exchanges'));
+    else if (face.turn) evidence.push(face.turn + (face.turn === 1 ? ' turn' : ' turns'));
     if (face.spend) evidence.push(tokens(face.spend) + ' tokens');
     if (face.context && face.budget) {
       evidence.push(Math.min(100, Math.round((face.context / face.budget) * 100)) +
@@ -1797,7 +1843,13 @@
     // words never land in another's transcript: a background run stays a
     // row in the work list until the owner opens it, and the row's state
     // refreshes when a seat or an ending arrives for another session.
-    if (event.session && face.session && event.session !== face.session) {
+    // The exception is a delegation this conversation's own run raised:
+    // it names its CHILD in `session` — the branch key — and carries the
+    // parent in `parent`, so the card and the branch lines pass while
+    // another conversation's children still do not.
+    var ownChild = event.type === 'delegation' && event.parent &&
+      event.parent === face.session;
+    if (!ownChild && event.session && face.session && event.session !== face.session) {
       if (event.type === 'finished' || event.type === 'failed') {
         // That run is over. A message queued in this conversation was
         // waiting on it, so the queue drains now — the send names this
@@ -1853,6 +1905,9 @@
         if (!face.assistant && event.text) {
           var said = node('div', 'assistant md-rendered');
           said.appendChild(markdown(event.text));
+          var saidTools = node('div', 'msg-tools');
+          saidTools.appendChild(makeCopy(function () { return event.text; }, 'copy this reply'));
+          said.appendChild(saidTools);
           row(said, event);
         }
         break;
@@ -2130,6 +2185,7 @@
   }
 
   function paintFacts() {
+    var ex = exchanges();
     var rows = [
       // A face that has not run yet has no session: the log is created
       // on the first task (KI-022), so the row reads a dash until one
@@ -2138,7 +2194,7 @@
       ['model', face.model],
       ['spend', tokens(face.spend) + ' tokens'],
       ['context', face.context ? tokens(face.context) + ' of ' + tokens(face.budget) : '\u2014'],
-      ['turns', face.turn ? String(face.turn) : '\u2014'],
+      ['exchanges', ex ? String(ex) : '\u2014'],
       ['route', face.route ? face.route.provider : '\u2014'],
       ['state', face.seat ? 'a seat is standing' : face.running ? 'running'
         : face.stop ? (/stopped by the owner/i.test(face.stop.reason || '') ? 'stopped' : face.stop.type)
@@ -2411,7 +2467,8 @@
       // answer to "is it doing anything", rather than a spinner that
       // claims work it cannot see.
       var since = face.process && face.process.at ? Date.now() - face.process.at : 0;
-      var turn = face.turn ? ' \u00b7 turn ' + face.turn : '';
+      var ex = exchanges();
+      var turn = face.turn ? (ex ? ' \u00b7 exchange ' + ex : ' \u00b7 turn ' + face.turn) : '';
       el.hint.textContent = 'working' + turn + ' \u00b7 ' + elapsed(since) +
         ' since the last event';
     } else {
@@ -2511,6 +2568,7 @@
     }
     var p = face.process;
     p.at = Date.now();
+    var ex = exchanges();
     switch (event.type) {
       case 'routed':
         p.provider = event.provider || '';
@@ -2522,7 +2580,7 @@
       case 'turn':
         p.stage = 'think';
         p.turn = Number(event.turn) || p.turn;
-        p.last = 'turn ' + p.turn;
+        p.last = ex ? 'exchange ' + ex : 'turn ' + p.turn;
         break;
       case 'tool_call':
         p.stage = 'act';
@@ -2677,11 +2735,12 @@
   }
 
   function processNote(key, p) {
+    var ex = exchanges();
     switch (key) {
       case 'route':
         return p.provider ? p.provider + (p.model ? ' \u00b7 ' + p.model : '') : 'waiting for the decision';
       case 'think':
-        return p.turn ? 'turn ' + p.turn : 'the model\u2019s turn';
+        return p.turn ? (ex ? 'exchange ' + ex : 'turn ' + p.turn) : 'the model\u2019s turn';
       case 'act':
         if (p.waiting) return 'waiting for your approval';
         if (p.tool) return p.tool + (p.calls > 1 ? ' \u00b7 ' + p.calls + ' calls' : '');
@@ -2713,6 +2772,7 @@
   function paintProcess() {
     if (!el.processBody) return;
     var p = face.process;
+    var ex = exchanges();
     var state = !p ? 'idle'
       : p.active ? 'running'
         : p.stop === 'failed' ? 'failed'
@@ -2723,7 +2783,8 @@
     if (el.processPill) {
       el.processPill.hidden = !p || (!p.active && !(p.mode === 'plan' && p.stage === 'review'));
       if (!el.processPill.hidden) {
-        el.processPill.textContent = p.turn ? 'turn ' + p.turn + ' \u00b7 ' + p.stage
+        el.processPill.textContent = p.turn
+          ? (ex ? 'exchange ' + ex : 'turn ' + p.turn) + ' \u00b7 ' + p.stage
           : p.mode === 'plan' ? 'plan mode' : p.stage;
         el.processPill.dataset.state = state === 'review' ? 'running' : state;
       }
@@ -2757,7 +2818,7 @@
     var branches = processBranches(p);
     if (branches) el.processBody.appendChild(branches);
     var meta = node('div', 'process-meta');
-    if (p.turn) meta.appendChild(node('span', null, 'turn ' + p.turn));
+    if (p.turn) meta.appendChild(node('span', null, ex ? 'exchange ' + ex : 'turn ' + p.turn));
     if (p.calls) meta.appendChild(node('span', null, p.calls + ' calls'));
     if (p.facts) meta.appendChild(node('span', null, p.facts + ' facts'));
     if (p.delegations) meta.appendChild(node('span', null, p.delegations + ' delegations'));
@@ -2885,6 +2946,7 @@
   function paintProcessStrip(p) {
     if (!el.processStrip) return;
     var open = document.body.dataset.aside !== 'closed';
+    var ex = exchanges();
     var narrow = window.innerWidth <= 1180;
     var show = !!p && (p.active || (p.mode === 'plan' && p.stage === 'review')) && (!open || narrow);
     el.processStrip.hidden = !show;
@@ -2897,10 +2959,11 @@
     dot.dataset.state = p.active ? 'running' : p.stop === 'failed' ? 'failed' : 'done';
     main.appendChild(dot);
     main.appendChild(node('span', 'process-strip-label',
-      p.turn ? 'turn ' + p.turn : p.mode === 'plan' ? 'plan mode' : 'the run'));
+      p.turn ? (ex ? 'exchange ' + ex : 'turn ' + p.turn)
+        : p.mode === 'plan' ? 'plan mode' : 'the run'));
     main.appendChild(node('span', 'process-strip-note',
       p.tool || (p.stage === 'review' ? 'the plan is ready'
-        : p.last && p.last !== 'turn ' + p.turn ? p.last : '')));
+        : p.last && p.last !== (ex ? 'exchange ' + ex : 'turn ' + p.turn) ? p.last : '')));
     var dots = node('span', 'process-strip-dots');
     var steps = p.mode === 'plan' ? PLAN_STEPS : RUN_STEPS;
     var order = steps.map(function (step) { return step[0]; });
@@ -2927,6 +2990,7 @@
 
   function openProcessDrawer() {
     var p = face.process;
+    var ex = exchanges();
     if (!p) {
       openDrawer('the run', [['process', node('p', 'derivation',
         'No run is in flight. Ask fleet for something and the loop lands here.')]]);
@@ -2936,7 +3000,7 @@
       ['where we are', processSteps(p)],
       ['the last step', node('p', 'derivation', p.last || 'no step yet')],
       ['the counts', node('p', 'derivation',
-        'turn ' + p.turn + ' \u00b7 ' + p.calls + ' calls \u00b7 ' + p.facts +
+        (ex ? 'exchange ' + ex : 'turn ' + p.turn) + ' \u00b7 ' + p.calls + ' calls \u00b7 ' + p.facts +
         ' facts \u00b7 ' + p.delegations + ' delegations \u00b7 ' + p.lanes + ' lanes')]
     ];
     // Below the dock's breakpoint the drawer is the process card, so it
@@ -8001,10 +8065,13 @@
   // rather than instead of it: the owner keeps watching the run and
   // still reads the child's records.
   function showSessionObject(replay, current) {
+    var ex = exchangesIn(replay.cards || []);
     var summary = (replay.model || 'routing\u2026') +
       (replay.kind ? ' \u00b7 ' + replay.kind : '') +
       ' \u00b7 ' + (replay.ended
-        ? 'ended: ' + replay.stop_reason + ' \u00b7 ' + replay.turns + ' turns'
+          ? 'ended: ' + replay.stop_reason +
+            (ex ? ' \u00b7 ' + ex + (ex === 1 ? ' exchange' : ' exchanges')
+              : replay.turns ? ' \u00b7 ' + replay.turns + ' turns' : '')
         : 'no end record \u2014 the run was interrupted');
     var actions = node('div', 'replay-actions');
     var copy = node('button', 'replay-button');

@@ -34,9 +34,12 @@ ID, and fact name.
 One event log drives the whole face. `/api/state` is the replay and
 `/events` is the live half of the same log, so a refresh and a stream
 are the same derivation run twice. Every number in the header — spend,
-context, route, turns, stop reason — is reduced out of the log rather
+context, route, exchanges, stop reason — is reduced out of the log rather
 than reported, and the inspector shows the reduction beside the event it
-came from.
+came from. An **exchange** is one owner message and the run that
+answered it; steer frames and scheduled prompts ride the log as user
+records but are not counted, so the total reads the same live and after
+a reload.
 
 ## The home briefing
 
@@ -64,7 +67,7 @@ the runs and facts that landed while the owner was away.
 
 A run is a loop, and the face shows where it is. The dock opens with
 **the run**: route, think, act, verify, with the current step, the
-turn, the tool, the facts, the delegations, the checkpoints, and the
+exchange, the tool, the facts, the delegations, the checkpoints, and the
 elapsed time. It is reduced from the same event log the transcript
 reads, so it cannot claim a step the run did not take. A plan-mode run
 uses its own three-step loop (plan, review, build).
@@ -192,7 +195,10 @@ every visible `.tile`, `.badge`, `.rrow`, `.rank-row`, `.cal-cell`,
   /api/session/new`), so the next run lands in it. Replies render as
   markdown when their block closes: streamed text while it arrives, the
   rendered block at the boundary, and the receipt's closing report the
-  same way.
+  same way. Every message then carries its own controls under its words
+  — **copy** on any reply, **edit** and **copy** on the owner's own —
+  visible without a hover, because a hover-only control does not exist
+  on a touch face.
 - **The activity rows.** One line per thing the run did, each opening on
   a press: `Thought · Ns` (the provider's `reasoning_content`, kept in a
   `reasoning` log record and never sent back), and a tool call, whose

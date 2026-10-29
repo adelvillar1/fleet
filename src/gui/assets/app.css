@@ -1653,6 +1653,9 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
   cursor: pointer;
 }
 .turn-jump:hover { color: var(--dsw-alias-accent); border-color: var(--dsw-alias-accent); }
+/* The quiet control on a row's shoulder — edit on the owner's bubble,
+   rewind on a turn mark, copy on any message — visible without a
+   hover: a hover-only control does not exist on a touch face. */
 .row-rewind {
   margin-left: auto;
   padding: 2px 8px;
@@ -1663,16 +1666,7 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
   font: inherit;
   font-size: 9.5px;
   cursor: pointer;
-  opacity: 0;
-  transition: opacity var(--fast) var(--ease);
 }
-.turn-mark:hover .row-rewind,
-.row-rewind:focus-visible { opacity: 1; }
-/* The edit affordance on the owner's own bubble (D3): the same quiet
-   until hovered, one press to fill the composer with the correctable
-   words. It floats at the bubble's shoulder, not inside it — the
-   bubble's text is the owner's, unedited. */
-.owner { position: relative; }
 .owner-session-ref {
   border: 0;
   padding: 0 1px;
@@ -1685,14 +1679,16 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
 }
 .command.reference .command-name { color: var(--dsw-alias-ink-tertiary); }
 
-.owner-edit {
-  position: absolute;
-  right: 100%;
-  top: 0;
-  margin-right: 8px;
+/* The message's own controls as one quiet footer: edit + copy on the
+   owner's bubble, copy under a reply. They sit at the row's right
+   edge, always present, and never touch the message's text. */
+.msg-tools {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 6px;
 }
-.owner:hover .owner-edit,
-.owner-edit:focus-visible { opacity: 1; }
+.msg-tools .row-rewind { margin-left: 0; }
 .row-rewind:hover {
   color: var(--dsw-alias-accent);
   border-color: var(--dsw-alias-accent);

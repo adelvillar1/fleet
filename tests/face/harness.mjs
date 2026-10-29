@@ -208,6 +208,9 @@ function boot(options) {
     if (pathOnly === '/api/sessions') {
       return Promise.resolve({ status: 200, json: () => Promise.resolve(documents.sessions || emptySessions()) });
     }
+    if (pathOnly === '/api/session') {
+      return Promise.resolve({ status: 200, json: () => Promise.resolve(documents.branch || {}) });
+    }
     if (pathOnly === '/api/session/archive') {
       return Promise.resolve({
         status: opts.archiveStatus || 200,
@@ -383,7 +386,8 @@ function boot(options) {
     open: () => null,
     focus: () => {},
   };
-  const navigator_ = { clipboard: { writeText: () => Promise.resolve() }, userAgent: 'node', language: 'en' };
+  const clipboardWrites = [];
+  const navigator_ = { clipboard: { writeText: (text) => { clipboardWrites.push(text); return Promise.resolve(); } }, userAgent: 'node', language: 'en' };
   const sandbox = {
     document: document_,
     window: window_,
@@ -463,6 +467,7 @@ function boot(options) {
     fireOn(id, kind, event) { IDS[id].fire(kind, event || {}); },
     text: (id) => (IDS[id] ? IDS[id].textContent : ''),
     rows: (sel) => documentElement.querySelectorAll(sel),
+    clipboardWrites,
   };
 }
 
@@ -2437,6 +2442,112 @@ async function theArchiveIsTheOneEndAndTheOwnersVerb() {
     refused.text('log').slice(0, 120));
 }
 
+// The chat review (the owner's report): an owner message renders its
+// words once; the conversation's count is exchanges — owner messages,
+// steer frames and scheduled prompts excluded so the number is the
+// same live and after a reload — and the message controls are present
+// without a hover: a hover-only control does not exist on a touch face.
+async function theChatCountsExchangesAndShowsItsControls() {
+  const doc = {
+    sessions: {
+      type: 'sessions', read_at: 'now', current: '',
+      counts: { needs: 0, working: 0, background: 0, earlier: 1, total: 1 },
+      sessions: [row('chat-1', 'completed', { title: 'the chat review' })],
+    },
+    state: (asked) => ({ ...emptyState(asked), session: asked }),
+    branch: {
+      type: 'replay', id: 'chat-branch', model: 'deepseek', kind: 'run',
+      ended: true, stop_reason: 'completed', turns: 7, omitted: 0,
+      cards: [
+        { type: 'message', role: 'owner', text: 'the first ask' },
+        { type: 'message', role: 'owner', text: 'the second ask' },
+        { type: 'message', role: 'owner', text: '[scheduled run — job `x` at now]' },
+        { type: 'message', role: 'owner',
+          text: '[the owner of this run steered it through its control file — this is the owner speaking, not you]\nleft' },
+        { type: 'message', role: 'assistant', text: 'an answer' },
+      ],
+    },
+  };
+  const page = boot({ width: 1440, hash: '#/sessions/chat-1', documents: doc });
+  await flush();
+  page.open();
+  await flush();
+
+  // One owner message renders its words once: the old body appended
+  // the raw text before its own branches, so every message printed twice.
+  page.push({ type: 'message', role: 'owner', text: 'the one ask' });
+  await flush(40);
+  const spans = page.rows('.owner-text').filter((el) => el.textContent === 'the one ask');
+  check('chat the owner message renders once', spans.length === 1, String(spans.length));
+
+  // The turn is the model's request; the count the header carries is
+  // exchanges — the hint and the pill name the exchange in flight.
+  page.push({ type: 'turn', turn: 1 });
+  await flush(40);
+  const hint = page.IDS['hint'].textContent;
+  check('chat the hint names the exchange in flight',
+    hint.includes('exchange 1') && !hint.includes('turn 1'), hint);
+  const pill = page.IDS['process-pill'].textContent;
+  check('chat the pill names the exchange, not the round',
+    pill.includes('exchange 1') && !pill.includes('turn 1'), pill);
+
+  // A second exchange, then the two system frames that ride the log as
+  // user records: neither may move the count.
+  page.push({ type: 'message', role: 'owner', text: 'the second ask here' });
+  page.push({ type: 'message', role: 'owner', text: '[scheduled run — job `x` at now]' });
+  page.push({ type: 'message', role: 'owner',
+    text: '[the owner of this run steered it through its control file — this is the owner speaking, not you]\nleft' });
+  page.push({ type: 'message', role: 'assistant', text: 'the answer' });
+  page.push({ type: 'finished', stop_reason: 'completed' });
+  await flush(60);
+  const facts = page.text('facts');
+  check('chat the header row says exchanges and not turns',
+    facts.includes('exchanges') && !facts.includes('turns'), facts);
+  const exchangeDt = page.rows('#facts dt')
+    .find((dt) => dt.textContent === 'exchanges');
+  const exchangeValue = exchangeDt ? exchangeDt.parentNode.children[1].textContent : '(no row)';
+  check('chat two owner messages count as two exchanges', exchangeValue === '2',
+    exchangeValue);
+  const evidence = page.rows('.receipt-line')
+    .map((one) => one.textContent).join(' | ');
+  check('chat the receipt counts exchanges',
+    evidence.includes('2 exchanges') && !evidence.includes('turns'), evidence);
+
+  // The controls: edit + copy on each owner bubble (four messages,
+  // two of them system frames), copy under the reply, all present
+  // without a hover — and a copy puts its message's words on the
+  // clipboard (the label flip runs behind an immediate stub timer, so
+  // the payload is what a harness can see).
+  check('chat every message carries its controls',
+    page.rows('.owner-edit').length === 4 && page.rows('.msg-copy').length === 5,
+    page.rows('.owner-edit').length + ' edits / ' + page.rows('.msg-copy').length + ' copies');
+  const copy = page.rows('.msg-copy')[0];
+  copy.click();
+  check('chat copy puts the message on the clipboard',
+    page.clipboardWrites.some((text) => text === 'the one ask'),
+    JSON.stringify(page.clipboardWrites));
+  check('chat the row controls are not gated behind hover',
+    !ruleBlock('.row-rewind').includes('opacity: 0') &&
+      ruleBlock('.msg-tools').includes('justify-content: flex-end'),
+    ruleBlock('.row-rewind') + ' | ' + ruleBlock('.msg-tools'));
+
+  // The drawer counts the same way over its cards: two exchanges, the
+  // system frames excluded, the run's seven model requests left as the
+  // machine's own figure elsewhere.
+  page.push({ type: 'delegation', session: 'chat-branch', parent: 'chat-1',
+    goal: 'the branch', stage: 'done', detail: { outcome: 'completed', turns: 4 } });
+  await flush(40);
+  const branch = page.rows('.process-branch');
+  check('chat the branch line exists to open', branch.length === 1,
+    String(branch.length));
+  if (branch.length) branch[0].click();
+  await flush(60);
+  const drawerText = page.text('dock-object-body') || page.text('drawer-body');
+  check('chat the drawer counts the exchanges its cards show',
+    drawerText.includes('2 exchanges') && !drawerText.includes('7 turns'),
+    drawerText.slice(0, 160));
+}
+
 const cases = [
   ['C1/C8 the list groups by attention and counts what the server counted', theListGroupsByAttentionAndCountsWhatTheServerCounted],
   ['C2 every state opens through one verb', everyStateOpensThroughOneVerb],
@@ -2466,6 +2577,7 @@ const cases = [
   ['C4 the strip lines open their record', theStripsLinesOpenTheirRecord],
   ['C5 the workspace-history section draws the tree it read', theWorkspaceHistorySectionDrawsTheTreeItRead],
   ['ARCH the archive is the one end and the owner\u2019s verb', theArchiveIsTheOneEndAndTheOwnersVerb],
+  ['REVIEW the chat counts exchanges and shows its controls', theChatCountsExchangesAndShowsItsControls],
 ];
 
 for (const [name, run] of cases) {
