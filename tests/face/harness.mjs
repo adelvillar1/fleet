@@ -2742,16 +2742,27 @@ async function theTurnControlsGradeForkAndHook() {
 
   // The seeded verdict rehydrates: the like button reads as pressed
   // from the state document, not from the click that never happened.
+  // The controls are icons — the words are the accessible name and the
+  // tooltip, the pressed state is aria-pressed plus the accent.
   const buttons = footers[0].querySelectorAll('.msg-fb');
   const like = buttons.find((b) => b.dataset.label === 'like');
   const dislike = buttons.find((b) => b.dataset.label === 'dislike');
+  check('turn the controls are icons with their words as names',
+    footers[0].querySelectorAll('.msg-icon').length === 5 &&
+      like.innerHTML.indexOf('<svg') === 0 &&
+      like.getAttribute('aria-label') === 'like' &&
+      like.title.includes('this reply was right') &&
+      dislike.getAttribute('aria-label') === 'dislike',
+    footers[0].querySelectorAll('.msg-icon').length + ' icons / ' +
+      like.getAttribute('aria-label') + ' / ' + like.title);
   check('turn a graded reply shows its grade after load',
-    like.textContent === 'liked' && like.dataset.state === 'up',
-    like.textContent + '/' + like.dataset.state);
+    like.getAttribute('aria-pressed') === 'true' && like.dataset.state === 'up' &&
+      like.title.startsWith('liked'),
+    like.getAttribute('aria-pressed') + '/' + like.dataset.state + '/' + like.title);
 
   // A press posts the verdict keyed by the exchange, and the reply's
-  // buttons repaint from what came back: down flips dislike to its
-  // past tense and clears like — one verdict per exchange.
+  // buttons repaint from what came back: down presses dislike and
+  // clears like — one verdict per exchange.
   dislike.click();
   await flush(40);
   const stamps = page.calls.filter((c) => c.url.startsWith('/api/feedback'));
@@ -2759,10 +2770,11 @@ async function theTurnControlsGradeForkAndHook() {
     stamps.length === 1 && String(stamps[0].body).includes('"exchange":1') &&
       String(stamps[0].body).includes('"verdict":"down"'),
     JSON.stringify(stamps.map((c) => c.body)));
-  check('turn the pressed verdict reads back as words',
-    dislike.textContent === 'disliked' && dislike.dataset.state === 'down' &&
-      like.textContent === 'like' && like.dataset.state === '',
-    dislike.textContent + ' / ' + like.textContent);
+  check('turn the pressed verdict reads back as state',
+    dislike.getAttribute('aria-pressed') === 'true' && dislike.dataset.state === 'down' &&
+      dislike.title.startsWith('disliked') &&
+      like.getAttribute('aria-pressed') === 'false' && like.dataset.state === '',
+    dislike.getAttribute('aria-pressed') + '/' + like.getAttribute('aria-pressed'));
 
   // The hook opens its form with the task the exchange answered —
   // the ask itself, because a job sees its task and nothing else —
@@ -2809,6 +2821,41 @@ async function theTurnControlsGradeForkAndHook() {
     JSON.stringify(page.calls.filter((c) => c.url.startsWith('/api/resume')).map((c) => c.body)));
 }
 
+// The composer's two verbs as icons: the steering wheel prefills
+// /steer, the bifurcation prefills /btw — the slash parser stays the
+// only parser, the press only writes the command's own word.
+async function theComposerVerbsAreIcons() {
+  const page = boot({ width: 1440, hash: '#/chat' });
+  await flush();
+  page.open();
+  await flush();
+
+  const steer = page.rows('#composer-steer')[0];
+  const btw = page.rows('#composer-btw')[0];
+  // The buttons are static markup, and the harness's page is built from
+  // ids alone — so the glyphs and the names read from the page's own
+  // text, the way the CSS checks read their rules.
+  check('verbs the composer carries both verb icons with their names',
+    steer && btw &&
+      HTML.includes('id="composer-steer"') && HTML.includes('id="composer-btw"') &&
+      HTML.includes('aria-label="steer the run in flight"') &&
+      HTML.includes('aria-label="ask beside the run"') &&
+      /id="composer-steer"[\s\S]*?<circle cx="12" cy="12" r="8.5">/.test(HTML) &&
+      /id="composer-btw"[\s\S]*?<path d="M12 21v-7.5">/.test(HTML),
+    (steer && 'elements present') + ' / markup ' +
+      HTML.includes('aria-label="steer the run in flight"'));
+
+  const task = page.rows('#task')[0];
+  steer.click();
+  check('verbs the steering wheel prefills the steer command',
+    task.value === '/steer ',
+    JSON.stringify(task.value));
+  btw.click();
+  check('verbs the bifurcation prefills the btw command',
+    task.value === '/btw ',
+    JSON.stringify(task.value));
+}
+
 const cases = [
   ['C1/C8 the list groups by attention and counts what the server counted', theListGroupsByAttentionAndCountsWhatTheServerCounted],
   ['C2 every state opens through one verb', everyStateOpensThroughOneVerb],
@@ -2840,6 +2887,7 @@ const cases = [
   ['ARCH the archive is the one end and the owner\u2019s verb', theArchiveIsTheOneEndAndTheOwnersVerb],
   ['REVIEW the chat counts exchanges and shows its controls', theChatCountsExchangesAndShowsItsControls],
   ['TURN the turn controls grade, fork, and hook', theTurnControlsGradeForkAndHook],
+  ['VERBS the composer carries the two verb icons', theComposerVerbsAreIcons],
 ];
 
 for (const [name, run] of cases) {

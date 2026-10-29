@@ -482,6 +482,8 @@
     folderReset: document.getElementById('folder-reset'),
     folderPopInput: document.getElementById('folder-pop-input'),
     attach: document.getElementById('attach'),
+    composerSteer: document.getElementById('composer-steer'),
+    composerBtw: document.getElementById('composer-btw'),
     attachInput: document.getElementById('attach-input'),
     attachChips: document.getElementById('attach-chips'),
     facts: document.getElementById('facts'),
@@ -946,51 +948,88 @@
   }
   function exchanges() { return exchangesIn(face.events); }
 
-  // A message's own copy control, its label flip the visible trace —
-  // an effect with no visible trace reads as broken.
-  function makeCopy(getText, title) {
-    var button = node('button', 'row-rewind msg-copy', 'copy');
+  // The turn's controls are icons: the words live in the tooltip and
+  // the accessible name, and the glyph carries the row. One path table
+  // and two builders, so the footer's five and the owner bubble's copy
+  // draw from one place and cannot drift apart.
+  var MSG_ICONS = {
+    copy: '<rect x="9" y="9" width="13" height="13" rx="2"></rect>' +
+      '<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>',
+    check: '<path d="M4 12.5l5 5L20 6.5"></path>',
+    like: '<path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3z"></path>' +
+      '<path d="M7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"></path>',
+    dislike: '<g transform="rotate(180 12 12)">' +
+      '<path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3z"></path>' +
+      '<path d="M7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"></path></g>',
+    fork: '<line x1="6" y1="3" x2="6" y2="15"></line>' +
+      '<circle cx="18" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle>' +
+      '<path d="M18 9a9 9 0 0 1-9 9"></path>',
+    hook: '<circle cx="12" cy="5" r="3"></circle><line x1="12" y1="22" x2="12" y2="8"></line>' +
+      '<path d="M5 12H2a10 10 0 0 0 20 0h-3"></path>'
+  };
+
+  function iconSvg(paths) {
+    return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"' +
+      ' stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + paths + '</svg>';
+  }
+
+  function iconButton(paths, cls, label, title) {
+    var button = node('button', cls + ' msg-icon');
     button.type = 'button';
-    button.title = title;
+    button.innerHTML = iconSvg(paths);
+    button.setAttribute('aria-label', label);
+    button.title = title || label;
+    return button;
+  }
+
+  // A message's own copy control. The trace is the icon itself: the
+  // glyph becomes a check for a breath, then returns — an effect with
+  // no visible trace reads as broken.
+  function makeCopy(getText, title) {
+    var button = iconButton(MSG_ICONS.copy, 'row-rewind msg-copy', 'copy', title);
     button.addEventListener('click', function () {
       if (navigator.clipboard) navigator.clipboard.writeText(getText()).catch(function () { });
-      button.textContent = 'copied';
-      window.setTimeout(function () { button.textContent = 'copy'; }, 1200);
+      button.innerHTML = iconSvg(MSG_ICONS.check);
+      button.title = 'copied';
+      window.setTimeout(function () {
+        button.innerHTML = iconSvg(MSG_ICONS.copy);
+        button.title = title;
+      }, 1200);
     });
     return button;
   }
 
-  // The reply's own controls: copy, the owner's verdict on this
-  // exchange, a fork carrying this point's history, and a hook that
-  // arms a scheduled job from this turn. Every verdict button names
-  // its exchange — the same count the header carries — so the key
-  // survives a reload and the pressed state can be repainted from the
-  // state document.
+  // The reply's own controls as icons: copy, the owner's verdict on
+  // this exchange, a fork carrying this point's history, and a hook
+  // that arms a scheduled job from this turn. Every verdict button
+  // names its exchange — the same count the header carries — so the
+  // key survives a reload and the pressed state can be repainted from
+  // the state document. The words stay on the button as the tooltip
+  // and the accessible name; the pressed verdict is the accent plus
+  // aria-pressed.
   function assistantFooter(getText, ex) {
     var tools = node('div', 'msg-tools');
     tools.appendChild(makeCopy(getText, 'copy this reply'));
     var held = (face.feedback || {})[String(ex)] || '';
-    var up = node('button', 'row-rewind msg-fb', held === 'up' ? 'liked' : 'like');
-    up.type = 'button';
-    up.title = 'this reply was right';
+    var up = iconButton(MSG_ICONS.like, 'row-rewind msg-fb', 'like',
+      held === 'up' ? 'liked — this reply was right' : 'this reply was right');
     up.dataset.exchange = String(ex);
     up.dataset.label = 'like';
     up.dataset.state = held === 'up' ? 'up' : '';
+    up.setAttribute('aria-pressed', held === 'up' ? 'true' : 'false');
     up.addEventListener('click', function () { stampFeedback(ex, 'up'); });
-    var down = node('button', 'row-rewind msg-fb', held === 'down' ? 'disliked' : 'dislike');
-    down.type = 'button';
-    down.title = 'this reply missed';
+    var down = iconButton(MSG_ICONS.dislike, 'row-rewind msg-fb', 'dislike',
+      held === 'down' ? 'disliked — this reply missed' : 'this reply missed');
     down.dataset.exchange = String(ex);
     down.dataset.label = 'dislike';
     down.dataset.state = held === 'down' ? 'down' : '';
+    down.setAttribute('aria-pressed', held === 'down' ? 'true' : 'false');
     down.addEventListener('click', function () { stampFeedback(ex, 'down'); });
-    var fork = node('button', 'row-rewind msg-fork', 'fork');
-    fork.type = 'button';
-    fork.title = 'a new conversation carrying this reply’s history';
+    var fork = iconButton(MSG_ICONS.fork, 'row-rewind msg-fork', 'fork',
+      'a new conversation carrying this reply’s history');
     fork.addEventListener('click', function () { forkFrom(ex); });
-    var hook = node('button', 'row-rewind msg-hook', 'hook');
-    hook.type = 'button';
-    hook.title = 'arm a scheduled job from this turn';
+    var hook = iconButton(MSG_ICONS.hook, 'row-rewind msg-hook', 'hook',
+      'arm a scheduled job from this turn');
     hook.addEventListener('click', function () { openHook(ex, ownerMessageFor(ex)); });
     tools.appendChild(up);
     tools.appendChild(down);
@@ -1022,10 +1061,10 @@
   }
 
   // The pressed state as the state document holds it: one verdict per
-  // exchange, so only the button that verdict belongs to flips — its
-  // label to the past tense, its state to the accent. The trace is
-  // words as well as tint; an effect with no visible trace reads as
-  // broken.
+  // exchange, so only the button that verdict belongs to presses —
+  // its accent, its aria-pressed, and its tooltip to the past tense.
+  // The icon is the label; the words are the trace the glance and the
+  // screen reader both read.
   function paintFeedback() {
     if (!face.stream || !face.stream.querySelectorAll) return;
     var held = face.feedback || {};
@@ -1035,9 +1074,10 @@
       var mine = (label === 'like' && state === 'up') ||
         (label === 'dislike' && state === 'down');
       button.dataset.state = mine ? state : '';
-      button.textContent = mine
-        ? (state === 'up' ? 'liked' : 'disliked')
-        : label;
+      button.setAttribute('aria-pressed', mine ? 'true' : 'false');
+      button.title = mine
+        ? (state === 'up' ? 'liked — this reply was right' : 'disliked — this reply missed')
+        : (label === 'like' ? 'this reply was right' : 'this reply missed');
     });
   }
 
@@ -7460,6 +7500,25 @@
   if (el.attach) {
     el.attach.addEventListener('click', function () { el.attachInput.click(); });
   }
+  // The composer's two verbs as icons: the press fills the composer
+  // with the command's own word and puts the caret after it, so the
+  // owner types the instruction and the slash parser — the only
+  // parser — takes it from there. No second body shape, no second
+  // surface to keep honest.
+  function prefillCommand(prefix) {
+    el.task.value = prefix;
+    el.task.focus();
+    try {
+      var end = el.task.value.length;
+      el.task.setSelectionRange(end, end);
+    } catch (error) { }
+  }
+  if (el.composerSteer) {
+    el.composerSteer.addEventListener('click', function () { prefillCommand('/steer '); });
+  }
+  if (el.composerBtw) {
+    el.composerBtw.addEventListener('click', function () { prefillCommand('/btw '); });
+  }
   if (el.attachInput) {
     el.attachInput.addEventListener('change', function () {
       attachFiles(el.attachInput.files);
@@ -7655,6 +7714,7 @@
     stopped: 'stopped by you',
     'handed back': 'handed back',
     archived: 'archived',
+    resumed: 'resumed',
     interrupted: 'interrupted',
     new: 'new'
   };
@@ -8235,11 +8295,13 @@
     var ex = exchangesIn(replay.cards || []);
     var summary = (replay.model || 'routing\u2026') +
       (replay.kind ? ' \u00b7 ' + replay.kind : '') +
-      ' \u00b7 ' + (replay.ended
+      ' \u00b7 ' + (replay.resumed
+        ? 'resumed \u2014 continued after the run ended'
+        : replay.ended
           ? 'ended: ' + replay.stop_reason +
             (ex ? ' \u00b7 ' + ex + (ex === 1 ? ' exchange' : ' exchanges')
               : replay.turns ? ' \u00b7 ' + replay.turns + ' turns' : '')
-        : 'no end record \u2014 the run was interrupted');
+          : 'no end record \u2014 the run was interrupted');
     var actions = node('div', 'replay-actions');
     var copy = node('button', 'replay-button');
     copy.type = 'button';

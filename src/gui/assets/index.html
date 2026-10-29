@@ -532,6 +532,34 @@
               </svg>
             </button>
             <input type="file" id="attach-input" multiple hidden>
+            <!-- The run's two verbs beside the run itself, as icons that
+                 prefill their commands: the steering wheel fills the
+                 composer with /steer, the bifurcation with /btw — the
+                 owner types the instruction, the slash parser stays the
+                 only parser. -->
+            <button type="button" class="foot-btn icon" id="composer-steer"
+                    aria-label="steer the run in flight"
+                    title="steer the run in flight — /steer <text>, taken at its next step">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
+                   stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="8.5"></circle>
+                <circle cx="12" cy="12" r="2.5"></circle>
+                <path d="M12 14.5v6"></path>
+                <path d="M9.8 10.8L4.6 7.8"></path>
+                <path d="M14.2 10.8l5.2-3"></path>
+              </svg>
+            </button>
+            <button type="button" class="foot-btn icon" id="composer-btw"
+                    aria-label="ask beside the run"
+                    title="ask beside the run — /btw <question>, answered outside the log">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
+                   stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M12 21v-7.5"></path>
+                <path d="M12 13.5L5.5 4.5"></path>
+                <path d="M12 13.5l6.5-9"></path>
+                <circle cx="12" cy="13.5" r="1.2"></circle>
+              </svg>
+            </button>
             <button type="button" class="foot-btn plan" id="plan" aria-pressed="false"
                     title="plan the work before running it">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"

@@ -1690,9 +1690,27 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
   margin-top: 6px;
 }
 .msg-tools .row-rewind { margin-left: 0; }
-/* A stamped verdict reads as words and accent: the label flips to its
-   past tense, so the pressed state survives a glance as well as a
-   color check. */
+/* The turn's controls are icons: the glyph carries the row, the words
+   live in the tooltip and the accessible name, and the pressed verdict
+   is the accent plus aria-pressed. The square keeps the row's quiet
+   footprint while giving the touch target a little more room. */
+.msg-tools .row-rewind.msg-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  font-size: 0;
+}
+.msg-tools .row-rewind.msg-icon svg {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+}
+/* A stamped verdict reads as accent and state: the glyph tints and
+   aria-pressed flips, so the pressed state survives a glance as well
+   as a color check. */
 .msg-fb[data-state="up"],
 .msg-fb[data-state="down"] {
   color: var(--dsw-alias-accent);

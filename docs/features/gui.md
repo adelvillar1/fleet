@@ -196,14 +196,22 @@ every visible `.tile`, `.badge`, `.rrow`, `.rank-row`, `.cal-cell`,
   markdown when their block closes: streamed text while it arrives, the
   rendered block at the boundary, and the receipt's closing report the
   same way. Every message then carries its own controls under its words
-  — **copy**, **like**, **dislike**, **fork**, and **hook** on a reply,
-  **edit** and **copy** on the owner's own — visible without a hover,
-  because a hover-only control does not exist on a touch face. A
-  verdict is keyed by the exchange the reply answered and lands in the
-  feedback sidecar beside the log, never in it; a fork opens a new
+  as icons — **copy**, **like**, **dislike**, **fork**, and **hook** on
+  a reply, **edit** and **copy** on the owner's own — the words in the
+  tooltip and the accessible name, the glyph in the row, visible
+  without a hover, because a hover-only control does not exist on a
+  touch face. A verdict is keyed by the exchange the reply answered and
+  lands in the feedback sidecar beside the log, never in it; the
+  pressed verdict is the accent plus `aria-pressed` and the tooltip's
+  past tense; a fork opens a new
   conversation carrying this point's history with the source left
   whole; a hook seeds a scheduled job from the ask the turn answered,
-  and the owner arms it in the drawer before anything is written.
+  and the owner arms it in the drawer before anything is written. The
+  composer's foot carries the run's two beside-verbs as icons beside
+  attach and plan: the **steering wheel** fills the composer with
+  `/steer` and the **bifurcation** with `/btw` — the owner types the
+  instruction, and the slash parser, the only parser, takes it from
+  there.
 - **The activity rows.** One line per thing the run did, each opening on
   a press: `Thought · Ns` (the provider's `reasoning_content`, kept in a
   `reasoning` log record and never sent back), and a tool call, whose
