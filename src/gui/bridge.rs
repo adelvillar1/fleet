@@ -2215,6 +2215,17 @@ impl Bridge {
         }
     }
 
+    /// The contained bytes read the preview renders from: the working
+    /// directory's documents, the credential refusal first, the cap,
+    /// the content type from the extension allowlist and nothing else.
+    pub async fn preview(&self, asked: &str) -> Result<(Vec<u8>, &'static str), String> {
+        let root = self.cwd.clone();
+        let asked = asked.to_string();
+        tokio::task::spawn_blocking(move || preview_read(&root, &asked))
+            .await
+            .map_err(|_| "the preview read did not land".to_string())?
+    }
+
     /// The framing verdict the pane's browser needs: will the site
     /// allow being framed? The site's own headers answer; the reason
     /// names them, and the face offers the reader door beside it.
@@ -4073,12 +4084,89 @@ fn viewer_language(path: &std::path::Path) -> &'static str {
         Some("css") => "css",
         Some("html") => "html",
         Some("json") => "json",
+        Some("jsonl" | "ndjson") => "jsonl",
         Some("md") => "markdown",
         Some("toml") => "toml",
         Some("yml" | "yaml") => "yaml",
         Some("sh") => "shell",
+        Some("csv") => "csv",
+        Some("tsv") => "tsv",
+        Some("png") => "png",
+        Some("jpg" | "jpeg") => "jpeg",
+        Some("gif") => "gif",
+        Some("webp") => "webp",
+        Some("svg") => "svg",
+        Some("pdf") => "pdf",
+        Some("docx") => "docx",
+        Some("pptx") => "pptx",
+        Some("xlsx") => "xlsx",
+        Some("drawio") => "drawio",
         _ => "text",
     }
+}
+
+/// The content type the preview route serves a format as — derived from
+/// the extension allowlist, never from the path or the bytes. SVG is
+/// served with `Content-Disposition: attachment` (the route sets it for
+/// everything): an `<img>` fetch ignores the disposition, a navigation
+/// to the URL can never execute the SVG's scripts on the face's origin.
+pub fn preview_content_type(language: &str) -> Option<&'static str> {
+    Some(match language {
+        "png" => "image/png",
+        "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "svg" => "image/svg+xml",
+        "pdf" => "application/pdf",
+        "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "drawio" => "application/xml",
+        _ => return None,
+    })
+}
+
+/// Whether a format is one of the binary documents the preview renders
+/// — the file read answers them with a language and no text instead of
+/// the "not text" refusal.
+fn preview_binary(language: &str) -> bool {
+    matches!(
+        language,
+        "png" | "jpeg" | "gif" | "webp" | "svg" | "pdf" | "docx" | "pptx" | "xlsx" | "drawio"
+    )
+}
+
+/// The byte cap for one preview read — documents are bigger than text,
+/// and a browser that asks for a 2 GB spreadsheet is refused, not
+/// paged. Named in the plan.
+const PREVIEW_BYTE_CAP: usize = 32 * 1024 * 1024;
+
+/// One file's bytes for the preview, through the same containment the
+/// text read uses: the working directory, the lexical credential
+/// refusal first, the cap. The content type comes from the extension's
+/// allowlist and from nothing else.
+pub fn preview_read(
+    root: &std::path::Path,
+    asked: &str,
+) -> Result<(Vec<u8>, &'static str), String> {
+    let name = asked.rsplit('/').next().unwrap_or(asked);
+    if name.starts_with(".env") {
+        return Err("a credential file is never served".to_string());
+    }
+    let path = pane_path(root, asked)?;
+    let language = viewer_language(&path);
+    let content_type = preview_content_type(language)
+        .ok_or_else(|| format!("{name} is not a previewable format"))?;
+    let bytes = std::fs::read(&path).map_err(|error| format!("{error}"))?;
+    if bytes.len() > PREVIEW_BYTE_CAP {
+        return Err(format!(
+            "{} is {} bytes; the preview serves at most {}",
+            name,
+            bytes.len(),
+            PREVIEW_BYTE_CAP
+        ));
+    }
+    Ok((bytes, content_type))
 }
 
 /// One directory's entries, directories first then files, each with its
@@ -4281,17 +4369,33 @@ fn file_read(root: &std::path::Path, asked: &str) -> Value {
     } else {
         &bytes[..]
     };
+    let language = viewer_language(&path);
     let text = match String::from_utf8(cut.to_vec()) {
         Ok(text) => text,
         Err(_) => {
-            return json!({"type": "file", "refused": [format!("{} is not text", path.display())]})
+            if preview_binary(language) {
+                // A binary document the preview renders: the face
+                // dispatches on the language and reads the bytes from
+                // the preview route. A binary with no renderer stays a
+                // refusal — a file shown as nothing is still a lie
+                // about what is there.
+                return json!({
+                    "type": "file",
+                    "path": asked,
+                    "name": name,
+                    "language": language,
+                    "bytes": bytes.len(),
+                    "truncated": truncated,
+                });
+            }
+            return json!({"type": "file", "refused": [format!("{} is not text", path.display())]});
         }
     };
     json!({
         "type": "file",
         "path": asked,
         "name": name,
-        "language": viewer_language(&path),
+        "language": language,
         "bytes": bytes.len(),
         "truncated": truncated,
         "text": text,
@@ -10176,6 +10280,51 @@ mod tests {
         let refused = mark_probes(&home, &["no-such-log".into()]);
         assert!(refused.is_err());
         std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn the_preview_route_serves_contained_bytes_only() {
+        let home = std::env::temp_dir().join(format!("fleet-gui-pv-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(home.join("sub")).expect("a temp home");
+        std::fs::write(home.join("doc.pdf"), b"%PDF-1.4 fake").unwrap();
+        std::fs::write(home.join("logo.png"), b"\x89PNG fake").unwrap();
+        std::fs::write(home.join("note.txt"), b"plain").unwrap();
+        std::fs::write(home.join(".env"), b"SECRET=1").unwrap();
+        std::fs::write(
+            home.join("sub").join("big.pdf"),
+            vec![b'x'; PREVIEW_BYTE_CAP + 1],
+        )
+        .unwrap();
+
+        // The allowlisted formats serve with the server-derived type.
+        let (bytes, kind) = preview_read(&home, "doc.pdf").expect("the pdf");
+        assert_eq!(kind, "application/pdf");
+        assert_eq!(bytes, b"%PDF-1.4 fake");
+        let (_, kind) = preview_read(&home, "logo.png").expect("the png");
+        assert_eq!(kind, "image/png");
+        // A text file is not on the preview route's allowlist: the text
+        // read serves it, and the preview route refuses it by name.
+        assert!(preview_read(&home, "note.txt").is_err());
+        // The credential refusal is lexical and first, whether or not
+        // the file exists.
+        assert!(preview_read(&home, ".env").is_err());
+        assert!(preview_read(&home, ".env.nonexistent").is_err());
+        // The containment: a walk outside refuses, as everywhere.
+        assert!(preview_read(&home, "../outside.pdf").is_err());
+        // The cap: a document past it refuses with its size named.
+        let refused = preview_read(&home, "sub/big.pdf").unwrap_err();
+        assert!(refused.contains("at most"), "{refused}");
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn the_preview_types_come_from_the_allowlist_alone() {
+        assert_eq!(preview_content_type("pdf"), Some("application/pdf"));
+        assert_eq!(preview_content_type("svg"), Some("image/svg+xml"));
+        assert_eq!(preview_content_type("drawio"), Some("application/xml"));
+        assert_eq!(preview_content_type("txt"), None);
+        assert_eq!(preview_content_type("exe"), None);
     }
 
     #[test]

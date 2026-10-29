@@ -71,6 +71,15 @@ use crate::gui::bridge::Bridge;
 pub(crate) const INDEX: &str = include_str!("assets/index.html");
 pub(crate) const STYLES: &str = include_str!("assets/app.css");
 pub(crate) const SCRIPT: &str = include_str!("assets/app.js");
+/// The vendored document renderers (see assets/vendor/VENDOR.json for
+/// the provenance: versions, upstream URLs, SHA-256s, licenses). Served
+/// from the face's own origin, never a CDN at render time.
+pub(crate) const VENDOR_PURIFY: &str = include_str!("assets/vendor/purify.min.js");
+pub(crate) const VENDOR_PDF: &str = include_str!("assets/vendor/pdf.min.mjs");
+pub(crate) const VENDOR_PDF_WORKER: &str = include_str!("assets/vendor/pdf.worker.min.mjs");
+pub(crate) const VENDOR_DOCX: &str = include_str!("assets/vendor/docx-preview.min.js");
+pub(crate) const VENDOR_JSZIP: &str = include_str!("assets/vendor/jszip.min.js");
+pub(crate) const VENDOR_MANIFEST: &str = include_str!("assets/vendor/VENDOR.json");
 /// The install surface: the manifest, the shell worker, and the icons.
 pub(crate) const MANIFEST: &str = include_str!("assets/manifest.webmanifest");
 const WORKER: &str = include_str!("assets/sw.js");
@@ -268,6 +277,72 @@ async fn serve_connection(
                 asset("text/javascript; charset=utf-8", SCRIPT)
             };
             write_reply(&mut stream, reply).await
+        }
+        ("GET", "/vendor/purify.min.js") => {
+            write_reply(
+                &mut stream,
+                versioned_asset("text/javascript; charset=utf-8", VENDOR_PURIFY),
+            )
+            .await
+        }
+        ("GET", "/vendor/pdf.min.mjs") => {
+            write_reply(
+                &mut stream,
+                versioned_asset("text/javascript; charset=utf-8", VENDOR_PDF),
+            )
+            .await
+        }
+        ("GET", "/vendor/pdf.worker.min.mjs") => {
+            write_reply(
+                &mut stream,
+                versioned_asset("text/javascript; charset=utf-8", VENDOR_PDF_WORKER),
+            )
+            .await
+        }
+        ("GET", "/vendor/docx-preview.min.js") => {
+            write_reply(
+                &mut stream,
+                versioned_asset("text/javascript; charset=utf-8", VENDOR_DOCX),
+            )
+            .await
+        }
+        ("GET", "/vendor/jszip.min.js") => {
+            write_reply(
+                &mut stream,
+                versioned_asset("text/javascript; charset=utf-8", VENDOR_JSZIP),
+            )
+            .await
+        }
+        ("GET", "/vendor/VENDOR.json") => {
+            write_reply(
+                &mut stream,
+                versioned_asset("application/json", VENDOR_MANIFEST),
+            )
+            .await
+        }
+        ("GET", "/api/preview") => {
+            let asked = decode_query(&request.query, "path");
+            match bridge.preview(&asked).await {
+                Ok((bytes, content_type)) => {
+                    let head = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\n\
+                         Connection: close\r\nCache-Control: no-store\r\n\
+                         X-Content-Type-Options: nosniff\r\n\
+                         Content-Disposition: attachment\r\n\r\n",
+                        bytes.len()
+                    );
+                    stream
+                        .write_all(head.as_bytes())
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    stream.write_all(&bytes).await.map_err(|e| e.to_string())?;
+                    stream.flush().await.map_err(|e| e.to_string())?;
+                    Ok(())
+                }
+                Err(message) => {
+                    write_reply(&mut stream, api(403, json!({"refused": [message]}))).await
+                }
+            }
         }
         ("GET", "/events") => {
             stream_events(&mut stream, base_url, heartbeat, bridge.subscribe()).await

@@ -14375,16 +14375,38 @@
     }
   }
 
-  // The preview: markdown rendered, everything else shown as text with
-  // its own line breaks. A half-written markdown renderer is worse than
-  // none, so the subset here is the one this repository's own documents
-  // actually use — headings, paragraphs, lists, code fences, emphasis,
-  // links and inline code.
+  // The preview's dispatch: one render per format the pane names, and
+  // a plain-text default. The binary documents ride the contained
+  // bytes route; their renderers never eval document content, and the
+  // document-authored HTML (a deck, a docx) renders inside the
+  // sandboxed frame, never the app's own DOM.
+  var PREVIEW_BINARY = {
+    png: 1, jpeg: 1, gif: 1, webp: 1, svg: 1,
+    pdf: 1, docx: 1, pptx: 1, xlsx: 1, drawio: 1
+  };
+
+  function previewUrl(path) {
+    return '/api/preview?path=' + encodeURIComponent(path);
+  }
+
+  // The document frame: one sandboxed iframe per render, the pattern
+  // the artifacts panels use — scripts allowed (a deck may carry them),
+  // same-origin never, top-level navigation never. What is inside
+  // cannot reach the app's DOM, storage, or origin.
+  function documentFrame(srcdoc) {
+    var frame = node('iframe', 'pane-doc-frame');
+    frame.setAttribute('sandbox', 'allow-scripts');
+    frame.setAttribute('referrerpolicy', 'no-referrer');
+    frame.srcdoc = srcdoc;
+    return frame;
+  }
+
   function paintPreview() {
     var read = face.file;
     el.panePreview.textContent = '';
     // A deck the run built renders ahead of any file: it is the
-    // deliverable, and the pane is where it is readable.
+    // deliverable, and the pane is where it is readable — inside the
+    // frame, because the deck is the model's HTML.
     if (face.deck && face.deck.html) {
       var head = node('div', 'pane-file-head');
       head.appendChild(node('span', 'pane-file-name', 'a ' + face.deck.project));
@@ -14398,7 +14420,7 @@
       if ((face.deck.faults || '').length && face.deck.fix_deck) {
         el.panePreview.appendChild(deckCard(face.deck));
       }
-      el.panePreview.appendChild(node('div', 'deck-frame', face.deck.html));
+      el.panePreview.appendChild(documentFrame(String(face.deck.html)));
       return;
     }
     if (!read) {
@@ -14410,12 +14432,415 @@
       el.panePreview.appendChild(node('p', 'pane-empty', read.refused.join(' \u00b7 ')));
       return;
     }
-    if (read.language !== 'markdown') {
-      var plain = node('pre', 'pane-plain', read.text || '');
-      el.panePreview.appendChild(plain);
+    var language = read.language;
+    if (read.text == null && PREVIEW_BINARY[language]) {
+      renderBinaryPreview(read, language);
       return;
     }
-    el.panePreview.appendChild(markdown(String(read.text || '')));
+    if (language === 'markdown') {
+      el.panePreview.appendChild(markdown(String(read.text || '')));
+      return;
+    }
+    if (language === 'csv' || language === 'tsv') {
+      renderDelimited(read, language === 'csv' ? ',' : '\t');
+      return;
+    }
+    if (language === 'json' || language === 'jsonl') {
+      renderJsonTree(read);
+      return;
+    }
+    var plain = node('pre', 'pane-plain', read.text || '');
+    el.panePreview.appendChild(plain);
+  }
+
+  function renderBinaryPreview(read, language) {
+    if (language === 'png' || language === 'jpeg' || language === 'gif' ||
+        language === 'webp' || language === 'svg') {
+      // <img> makes an SVG's scripts inert; nothing else renders an
+      // untrusted SVG in this face.
+      var img = node('img', 'pane-image');
+      img.src = previewUrl(read.path);
+      img.alt = read.name;
+      el.panePreview.appendChild(img);
+      return;
+    }
+    if (language === 'pdf') { renderPdf(read); return; }
+    if (language === 'xlsx') { renderXlsx(read); return; }
+    if (language === 'pptx') { renderPptx(read); return; }
+    if (language === 'docx') { renderDocx(read); return; }
+    if (language === 'drawio') { renderDrawio(read); return; }
+  }
+
+  function previewFailed(where, error) {
+    el.panePreview.textContent = '';
+    el.panePreview.appendChild(node('p', 'pane-empty',
+      where + ' would not render: ' + ((error && error.message) || error)));
+  }
+
+  function previewBytes(read) {
+    return fetch(previewUrl(read.path)).then(function (reply) {
+      if (!reply.ok) throw new Error('the preview read was refused');
+      return reply.arrayBuffer();
+    });
+  }
+
+  // ---- the format renderers (the plan's D1, D3-D7) ----
+
+  // Delimited text: a quote-aware split into a real table. The whole
+  // file renders — the pane scrolls — and a ragged row renders with its
+  // actual cell count rather than being padded into a lie.
+  function renderDelimited(read, delimiter) {
+    var rows = parseDelimited(String(read.text || ''), delimiter);
+    var table = node('table', 'md-table pane-data');
+    var thead = node('thead');
+    var headRow = node('tr');
+    (rows[0] || []).forEach(function (cell) {
+      var th = node('th', 'md-th');
+      th.appendChild(document.createTextNode(cell));
+      headRow.appendChild(th);
+    });
+    thead.appendChild(headRow);
+    table.appendChild(thead);
+    var tbody = node('tbody');
+    rows.slice(1).forEach(function (row) {
+      var tr = node('tr');
+      row.forEach(function (cell) {
+        var td = node('td', 'md-td');
+        td.appendChild(document.createTextNode(cell));
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    el.panePreview.appendChild(table);
+  }
+
+  function parseDelimited(text, delimiter) {
+    var rows = [[]];
+    var field = '';
+    var quoted = false;
+    for (var i = 0; i < text.length; i++) {
+      var ch = text[i];
+      if (quoted) {
+        if (ch === '"') {
+          if (text[i + 1] === '"') { field += '"'; i += 1; }
+          else quoted = false;
+        } else field += ch;
+        continue;
+      }
+      if (ch === '"') { quoted = true; continue; }
+      if (ch === delimiter) { rows[rows.length - 1].push(field); field = ''; continue; }
+      if (ch === '\n') { rows[rows.length - 1].push(field); field = ''; rows.push([]); continue; }
+      if (ch === '\r') continue;
+      field += ch;
+    }
+    rows[rows.length - 1].push(field);
+    return rows.filter(function (row) { return row.length > 1 || (row[0] || '').length; });
+  }
+
+  // JSON and NDJSON: a tree of collapsible details — objects and arrays
+  // open, leaves as key: value lines. Hand-rolled, zero vendor bytes.
+  function renderJsonTree(read) {
+    var wrap = node('div', 'pane-json');
+    var parse = function (line) { try { return JSON.parse(line); } catch (error) { return null; } };
+    var records = [];
+    if (read.language === 'jsonl') {
+      String(read.text || '').split('\n').forEach(function (line) {
+        if (!line.trim()) return;
+        var one = parse(line);
+        records.push(one === null ? line : one);
+      });
+    } else {
+      records.push(parse(String(read.text || '')) || String(read.text || ''));
+    }
+    records.forEach(function (record, index) {
+      if (records.length > 1) {
+        wrap.appendChild(node('p', 'pane-json-record', 'record ' + (index + 1)));
+      }
+      wrap.appendChild(jsonNode(record, 'root'));
+    });
+    el.panePreview.appendChild(wrap);
+  }
+
+  function jsonNode(value, label) {
+    if (value && typeof value === 'object') {
+      var details = node('details', 'pane-json-node');
+      details.open = true;
+      var summary = node('summary', 'pane-json-summary',
+        (label ? label + ' ' : '') + (Array.isArray(value) ? '[' + value.length + ']' : '{' + Object.keys(value).length + '}'));
+      details.appendChild(summary);
+      Object.keys(value).forEach(function (key) {
+        details.appendChild(jsonNode(value[key], key));
+      });
+      return details;
+    }
+    var line = node('div', 'pane-json-leaf');
+    line.appendChild(node('span', 'pane-json-key', label ? label + ': ' : ''));
+    line.appendChild(node('span', 'pane-json-value', String(value)));
+    return line;
+  }
+
+  // PDF: vendored PDF.js in API mode, the document as data — scripting
+  // disabled at the API and the worker ours alone. Pages render to
+  // canvases, capped at fifty, and the cap names what it cut.
+  var pdfLib = null;
+  function renderPdf(read) {
+    var wrap = node('div', 'pane-pdf');
+    var status = node('p', 'pane-empty', 'opening the document\u2026');
+    wrap.appendChild(status);
+    el.panePreview.appendChild(wrap);
+    var ready = pdfLib
+      ? Promise.resolve(pdfLib)
+      : import('/vendor/pdf.min.mjs').then(function (lib) {
+          lib.GlobalWorkerOptions.workerSrc = '/vendor/pdf.worker.min.mjs';
+          pdfLib = lib;
+          return lib;
+        });
+    ready.then(function (lib) {
+      return previewBytes(read).then(function (data) {
+        return lib.getDocument({ data: data, isEvalSupported: false, enableScripting: false }).promise;
+      });
+    }).then(function (pdf) {
+      wrap.textContent = '';
+      var cap = Math.min(pdf.numPages, 50);
+      var head = node('p', 'pane-pdf-meta', pdf.numPages + ' page' +
+        (pdf.numPages === 1 ? '' : 's') +
+        (pdf.numPages > cap ? ' \u00b7 the first ' + cap + ' render' : ''));
+      wrap.appendChild(head);
+      var page = 1;
+      var renderNext = function () {
+        if (page > cap) return Promise.resolve();
+        return pdf.getPage(page).then(function (one) {
+          var viewport = one.getViewport({ scale: 1.5 });
+          var canvas = document.createElement('canvas');
+          canvas.className = 'pane-pdf-page';
+          canvas.width = viewport.width;
+          canvas.height = viewport.height;
+          wrap.appendChild(canvas);
+          return one.render({ canvasContext: canvas.getContext('2d'), viewport: viewport })
+            .promise.then(function () { page += 1; return renderNext(); });
+        });
+      };
+      return renderNext();
+    }).catch(function (error) { previewFailed('the document', error); });
+  }
+
+  // The hand-rolled zip reader: the central directory walked, entries
+  // inflated with the browser's own DecompressionStream. No library,
+  // read-only, and the one reader the xlsx and pptx previews share.
+  async function zipEntries(buffer) {
+    var bytes = new Uint8Array(buffer);
+    var view = new DataView(buffer);
+    var eocd = -1;
+    for (var i = bytes.length - 22; i >= Math.max(0, bytes.length - 22 - 65536); i--) {
+      if (view.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+    }
+    if (eocd < 0) throw new Error('not a zip archive');
+    var count = view.getUint16(eocd + 10, true);
+    var at = view.getUint32(eocd + 16, true);
+    var entries = {};
+    for (var n = 0; n < count; n++) {
+      if (view.getUint32(at, true) !== 0x02014b50) break;
+      var method = view.getUint16(at + 10, true);
+      var compSize = view.getUint32(at + 20, true);
+      var nameLen = view.getUint16(at + 28, true);
+      var extraLen = view.getUint16(at + 30, true);
+      var commentLen = view.getUint16(at + 32, true);
+      var localAt = view.getUint32(at + 42, true);
+      var name = new TextDecoder().decode(bytes.subarray(at + 46, at + 46 + nameLen));
+      entries[name] = { method: method, compSize: compSize, localAt: localAt };
+      at += 46 + nameLen + extraLen + commentLen;
+    }
+    async function read(name) {
+      var one = entries[name];
+      if (!one) throw new Error(name + ' is not in the archive');
+      var localNameLen = view.getUint16(one.localAt + 26, true);
+      var localExtraLen = view.getUint16(one.localAt + 28, true);
+      var start = one.localAt + 30 + localNameLen + localExtraLen;
+      var raw = bytes.subarray(start, start + one.compSize);
+      if (one.method === 0) return raw;
+      if (one.method !== 8) throw new Error('the archive uses a compression the reader does not know');
+      var stream = new Blob([raw]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+      return new Uint8Array(await new Response(stream).arrayBuffer());
+    }
+    return { names: Object.keys(entries), read: read };
+  }
+
+  function xmlText(xmlDoc, tag, namespace) {
+    var nodes = xmlDoc.getElementsByTagNameNS(namespace || '*', tag);
+    var out = [];
+    for (var i = 0; i < nodes.length; i++) out.push(nodes[i].textContent);
+    return out;
+  }
+
+  // XLSX: shared strings plus the sheets, parsed with DOMParser and
+  // rendered as real tables with tabs. Values only, by design — no
+  // formulas, no charts — and the pane says so.
+  async function renderXlsx(read) {
+    try {
+      var archive = await zipEntries(await previewBytes(read));
+      var shared = [];
+      if (archive.names.indexOf('xl/sharedStrings.xml') !== -1) {
+        var stringsDoc = new DOMParser().parseFromString(
+          new TextDecoder().decode(await archive.read('xl/sharedStrings.xml')), 'text/xml');
+        shared = Array.prototype.map.call(
+          stringsDoc.getElementsByTagName('si'),
+          function (si) {
+            return Array.prototype.map.call(si.getElementsByTagName('t'),
+              function (t) { return t.textContent; }).join('');
+          });
+      }
+      var workbook = new DOMParser().parseFromString(
+        new TextDecoder().decode(await archive.read('xl/workbook.xml')), 'text/xml');
+      var sheets = Array.prototype.map.call(
+        workbook.getElementsByTagName('sheet'),
+        function (sheet, index) {
+          return { name: sheet.getAttribute('name') || ('sheet ' + (index + 1)),
+                   path: 'xl/worksheets/sheet' + (index + 1) + '.xml' };
+        });
+      var wrap = node('div', 'pane-xlsx');
+      var tabs = node('div', 'pane-xlsx-tabs');
+      var table = node('div', 'pane-xlsx-sheet');
+      var renderSheet = async function (sheet) {
+        table.textContent = '';
+        var doc = new DOMParser().parseFromString(
+          new TextDecoder().decode(await archive.read(sheet.path)), 'text/xml');
+        var html = node('table', 'md-table pane-data');
+        var rows = doc.getElementsByTagName('row');
+        for (var r = 0; r < Math.min(rows.length, 500); r++) {
+          var tr = node('tr');
+          var cells = rows[r].getElementsByTagName('c');
+          for (var c = 0; c < cells.length; c++) {
+            var kind = cells[c].getAttribute('t');
+            var values = cells[c].getElementsByTagName('v');
+            var text = values.length
+              ? (kind === 's' ? (shared[Number(values[0].textContent)] || '')
+                : values[0].textContent)
+              : '';
+            var td = node('td', 'md-td', text);
+            tr.appendChild(td);
+          }
+          html.appendChild(tr);
+        }
+        table.appendChild(html);
+        if (rows.length > 500) {
+          table.appendChild(node('p', 'pane-empty',
+            'the first 500 of ' + rows.length + ' rows'));
+        }
+      };
+      sheets.forEach(function (sheet, index) {
+        var tab = node('button', 'pane-xlsx-tab', sheet.name);
+        tab.type = 'button';
+        tab.addEventListener('click', function () {
+          Array.prototype.forEach.call(tabs.children, function (one) { one.dataset.active = ''; });
+          tab.dataset.active = 'true';
+          renderSheet(sheet).catch(function (error) { previewFailed('the sheet', error); });
+        });
+        tabs.appendChild(tab);
+        if (index === 0) { tab.dataset.active = 'true'; renderSheet(sheet).catch(function (error) { previewFailed('the sheet', error); }); }
+      });
+      wrap.appendChild(tabs);
+      wrap.appendChild(node('p', 'pane-empty', 'values \u00b7 formulas and charts are not part of this preview'));
+      wrap.appendChild(table);
+      el.panePreview.textContent = '';
+      el.panePreview.appendChild(wrap);
+    } catch (error) { previewFailed('the spreadsheet', error); }
+  }
+
+  // PPTX, the honest partial: the same zip reader pulls each slide's
+  // text and notes into an outline. No client-side slide rendering
+  // exists that is worth vendoring, and the pane says so.
+  async function renderPptx(read) {
+    try {
+      var archive = await zipEntries(await previewBytes(read));
+      var slides = archive.names.filter(function (name) {
+        return /^ppt\/slides\/slide\d+\.xml$/.test(name);
+      }).sort(function (left, right) {
+        return Number(left.match(/\d+/)[0]) - Number(right.match(/\d+/)[0]);
+      });
+      var wrap = node('div', 'pane-pptx');
+      wrap.appendChild(node('p', 'pane-empty',
+        slides.length + ' slide' + (slides.length === 1 ? '' : 's') +
+        ' \u00b7 the outline, not the slides \u2014 nothing renders a deck client-side'));
+      for (var i = 0; i < slides.length; i++) {
+        var doc = new DOMParser().parseFromString(
+          new TextDecoder().decode(await archive.read(slides[i])), 'text/xml');
+        var card = node('div', 'pane-pptx-slide');
+        card.appendChild(node('h3', 'pane-pptx-num', 'slide ' + (i + 1)));
+        var texts = xmlText(doc, 't');
+        texts.filter(function (t) { return t.trim(); }).forEach(function (t) {
+          card.appendChild(node('p', 'pane-pptx-line', t));
+        });
+        var notesName = 'ppt/notesSlides/notesSlide' + (i + 1) + '.xml';
+        if (archive.names.indexOf(notesName) !== -1) {
+          var notes = new DOMParser().parseFromString(
+            new TextDecoder().decode(await archive.read(notesName)), 'text/xml');
+          var noteLines = xmlText(notes, 't').filter(function (t) { return t.trim(); });
+          if (noteLines.length) {
+            card.appendChild(node('p', 'pane-pptx-notes', 'notes: ' + noteLines.join(' \u00b7 ')));
+          }
+        }
+        wrap.appendChild(card);
+      }
+      el.panePreview.textContent = '';
+      el.panePreview.appendChild(wrap);
+    } catch (error) { previewFailed('the deck', error); }
+  }
+
+  // DOCX: docx-preview renders inside the sandboxed frame — the
+  // document's styles are document content, so the render never touches
+  // the app's origin. The libraries load into the frame as source, the
+  // bytes ride in as base64, and the frame's script does the rest.
+  async function renderDocx(read) {
+    try {
+      var data = await previewBytes(read);
+      var bytes = new Uint8Array(data);
+      var binary = '';
+      for (var i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+      var sources = await Promise.all([
+        fetch('/vendor/jszip.min.js').then(function (r) { return r.text(); }),
+        fetch('/vendor/docx-preview.min.js').then(function (r) { return r.text(); })
+      ]);
+      var doc = '<!doctype html><html><head><meta charset="utf-8"><style>' +
+        'body { margin: 16px; background: #fff; color: #111; }' +
+        '.docx-wrapper { background: #fff; }' +
+        '<\/style></head><body>' +
+        '<script>' + sources[0].replace(/<\/script/gi, '<\\/script') + '<\/script>' +
+        '<script>' + sources[1].replace(/<\/script/gi, '<\\/script') + '<\/script>' +
+        '<script>' +
+        'var raw = atob("' + btoa(binary) + '");' +
+        'var bytes = new Uint8Array(raw.length);' +
+        'for (var i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);' +
+        'docx.renderAsync(bytes, document.body).catch(function (e) {' +
+        '  document.body.textContent = "the document would not render: " + (e.message || e);' +
+        '});' +
+        '<\/script></body></html>';
+      el.panePreview.textContent = '';
+      el.panePreview.appendChild(documentFrame(doc));
+    } catch (error) { previewFailed('the document', error); }
+  }
+
+  // drawio: the XML is the document, and the pane offers the .svg
+  // companion when one sits beside it — the export convention drawio
+  // itself teaches, and the interactive viewer's honest substitute.
+  async function renderDrawio(read) {
+    var wrap = node('div', 'pane-drawio');
+    var sibling = read.path.replace(/\.drawio$/, '.svg');
+    try {
+      var companion = await fetch(previewUrl(sibling));
+      if (companion.ok) {
+        wrap.appendChild(node('p', 'pane-empty', 'the exported svg beside it:'));
+        var img = node('img', 'pane-image');
+        img.src = previewUrl(sibling);
+        img.alt = sibling;
+        wrap.appendChild(img);
+      }
+    } catch (error) { /* no companion: the XML below is the whole answer */ }
+    wrap.appendChild(node('p', 'pane-empty', read.name + ' \u00b7 the diagram\u2019s own XML:'));
+    var source = node('pre', 'pane-plain', String(read.text || ''));
+    wrap.appendChild(source);
+    el.panePreview.textContent = '';
+    el.panePreview.appendChild(wrap);
   }
 
   function markdown(text) {
@@ -14423,6 +14848,10 @@
     var fence = null;
     var list = null;
     var para = [];
+    // The line a table consumed runs to: the walker's forEach cannot
+    // skip, so the table branch marks the boundary and the walker
+    // stands down until it passes.
+    var skipUntil = 0;
     var flushPara = function () {
       if (!para.length) return;
       var p = node('p', 'md-p');
@@ -14435,7 +14864,8 @@
       out.appendChild(list);
       list = null;
     };
-    text.split('\n').forEach(function (raw) {
+    var lines = text.split('\n');
+    lines.forEach(function (raw, lineAt) {
       var line = raw.replace(/\s+$/, '');
       var fenceAt = line.match(/^```(\w*)$/);
       if (fenceAt) {
@@ -14468,13 +14898,78 @@
         list.appendChild(li);
         return;
       }
+      // A table: a | row whose next non-empty line is the |---|
+      // separator. The rows are split on the pipes that stand outside
+      // quotes — the corpus's own tables never quote a pipe, and a
+      // quoted-pipe walker here would be cleverer than its data.
+      var tableAt = line.match(/^\s*\|.*\|\s*$/);
+      if (tableAt && !fence) {
+        var next = '';
+        for (var seek = lineAt + 1; seek < lines.length; seek++) {
+          if (lines[seek].trim()) { next = lines[seek]; break; }
+        }
+        if (/^\s*\|[\s:|-]+\|\s*$/.test(next)) {
+          flushPara(); flushList();
+          var rows = [];
+          var cursor = seek + 1;
+          while (cursor < lines.length && /^\s*\|.*\|\s*$/.test(lines[cursor])) {
+            rows.push(lines[cursor]);
+            cursor += 1;
+          }
+          out.appendChild(markdownTable(line, rows));
+          // The consumed rows: the walker stands down until it passes
+          // them — the index is the forEach's own, so duplicate lines
+          // cannot mislead it.
+          skipUntil = cursor;
+          return;
+        }
+      }
+      if (lineAt < skipUntil) return;
       flushList();
       para.push(line.trim());
     });
     if (fence) out.appendChild(node('pre', 'md-code', fence.join('\n')));
     flushPara();
     flushList();
+    // The sanitizer pass: the renderer builds nodes with textContent
+    // and never innerHTML, but its own defense is one layer — the
+    // serialization round-trip through DOMPurify is the second, and it
+    // is the one that survives a renderer's mistake.
+    if (window.DOMPurify) {
+      var clean = node('div', 'md');
+      clean.innerHTML = window.DOMPurify.sanitize(out.innerHTML);
+      return clean;
+    }
     return out;
+  }
+
+  function markdownTable(header, rows) {
+    var cells = function (line) {
+      return line.replace(/^\s*\|/, '').replace(/\|\s*$/, '').split('|')
+        .map(function (cell) { return cell.trim(); });
+    };
+    var table = node('table', 'md-table');
+    var thead = node('thead');
+    var headRow = node('tr');
+    cells(header).forEach(function (cell) {
+      var th = node('th', 'md-th');
+      th.appendChild(inline(cell));
+      headRow.appendChild(th);
+    });
+    thead.appendChild(headRow);
+    table.appendChild(thead);
+    var tbody = node('tbody');
+    rows.forEach(function (line) {
+      var tr = node('tr');
+      cells(line).forEach(function (cell) {
+        var td = node('td', 'md-td');
+        td.appendChild(inline(cell));
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    return table;
   }
 
   // Inline markdown: code, bold, italic, links. Text is built as nodes

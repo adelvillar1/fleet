@@ -1,0 +1,61 @@
+{
+  "name": "the face's vendored document renderers",
+  "policy": "Pinned, offline-capable, lazy-loaded per format. Never a CDN at render time. Each entry: version, upstream, the exact download URL, the SHA-256 of the vendored file, the SPDX license, and the reason. Re-verify provenance with shasum -a 256.",
+  "entries": [
+    {
+      "file": "purify.min.js",
+      "name": "DOMPurify",
+      "version": "3.4.1",
+      "upstream": "https://github.com/cure53/DOMPurify",
+      "download": "https://unpkg.com/dompurify@3.4.1/dist/purify.min.js",
+      "sha256": "c3d1c163c700071ad546390cb92a36c31cd6aceaad1bf77c4ef6eb9d845f1976",
+      "license": "Apache-2.0 OR MPL-2.0",
+      "vendored": "2026-10-29",
+      "reason": "The sanitizer between document-derived HTML and the pane's DOM (markdown hardening, D2)."
+    },
+    {
+      "file": "pdf.min.mjs",
+      "name": "PDF.js",
+      "version": "6.4.299",
+      "upstream": "https://github.com/mozilla/pdf.js",
+      "download": "https://unpkg.com/pdfjs-dist@6.4.299/build/pdf.min.mjs",
+      "sha256": "57456c8e0c81e46be31174b499ef77f2b9f5ee46d04412ba627320a36755d4c2",
+      "license": "Apache-2.0",
+      "vendored": "2026-10-29",
+      "reason": "PDF rendering inside the fence (D3): the sandbox disables the browser's native viewer, so the fence chooses PDF.js \u2014 API mode, scripting disabled, the document as data."
+    },
+    {
+      "file": "pdf.worker.min.mjs",
+      "name": "PDF.js worker",
+      "version": "6.4.299",
+      "upstream": "https://github.com/mozilla/pdf.js",
+      "download": "https://unpkg.com/pdfjs-dist@6.4.299/build/pdf.worker.min.mjs",
+      "sha256": "9536359f1b8367850d485731ca1d5e45c159a7b7a0912325e539937aa21ceb18",
+      "license": "Apache-2.0",
+      "vendored": "2026-10-29",
+      "reason": "PDF.js's parse worker \u2014 the pair with pdf.min.mjs, one version pin."
+    },
+    {
+      "file": "docx-preview.min.js",
+      "name": "docx-preview",
+      "version": "0.4.1",
+      "upstream": "https://github.com/VolodymyrBaydalka/docxjs",
+      "download": "https://unpkg.com/docx-preview@0.4.1/dist/docx-preview.min.js",
+      "sha256": "c4a133c65a112799e35b143c572dfff9e923a3bf39b5fd3b07a06aa0f8f530c2",
+      "license": "Apache-2.0",
+      "vendored": "2026-10-29",
+      "reason": "DOCX rendering (D5) \u2014 runs inside the sandboxed frame, its output never touches the app's origin."
+    },
+    {
+      "file": "jszip.min.js",
+      "name": "JSZip",
+      "version": "3.10.1",
+      "upstream": "https://github.com/Stuk/jszip",
+      "download": "https://unpkg.com/jszip@3.10.1/dist/jszip.min.js",
+      "sha256": "acc7e41455a80765b5fd9c7ee1b8078a6d160bbbca455aeae854de65c947d59e",
+      "license": "MIT",
+      "vendored": "2026-10-29",
+      "reason": "docx-preview's dependency, the zip reader the DOCX render needs inside the frame."
+    }
+  ]
+}

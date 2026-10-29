@@ -98,15 +98,37 @@ second version. Four tabs: **run** (the live loop — route, think, act,
 verify — with the stop and steer controls, and the session and trust
 cards beneath it when no object is selected), **files** (the working
 directory's tree beside one file's code), **preview** (the deliverable
-as the owner will see it, the deck ahead of any file), and **web** (an
-address bar that renders the site live when the site allows framing —
-the pane checks the site's own `x-frame-options` and CSP before
-rendering, names the refusal in the site's words when it does not, and
-stands the prose reader and the owner's browser beside it as the two
-doors; a framed page cannot navigate the pane away). Selecting an
-object opens the pane with the object's card above the tab body, the
-run's cards standing down while it speaks; at and below 1180px the
-fixed drawer keeps that job.
+and the documents, see below), and **web** (an address bar that
+renders the site live when the site allows framing — the pane checks
+the site's own `x-frame-options` and CSP before rendering, names the
+refusal in the site's words when it does not, and stands the prose
+reader and the owner's browser beside it as the two doors; a framed
+page cannot navigate the pane away). Selecting an object opens the
+pane with the object's card above the tab body, the run's cards
+standing down while it speaks; at and below 1180px the fixed drawer
+keeps that job.
+
+**The preview renders the common documents.** Markdown (the house's
+own renderer, table support, the output through DOMPurify before it
+touches the DOM), CSV/TSV as real tables (quote-aware), JSON and NDJSON
+as collapsible trees, images and SVG as `<img>` — an SVG's scripts are
+inert there and nowhere else — PDF pages through vendored PDF.js with
+scripting disabled (the document is data), XLSX as real tables with
+sheet tabs from a hand-rolled zip reader (values only, named), PPTX as
+a per-slide outline (the honest partial: nothing renders a deck
+client-side, and the pane says so), DOCX through vendored docx-preview
+inside the sandboxed frame, and `.drawio` as its XML with the `.svg`
+companion rendered when one sits beside it. The deck a run builds
+renders inside the sandboxed frame too — it is the model's HTML. The
+fences: a contained bytes route (`/api/preview`) with the same
+credential refusal and working-directory bounds the text read has, the
+content type derived from an extension allowlist and nothing else,
+`nosniff`, and `Content-Disposition: attachment` so a navigation to the
+route can never execute a document on the face's origin. The vendored
+libraries (DOMPurify, PDF.js, docx-preview, JSZip) carry their
+provenance in `assets/vendor/VENDOR.json` — versions, upstreams,
+SHA-256s, licenses — and lazy-load per format from the face's own
+origin.
 
 **The owner's width.** The pane's left edge is a grip: drag it and the
 width follows between a 300px floor and the stage's own, the choice
@@ -317,7 +339,7 @@ Escape clears the object, never the dock.
 | `GET /api/related` | cross-kind related objects for one selected id |
 | `GET/POST /api/usage` | the browser's counters and the adaptation knob |
 | `GET /api/router`, `/api/delegation`, `/api/memory`, `/api/skills`, `/api/sessions`, `/api/session`, `/api/calibration`, `/api/tower`, `/api/second-brain`, `/api/settings` | the panels' own reads |
-| `GET /api/tree`, `/api/file`, `/api/web`, `/api/web/frame` | the pane's contained reads: the working directory, a credential-refusing file read, a guarded fetch, and the framing verdict the browser tab renders by |
+| `GET /api/tree`, `/api/file`, `/api/web`, `/api/web/frame`, `/api/preview` | the pane's contained reads: the working directory, a credential-refusing file read, a guarded fetch, the framing verdict the browser tab renders by, and the document bytes the preview renders from |
 | `GET /api/channels` | the channel control plane: the service's status (and whether its heartbeat still beats), every channel's paired and pending peers, and the newest fifty activity lines with the bound named |
 | `POST /api/channels/{start,stop,pair,capability,revoke,forget}` | the control plane's writes. `pair` answers with the token exactly once; there is no read that returns it again |
 | `GET /api/access`, `POST /api/access/revoke` | the paired devices and channel peers, by name and digest only, and the revocation that forgets one |

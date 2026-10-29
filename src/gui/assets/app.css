@@ -5427,6 +5427,72 @@ body[data-pane-dragging="true"] .pane iframe { pointer-events: none; }
 .pane-web-refuse-why { margin: 0 0 10px; color: var(--dsw-alias-ink-secondary); font-size: 12px; }
 .pane-web-doors { display: flex; gap: 6px; flex-wrap: wrap; }
 .pane-web-doors .row-rewind { margin-left: 0; }
+/* The format renderers (the preview-formats plan): the image and svg
+   path, the document frame, the pdf canvases, the data tables, the
+   json tree, the office outlines. */
+.pane-image {
+  max-width: 100%;
+  height: auto;
+  display: block;
+  margin: 8px 0;
+  border: 1px solid var(--dsw-alias-hairline);
+  border-radius: 6px;
+  background: #fff;
+}
+.pane-doc-frame {
+  display: block;
+  width: 100%;
+  height: min(70vh, 900px);
+  min-height: 320px;
+  border: 1px solid var(--dsw-alias-hairline);
+  border-radius: 6px;
+  background: #fff;
+}
+.pane-pdf { display: flex; flex-direction: column; gap: 8px; }
+.pane-pdf-page {
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--dsw-alias-hairline);
+  border-radius: 4px;
+  background: #fff;
+}
+.pane-pdf-meta, .pane-pptx, .pane-xlsx, .pane-drawio, .pane-json { color: var(--dsw-alias-ink); }
+.pane-data { max-width: 100%; overflow-x: auto; display: block; }
+.pane-data .md-th, .pane-data .md-td { text-align: left; padding: 3px 8px; }
+.pane-xlsx-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0; }
+.pane-xlsx-tab {
+  border: 1px solid var(--dsw-alias-hairline);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--dsw-alias-ink-secondary);
+  font: inherit;
+  font-size: 10.5px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+.pane-xlsx-tab[data-active="true"] { color: var(--dsw-alias-accent); border-color: var(--dsw-alias-accent); }
+.pane-json-node { margin: 2px 0 2px 12px; }
+.pane-json-summary { cursor: pointer; color: var(--dsw-alias-ink-secondary); font-size: 11px; }
+.pane-json-leaf { margin: 1px 0 1px 12px; font-size: 11.5px; }
+.pane-json-key { color: var(--dsw-alias-ink-tertiary); }
+.pane-json-value { color: var(--dsw-alias-ink); overflow-wrap: anywhere; }
+.pane-pptx-slide {
+  border: 1px solid var(--dsw-alias-hairline);
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin: 8px 0;
+}
+.pane-pptx-num { margin: 0 0 4px; font-size: 11px; color: var(--dsw-alias-ink-tertiary); }
+.pane-pptx-line { margin: 2px 0; font-size: 12px; }
+.pane-pptx-notes { margin: 6px 0 0; font-size: 10.5px; color: var(--dsw-alias-ink-tertiary); }
+.md-table { border-collapse: collapse; margin: 8px 0; }
+.md-table .md-th, .md-table .md-td {
+  border: 1px solid var(--dsw-alias-hairline);
+  font-size: 11.5px;
+  overflow-wrap: anywhere;
+}
+.md-table .md-th { background: var(--dsw-alias-accent-wash); font-weight: 600; }
+
 .pane-web-back,
 .pane-web-out {
   border: 0;

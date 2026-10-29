@@ -15,6 +15,8 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '../..');
 const SRC = fs.readFileSync(path.join(ROOT, 'src/gui/assets/app.js'), 'utf8');
 const HTML = fs.readFileSync(path.join(ROOT, 'src/gui/assets/index.html'), 'utf8');
+const RUST = fs.readFileSync(path.join(ROOT, 'src/gui/bridge.rs'), 'utf8') +
+  fs.readFileSync(path.join(ROOT, 'src/gui/server.rs'), 'utf8');
 const CSS = fs.readFileSync(path.join(ROOT, 'src/gui/assets/app.css'), 'utf8');
 const flat = (text) => String(text).replace(/\s+/g, ' ').trim();
 const ruleBlock = (selector) => {
@@ -333,6 +335,22 @@ function boot(options) {
     }
     if (pathOnly === '/api/run') {
       return Promise.resolve({ status: 200, json: () => Promise.resolve({ type: 'run', accepted: true }) });
+    }
+    if (pathOnly === '/api/tree') {
+      return Promise.resolve({
+        status: 200,
+        json: () => Promise.resolve(documents.tree ||
+          { type: 'tree', entries: [], refused: [] }),
+      });
+    }
+    if (pathOnly === '/api/file') {
+      const asked = new URL('http://x' + url).searchParams.get('path') || '';
+      const files = documents.files || {};
+      return Promise.resolve({
+        status: 200,
+        json: () => Promise.resolve(files[asked] ||
+          { type: 'file', path: asked, name: asked, language: 'text', text: '' }),
+      });
     }
     if (pathOnly === '/api/memory') {
       return Promise.resolve({
@@ -3240,6 +3258,102 @@ async function thePaneIsOneSurfaceWithTheOwnersHandOnIt() {
     page2.IDS['pane-web-out'].hidden === false, 'out');
 }
 
+
+// The preview renders the common formats: the zero-dependency ones
+// (csv/tsv tables, json trees, images and svg as inert img) end to end
+// through the face's own open flow, the markdown table renders while a
+// script in a markdown file stays text, and a binary document the fake
+// DOM cannot inflate fails gracefully with the pane's own words.
+async function thePreviewRendersTheCommonFormats() {
+  const page = boot({
+    width: 1440, hash: '#/sessions/pane-1',
+    documents: {
+      sessions: {
+        type: 'sessions', read_at: 'now', current: '',
+        counts: { needs: 0, working: 0, background: 0, earlier: 1, total: 1 },
+        sessions: [row('pane-1', 'completed', { title: 'a conversation' })],
+      },
+      state: (asked) => ({ ...emptyState(asked), session: asked }),
+      tree: { type: 'tree', refused: [], entries: [
+        { name: 'data.csv', kind: 'file' },
+        { name: 'notes.md', kind: 'file' },
+        { name: 'doc.json', kind: 'file' },
+        { name: 'logo.png', kind: 'file' },
+        { name: 'sheet.xlsx', kind: 'file' },
+      ] },
+      files: {
+        'data.csv': { type: 'file', path: 'data.csv', name: 'data.csv',
+          language: 'csv', text: 'name,size\na,1\n"b,x",2' },
+        'notes.md': { type: 'file', path: 'notes.md', name: 'notes.md',
+          language: 'markdown',
+          text: '| a | b |\n|---|---|\n| 1 | 2 |\n\n<script>alert(1)</script>' },
+        'doc.json': { type: 'file', path: 'doc.json', name: 'doc.json',
+          language: 'json', text: '{"k": [1, 2]}' },
+        'logo.png': { type: 'file', path: 'logo.png', name: 'logo.png', language: 'png' },
+        'sheet.xlsx': { type: 'file', path: 'sheet.xlsx', name: 'sheet.xlsx', language: 'xlsx' },
+      },
+    },
+  });
+  await flush();
+  page.open();
+  await flush(40);
+  page.rows('#pane-open')[0].click();
+  await flush(20);
+  page.IDS['tab-files'].click();
+  await flush(20);
+  const open = async (name) => {
+    const row = page.rows('.pane-row').find((one) => one.textContent.includes(name));
+    if (!row) throw new Error(name + ' has no tree row');
+    row.click();
+    await flush(40);
+    page.IDS['tab-preview'].click();
+    await flush(40);
+  };
+
+  await open('data.csv');
+  const cells = page.rows('.pane-data .md-td');
+  check('PV the csv renders as a table with the quoted comma as one cell',
+    cells.length === 4 &&
+      page.rows('.pane-data .md-td').some((td) => td.textContent === 'b,x'),
+    String(cells.length));
+
+  await open('notes.md');
+  check('PV the markdown table renders',
+    page.rows('.md-table').length === 1 &&
+      page.rows('.md-table .md-td').length === 2,
+    String(page.rows('.md-table .md-td').length));
+  check('PV a script in a markdown file stays text',
+    page.rows('.md script, .md iframe, .md img').length === 0 &&
+      /<script>alert\(1\)/.test(page.text('pane-preview-body')),
+    page.text('pane-preview-body').slice(-60));
+
+  await open('doc.json');
+  check('PV the json renders as a tree',
+    page.rows('.pane-json-node').length >= 1 &&
+      page.rows('.pane-json-leaf').length === 2,
+    String(page.rows('.pane-json-leaf').length));
+
+  await open('logo.png');
+  const img = page.rows('.pane-image')[0];
+  check('PV an image renders from the contained route',
+    img && String(img.src).includes('/api/preview?path=logo.png'),
+    String(img && img.src));
+
+  await open('sheet.xlsx');
+  check('PV a binary document fails gracefully in the pane\u2019s own words',
+    page.text('pane-preview-body').includes('would not render'),
+    page.text('pane-preview-body').slice(0, 80));
+
+  // The Rust side's fences, read from the source: the credential
+  // refusal, the allowlist-derived type, nosniff, attachment.
+  check('PV the preview route\u2019s fences are in the served page\u2019s backend',
+    RUST.includes('a credential file is never served') &&
+      RUST.includes('X-Content-Type-Options: nosniff') &&
+      RUST.includes('Content-Disposition: attachment') &&
+      RUST.includes('preview_content_type'),
+    'source');
+}
+
 const cases = [
   ['C1/C8 the list groups by attention and counts what the server counted', theListGroupsByAttentionAndCountsWhatTheServerCounted],
   ['C2 every state opens through one verb', everyStateOpensThroughOneVerb],
@@ -3278,6 +3392,7 @@ const cases = [
   ['N3 the rail badge says where the work is', theRailBadgeSaysWhereTheWorkIs],
   ['Q the queued messages carry their actions', theQueuedMessagesCarryTheirActions],
   ['P the pane is one surface with the owner\u2019s hand on it', thePaneIsOneSurfaceWithTheOwnersHandOnIt],
+  ['PV the preview renders the common formats', thePreviewRendersTheCommonFormats],
 ];
 
 for (const [name, run] of cases) {
