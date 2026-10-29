@@ -4740,7 +4740,10 @@ mod tests {
     #[test]
     fn the_deck_tool_suggest_mode_ranks_for_an_intent() {
         // Against the machine's own embed endpoint (loopback, fleet's
-        // own service): the ranking names layouts, best first.
+        // own service): the ranking names layouts, best first. The gate
+        // is KI-340's widened rule — one live-embed test at a time, so
+        // this call never queues behind its siblings' embeds.
+        let _gate = crate::memory::embed_gate_blocking();
         let ask = serde_json::json!({
             "suggest": { "intent": "a single number that carries the whole point of the argument" }
         });

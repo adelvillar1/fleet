@@ -172,11 +172,44 @@ pub trait Handler: Send + Sync {
 pub async fn serve(
     client: Arc<Client>,
     handler: Arc<dyn Handler>,
-    mut shutdown: tokio::sync::watch::Receiver<bool>,
+    shutdown: tokio::sync::watch::Receiver<bool>,
 ) {
-    if let Err(error) = client.join() {
-        eprintln!("fleet relay: {error}");
-        return;
+    serve_with_ready(client, handler, shutdown, None).await
+}
+
+/// `serve`, carrying the lifecycle signal KI-351 named: `ready` fires
+/// after the first successful join — the moment the loop can answer —
+/// so a test waits on the relay's own word instead of a wall clock.
+pub async fn serve_with_ready(
+    client: Arc<Client>,
+    handler: Arc<dyn Handler>,
+    mut shutdown: tokio::sync::watch::Receiver<bool>,
+    mut ready: Option<tokio::sync::oneshot::Sender<()>>,
+) {
+    // A join refused at startup once ended the loop outright while a
+    // failed poll inside it rejoined — two policies for one condition.
+    // One policy now, the loop's own: a transient join failure pauses
+    // two seconds and tries again, and only the shutdown ends the
+    // relay. KI-351 was this split — one load-induced join error killed
+    // the loop and the test polled an answer that could never come.
+    loop {
+        match client.join() {
+            Ok(()) => {
+                if let Some(ready) = ready.take() {
+                    let _ = ready.send(());
+                }
+                break;
+            }
+            Err(error) => eprintln!("fleet relay: {error}"),
+        }
+        tokio::select! {
+            changed = shutdown.changed() => {
+                if changed.is_ok() && *shutdown.borrow_and_update() {
+                    return;
+                }
+            }
+            _ = tokio::time::sleep(Duration::from_secs(2)) => {}
+        }
     }
     loop {
         if *shutdown.borrow_and_update() {
@@ -489,9 +522,26 @@ mod tests {
         ));
         relay.offer(frame("g1", "/api/state"));
         let (shutdown, shutdown_rx) = tokio::sync::watch::channel(false);
-        let serving = tokio::spawn(serve(Arc::clone(&client), Arc::new(Echo), shutdown_rx));
-        // Wait for the answer to come back against the frame's id.
-        for _ in 0..100 {
+        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+        let serving = tokio::spawn(serve_with_ready(
+            Arc::clone(&client),
+            Arc::new(Echo),
+            shutdown_rx,
+            Some(ready_tx),
+        ));
+        // KI-351's named action: the relay's own lifecycle word, not a
+        // clock. Readiness fires after the join the loop answers from —
+        // a join whose one-shot refusal at startup used to kill the
+        // loop outright, which the retry inside `serve_with_ready` now
+        // absorbs — and the two deadlines below reach only a relay that
+        // never comes up or never polls, where the old wait's two
+        // seconds red under a loaded suite with a correct relay slow.
+        tokio::time::timeout(Duration::from_secs(60), ready_rx)
+            .await
+            .expect("the relay never announced itself within 60 s")
+            .expect("the readiness channel closed before the join answered");
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+        loop {
             if !relay
                 .answers
                 .lock()
@@ -500,7 +550,11 @@ mod tests {
             {
                 break;
             }
-            tokio::time::sleep(Duration::from_millis(20)).await;
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "the joined relay never answered the offered frame within 60 s"
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
         }
         let answers = relay
             .answers

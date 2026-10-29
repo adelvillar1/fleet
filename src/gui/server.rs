@@ -2610,6 +2610,10 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn the_address_alone_opens_the_face_and_the_web_is_refused() {
+        // KI-340 widened: the rank call embeds against the live backend —
+        // live-embed tests take turns, so the queue this request waits
+        // in is the cron driver's alone rather than the suite's.
+        let _gate = crate::memory::embed_gate().await;
         let (_token, port) = launch().await;
         // The owner's ruling: browsing the address of a running fleet
         // opens fleet — no credential in the URL, in a header, or
@@ -2638,12 +2642,15 @@ mod tests {
         // The same state-changing request from the face itself — a
         // loopback origin — is served. The rank route embeds over HTTP
         // to the machine's shared backend, which a live face can keep
-        // busy, so this read carries its own budget (KI-280's shape).
+        // busy, so this read carries its own budget (KI-280's shape),
+        // widened with KI-340 to a deadline only a hung embedder
+        // reaches — an empty reply at two minutes is a hang, not a
+        // loaded machine.
         let own = ask_within(
             port,
             "POST /api/rank HTTP/1.1\r\nHost: 127.0.0.1\r\nOrigin: http://127.0.0.1:3080\r\nContent-Length: 2\r\nContent-Type: application/json\r\n\r\n{}",
             None,
-            Duration::from_secs(30),
+            Duration::from_secs(120),
         );
         assert!(own.starts_with("HTTP/1.1 200"), "{own}");
     }
@@ -2919,6 +2926,12 @@ mod tests {
     /// no rows — but it still says what it looked at and how it scored.
     #[tokio::test(flavor = "multi_thread")]
     async fn the_related_route_answers_one_document_and_refuses_a_foreign_kind() {
+        // KI-340 widened: the related read warms a cold corpus against
+        // the live backend — live-embed tests take turns. The warm task
+        // itself runs free of the gate (it is the product's, spawned
+        // behind the request), so at worst one warm build overlaps the
+        // next gated test instead of a dozen threads' embeds.
+        let _gate = crate::memory::embed_gate().await;
         let (token, port) = launch().await;
         // The observable reply is the bound: a loaded suite can starve
         // the server's accept path past any fixed read budget, which is
@@ -3522,13 +3535,20 @@ mod tests {
     /// than refusing, so the lexical ranking stands.
     #[tokio::test(flavor = "multi_thread")]
     async fn the_rank_route_orders_candidates_by_what_was_typed() {
+        // KI-340 widened: the route embeds against the live backend —
+        // live-embed tests take turns, so this request queues behind at
+        // most the cron driver's work rather than the whole suite.
+        let _gate = crate::memory::embed_gate().await;
         let (token, port) = launch().await;
         let body = r#"{"asked":"make the screen darker","candidates":["theme dark light mode switch between the light and dark themes","pane files code preview explore open or close the files and deliverables pane","compact fold summarise fold the conversation now"]}"#;
         // KI-280: the route embeds over HTTP to the machine's shared
         // backend, which a live face can keep busy; the request gets its
         // own budget, the way the vault's slow PBKDF2 path does, instead
         // of the ordinary three seconds that once returned nothing at all.
-        let reply = post_within(port, "/api/rank", &token, body, Duration::from_secs(30));
+        // KI-340 widened it to a deadline only a hung embedder reaches:
+        // the gate keeps the queue shallow, and an empty reply at two
+        // minutes is a hang, not a loaded machine.
+        let reply = post_within(port, "/api/rank", &token, body, Duration::from_secs(120));
         assert!(reply.starts_with("HTTP/1.1 200"), "{reply}");
         let document: serde_json::Value = serde_json::from_str(
             reply

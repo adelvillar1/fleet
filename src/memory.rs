@@ -2166,6 +2166,36 @@ pub fn probed_embedder() -> Box<dyn Embedder> {
         .box_clone()
 }
 
+/// The suite's one live-embedder gate — KI-340's class, widened
+/// 2026-10-29: the machine has one embedding backend, and parallel
+/// test threads queued behind it until the ten-second embed timeout
+/// outran them (the deck tool called a busy backend "absent", the rank
+/// route's handler outlived its client's budget and the reply came
+/// back empty). A lib test that embeds against the live endpoint holds
+/// this lock, so the queue the backend sees is the cron driver's
+/// alone. The lock is tokio's own: the gated server tests hold it
+/// across the request's await, which a std guard may not — clippy's
+/// rule, and the reason there are two ways in (the async tests await
+/// it, the plain `#[test]`s take it blocking). Tests in another binary
+/// need no gate of their own: cargo runs test binaries one at a time.
+#[cfg(test)]
+pub(crate) static EMBED_GATE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// The gate for an async test — held across the request the test
+/// makes, dropped when the guard drops.
+#[cfg(test)]
+pub(crate) async fn embed_gate() -> tokio::sync::MutexGuard<'static, ()> {
+    EMBED_GATE.lock().await
+}
+
+/// The gate for a plain `#[test]`, which has no runtime to await on.
+/// `blocking_lock` panics inside an async context, and a plain test
+/// is never one.
+#[cfg(test)]
+pub(crate) fn embed_gate_blocking() -> tokio::sync::MutexGuard<'static, ()> {
+    EMBED_GATE.blocking_lock()
+}
+
 impl Memory {
     /// Load the corpus under `root` with the vector path probed: the
     /// real local-model backend when it answers, keyword-only otherwise.
