@@ -150,6 +150,10 @@ pub struct GuiOptions {
     /// The port the bot face binds (the persona experience's own
     /// origin). Default 3081: one port beside the remote console face.
     pub bot_port: u16,
+    /// Dial out to a second relay so a phone on another network reaches
+    /// the bot face through its own origin — a separate service, the
+    /// same seal. Off by default: the bot face keeps its LAN shape.
+    pub bot_relay: Option<String>,
 }
 
 /// Options for `fleet run`.
@@ -599,6 +603,7 @@ usage:
                                 --host serves loopback only; a routable
                                 address is refused by name
   fleet gui --remote [--remote-host <address>] [--bot-port <n>]
+                                [--relay <url>] [--bot-relay <url>]
                                 adds two paired-device faces beside the loopback
                                 one: the work experience (the console) on this
                                 machine's address, and the bot — the persona
@@ -606,7 +611,10 @@ usage:
                                 3081), both gated by device tokens and
                                 default-deny on their routes. A pairing code is
                                 printed; the phone redeems it once at /pair, and
-                                one device token works on either face
+                                one device token works on either face.
+                                --relay dials the console's relay;
+                                --bot-relay dials the bot's own — a separate
+                                service, the same seal, its own origin
   fleet pair                   mint a pairing code a phone redeems for a
                                 device token; the window lands in the home, so
                                 this needs no running face
@@ -2195,6 +2203,7 @@ fn parse_gui(args: &[String]) -> Result<Command, String> {
     let mut relay: Option<String> = None;
     let mut remote_host: Option<String> = None;
     let mut bot_port: u16 = 3081;
+    let mut bot_relay: Option<String> = None;
     let mut index = 0;
     while index < args.len() {
         let arg = args[index].as_str();
@@ -2219,6 +2228,13 @@ fn parse_gui(args: &[String]) -> Result<Command, String> {
                     .parse()
                     .map_err(|_| format!("`--bot-port` wants a port number, got `{value}`"))?;
             }
+            "--bot-relay" => {
+                let value = take_value(args, &mut index, "--bot-relay")?;
+                bot_relay = Some(value);
+                // A bot relay with no remote face has nothing to forward
+                // either.
+                remote = true;
+            }
             "--host" => {
                 let value = take_value(args, &mut index, "--host")?;
                 crate::gui::server::loopback_address(&value)?;
@@ -2235,7 +2251,7 @@ fn parse_gui(args: &[String]) -> Result<Command, String> {
             }
             other => {
                 return Err(format!(
-                    "`{other}` takes no value here; gui takes --host, --port, --no-open, --remote, --remote-host, --bot-port, --channels, and --relay"
+                    "`{other}` takes no value here; gui takes --host, --port, --no-open, --remote, --remote-host, --bot-port, --bot-relay, --channels, and --relay"
                 ));
             }
         }
@@ -2254,6 +2270,7 @@ fn parse_gui(args: &[String]) -> Result<Command, String> {
         remote,
         remote_host,
         bot_port,
+        bot_relay,
         channels,
         relay,
     }))
@@ -2819,6 +2836,7 @@ mod tests {
                 port: crate::gui::DEFAULT_PORT,
                 no_open: false,
                 bot_port: 3081,
+                bot_relay: None,
                 remote: false,
                 remote_host: None,
                 channels: false,

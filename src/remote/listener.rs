@@ -27,6 +27,9 @@
 use std::net::IpAddr;
 use std::sync::Arc;
 
+use base64::engine::general_purpose::STANDARD as B64;
+use base64::Engine as _;
+
 use serde_json::json;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
@@ -400,6 +403,30 @@ impl RelayHandler {
             _ => bad_request("the handshake answers GET and POST"),
         }
     }
+
+    /// The install set's icons, relayed, from this handler's own face:
+    /// the console answers the console's set, the bot the bot's. The
+    /// frame protocol carries text, and an icon is bytes: the answer is
+    /// base64 under a marker header the relay consumes, so the phone's
+    /// browser receives the bytes it asked for and the frame stays text
+    /// end to end.
+    fn icon_answer(&self, frame_id: &str, path: &str) -> Option<crate::remote::relay::Answer> {
+        let icon = match self.face {
+            RemoteFace::Console => crate::gui::server::console_icon_for(path)?,
+            RemoteFace::Bot => crate::gui::server::bot_icon_for(path)?,
+        };
+        Some(crate::remote::relay::Answer {
+            id: frame_id.to_string(),
+            status: 200,
+            headers: vec![
+                ("content-type".to_string(), "image/png".to_string()),
+                ("cache-control".to_string(), "max-age=3600".to_string()),
+                ("x-fleet-b64".to_string(), "1".to_string()),
+            ],
+            body: B64.encode(icon),
+            enc: None,
+        })
+    }
 }
 
 impl crate::remote::relay::Handler for RelayHandler {
@@ -411,13 +438,25 @@ impl crate::remote::relay::Handler for RelayHandler {
     > {
         let frame = frame.clone();
         Box::pin(async move {
-            // Two routes the socket path handles before its own gate,
-            // answered here for the same reason they are there: the
-            // redemption is unauthenticated by design (the one-time
-            // code and its attempt cap are the gate), and the handshake
-            // is what produces the seal, so neither can sit behind the
-            // seal they make possible.
+            // Three routes the socket path handles before its own gate,
+            // answered here for the same reasons: the pairing page is
+            // what an unpaired phone's browser asks for (no token to
+            // check yet), the redemption is unauthenticated by design
+            // (the one-time code and its attempt cap are the gate), and
+            // the handshake is what produces the seal. None of the
+            // three can sit behind the seal or the allowlist they make
+            // possible.
             let bare = frame.path.split('?').next().unwrap_or(&frame.path);
+            if (frame.method.as_str(), bare) == ("GET", "/pair") {
+                let reply = pairing_page();
+                return crate::remote::relay::Answer {
+                    id: frame.id,
+                    status: status_of(&reply),
+                    headers: vec![("content-type".to_string(), reply.content_type.to_string())],
+                    body: reply.body,
+                    enc: None,
+                };
+            }
             if (frame.method.as_str(), bare) == ("POST", "/api/pair") {
                 let reply = redeem(&frame.body, &self.home);
                 return crate::remote::relay::Answer {
@@ -437,6 +476,11 @@ impl crate::remote::relay::Handler for RelayHandler {
                     body: reply.body,
                     enc: None,
                 };
+            }
+            if frame.method.as_str() == "GET" {
+                if let Some(answer) = self.icon_answer(&frame.id, bare) {
+                    return answer;
+                }
             }
             let reply = answer_frame(&frame, &self.bridge, &self.device_name, self.face).await;
             crate::remote::relay::Answer {
@@ -1773,6 +1817,60 @@ mod tests {
         // And no device was written by the wrong code.
         let store = DeviceStore::load(&home).unwrap();
         assert!(store.devices.is_empty(), "{store:?}");
+        std::fs::remove_dir_all(&home).ok();
+    }
+}
+
+#[cfg(test)]
+mod relay_handler_tests {
+    use super::*;
+    use crate::remote::relay::Handler as _;
+
+    fn fresh_home() -> std::path::PathBuf {
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let serial = NEXT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let home = std::env::temp_dir().join(format!(
+            "fleet-relay-handler-{}-{serial}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).expect("a temp home");
+        home
+    }
+
+    /// The pairing page rides the relay the way it rides the socket: an
+    /// unpaired phone's browser asks for it with no token to present,
+    /// and the frame path must answer it before the allowlist, which
+    /// has no `/pair` in it by design.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_relayed_pairing_page_answers_without_a_token() {
+        let home = fresh_home();
+        let (bridge, _sources) = Bridge::detached(
+            home.clone(),
+            "deepseek-flash".to_string(),
+            Some("s".to_string()),
+        );
+        let keys = Arc::new(std::sync::Mutex::new(
+            crate::remote::relay::RelayKeys::mint("sid-pair-page"),
+        ));
+        let handler = RelayHandler::new(
+            Arc::new(bridge),
+            "a relayed phone".to_string(),
+            RemoteFace::Console,
+            home.clone(),
+            keys,
+        );
+        let frame = crate::remote::relay::Frame {
+            id: "pair-1".to_string(),
+            method: "GET".to_string(),
+            path: "/pair?c=SOMECODE".to_string(),
+            headers: Vec::new(),
+            body: String::new(),
+            enc: None,
+        };
+        let answer = handler.answer(&frame).await;
+        assert_eq!(answer.status, 200, "{}", answer.body);
+        assert!(answer.body.contains("Pair this device"), "{}", answer.body);
         std::fs::remove_dir_all(&home).ok();
     }
 }

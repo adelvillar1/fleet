@@ -155,6 +155,25 @@ edge rule limiting `/join`, or accept.
   (`svc_yTCvrwn3nwbhTquS`), four deployments, the live one
   `dep_KLpwx0vlDYxm1Uwy`.
 
+## The bot face follows (the same evening)
+
+The owner's correction — "the bot needs to be available on the relay,
+or a separate relay with a separate service" — landed as the separate
+service: **`https://fleetbot.opsh.io`**, a second OpenShip deployment
+of the same two files, dialed by the new `fleet gui --bot-relay` flag
+and carrying the bot face's own session, secret, handler (the bot
+allowlist, the bot icons), and the same X25519-then-AES-GCM seal. The
+live probe paired at the bot origin and opened a sealed conversation
+creation from ciphertext. Both faces are now on the relay; each origin
+pairs separately (domains cannot share a cookie — the two-installs
+rule, honestly). Plan
+`2026-10-29-bot-face-on-the-relay.md` completed with its proofs; the
+memory updated. Two operational finds rode along: a stack deploy must
+pass ALL service ids (the platform's "No image is available" trap), and
+the LaunchAgent now writes `~/Library/Logs/fleet-gui.log` — the launch
+words (both entry URLs) were dying in launchd's void, which is why the
+entry secrets kept escaping this session's probes.
+
 ## Notes
 
 - The face runs `fleet gui --no-open --remote --relay

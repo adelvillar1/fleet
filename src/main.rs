@@ -878,6 +878,7 @@ async fn gui_command(options: &cli::GuiOptions) -> ExitCode {
             enabled: options.remote,
             host: options.remote_host.clone(),
             bot_port: options.bot_port,
+            bot_relay: options.bot_relay.clone(),
         },
         channels: options.channels,
         relay: options.relay.clone(),

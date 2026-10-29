@@ -139,9 +139,11 @@ calibration day-files under
   `docs/features/remote-access.md`): the face dials out, the origin root
   serves the paired face, frame bodies are sealed end to end with a key
   from an X25519 exchange the relay only watched, and the session
-  secret rides URLs as a fragment browsers never send. Tailscale is the
-  optional fallback origin; without either, the pairing QR points at
-  plain-HTTP LAN.
+  secret rides URLs as a fragment browsers never send. Both faces are
+  on the relay — the console at `fleet.opsh.io`, the bot at
+  `fleetbot.opsh.io` (a second service, `--bot-relay`), each pairing at
+  its own origin. Tailscale is the optional fallback origin; without
+  either, the pairing QR points at plain-HTTP LAN.
 - **The vault.** Unlock per process (`FLEET_VAULT_PASSPHRASE` or the
   face), lock again, or `vault_reset` (archives the old vault, onboards
   a new one — the sealed copies are lost, the plaintext `.env` is not).

@@ -19,6 +19,7 @@ const RUST = fs.readFileSync(path.join(ROOT, 'src/gui/bridge.rs'), 'utf8') +
   fs.readFileSync(path.join(ROOT, 'src/gui/server.rs'), 'utf8') +
   fs.readFileSync(path.join(ROOT, 'src/remote/listener.rs'), 'utf8') +
   fs.readFileSync(path.join(ROOT, 'src/gui/mod.rs'), 'utf8');
+const BOTJS = fs.readFileSync(path.join(ROOT, 'src/gui/assets/bot.js'), 'utf8');
 const CSS = fs.readFileSync(path.join(ROOT, 'src/gui/assets/app.css'), 'utf8');
 const flat = (text) => String(text).replace(/\s+/g, ' ').trim();
 const ruleBlock = (selector) => {
@@ -3631,6 +3632,19 @@ async function theStrategyStepShowsItsPreview() {
       RUST.indexOf('fleet_relay_k') !== -1, 'pair page');
     check('RL the entry URL carries the secret as a fragment',
       RUST.indexOf('#k=') !== -1, 'entry');
+    // The bot shell carries its own twin of the transport: the same
+    // seal, the bot's install set bare, and the second dial named.
+    check('RL the bot shell seals like the console',
+      BOTJS.indexOf("'x-fleet-relay'") !== -1 && BOTJS.indexOf("'x-fleet-enc'") !== -1 &&
+        BOTJS.indexOf('fleet_relay_k') !== -1, 'bot transport');
+    check('RL the bot install set rides bare',
+      BOTJS.indexOf("'/bot.webmanifest': 1") !== -1 &&
+        BOTJS.indexOf("'/bot-sw.js': 1") !== -1 && BOTJS.indexOf("'/bot-icon-192.png': 1") !== -1,
+      'bot table');
+    check('RL the bot relay is its own dial',
+      RUST.indexOf('--bot-relay') !== -1 && RUST.indexOf('bot relay at') !== -1, 'second dial');
+    check('RL the bot handler answers its own icons',
+      RUST.indexOf('RemoteFace::Bot => crate::gui::server::bot_icon_for(path)') !== -1, 'bot icons');
   }
 
 const cases = [

@@ -39,6 +39,10 @@ pub struct RemoteOptions {
     /// where it already was; the bot is a second window, not a
     /// replacement). Zero asks the operating system for a free one.
     pub bot_port: u16,
+    /// A second relay for the bot face — its own service, its own
+    /// origin, the same seal. Off by default: the bot face keeps its
+    /// LAN shape until the owner names the origin.
+    pub bot_relay: Option<String>,
 }
 
 /// The address the remote face binds, and how it was chosen — which the
@@ -372,6 +376,7 @@ mod tests {
     fn a_named_literal_ip_is_taken_as_it_is() {
         let options = RemoteOptions {
             bot_port: 3081,
+            bot_relay: None,
             enabled: true,
             host: Some("192.168.1.50".to_string()),
         };
@@ -388,6 +393,7 @@ mod tests {
     fn a_named_tailnet_address_is_recognised_as_one() {
         let options = RemoteOptions {
             bot_port: 3081,
+            bot_relay: None,
             enabled: true,
             host: Some("100.101.102.103".to_string()),
         };
@@ -399,6 +405,7 @@ mod tests {
     fn a_named_host_that_resolves_nowhere_is_an_error_naming_the_flag() {
         let options = RemoteOptions {
             bot_port: 3081,
+            bot_relay: None,
             enabled: true,
             host: Some("no-such-host.invalid".to_string()),
         };
@@ -411,6 +418,7 @@ mod tests {
     fn an_empty_named_host_is_refused_before_a_socket_exists() {
         let options = RemoteOptions {
             bot_port: 3081,
+            bot_relay: None,
             enabled: true,
             host: Some("   ".to_string()),
         };
@@ -421,6 +429,7 @@ mod tests {
     fn localhost_resolves_to_a_name_but_it_is_not_a_tailnet() {
         let options = RemoteOptions {
             bot_port: 3081,
+            bot_relay: None,
             enabled: true,
             host: Some("localhost".to_string()),
         };

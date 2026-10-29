@@ -8,6 +8,168 @@
 // renders are the archive's own, mapped once server-side (D5).
 'use strict';
 
+// ---------- the relay transport (the console's app.js is its twin) ------
+//
+// When this page was reached through the bot's relay — the entry URL
+// carries the relay secret as a fragment, the part of a URL browsers
+// never send — every content-bearing request is sealed end to end and
+// names the relay in a header. The seal is the browser's own WebCrypto:
+// an X25519 exchange through the relay (the relay holds no scalar) and
+// AES-256-GCM over the derived key. On the LAN face there is no stored
+// secret and every line here is inert.
+
+const RELAY_KEY_STORE = 'fleet_relay_k';
+
+// The paths a browser fetches on its own — the bot shell's install set
+// and the pairing form. They ride as plaintext frames of public code.
+const RELAY_OPEN_PATHS = {
+  '/': 1, '/bot.css': 1, '/bot.js': 1, '/bot.webmanifest': 1,
+  '/bot-sw.js': 1, '/bot-icon-192.png': 1, '/bot-icon-512.png': 1, '/pair': 1,
+};
+const RELAY_HANDSHAKE_PATH = '/api/relay/handshake';
+
+function relaySecretOf() {
+  try { return localStorage.getItem(RELAY_KEY_STORE) || ''; } catch { return ''; }
+}
+
+function bytesToB64(bytes) {
+  let text = '';
+  for (let i = 0; i < bytes.length; i++) text += String.fromCharCode(bytes[i]);
+  return btoa(text);
+}
+
+function b64ToBytes(text) {
+  const raw = atob(text);
+  const out = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+  return out;
+}
+
+function concatBytes(left, right) {
+  const out = new Uint8Array(left.length + right.length);
+  out.set(left, 0);
+  out.set(right, left.length);
+  return out;
+}
+
+// The entry URL's fragment is the secret. It exists on the screen that
+// showed the QR and in this page's storage after this line — never on
+// a wire.
+(() => {
+  const match = window.location.hash.match(/^#k=(.+)$/);
+  if (match) {
+    try { localStorage.setItem(RELAY_KEY_STORE, match[1]); } catch { /* storage refused; the face stays unsealed */ }
+    history.replaceState(null, '', location.pathname + location.search);
+  }
+})();
+
+const RELAY_SECRET = relaySecretOf();
+let RELAY_READY = null;
+
+// The exchange: GET the device's public half, derive the shared secret
+// against a scalar born here, POST the phone's public half. Both sides
+// derive the same key — HKDF over the shared secret, salted with the
+// session id the handshake names. Flat on purpose: a chain this deep
+// is a paren counting exercise, and async is the seam the bot already
+// speaks.
+async function relayHandshake(secret) {
+  const headers = { 'x-fleet-relay': secret };
+  const setup = (async () => {
+    const asked = await fetch(RELAY_HANDSHAKE_PATH, { headers, cache: 'no-store' });
+    if (!asked.ok) throw new Error(`the handshake did not answer: ${asked.status}`);
+    const doc = await asked.json();
+    let pair;
+    try {
+      pair = await crypto.subtle.generateKey({ name: 'X25519' }, true, ['deriveBits']);
+    } catch {
+      throw new Error('this browser cannot seal its frames (X25519 is unavailable); update iOS and reload');
+    }
+    const deviceKey = await crypto.subtle.importKey('raw', b64ToBytes(doc.public), { name: 'X25519' }, true, []);
+    const shared = await crypto.subtle.deriveBits({ name: 'X25519', public: deviceKey }, pair.privateKey, 256);
+    const hk = await crypto.subtle.importKey('raw', shared, 'HKDF', false, ['deriveBits']);
+    const keyBits = await crypto.subtle.deriveBits(
+      { name: 'HKDF', hash: 'SHA-256', salt: new TextEncoder().encode(doc.sid), info: new TextEncoder().encode('fleet relay frame v1') },
+      hk, 256,
+    );
+    const key = await crypto.subtle.importKey('raw', keyBits, 'AES-GCM', false, ['encrypt', 'decrypt']);
+    const publicRaw = await crypto.subtle.exportKey('raw', pair.publicKey);
+    const posted = await fetch(RELAY_HANDSHAKE_PATH, {
+      method: 'POST',
+      headers: Object.assign({ 'Content-Type': 'application/json' }, headers),
+      body: JSON.stringify({ public: bytesToB64(new Uint8Array(publicRaw)) }),
+    });
+    if (!posted.ok) throw new Error(`the handshake was refused: ${posted.status}`);
+    return { key };
+  })();
+  setup
+    .then(() => document.documentElement.setAttribute('data-relay-sealed', '1'))
+    .catch(() => {});
+  RELAY_READY = setup;
+  return setup;
+}
+
+function openSealedReply(key, reply) {
+  if (reply.headers.get('x-fleet-enc') !== '1') return Promise.resolve(reply);
+  const frameId = reply.headers.get('x-fleet-frame') || '';
+  return reply.arrayBuffer().then((buffer) => {
+    const raw = new Uint8Array(buffer);
+    return crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv: raw.slice(0, 12), additionalData: new TextEncoder().encode(frameId), tagLength: 128 },
+      key, raw.slice(12),
+    ).then((plain) => {
+      const headers = new Headers();
+      reply.headers.forEach((value, name) => {
+        if (name.toLowerCase() !== 'content-length') headers.set(name, value);
+      });
+      return new Response(new TextDecoder().decode(plain), {
+        status: reply.status, statusText: reply.statusText, headers,
+      });
+    });
+  });
+}
+
+if (RELAY_SECRET && typeof window.fetch === 'function') {
+  document.documentElement.setAttribute('data-relay', '1');
+  relayHandshake(RELAY_SECRET);
+  const RAW_FETCH = window.fetch.bind(window);
+  window.fetch = function (input, init) {
+    init = init || {};
+    const asked = typeof input === 'string' ? input : input.url;
+    const url = new URL(asked, location.href);
+    if (url.origin !== location.origin) return RAW_FETCH(input, init);
+    const bare = url.pathname;
+    const method = (init.method || (typeof input === 'object' && input.method) || 'GET').toUpperCase();
+    if (method === 'GET' && RELAY_OPEN_PATHS[bare]) return RAW_FETCH(input, init);
+    const named = Object.assign({}, init.headers || {});
+    if (init.headers instanceof Headers) {
+      init.headers.forEach((value, name) => { named[name] = value; });
+    } else if (typeof input === 'object' && input.headers instanceof Headers) {
+      input.headers.forEach((value, name) => { named[name] = value; });
+    }
+    named['x-fleet-relay'] = RELAY_SECRET;
+    if (bare === RELAY_HANDSHAKE_PATH) {
+      return RAW_FETCH(url.href, Object.assign({}, init, { headers: named }));
+    }
+    return RELAY_READY.then((seal) => {
+      named['x-fleet-enc'] = '1';
+      const sendInit = Object.assign({}, init, { headers: named });
+      const send = () => RAW_FETCH(url.href, sendInit).then((reply) => openSealedReply(seal.key, reply));
+      const body = init.body;
+      if (body == null) return send();
+      const text = typeof body === 'string' ? body : String(body);
+      const nonce = crypto.getRandomValues(new Uint8Array(12));
+      const binding = bare + (url.search || '');
+      return crypto.subtle.encrypt(
+        { name: 'AES-GCM', iv: nonce, additionalData: new TextEncoder().encode(binding), tagLength: 128 },
+        seal.key, new TextEncoder().encode(text),
+      ).then((sealed) => {
+        sendInit.body = bytesToB64(concatBytes(nonce, new Uint8Array(sealed)));
+        return send();
+      });
+    });
+  };
+}
+
 // ---------- the fleet seam: one fetch with the paired cookie ----------
 
 async function api(path, options) {
@@ -262,6 +424,22 @@ async function openConversation(id) {
 }
 
 function listen(id) {
+  // The relayed stream is a poll, not a subscription: a frame is a
+  // whole reply, so the device answers /events with the session's
+  // state and the conversation refreshes on a clock — the same shape
+  // the console's face runs. An EventSource through the relay would be
+  // a held-open connection the transport does badly and a header it
+  // cannot present.
+  if (document.documentElement.getAttribute('data-relay') === '1') {
+    state.events?.close();
+    state.events = { close: () => clearInterval(state.pollTimer) };
+    const tick = () => {
+      if (state.view === 'conversation' && state.session === id) refreshConversation(id);
+    };
+    tick();
+    state.pollTimer = setInterval(tick, 2500);
+    return;
+  }
   state.events?.close();
   const source = new EventSource('/events');
   state.events = source;

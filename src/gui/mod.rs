@@ -130,6 +130,10 @@ pub async fn serve(options: GuiOptions) -> Result<(), String> {
     // is a named error rather than a half-up one with a live code nobody
     // was told about. Both faces share one bridge — a phone and the
     // desktop are two clients of one conversation.
+    // The bot face's relay credentials, captured at bind: the listener
+    // moves into its serve task, and the bot's relay dial (below) needs
+    // the session and secret that were minted for it alone.
+    let mut bot_relay_credentials: Option<(String, String)> = None;
     let remote = if options.remote.enabled {
         let address = crate::remote::resolve_address(&options.remote)?;
         // Two faces, one bridge (the owner's 2026-10-28 correction): the
@@ -157,6 +161,7 @@ pub async fn serve(options: GuiOptions) -> Result<(), String> {
             Arc::clone(&bridge),
         )
         .await?;
+        bot_relay_credentials = Some((bot_listener.device_session(), bot_listener.device_secret()));
         tokio::spawn(async move {
             if let Err(error) = bot_listener.serve().await {
                 eprintln!("fleet remote: the bot face stopped: {error}");
@@ -324,6 +329,51 @@ pub async fn serve(options: GuiOptions) -> Result<(), String> {
         // The sender now lives in `_relay_shutdown`, held for the
         // process's life: a relay that stops when the face stops is the
         // honest shape.
+    }
+
+    // The bot's own relay: a separate service, its own origin, the same
+    // seal. The owner's 2026-10-29 ruling — both faces reach the phone —
+    // with the shape that adds no mechanism: the relay stays a
+    // single-device switchboard, so a second deployment of the same two
+    // files carries the bot face and nothing else.
+    let mut _bot_relay_shutdown: Option<tokio::sync::watch::Sender<bool>> = None;
+    if let Some(bot_relay_url) = &options.remote.bot_relay {
+        // The credentials were captured at bind, before the bot
+        // listener's serve task moved it: one session, one secret, minted
+        // for the bot face alone.
+        let Some((bot_sid, bot_hash)) = &bot_relay_credentials else {
+            return Err(
+                "fleet gui --bot-relay needs --remote: a relay with no bot face has nothing to forward"
+                    .to_string(),
+            );
+        };
+        let keys = Arc::new(std::sync::Mutex::new(
+            crate::remote::relay::RelayKeys::mint(bot_sid),
+        ));
+        let client = Arc::new(crate::remote::relay::Client::new(
+            bot_relay_url,
+            bot_sid.clone(),
+            bot_hash.clone(),
+        ));
+        let handler = Arc::new(listener::RelayHandler::new(
+            Arc::clone(&bridge),
+            "a relayed phone".to_string(),
+            listener::RemoteFace::Bot,
+            bridge.home_path(),
+            Arc::clone(&keys),
+        ));
+        let (shutdown, shutdown_rx) = tokio::sync::watch::channel(false);
+        _bot_relay_shutdown = Some(shutdown);
+        let dialing = Arc::clone(&client);
+        tokio::spawn(async move {
+            crate::remote::relay::serve(dialing, handler, shutdown_rx, keys).await
+        });
+        println!("fleet gui — dialing the bot relay at {bot_relay_url}");
+        println!(
+            "  bot:    {}/#k={}  (the persona experience; pair it at its own origin)",
+            bot_relay_url.trim_end_matches('/'),
+            bot_hash
+        );
     }
 
     match remote {

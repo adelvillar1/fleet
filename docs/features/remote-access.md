@@ -194,6 +194,18 @@ device sessions that stop polling are pruned after ninety seconds, so a
 dead face never stands between a phone and its fleet. The per-session
 `/s/<sid>/` shape stays for compatibility.
 
+**Two faces, two relays.** The owner's 2026-10-29 ruling — the console
+and the bot experience both reach the phone — is served by a second
+relay service: the bot face dials its own (`--bot-relay`, default
+absent), with its own session, its own origin
+(`https://fleetbot.opsh.io`), and the same seal, pairing, and install
+set. The relay stays a single-device switchboard; nothing in it knows a
+second face exists. Two origins is the two-PWA-installs rule carried
+honestly: an origin is an install's identity, and each origin pairs
+separately — domains cannot share a cookie, so pairing at one never
+pairs the other, and the launch prints both entry URLs, each with its
+own fragment.
+
 **The entry URL.** The launch prints `https://<relay>/#k=<secret>`: the
 secret as a fragment, which browsers never send. The face's page files
 it into its own storage on boot and seals from then on; the pairing
@@ -246,11 +258,15 @@ openship deployment get <deployment>      # status: ready; the url is the origin
 ```
 
 The origin is `https://fleet.opsh.io`; `remote.public_url` names it, and
-`fleet gui --remote --relay https://fleet.opsh.io` dials it. Two
-measured facts the runbook should keep: the platform's edge refuses
-non-browser user agents before the request reaches the relay (a probe
-presents a browser's), and a redeploy of the service is survivable
-unaided — the face rejoins within seconds of the relay's return, which
-is the resilience the dialer's own backoff loop was built for. Mapping a
-permanent domain over the free subdomain later is OpenShip's documented
-custom-domain flow and one `remote.public_url` change.
+`fleet gui --remote --relay https://fleet.opsh.io` dials it. The bot's
+relay is the same two files as a second service on the same project
+(`fleetbot`, `https://fleetbot.opsh.io`), dialed by `--bot-relay` — a
+stack deploy passes both service ids, because the platform deploys a
+stack all-or-nothing. Two measured facts the runbook should keep: the
+platform's edge refuses non-browser user agents before the request
+reaches the relay (a probe presents a browser's), and a redeploy of a
+service is survivable unaided — the face rejoins within seconds of the
+relay's return, which is the resilience the dialer's own backoff loop
+was built for. Mapping a permanent domain over the free subdomains
+later is OpenShip's documented custom-domain flow and one setting per
+face.
