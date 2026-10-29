@@ -1656,6 +1656,7 @@ mod tests {
             model: "deepseek-flash".to_string(),
             created: "2026-10-15T00:00:00Z".to_string(),
             ended: true,
+            resumed: false,
             kind: None,
             workspace: workspace.map(str::to_string),
             workspace_inferred: false,

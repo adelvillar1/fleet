@@ -4265,6 +4265,7 @@ fn cards_from_records(records: &[session::Record]) -> (Vec<Value>, usize) {
             | session::Record::LaneFailed { .. }
             | session::Record::Declarations { .. }
             | session::Record::Routed { .. }
+            | session::Record::Resume { .. }
             // A leave only ends a participation the join row opened;
             // the join row itself is what the transcript shows.
             | session::Record::Leave { .. } => {}
@@ -4442,6 +4443,7 @@ fn replay_read(home: &std::path::Path, asked: &str) -> Value {
     let (cards, omitted) = cards_from_records(&records);
     let (mut model, mut created, mut kind, mut parent) = (String::new(), String::new(), None, None);
     let mut ended = false;
+    let mut resumed = false;
     let mut served_model: Option<String> = None;
     let mut stop_reason = String::new();
     let mut turns = 0u64;
@@ -4471,6 +4473,15 @@ fn replay_read(home: &std::path::Path, asked: &str) -> Value {
                 turns = *t;
                 served_model = answered.clone();
             }
+            // A resume after the last end means the conversation was
+            // continued: not ended, and said so (the 2026-10-28 ruling).
+            session::Record::Resume { .. } => {
+                ended = false;
+                resumed = true;
+                stop_reason = String::new();
+                turns = 0;
+                served_model = None;
+            }
             session::Record::Compaction { .. } => compacted = true,
             _ => {}
         }
@@ -4490,6 +4501,7 @@ fn replay_read(home: &std::path::Path, asked: &str) -> Value {
         "kind": kind,
         "parent": parent,
         "ended": ended,
+        "resumed": resumed,
         "stop_reason": stop_reason,
         "turns": turns,
         "compacted": compacted,
@@ -4700,6 +4712,13 @@ fn work_state(
     }
     if live.driving.as_deref() == Some(entry.id.as_str()) {
         return "working";
+    }
+    // A continued conversation is not a terminated one: a resume
+    // record after the last end means the owner picked it back up
+    // (the 2026-10-28 ruling). A run actually in flight in it already
+    // returned working above — the live word wins while it lasts.
+    if entry.resumed {
+        return "resumed";
     }
     // A log with no owner message is a conversation created and not yet
     // used: New writes the start record, and the next message is what
@@ -9240,6 +9259,7 @@ mod tests {
             personas: Vec::new(),
             created: "2026-10-23T00:00:00Z".to_string(),
             ended,
+            resumed: false,
             kind: kind.map(str::to_string),
             workspace: None,
             workspace_inferred: false,
@@ -9258,6 +9278,66 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|age| age.as_secs())
             .unwrap_or_default()
+    }
+
+    #[test]
+    fn a_resumed_session_is_not_terminated() {
+        // The owner's 2026-10-28 ruling: a session continued after its
+        // handback reads as continued — resumed while idle, working
+        // while a run is actually in flight in it — never as terminated
+        // or as interrupted by freshness.
+        let mut live = LiveFace::default();
+        let mut resumed = row(
+            "resumed",
+            None,
+            None,
+            false,
+            None,
+            Some("t"),
+            Some(now_secs() - 60),
+        );
+        resumed.resumed = true;
+        assert_eq!(work_state(&resumed, &live, false, false), "resumed");
+        live.driving = Some("resumed".to_string());
+        assert_eq!(work_state(&resumed, &live, false, false), "working");
+    }
+
+    #[tokio::test]
+    async fn a_replayed_continued_session_carries_the_resume() {
+        let home = std::env::temp_dir().join(format!(
+            "fleet-bridge-replay-resume-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        let session = session::Session::create(&home, "deepseek-flash").unwrap();
+        let id = session.id().to_string();
+        let (bridge, _sources) = Bridge::detached(home.clone(), "m".to_string(), Some(id.clone()));
+        let mut session = session;
+        session
+            .record(&session::Record::User {
+                content: "before the handback".to_string(),
+            })
+            .unwrap();
+        session
+            .record(&session::Record::End {
+                stop_reason: "handed back".to_string(),
+                turns: 1,
+                served_model: Some("GLM-5.3-Flash".to_string()),
+            })
+            .unwrap();
+        drop(session);
+        // The continuation: opening the log is what stamps the resume.
+        drop(session::Session::open(&session::session_path(&bridge.home, &id)).unwrap());
+
+        let replay = bridge.replay(&id).await;
+        assert_eq!(replay["ended"], false, "{}", replay);
+        assert_eq!(replay["resumed"], true, "{}", replay);
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     #[test]

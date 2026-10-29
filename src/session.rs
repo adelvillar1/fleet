@@ -264,6 +264,15 @@ pub enum Record {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         served_model: Option<String>,
     },
+    /// The conversation was opened again after its log carried an
+    /// `end`: the owner continued it. Bookkeeping, like `start` and
+    /// `end` — it replays to no message. Stamped by [`Session::open`],
+    /// so every continuation path (the face's dispatch, the CLI's
+    /// `--session`, the TUI's steer-after-end) records it in one place.
+    Resume {
+        /// When the conversation was reopened, ISO-8601 UTC.
+        at: String,
+    },
     /// One compaction: the summary that stands in for a range of turns,
     /// the range it replaces, and what the context cost before and after.
     ///
@@ -407,11 +416,40 @@ impl Session {
     pub fn open(path: &Path) -> io::Result<Session> {
         let log = OpenOptions::new().append(true).open(path)?;
         let kind = start_kind(path);
-        Ok(Session {
+        let mut session = Session {
             path: path.to_path_buf(),
             log,
             kind,
-        })
+        };
+        session.stamp_resume_if_ended();
+        Ok(session)
+    }
+
+    /// A log whose last record is `end` was handed back and is now being
+    /// continued — the owner's 2026-10-28 ruling: an interrupted session
+    /// a user continues is a resumed session, not a terminated one, and
+    /// the resume must be a fact the log carries, not an inference a
+    /// surface makes. Stamped here because every continuation path —
+    /// the face's dispatch, the CLI's `--session`, the TUI's
+    /// steer-after-end — opens the log through this one seam. The read
+    /// is bounded (the last record only) and a failure to read or parse
+    /// stamps nothing: bookkeeping must never block a continuation.
+    fn stamp_resume_if_ended(&mut self) {
+        let last = tail_lines(&self.path, 4096)
+            .into_iter()
+            .rev()
+            .find(|line| !line.trim().is_empty());
+        let Some(last) = last else {
+            return;
+        };
+        let Ok(record) = serde_json::from_str::<Record>(last.trim()) else {
+            return;
+        };
+        if matches!(record, Record::End { .. }) {
+            let _ = self.record(&Record::Resume {
+                at: iso_utc_stamp(SystemTime::now()).unwrap_or_default(),
+            });
+        }
     }
 
     /// The kind the start record declares, when this log carries one —
@@ -534,16 +572,39 @@ pub fn summarize(path: &Path) -> Option<SessionSummary> {
     // record also carries the model that actually served (KI-073),
     // which is what surfaces name instead of the head's nominal stamp.
     let text = fs::read_to_string(path).ok()?;
-    let last = text.lines().rev().find(|line| !line.trim().is_empty())?;
-    let (ended, served_model, stop_reason, turns) =
-        match serde_json::from_str::<Record>(last.trim()) {
+    // The end fold reads the whole file, not the last line: every
+    // handback appends an `end`, and a conversation continued after one
+    // carries records after it. `ended` is true only when the LAST
+    // record is `end`; any later record — a `resume` above all — clears
+    // it, so a session the owner continued reads as continued, never as
+    // terminated (the owner's 2026-10-28 ruling, KI-354).
+    let mut ended = false;
+    let mut served_model = None;
+    let mut stop_reason = None;
+    let mut turns = None;
+    let mut saw_resume = false;
+    for line in text.lines() {
+        match serde_json::from_str::<Record>(line.trim()) {
             Ok(Record::End {
-                stop_reason,
-                turns,
-                served_model,
-            }) => (true, served_model, Some(stop_reason), Some(turns)),
-            _ => (false, None, None, None),
-        };
+                stop_reason: reason,
+                turns: count,
+                served_model: answered,
+            }) => {
+                ended = true;
+                stop_reason = Some(reason);
+                turns = Some(count);
+                served_model = answered;
+            }
+            Ok(Record::Resume { .. }) => {
+                ended = false;
+                saw_resume = true;
+                stop_reason = None;
+                turns = None;
+                served_model = None;
+            }
+            _ => {}
+        }
+    }
     let last_write = fs::metadata(path)
         .and_then(|meta| meta.modified())
         .ok()
@@ -621,6 +682,7 @@ pub fn summarize(path: &Path) -> Option<SessionSummary> {
         first_text,
         created,
         ended,
+        resumed: saw_resume && !ended,
         kind,
         workspace,
         workspace_inferred,
@@ -720,8 +782,15 @@ pub struct SessionSummary {
     /// call.
     pub first_text: Option<String>,
     pub created: String,
-    /// True when the log's last record is `end`.
+    /// True when the log's last record is `end`. A record after it —
+    /// a `resume` above all — clears this, so a conversation the owner
+    /// continued is not ended however many handbacks sit mid-log.
     pub ended: bool,
+    /// True when the log carries a `resume` record after its last
+    /// `end`: an interrupted session the owner continued. The archive
+    /// speaks this as its own state word rather than reading the
+    /// conversation as terminated or as interrupted by freshness.
+    pub resumed: bool,
     /// `subagent` for a delegated child run's log; `None` for an
     /// ordinary session's. The picker and `fleet sessions` show it as a
     /// marker beside the row — a child is an ordinary session with a
@@ -840,6 +909,7 @@ pub fn list(home: &Path) -> io::Result<Vec<SessionSummary>> {
                     personas: Vec::new(),
                     created: String::new(),
                     ended: false,
+                    resumed: false,
                     kind: None,
                     workspace: None,
                     workspace_inferred: false,
@@ -925,7 +995,10 @@ pub fn conversation(records: &[Record]) -> Conversation {
         match record {
             // Bookkeeping: a rewind marks a cut the caller already
             // applied, and a plan rides the assistant message beside it.
-            Record::Rewind { .. } | Record::Plan { .. } | Record::Reasoning { .. } => {}
+            Record::Rewind { .. }
+            | Record::Plan { .. }
+            | Record::Reasoning { .. }
+            | Record::Resume { .. } => {}
             // Bookkeeping: which channel the peer arrived on replays to
             // no message. A persona's join and leave are the same kind
             // of fact about the conversation's staffing, not its content.
@@ -1443,6 +1516,59 @@ mod tests {
             records.last().unwrap(),
             Record::End { stop_reason, .. } if stop_reason == "completed"
         ));
+        fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn a_continued_session_is_resumed_not_ended() {
+        let home = temp_home("resumed-session");
+        let mut session = Session::create(&home, "deepseek-flash").unwrap();
+        session
+            .record(&Record::User {
+                content: "hello".into(),
+            })
+            .unwrap();
+        session
+            .record(&Record::End {
+                stop_reason: "completed".into(),
+                turns: 1,
+                served_model: None,
+            })
+            .unwrap();
+        let path = session.path().to_path_buf();
+        drop(session);
+
+        // Before the continuation: ended, with the handback's words.
+        let closed = summarize(&path).unwrap();
+        assert!(closed.ended);
+        assert!(!closed.resumed);
+        assert_eq!(closed.stop_reason.as_deref(), Some("completed"));
+
+        // Opening the log again stamps the resume: the continuation is
+        // a fact the log carries, not an inference a surface makes.
+        drop(Session::open(&path).unwrap());
+
+        let resumed = summarize(&path).unwrap();
+        assert!(!resumed.ended, "a continued session is not ended");
+        assert!(resumed.resumed);
+        assert!(resumed.stop_reason.is_none());
+        assert!(resumed.turns.is_none());
+
+        // A log that never ended is not stamped: opening records
+        // nothing, so a live conversation never reads resumed.
+        let mut fresh = Session::create(&home, "deepseek-flash").unwrap();
+        fresh
+            .record(&Record::User {
+                content: "still talking".into(),
+            })
+            .unwrap();
+        let fresh_path = fresh.path().to_path_buf();
+        drop(fresh);
+        drop(Session::open(&fresh_path).unwrap());
+        let untouched = summarize(&fresh_path).unwrap();
+        assert!(!untouched.ended);
+        assert!(!untouched.resumed, "a live conversation is not resumed");
+
         fs::remove_dir_all(&home).ok();
     }
 

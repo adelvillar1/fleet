@@ -3047,8 +3047,7 @@ fn entry_of(record: &Record) -> Option<Entry> {
     match record {
         // Bookkeeping: a rewind marks a cut the pane's own seed applies,
         // and a plan rides the assistant message beside it.
-        Record::Rewind { .. } => None,
-        Record::Plan { .. } => None,
+        Record::Rewind { .. } | Record::Plan { .. } | Record::Resume { .. } => None,
         // Bookkeeping: the standing goal rides the prompt, and the run
         // card is where a TUI reads it.
         Record::Goal { .. } => None,
@@ -4409,6 +4408,7 @@ mod tests {
             model: "deepseek-flash".to_string(),
             created: "2026-10-13T00:00:00Z".to_string(),
             ended: false,
+            resumed: false,
             kind: None,
             workspace: None,
             workspace_inferred: false,
