@@ -8,8 +8,8 @@ tier: durable
 shape: [state-sync]
 phrases: [corpus-refresh-dev-decisions, tools/call refresh, BLEND1_PYTHONPATH, action unchanged, dev-decisions docs/**/*.md]
 missing: []
-recall-count: 4
-superseded-by:
+recall-count: 11
+superseded-by: corpus-dev-decisions-rebuilt-2026-10-28
 valid-until:
 ---
 
