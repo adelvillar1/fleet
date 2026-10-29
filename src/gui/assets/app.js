@@ -328,9 +328,6 @@
     railMenu: document.getElementById('rail-menu'),
     railScrim: document.getElementById('rail-scrim'),
     railWhere: document.getElementById('rail-where'),
-    asideToggle: document.getElementById('aside-toggle'),
-    dockFold: document.getElementById('dock-fold'),
-    dock: document.getElementById('dock'),
     dockObject: document.getElementById('dock-object'),
     dockObjectTitle: document.getElementById('dock-object-title'),
     dockObjectBody: document.getElementById('dock-object-body'),
@@ -366,9 +363,14 @@
     paneTree: document.getElementById('pane-tree'),
     paneFile: document.getElementById('pane-file'),
     panePreview: document.getElementById('pane-preview-body'),
+    tabRun: document.getElementById('tab-run'),
+    paneRun: document.getElementById('pane-run'),
     tabFiles: document.getElementById('tab-files'),
     tabPreview: document.getElementById('tab-preview'),
     tabWeb: document.getElementById('tab-web'),
+    paneGrip: document.getElementById('pane-grip'),
+    paneWebBack: document.getElementById('pane-web-back'),
+    paneWebOut: document.getElementById('pane-web-out'),
     paneWeb: document.getElementById('pane-web'),
     paneAddress: document.getElementById('pane-address'),
     paneAddressBox: document.getElementById('pane-address-box'),
@@ -554,13 +556,7 @@
     // The visit stamp, read before it is overwritten, so the home can
     // say what happened while the owner was away.
     lastVisit: '',
-    // The nav mode the owner had before the dock auto-folded it at the
-    // mid breakpoint. Restored when the dock closes or the screen widens.
-    railBeforeDock: null,
-    // Whether the dock was closed before an object opened it. Closing
-    // the object then collapses the dock too, rather than leaving a
     // column the owner never asked for standing open.
-    asideBeforeObject: false,
     // The live process: the run's own stage, turn, tool, and counts,
     // reduced from the same event log the transcript reads.
     process: null,
@@ -733,7 +729,8 @@
     // whatever measures next. One shape, one place, regardless of which
     // surface the work is in.
     actionCards: [],
-    paneTab: 'files'
+    // The run tab is the pane's own default: where are we, before what exists.
+    paneTab: 'run'
   };
 
   // A short mark for a tool, so a card reads at a glance without an
@@ -3175,10 +3172,9 @@
 
   function paintProcessStrip(p) {
     if (!el.processStrip) return;
-    var open = document.body.dataset.aside !== 'closed';
+    var open = document.body.dataset.pane === 'open';
     var ex = exchanges();
-    var narrow = window.innerWidth <= 1180;
-    var show = !!p && (p.active || (p.mode === 'plan' && p.stage === 'review')) && (!open || narrow);
+    var show = !!p && (p.active || (p.mode === 'plan' && p.stage === 'review')) && !open;
     el.processStrip.hidden = !show;
     if (!show) return;
     el.processStrip.textContent = '';
@@ -3211,11 +3207,10 @@
   }
 
   function openProcess() {
-    if (window.innerWidth > 1180) {
-      setAside(true);
-      return;
-    }
-    openProcessDrawer();
+    // The run lives in the pane now, at every width: the pane overlay
+    // below 1180 carries it the way the drawer did.
+    openPane();
+    showPaneTab('run');
   }
 
   function openProcessDrawer() {
@@ -3294,31 +3289,9 @@
     openDrawer('the run', sections);
   }
 
-  function setAside(open) {
-    document.body.dataset.aside = open ? 'open' : 'closed';
-    // At the mid breakpoint the dock only has room as a column if the
-    // nav folds. Opening it folds the nav and remembers what was there;
-    // the fold is not written to storage because it is not the owner's
-    // choice.
-    if (open && window.innerWidth > 1180 && window.innerWidth < 1600 &&
-        document.body.dataset.rail !== 'icons' && !face.railBeforeDock) {
-      face.railBeforeDock = document.body.dataset.rail || 'full';
-      applyRail('icons', false);
-    }
-    if (!open && face.railBeforeDock) {
-      var restore = face.railBeforeDock;
-      face.railBeforeDock = null;
-      applyRail(restore, false);
-    }
-    if (el.asideToggle) {
-      el.asideToggle.setAttribute('aria-pressed', open ? 'true' : 'false');
-      el.asideToggle.setAttribute('aria-label',
-        open ? 'undock the run\u2019s card' : 'dock the run\u2019s card');
-      el.asideToggle.title = open ? 'undock the run\u2019s card' : 'dock the run\u2019s card';
-    }
-    try { window.localStorage.setItem('fleet-aside', open ? 'open' : 'closed'); } catch (error) { }
-    syncDock();
-  }
+  // The dock is gone: the pane is the one right surface, and the run's
+  // process lives in it as a tab. setAside and the data-aside state it
+  // wrote retired with the second icon.
 
   // ------------------------------------------------------------- the home
 
@@ -6359,11 +6332,11 @@
   }
 
   function openDrawer(title, sections) {
-    // The dock is the inspector wherever there is room. The fixed drawer
-    // is the narrow-screen fallback, not a second surface to maintain.
+    // The pane is the inspector wherever there is room: the object card
+    // stands above the tab body, the run's own cards hidden while it
+    // speaks. The fixed drawer is the narrow-screen fallback.
     if (window.innerWidth > 1180 && el.dockObject) {
-      if (document.body.dataset.aside !== 'open') face.asideBeforeObject = true;
-      setAside(true);
+      openPane();
       el.dockObjectTitle.textContent = title;
       el.dockObjectBody.textContent = '';
       renderSections(el.dockObjectBody, sections);
@@ -6391,13 +6364,6 @@
       el.dockObjectBody.textContent = '';
       el.faceCard.hidden = false;
       el.trustCard.hidden = false;
-      // An object that opened the dock closes it again. A dock the
-      // owner had open before the object stays open: the column is
-      // theirs, not the object's.
-      if (face.asideBeforeObject) {
-        face.asideBeforeObject = false;
-        setAside(false);
-      }
       return;
     }
     el.drawer.hidden = true;
@@ -6748,37 +6714,11 @@
   } catch (error) { }
   paintChatScale();
 
-  try {
-    var savedAside = window.localStorage.getItem('fleet-aside');
-    // The dock is the owner's to open, at every width: the work column
-    // carries the run's state in the list and the strip carries it in
-    // the conversation, so a third column nobody asked for is space
-    // taken from the work.
-    setAside(savedAside === 'open');
-  } catch (error) {
-    setAside(false);
-  }
-
   // The list's fold is the owner's too, and read before the first route
   // paints so the page opens in the shape they left it in.
   try {
     face.workFolded = window.localStorage.getItem('fleet-work') === 'collapsed';
   } catch (error) { }
-  if (el.asideToggle) {
-    el.asideToggle.addEventListener('click', function () {
-      // A dock opened by hand is the owner's: closing an object later
-      // must not fold it.
-      face.asideBeforeObject = false;
-      setAside(document.body.dataset.aside === 'closed');
-      if (face.panel === 'sessions') paintSessions();
-    });
-  }
-  if (el.dockFold) {
-    el.dockFold.addEventListener('click', function () {
-      face.asideBeforeObject = false;
-      setAside(false);
-    });
-  }
   if (el.dockObjectClose) {
     el.dockObjectClose.addEventListener('click', closeDrawer);
   }
@@ -6786,7 +6726,6 @@
     el.processPill.addEventListener('click', openProcess);
   }
   window.addEventListener('resize', function () {
-    syncDock();
     if (face.panel === 'sessions') paintSessions();
   });
 
@@ -14301,9 +14240,82 @@
     return paneGet('/api/web?url=' + encodeURIComponent(url))
       .then(function (doc) {
         face.page = doc;
-        if (face.paneTab === 'web') paintPage();
+        if (face.paneTab === 'web') paintWeb();
       })
       .catch(function () { });
+  }
+
+  // The browser half: the address opens live when the site allows
+  // framing and names the site's own refusal when it does not, with the
+  // prose reader and the owner's browser as the two doors beside it.
+  // The sandbox denies top-level navigation, so a framed page cannot
+  // escape the pane.
+  function webNormalize(asked) {
+    var url = (asked || '').trim();
+    if (url && !/^https?:\/\//i.test(url)) url = 'https://' + url;
+    return url;
+  }
+
+  function openWebAddress(asked, fromBack) {
+    var url = webNormalize(asked);
+    if (!url) return;
+    face.webUrl = url;
+    if (!fromBack) {
+      face.webHistory = face.webHistory || [];
+      if (face.webHistory[face.webHistory.length - 1] !== url) {
+        face.webHistory.push(url);
+      }
+    }
+    el.paneAddressBox.value = url;
+    el.paneWebBack.disabled = (face.webHistory || []).length < 2;
+    face.webFrame = null;
+    face.page = null;
+    return paneGet('/api/web/frame?url=' + encodeURIComponent(url))
+      .then(function (doc) {
+        face.webFrame = doc;
+        if (face.paneTab === 'web') paintWeb();
+      })
+      .catch(function () { });
+  }
+
+  function paintWeb() {
+    el.panePage.textContent = '';
+    var frame = face.webFrame;
+    if (frame && frame.refused && frame.refused.length) {
+      el.panePage.appendChild(node('p', 'pane-empty', frame.refused.join(' · ')));
+      return;
+    }
+    if (frame) {
+      if (frame.framable) {
+        var live = node('iframe', 'pane-frame');
+        live.src = frame.url;
+        live.setAttribute('sandbox',
+          'allow-scripts allow-same-origin allow-forms allow-popups');
+        live.setAttribute('referrerpolicy', 'no-referrer');
+        live.setAttribute('title', 'the page, live');
+        el.panePage.appendChild(live);
+        el.paneWebOut.hidden = false;
+        return;
+      }
+      // The site said no. The refusal names the site's own words, and
+      // the two doors stand beside it.
+      var card = node('div', 'pane-web-refuse');
+      card.appendChild(node('p', 'pane-web-refuse-why',
+        (frame.url || face.webUrl) + ' will not render in the pane: ' +
+        (frame.reason || 'the site refused framing')));
+      var doors = node('div', 'pane-web-doors');
+      var reader = node('button', 'row-rewind', 'read it as prose');
+      reader.type = 'button';
+      reader.addEventListener('click', function () {
+        readPage(face.webUrl, true);
+      });
+      doors.appendChild(reader);
+      card.appendChild(doors);
+      el.panePage.appendChild(card);
+      el.paneWebOut.hidden = false;
+      return;
+    }
+    paintPage();
   }
 
   function paintPage() {
@@ -14791,6 +14803,7 @@
   function openPane() {
     el.pane.hidden = false;
     document.body.dataset.pane = 'open';
+    showPaneTab(face.paneTab || 'run');
     if (!face.tree) readTree('', true);
   }
 
@@ -14801,27 +14814,45 @@
 
   function showPaneTab(which) {
     face.paneTab = which;
+    var run = which === 'run';
     var files = which === 'files';
     var preview = which === 'preview';
     var web = which === 'web';
+    el.tabRun.classList.toggle('active', run);
     el.tabFiles.classList.toggle('active', files);
     el.tabPreview.classList.toggle('active', preview);
     el.tabWeb.classList.toggle('active', web);
+    el.tabRun.setAttribute('aria-selected', run ? 'true' : 'false');
     el.tabFiles.setAttribute('aria-selected', files ? 'true' : 'false');
     el.tabPreview.setAttribute('aria-selected', preview ? 'true' : 'false');
     el.tabWeb.setAttribute('aria-selected', web ? 'true' : 'false');
+    el.paneRun.hidden = !run;
     el.paneFiles.hidden = !files;
     el.panePreviewPanel.hidden = !preview;
     el.paneWeb.hidden = !web;
-    if (files) paintTree();
+    if (run) paintProcess();
+    else if (files) paintTree();
     else if (preview) paintPreview();
-    else paintPage();
+    else paintWeb();
   }
 
   el.paneAddress.addEventListener('submit', function (event) {
     event.preventDefault();
-    readPage(el.paneAddressBox.value, true);
+    openWebAddress(el.paneAddressBox.value);
   });
+  if (el.paneWebBack) {
+    el.paneWebBack.addEventListener('click', function () {
+      var history = face.webHistory || [];
+      if (history.length < 2) return;
+      history.pop();
+      openWebAddress(history[history.length - 1], true);
+    });
+  }
+  if (el.paneWebOut) {
+    el.paneWebOut.addEventListener('click', function () {
+      if (face.webUrl) window.open(face.webUrl, '_blank');
+    });
+  }
 
   // ------------------------------------------------- the rail and the palette
 
@@ -14930,7 +14961,6 @@
 
   function setRail(mode) {
     applyRail(mode, true);
-    syncDock();
   }
 
   function applyRail(mode, remember) {
@@ -14946,23 +14976,9 @@
     }
   }
 
-  function dockMode() {
-    if (document.body.dataset.aside === 'closed' || window.innerWidth <= 1180) return 'closed';
-    if (window.innerWidth >= 1600) return 'column';
-    return document.body.dataset.rail === 'icons' ? 'column' : 'overlay';
-  }
-
-  function syncDock() {
-    // At the wide breakpoint the nav is the owner's choice again; a fold
-    // that was only there to make room for the dock is undone.
-    if (window.innerWidth >= 1600 && face.railBeforeDock) {
-      var restore = face.railBeforeDock;
-      face.railBeforeDock = null;
-      applyRail(restore, false);
-    }
-    document.body.dataset.dock = dockMode();
-    paintProcess();
-  }
+  // The dock's mode machine retired with it: the pane is the one right
+  // surface, the rail folds only when the owner says so, and the run's
+  // process paints when its own events land.
 
   // ------------------------------------------------------ the palette
 
@@ -15265,7 +15281,68 @@
   // The pane's controls. Its shortcut is cmd+backslash — the editor
   // convention for a side pane — and Esc from a pane with nothing open
   // comes home rather than closing it, so one key always means one thing.
-  el.paneOpen.addEventListener('click', openPane);
+  el.paneOpen.addEventListener('click', function () {
+    if (el.pane.hidden) openPane();
+    else closePane();
+  });
+  // The pane's width is the owner's hand: the grip drags --pane-width
+  // between its floor and the stage's, remembers the choice, resets on
+  // double-click, and takes the keyboard as a separator (arrow keys
+  // widen and narrow). During the drag the frame's own pointer events
+  // stand down, or a live page would swallow the move.
+  (function () {
+    if (!el.paneGrip) return;
+    var MIN = 300, MAX = 720, STAGE_FLOOR = 560, DEFAULT = 440;
+    var applied = DEFAULT;
+    function clamp(width) {
+      var max = Math.max(MIN, Math.min(MAX, window.innerWidth - STAGE_FLOOR));
+      return Math.round(Math.min(max, Math.max(MIN, width)));
+    }
+    function apply(width, remember) {
+      var w = clamp(width);
+      applied = w;
+      document.documentElement.style.setProperty('--pane-width', w + 'px');
+      el.paneGrip.setAttribute('aria-valuenow', String(w));
+      if (remember) {
+        try { window.localStorage.setItem('fleet-pane-width', String(w)); } catch (error) { }
+      }
+    }
+    var startX = 0, startW = 0;
+    el.paneGrip.addEventListener('pointerdown', function (event) {
+      startX = event.clientX;
+      startW = applied;
+      if (el.paneGrip.setPointerCapture) {
+        try { el.paneGrip.setPointerCapture(event.pointerId); } catch (error) { }
+      }
+      document.body.dataset.paneDragging = 'true';
+    });
+    el.paneGrip.addEventListener('pointermove', function (event) {
+      if (document.body.dataset.paneDragging !== 'true') return;
+      apply(startW + (startX - event.clientX), false);
+    });
+    el.paneGrip.addEventListener('pointerup', function (event) {
+      if (document.body.dataset.paneDragging !== 'true') return;
+      document.body.dataset.paneDragging = '';
+      if (el.paneGrip.releasePointerCapture) {
+        try { el.paneGrip.releasePointerCapture(event.pointerId); } catch (error) { }
+      }
+      var w = parseInt(document.documentElement.style.getPropertyValue('--pane-width'), 10);
+      apply(isNaN(w) ? DEFAULT : w, true);
+    });
+    el.paneGrip.addEventListener('dblclick', function () {
+      try { window.localStorage.removeItem('fleet-pane-width'); } catch (error) { }
+      apply(DEFAULT, false);
+    });
+    el.paneGrip.addEventListener('keydown', function (event) {
+      if (event.key === 'ArrowLeft') { event.preventDefault(); apply(applied + 24, true); }
+      if (event.key === 'ArrowRight') { event.preventDefault(); apply(applied - 24, true); }
+    });
+    try {
+      var saved = parseInt(window.localStorage.getItem('fleet-pane-width'), 10);
+      if (!isNaN(saved)) apply(saved, false);
+    } catch (error) { }
+  })();
+
   el.paneClose.addEventListener('click', closePane);
   el.tabFiles.addEventListener('click', function () { showPaneTab('files'); });
   el.tabPreview.addEventListener('click', function () { showPaneTab('preview'); });

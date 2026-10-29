@@ -118,7 +118,6 @@
   --rail-width: 236px;
   --rail-width-icons: 66px;
   --aside-width: 320px;
-  --dock-width: 320px;
   --pane-width: 440px;
   --drawer-width: 440px;
   --card-bg: var(--dsw-alias-surface);
@@ -342,7 +341,9 @@ button, input, textarea, select { font: inherit; }
 .face {
   position: relative;
   display: grid;
-  grid-template-columns: var(--rail-width) minmax(0, 1fr) var(--dock-width);
+  /* The pane is the one right surface: two columns closed, three open,
+     the pane's width the owner's own (P1's grip writes --pane-width). */
+  grid-template-columns: var(--rail-width) minmax(0, 1fr);
   grid-template-rows: var(--topbar-height) 2px minmax(0, 1fr);
   height: 100dvh;
   overflow: hidden;
@@ -351,30 +352,11 @@ button, input, textarea, select { font: inherit; }
 .surfaces { grid-column: 1; grid-row: 1 / -1; }
 .topbar, .meter { grid-column: 2 / -1; }
 .stage { grid-column: 2; grid-row: 3; }
-.dock { grid-column: 3; grid-row: 3; }
 
-/* The dock is a column where there is room, a pinned overlay when the
-   nav is expanded at 1440, and absent below 1180 where the fixed drawer
-   carries the selected object. */
-body[data-aside="closed"] .face,
-body[data-dock="closed"] .face,
-body[data-dock="overlay"] .face {
-  grid-template-columns: var(--rail-width) minmax(0, 1fr);
+body[data-pane="open"] .face {
+  grid-template-columns: var(--rail-width) minmax(0, 1fr) var(--pane-width);
 }
-
-body[data-aside="closed"] .dock,
-body[data-dock="closed"] .dock,
-body[data-pane="open"] .dock { display: none; }
-
-body[data-dock="overlay"] .dock {
-  position: fixed;
-  top: calc(var(--topbar-height) + 2px);
-  right: 0;
-  bottom: 0;
-  z-index: 18;
-  width: var(--dock-width);
-  box-shadow: var(--shadow-3);
-}
+.pane { grid-column: 3; grid-row: 3; }
 
 /* ------------------------------------------------------------ the rail */
 
@@ -608,13 +590,11 @@ body[data-dock="overlay"] .dock {
 
 /* The compact rail: the map loses its words, not its places. */
 body[data-rail="icons"] .face {
-  grid-template-columns: var(--rail-width-icons) minmax(0, 1fr) var(--dock-width);
+  grid-template-columns: var(--rail-width-icons) minmax(0, 1fr);
 }
 
-body[data-rail="icons"][data-aside="closed"] .face,
-body[data-rail="icons"][data-dock="closed"] .face,
-body[data-rail="icons"][data-dock="overlay"] .face {
-  grid-template-columns: var(--rail-width-icons) minmax(0, 1fr);
+body[data-rail="icons"][data-pane="open"] .face {
+  grid-template-columns: var(--rail-width-icons) minmax(0, 1fr) var(--pane-width);
 }
 
 body[data-rail="icons"] .surfaces { padding: 14px 8px 10px; }
@@ -2486,19 +2466,14 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
   background: var(--card-bg);
 }
 
-/* The dock is the inspector's home: the process card first, then the
-   selected object, then the session and trust cards when nothing is
-   selected. It scrolls as one column. */
-.dock {
-  min-width: 0;
-  min-height: 0;
-  overflow-x: hidden;
-}
+/* The pane's run tab is the inspector's home: the process card, then
+   the session and trust cards when no object is selected. The cards
+   kept their classes; the column they scroll in is the pane's body. */
 
 .dock-object-body {
   display: grid;
   /* One track that can shrink: a long fact name, a path, or a form
-     value must wrap inside the dock rather than widen the card past
+     value must wrap inside the pane rather than widen the card past
      the column (the face clips, so an overflow here reads as text cut
      at the window edge). */
   grid-template-columns: minmax(0, 1fr);
@@ -2508,15 +2483,15 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
 }
 
 .dock-object-body > *,
-.dock .fact-field,
-.dock .fact-field input,
-.dock .fact-field textarea {
+.pane .fact-field,
+.pane .fact-field input,
+.pane .fact-field textarea {
   min-width: 0;
   max-width: 100%;
 }
 
-.dock .fact-field input,
-.dock .fact-field textarea { width: 100%; }
+.pane .fact-field input,
+.pane .fact-field textarea { width: 100%; }
 
 .dock-object .card-head h2 {
   color: var(--dsw-alias-ink);
@@ -5400,6 +5375,7 @@ pre.drawer-code {
 /* -------------------------------------------------------------- the pane */
 
 .pane {
+  position: relative;
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -5407,6 +5383,62 @@ pre.drawer-code {
   border-left: var(--card-hairline);
   background: var(--dsw-alias-surface);
 }
+/* The owner's hand on the pane's width: the grip is the pane's left
+   edge, a separator the pointer drags and the keyboard steps. The
+   visible line thickens on hover; during a drag the frame stands down
+   so a live page cannot swallow the move. */
+.pane-grip {
+  position: absolute;
+  left: -4px;
+  top: 0;
+  bottom: 0;
+  width: 9px;
+  cursor: col-resize;
+  z-index: 5;
+  touch-action: none;
+}
+.pane-grip::after {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--card-hairline);
+}
+.pane-grip:hover::after,
+.pane-grip:focus-visible::after {
+  width: 3px;
+  left: 3px;
+  background: var(--dsw-alias-accent);
+}
+.pane-grip:focus-visible { outline: none; }
+body[data-pane-dragging="true"] { cursor: col-resize; user-select: none; }
+body[data-pane-dragging="true"] .pane iframe { pointer-events: none; }
+.pane-frame {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: 320px;
+  border: 0;
+  background: #fff;
+}
+.pane-web-refuse { padding: 10px 2px; }
+.pane-web-refuse-why { margin: 0 0 10px; color: var(--dsw-alias-ink-secondary); font-size: 12px; }
+.pane-web-doors { display: flex; gap: 6px; flex-wrap: wrap; }
+.pane-web-doors .row-rewind { margin-left: 0; }
+.pane-web-back,
+.pane-web-out {
+  border: 0;
+  background: transparent;
+  color: var(--dsw-alias-ink-tertiary);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  padding: 0 4px;
+}
+.pane-web-back:hover, .pane-web-out:hover { color: var(--dsw-alias-accent); }
+.pane-web-back:disabled { opacity: 0.4; cursor: default; }
 
 body[data-pane="open"] .face {
   grid-template-columns: var(--rail-width) minmax(0, 1fr) var(--pane-width);
@@ -5471,7 +5503,8 @@ body[data-rail="icons"][data-pane="open"] .face {
 
 .pane-close:hover { background: var(--dsw-alias-surface-raised); color: var(--dsw-alias-ink); }
 
-.pane-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.pane-body {
+  overflow-y: auto; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 
 .pane-tree {
   flex: 0 0 auto;

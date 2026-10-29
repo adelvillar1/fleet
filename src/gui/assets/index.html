@@ -174,18 +174,6 @@
             <path d="M15 15h1.5v1.5H15zM18.5 18.5H20V20h-1.5zM15 19.5h1.5V21H15zM19.5 15H21v1.5h-1.5z"></path>
           </svg>
         </button>
-        <button class="aside-toggle" id="aside-toggle" type="button"
-                aria-label="show the run's process" aria-pressed="true"
-                title="show the run's process">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
-               stroke-linecap="round" aria-hidden="true">
-            <rect x="3.5" y="4.5" width="17" height="15" rx="2"></rect>
-            <path d="M14.5 4.5v15"></path>
-            <path d="M17 9h1.5"></path>
-            <path d="M17 12.5h1.5"></path>
-            <path d="M17 16h1.5"></path>
-          </svg>
-        </button>
         <button class="theme-toggle" id="theme-toggle" type="button"
                 aria-label="choose a theme" title="choose a theme" data-theme="paper">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
@@ -195,7 +183,7 @@
           </svg>
         </button>
         <button class="pane-open" id="pane-open" type="button"
-                aria-label="open the files and deliverables pane" title="files, code and deliverables">
+                aria-label="the pane: the run, files, preview, web" title="the pane: the run, files, preview, web">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
                stroke-linecap="round" aria-hidden="true">
             <rect x="3.5" y="4.5" width="17" height="15" rx="2"></rect>
@@ -700,78 +688,16 @@
        work rather than over it. It is a grid column where the width
        allows, a pinned overlay when the nav is expanded at 1440, and
        the fixed drawer's content below 1180. -->
-  <aside class="dock rail" id="dock" aria-label="the run and the selected object">
-      <!-- The live process. A run is a loop, and this is where it is:
-           route, think, act, verify, with the current step, the turn,
-           the tool, and the elapsed time. It is the first card in the
-           aside because it answers "where are we" before "what exists". -->
-      <section class="card process-card" id="process-card">
-        <header class="card-head">
-          <h2>the run</h2>
-          <span class="dock-head-side">
-            <span class="count" id="process-state">idle</span>
-            <button class="ghost dock-fold" id="dock-fold" type="button"
-                    aria-label="collapse the dock" title="collapse this panel">collapse</button>
-          </span>
-        </header>
-        <div class="process-body" id="process-body"></div>
-        <!-- The only part of this card the event loop never rebuilds:
-             a half-typed steer survives every turn's repaint. -->
-        <div class="process-controls" id="process-controls" hidden>
-          <form class="process-steer" id="process-steer-form">
-            <input type="text" id="process-steer" placeholder="steer the run&hellip;"
-                   autocomplete="off" aria-label="steer this run" />
-            <button class="ghost" type="submit" title="send this steer to the run">steer</button>
-          </form>
-          <button class="process-stop" id="process-stop" type="button"
-                  title="stop at the run&rsquo;s next step">stop</button>
-        </div>
-      </section>
-
-      <section class="card dock-object" id="dock-object" hidden>
-        <header class="card-head">
-          <h2 id="dock-object-title">object</h2>
-          <button class="ghost" id="dock-object-close" type="button"
-                  title="close this object, and the dock if it opened it">close</button>
-        </header>
-        <div class="dock-object-body" id="dock-object-body"></div>
-      </section>
-
-      <section class="card" id="face-card">
-        <header class="card-head">
-          <h2>this session</h2>
-          <button class="ghost" id="inspect-face" type="button">inspect</button>
-        </header>
-        <dl class="facts" id="facts"></dl>
-      </section>
-
-      <!-- Where the trust state lives: the rules the owner has written
-           through the one writer, in the order the writer holds them.
-           A prompt that never comes back is this list. -->
-      <section class="card" id="trust-card">
-        <header class="card-head">
-          <h2>trust</h2>
-          <span class="count" id="rule-count">0</span>
-        </header>
-        <p class="card-note" id="trust-note">
-          Calls the owner has said yes to for good. A remembered rule stops the prompt before it
-          is drawn, so the seat thins out as the work repeats.
-        </p>
-        <ul class="rules" id="rules"></ul>
-      </section>
-  </aside>
-
-  <!-- The pane: the working directory, beside the surface rather than in
-       it. The tree explores, the viewer reads the actual code, and the
-       preview renders a deliverable. It is contained to the directory
-       this face was launched from, and a credential file is refused by
-       name — the browser can ask for a file now, which is exactly where
-       one would leak. -->
-  <aside class="pane" id="pane" hidden aria-label="files and deliverables">
+  <aside class="pane" id="pane" hidden aria-label="the pane: the run, files, preview, web">
+    <div class="pane-grip" id="pane-grip" role="separator" aria-orientation="vertical"
+         aria-label="resize the pane" aria-valuemin="300" aria-valuemax="720"
+         aria-valuenow="440" tabindex="0" title="drag to resize · double-click resets · arrow keys too"></div>
     <header class="pane-head">
       <div class="pane-tabs" role="tablist" aria-label="pane view">
-        <button class="pane-tab active" id="tab-files" type="button" role="tab"
-                aria-controls="pane-files" aria-selected="true">files</button>
+        <button class="pane-tab active" id="tab-run" type="button" role="tab"
+                aria-controls="pane-run" aria-selected="true">run</button>
+        <button class="pane-tab" id="tab-files" type="button" role="tab"
+                aria-controls="pane-files" aria-selected="false">files</button>
         <button class="pane-tab" id="tab-preview" type="button" role="tab"
                 aria-controls="pane-preview" aria-selected="false">preview</button>
         <button class="pane-tab" id="tab-web" type="button" role="tab"
@@ -781,7 +707,70 @@
         <span aria-hidden="true">›</span>
       </button>
     </header>
-    <div class="pane-body" id="pane-files" role="tabpanel" aria-labelledby="tab-files">
+
+<!-- The pane: the working directory, beside the surface rather than in
+     it. The tree explores, the viewer reads the actual code, and the
+     preview renders a deliverable. It is contained to the directory
+     this face was launched from, and a credential file is refused by
+     name — the browser can ask for a file now, which is exactly where
+     one would leak. -->
+    <section class="card dock-object" id="dock-object" hidden>
+      <header class="card-head">
+        <h2 id="dock-object-title">object</h2>
+        <button class="ghost" id="dock-object-close" type="button"
+                title="close this object, and the dock if it opened it">close</button>
+      </header>
+      <div class="dock-object-body" id="dock-object-body"></div>
+    </section>
+
+    <div class="pane-body" id="pane-run" role="tabpanel" aria-labelledby="tab-run">
+    <section class="card process-card" id="process-card">
+      <header class="card-head">
+        <h2>the run</h2>
+        <span class="dock-head-side">
+          <span class="count" id="process-state">idle</span>
+        </span>
+      </header>
+      <div class="process-body" id="process-body"></div>
+      <!-- The only part of this card the event loop never rebuilds:
+           a half-typed steer survives every turn's repaint. -->
+      <div class="process-controls" id="process-controls" hidden>
+        <form class="process-steer" id="process-steer-form">
+          <input type="text" id="process-steer" placeholder="steer the run&hellip;"
+                 autocomplete="off" aria-label="steer this run" />
+          <button class="ghost" type="submit" title="send this steer to the run">steer</button>
+        </form>
+        <button class="process-stop" id="process-stop" type="button"
+                title="stop at the run&rsquo;s next step">stop</button>
+      </div>
+    </section>
+
+
+    <section class="card" id="face-card">
+      <header class="card-head">
+        <h2>this session</h2>
+        <button class="ghost" id="inspect-face" type="button">inspect</button>
+      </header>
+      <dl class="facts" id="facts"></dl>
+    </section>
+
+    <!-- Where the trust state lives: the rules the owner has written
+         through the one writer, in the order the writer holds them.
+         A prompt that never comes back is this list. -->
+    <section class="card" id="trust-card">
+      <header class="card-head">
+        <h2>trust</h2>
+        <span class="count" id="rule-count">0</span>
+      </header>
+      <p class="card-note" id="trust-note">
+        Calls the owner has said yes to for good. A remembered rule stops the prompt before it
+        is drawn, so the seat thins out as the work repeats.
+      </p>
+      <ul class="rules" id="rules"></ul>
+    </section>
+
+    </div>
+    <div class="pane-body" id="pane-files" role="tabpanel" aria-labelledby="tab-files" hidden>
       <nav class="pane-tree" id="pane-tree" aria-label="the working directory"></nav>
       <div class="pane-file" id="pane-file"></div>
     </div>
@@ -790,10 +779,15 @@
     </div>
     <div class="pane-body" id="pane-web" role="tabpanel" aria-labelledby="tab-web" hidden>
       <form class="pane-address" id="pane-address">
+        <button class="pane-web-back" id="pane-web-back" type="button"
+                aria-label="back in this tab's addresses" title="back" disabled>&lsaquo;</button>
         <input class="pane-address-box" id="pane-address-box" type="text"
                autocomplete="off" spellcheck="false" placeholder="an http or https address"
-               aria-label="the address to read">
-        <button class="pane-address-go" type="submit">read</button>
+               aria-label="the address to open">
+        <button class="pane-address-go" type="submit">open</button>
+        <button class="pane-web-out" id="pane-web-out" type="button"
+                aria-label="open this address in your browser" title="open in your browser"
+                hidden>&#8599;</button>
       </form>
       <div class="pane-page" id="pane-page"></div>
     </div>

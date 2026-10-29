@@ -90,17 +90,30 @@ uses its own three-step loop (plan, review, build).
   end the next run in the same session.
 
 The topbar carries a compact process chip on every panel, so a run is
-visible while the owner is reading the router or a board. The dock is
-collapsible from the topbar; when it is closed, the same state becomes
-one line above the composer.
+visible while the owner is reading the router or a board; the strip
+becomes one line above the composer when the pane is closed.
 
-**The dock's layout.** From 1600px the nav, content, and dock stand as
-three columns. From 1181–1599 opening the dock folds the nav to its
-icon rail; expanding the nav while the dock is open turns the dock into
-a pinned overlay, and closing it restores the nav mode the owner had.
-At 1180px and below there is no dock column: the process becomes the
-strip above the composer and selected objects use the fixed drawer.
-The dock and the file/preview pane are mutually exclusive columns.
+**The pane is the one right surface.** One icon opens it; there is no
+second version. Four tabs: **run** (the live loop — route, think, act,
+verify — with the stop and steer controls, and the session and trust
+cards beneath it when no object is selected), **files** (the working
+directory's tree beside one file's code), **preview** (the deliverable
+as the owner will see it, the deck ahead of any file), and **web** (an
+address bar that renders the site live when the site allows framing —
+the pane checks the site's own `x-frame-options` and CSP before
+rendering, names the refusal in the site's words when it does not, and
+stands the prose reader and the owner's browser beside it as the two
+doors; a framed page cannot navigate the pane away). Selecting an
+object opens the pane with the object's card above the tab body, the
+run's cards standing down while it speaks; at and below 1180px the
+fixed drawer keeps that job.
+
+**The owner's width.** The pane's left edge is a grip: drag it and the
+width follows between a 300px floor and the stage's own, the choice
+persists across reloads, a double-click resets, and the grip is a
+separator the keyboard steps with the arrow keys. While a drag is in
+flight a live page's pointer events stand down, so the frame cannot
+swallow the move.
 
 ## Selected objects and related suggestions
 
@@ -304,7 +317,7 @@ Escape clears the object, never the dock.
 | `GET /api/related` | cross-kind related objects for one selected id |
 | `GET/POST /api/usage` | the browser's counters and the adaptation knob |
 | `GET /api/router`, `/api/delegation`, `/api/memory`, `/api/skills`, `/api/sessions`, `/api/session`, `/api/calibration`, `/api/tower`, `/api/second-brain`, `/api/settings` | the panels' own reads |
-| `GET /api/tree`, `/api/file`, `/api/web` | the pane's contained reads: the working directory, a credential-refusing file read, a guarded fetch |
+| `GET /api/tree`, `/api/file`, `/api/web`, `/api/web/frame` | the pane's contained reads: the working directory, a credential-refusing file read, a guarded fetch, and the framing verdict the browser tab renders by |
 | `GET /api/channels` | the channel control plane: the service's status (and whether its heartbeat still beats), every channel's paired and pending peers, and the newest fifty activity lines with the bound named |
 | `POST /api/channels/{start,stop,pair,capability,revoke,forget}` | the control plane's writes. `pair` answers with the token exactly once; there is no read that returns it again |
 | `GET /api/access`, `POST /api/access/revoke` | the paired devices and channel peers, by name and digest only, and the revocation that forgets one |

@@ -2215,6 +2215,26 @@ impl Bridge {
         }
     }
 
+    /// The framing verdict the pane's browser needs: will the site
+    /// allow being framed? The site's own headers answer; the reason
+    /// names them, and the face offers the reader door beside it.
+    pub async fn web_frame(&self, url: &str) -> Value {
+        let url = url.trim().to_string();
+        match tokio::task::spawn_blocking(move || crate::web::framable(&url)).await {
+            Ok(Ok(verdict)) => json!({
+                "type": "web-frame",
+                "url": verdict.url,
+                "framable": verdict.framable,
+                "reason": verdict.reason,
+                "content_type": verdict.content_type,
+            }),
+            Ok(Err(reason)) => {
+                json!({"type": "web-frame", "refused": [reason.to_string()]})
+            }
+            Err(_) => json!({"type": "web-frame", "refused": ["the check did not land"]}),
+        }
+    }
+
     /// The pane's tree read, off the working directory.
     pub async fn tree(&self, asked: &str) -> Value {
         let root = self.cwd.clone();

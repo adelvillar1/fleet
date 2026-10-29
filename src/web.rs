@@ -230,6 +230,89 @@ impl Readable {
 }
 
 /// Fetch one page, following and re-validating every redirect.
+/// The verdict a browser-in-the-pane needs before it renders an
+/// address live: will the site allow being framed? The site's own
+/// headers answer — `x-frame-options` and CSP `frame-ancestors` — and
+/// the content type must be a document at all. The body is never read:
+/// the headers are the whole answer.
+pub struct FrameVerdict {
+    /// The address after redirects — what the pane's address bar shows.
+    pub url: String,
+    pub framable: bool,
+    /// Why not, in the site's own words, when `framable` is false.
+    pub reason: String,
+    pub content_type: String,
+}
+
+pub fn framable(url: &str) -> Result<FrameVerdict, FetchError> {
+    let agent = ureq::AgentBuilder::new()
+        .timeout(FETCH_TIMEOUT)
+        .redirects(0)
+        .user_agent(USER_AGENT)
+        .build();
+    let mut current = url.to_string();
+    for _ in 0..=MAX_REDIRECTS {
+        let (checked, _host) = guard(&current)?;
+        let response = agent
+            .get(&checked)
+            .call()
+            .map_err(|error| FetchError::Transport(error.to_string()))?;
+        let status = response.status();
+        if (300..400).contains(&status) {
+            let Some(location) = response.header("location") else {
+                return Err(FetchError::Transport(format!(
+                    "a {status} with no location to follow"
+                )));
+            };
+            current = resolve_redirect(&current, location);
+            continue;
+        }
+        let content_type = response
+            .header("content-type")
+            .unwrap_or_default()
+            .to_string();
+        let xfo = response
+            .header("x-frame-options")
+            .unwrap_or_default()
+            .to_uppercase();
+        let csp = response
+            .header("content-security-policy")
+            .unwrap_or_default()
+            .to_lowercase();
+        // A frame renders documents: HTML, or a server that names no
+        // type (the lenient read — the frame itself will show what the
+        // site serves). Anything download-shaped stays behind the
+        // reader door.
+        let is_document = content_type.is_empty() || content_type.starts_with("text/html");
+        let denied_by_xfo = xfo.contains("DENY") || xfo.contains("SAMEORIGIN");
+        let denied_by_csp = csp.split(';').any(|directive| {
+            let directive = directive.trim();
+            directive.starts_with("frame-ancestors")
+                && !directive
+                    .split_whitespace()
+                    .any(|token| token == "*" || token == "http:" || token == "https:")
+        });
+        let framable = is_document && !denied_by_xfo && !denied_by_csp;
+        let reason = if !is_document {
+            format!("the address is a {content_type}, not a document to render")
+        } else if denied_by_xfo {
+            format!("the site's own x-frame-options says {xfo}")
+        } else if denied_by_csp {
+            "the site's content-security-policy forbids being framed".to_string()
+        } else {
+            String::new()
+        };
+        // The response drops here unread: the headers were the answer.
+        return Ok(FrameVerdict {
+            url: current,
+            framable,
+            reason,
+            content_type,
+        });
+    }
+    Err(FetchError::Transport("too many redirects".to_string()))
+}
+
 pub fn fetch(url: &str) -> Result<Page, FetchError> {
     let agent = ureq::AgentBuilder::new()
         .timeout(FETCH_TIMEOUT)

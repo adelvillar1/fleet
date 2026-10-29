@@ -192,6 +192,13 @@ function boot(options) {
   const body = new El('body');
   const documentElement = new El('html');
   documentElement.children = Object.values(IDS);
+  // A static `hidden` attribute is the element's real initial state: the
+  // pane, the drawer, the work column all boot hidden, and a face that
+  // toggles them reads the attribute, not a stub default.
+  PAGE_IDS.forEach((id) => {
+    const tag = HTML.match(new RegExp('<[^>]*id="' + id + '"[^>]*>'));
+    if (tag && /\shidden[\s>]/.test(tag[0])) IDS[id].hidden = true;
+  });
   const calls = [];
   const events = [];
   let streamSource = null;
@@ -326,6 +333,28 @@ function boot(options) {
     }
     if (pathOnly === '/api/run') {
       return Promise.resolve({ status: 200, json: () => Promise.resolve({ type: 'run', accepted: true }) });
+    }
+    if (pathOnly === '/api/memory') {
+      return Promise.resolve({
+        status: 200,
+        json: () => Promise.resolve(documents.memory || { type: 'memory', facts: [], hits: [] }),
+      });
+    }
+    if (pathOnly === '/api/web/frame') {
+      const asked = new URL('http://x' + url).searchParams.get('url') || '';
+      return Promise.resolve({
+        status: 200,
+        json: () => Promise.resolve(documents.webFrame ||
+          { type: 'web-frame', url: asked, framable: true, reason: '', content_type: 'text/html' }),
+      });
+    }
+    if (pathOnly === '/api/web') {
+      const asked = new URL('http://x' + url).searchParams.get('url') || '';
+      return Promise.resolve({
+        status: 200,
+        json: () => Promise.resolve(documents.web ||
+          { type: 'web', url: asked, title: 'the page', blocks: [], links: [] }),
+      });
     }
     if (pathOnly === '/api/workspace-history') {
       return Promise.resolve({
@@ -872,7 +901,7 @@ async function aFinishedRunStopsBlockingTheNextSend() {
 }
 
 
-// C7: the dock is closed by default at 1600 and the work column holds
+// C7: the pane is the one right surface and the work column holds
 // its place; the prose measure stays inside 80ch. The mode is the DOM's
 // to prove here; the rules that produce the geometry are read from the
 // stylesheet, because a DOM stub has no layout engine (the live pass
@@ -893,8 +922,16 @@ async function theDockIsClosedAndTheWorkColumnTakesItsPlace() {
   await flush();
   page.open();
   await flush();
-  check('C7 the dock is closed by default at 1600', page.body.dataset.aside === 'closed',
-    String(page.body.dataset.aside));
+  check('C7 one entry: no aside toggle, one pane button',
+    !HTML.includes('aside-toggle') && HTML.includes('id="pane-open"') &&
+      !HTML.includes('class="dock rail"'),
+    'html');
+  check('C7 the pane carries the four tabs, run first',
+    HTML.includes('id="tab-run"') && HTML.includes('id="pane-run"') &&
+      HTML.indexOf('tab-run') < HTML.indexOf('tab-files') &&
+      HTML.includes('id="process-card"') === true &&
+      HTML.indexOf('id="process-card"') > HTML.indexOf('id="pane-run"'),
+    'tabs');
   check('C7 the work column is open', page.body.dataset.work === 'open', String(page.body.dataset.work));
   check('C7 the work column is shown', page.IDS['work-col'].hidden === false, 'hidden');
   check('C7 the column has a width token', flat(CSS).includes('--work-width: 320px'), '--work-width');
@@ -3079,6 +3116,130 @@ async function theQueuedMessagesCarryTheirActions() {
     ruleBlock('.queue-text') + ' | ' + ruleBlock('.queue-row'));
 }
 
+
+// The unified pane: one entry, the run tab alive, the object card in
+// the pane, the grip owning the width, and the web tab rendering live
+// or naming the refusal with its two doors.
+async function thePaneIsOneSurfaceWithTheOwnersHandOnIt() {
+  const doc = {
+    sessions: {
+      type: 'sessions', read_at: 'now', current: '',
+      counts: { needs: 0, working: 0, background: 0, earlier: 1, total: 1 },
+      sessions: [row('pane-1', 'completed', { title: 'a conversation' })],
+    },
+    state: (asked) => ({ ...emptyState(asked), session: asked }),
+    memory: { type: 'memory', hits: [], facts: [{
+      id: 'fact-1', name: 'the fact the owner presses',
+      description: 'what the corpus knows', fact_type: 'fact', basis: 'the evidence',
+      tier: 'fact', recall_count: 1, retired: false,
+    }] },
+    webFrame: { type: 'web-frame', url: 'https://example.com/x',
+      framable: false, reason: "the site's own x-frame-options says DENY",
+      content_type: 'text/html' },
+  };
+  const page = boot({ width: 1440, hash: '#/sessions/pane-1', documents: doc });
+  await flush();
+  page.open();
+  await flush(60);
+
+  // The run tab: the pane opens on it, and the process card paints in it.
+  page.rows('#pane-open')[0].click();
+  await flush(40);
+  check('P the pane opens on the run tab',
+    page.body.dataset.pane === 'open' &&
+      page.IDS['pane-run'].hidden === false &&
+      page.IDS['tab-run'].getAttribute('aria-selected') === 'true',
+    page.body.dataset.pane + ' / ' + page.IDS['pane-run'].hidden);
+  check('P the process card lives in the pane and painted',
+    HTML.indexOf('id="pane-run"') < HTML.indexOf('id="process-card"') &&
+      HTML.indexOf('id="process-card"') < HTML.indexOf('id="pane-files"') &&
+      page.text('process-state') !== '',
+    page.text('process-state'));
+
+  // The object: a press opens the pane with the object card above the
+  // body, and the run's own cards stand down while it speaks.
+  page.rows('.surfaces-link').find((l) => l.dataset.address === 'memory').click();
+  await flush(40);
+  const objectRow = page.rows('.mem-row')[0];
+  if (objectRow) objectRow.click();
+  await flush(40);
+  check('P the object card opens in the pane',
+    page.body.dataset.pane === 'open' && page.IDS['dock-object'].hidden === false &&
+      page.text('dock-object-title').length > 0,
+    page.text('dock-object-title'));
+  page.fireOn('dock-object-close', 'click');
+  await flush(20);
+  check('P closing the object returns the run tab',
+    page.IDS['dock-object'].hidden === true && page.IDS['face-card'].hidden === false,
+    'closed');
+
+  // The grip: drag left widens to the cap, the choice persists, the
+  // double-click resets, and the separator takes the keyboard.
+  const grip = page.rows('#pane-grip')[0];
+  grip.fire('pointerdown', { clientX: 1000, pointerId: 1 });
+  grip.fire('pointermove', { clientX: 700, pointerId: 1 });
+  grip.fire('pointerup', { clientX: 700, pointerId: 1 });
+  const widened = page.sandbox.document.documentElement.style.getPropertyValue('--pane-width');
+  check('P the drag widens the pane to its cap and persists',
+    widened === '720px' &&
+      JSON.stringify(page.sandbox.localStorage.getItem('fleet-pane-width')) === '"720"',
+    String(widened));
+  grip.fire('dblclick', {});
+  const reset = page.sandbox.document.documentElement.style.getPropertyValue('--pane-width');
+  check('P the double-click resets the width', reset === '440px', String(reset));
+  grip.fire('keydown', { key: 'ArrowLeft' });
+  const stepped = page.sandbox.document.documentElement.style.getPropertyValue('--pane-width');
+  check('P the arrow keys step the width', stepped === '464px', String(stepped));
+  check('P the grip is a separator with its bounds declared',
+    HTML.includes('role="separator"') && HTML.includes('aria-valuemin="300"') &&
+      ruleBlock('.pane-grip').includes('cursor: col-resize'),
+    'grip');
+
+  // The web tab: a refusing address names the site's own words and
+  // offers the reader door; a framable address renders live in the
+  // sandboxed frame; back walks the tab's own history.
+  page.IDS['tab-web'].click();
+  await flush(20);
+  page.IDS['pane-address-box'].value = 'example.com/x';
+  page.fireOn('pane-address', 'submit', {});
+  await flush(40);
+  check('P the refusal names the site and keeps it honest',
+    page.text('pane-page').includes('x-frame-options says DENY'),
+    page.text('pane-page').slice(0, 120));
+  check('P the frame URL carried the normalized address',
+    page.calls.some((c) => c.url.includes('/api/web/frame?url=https%3A%2F%2Fexample.com%2Fx')),
+    JSON.stringify(page.calls.filter((c) => c.url.includes('/api/web/frame')).map((c) => c.url)));
+  page.documents = page.documents || {};
+  const reader = page.rows('.pane-web-doors .row-rewind')[0];
+  if (reader) reader.click();
+  await flush(40);
+  check('P the reader door reads the prose',
+    page.calls.some((c) => c.url.includes('/api/web?url=')),
+    'reader');
+
+  const page2 = boot({
+    width: 1440, hash: '#/sessions/pane-1',
+    documents: { ...doc, webFrame: { type: 'web-frame', url: 'https://a.example/',
+      framable: true, reason: '', content_type: 'text/html' } },
+  });
+  await flush();
+  page2.open();
+  await flush(40);
+  page2.IDS['tab-web'].click();
+  await flush(20);
+  page2.IDS['pane-address-box'].value = 'a.example';
+  page2.fireOn('pane-address', 'submit', {});
+  await flush(40);
+  const frame = page2.rows('.pane-frame')[0];
+  check('P a framable address renders live in the sandboxed frame',
+    frame && frame.getAttribute('sandbox').includes('allow-scripts') &&
+      frame.getAttribute('sandbox').includes('allow-forms') &&
+      !frame.getAttribute('sandbox').includes('allow-top-navigation'),
+    frame ? frame.getAttribute('sandbox') : 'no frame');
+  check('P the out door offers the owner\u2019s browser',
+    page2.IDS['pane-web-out'].hidden === false, 'out');
+}
+
 const cases = [
   ['C1/C8 the list groups by attention and counts what the server counted', theListGroupsByAttentionAndCountsWhatTheServerCounted],
   ['C2 every state opens through one verb', everyStateOpensThroughOneVerb],
@@ -3116,6 +3277,7 @@ const cases = [
   ['N2 New mints nothing until words exist', newMintsNothingUntilWordsExist],
   ['N3 the rail badge says where the work is', theRailBadgeSaysWhereTheWorkIs],
   ['Q the queued messages carry their actions', theQueuedMessagesCarryTheirActions],
+  ['P the pane is one surface with the owner\u2019s hand on it', thePaneIsOneSurfaceWithTheOwnersHandOnIt],
 ];
 
 for (const [name, run] of cases) {

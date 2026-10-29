@@ -167,10 +167,10 @@ store and its diff, and a command palette over every pane and panel
 
 | You want to | Say |
 |---|---|
-| one task, start to finish | `fleet run "<task>"` |
+| one task, start to finish | `fleet run "<task>"` (`--probe` births it as verification traffic — the archive keeps it, the owner's screens don't show it) |
 | a working session, many tasks | `fleet chat` |
 | the browser console | `fleet gui` |
-| the archive of runs | `fleet sessions` (add `--recall <query>` to rank it, `--consolidate`, `--archive`) |
+| the archive of runs | `fleet sessions` (add `--recall <query>` to rank it, `--consolidate`, `--archive`, `--probe <id>` to mark verification traffic) |
 | what the lanes are doing | `fleet lanes` |
 | the routing roster | `fleet providers` |
 | the day's calibration stream | `fleet calib` (then `fleet judge`, `fleet delegate` for the grading beats) |
