@@ -62,8 +62,10 @@ reads never land in a child's feed.
 **The cut is named.** `moreBranches`, `moreLayers` and the per-branch
 `more` cursor are the substrate's own "there is more" — the document
 carries them as words (`truncated`) the face prints where the tree
-stands. A silent drop (the old 50-of-89) is the shape the surface
-never draws.
+stands, the instrument's line says "the newest N" when the page was
+cut, and the Files tabs carry the same note rather than a shorter list
+passing as the whole. A silent drop (the old 50-of-89) is the shape the
+surface never draws.
 
 **The CLI survives where the backend cannot.** `fs list` (the Files
 pane's listing), `fs read`/`fs stat`/`fs blame` (the file's
@@ -77,9 +79,15 @@ exports the recipe used to need are gone: `fleet install` records the
 machine's facts, and the reads and the runs compose from them.
 
 **A dead read is named, never an empty view.** A failed script, a
-worker that does not answer — each is a named reason on the document.
-An empty list that reads as "nothing here" is the one shape the
-surface never draws.
+worker that does not answer — each is a named reason on the document,
+and the two failures a Docker reset produces are named in the panel's
+language *before* the script runs: a recorded worker with nothing
+answering on its port reads "the LayerFS worker is not running — start
+it with `fleet install`", and a Store volume the reset took reads "the
+project's LayerFS Store volume is missing — re-register the folder; its
+history restarts empty". The script's own words ride after the named
+cause, bounded, as evidence. An empty list that reads as "nothing
+here" is the one shape the surface never draws.
 
 ## The section
 
@@ -87,27 +95,39 @@ Five cards, all from one read — the vocabulary the substrate itself
 carries (the reference the `dsh-layerfs` plugin draws with):
 
 - **the tree** — main's spine with a **band** for every Layer (coloured
-  by the branch that published it), one **lane** per branch with work
-  sprouting from a **fork node at its actual base** (the `base` /
-  `forkedFrom` the old face parsed and never drew), a **leaf** for
-  every commit, and a **dashed stem** where a publish grafted a leaf
+  by the branch that published it), one **lane** per branch with work —
+  a head *or* a merge the Layers record — sprouting from a **fork node
+  at the Commit it forked from** (`forkedFrom` when the page carries
+  it, the Layer's `base` as the fallback), a **leaf** per commit the
+  page carries, and a **dashed stem** where a publish grafted a leaf
   back to the band it made (`layer.sourceCommit` — on the live store
   every merge lands there, while the commits' own merge fields are
-  null). Lanes pack nearest the spine; time is event slots, not the
+  null). A merged branch whose head is gone has no leaf to stem from —
+  `get_history` skips a head-null branch's commits — so its **ring
+  stands alone on the band**, named by the Layer, and its lane and Work
+  row stay: finished work never reads as "forked, no work". Lane bodies
+  follow each commit's own `parent` (a parent outside the page starts a
+  new segment), so the drawing never implies a link the read did not
+  carry. Lanes pack nearest the spine; time is event slots, not the
   wall clock. A branch nobody worked is ONE idle chip with a count —
   never one column each (the store that motivated this plan had 89
   branches and the old graph drew ~4 lanes before clipping the rest
   off-canvas: the plot's `viewBox` is the content's size now and the
-  card scrolls). Zoom 25–200% + fit, drag or scroll to pan, a minimap
-  with the visible window, a hover card per node, sideways by default
-  with an upright toggle, and a click reads Files at that ref. The lane
-  colours are the `--lane-0…5` palette, defined in all four themes;
-  the semantic tones stay semantic.
+  card scrolls). Commits whose branch the page cut are counted under
+  the tree, so the strip's commit figure and the leaves agree or the
+  note says why they cannot. Zoom 25–200% + fit, drag or scroll to pan,
+  a minimap with the visible window, a hover card per node, sideways by
+  default with an upright toggle, and a click reads Files at that ref.
+  The lane colours are the `--lane-0…5` palette, defined in all four
+  themes; the semantic tones stay semantic.
 - **the work** — every branch with work as `C<ordinal> · ↓ L<k>` (its
-  head commit's place in the run, and the layer it forked from), its
-  state (merged / open / idle — derived from the layers that name it,
-  never recorded twice), its last activity, and the child session and
-  outcome joined from the day's delegation rows.
+  head commit's place in the run, and the layer it forked from — with
+  `(page)` when the layer list itself was cut), its state (merged /
+  open / idle — derived from the layers that name it, never recorded
+  twice), its last activity, and the child session and outcome joined
+  from the day's delegation rows. A merged branch whose commit is
+  outside the page reads `merged · the layer carries its commit` — the
+  work happened, and the Layer is where it stays legible.
 - **the calls** — the live feed: the substrate's own trace
   (`LAYERFS_TRACE=<home>/traces/<session>.jsonl`, set per child by the
   arm) tailed with per-file offsets, held trailing lines, and the 200

@@ -395,7 +395,15 @@ fn parse_commit(commit: &serde_json::Value) -> CommitView {
             .map(|items| {
                 items
                     .iter()
-                    .filter_map(|item| item.as_str().map(str::to_string))
+                    .filter_map(|item| match item {
+                        // The wire's entries are objects
+                        // (`{path, kept, deleted, rule}`); the bare
+                        // strings are the older shape, kept for a
+                        // reader of either.
+                        serde_json::Value::String(text) => Some(text.clone()),
+                        serde_json::Value::Object(entry) => Some(lww_line(entry)),
+                        _ => None,
+                    })
                     .collect()
             })
             .unwrap_or_default(),
@@ -842,6 +850,13 @@ fn backend_answer(
         .as_ref()
         .map(|machine| machine.home.clone())
         .unwrap_or_else(|_| home.to_path_buf());
+    // A worker the home records but nothing answers is named before the
+    // script runs: the node stack's first line blames the script, and
+    // the cause is the worker — a Docker reset takes the container and
+    // leaves the endpoint file pointing at its dead port.
+    if let Some(gap) = worker_gap(&layerfs_home) {
+        return Err(gap);
+    }
     let script = history_script(&layerfs_home)?;
     // The bundle is the machine's own record, never the process env: a
     // face launched in a clean environment has no LAYERFS_* facts, and
@@ -863,10 +878,17 @@ fn backend_answer(
         .output()
         .map_err(|error| format!("the history script could not run: {error}"))?;
     if !output.status.success() {
-        return Err(format!(
-            "the script failed: {}",
-            bounded_stderr(&output.stderr)
-        ));
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        // A recognized substrate failure is named first — the panel is
+        // told what to do — with the script's own words kept after it
+        // as evidence, bounded like every other read's.
+        return Err(match named_refusal(&stderr) {
+            Some(cause) => format!(
+                "{cause} \u{2014} the script said: {}",
+                bounded_stderr(&output.stderr)
+            ),
+            None => format!("the script failed: {}", bounded_stderr(&output.stderr)),
+        });
     }
     let document: serde_json::Value = serde_json::from_slice(&output.stdout)
         .map_err(|error| format!("the script's answer was not JSON: {error}"))?;
@@ -874,6 +896,76 @@ fn backend_answer(
         return Err(error.to_string());
     }
     Ok(document)
+}
+
+/// One last-writer-wins entry as the hover card reads it. The substrate
+/// emits objects (`{path, kept, deleted, rule}`) — the old parse took
+/// strings only, so every real entry was dropped and the field looked
+/// parsed while always empty.
+fn lww_line(entry: &serde_json::Map<String, serde_json::Value>) -> String {
+    let text = |key: &str| {
+        entry
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+    };
+    let mut said = if text("path").is_empty() {
+        "(an unnamed path)".to_string()
+    } else {
+        text("path").to_string()
+    };
+    if !text("rule").is_empty() {
+        said.push_str(" \u{00b7} ");
+        said.push_str(text("rule"));
+    }
+    if !text("deleted").is_empty() {
+        said.push_str(" \u{2014} dropped ");
+        said.push_str(text("deleted"));
+    }
+    if said.chars().count() > 120 {
+        said = said.chars().take(117).collect::<String>() + "\u{2026}";
+    }
+    said
+}
+
+/// The worker the reads ride, when the home records one and nothing
+/// answers on its port. A home that never provisioned a worker has no
+/// endpoint file and is not told to start one — the script's own
+/// failure is its answer there.
+fn worker_gap(layerfs_home: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(layerfs_home.join("worker").join("endpoint.json")).ok()?;
+    let port = serde_json::from_str::<serde_json::Value>(&text)
+        .ok()?
+        .get("port")?
+        .as_u64()?;
+    let port = u16::try_from(port).ok()?;
+    let address = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+    match std::net::TcpStream::connect_timeout(&address, std::time::Duration::from_millis(300)) {
+        Ok(_) => None,
+        Err(_) => Some(format!(
+            "the LayerFS worker is not running (nothing answers on {address}) \u{2014} start it with `fleet install`"
+        )),
+    }
+}
+
+/// A substrate failure translated to its named cause — the two a Docker
+/// reset produces (the worker gone, then the Store volume gone) named
+/// in the panel's language instead of an uncaught node stack. `None`
+/// for anything unrecognized: the caller prints it verbatim rather than
+/// guessing.
+fn named_refusal(stderr: &str) -> Option<String> {
+    if stderr.contains("the LayerFS worker did not answer") {
+        return Some(
+            "the LayerFS worker is not running \u{2014} start it with `fleet install`".to_string(),
+        );
+    }
+    if stderr.contains("cannot be examined") && stderr.contains("ENOENT") {
+        return Some(
+            "the project's LayerFS Store volume is missing (a Docker reset removes it) \u{2014} re-register the folder; its history restarts empty"
+                .to_string(),
+        );
+    }
+    None
 }
 
 /// The instrument's file reads: one route, four modes — text (a
@@ -1305,6 +1397,144 @@ appendFileSync({count:?}, JSON.stringify(process.argv.slice(2)) + \"\\n\");
         )
         .unwrap();
         (script, count)
+    }
+
+    #[test]
+    fn a_substrate_failure_is_named_in_the_panels_language() {
+        // The two failures a Docker reset produces, verbatim from the
+        // node SDK's uncaught throw, are recognized by name.
+        let worker = "LayerFSError: Failed: the LayerFS worker did not answer (connect ECONNREFUSED 127.0.0.1:54277); the call was not sent\n    at outcome (file:///bundle/client.js:40)";
+        let named = named_refusal(worker).expect("the worker failure is recognized");
+        assert!(named.contains("worker is not running"), "{named}");
+        assert!(named.contains("fleet install"), "{named}");
+        let store = "LayerFSError: Unsupported: the Store's directory /var/lib/docker/volumes/v/_data/global cannot be examined: ENOENT: No such file or directory";
+        let named = named_refusal(store).expect("the missing store is recognized");
+        assert!(named.contains("Store volume is missing"), "{named}");
+        assert!(named.contains("restarts empty"), "{named}");
+        // Anything unrecognized keeps its own words.
+        assert!(named_refusal("TypeError: something else broke").is_none());
+    }
+
+    #[test]
+    fn a_recorded_worker_that_answers_nothing_is_named_before_the_script() {
+        let root = std::env::temp_dir().join(format!(
+            "fleet-layerfs-worker-gap-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let layerfs_home = root.join("layerfs-home");
+        std::fs::create_dir_all(layerfs_home.join("worker")).unwrap();
+        let endpoint = layerfs_home.join("worker").join("endpoint.json");
+        // No endpoint file: no worker was ever recorded, so nothing is named.
+        assert!(worker_gap(&layerfs_home).is_none());
+        // A live port behind the record: no gap either.
+        let live = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let live_port = live.local_addr().unwrap().port();
+        std::fs::write(
+            &endpoint,
+            serde_json::json!({ "port": live_port }).to_string(),
+        )
+        .unwrap();
+        assert!(worker_gap(&layerfs_home).is_none());
+        drop(live);
+        // A closed port behind the record: named, with the address it
+        // was expected to answer on.
+        let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let closed_port = closed.local_addr().unwrap().port();
+        drop(closed);
+        std::fs::write(
+            &endpoint,
+            serde_json::json!({ "port": closed_port }).to_string(),
+        )
+        .unwrap();
+        let gap = worker_gap(&layerfs_home).expect("a dead worker is a gap");
+        assert!(gap.contains("worker is not running"), "{gap}");
+        assert!(gap.contains(&closed_port.to_string()), "{gap}");
+        assert!(gap.contains("fleet install"), "{gap}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_dead_worker_is_named_before_the_history_script_runs() {
+        let _lock = crate::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let root = std::env::temp_dir().join(format!(
+            "fleet-layerfs-dead-worker-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let home = view_home(&root);
+        // The machine's facts, so the read resolves the recorded home:
+        // a config carrying the layerfs home, bundle, and image.
+        let layerfs_home = root.join("layerfs-home");
+        let bundle = root.join("bundle");
+        std::fs::create_dir_all(layerfs_home.join("worker")).unwrap();
+        std::fs::create_dir_all(&bundle).unwrap();
+        let mut config: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(home.join("config.json")).unwrap())
+                .unwrap();
+        config["layerfs"]["home"] = serde_json::json!(layerfs_home.display().to_string());
+        config["layerfs"]["bundle"] = serde_json::json!(bundle.display().to_string());
+        config["layerfs"]["image"] = serde_json::json!("sha256:test");
+        std::fs::write(
+            home.join("config.json"),
+            serde_json::to_string(&config).unwrap(),
+        )
+        .unwrap();
+        // A recorded worker behind a closed port: the Docker reset's shape.
+        let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let closed_port = closed.local_addr().unwrap().port();
+        drop(closed);
+        std::fs::write(
+            layerfs_home.join("worker").join("endpoint.json"),
+            serde_json::json!({ "port": closed_port }).to_string(),
+        )
+        .unwrap();
+
+        let _home = EnvGuard::set("FLEET_HOME", &home);
+        let (script, count) = stub_history(&root.join("history"), &live_shape_answer());
+        let _history = EnvGuard::set("FLEET_LAYERFS_HISTORY", &script);
+        let err = history(&registration(), &home, None).expect_err("the dead worker refuses");
+        assert!(err.contains("worker is not running"), "{err}");
+        assert!(err.contains(&closed_port.to_string()), "{err}");
+        // The script never ran: the count file stays absent or empty.
+        let calls = std::fs::read_to_string(&count).unwrap_or_default();
+        assert!(calls.trim().is_empty(), "{calls}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_last_writer_wins_entry_reads_as_its_object() {
+        // The substrate's shape: `{path, kept, deleted, rule}` — the old
+        // parse kept only strings, so every entry vanished.
+        let entry = serde_json::json!({
+            "path": "docs/plans/x.md",
+            "kept": "main",
+            "deleted": "fleet-child-20261026t104335z-000000",
+            "rule": "newer wins"
+        });
+        let line = lww_line(entry.as_object().expect("an object"));
+        assert!(line.contains("docs/plans/x.md"), "{line}");
+        assert!(line.contains("newer wins"), "{line}");
+        assert!(line.contains("dropped fleet-child"), "{line}");
+        // A bare string still reads as itself (the older shape).
+        let legacy: Vec<serde_json::Value> = vec![serde_json::json!("plain entry")];
+        let parsed: Vec<String> = legacy
+            .iter()
+            .filter_map(|item| match item {
+                serde_json::Value::String(text) => Some(text.clone()),
+                serde_json::Value::Object(map) => Some(lww_line(map)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(parsed, vec!["plain entry".to_string()]);
     }
 
     fn view_home(root: &std::path::Path) -> std::path::PathBuf {

@@ -9803,9 +9803,10 @@
       read.registered === false ? 'no project' : (read.project || 'the project'),
       read.registered === false
         ? 'the launch folder has no LayerFS project yet'
-        : (branches.length + (branches.length === 1 ? ' branch' : ' branches') +
+        : (read.truncated ? 'the newest ' : '') +
+           branches.length + (branches.length === 1 ? ' branch' : ' branches') +
            ' \u00b7 ' + commits + ' commits \u00b7 ' + layers.length +
-           (layers.length === 1 ? ' layer' : ' layers')),
+           (layers.length === 1 ? ' layer' : ' layers'),
       [{
         label: 'refresh',
         run: function () {
@@ -9822,7 +9823,9 @@
       [commits, 'commits'],
       [layers.length, 'layers'],
       [storage ? Math.round(storage.stored / 1048576) : 0, 'MB stored'],
-      [storage ? Math.round(storage.dedupe * 100) / 100 : 0, 'dedupe'],
+      [storage && storage.canonical > 0
+        ? Math.round((storage.logical / storage.canonical) * 100) / 100
+        : '\u2014', 'dedupe'],
       [(read.refused || []).length, 'reads refused', (read.refused || []).length ? 'down' : null]
     ], read.project ? 'project ' + read.project : 'no project registered'));
 
@@ -9888,7 +9891,12 @@
     // The branches with work, in fork order, one lane each — the free
     // lane nearest the spine, alternating sides.
     var worked = (read.branches || []).filter(function (branch) {
-      return branch.name !== 'main' && branch.head;
+      // A head, or a merge the Layer records: get_history skips a
+      // merged branch's commits, so its head is gone with them — but
+      // the merge is real and the Layer names the commit it published.
+      // Filtering on `head` alone was how finished work read as
+      // "forked, no work".
+      return branch.name !== 'main' && (branch.head || branch.state === 'merged');
     });
     worked.sort(function (a, b) {
       var ai = (a.base && layerIndex[a.base] !== undefined) ? layerIndex[a.base] : 999;
@@ -9901,16 +9909,27 @@
     });
     // The grafts: every published Layer names the Commit it was made
     // from — the dashed stem back to the band.
+    // The grafts: every published Layer names the Commit it was made
+    // from — kept even when that commit is outside the page (a merged
+    // branch's commits never arrive), because the merge is the fact.
     var grafts = layers.filter(function (layer) {
-      return layer.source_commit && slot[layer.source_commit] !== undefined;
+      return layer.source_commit;
     });
     var idle = (read.branches || []).filter(function (branch) {
-      return branch.name !== 'main' && !branch.head;
+      return branch.name !== 'main' && !branch.head && branch.state !== 'merged';
     });
+    // The commits the page carries whose branch it cannot draw (a cut
+    // branch): counted so the tree's note can say so instead of
+    // leaving the leaf count silently short of the strip's.
+    var drawn = {};
+    worked.forEach(function (branch) { drawn[branch.name] = true; });
+    var undrawn = commits.filter(function (commit) {
+      return commit.branch && !drawn[commit.branch];
+    }).length;
     return {
       layers: layers, layerIndex: layerIndex, commits: commits, ordinal: ordinal,
       slot: slot, totalSlots: totalSlots, worked: worked, lane: lane,
-      grafts: grafts, idle: idle,
+      grafts: grafts, idle: idle, undrawnCommits: undrawn,
       totalNodes: layers.length + commits.length
     };
   }
@@ -10035,6 +10054,14 @@
     if (read.truncated) {
       wrap.appendChild(node('p', 'dag-truncated', 'showing ' + read.truncated));
     }
+    if (layout.undrawnCommits) {
+      // The strip counts every commit the page carried; the leaves can
+      // only stand on branches the page drew. Say so rather than let
+      // the two numbers disagree in silence.
+      wrap.appendChild(node('p', 'dag-truncated',
+        layout.undrawnCommits + (layout.undrawnCommits === 1 ? ' commit belongs' : ' commits belong') +
+        ' to branches this page cut \u2014 no leaves for them here.'));
+    }
     card.appendChild(wrap);
     // Restore the pan the owner had, then show the newest end.
     if (face.historyScroll) scroll.scrollLeft = face.historyScroll;
@@ -10128,8 +10155,15 @@
       var mine = layout.commits.filter(function (commit) {
         return commit.branch === branch.name;
       });
-      var baseSlot = (branch.base && layout.slot[branch.base] !== undefined)
-        ? layout.slot[branch.base] : 0;
+      // The fork node sits at the Commit the branch forked FROM (the
+      // substrate's forkedFrom) when the page carries it; the Layer's
+      // base is the fallback. `base` alone collapsed every fork inside
+      // one layer onto a single spine slot.
+      var forkCommit = branch.forked_from && layout.slot[branch.forked_from] !== undefined
+        ? branch.forked_from : null;
+      var baseSlot = forkCommit !== null
+        ? layout.slot[forkCommit]
+        : (branch.base && layout.slot[branch.base] !== undefined) ? layout.slot[branch.base] : 0;
       var fork = pos(baseSlot, 0);
       var headAt = mine.length
         ? pos(layout.slot[mine[mine.length - 1].id], lane)
@@ -10138,17 +10172,35 @@
       plot.appendChild(svg('path', {
         d: bend(fork, headAt, sideways), class: 'dag-lane', stroke: color
       }));
-      // The lane's body through its commits.
-      if (mine.length > 1) {
-        var points = mine.map(function (commit) {
-          var at = pos(layout.slot[commit.id], lane);
-          return at.x + ' ' + at.y;
+      // The lane's body follows each commit's own parent — the ancestry
+      // the substrate reported — not the order the commits happen to
+      // arrive in. A parent outside the page starts a new segment, so
+      // the lane never implies a link the read did not carry.
+      var byIdHere = {};
+      mine.forEach(function (commit) { byIdHere[commit.id] = commit; });
+      var seenHere = {};
+      var segments = [];
+      mine.forEach(function (commit) {
+        if (seenHere[commit.id]) return;
+        var segment = [];
+        var at = commit;
+        while (at && !seenHere[at.id]) {
+          seenHere[at.id] = true;
+          segment.unshift(at);
+          at = at.parent && byIdHere[at.parent] ? byIdHere[at.parent] : null;
+        }
+        if (segment.length > 1) segments.push(segment);
+      });
+      segments.forEach(function (segment) {
+        var points = segment.map(function (commit) {
+          var spot = pos(layout.slot[commit.id], lane);
+          return spot.x + ' ' + spot.y;
         }).join(' L ');
-        var start = pos(layout.slot[mine[0].id], lane);
+        var start = pos(layout.slot[segment[0].id], lane);
         plot.appendChild(svg('path', {
           d: 'M ' + start.x + ' ' + start.y + ' L ' + points, class: 'dag-lane', stroke: color
         }));
-      }
+      });
       // The fork node at the branch's actual base.
       var forkNode = svg('rect', {
         x: fork.x - (sideways ? 3 : 4), y: fork.y - (sideways ? 4 : 3),
@@ -10158,8 +10210,9 @@
       bindNode(forkNode, nodes, {
         kind: 'fork', id: branch.name, at: fork,
         title: 'fork \u2190 ' + branch.name,
-        lines: ['fork: ' + branch.name, 'from ' + (branch.base || 'main').slice(0, 12) +
-          (branch.child ? ' \u00b7 child session ' + branch.child.session : '')],
+        lines: ['fork: ' + branch.name,
+          'from ' + (forkCommit ? 'commit ' + forkCommit.slice(0, 12) : (branch.base || 'main').slice(0, 12)) +
+            (branch.child ? ' \u00b7 child session ' + branch.child.session : '')],
         ref: branch.name, label: branch.name
       });
       plot.appendChild(forkNode);
@@ -10176,18 +10229,35 @@
             'C' + layout.ordinal[commit.id] + ' \u00b7 ' + (commit.message || '(no message)'),
             commit.id.slice(0, 12) + ' \u00b7 via ' + (commit.via || '?') +
               ' \u00b7 ' + historyTime(commit.time),
-            bytes(commit.logical) + ' tree \u00b7 +' + bytes(commit.new_stored) + ' stored'
-          ],
+            bytes(commit.logical) + ' tree \u00b7 +' + bytes(commit.new_stored) + ' stored',
+            (commit.merged_from ? 'merged from ' + String(commit.merged_from).slice(0, 12) : null),
+            (commit.lww && commit.lww.length
+              ? 'lww \u00b7 ' + commit.lww.slice(0, 3).map(function (entry) {
+                // The view hands strings; the raw wire shape is an
+                // object ({path, kept, deleted, rule}) — read either.
+                if (typeof entry === 'string') return entry;
+                if (entry && entry.path) {
+                  return entry.path + (entry.rule ? ' \u00b7 ' + entry.rule : '');
+                }
+                return '';
+              }).filter(Boolean).join(' \u00b7 ') +
+                (commit.lww.length > 3 ? ' \u00b7 +' + (commit.lww.length - 3) : '')
+              : null)
+          ].filter(Boolean),
           ref: commit.id, label: 'commit ' + commit.id.slice(0, 12)
         });
         plot.appendChild(leaf);
       });
-      // The head: the state dot and the name tag.
-      var headDot = svg('circle', {
-        cx: headAt.x, cy: headAt.y, r: 5, class: 'dag-head-dot', 'data-state': branch.state,
-        fill: color
-      });
-      plot.appendChild(headDot);
+      // The head: the state dot and the name tag. A merged branch whose
+      // commits are outside the page has no head to dot — its tag sits
+      // at the fork and the graft's ring carries the merge.
+      if (branch.head) {
+        var headDot = svg('circle', {
+          cx: headAt.x, cy: headAt.y, r: 5, class: 'dag-head-dot', 'data-state': branch.state,
+          fill: color
+        });
+        plot.appendChild(headDot);
+      }
       var tagAt = sideways
         ? { x: headAt.x + 9, y: headAt.y + 3 }
         : { x: headAt.x + 9, y: headAt.y + 3 };
@@ -10204,17 +10274,37 @@
       plot.appendChild(tag);
     });
     // The grafts: a dashed stem from the leaf a publish carried up to
-    // the band it made, with a ring at the stem's foot.
+    // the band it made, with a ring at the stem's foot — or, when that
+    // commit is outside the page (a merged branch's commits never
+    // arrive), the ring alone on the band, named by the Layer.
     layout.grafts.forEach(function (layer) {
-      var from = pos(layout.slot[layer.source_commit], layout.lane[layer.source_branch.replace(/^merge-/, '')] || 0);
+      var laneName = (layer.source_branch || '').replace(/^merge-/, '');
+      var laneY = layout.lane[laneName] !== undefined ? layout.lane[laneName] : 0;
+      var stroke = laneColor[layer.source_branch] || 'var(--dsw-alias-ink-tertiary)';
+      var known = layout.slot[layer.source_commit] !== undefined;
+      var from = known
+        ? pos(layout.slot[layer.source_commit], laneY)
+        : pos(layout.slot[layer.id], 0);
       var to = pos(layout.slot[layer.id], 0);
-      plot.appendChild(svg('path', {
-        d: bend(from, to, sideways), class: 'dag-graft', stroke: laneColor[layer.source_branch] || 'var(--dsw-alias-ink-tertiary)'
-      }));
-      plot.appendChild(svg('circle', {
-        cx: from.x, cy: from.y, r: 6, class: 'dag-ring',
-        stroke: laneColor[layer.source_branch] || 'var(--dsw-alias-ink-tertiary)'
-      }));
+      if (known) {
+        plot.appendChild(svg('path', {
+          d: bend(from, to, sideways), class: 'dag-graft', stroke: stroke
+        }));
+      }
+      var ring = svg('circle', {
+        cx: from.x, cy: from.y, r: 6, class: 'dag-ring', stroke: stroke
+      });
+      ring.appendChild(svg('title', null,
+        'merge: ' + (layer.source_branch || 'an unnamed branch') + ' \u00b7 from commit ' +
+        layer.source_commit.slice(0, 12) + (known ? '' : ' \u00b7 outside this page')));
+      if (known) {
+        ring.classList.add('dag-node');
+        ring.style.cursor = 'pointer';
+        ring.addEventListener('click', function () {
+          historyBrowse(layer.source_commit, 'commit ' + layer.source_commit.slice(0, 12));
+        });
+      }
+      plot.appendChild(ring);
     });
     if (!layout.layers.length && !layout.commits.length) {
       plot.appendChild(label(PAD, h / 2, 'dag-empty',
@@ -10367,7 +10457,9 @@
     var layerAt = {};
     layers.forEach(function (layer, index) { layerAt[layer.id] = index; });
     var rows = (read.branches || []).filter(function (branch) {
-      return branch.name !== 'main' && branch.head;
+      // A merged branch whose head is gone (its commits are outside the
+      // page) is still work that happened: the Layer records the merge.
+      return branch.name !== 'main' && (branch.head || branch.state === 'merged');
     });
     rows.forEach(function (branch) {
       var base = layerAt[branch.base || branch.forked_from];
@@ -10402,15 +10494,18 @@
       branchCell.appendChild(link);
       line.appendChild(branchCell);
       line.appendChild(node('td', null,
-        'C' + (ordinal[branch.head] || '?') + ' \u00b7 ' + branch.commitCount +
-        (branch.commitCount === 1 ? ' commit' : ' commits')));
+        branch.head
+          ? 'C' + (ordinal[branch.head] || '?') + ' \u00b7 ' + branch.commitCount +
+            (branch.commitCount === 1 ? ' commit' : ' commits')
+          : 'merged \u00b7 the layer carries its commit'));
       line.appendChild(node('td', null,
-        branch.layerBase ? ('\u2193 L' + branch.layerBase) : '\u2193 ?'));
+        (branch.layerBase ? ('\u2193 L' + branch.layerBase) : '\u2193 ?') +
+        (read.truncated ? ' (page)' : '')));
       var state = node('td');
       state.appendChild(node('span', 'chip' + (branch.state === 'merged' ? ' is-ok' : ''),
         historyStateWord(branch.state)));
       line.appendChild(state);
-      line.appendChild(node('td', null, historyTime(branch.lastAt)));
+      line.appendChild(node('td', null, branch.lastAt ? historyTime(branch.lastAt) : '\u2014'));
       line.appendChild(node('td', null,
         branch.child ? clip(branch.child.session, 26) + ' \u00b7 ' + (branch.child.outcome || '?') : '\u2014'));
       table.appendChild(line);
@@ -10508,6 +10603,11 @@
       tabs.appendChild(nodeTab);
     }
     card.appendChild(tabs);
+    if (read.truncated) {
+      card.appendChild(node('p', 'board-empty',
+        'The newest ' + branches.length + ' branches only — the page is capped at the ' +
+        'Store’s own reading limit and more remain; the tree’s note names what it cut.'));
+    }
     // The modes: the file's instruments. Diff stands on the ref's own
     // ends (the commit's parent or base), so it is offered only when
     // the read knows them.
@@ -10879,8 +10979,9 @@
       }, 0);
       card.appendChild(node('p', 'board-note',
         'per commit: ' + bytes(Math.round(sum / costed.length)) + ' average \u00b7 ' +
-        bytes(largest) + ' largest \u2014 from the ' + costed.length +
-        (costed.length === 1 ? ' commit' : ' commits') + ' the read carried.'));
+        bytes(largest) + ' largest \u2014 over the ' + costed.length +
+        (costed.length === 1 ? ' commit' : ' commits') + ' with a stored cost, of the ' +
+        commits.length + ' the page carried.'));
       var tall = Math.max.apply(null, costed.map(function (commit) { return commit.new_stored; }));
       var chart = node('div', 'figure-bars');
       costed.forEach(function (commit) {

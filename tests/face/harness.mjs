@@ -98,6 +98,10 @@ class El {
     this.offsetWidth = 320;
     this.offsetHeight = 40;
   }
+  getBoundingClientRect() {
+    return { left: 0, top: 0, right: 800, bottom: 600, width: 800, height: 600 };
+
+  }
   get textContent() {
     if (this.children.length) return this.children.map((c) => c.textContent).join('');
     return this._text;
@@ -2289,6 +2293,126 @@ async function theWorkspaceHistorySectionDrawsTheTreeItRead() {
   check('the cut is named in words',
     cut.rows('.dag-truncated').some((n) => /more remain in the Store/.test(n.textContent)),
     cut.rows('.dag-truncated').map((n) => n.textContent).join(' | '));
+  // The cut's own words: the instrument says "the newest" and the Files
+  // tabs name the cap instead of a shorter list passing as the whole.
+  check('a cut page says the newest, and the tabs name the cap',
+    cut.rows('.surface-tool-meta').some((n) => /the newest/.test(n.textContent)) &&
+      cut.rows('.board-card').some((c) => /newest 2 branches only/.test(c.textContent)),
+    cut.rows('.surface-tool-meta').map((n) => n.textContent).join(' | '));
+
+  // The truth fixtures: places the panel used to lie about the
+  // substrate's own model — a merged branch whose head is gone (its
+  // commits are outside the page), a fork at forkedFrom rather than
+  // the Layer's base, an out-of-page merge graft, the lww objects,
+  // commits on cut branches, and a null dedupe.
+  const hard = {
+    type: 'workspace-history', registered: true, folder: '/w', project: 'fleet',
+    version: 'v2',
+    branches: [
+      { name: 'main', base: 'L1', head: null, forked_from: null, state: 'idle', child: null },
+      {
+        name: 'child-worked', base: 'L1', head: 'C2', forked_from: 'C1', state: 'merged',
+        child: { session: '20261026T030000Z-hard00', outcome: 'completed' },
+      },
+      {
+        name: 'child-merged', base: 'L1', head: null, forked_from: 'C1', state: 'merged',
+        child: { session: '20261026T030000Z-hard01', outcome: 'completed' },
+      },
+      { name: 'child-idle', base: 'L1', head: null, forked_from: 'L1', state: 'idle', child: null },
+    ],
+    commits: [
+      {
+        id: 'C1', branch: 'child-worked', parent: null, second_parent: null, base: 'L1',
+        merged_from: null, displaced: null,
+        lww: [{ path: 'docs/x.md', kept: 'main', deleted: 'child-merged', rule: 'newer wins' }],
+        lww_truncated: false, logical: 100, new_canonical: 90, new_stored: 80,
+        new_metadata: 5, via: 'fs', message: 'first', time: 1792975000000, root: 'r1',
+      },
+      {
+        id: 'C2', branch: 'child-worked', parent: 'C1', second_parent: null, base: 'L1',
+        merged_from: null, displaced: null, lww: [], lww_truncated: false,
+        logical: 200, new_canonical: 180, new_stored: 160, new_metadata: 6,
+        via: 'fs', message: 'second', time: 1792975001000, root: 'r2',
+      },
+      {
+        id: 'CX', branch: 'cut-branch', parent: null, second_parent: null, base: 'L1',
+        merged_from: null, displaced: null, lww: [], lww_truncated: false,
+        logical: 50, new_canonical: 40, new_stored: 30, new_metadata: 2,
+        via: 'fs', message: 'cut', time: 1792975002000, root: 'r3',
+      },
+    ],
+    layers: [
+      {
+        id: 'L3', logical: 900, parent: 'L2', root: null,
+        source_branch: 'merge-child-merged', source_commit: 'C-OUT', overwrote_count: 0,
+      },
+      {
+        id: 'L2', logical: 800, parent: 'L1', root: null,
+        source_branch: 'merge-child-worked', source_commit: 'C2', overwrote_count: 0,
+      },
+      {
+        id: 'L1', logical: 700, parent: null, root: null,
+        source_branch: null, source_commit: null, overwrote_count: 0,
+      },
+    ],
+    storage: {
+      logical: 1000, canonical: 800, stored: 600, metadata: 10, file: 0, free: 0,
+      dedupe: null, compression: null, init: null,
+    },
+    cut_branches: ['cut-branch'], truncated: '3 branches shown, more remain in the Store',
+    note: null, refused: [],
+  };
+  const truth = boot({ hash: '#/workspace-history', documents: { 'workspace-history': hard } });
+  await flush();
+  truth.open();
+  await flush();
+
+  const truthCards = truth.rows('.board-card').map((c) => c.textContent).join(' ');
+  check('a merged branch with no head is work, not idle',
+    truthCards.includes('child-merged') &&
+      truthCards.includes('the layer carries its commit'),
+    truthCards.slice(0, 300));
+  const truthIdle = truth.rows('.dag-idle .chip').map((n) => n.textContent.trim());
+  check('the idle chip counts only the branches with nothing',
+    truthIdle.some((t) => /1 idle/.test(t)), truthIdle.join(' | '));
+  // Every merge has its ring; the out-of-page one has no stem, and says
+  // so rather than dropping out of the drawing.
+  const truthRings = truth.rows('.dag-ring');
+  const truthGrafts = truth.rows('.dag-graft');
+  check('every merge has a ring, and only the in-page one a stem',
+    truthRings.length === 2 && truthGrafts.length === 1,
+    truthRings.length + ' rings / ' + truthGrafts.length + ' stems');
+  check('the out-of-page merge names itself on its ring',
+    truthRings.some((ring) => (ring.children || [])
+      .some((child) => /outside this page/.test(child.textContent || ''))),
+    truthRings.map((ring) => ring.textContent).join(' | '));
+  // The fork sits at forkedFrom (a commit), not the Layer's base.
+  const hover = truth.rows('.dag-hover')[0];
+  let forkLine = '';
+  truth.rows('.dag-fork').forEach((fork) => {
+    fork.fire('mouseenter');
+    if (hover && /commit C1/.test(hover.textContent)) forkLine = hover.textContent;
+  });
+  check('the fork is drawn at forkedFrom, named by the commit',
+    /from commit C1/.test(forkLine), forkLine.slice(0, 160));
+  // The lww entry reads from its object shape.
+  let lwwLine = '';
+  truth.rows('.dag-leaf').forEach((leaf) => {
+    leaf.fire('mouseenter');
+    if (hover && /lww/.test(hover.textContent)) lwwLine = hover.textContent;
+  });
+  check('the lww entry reads from its object shape',
+    /lww .*docs\/x\.md/.test(lwwLine), lwwLine.slice(0, 200));
+  // Commits whose branch the page cut are named, not silently missing.
+  check('commits on cut branches are named',
+    truth.rows('.dag-truncated')
+      .some((n) => /belongs? to branches this page cut/.test(n.textContent)),
+    truth.rows('.dag-truncated').map((n) => n.textContent).join(' | '));
+  // The dedupe figure is computed from the byte totals, never read
+  // from the substrate's nullable string: the honest ratio here.
+  check('the dedupe figure is the bytes\u2019 own ratio',
+    truth.rows('.surface-strip').some((strip) => /1\.25 dedupe/.test(strip.textContent)),
+    truth.rows('.surface-strip').map((strip) => strip.textContent).join(' | '));
   // Bounds: more worked branches make the plot TALLER (or wider), the
   // viewBox is the content's size, and the card scrolls — no node sits
   // outside the plot's bounds because the bounds ARE the content.
