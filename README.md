@@ -55,12 +55,7 @@ load the model is worst at is carried by components that are cheap,
 fast, and reliable beside it. The case, with the evidence, is
 [docs/architecture/lanes.md](docs/architecture/lanes.md).
 
-**Tested.** A local gate that runs whole — `cargo fmt --all --check`,
-`cargo clippy --all-targets -- -D warnings`, `cargo build --release`,
-`cargo test` — with a fixed eval corpus graded headless, plan-gate and
-evidence-gate on the plans, arch-gate against the technical contract,
-and the calibration stream recording every route, screening, and run
-ending. Nothing ships green by assertion; each claim has a gate.
+**Tested.** The verification is one logic at three scales. The gate at the change: `cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings`, `cargo build --release`, `cargo test` with exit codes read directly, beside the fixed eval corpus graded headless and the plan, evidence, and arch gates over the plans. The judge at the day: the calibration stream grades every route it recorded, per provider-and-workload-shape cell, from redacted evidence only, and the owner's agree-or-disagree rides the same append-only row as ground truth. The same pattern runs at project scale: one-line tower reports reconciled against git. Nothing ships green by assertion; each claim has a gate, and the gates grade themselves.
 
 **Here.** Alpha, version 0.2.0, past the agent core: routing, memory
 recall, delegation, scheduling, self-calibration, a browser face, a
@@ -80,7 +75,7 @@ named, not implied — see Sequencing in
   standard code, **frontend** (interface surface routes to
   deepseek-flash first, GLM behind it across two more hosts), hard,
   prose, deep context — and nothing is hardcoded: the router decides
-  unless you pin, and `--model` is a pin resolved by name.
+  unless you pin, and `--model` is a pin resolved by name. Routing is a decision, not an inference: a closed verdict set, a confidence floor with the fallback recorded, and a judge that grades each provider by the shape it served, never an average.
 - **Sessions that end only by archive** — the work list shows what is
   alive (`handed back`, `capped`, `working`), not what merely stopped;
   archiving is the owner's verb, and archived sessions gather in one
@@ -88,12 +83,10 @@ named, not implied — see Sequencing in
 - **A working folder that is a default** — set it once; every chat
   without its own choice works in it, and the face shows the folder the
   run will use.
-- **Memory that reads and edits** — one markdown fact per file,
-  recalled by meaning, with the corpus and its recall counts both
-  inspectable.
-- **Skills as procedural memory** — the library the model can reach,
-  disclosed description-first, fetched on demand, with the harness's own
-  drafts waiting as proposals that never apply silently.
+- **Memory that reads, edits, and remembers its failures** — one
+  markdown fact per file, git-tracked, recalled by meaning, shape-first: the problem's shape partitions recall and the words corroborate within it. Facts carry the vocabulary of trajectories that diverged as anti-vectors, the three endings of a problem (diverged, incomplete, resolved), the owner's own corrections as a tier that is never evicted, and an hourly consolidation that supersedes and archives what aged out. The corpus and its recall counts are both inspectable.
+- **Compaction that scales with the model** — the trigger is three fifths of the serving model's declared window, with a 100k floor, a 32k reserve at the edge, and the last four turns verbatim, so a 128k model and a 1M model run the same rule at different scales.
+- **Skills as procedural memory** — the canonical cross-harness library read in place, disclosed description-first, fetched on demand, with the harness's own drafts waiting as proposals that never apply silently.
 - **Delegation with a record** — a child is a real session on a scoped
   tool set, routed by the router over its own brief, with the plan's
   dependency graph carried beside it.
@@ -138,6 +131,9 @@ Effort levels per workload (research done, plan not written); the
 shell; the cron corpus-refresh repair. Each is named with its reason in
 the technical document's Sequencing section.
 
+Commissioned and drafted, not built: the guided onboarding. Five steps in dependency order — one LLM, the lanes in lane order, the projects landscape, the tower's token, the model roster — every fact narrated from the registries the runtime already reads, every step ending in a proof, completion equal to one green probe. The plan:
+`docs/plans/2026-10-29-guided-onboarding.md`.
+
 ## Start here
 
 ```sh
@@ -153,6 +149,16 @@ are vendored in this repository under `services/`, and their heavy
 dependencies are an optional second step (`fleet install --lanes`), each
 skipped by name when it cannot be built. No step needs Node or another
 harness's checkout.
+
+## Foundations
+
+Six foundations, named rather than borrowed quietly. Two are external; four are the
+owner's own work that predates and feeds this harness. What grew from them is its own architecture.
+
+- **[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)** — the seed this repo grew from. Its architecture gave Fleet the agent loop, the session log, the reconstructability rule, the lanes' vendoring pattern, and the decision core the router keeps as its spec. The port to Rust is where the inheritance ends: memory, context, skills, workflows, and the verification loops are Fleet's own designs, and the harness they compose is its own thing — answerable to this repository's rulings, not its ancestor's shape.
+- **[LayerFS](https://github.com/Ephemeral-AI-Lab/layerfs)** (MIT, v1.1.0) — the substrate under collision-free delegation and the workspace-history instrument. Fleet drives the released tool through its command; every delegated child's copy-on-write workspace stands on it.
+- **[dev-decisions](https://github.com/adelvillar1/dev-decisions)** — the owner's verification and calibration layer, built before this harness and integrated by wire contract. Its plan, evidence, docs, and architecture gates run Fleet's development; its JSONL log vocabulary is what Fleet's calibration stream writes into; its judge-grading floors are the trust model Fleet reuses.
+- **[agnostic-router-kit](https://github.com/adelvillar1/agnostic-router-kit)** — the owner's harness-neutral router and workflow plane, the precursor to Fleet's router. Fleet owns routing in-process; the kit's decision core (roster, tiering, sys1-judged workload, quota-aware failover, and the journaled workflow plane) is the spec it was ported from.
 
 ## Where things live
 
