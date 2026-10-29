@@ -60,8 +60,10 @@ this home, grouped by what needs the owner rather than by project:
 *earlier*, grouped by the project each run was born in, and *archived* —
 one closed line at the bottom, the sessions the owner ended. The rail
 renders the owner's work only: the app's own runs (scheduled jobs,
-delegated children, peer conversations) live in the log — `fleet cron`,
-`fleet sessions` — never on the user screen. A row says
+delegated children, peer conversations) and **probes** — verification
+traffic, birthed by `fleet run --probe` or marked after the fact by
+`fleet sessions --probe <id>` — live in the log, never on the user
+screen. A row says
 its state in words — *handed back*, *resumed*, *completed*, *capped*,
 *stopped by you*, *archived*, *interrupted*, *active* — with its age, its project,
 and, for background work, the job's name. One verb: opening a row loads

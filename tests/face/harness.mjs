@@ -568,7 +568,7 @@ const flush = async (turns = 40) => { for (let i = 0; i < turns; i += 1) await P
 async function theListGroupsByAttentionAndCountsWhatTheServerCounted() {
   const sessions = {
     type: 'sessions', read_at: 'now', current: '',
-    counts: { needs: 1, working: 1, background: 2, earlier: 1, yours: 3, total: 6 },
+    counts: { needs: 1, working: 1, background: 2, earlier: 1, yours: 3, total: 7 },
     sessions: [
       row('paused-1', 'paused', { title: 'corpus-refresh-fleet — paused', class: 'background', job: 'corpus-refresh-fleet' }),
       row('needs-1', 'needs-approval', { title: 'the ledger writer' }),
@@ -576,6 +576,7 @@ async function theListGroupsByAttentionAndCountsWhatTheServerCounted() {
       row('done-1', 'completed', { title: 'conversation control' }),
       row('bg-1', 'completed', { title: 'corpus-refresh fleet', class: 'background', job: 'corpus-refresh-fleet' }),
       row('bg-2', 'interrupted', { title: 'corpus-refresh fleet', class: 'background', job: 'corpus-refresh-fleet' }),
+      row('probe-1', 'completed', { title: 'say the single word: ok', class: 'probe' }),
     ],
   };
   const page = boot({
@@ -602,8 +603,9 @@ async function theListGroupsByAttentionAndCountsWhatTheServerCounted() {
   check('C1 no family lines exist', page.rows('.work-family').length === 0,
     String(page.rows('.work-family').length));
   check('C1 no system row renders in any group',
-    page.rows('.work-row').every((row) => !['background', 'delegated', 'channel'].includes(row.dataset.class)) &&
-      !/corpus-refresh-fleet/.test(page.text('work-list')),
+    page.rows('.work-row').every((row) => !['background', 'delegated', 'channel', 'probe'].includes(row.dataset.class)) &&
+      !/corpus-refresh-fleet/.test(page.text('work-list')) &&
+      !/say the single word/.test(page.text('work-list')),
     page.rows('.work-row').map((r) => r.dataset.class).join(','));
   // C8: the needs pick skips the paused scheduled row — a system run at
   // its gate never opens as "the first row that needs the owner".

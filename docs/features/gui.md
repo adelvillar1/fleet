@@ -174,7 +174,10 @@ every visible `.tile`, `.badge`, `.rrow`, `.rank-row`, `.cal-cell`,
   owner's work only: system-initiated sessions — scheduled jobs,
   delegated children, peer channels — live in the log (`fleet cron`,
   `fleet sessions`), never on the user screen, and a log with no words
-  and no kind is not a conversation at all. Rows are grouped by what
+  and no kind is not a conversation at all. A **probe** — verification
+  traffic, birthed by `fleet run --probe` or marked by `fleet sessions
+  --probe <id>` in the archive's sidecar — is the same: the log keeps
+  everything, the rail renders none of it. Rows are grouped by what
   needs the owner (*needs you*, *working*, *earlier* per project, and
   **archived** closed behind one line at the bottom), and the state
   words come from the bridge's derivation:

@@ -3629,12 +3629,24 @@ const TITLES_FILE: &str = "sessions-titles.json";
 /// the owner's conversation on its own. `id → the archived stamp`.
 const ARCHIVED_FILE: &str = "sessions-archived.json";
 
+/// The sidecar naming the archive's verification traffic — the
+/// kind-less logs that were born before `fleet run --probe` existed,
+/// marked here rather than re-stamped in place, because a log is
+/// append-only. `id → the stamp the mark was made`. The face's
+/// classifier reads it beside the log's own kind; the CLI archive
+/// lists every row either way.
+const PROBES_FILE: &str = "sessions-probes.json";
+
 fn titles_path(home: &std::path::Path) -> PathBuf {
     home.join(TITLES_FILE)
 }
 
 fn archived_path(home: &std::path::Path) -> PathBuf {
     home.join(ARCHIVED_FILE)
+}
+
+fn probes_path(home: &std::path::Path) -> PathBuf {
+    home.join(PROBES_FILE)
 }
 
 fn load_titles(home: &std::path::Path) -> std::collections::HashMap<String, String> {
@@ -3679,6 +3691,63 @@ fn load_archived(home: &std::path::Path) -> std::collections::HashMap<String, St
         .into_iter()
         .filter(|(id, _)| session::session_path(home, id).exists())
         .collect()
+}
+
+/// Read the probe set: `id → the stamp the mark was made`. An entry
+/// whose session log is gone is dropped, like the titles map.
+fn load_probes(home: &std::path::Path) -> std::collections::HashMap<String, String> {
+    let text = match std::fs::read_to_string(probes_path(home)) {
+        Ok(text) => text,
+        Err(_) => return std::collections::HashMap::new(),
+    };
+    let stored: std::collections::HashMap<String, String> =
+        serde_json::from_str(&text).unwrap_or_default();
+    stored
+        .into_iter()
+        .filter(|(id, _)| session::session_path(home, id).exists())
+        .collect()
+}
+
+/// Mark sessions as probe traffic: every id must be a real log — the
+/// verb refuses by name rather than writing a mark for nothing — and
+/// the write is atomic with a writer-unique temp name, the archived
+/// set's own rules. Returns the ids actually marked.
+pub fn mark_probes(home: &std::path::Path, ids: &[String]) -> Result<Vec<String>, String> {
+    for id in ids {
+        if !session::session_path(home, id).exists() {
+            return Err(format!(
+                "no session `{id}` under {}",
+                crate::home::sessions_dir(home).display()
+            ));
+        }
+    }
+    let mut probes = load_probes(home);
+    let stamp = crate::boards::now_stamp();
+    let mut marked = Vec::new();
+    for id in ids {
+        probes.insert(id.clone(), stamp.clone());
+        marked.push(id.clone());
+    }
+    save_probes(home, &probes);
+    Ok(marked)
+}
+
+/// Write the probe set, atomically and with a writer-unique temp name,
+/// the archived set's own rules.
+fn save_probes(home: &std::path::Path, probes: &std::collections::HashMap<String, String>) {
+    let path = probes_path(home);
+    if probes.is_empty() {
+        let _ = std::fs::remove_file(&path);
+        return;
+    }
+    let Ok(text) = serde_json::to_string_pretty(probes) else {
+        return;
+    };
+    let temp = path.with_extension(format!("{}.tmp", std::process::id()));
+    if std::fs::write(&temp, text).is_err() {
+        return;
+    }
+    let _ = std::fs::rename(&temp, &path);
 }
 
 /// Write the archived set, atomically and with a writer-unique temp
@@ -4756,6 +4825,7 @@ fn work_class(entry: &session::SessionSummary) -> &'static str {
     match entry.kind.as_deref() {
         Some(session::SCHEDULED_KIND) => "background",
         Some(session::SUBAGENT_KIND) => "delegated",
+        Some(session::PROBE_KIND) => "probe",
         _ if entry.channel.is_some() => "channel",
         _ => "yours",
     }
@@ -4997,6 +5067,7 @@ fn inbox_document(
 fn sessions_read(home: &std::path::Path, current: &str, live: &LiveFace, query: &str) -> Value {
     let titles = load_titles(home);
     let archived = load_archived(home);
+    let probes = load_probes(home);
     let entries = match session::list(home) {
         Ok(entries) => entries,
         Err(error) => {
@@ -5070,7 +5141,14 @@ fn sessions_read(home: &std::path::Path, current: &str, live: &LiveFace, query: 
                 // Whose work this is, and — for a scheduled run — which
                 // job, so the background group can be one line per job
                 // instead of a pile of anonymous runs.
-                "class": work_class(entry),
+                // Whose work this is: the log's own kind, or the
+                // legacy sidecar's mark for the kind-less logs that
+                // were verification traffic before the word existed.
+                "class": if probes.contains_key(&entry.id) {
+                    "probe"
+                } else {
+                    work_class(entry)
+                },
                 "job": scheduled_job(entry),
                 // The one derived word the list groups by.
                 "state": work_state(entry, live, paused, is_archived),
@@ -10007,6 +10085,76 @@ mod tests {
                 .count(),
             2
         );
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[tokio::test]
+    async fn a_probe_is_classed_and_the_owners_counts_let_it_go() {
+        let home = std::env::temp_dir().join(format!("fleet-gui-probe-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).expect("a temp home");
+        // A probe born with the kind, and a kind-less log marked in the
+        // sidecar — the two ways verification traffic exists. Both
+        // classify `probe`, both stay out of the owner's counts, and
+        // both stay in the document: the archive keeps the whole truth.
+        let mut born = crate::session::Session::create_probe(&home, "deepseek-flash").unwrap();
+        born.record(&crate::session::Record::User {
+            content: "say the single word: ok".into(),
+        })
+        .unwrap();
+        born.record(&crate::session::Record::End {
+            stop_reason: "completed".into(),
+            turns: 1,
+            served_model: None,
+        })
+        .unwrap();
+        let born_id = born.id().to_string();
+        let mut legacy = crate::session::Session::create(&home, "deepseek-flash").unwrap();
+        legacy
+            .record(&crate::session::Record::User {
+                content: "reply with exactly this text and nothing else: ROUTER OK".into(),
+            })
+            .unwrap();
+        let legacy_id = legacy.id().to_string();
+        drop(born);
+        drop(legacy);
+        let live = LiveFace {
+            driving: None,
+            seats: Default::default(),
+        };
+
+        // Before the mark: the kind-less row reads as the owner's.
+        let before = sessions_read(&home, "", &live, "");
+        let row = |doc: &Value, id: &str| {
+            doc["sessions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|row| row["id"] == id)
+                .cloned()
+                .unwrap_or_else(|| panic!("{id} in {doc}"))
+        };
+        assert_eq!(row(&before, &legacy_id)["class"], "yours");
+
+        // The mark: the sidecar names the legacy log.
+        let marked = mark_probes(&home, std::slice::from_ref(&legacy_id)).expect("the mark");
+        assert_eq!(marked, vec![legacy_id.clone()]);
+
+        let after = sessions_read(&home, "", &live, "");
+        assert_eq!(row(&after, &born_id)["class"], "probe");
+        assert_eq!(row(&after, &legacy_id)["class"], "probe");
+        let counts = &after["counts"];
+        // Two probes and nothing of the owner's: the owner's counts are
+        // all zero, the rows are still in the document, and the total
+        // names both.
+        assert_eq!(counts["needs"], 0, "{after}");
+        assert_eq!(counts["yours"], 0);
+        assert_eq!(counts["earlier"], 0);
+        assert_eq!(after["sessions"].as_array().unwrap().len(), 2);
+        assert_eq!(after["counts"]["total"], 2);
+        // The verb refuses an id that is not a log, by name.
+        let refused = mark_probes(&home, &["no-such-log".into()]);
+        assert!(refused.is_err());
         std::fs::remove_dir_all(&home).ok();
     }
 

@@ -141,9 +141,11 @@ fn dispatch_sync(args: &[String]) -> ExitCode {
             println!("fleet {}", env!("CARGO_PKG_VERSION"));
             ExitCode::SUCCESS
         }
-        Ok(Command::SessionsView { recall, view }) => {
-            sessions_command(recall.as_deref(), view.as_deref())
-        }
+        Ok(Command::SessionsView {
+            recall,
+            view,
+            probes,
+        }) => sessions_command(recall.as_deref(), view.as_deref(), &probes),
         // The remote surface's own commands: none of them awaits, so they
         // live in the sync half with the rest.
         Ok(Command::Pair) => pair_command(),
@@ -323,14 +325,18 @@ async fn run_command(options: &RunOptions) -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    let mut session =
-        match open_session(&home, options.session.as_deref(), &prepared.decision.model) {
-            Ok(session) => session,
-            Err(message) => {
-                eprintln!("fleet: {message}");
-                return ExitCode::from(2);
-            }
-        };
+    let mut session = match open_session(
+        &home,
+        options.session.as_deref(),
+        &prepared.decision.model,
+        options.probe,
+    ) {
+        Ok(session) => session,
+        Err(message) => {
+            eprintln!("fleet: {message}");
+            return ExitCode::from(2);
+        }
+    };
     eprintln!("fleet: session {}", session.id());
     eprintln!(
         "route: {} ({}) · model {}",
@@ -406,7 +412,7 @@ async fn chat_command(options: &ChatOptions) -> ExitCode {
         .and_then(|pin| pin.split_once('/'))
         .map(|(_, model)| model.to_string())
         .unwrap_or_else(|| route::AUTO_MODEL.to_string());
-    let mut session = match open_session(&home, options.session.as_deref(), &start_model) {
+    let mut session = match open_session(&home, options.session.as_deref(), &start_model, false) {
         Ok(session) => session,
         Err(message) => {
             eprintln!("fleet: {message}");
@@ -2705,11 +2711,23 @@ async fn drive(
 }
 
 /// Open `--session <id>` or create a new session, failing loud on missing
-/// logs.
-fn open_session(home: &std::path::Path, id: Option<&str>, model: &str) -> Result<Session, String> {
+/// logs. `probe` births the new log as verification traffic (`kind:
+/// probe`) — the archive keeps it whole, the owner's surfaces leave it
+/// to the log. A resumed log keeps the kind it was born with, so the
+/// run parser refuses the pair before this is ever called.
+fn open_session(
+    home: &std::path::Path,
+    id: Option<&str>,
+    model: &str,
+    probe: bool,
+) -> Result<Session, String> {
     match id {
-        None => Session::create(home, model)
-            .map_err(|error| format!("could not create the session: {error}")),
+        None => if probe {
+            Session::create_probe(home, model)
+        } else {
+            Session::create(home, model)
+        }
+        .map_err(|error| format!("could not create the session: {error}")),
         Some(id) => {
             let path = session::session_path(home, id);
             if !path.exists() {
@@ -2918,7 +2936,7 @@ async fn compact_command(session_id: Option<&str>, force: bool) -> ExitCode {
 /// through the six-channel ranker, where a session IS a trajectory and
 /// the direction channel reads the record itself. A positional opens
 /// one session's log as cards.
-fn sessions_command(recall: Option<&str>, view: Option<&str>) -> ExitCode {
+fn sessions_command(recall: Option<&str>, view: Option<&str>, probes: &[String]) -> ExitCode {
     let home = match fleet_home() {
         Ok(home) => home,
         Err(message) => {
@@ -2926,6 +2944,24 @@ fn sessions_command(recall: Option<&str>, view: Option<&str>) -> ExitCode {
             return ExitCode::from(2);
         }
     };
+    // The archive's own marking verb: `fleet sessions --probe <id>`
+    // names verification traffic in the sidecar the face's classifier
+    // reads — the log keeps everything, nothing is re-stamped in place.
+    if !probes.is_empty() {
+        let marked = match fleet::gui::bridge::mark_probes(&home, probes) {
+            Ok(marked) => marked,
+            Err(message) => {
+                eprintln!("fleet: {message}");
+                return ExitCode::from(2);
+            }
+        };
+        println!(
+            "marked {} session(s) as probe traffic: {}",
+            marked.len(),
+            marked.join(", ")
+        );
+        return ExitCode::SUCCESS;
+    }
     if let Some(instruction) = recall {
         // The ranker, pointed at the archive. The embedder resolves
         // the same way the run's does, and an absent embedder is the

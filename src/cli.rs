@@ -11,10 +11,14 @@ pub enum Command {
     /// Interactive multi-turn session.
     Chat(ChatOptions),
     /// The archive: listed as cards, ranked for an instruction with
-    /// `--recall`, or one session opened by name.
+    /// `--recall`, or one session opened by name. `--probe <id>`
+    /// (repeatable) marks verification traffic — the log keeps
+    /// everything, the surfaces that render the owner's work leave it
+    /// to the log.
     SessionsView {
         recall: Option<String>,
         view: Option<String>,
+        probes: Vec<String>,
     },
     /// Fold one session's stored context on demand.
     Compact {
@@ -161,6 +165,10 @@ pub struct RunOptions {
     /// Force the context fold on the next turn boundary, whatever the
     /// token budget says.
     pub compact_now: bool,
+    /// `--probe`: birth the session as verification traffic — `kind:
+    /// probe` on the start record. The archive keeps it whole; the
+    /// surfaces that render the owner's work leave it to the log.
+    pub probe: bool,
 }
 
 /// Options for `fleet chat`.
@@ -558,7 +566,7 @@ pub const HELP: &str = "\
 fleet — a native Rust agent based on DeepSeek Harness
 
 usage:
-  fleet run \"<task>\" [options]   run one task to completion
+  fleet run \"<task>\" [options]   run one task to completion (--probe births verification traffic)
   fleet chat [options]           interactive multi-turn session
   fleet gui [--port <n>] [--host <address>] [--no-open]
                                 the browser face: a loopback server over the
@@ -594,7 +602,7 @@ usage:
                                 forget one webhook peer
   fleet channels capability <channel> <peer> <task|observe>
                                 let a paired peer act, or only listen
-  fleet sessions [--recall \"<q>\"] [<id>]
+  fleet sessions [--recall \"<q>\"] [--probe <id>] [<id>]
                                 the archive as cards, ranked for an
                                 instruction, or one session opened
   fleet compact [<session>] [--force]
@@ -844,6 +852,7 @@ fn parse_run(args: &[String]) -> Result<Command, String> {
     let mut yes = false;
     let mut session: Option<String> = None;
     let mut compact_now = false;
+    let mut probe = false;
     let mut index = 0;
     while index < args.len() {
         let arg = args[index].as_str();
@@ -851,6 +860,7 @@ fn parse_run(args: &[String]) -> Result<Command, String> {
             "--help" | "-h" => return Ok(Command::Help),
             "--yes" | "-y" => yes = true,
             "--compact-now" => compact_now = true,
+            "--probe" => probe = true,
             "--model" => model = Some(take_value(args, &mut index, arg)?),
             "--max-turns" => {
                 let value = take_value(args, &mut index, arg)?;
@@ -869,6 +879,13 @@ fn parse_run(args: &[String]) -> Result<Command, String> {
     if words.is_empty() {
         return Err("run needs a task: fleet run \"<task>\"".to_string());
     }
+    if probe && session.is_some() {
+        return Err(
+            "`--probe` births a session as verification traffic; a resumed \
+             session keeps the kind it was born with — drop one of the two"
+                .to_string(),
+        );
+    }
     Ok(Command::Run(RunOptions {
         task: words.join(" "),
         model,
@@ -876,6 +893,7 @@ fn parse_run(args: &[String]) -> Result<Command, String> {
         yes,
         session,
         compact_now,
+        probe,
     }))
 }
 
@@ -913,12 +931,14 @@ fn parse_chat(args: &[String]) -> Result<Command, String> {
 fn parse_sessions(args: &[String]) -> Result<Command, String> {
     let mut recall: Option<String> = None;
     let mut view: Option<String> = None;
+    let mut probes: Vec<String> = Vec::new();
     let mut index = 0;
     while index < args.len() {
         let arg = args[index].as_str();
         match arg {
             "--help" | "-h" => return Ok(Command::Help),
             "--recall" => recall = Some(take_value(args, &mut index, arg)?),
+            "--probe" => probes.push(take_value(args, &mut index, arg)?),
             _ if arg.starts_with('-') && arg != "-" => {
                 return Err(format!("unknown sessions option `{arg}`"));
             }
@@ -933,7 +953,11 @@ fn parse_sessions(args: &[String]) -> Result<Command, String> {
         }
         index += 1;
     }
-    Ok(Command::SessionsView { recall, view })
+    Ok(Command::SessionsView {
+        recall,
+        view,
+        probes,
+    })
 }
 
 /// `fleet compact [<session>]`: fold one session's stored context on
@@ -2984,12 +3008,35 @@ mod tests {
     }
 
     #[test]
+    fn run_takes_the_probe_flag_and_refuses_the_pair() {
+        let parsed = parse(&args(&["run", "--probe", "say ok"])).unwrap();
+        match parsed {
+            Command::Run(options) => assert!(options.probe),
+            other => panic!("{other:?}"),
+        }
+        let refused = parse(&args(&["run", "--probe", "--session", "abc", "say ok"]));
+        assert!(refused.is_err());
+    }
+
+    #[test]
+    fn sessions_takes_the_probe_mark() {
+        let parsed = parse(&args(&["sessions", "--probe", "abc", "--probe", "def"])).unwrap();
+        match parsed {
+            Command::SessionsView { probes, .. } => {
+                assert_eq!(probes, vec!["abc".to_string(), "def".to_string()]);
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
     fn bare_commands_take_no_options() {
         assert_eq!(
             parse(&args(&["sessions"])).unwrap(),
             Command::SessionsView {
                 recall: None,
-                view: None
+                view: None,
+                probes: Vec::new(),
             }
         );
         assert_eq!(parse(&args(&["lanes"])).unwrap(), Command::Lanes);
@@ -3011,7 +3058,8 @@ mod tests {
             parse(&args(&["sessions", "--recall", "the router pin"])).unwrap(),
             Command::SessionsView {
                 recall: Some("the router pin".to_string()),
-                view: None
+                view: None,
+                probes: Vec::new(),
             }
         );
         assert!(parse(&args(&["lanes", "--json"])).is_err());

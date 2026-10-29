@@ -35,6 +35,15 @@ pub const SUBAGENT_KIND: &str = "subagent";
 /// `fleet sessions` name one without opening its log.
 pub const SCHEDULED_KIND: &str = "scheduled";
 
+/// The `kind` a verification run's `start` record carries. A probe is a
+/// run that exists to check the harness — the session is the evidence,
+/// not a conversation — so `fleet run --probe` stamps it at birth and
+/// the surfaces that render the owner's work leave it to the log. The
+/// archive's `sessions-probes.json` sidecar names the legacy logs that
+/// were born before the word existed; no log is ever re-stamped in
+/// place.
+pub const PROBE_KIND: &str = "probe";
+
 /// One line of a session log.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -361,6 +370,17 @@ impl Session {
     pub fn create_scheduled(home: &Path, model: &str) -> io::Result<Session> {
         let dir = crate::home::ensure_sessions_dir(home)?;
         Session::open_new(&dir, model, Some(SCHEDULED_KIND), None, None)
+    }
+
+    /// Create a verification run's log under `sessions_dir(home)`,
+    /// marked `kind: probe` — `fleet run --probe`'s birth stamp. The
+    /// same seam the other kinds use: the session is real work in a
+    /// real log the archive keeps whole; what it is not is a
+    /// conversation, and the surfaces that render the owner's work say
+    /// so by the kind.
+    pub fn create_probe(home: &Path, model: &str) -> io::Result<Session> {
+        let dir = crate::home::ensure_sessions_dir(home)?;
+        Session::open_new(&dir, model, Some(PROBE_KIND), None, None)
     }
 
     /// The one place a log is created: the id, the file, and the `start`
@@ -1146,6 +1166,17 @@ fn unique_suffix() -> u32 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_probe_log_carries_its_kind() {
+        let home = std::env::temp_dir().join(format!("fleet-probe-kind-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        let session = Session::create_probe(&home, "deepseek-flash").unwrap();
+        assert_eq!(session.kind(), Some(PROBE_KIND));
+        let reopened = Session::open(&session.path).unwrap();
+        assert_eq!(reopened.kind(), Some(PROBE_KIND));
+        std::fs::remove_dir_all(&home).ok();
+    }
+
     use super::*;
 
     fn temp_home(tag: &str) -> PathBuf {
