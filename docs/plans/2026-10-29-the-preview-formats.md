@@ -187,6 +187,16 @@ diagram-heavy use shows up; the agent's prompts learn to emit
   `the_preview_types_come_from_the_allowlist_alone`); the Chromium probe
   renders real PDF bytes — 2,345 inked pixels on the probe's page
   (`tmp/pdf-probe.mjs`).
+- **The e2e probe** (`tmp/preview-probe.mjs`): a scratch gui — its own
+  home, its own port, its working directory the fixtures directory —
+  driven in real Chromium through the pane's own tree and tab. The XLSX:
+  the hand-rolled reader inflates the real archive, both sheets tab
+  correctly, the shared strings resolve, every value lands. The DOCX:
+  docx-preview reports **rendered** from inside the sandboxed frame
+  (boot → libraries → render), the frame's sandbox carrying
+  allow-scripts and never allow-same-origin. The frame's render report
+  (boot → libraries → rendered/failed posted to the parent) is face
+  code — the pane's window into what an opaque frame did.
 
 ## Files to be touched
 

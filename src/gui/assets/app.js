@@ -14808,11 +14808,19 @@
         '<script>' + sources[0].replace(/<\/script/gi, '<\\/script') + '<\/script>' +
         '<script>' + sources[1].replace(/<\/script/gi, '<\\/script') + '<\/script>' +
         '<script>' +
+        // The frame reports its own state — boot, libraries, render —
+        // so the pane (and anything driving it) learns how far the
+        // document got without reaching into the opaque origin.
+        'parent.postMessage({ type: "docx-preview-boot" }, "*");' +
         'var raw = atob("' + btoa(binary) + '");' +
         'var bytes = new Uint8Array(raw.length);' +
         'for (var i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);' +
-        'docx.renderAsync(bytes, document.body).catch(function (e) {' +
+        'parent.postMessage({ type: "docx-preview-lib", jszip: typeof JSZip, docx: typeof docx }, "*");' +
+        'docx.renderAsync(bytes, document.body).then(function () {' +
+        '  parent.postMessage({ type: "docx-preview-rendered" }, "*");' +
+        '}).catch(function (e) {' +
         '  document.body.textContent = "the document would not render: " + (e.message || e);' +
+        '  parent.postMessage({ type: "docx-preview-failed", reason: String(e && e.message || e) }, "*");' +
         '});' +
         '<\/script></body></html>';
       el.panePreview.textContent = '';
