@@ -118,9 +118,15 @@ impl State {
                     "done": step.done,
                     "skipped": step.skipped,
                     "evidence": step.evidence,
+                    // The visible proof every card renders: what the
+                    // machine can show for this step right now.
+                    "proof": proof(&facts.home, facts, step.id),
                     "narration": narration(step.id, facts).to_json(),
                 })
             }).collect::<Vec<_>>(),
+            // The strategy step's own screen: the chain, the workloads,
+            // the ceilings, the window fallback.
+            "preview": preview(facts),
             "door": facts.door(),
         })
     }
@@ -162,6 +168,8 @@ impl Narration {
 /// The derived facts every narration reads. Built once per call from the
 /// structures the runtime itself reads.
 pub struct Facts {
+    /// The home every derived path is relative to.
+    pub home: std::path::PathBuf,
     /// The roster's candidates with their keys resolved, in declared
     /// order — never a key's value, only whether it resolved.
     pub resolved: Vec<route::Resolved>,
@@ -188,6 +196,27 @@ pub struct Facts {
     /// The keys the machine already holds (names only), for the door's
     /// "it is already here" press. Never a value.
     pub present_keys: Vec<String>,
+    /// The chain as built, in declared order: each provider, whether it
+    /// resolves, and the billing class the roster gives it.
+    pub chain: Vec<ChainRow>,
+    /// The first candidate each of the two everyday workloads names, as
+    /// the preference table builds them.
+    pub quick: Option<String>,
+    pub hard: Option<String>,
+    /// The daily ceilings in force — the compiled values, or the
+    /// owner's own when a setting tightened one.
+    pub ceilings: Vec<(String, f64, f64)>,
+}
+
+/// One row of the chain the strategy preview shows.
+#[derive(Debug, Clone)]
+pub struct ChainRow {
+    pub provider: String,
+    pub model: String,
+    /// Ready, no key, or disabled — the router's own verdict.
+    pub state: String,
+    /// `plan` or `payg`; the payg tail serves only after the rest.
+    pub billing: String,
 }
 
 impl Facts {
@@ -231,7 +260,71 @@ impl Facts {
             .filter(|entry| entry.key.is_some())
             .map(|entry| entry.candidate.key_env.clone())
             .collect();
+        // The chain, in declared order, with each candidate's own verdict.
+        let chain: Vec<ChainRow> = resolved
+            .iter()
+            .map(|entry| ChainRow {
+                provider: entry.candidate.id.clone(),
+                model: entry.candidate.models.first().cloned().unwrap_or_default(),
+                state: match route::provider_state(entry) {
+                    route::ProviderState::Ready => "ready",
+                    route::ProviderState::NoKey => "no key",
+                    route::ProviderState::Disabled => "disabled",
+                }
+                .to_string(),
+                billing: match entry.candidate.billing {
+                    route::Billing::Plan => "plan",
+                    route::Billing::Payg => "payg",
+                }
+                .to_string(),
+            })
+            .collect();
+        // The two everyday workloads' first candidate, from the roster's
+        // own preference table — the same table the router walks.
+        let workload_first = |workload: &str| {
+            roster.as_ref().and_then(|roster| {
+                roster
+                    .preferences
+                    .iter()
+                    .find(|preference| preference.workload == workload)
+                    .and_then(|preference| preference.candidates.first())
+                    .map(|(provider, model)| format!("{provider}/{model}"))
+            })
+        };
+        // The ceilings in force: a setting can only tighten the compiled
+        // cap, so the smaller of the two is what a day may spend.
+        let env_name = |key: &str| -> f64 {
+            crate::home::resolve_setting(key, dotenv)
+                .and_then(|value| value.trim().parse::<f64>().ok())
+                .unwrap_or(f64::INFINITY)
+        };
+        let ceilings = vec![
+            (
+                "the judge's asks".to_string(),
+                env_name("FLEET_JUDGE_BUDGET_USD_DAY").min(crate::judge::JUDGE_BUDGET_USD_DAY),
+                crate::judge::JUDGE_BUDGET_USD_DAY,
+            ),
+            (
+                "the delegation judge's asks".to_string(),
+                env_name("FLEET_DELEGATE_BUDGET_USD_DAY")
+                    .min(crate::delegate::DELEGATE_BUDGET_USD_DAY),
+                crate::delegate::DELEGATE_BUDGET_USD_DAY,
+            ),
+            (
+                "the explain beat's asks".to_string(),
+                env_name("FLEET_EXPLAIN_BUDGET_USD_DAY")
+                    .min(crate::explain::EXPLAIN_BUDGET_USD_DAY),
+                crate::explain::EXPLAIN_BUDGET_USD_DAY,
+            ),
+        ];
+        let quick = workload_first("quick");
+        let hard = workload_first("hard");
         Facts {
+            home: home.to_path_buf(),
+            chain,
+            quick,
+            hard,
+            ceilings,
             resolved,
             keyed,
             tail,
@@ -471,6 +564,106 @@ pub fn decisions(home: &Path) -> Decisions {
         }
     }
     out
+}
+
+/// The roster step's confirmation preview: the chain as built, what the
+/// two everyday workloads do with it, the ceilings in force, and the
+/// window fallback — every figure derived, nothing restated.
+///
+/// Step five's epistemics differ from the others: there is a right
+/// answer to "is the key present" and there is only a strategy to
+/// "which model for which work". So this ends in a confirmation to
+/// read, not a green to earn.
+pub fn preview(facts: &Facts) -> Value {
+    json!({
+        "chain": facts.chain.iter().map(|row| json!({
+            "provider": row.provider,
+            "model": row.model,
+            "state": row.state,
+            "billing": row.billing,
+        })).collect::<Vec<_>>(),
+        "quick": facts.quick.clone().unwrap_or_default(),
+        "hard": facts.hard.clone().unwrap_or_default(),
+        "tail": facts.tail.clone().unwrap_or_default(),
+        "ceilings": facts.ceilings.iter().map(|(label, in_force, compiled)| json!({
+            "what": label,
+            "in_force": in_force,
+            "compiled": compiled,
+            // A ceiling the owner tightened reads as tightened; one at
+            // its compiled value reads as the compiled default.
+            "tightened": in_force < compiled,
+        })).collect::<Vec<_>>(),
+        "windows": {
+            "declared": facts.declared_windows,
+            "floor": facts.window_floor,
+        },
+    })
+}
+
+/// One step's visible proof, in the owner's words — what the machine can
+/// show for it right now, whether or not the step is done. The cards
+/// render this under their benefit sentence, so no card asks the owner
+/// to take anything on faith.
+pub fn proof(home: &Path, facts: &Facts, id: &str) -> String {
+    match id {
+        STEP_HOME => {
+            let dirs = HOME_LAYOUT
+                .iter()
+                .filter(|name| home.join(name).is_dir())
+                .count();
+            format!("{dirs} of {} — {}", HOME_LAYOUT.len(), home.display())
+        }
+        STEP_LLM => {
+            if facts.keyed.is_empty() {
+                "no account answers yet".to_string()
+            } else {
+                format!("answers as {}", facts.keyed.join(", "))
+            }
+        }
+        STEP_LANES => format!(
+            "{} of {} specialists are installed",
+            facts.lanes_answering,
+            facts.lanes.len()
+        ),
+        STEP_PROJECTS => {
+            let known = tower_project_count(&facts.projects_root);
+            format!(
+                "{known} {} under {}",
+                if known == 1 {
+                    "repository"
+                } else {
+                    "repositories"
+                },
+                facts.projects_root.display()
+            )
+        }
+        STEP_GITHUB => {
+            if facts.github_set {
+                "a token resolves".to_string()
+            } else {
+                "no token yet".to_string()
+            }
+        }
+        STEP_ROSTER => {
+            let quick = facts
+                .quick
+                .clone()
+                .unwrap_or_else(|| "the built-in order".to_string());
+            let hard = facts
+                .hard
+                .clone()
+                .unwrap_or_else(|| "the built-in order".to_string());
+            format!(
+                "{} choices in force · quick {quick} · hard {hard}",
+                if facts.chain.is_empty() {
+                    0
+                } else {
+                    facts.chain.len()
+                }
+            )
+        }
+        _ => String::new(),
+    }
 }
 
 /// One step's copy. Every derived fact reads through `facts`; the

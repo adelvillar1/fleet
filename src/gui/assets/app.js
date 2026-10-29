@@ -3469,6 +3469,7 @@
   // one sentence of benefit, one action, and a real "not now".
   function paintOnboardCards(doc) {
     if (!el.onboardCards) return;
+    if (el.empty && el.empty.dataset.onboard === 'preview') el.empty.dataset.onboard = '';
     var open = (doc.steps || []).filter(function (one) {
       return !one.done && !one.skipped && one.id !== 'first-llm' && one.id !== 'home';
     });
@@ -3482,6 +3483,14 @@
       head.appendChild(node('h2', null, copy.title || one.id));
       card.appendChild(head);
       card.appendChild(node('p', 'card-note', copy.lede || ''));
+      // The proof: what the machine can show for this step right now —
+      // a real derived reading, not a tick. No card asks for faith.
+      if (one.proof) {
+        var proofLine = node('p', 'onboard-proof');
+        proofLine.appendChild(node('span', 'onboard-proof-mark', '\u00b7'));
+        proofLine.appendChild(node('span', null, one.proof));
+        card.appendChild(proofLine);
+      }
       var acts = node('div', 'onboard-acts');
       var go = node('button', 'foot-btn', copy.action || 'Set it up');
       go.type = 'button';
@@ -3566,6 +3575,99 @@
     });
   }
 
+  // The strategy step's screen: the chain as built, what the two
+  // everyday workloads do with it, the ceilings in force, and the
+  // window fallback — every figure from the document's own derivation.
+  // It ends in a confirmation to read, not a green to earn.
+  function onboardPreview() {
+    var doc = face.onboard || {};
+    var preview = doc.preview || {};
+    if (el.onboardDoor) el.onboardDoor.hidden = true;
+    // The preview is a screen: the welcome's own furniture stands down
+    // exactly as it does for the door.
+    el.empty.dataset.onboard = 'preview';
+    el.onboardCards.textContent = '';
+    el.onboardCards.hidden = false;
+
+    var card = node('div', 'card onboard-card onboard-preview');
+    var head = node('header', 'card-head');
+    head.appendChild(node('h2', null, 'Which model does what'));
+    card.appendChild(head);
+    card.appendChild(node('p', 'card-note',
+      'This is the machine\u2019s own order. Read it, and say so \u2014 or change it in the settings. '
+      + 'Nothing here is locked in.'));
+    el.onboardCards.appendChild(card);
+
+    var chain = node('div', 'onboard-chain');
+    (preview.chain || []).forEach(function (row) {
+      var line = node('div', 'onboard-chain-row');
+      line.dataset.state = row.state === 'ready' ? 'ready' : 'idle';
+      line.appendChild(node('span', 'onboard-chain-name', row.provider));
+      line.appendChild(node('span', 'onboard-chain-model', row.model));
+      line.appendChild(node('span', 'onboard-chain-state',
+        row.state === 'ready' ? 'answers' : row.state));
+      if (row.billing === 'payg') {
+        line.appendChild(node('span', 'onboard-chain-tail', 'last resort'));
+      }
+      chain.appendChild(line);
+    });
+    if (!(preview.chain || []).length) {
+      chain.appendChild(node('p', 'board-empty', 'the roster read did not land'));
+    } else if (preview.tail) {
+      chain.appendChild(node('p', 'onboard-chain-note',
+        (preview.tail) + ' is the declared last resort: it serves only after every other ' +
+        'candidate has failed, and the decision row names it when it does.'));
+    }
+    card.appendChild(chain);
+
+    var workloads = node('div', 'onboard-workloads');
+    [['a quick task', preview.quick], ['a hard one', preview.hard]].forEach(function (pair) {
+      var one = node('div', 'onboard-workload');
+      one.appendChild(node('span', 'method-label', pair[0]));
+      one.appendChild(node('span', 'onboard-workload-who', pair[1] || 'the built-in order'));
+      workloads.appendChild(one);
+    });
+    card.appendChild(workloads);
+
+    var caps = node('div', 'onboard-caps');
+    (preview.ceilings || []).forEach(function (cap) {
+      var line = node('span', 'onboard-cap');
+      line.appendChild(node('b', null, '$' + Number(cap.in_force).toFixed(2)));
+      line.appendChild(document.createTextNode(' a day \u00b7 ' + cap.what +
+        (cap.tightened ? ' (tightened)' : '')));
+      caps.appendChild(line);
+    });
+    card.appendChild(caps);
+
+    var windows = preview.windows || {};
+    card.appendChild(node('p', 'onboard-chain-note',
+      (windows.declared || 0) + ' models carry a declared context window; any other model gets '
+      + (windows.floor || 0) + ' tokens before the conversation is folded. Heard at pick time, '
+      + 'not in week three.'));
+
+    var acts = node('div', 'onboard-acts');
+    var confirm = node('button', 'foot-btn', 'This looks right');
+    confirm.type = 'button';
+    confirm.addEventListener('click', function () {
+      onboardPost({ op: 'confirm' }).then(function (doc) {
+        if (!doc) return;
+        notice('the strategy is confirmed', 'change any of it in the settings');
+        readOnboard(true);
+      });
+    });
+    acts.appendChild(confirm);
+    var later = node('button', 'row-rewind', 'not now');
+    later.type = 'button';
+    later.title = 'Fleet keeps its built-in order; the choice stays open.';
+    later.addEventListener('click', function () { onboardSkip('roster'); });
+    acts.appendChild(later);
+    var adjust = node('button', 'row-rewind', 'change it');
+    adjust.type = 'button';
+    adjust.addEventListener('click', function () { window.location.hash = '#/settings'; });
+    acts.appendChild(adjust);
+    card.appendChild(acts);
+  }
+
   function onboardSkip(step) {
     onboardPost({ op: 'skip', step: step }).then(function (doc) {
       if (!doc) return;
@@ -3575,6 +3677,10 @@
   }
 
   function onboardStep(step) {
+    if (step === 'roster') {
+      onboardPreview();
+      return;
+    }
     if (step === 'lanes') {
       onboardPost({ op: 'verify' }).then(function (doc) {
         if (!doc) return;

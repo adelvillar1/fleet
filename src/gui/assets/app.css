@@ -1240,14 +1240,23 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
    method strip, the lanes, the offers and the footnote are the work
    home's furniture, and a machine that cannot answer has none of it. */
 .empty[data-onboard="door"] .home-stats,
+.empty[data-onboard="preview"] .home-stats,
 .empty[data-onboard="door"] .recent,
+.empty[data-onboard="preview"] .recent,
 .empty[data-onboard="door"] .since,
+.empty[data-onboard="preview"] .since,
 .empty[data-onboard="door"] .next,
+.empty[data-onboard="preview"] .next,
 .empty[data-onboard="door"] .method:not(.onboard-mechanism),
+.empty[data-onboard="preview"] .method,
 .empty[data-onboard="door"] .lanes,
+.empty[data-onboard="preview"] .lanes,
 .empty[data-onboard="door"] .offers:not(#door-discovered),
+.empty[data-onboard="preview"] .offers,
 .empty[data-onboard="door"] .home-known,
+.empty[data-onboard="preview"] .home-known,
 .empty[data-onboard="door"] .empty-meta,
+.empty[data-onboard="preview"] .empty-meta,
 .empty[data-onboard="door"] .onboard-cards { display: none; }
 
 .onboard-door {
@@ -1312,7 +1321,9 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
 }
 .onboard-card {
   padding: 15px 16px 16px;
+  border: var(--card-hairline);
   border-radius: 12px;
+  background: var(--card-bg);
 }
 .onboard-card .card-head h2 {
   font-size: 13px;
@@ -1322,6 +1333,93 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
   color: var(--dsw-alias-ink);
 }
 .onboard-card .card-note { margin: 4px 0 10px; }
+/* The visible proof on every card: one derived reading, never a tick.
+   The dot is the house's state mark; the words are the evidence. */
+.onboard-proof {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  margin: 0 0 10px;
+  color: var(--dsw-alias-ink-secondary);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+.onboard-proof-mark { color: var(--dsw-alias-accent); }
+/* The strategy preview: the chain as built, then the two everyday
+   workloads, then the ceilings. Rows are the console's own hairline
+   language; the payg tail says what it is. */
+.onboard-chain {
+  display: grid;
+  gap: 2px;
+  margin: 0 0 12px;
+  padding: 10px 0;
+  border-top: var(--card-hairline);
+  border-bottom: var(--card-hairline);
+}
+.onboard-chain-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) auto auto;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 11.5px;
+  color: var(--dsw-alias-ink);
+}
+.onboard-chain-row[data-state="idle"] { color: var(--dsw-alias-ink-tertiary); }
+.onboard-chain-name { font-weight: 600; }
+.onboard-chain-model {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--dsw-alias-ink-tertiary);
+  overflow-wrap: anywhere;
+}
+.onboard-chain-state {
+  font-size: 10.5px;
+  line-height: 1.9;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--dsw-alias-ink-tertiary);
+}
+.onboard-chain-row[data-state="ready"] .onboard-chain-state { color: var(--dsw-alias-ok); }
+.onboard-chain-tail {
+  font-size: 9.5px;
+  line-height: 1.7;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--dsw-alias-ink-tertiary);
+  border: var(--card-hairline);
+  border-radius: 5px;
+  padding: 0 5px;
+}
+.onboard-chain-note {
+  margin: 8px 0 0;
+  color: var(--dsw-alias-ink-tertiary);
+  font-size: 11px;
+  line-height: 1.55;
+}
+.onboard-workloads {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0 0 10px;
+}
+.onboard-workload { display: grid; gap: 3px; }
+.onboard-workload-who {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--dsw-alias-ink);
+  overflow-wrap: anywhere;
+}
+.onboard-caps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin: 0 0 10px;
+  font-size: 11px;
+  color: var(--dsw-alias-ink-tertiary);
+}
+.onboard-caps b { color: var(--dsw-alias-ink); font-weight: 600; }
 .onboard-acts {
   display: flex;
   align-items: center;

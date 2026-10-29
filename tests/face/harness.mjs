@@ -3385,6 +3385,7 @@ function onboardDoc(options) {
     { id: 'roster', done: false, skipped: false, evidence: '' },
   ].map((step) => ({
     ...step,
+    proof: step.proof || ('proof for ' + step.id + ': 0 of 1 read'),
     narration: {
       eyebrow: 'fleet \u00b7 ' + step.id,
       title: step.id === 'lanes' ? 'Small specialists, called when they help.'
@@ -3399,6 +3400,19 @@ function onboardDoc(options) {
   }));
   return {
     type: 'onboard',
+    preview: {
+      chain: [
+        { provider: 'stepfun', model: 'step-5-preview', state: 'ready', billing: 'plan' },
+        { provider: 'deepseek', model: 'deepseek-flash', state: 'no key', billing: 'payg' },
+      ],
+      quick: 'stepfun/step-5-preview',
+      hard: 'stepfun/step-5-preview',
+      tail: 'deepseek',
+      ceilings: [
+        { what: "the judge's asks", in_force: 0.05, compiled: 0.05, tightened: false },
+      ],
+      windows: { declared: 12, floor: 100000 },
+    },
     ready: !opts.door,
     first_incomplete: opts.door ? 'first-llm' : 'lanes',
     steps,
@@ -3491,6 +3505,10 @@ async function theCapabilityCardsAreOnDemand() {
     cards.every((card) => card.querySelectorAll('.foot-btn').length === 1 &&
       card.querySelectorAll('.row-rewind').length === 1),
     String(cards.length));
+  check('OB every card carries a visible proof',
+    cards.every((card) => card.querySelectorAll('.onboard-proof').length === 1) &&
+      page.text('onboard-cards').includes('proof for'),
+    String(cards.length) + ' cards');
   check('OB a card names its benefit before its mechanism',
     cards[0].textContent.indexOf('One sentence of benefit') <
       cards[0].textContent.indexOf('The mechanism words live here'),
@@ -3509,6 +3527,68 @@ async function theCapabilityCardsAreOnDemand() {
   check('OB a settled fleet shows no setup at all',
     quiet.rows('.onboard-card').length === 0 && quiet.IDS['onboard-cards'].hidden === true,
     String(quiet.rows('.onboard-card').length));
+}
+
+
+// The strategy step ends in a confirmation to read, not a green to earn:
+// the chain as built, what a quick task and a hard one do, the ceilings
+// in force, and the window fallback — then one confirmation.
+async function theStrategyStepShowsItsPreview() {
+  const posts = [];
+  const page = boot({
+    width: 1440, hash: '#/chat',
+    documents: { onboard: onboardDoc({ door: false }), state: (asked) => emptyState(asked) },
+  });
+  await flush();
+  page.open();
+  await flush(80);
+
+  const rosterCard = page.rows('.onboard-card').find((card) =>
+    card.textContent.includes('Which model does what'));
+  check('PV the strategy card is on the stack', !!rosterCard,
+    String(page.rows('.onboard-card').length));
+  // Its own action opens the preview, not the settings surface.
+  rosterCard.querySelector('.foot-btn').click();
+  await flush(60);
+  const preview = page.rows('.onboard-preview')[0];
+  check('PV the strategy step opens its preview in place', !!preview,
+    String(page.rows('.onboard-preview').length));
+  check('PV the preview shows the chain as built',
+    page.rows('.onboard-chain-row').length === 2 &&
+      page.text('onboard-cards').includes('stepfun') &&
+      page.text('onboard-cards').includes('deepseek'),
+    String(page.rows('.onboard-chain-row').length));
+  check('PV the chain names the last resort',
+    page.text('onboard-cards').includes('last resort') &&
+      page.text('onboard-cards').includes('serves only after every other'),
+    'tail');
+  check('PV the preview names what a quick task and a hard one do',
+    page.rows('.onboard-workload').length === 2 &&
+      page.text('onboard-cards').includes('a quick task') &&
+      page.text('onboard-cards').includes('a hard one') &&
+      page.text('onboard-cards').includes('stepfun/step-5-preview'),
+    'workloads');
+  check('PV the preview names the ceilings in force',
+    page.rows('.onboard-cap').length === 1 &&
+      page.text('onboard-cards').includes('$0.05') &&
+      page.text('onboard-cards').includes('a day'),
+    page.text('onboard-cards').includes('$0.05') ? 'caps' : 'missing');
+  check('PV the preview names the window fallback',
+    page.text('onboard-cards').includes('12 models carry a declared context window') &&
+      page.text('onboard-cards').includes('100000 tokens'),
+    'windows');
+  // The confirmation posts the decision and records it.
+  const confirm = page.rows('.onboard-acts .foot-btn')[0];
+  check('PV the preview ends in a confirmation and a real not-now',
+    !!confirm && page.rows('.onboard-acts .row-rewind').length === 2,
+    String(page.rows('.onboard-acts .row-rewind').length));
+  confirm.click();
+  await flush(60);
+  const confirmed = page.calls.filter((call) =>
+    call.url.startsWith('/api/onboard') && String(call.body).includes('"op":"confirm"'));
+  check('PV confirming posts the decision', confirmed.length === 1,
+    JSON.stringify(page.calls.filter((c) => c.url.startsWith('/api/onboard')).map((c) => c.body)));
+  void posts;
 }
 
 const cases = [
@@ -3552,6 +3632,7 @@ const cases = [
   ['PV the preview renders the common formats', thePreviewRendersTheCommonFormats],
   ['OB the door is the welcome in its first-run state', theDoorIsTheWelcomeInItsFirstRunState],
   ['OB the capability cards are on demand', theCapabilityCardsAreOnDemand],
+  ['PV the strategy step shows its preview', theStrategyStepShowsItsPreview],
 ];
 
 for (const [name, run] of cases) {

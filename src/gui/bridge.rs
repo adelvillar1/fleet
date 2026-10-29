@@ -2321,6 +2321,20 @@ impl Bridge {
                     "refused": proved.err().map(|reason| vec![reason]).unwrap_or_default(),
                 }));
             }
+            // The press for an account already on the machine: prove it
+            // without writing anything.
+            "prove" => {
+                let dotenv: std::collections::HashMap<String, String> =
+                    crate::home::read_dotenv_with_process_vault(&home);
+                let proved = self.onboard_prove(&home, &dotenv).await;
+                return Ok(json!({
+                    "type": "onboard_op",
+                    "op": op,
+                    "proved": proved.is_ok(),
+                    "answer": proved.as_deref().unwrap_or(""),
+                    "refused": proved.err().map(|reason| vec![reason]).unwrap_or_default(),
+                }));
+            }
             "skip" => {
                 let step = arguments
                     .get("step")

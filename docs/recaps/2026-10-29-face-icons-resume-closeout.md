@@ -175,3 +175,55 @@ verification debt into a deploy step.
 - The full cargo suite takes minutes cold; run it as a background task
   when a turn continues past it — the owner cancelled the first
   foreground attempt watching it sit.
+
+## The guided onboarding (added the same day, after the icons)
+
+The plan `2026-10-29-guided-onboarding.md` is **completed**. The first-run
+surface is two states of the home, decided by one derived read
+(`/api/onboard`):
+
+- **The door** — when no candidate resolves, the welcome becomes its
+  first-run state: `fleet · first run`, "One account, and fleet can
+  think.", the benefit sentence, and one decision. It looks before it
+  asks (an account already on the machine is a single press), and the
+  press proves itself.
+- **The cards** — the capabilities the machine can still gain, each with
+  its benefit, a **visible proof** (a derived reading — "6 of 6
+  specialists are installed", "30 repositories under …", "8 choices in
+  force · quick … · hard …"), one action, and a real "not now".
+- **The strategy preview** — the roster step ends in a screen, not a
+  jump: the chain as built with each candidate's state and billing, the
+  last resort named, what a quick task and a hard one do, the ceilings in
+  force, and the window fallback. Then one confirmation.
+- **The sequence** — `fleet onboard` walks the same steps, resuming at
+  the first incomplete one; decisions ride the calibration stream's
+  existing `lifecycle` rows, so nothing new is stored.
+
+### Proven by hand (the plan's deferred check)
+
+The door's press, run against the live face on this machine:
+
+```
+POST /api/onboard {"op":"prove"}
+→ proved: true, answer: "Hello there, how are you?"
+```
+
+One bounded call through the router, the model's own words back — the
+criterion the plan deferred to a hand proof, recorded here.
+
+### The audit's finding
+
+Two criteria were marked met before the behaviour existed: the cards had
+no visible proof element, and the strategy step's action still jumped to
+settings. Both landed the same day, with harness checks of their own
+(`OB every card carries a visible proof`, `PV the strategy step shows
+its preview`), and the plan's record carries the correction rather than
+a quiet green.
+
+### State
+
+Harness 375 checks across 41 cases; the gate green (fmt 0, clippy 0,
+build 0, test 0). The live document on :3080 derives every figure from
+this machine: 6/6 specialists installed, 30 repositories, quick
+`token-plan/qwen3.8-flash`, hard `zai-coding-plan/GLM-5.3-Flash`, the
+`deepseek` last resort, three ceilings, 35 declared windows.

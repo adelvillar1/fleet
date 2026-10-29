@@ -283,7 +283,11 @@ and the user hears it at pick time, not in week three.
       before mechanism, and the discovered-key press when one exists
       (`OB the door is the welcome in its first-run state`); the press
       proves itself with one bounded call whose answer lands in the
-      conversation (`/api/onboard`'s `key` op → `onboard_prove`).
+      conversation (`/api/onboard`'s `prove` op → `onboard_prove`).
+      **Proven by hand 2026-10-29** against the live face: `POST
+      /api/onboard {"op":"prove"}` answered `proved: true`, the model's
+      own words back ("Hello there, how are you?") — one bounded call
+      through the router, recorded in the day's recap.
 - [x] A send with no key raises the door inline — `UiEvent::NeedsSetup`
       replaces the routing error, the face's `needs_setup` case restores
       the typed words, and the CLI's own refusal names `fleet gui`.
@@ -298,9 +302,14 @@ and the user hears it at pick time, not in week three.
       harness asserts the onboarding's CSS declares no token the console
       lacks and no literal colour (`OB the door is the welcome in its
       first-run state`).
-- [x] The capabilities appear as benefit cards on demand
-      (`OB the capability cards are on demand`), and a settled fleet
-      shows none.
+- [x] The capabilities appear as benefit cards on demand, **each with a
+      visible proof** — the document carries a derived reading per step
+      (`proof(...)`: "6 of 6 specialists are installed", "30 repositories
+      under …", "8 choices in force · quick … · hard …") and the card
+      renders it under its benefit sentence (`OB every card carries a
+      visible proof`) — and a settled fleet shows none.
+      *(The audit found this criterion marked met before the proof
+      element existed; the fix landed the same day.)*
 - [x] Every narrated fact is derived —
       `the_narration_is_derived_from_the_lane_registry` walks the
       registry's own names, roles, root, and window floor.
@@ -317,9 +326,16 @@ and the user hears it at pick time, not in week three.
       (`mcp_registry::github_token_name`, from the registry never a
       constant) and writes through the secret path; with no card the
       step refuses in plain words rather than inventing a name.
-- [x] The roster step ends in the confirmation (a `lifecycle` row) and
-      its disclosure names the window floor for undeclared models, read
-      from `compaction::COMPACTION_TOKEN_BUDGET`.
+- [x] The roster step **ends in the confirmation preview**: the chain as
+      built (each provider, model, state and billing), what a quick task
+      and a hard one do (the preference table's first candidate for
+      each), the ceilings in force (compiled or tightened), and the
+      window fallback (declared count + the floor from
+      `compaction::COMPACTION_TOKEN_BUDGET`) — then one "this looks
+      right" that records the decision, with "not now" and "change it"
+      beside it (`PV the strategy step shows its preview`).
+      *(The audit found this criterion marked met while the action still
+      just jumped to settings; the preview landed the same day.)*
 - [x] Completion is the one green probe over four real reads, and the
       recalled fact is the sequence's own
       (`the_onboarding_seeds_the_fact_its_completion_reads`).
@@ -363,6 +379,16 @@ assertion. The chat-turn verify stays out of the suite (not
 deterministic) and is proven by hand once, recorded in the recap. The
 GUI criteria are driven by the face harness over the bridge's document
 shapes, the way the pane's and the work rail's checks are.
+
+## Audited after the build — two criteria were marked met before they were
+
+The completion audit found two of the fourteen criteria checked while the
+behaviour was missing: the capability cards had no visible proof element,
+and the strategy step's action still jumped to the settings surface
+instead of showing its confirmation preview. Both landed the same day
+(`proof(...)` + the card's proof line; `onboard::preview` + the face's
+preview screen), with harness checks of their own and the plan's wording
+corrected here rather than quietly left green.
 
 ## Examined 2026-10-29 — six findings incorporated
 
