@@ -1,5 +1,5 @@
 ---
-status: draft
+status: completed
 created: 2026-10-29
 updated: 2026-10-29
 slug: conversation-sessions-home
@@ -71,6 +71,18 @@ N3 close the seams the diagnosis named.
 
 ### N0 — the work rail renders the owner's work only
 
+**Landed 2026-10-29.** The face filters every group through one
+predicate (`railRow`: class-yours and not a shell); the background line,
+its toggle and the family code are gone; the bridge's counts are
+owner-scoped (KI-300's law — a head cannot count a row the list will
+not render), with the all-class background count kept as the document's
+own fact. The welcome's "pick up where you left off" is filtered too
+(bridge `owner_recent` for the home document, the face's fallback for
+the sessions slice). Pinned by `the_counts_speak_the_owners_work_only`,
+`the_welcomes_recent_is_the_owners_only`, and the rewritten C1 harness
+case (system rows seeded, none rendered, the needs pick skips a
+scheduled run paused at its gate).
+
 The rail renders rows of class `yours` and nothing else. The
 background/delegated/channel groups and their toggle leave `paintWork`
 entirely; the needs/working/archived groups gain the class filter so no
@@ -81,6 +93,16 @@ speaks the owner's work in the same words (`counts.yours`, already
 derived — bridge.rs:5094).
 
 ### N1 — the home, always reachable
+
+**Landed 2026-10-29.** Arriving at `#/chat` detaches: the draft swaps
+under the conversation's (or the pending) key, the pointer clears, the
+welcome shows, the log hides, and nothing server-side changes. The
+stream's guard skips every named event for a detached face — no
+transcript is watching — while the `session` adoption event still
+lands, so a send from the home follows its own conversation. Escape and
+the rail's conversation item both walk home. Pinned by the N1 harness
+case (detach → welcome → the recent row re-enters the same
+conversation; nothing minted).
 
 The welcome becomes a state of the conversation surface, not the
 absence of one. The rail's "conversation" item and Escape land on the
@@ -94,6 +116,16 @@ conversations, the rail is the way home.
 
 ### N2 — New mints nothing until words exist
 
+**Landed 2026-10-29.** New (and /clear, the same verb) walks home with a
+pending intent; the session is created at the first send —
+create-then-send in one turn — and the pending draft lives under
+`fleet-draft-new` until a session owns it. Opening any conversation
+leaves the intent behind; the rail and the @-list skip rows with no
+words and no kind. Pinned by the N2 harness case (New mints nothing →
+the pending draft returns → abandoning mints nothing → the send creates
+exactly one session and the run lands in it) and the rewritten C3/C4
+New-/clear checks.
+
 The home composer composes into a pending conversation; the session is
 created at the first send (create-then-send in one turn), so an
 abandoned compose leaves no shell. The pending draft lives under its
@@ -103,6 +135,14 @@ archive still lists them. The 34 existing shells stop being rendered
 and stop being created.
 
 ### N3 — the rail says where the work is
+
+**Landed 2026-10-29.** The dead count spans came alive: the sessions
+badge shows needs + working from the bridge's owner-scoped counts,
+hides when the archive is quiet, and rides the link so the click-through
+is the rail's own. One archive read at boot feeds it from any panel, and
+the five-second clock refreshes it while work is in flight. Pinned by
+the N3 harness case (the badge shows 3 when two need the owner and one
+works; hidden on a quiet archive).
 
 The count badges come alive: "sessions" carries the needs + working
 counts when either is non-zero (the spans and `dataset.count` exist;
@@ -161,9 +201,11 @@ see it waiting, click it, land in it.
   the parsers; a rail change there is its own slice if the owner wants
   one.
 
-## Verification
+## Verification — met 2026-10-29
 
-The gate runs whole and exit codes are read directly. The four harness
-checks are the proof; the live face gets one manual pass (home → work →
-home; the rail with today's archive; a compose abandoned) before the
-plan's status flips.
+The gate ran whole with exit codes read directly (fmt 0, clippy 0,
+build 0, test 0 — including the two new bridge tests). The face harness
+is green at **323 checks across 35 cases**, including the four
+increment cases. One harness fidelity gap was closed on the way: the
+fake window's hash setter now fires hashchange like a real browser, so
+the router walks on programmatic navigation too.

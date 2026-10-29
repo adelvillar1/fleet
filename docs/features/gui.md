@@ -166,14 +166,25 @@ every visible `.tile`, `.badge`, `.rrow`, `.rank-row`, `.cal-cell`,
   one verb: it resumes that log into the conversation beside the list,
   with its composer, so reading and continuing are the same act and
   there is no separate read-only replay. `#/sessions/<id>` is the
-  address of the open row and survives a reload; `#/chat` is the
-  new-work front door. Rows are grouped by what needs the owner
-  (*needs you*, *working*, *background* closed behind one line that
-  names its run count, *earlier* per project, and **archived** closed
-  behind one line of its own at the bottom), and the state words come
-  from the bridge's derivation:
+  address of the open row and survives a reload; `#/chat` is the home —
+  the welcome with the counts and "pick up where you left off", and the
+  one place every surface's Escape returns to; arriving there detaches
+  from the conversation being read (nothing server-side changes, and
+  the recent list's live row is the way back). The rail renders the
+  owner's work only: system-initiated sessions — scheduled jobs,
+  delegated children, peer channels — live in the log (`fleet cron`,
+  `fleet sessions`), never on the user screen, and a log with no words
+  and no kind is not a conversation at all. Rows are grouped by what
+  needs the owner (*needs you*, *working*, *earlier* per project, and
+  **archived** closed behind one line at the bottom), and the state
+  words come from the bridge's derivation:
   `needs-approval`, `paused`, `working`, `active`, `handed back`,
-  `completed`, `capped`, `stopped`, `archived`, `interrupted`, `new`.
+  `completed`, `capped`, `stopped`, `archived`, `interrupted`, `new`,
+  `resumed`. The rail's sessions badge counts the owner's waiting work
+  — needs plus working — from every surface, and hides when the archive
+  is quiet. **New** is an intent, not a row: it walks home with a fresh
+  compose, and the session is created when words are sent, so an
+  abandoned compose leaves no shell in the archive.
   Sessions end only when the owner archives them: a run that stopped —
   the model handed the conversation back, or the turn cap hit — reads
   as open (`handed back`, `capped`), never as finished, and every row

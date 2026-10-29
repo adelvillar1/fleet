@@ -780,7 +780,12 @@ impl Bridge {
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default();
-        let recent: Vec<Value> = runs.iter().take(3).cloned().collect();
+        // The welcome's "pick up where you left off" is the owner's own
+        // screen: the newest of THEIR conversations, by the same ruling
+        // that keeps system sessions off the work rail. The machine's
+        // activity timeline keeps every run — it is a count of what the
+        // machine did, not a list of sessions.
+        let recent: Vec<Value> = owner_recent(&runs, 3);
         let timeline: Vec<Value> = runs
             .iter()
             .map(|row| {
@@ -4759,6 +4764,24 @@ fn work_class(entry: &session::SessionSummary) -> &'static str {
 /// The job a scheduled run belongs to, read from the frame
 /// `cron::frame_task` writes into the run's first message. `None` for
 /// anything that is not a scheduled run or whose frame cannot be read.
+/// The welcome's recent runs: the newest of the owner's own
+/// conversations, by the ruling that keeps system-initiated sessions
+/// off the user screen. An absent class reads as the owner's — the
+/// field is always present in the sessions document, and its absence
+/// has never meant system work.
+fn owner_recent(runs: &[Value], take: usize) -> Vec<Value> {
+    runs.iter()
+        .filter(|row| {
+            matches!(
+                row.get("class").and_then(Value::as_str),
+                None | Some("yours")
+            )
+        })
+        .take(take)
+        .cloned()
+        .collect()
+}
+
 fn scheduled_job(entry: &session::SessionSummary) -> Option<String> {
     if entry.kind.as_deref() != Some(session::SCHEDULED_KIND) {
         return None;
@@ -5062,10 +5085,17 @@ fn sessions_read(home: &std::path::Path, current: &str, live: &LiveFace, query: 
         .collect::<Vec<_>>();
     // The counts the page shows are derived here, once, from the same
     // state words it renders: a head that re-derived them in the browser
-    // would be a second answer to what the archive holds (KI-300).
-    let count = |wanted: &[&str]| {
+    // would be a second answer to what the archive holds (KI-300). The
+    // rail renders the owner's work only — the 2026-10-29 ruling puts
+    // system-initiated sessions (scheduled jobs, delegated children,
+    // peer channels) in the log, never on the user screen — so the
+    // owner-facing counts are owner-scoped: a head that counted a row
+    // the list will not render would lie. The background count stays
+    // the document's own all-class fact.
+    let count_owner = |wanted: &[&str]| {
         sessions
             .iter()
+            .filter(|row| row.get("class").and_then(Value::as_str) == Some("yours"))
             .filter(|row| {
                 row.get("state")
                     .and_then(Value::as_str)
@@ -5074,8 +5104,8 @@ fn sessions_read(home: &std::path::Path, current: &str, live: &LiveFace, query: 
             })
             .count()
     };
-    let needs = count(&["needs-approval", "paused"]);
-    let working = count(&["working"]);
+    let needs = count_owner(&["needs-approval", "paused"]);
+    let working = count_owner(&["working"]);
     let background = sessions
         .iter()
         .filter(|row| {
@@ -5085,12 +5115,16 @@ fn sessions_read(home: &std::path::Path, current: &str, live: &LiveFace, query: 
             )
         })
         .count();
-    let archived_count = count(&["archived"]);
+    let archived_count = count_owner(&["archived"]);
     let total = sessions.len();
-    let earlier = total.saturating_sub(needs + working + background + archived_count);
-    // The owner's own conversations: what the work list shows by default.
-    // The app's background work is counted separately so the head can
-    // name the owner's work without the page subtracting anything itself.
+    let owner_total = sessions
+        .iter()
+        .filter(|row| row.get("class").and_then(Value::as_str) == Some("yours"))
+        .count();
+    let earlier = owner_total.saturating_sub(needs + working + archived_count);
+    // The owner's own conversations: what the work list shows. The
+    // app's background work is counted separately so the document keeps
+    // the archive's whole truth even though the rail renders none of it.
     let yours = needs + working + earlier;
     json!({
         "type": "sessions",
@@ -9897,6 +9931,101 @@ mod tests {
         assert_eq!(row(&paused_id)["state"], "paused");
         assert_eq!(row(&working_id)["state"], "working");
         std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[tokio::test]
+    async fn the_counts_speak_the_owners_work_only() {
+        let home = std::env::temp_dir().join(format!("fleet-gui-counts-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).expect("a temp home");
+        // A scheduled run paused at its gate and a scheduled run ended
+        // sit beside the owner's own paused conversation: the rail
+        // renders none of the system rows, so the head counts none of
+        // them either — a "needs you" that named a scheduled run would
+        // send the owner looking for a row that is not there.
+        let mut scheduled =
+            crate::session::Session::create_scheduled(&home, "deepseek-flash").unwrap();
+        scheduled
+            .record(&crate::session::Record::User {
+                content: "[scheduled run — job `corpus-refresh-x`] the frame".into(),
+            })
+            .unwrap();
+        let scheduled_id = scheduled.id().to_string();
+        std::fs::write(
+            crate::home::sessions_dir(&home).join(format!("{scheduled_id}.control")),
+            "{\"pause\": true}",
+        )
+        .unwrap();
+        let mut sched_ended =
+            crate::session::Session::create_scheduled(&home, "deepseek-flash").unwrap();
+        sched_ended
+            .record(&crate::session::Record::User {
+                content: "[scheduled run — job `corpus-refresh-y`] the frame".into(),
+            })
+            .unwrap();
+        sched_ended
+            .record(&crate::session::Record::End {
+                stop_reason: "completed".into(),
+                turns: 2,
+                served_model: None,
+            })
+            .unwrap();
+        let mut mine = crate::session::Session::create(&home, "deepseek-flash").unwrap();
+        mine.record(&crate::session::Record::User {
+            content: "hold this".into(),
+        })
+        .unwrap();
+        let mine_id = mine.id().to_string();
+        std::fs::write(
+            crate::home::sessions_dir(&home).join(format!("{mine_id}.control")),
+            "{\"pause\": true}",
+        )
+        .unwrap();
+
+        let live = LiveFace {
+            driving: None,
+            seats: Default::default(),
+        };
+        let document = sessions_read(&home, "", &live, "");
+        let counts = &document["counts"];
+        // The owner's paused conversation is the one "needs you"; the
+        // scheduled run paused at its gate counts nothing on the rail.
+        assert_eq!(counts["needs"], 1, "{document}");
+        assert_eq!(counts["working"], 0);
+        assert_eq!(counts["earlier"], 0);
+        assert_eq!(counts["yours"], 1);
+        // The background count stays the document's own all-class fact.
+        assert_eq!(counts["background"], 2);
+        // And the rows still carry the whole truth — classed, present.
+        // The render is the face's discipline, not the document's
+        // blindness.
+        let rows = document["sessions"].as_array().expect("rows");
+        assert_eq!(rows.len(), 3);
+        assert_eq!(
+            rows.iter()
+                .filter(|row| row["class"] == "background")
+                .count(),
+            2
+        );
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn the_welcomes_recent_is_the_owners_only() {
+        let row = |id: &str, class: &str| json!({"id": id, "class": class});
+        let runs = vec![
+            row("sched-newest", "background"),
+            row("mine-1", "yours"),
+            row("sched-2", "background"),
+            row("mine-2", "yours"),
+            row("mine-3", "yours"),
+        ];
+        let recent = owner_recent(&runs, 3);
+        let ids: Vec<&str> = recent
+            .iter()
+            .map(|row| row["id"].as_str().expect("an id"))
+            .collect();
+        assert_eq!(ids, vec!["mine-1", "mine-2", "mine-3"]);
     }
 
     #[test]

@@ -654,12 +654,10 @@
     // owner folded, and the background families they opened.
     sessionQuery: '',
     sessionFolded: {},
-    workExpanded: {},
-    // The app's own background runs — scheduled jobs, delegated children,
-    // peer conversations — are hidden by default: they keep the home
-    // alive but they are not the owner's work. One line names them and
-    // opens them on request.
-    showBackground: false,
+    // The New intent: set by New, cleared by opening a conversation or
+    // by the send that materializes it. The home's composer composes
+    // into nothing until then — an abandoned compose leaves no log.
+    pendingNew: false,
     // The work list folded to its strip: the owner's choice, kept for the
     // next reload the way the dock's is. The conversation takes the width
     // either way.
@@ -2057,7 +2055,10 @@
     // another conversation's children still do not.
     var ownChild = event.type === 'delegation' && event.parent &&
       event.parent === face.session;
-    if (!ownChild && event.session && face.session && event.session !== face.session) {
+    // A detached face is on the home: no transcript is watching, so a
+    // named event never paints — the row's state rides the sessions
+    // read and the rail's badge, not a log nobody is reading.
+    if (!ownChild && event.session && (!face.session || event.session !== face.session)) {
       if (event.type === 'finished' || event.type === 'failed') {
         // That run is over. A message queued in this conversation was
         // waiting on it, so the queue drains now — the send names this
@@ -3333,7 +3334,7 @@
   function paintRecent() {
     paintHome();
     var rows = (face.home && face.home.runs && face.home.runs.recent)
-      || ((face.sessions && face.sessions.sessions) || []).slice(0, 3);
+      || (face.sessions ? face.sessions.sessions.filter(railRow).slice(0, 3) : []);
     if (!rows.length) { el.recent.hidden = true; return; }
     el.recent.hidden = false;
     el.recent.textContent = '';
@@ -5989,14 +5990,41 @@
     // choice, and a run that overtook its own folder would work in the
     // old one.
     Promise.resolve(folderSync).then(function () {
-      // The run names the session the face is showing: after opening a
-      // session from the archive, a session-less run would go to the
-      // launch session — a different conversation, or a refusal when
-      // that one is mid-run — which reads as "the conversation will not
-      // let me work in it".
-      var runPath = '/api/run' + (face.session
-        ? '?session=' + encodeURIComponent(face.session) : '');
-      return post(runPath, {
+      // A pending New materializes here: the session is created at the
+      // first send — create-then-send in one turn — so an abandoned
+      // compose leaves no shell in the archive (N2). The pending
+      // draft's key clears with it; a refused creation restores the
+      // owner's words to the composer below.
+      var target = Promise.resolve(face.session);
+      if (!face.session && face.pendingNew) {
+        target = post('/api/session/new', {}).then(function (reply) {
+          if (reply.status !== 200 || !reply.body || !reply.body.id) {
+            throw new Error((reply.body && reply.body.error) || 'the new conversation was refused');
+          }
+          try { window.localStorage.removeItem('fleet-draft-new'); } catch (error) { }
+          face.pendingNew = false;
+          face.session = reply.body.id;
+          face.focus = { panel: 'sessions', id: face.session };
+          face.panel = 'sessions';
+          try {
+            window.history.replaceState(null, '',
+              '#/sessions/' + encodeURIComponent(face.session));
+          } catch (error) { }
+          setWork(window.innerWidth > 1180);
+          paintWork();
+          paintConvHead();
+          return face.session;
+        });
+      }
+      return target.then(function (session) {
+        // The run names the session the face is showing: after opening a
+        // session from the archive, a session-less run would go to the
+        // launch session — a different conversation, or a refusal when
+        // that one is mid-run — which reads as "the conversation will not
+        // let me work in it".
+        var runPath = '/api/run' + (session
+          ? '?session=' + encodeURIComponent(session) : '');
+        return post(runPath, {
         task: task,
         mode: face.permissions,
         pin: face.providerPin || null,
@@ -6012,6 +6040,7 @@
           truncated: file.truncated || null
         };
         })
+      });
       });
     }).then(function (reply) {
       if (reply.status === 200) {
@@ -7758,12 +7787,31 @@
         face.sessions = doc;
         if (face.panel === 'sessions') paintWork();
         paintConvHead();
+        paintRailCounts();
       })
       .catch(function () { });
   }
 
   function workRows() {
     return (face.sessions && face.sessions.sessions) || [];
+  }
+
+  // A shell is a log with no words and no kind — a New the owner
+  // abandoned, a boot's launch session never used. It is not a
+  // conversation; the rail and the @-list skip it, the CLI archive
+  // still lists it.
+  function notShell(row) {
+    return Boolean(row.kind || row.title);
+  }
+
+  // The rail is the owner's: system-initiated sessions — scheduled
+  // jobs, delegated children, peer channels — live in the log (fleet
+  // cron, fleet sessions, the calibration stream), never on the user
+  // screen, and a shell is not a conversation at all. One predicate,
+  // every group, so no state can leak a row the ruling keeps off.
+  // (Named railRow: ownerRow is already the message renderer's name.)
+  function railRow(row) {
+    return (!row.class || row.class === 'yours') && notShell(row);
   }
 
   function conversationName(id) {
@@ -7935,17 +7983,13 @@
         'The archive could not be read: ' + read.refused.join('; ')));
       return;
     }
-    var shown = all.filter(sessionMatchesQuery);
+    var shown = all.filter(railRow).filter(sessionMatchesQuery);
     var groups = {
       needs: shown.filter(function (row) { return workNeeds(row.state); }),
       working: shown.filter(function (row) { return row.state === 'working'; }),
       archived: shown.filter(function (row) { return row.state === 'archived'; }),
-      background: shown.filter(function (row) {
-        return row.class === 'background' || row.class === 'delegated' || row.class === 'channel';
-      }),
       earlier: shown.filter(function (row) {
-        return !workNeeds(row.state) && row.state !== 'working' && row.state !== 'archived' &&
-          row.class !== 'background' && row.class !== 'delegated' && row.class !== 'channel';
+        return !workNeeds(row.state) && row.state !== 'working' && row.state !== 'archived';
       })
     };
 
@@ -7959,32 +8003,6 @@
     if (groups.working.length) {
       el.workList.appendChild(workGroupHead('working', groupCount('working', groups.working)));
       groups.working.forEach(function (row) { el.workList.appendChild(workRow(row)); });
-    }
-    if (groups.background.length) {
-      // One quiet line, closed by default: the app's own work is a fact
-      // about the home, not a row the owner has to read past.
-      var backgroundCount = groupCount('background', groups.background);
-      var opened = !!face.showBackground;
-      var toggle = node('button', 'work-background');
-      toggle.type = 'button';
-      toggle.setAttribute('aria-expanded', opened ? 'true' : 'false');
-      toggle.title = opened ? 'hide the app\u2019s own runs' : 'show the app\u2019s own runs';
-      toggle.appendChild(node('span', null, opened ? '\u25be' : '\u25b8'));
-      var label = node('span');
-      label.appendChild(node('b', null, 'background'));
-      label.appendChild(document.createTextNode(' \u00b7 ' + backgroundCount +
-        (backgroundCount === 1 ? ' run' : ' runs') + (opened ? '' : ' \u00b7 hidden')));
-      toggle.appendChild(label);
-      toggle.addEventListener('click', function () {
-        face.showBackground = !face.showBackground;
-        paintWork();
-      });
-      el.workList.appendChild(toggle);
-      if (opened) {
-        familyLines(groups.background).forEach(function (family) {
-          el.workList.appendChild(workFamily(family));
-        });
-      }
     }
     if (groups.earlier.length) {
       el.workList.appendChild(workGroupHead('earlier', groupCount('earlier', groups.earlier)));
@@ -8106,62 +8124,6 @@
     return button;
   }
 
-  // Background work is one line per family until asked about: fourteen
-  // nightly jobs are not fourteen things the owner must read.
-  function familyLines(rows) {
-    var map = {};
-    rows.forEach(function (row) {
-      var name = row.job
-        || (row.class === 'delegated' ? 'subagents'
-          : row.class === 'channel' ? 'channel \u00b7 ' + ((row.channel && row.channel[0]) || 'peer')
-            : 'runs');
-      (map[name] = map[name] || []).push(row);
-    });
-    return Object.keys(map).map(function (name) {
-      var family = map[name];
-      var newest = family.slice().sort(function (left, right) {
-        return String(right.created || '').localeCompare(String(left.created || ''));
-      })[0];
-      return {
-        name: name,
-        rows: family,
-        newest: newest,
-        open: family.filter(function (row) {
-          return row.state === 'working' || row.state === 'active' || workNeeds(row.state);
-        }).length
-      };
-    }).sort(function (left, right) {
-      return String(right.newest.created || '').localeCompare(String(left.newest.created || ''));
-    });
-  }
-
-  function workFamily(family) {
-    var expanded = !!face.workExpanded[family.name];
-    var wrap = node('div', 'work-family-wrap');
-    var head = node('button', 'work-family');
-    head.type = 'button';
-    head.setAttribute('aria-expanded', expanded ? 'true' : 'false');
-    head.appendChild(node('span', null, expanded ? '\u25be' : '\u25b8'));
-    var label = node('span');
-    label.appendChild(node('b', null, family.name));
-    label.appendChild(document.createTextNode(' \u00b7 ' + family.rows.length +
-      (family.rows.length === 1 ? ' run' : ' runs') +
-      (family.open ? ' \u00b7 ' + family.open + ' active' : '') +
-      ' \u00b7 last ' + workStateWord(family.newest.state)));
-    head.appendChild(label);
-    head.addEventListener('click', function () {
-      face.workExpanded[family.name] = !face.workExpanded[family.name];
-      paintWork();
-    });
-    wrap.appendChild(head);
-    if (expanded) {
-      var list = node('div', 'work-family-rows');
-      family.rows.forEach(function (row) { list.appendChild(workRow(row)); });
-      wrap.appendChild(list);
-    }
-    return wrap;
-  }
-
   // The conversation's head: the way out, the way to another, the state
   // in words, and New. Shown whenever a conversation is loaded, so the
   // face never reads as a one-way door.
@@ -8231,6 +8193,10 @@
     if (!id) return Promise.resolve();
     var options = opts || {};
     var same = face.session === id;
+    // Opening a conversation leaves the New intent behind: the owner
+    // chose an existing one. The pending draft keeps its key for the
+    // next press of New.
+    face.pendingNew = false;
     // The draft swaps with the conversation (D2): the outgoing one keeps
     // its sentence, the incoming one restores its own.
     swapDraft(face.session, id);
@@ -8275,17 +8241,26 @@
 
   // New is a real conversation: the route writes the log, so the work
   // list holds it before its first message and the next run lands in it.
+  // A new conversation is an intent, not a row: the home with a fresh
+  // compose. The session is created when words are sent (create-
+  // then-send in one turn), so an abandoned compose leaves no shell in
+  // the archive — the archive holds conversations, not attempts (N2).
+  // The pending draft has its own key until a session owns it.
   function newConversation() {
-    return post('/api/session/new', {}).then(function (reply) {
-      if (reply.status !== 200 || !reply.body || !reply.body.id) {
-        notice('a new conversation was refused',
-          (reply.body && reply.body.error) || 'the face said no without a reason');
-        return;
-      }
-      face.sessions = null;
-      setWork(true);
-      return openWork(reply.body.id);
-    }).catch(function () { });
+    face.pendingNew = true;
+    if (window.location.hash === '#/chat') {
+      // Already home: the swap happens in place.
+      swapDraft(face.session || '', 'new');
+      face.session = null;
+      face.focus = null;
+      el.log.hidden = true;
+      el.empty.hidden = false;
+    } else {
+      // The hash walk detaches: showRoute's chat branch swaps the draft
+      // under the pending key and shows the welcome.
+      window.location.hash = '#/chat';
+    }
+    el.task.focus();
   }
 
   // A branch's log reads in the drawer, over the live conversation
@@ -14127,7 +14102,7 @@
           return;
         }
         readSessions(true).then(function () {
-          var rows = workRows();
+          var rows = workRows().filter(railRow);
           var needs = rows.filter(function (row) { return workNeeds(row.state); })[0];
           var pick = face.session || (needs || rows[0] || {}).id;
           if (pick) return openWork(pick);
@@ -14146,9 +14121,20 @@
       settings: function () { paintSettings(); readSettings(true).then(paintSettings); }
     };
     if (arrive[address]) arrive[address]();
-    // The welcome is a read, not a snapshot: returning to the
-    // conversation refreshes its counts after a run or a reload.
+    // The home is a place, not the absence of a conversation: arriving
+    // here detaches from the one being read — the pointer clears, the
+    // welcome shows — and touches nothing server-side. The conversation
+    // continues at the bridge, and the recent list's live row ("this
+    // face · id") is the one click back. The main conversation page is
+    // never a one-and-done (the owner's 2026-10-29 friction, N1).
     if (address === 'chat') {
+      if (face.session) {
+        swapDraft(face.session, face.pendingNew ? 'new' : '');
+        face.session = null;
+        face.focus = null;
+        el.log.hidden = true;
+        el.empty.hidden = false;
+      }
       readHome(false).then(function () {
         paintHome();
         paintRecent();
@@ -14614,7 +14600,7 @@
     } else if (!face.tree) {
       readTree('', true);
     }
-    workRows().forEach(function (one) {
+    workRows().filter(notShell).forEach(function (one) {
       if (one.id !== face.session) {
         rows.push({ kind: 'session', label: one.title || one.id,
           insert: '@' + (one.title || one.id), follow: 'session', value: one.id });
@@ -14857,6 +14843,31 @@
   // rail says so rather than pretending every destination is built.
   var BUILT = ['chat', 'router', 'delegation', 'memory', 'skills', 'sessions', 'calibration',
     'tower', 'second-brain', 'workspace-history', 'bots', 'vault', 'settings'];
+
+  // The rail's badge: the surface that has something waiting says so,
+  // and says nothing when it does not — an empty counter is decoration.
+  // The count spans were born with the rail and never filled (the dead
+  // affordance the navigation audit named, N3). The numbers are the
+  // bridge's own owner-scoped counts — never a second derivation — and
+  // the badge rides the link, so the click-through is the rail's own.
+  function paintRailCounts() {
+    if (!el.railTree) return;
+    var counts = face.sessions && face.sessions.counts;
+    var needs = counts ? counts.needs || 0 : 0;
+    var working = counts ? counts.working || 0 : 0;
+    var waiting = needs + working;
+    Array.prototype.forEach.call(el.railTree.querySelectorAll('.surfaces-count'), function (span) {
+      if (span.dataset.count !== 'sessions') return;
+      span.hidden = !waiting;
+      span.textContent = waiting ? String(waiting) : '';
+      span.title = waiting
+        ? (needs
+          ? needs + (needs === 1 ? ' needs you' : ' need you') +
+            (working ? ' \u00b7 ' + working + ' working' : '')
+          : working + (working === 1 ? ' conversation working' : ' conversations working'))
+        : '';
+    });
+  }
 
   function markRail() {
     var which = (window.location.hash || '').replace(/^#\/?/, '');
@@ -15303,6 +15314,9 @@
   // do too: the corpus changes when the agent writes a fact, and the
   // library changes when a proposal lands.
   window.setInterval(function () {
+    // Work in flight anywhere keeps the rail's badge honest from every
+    // surface; quiet, the badge rides the reads it already gets.
+    if (face.driving || face.running) readSessions(false);
     if (face.panel === 'router') readRouter(false);
     if (face.panel === 'delegation') readDelegation(false);
     if (face.panel === 'memory') readMemory(false);
@@ -15433,6 +15447,9 @@
       // failed boot, even if a panel's read is still in flight.
       document.documentElement.setAttribute('data-fleet-mounted', '1');
       listen();
+      // One archive read at boot: the rail's badge and the welcome's
+      // recent fallback speak from it, whatever panel the owner landed on.
+      readSessions(false);
     })
     .catch(function (error) {
       document.documentElement.setAttribute('data-fleet-mounted', '1');
