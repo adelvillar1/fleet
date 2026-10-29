@@ -132,10 +132,16 @@ calibration day-files under
   `target/debug` artifacts (age first, a 15 GiB tiered backstop second,
   `target/release` never touched) and declines while a build runs; it
   ends the recap step.
-- **Pairing.** `fleet channels pair-webhook` or the face's pairing card
-  mints a device credential; the webhook token is shown once. Tailscale
-  `serve` is the account-gated TLS path; without it the pairing QR
-  points at plain-HTTP LAN.
+- **Pairing and the remote path.** `fleet channels pair-webhook` or the
+  face's pairing card mints a device credential; the webhook token is
+  shown once. The remote path is the **outbound relay** on OpenShip
+  (`https://fleet.opsh.io`, the deployment runbook lives in
+  `docs/features/remote-access.md`): the face dials out, the origin root
+  serves the paired face, frame bodies are sealed end to end with a key
+  from an X25519 exchange the relay only watched, and the session
+  secret rides URLs as a fragment browsers never send. Tailscale is the
+  optional fallback origin; without either, the pairing QR points at
+  plain-HTTP LAN.
 - **The vault.** Unlock per process (`FLEET_VAULT_PASSPHRASE` or the
   face), lock again, or `vault_reset` (archives the old vault, onboards
   a new one — the sealed copies are lost, the plaintext `.env` is not).

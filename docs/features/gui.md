@@ -652,8 +652,11 @@ The topbar's QR icon — shown only on the loopback face — mints a fresh
 pairing window and shows the URL, the code, and a QR a phone can scan.
 The URL is chosen in one place, in this order:
 
-1. `remote.public_url`, when the owner has named the HTTPS origin a proxy
-   serves the remote face on.
+1. `remote.public_url`, when the owner has named the HTTPS origin — the
+   relay origin (`https://fleet.opsh.io`) is that value. When the face
+   dials a relay, the card's URL also carries the relay session's
+   secret as a fragment (`#k=…`), which browsers never send: the paired
+   page files it away and seals its frames with what it derives from it.
 2. A detected Tailscale name (`https://<tailnet name>`), **verified** by
    asking it for `/api/state`: the paired face answers 401 without a
    cookie, the loopback face answers 200, and a proxy pointed at the

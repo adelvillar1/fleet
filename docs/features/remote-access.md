@@ -47,11 +47,13 @@ The face has its own door: the topbar's QR icon mints a window and shows
 the URL, the code, and a scannable QR. The URL is `remote.public_url`
 when set, else a detected tailnet HTTPS name that is verified to reach
 the remote face, else this machine's address with the plain-HTTP caveat.
-Over Tailscale that is the intended path — point `tailscale serve` at the
-remote listener, then scan; iOS refuses cleartext to a tailnet address,
-so the HTTPS name matters. The card mints one live window: opening it
-again invalidates the previous code. A paired phone cannot call the mint
-route; it is loopback only.
+When the face dials a relay, the card's URL — and the entry URL the
+launch prints — carry the relay session's secret as a **fragment**
+(`#k=…`), the part of a URL browsers never send: the secret exists on
+the screens that show it and, after a page opens, in that page's
+storage, and never in a wire-visible URL or an edge log. The card mints
+one live window: opening it again invalidates the previous code. A
+paired phone cannot call the mint route; it is loopback only.
 
 The remote face is a second listener with a default-deny allowlist: a
 paired device may watch the stream, read state, list and open sessions,
@@ -69,11 +71,14 @@ device could reach every allowlisted API route but never the shell.
 
 The face is installable on a paired device: the manifest, the worker, and
 the icons are allowlisted and carry no data. Installation needs a secure
-context, so an HTTPS remote face (a TLS proxy or Tailscale serve) can be
-added to the home screen while the same face on plain-HTTP LAN cannot;
-the relayed path under `/s/<sid>/` is per-session and is not installable.
-The worker caches only the two versioned script assets and never HTML,
-an API response, or the event stream.
+context, and the relay origin is the HTTPS path: the dedicated relay
+forwards the origin root to the joined device, so the shell, the
+manifest, the worker, and the icons resolve at the origin root and the
+PWA installs from `https://fleet.opsh.io` (a permanent domain maps over
+it later by changing one setting). The per-session path under
+`/s/<sid>/` remains for compatibility and is not installable. The worker
+caches only the two versioned script assets and never HTML, an API
+response, or the event stream.
 
 ## The archive is the inbox
 
@@ -175,11 +180,39 @@ against a relay; a phone's HTTP requests — any verb — arrive as frames
 on that poll and the answers go back as frames, status line included.
 The relayed phone is held to the same allowlist the socket path applies
 and refused by name, because the boundary must not depend on the
-transport. The relay never parses either — it is
-a map of pending request ids and two queues, which is why the reference
-implementation in `relay/relay.py` is a hundred lines of anything. The
-page is Fleet's own, served through the relay rather than copied into it:
-there is no second copy of the face to keep in sync.
+transport. The relay never parses a request — it is a map of pending
+request ids and two queues. The page is Fleet's own, served through the
+relay rather than copied into it: there is no second copy of the face to
+keep in sync.
+
+**The root is the device.** A dedicated relay — the deployment below —
+forwards the origin root to the joined device session, so the face's
+shell, manifest, worker, and icons resolve at the origin root and the
+PWA installs there. Headered paths route by the presented secret itself
+(the device whose secret matches is the device the phone means), and
+device sessions that stop polling are pruned after ninety seconds, so a
+dead face never stands between a phone and its fleet. The per-session
+`/s/<sid>/` shape stays for compatibility.
+
+**The entry URL.** The launch prints `https://<relay>/#k=<secret>`: the
+secret as a fragment, which browsers never send. The face's page files
+it into its own storage on boot and seals from then on; the pairing
+page does the same before the post-pairing redirect can lose it. On the
+wire the URL names nothing.
+
+**The frames are sealed end to end.** The frame key comes from an
+X25519 exchange through the relay — the device holds a per-launch
+scalar, the phone holds its own, and neither public key alone derives
+anything — run through `GET`/`POST /api/relay/handshake`, then
+HKDF-SHA-256 into an AES-256-GCM key salted with the session id. The
+nonce rides the body; the frame id (for an answer) or the request path
+(for a request) is the additional data, so a body cannot be replayed
+onto another frame. An `/api/` frame that arrives without the seal is
+refused by name once the exchange exists. The browser-forced install
+fetches — the shell page, its assets, the manifest, the worker, the
+icons, the pairing page and its redemption — ride as plaintext frames
+of public code, because a browser navigation cannot present a header or
+open a ciphertext.
 
 The stream is the one route a frame cannot carry — a frame is a whole
 reply and a stream is a sequence — so `/events` over the relay answers
@@ -187,8 +220,37 @@ with the session's tail and a marker the page reads as "poll instead",
 which is what a phone does well and a held-open connection through a
 relay does badly.
 
-**The threat model, stated plainly:** the relay sees frame plaintext — a
-task's text, a seat's summary, a transcript. The pairing secret gates the
-session, so an unpaired relay cannot stitch a phone to a device, but a
-compromised relay reads what crosses it. End-to-end encryption is a later
-hardening increment, and this module does not pretend to be it.
+**The threat model, stated plainly:** the relay and the TLS edge in
+front of it see metadata — paths, frame ids, sizes — and ciphertext for
+everything content-bearing. Neither holds a scalar, so neither can
+derive the frame key; a relay that records every byte it sees still
+cannot open a frame. What a relay can do is refuse to carry frames,
+which is availability, not confidentiality. The relay's join endpoint
+is itself ungated (KI-367 names the residual and the fix), and the
+browser-forced install frames are public code by necessity.
+
+## The deployment
+
+The relay lives on OpenShip Cloud — the owner's Pro tier, one service
+slot, nothing stateful, no secret in the image. The two files are
+`relay/relay.py` and `relay/Dockerfile` (`python:3.12-slim`,
+unprivileged, port from the environment). The deploy is a folder upload
+of those two files, and the free subdomain is the origin:
+
+```sh
+openship service create relay -p <project> --build . --dockerfile Dockerfile \
+  --expose --exposed-port 8421 --domain fleet
+cd <a dir holding exactly relay.py and Dockerfile>
+openship deploy --folder --project <project> --service-ids <service id>
+openship deployment get <deployment>      # status: ready; the url is the origin
+```
+
+The origin is `https://fleet.opsh.io`; `remote.public_url` names it, and
+`fleet gui --remote --relay https://fleet.opsh.io` dials it. Two
+measured facts the runbook should keep: the platform's edge refuses
+non-browser user agents before the request reaches the relay (a probe
+presents a browser's), and a redeploy of the service is survivable
+unaided — the face rejoins within seconds of the relay's return, which
+is the resilience the dialer's own backoff loop was built for. Mapping a
+permanent domain over the free subdomain later is OpenShip's documented
+custom-domain flow and one `remote.public_url` change.

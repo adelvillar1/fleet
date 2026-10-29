@@ -1,7 +1,9 @@
 # The bot app
 
 The phone surface: fleet's **assistant-first** PWA, installed from the
-tailnet origin. It is a second shell over the same bridge as the console —
+relay origin (`https://fleet.opsh.io` — the console face is what the
+relay carries; see `remote-access.md` for the origin and the seal). It
+is a second shell over the same bridge as the console —
 one process, one agent thread, one log — never a second fleet. Plan:
 `docs/plans/2026-10-20-bot-pwa.md` (status: completed); the mockups it was
 built against live in `docs/plans/mockups/2026-10-20-bot-pwa/`.
@@ -46,7 +48,7 @@ built against live in `docs/plans/mockups/2026-10-20-bot-pwa/`.
 | Inbox | persona rail with counts; conversations grouped under each persona, rows led by the persona's mark; a compact strip above holding only what needs the owner (destructive seats, failures); the dispatch box |
 | Conversation | the participant stack and a `+` in the header; the goal as chrome; per-persona bylines; tool rows; the seat, dressed by its class; the working chip with Stop |
 | Dispatch | who takes it, then the goal, then send — the persona is the first choice because it decides tools, skills, and recall |
-| Install | the tailnet origin installs **fleet bot** (its own manifest, worker, icons); the worker's offline retry page says what is true |
+| Install | the relay origin installs **fleet bot** (its own manifest, worker, icons); the worker's offline retry page says what is true |
 
 ## Two windows, one bridge
 
