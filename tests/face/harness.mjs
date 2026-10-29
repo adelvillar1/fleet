@@ -3069,6 +3069,14 @@ async function theQueuedMessagesCarryTheirActions() {
   check('Q drop empties the queue and hides the chip',
     rows().length === 0 && page.IDS['queue-chip'].hidden === true,
     String(rows().length));
+  // The text never outgrows the row: the flex item shrinks to it (the
+  // auto minimum is what pushed a long message past the composer) and
+  // the row contains what is left.
+  check('Q the queue text shrinks to the row, never past the composer',
+    ruleBlock('.queue-text').includes('min-width: 0') &&
+      ruleBlock('.queue-row').includes('overflow: hidden') &&
+      ruleBlock('.queue-row').includes('gap: 8px'),
+    ruleBlock('.queue-text') + ' | ' + ruleBlock('.queue-row'));
 }
 
 const cases = [

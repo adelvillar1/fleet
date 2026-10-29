@@ -809,7 +809,7 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
   font-size: 11px;
   color: var(--dsw-alias-ink-secondary);
 }
-.queue-chip .queue-note { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.queue-chip .queue-note { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .queue-chip button {
   border: 0;
   background: transparent;
@@ -826,6 +826,11 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
 .queue-chip {
   display: flex;
   flex-direction: column;
+  /* Stretch, not center: the chip grew from a one-line pill into a
+     column card, and the earlier rule's center let the list size to
+     its content — a long queued message pushed the whole card past the
+     composer. Stretch ties every row to the width the composer gave. */
+  align-items: stretch;
   gap: 2px;
   margin: 6px 2px 0;
   padding: 6px 8px;
@@ -841,7 +846,7 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
   color: var(--dsw-alias-ink-tertiary);
 }
 .queue-head #queue-count { color: var(--dsw-alias-ink-secondary); }
-.queue-list { display: flex; flex-direction: column; }
+.queue-list { display: flex; flex-direction: column; min-width: 0; }
 .queue-row {
   display: flex;
   align-items: center;
@@ -851,6 +856,13 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
   font-size: 11px;
   color: var(--dsw-alias-ink);
   cursor: grab;
+  /* The row is as wide as the composer gave the chip and never wider:
+     every flex item in the chain — list, row, text — gives up its
+     auto minimum (min-width: 0), the text ellipsizes, and the row
+     contains whatever is left. One missing link pushed a long message
+     past the composer. */
+  min-width: 0;
+  overflow: hidden;
 }
 .queue-row:hover { background: var(--dsw-alias-accent-wash); }
 .queue-row[data-dragging="true"] { opacity: 0.55; }
@@ -862,6 +874,7 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
 }
 .queue-text {
   flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
