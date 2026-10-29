@@ -1684,11 +1684,41 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
    edge, always present, and never touch the message's text. */
 .msg-tools {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
   gap: 6px;
   margin-top: 6px;
 }
 .msg-tools .row-rewind { margin-left: 0; }
+/* A stamped verdict reads as words and accent: the label flips to its
+   past tense, so the pressed state survives a glance as well as a
+   color check. */
+.msg-fb[data-state="up"],
+.msg-fb[data-state="down"] {
+  color: var(--dsw-alias-accent);
+  border-color: var(--dsw-alias-accent);
+}
+/* The hook's drawer form: one field per line, the arm at the end. */
+.hook-form { display: grid; gap: 6px; }
+.hook-label {
+  color: var(--dsw-alias-ink-tertiary);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+}
+.hook-input,
+.hook-task {
+  border: 1px solid var(--dsw-alias-hairline);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-alias-ink);
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 8px;
+}
+.hook-task { min-height: 96px; resize: vertical; }
+.hook-arm { justify-self: start; margin-left: 0; }
 .row-rewind:hover {
   color: var(--dsw-alias-accent);
   border-color: var(--dsw-alias-accent);

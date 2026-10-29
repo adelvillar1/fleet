@@ -211,6 +211,28 @@ function boot(options) {
     if (pathOnly === '/api/session') {
       return Promise.resolve({ status: 200, json: () => Promise.resolve(documents.branch || {}) });
     }
+    if (pathOnly === '/api/feedback') {
+      // The verdict store is the test's own object: the route stamps,
+      // clears, and echoes it, so a pressed button can repaint from
+      // what the server read back exactly as the real one does.
+      const asked = new URL('http://x' + url).searchParams.get('session') || '';
+      const body = init && init.body ? JSON.parse(init.body) : {};
+      const store = documents.feedback || (documents.feedback = {});
+      const held = store[asked] || {};
+      if (body.verdict === 'clear') delete held[String(body.exchange)];
+      else held[String(body.exchange)] = body.verdict;
+      store[asked] = held;
+      return Promise.resolve({
+        status: 200,
+        json: () => Promise.resolve({ type: 'feedback', session: asked, feedback: held }),
+      });
+    }
+    if (pathOnly === '/api/session/fork') {
+      return Promise.resolve({
+        status: 200,
+        json: () => Promise.resolve({ type: 'fork', id: 'fork-from-fb', forked_from: 'fb-1' }),
+      });
+    }
     if (pathOnly === '/api/session/archive') {
       return Promise.resolve({
         status: opts.archiveStatus || 200,
@@ -2548,6 +2570,121 @@ async function theChatCountsExchangesAndShowsItsControls() {
     drawerText.slice(0, 160));
 }
 
+// The turn controls (the owner's zcode-parity ask): every reply
+// carries copy · like · dislike · fork · hook, the verdicts are keyed
+// by the exchange the reply answered (rehydrated from the state
+// document), the hook seeds a cron job from the ask it answers, and
+// the fork opens a new conversation carrying this point's history.
+async function theTurnControlsGradeForkAndHook() {
+  const doc = {
+    sessions: {
+      type: 'sessions', read_at: 'now', current: '',
+      counts: { needs: 0, working: 0, background: 0, earlier: 1, total: 1 },
+      sessions: [row('fb-1', 'completed', { title: 'the feedback session' })],
+    },
+    // The state document carries the verdicts: exchange 1 is already
+    // graded up when the face boots.
+    state: (asked) => ({
+      ...emptyState(asked),
+      session: asked,
+      feedback: asked === 'fb-1' ? { '1': 'up' } : {},
+    }),
+    feedback: {},
+    settings: { type: 'settings' },
+  };
+  const page = boot({ width: 1440, hash: '#/sessions/fb-1', documents: doc });
+  await flush();
+  page.open();
+  await flush();
+
+  page.push({ type: 'message', role: 'owner', text: 'grade me' });
+  page.push({ type: 'message', role: 'assistant', text: 'the answer to grade' });
+  await flush(40);
+
+  // One footer, five controls — and the owner's own bubble keeps only
+  // its edit and copy: the verdicts grade replies, not asks.
+  const footers = page.rows('.assistant .msg-tools');
+  check('turn the reply footer carries five controls',
+    footers.length === 1 &&
+      footers[0].querySelectorAll('.msg-copy').length === 1 &&
+      footers[0].querySelectorAll('.msg-fb').length === 2 &&
+      footers[0].querySelectorAll('.msg-fork').length === 1 &&
+      footers[0].querySelectorAll('.msg-hook').length === 1,
+    footers.length + ' footers');
+  const ownerTools = page.rows('.owner .msg-tools');
+  check('turn the owner bubble keeps only edit and copy',
+    ownerTools.length === 1 && ownerTools[0].querySelectorAll('.msg-fb').length === 0,
+    ownerTools.length + ' owner footers');
+
+  // The seeded verdict rehydrates: the like button reads as pressed
+  // from the state document, not from the click that never happened.
+  const buttons = footers[0].querySelectorAll('.msg-fb');
+  const like = buttons.find((b) => b.dataset.label === 'like');
+  const dislike = buttons.find((b) => b.dataset.label === 'dislike');
+  check('turn a graded reply shows its grade after load',
+    like.textContent === 'liked' && like.dataset.state === 'up',
+    like.textContent + '/' + like.dataset.state);
+
+  // A press posts the verdict keyed by the exchange, and the reply's
+  // buttons repaint from what came back: down flips dislike to its
+  // past tense and clears like — one verdict per exchange.
+  dislike.click();
+  await flush(40);
+  const stamps = page.calls.filter((c) => c.url.startsWith('/api/feedback'));
+  check('turn a dislike posts the verdict on its exchange',
+    stamps.length === 1 && String(stamps[0].body).includes('"exchange":1') &&
+      String(stamps[0].body).includes('"verdict":"down"'),
+    JSON.stringify(stamps.map((c) => c.body)));
+  check('turn the pressed verdict reads back as words',
+    dislike.textContent === 'disliked' && dislike.dataset.state === 'down' &&
+      like.textContent === 'like' && like.dataset.state === '',
+    dislike.textContent + ' / ' + like.textContent);
+
+  // The hook opens its form with the task the exchange answered —
+  // the ask itself, because a job sees its task and nothing else —
+  // and arming posts the settings surface's own cron op.
+  page.rows('.msg-hook')[0].click();
+  await flush(40);
+  const hookTask = page.rows('.hook-task');
+  const hookInputs = page.rows('.hook-input');
+  check('turn the hook opens its form seeded from the ask',
+    hookTask.length === 1 && hookTask[0].value === 'grade me' &&
+      hookInputs.length === 2 && String(hookInputs[0].value).startsWith('hook-'),
+    hookTask.length + ' tasks / ' + hookInputs.length + ' inputs');
+  hookInputs[0].value = 'turn-hook-one';
+  hookInputs[1].value = '*/15 * * * *';
+  hookTask[0].value = 'stand alone task';
+  page.rows('.hook-arm')[0].click();
+  await flush(40);
+  const armed = page.calls.filter((c) =>
+    c.url === '/api/settings' && String(c.body).includes('"op":"cron"'));
+  check('turn arming posts the cron job the form named',
+    armed.length === 1 && String(armed[0].body).includes('turn-hook-one') &&
+      String(armed[0].body).includes('stand alone task'),
+    JSON.stringify(armed.map((c) => c.body)));
+
+  // The controls never hide behind a hover, and the footer wraps
+  // rather than overflowing a narrow face.
+  check('turn the controls are not gated behind hover',
+    !ruleBlock('.row-rewind').includes('opacity: 0') &&
+      ruleBlock('.msg-tools').includes('flex-wrap: wrap'),
+    ruleBlock('.row-rewind') + ' | ' + ruleBlock('.msg-tools'));
+
+  // The fork posts the exchange and opens the conversation the server
+  // named — the source log is never touched, the face just moves.
+  page.rows('.msg-fork')[0].click();
+  await flush(60);
+  const forks = page.calls.filter((c) => c.url.startsWith('/api/session/fork'));
+  check('turn fork posts the exchange it cuts after',
+    forks.length === 1 && String(forks[0].body).includes('"exchange":1'),
+    JSON.stringify(forks.map((c) => c.body)));
+  const moved = page.calls.filter((c) =>
+    c.url.startsWith('/api/resume') && String(c.body).includes('fork-from-fb'));
+  check('turn the fork opens as the conversation',
+    moved.length >= 1,
+    JSON.stringify(page.calls.filter((c) => c.url.startsWith('/api/resume')).map((c) => c.body)));
+}
+
 const cases = [
   ['C1/C8 the list groups by attention and counts what the server counted', theListGroupsByAttentionAndCountsWhatTheServerCounted],
   ['C2 every state opens through one verb', everyStateOpensThroughOneVerb],
@@ -2578,6 +2715,7 @@ const cases = [
   ['C5 the workspace-history section draws the tree it read', theWorkspaceHistorySectionDrawsTheTreeItRead],
   ['ARCH the archive is the one end and the owner\u2019s verb', theArchiveIsTheOneEndAndTheOwnersVerb],
   ['REVIEW the chat counts exchanges and shows its controls', theChatCountsExchangesAndShowsItsControls],
+  ['TURN the turn controls grade, fork, and hook', theTurnControlsGradeForkAndHook],
 ];
 
 for (const [name, run] of cases) {

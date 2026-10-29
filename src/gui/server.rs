@@ -782,6 +782,43 @@ async fn serve_connection(
                 Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
             }
         }
+        // One reply's verdict: `up`/`down` stamps the exchange the
+        // reply answered, `clear` removes it. The grade lands in the
+        // feedback sidecar beside the log — the state document reads
+        // it back, the log never holds it.
+        ("POST", "/api/feedback") => {
+            let body = match read_body(&mut stream, &request, rest).await {
+                Ok(body) => body,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            let (exchange, verdict) = match feedback_of(&body) {
+                Ok(pair) => pair,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            let session = asked_session(bridge, &request);
+            match bridge.set_feedback(&session, exchange, &verdict) {
+                Ok(reply) => write_reply(&mut stream, api(200, reply)).await,
+                Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
+            }
+        }
+        // A fork: a new conversation whose log is this one's records
+        // through the exchange's reply. The source is left whole — the
+        // cut is the new file's own — and the face opens the fork.
+        ("POST", "/api/session/fork") => {
+            let body = match read_body(&mut stream, &request, rest).await {
+                Ok(body) => body,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            let exchange = match exchange_of(&body) {
+                Ok(exchange) => exchange,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            let session = asked_session(bridge, &request);
+            match bridge.fork(&session, exchange).await {
+                Ok(reply) => write_reply(&mut stream, api(200, reply)).await,
+                Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
+            }
+        }
         // Archive or restore a session: the owner's one end for a
         // session. The loop never ends the owner's conversation on its
         // own — a handback and a cap are pauses — so the archive is the
@@ -1581,6 +1618,37 @@ fn turn_of(body: &str) -> Result<u64, String> {
         .get("turn")
         .and_then(serde_json::Value::as_u64)
         .ok_or_else(|| "a rewind's body is a JSON object with a turn number".to_string())
+}
+
+/// The verdict a feedback's body carries: the exchange it grades and
+/// `up`, `down`, or `clear` — a closed vocabulary, refused by name.
+fn feedback_of(body: &str) -> Result<(u64, String), String> {
+    let parsed: serde_json::Value = serde_json::from_str(body)
+        .map_err(|e| format!("fleet gui could not read the feedback's body: {e}"))?;
+    let exchange = parsed
+        .get("exchange")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| "a feedback's body is a JSON object with an exchange number".to_string())?;
+    let verdict = parsed
+        .get("verdict")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "a feedback's body carries a verdict: up, down, or clear".to_string())?
+        .to_string();
+    if !matches!(verdict.as_str(), "up" | "down" | "clear") {
+        return Err(format!("`{verdict}` is not a verdict: up, down, or clear"));
+    }
+    Ok((exchange, verdict))
+}
+
+/// The exchange a fork's body carries: the conversation is cut after
+/// the reply that answered it.
+fn exchange_of(body: &str) -> Result<u64, String> {
+    let parsed: serde_json::Value = serde_json::from_str(body)
+        .map_err(|e| format!("fleet gui could not read the fork's body: {e}"))?;
+    parsed
+        .get("exchange")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| "a fork's body is a JSON object with an exchange number".to_string())
 }
 
 /// The decision an approval's body carries, in the seat's four words.
@@ -4327,6 +4395,230 @@ mod tests {
             brain.contains("maturity_state.json does not exist"),
             "{brain}"
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_reply_verdict_lands_beside_the_log_and_reads_back() {
+        // The shared helpers append `?token=` blindly; these routes are
+        // addressed by a `?session=` query, so the test builds its own
+        // request line with one join.
+        fn post_query(port: u16, path: &str, body: &str) -> String {
+            ask(
+                port,
+                &format!(
+                    "POST {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: {}\r\nContent-Type: application/json\r\n\r\n{body}",
+                    body.len()
+                ),
+                None,
+            )
+        }
+        fn get_query(port: u16, path: &str) -> String {
+            ask(
+                port,
+                &format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"),
+                None,
+            )
+        }
+
+        let home = settings_home();
+        let (bridge, _) = Bridge::detached(
+            home.clone(),
+            "deepseek-flash".to_string(),
+            Some("session-test".to_string()),
+        );
+        let (mut server, port) = Server::bind("127.0.0.1", 0, Arc::new(bridge))
+            .await
+            .expect("bind");
+        server.heartbeat = Duration::from_millis(20);
+        tokio::spawn(async move {
+            let _ = server.serve().await;
+        });
+        let created = crate::session::Session::create(&home, "deepseek-flash").expect("a session");
+        let id = created.id().to_string();
+        drop(created);
+
+        // A verdict stamps the exchange it grades, and the state
+        // document reads it back — beside the log, never in it.
+        let stamped = post_query(
+            port,
+            &format!("/api/feedback?session={id}"),
+            r#"{"exchange":2,"verdict":"up"}"#,
+        );
+        assert!(stamped.starts_with("HTTP/1.1 200"), "{stamped}");
+        let read = get_query(port, &format!("/api/state?session={id}"));
+        assert!(
+            read.contains("\"feedback\"") && read.contains("\"2\":\"up\""),
+            "{read}"
+        );
+
+        // A word outside the closed vocabulary is refused by name.
+        let bad = post_query(
+            port,
+            &format!("/api/feedback?session={id}"),
+            r#"{"exchange":3,"verdict":"meh"}"#,
+        );
+        assert!(bad.starts_with("HTTP/1.1 400"), "{bad}");
+
+        // Clear removes the verdict, and the emptied session leaves no
+        // residue behind — the same press can stamp again later.
+        let cleared = post_query(
+            port,
+            &format!("/api/feedback?session={id}"),
+            r#"{"exchange":2,"verdict":"clear"}"#,
+        );
+        assert!(cleared.starts_with("HTTP/1.1 200"), "{cleared}");
+        let reread = get_query(port, &format!("/api/state?session={id}"));
+        assert!(!reread.contains("\"2\":\"up\""), "{reread}");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_fork_cuts_after_the_exchange_and_leaves_the_source_whole() {
+        fn post_query(port: u16, path: &str, body: &str) -> String {
+            ask(
+                port,
+                &format!(
+                    "POST {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: {}\r\nContent-Type: application/json\r\n\r\n{body}",
+                    body.len()
+                ),
+                None,
+            )
+        }
+        fn forked_id(response: &str) -> String {
+            let payload = response.split("\r\n\r\n").nth(1).unwrap_or("");
+            let doc: serde_json::Value =
+                serde_json::from_str(payload).expect("the fork answers JSON");
+            doc.get("id")
+                .and_then(serde_json::Value::as_str)
+                .expect("the fork names its id")
+                .to_string()
+        }
+
+        let home = settings_home();
+        let (bridge, _) = Bridge::detached(
+            home.clone(),
+            "deepseek-flash".to_string(),
+            Some("session-test".to_string()),
+        );
+        let (mut server, port) = Server::bind("127.0.0.1", 0, Arc::new(bridge))
+            .await
+            .expect("bind");
+        server.heartbeat = Duration::from_millis(20);
+        tokio::spawn(async move {
+            let _ = server.serve().await;
+        });
+
+        use crate::session::Record;
+        let mut source =
+            crate::session::Session::create(&home, "deepseek-flash").expect("a session");
+        let id = source.id().to_string();
+        source
+            .record(&Record::User {
+                content: "the first ask".into(),
+            })
+            .expect("the record");
+        source
+            .record(&Record::Assistant {
+                content: Some("the first reply".into()),
+                tool_calls: Vec::new(),
+                persona: None,
+            })
+            .expect("the record");
+        source
+            .record(&Record::User {
+                content: "[the owner of this run steered it through its control file — left]"
+                    .into(),
+            })
+            .expect("the record");
+        source
+            .record(&Record::Assistant {
+                content: Some("after the steer".into()),
+                tool_calls: Vec::new(),
+                persona: None,
+            })
+            .expect("the record");
+        source
+            .record(&Record::User {
+                content: "the second ask".into(),
+            })
+            .expect("the record");
+        source
+            .record(&Record::Assistant {
+                content: Some("the second reply".into()),
+                tool_calls: Vec::new(),
+                persona: None,
+            })
+            .expect("the record");
+        drop(source);
+
+        // The fork cuts after the reply to exchange 1: the first ask
+        // and its whole run — steer frame included, it belongs to that
+        // run — and not the second ask past it.
+        let forked = post_query(
+            port,
+            &format!("/api/session/fork?session={id}"),
+            r#"{"exchange":1}"#,
+        );
+        assert!(forked.starts_with("HTTP/1.1 200"), "{forked}");
+        let new_id = forked_id(&forked);
+        let fresh_path = crate::session::session_path(&home, &new_id);
+        let records = crate::session::replay(&fresh_path).expect("the fork's log");
+        let users: Vec<&str> = records
+            .iter()
+            .filter_map(|record| match record {
+                Record::User { content } => Some(content.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            users,
+            vec![
+                "the first ask",
+                "[the owner of this run steered it through its control file — left]"
+            ],
+            "{users:?}"
+        );
+        // The lineage rides the fork's own start line.
+        let first_line = std::fs::read_to_string(&fresh_path)
+            .expect("the fork's log")
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .to_string();
+        assert!(
+            first_line.contains(&format!("\"forked_from\":\"{id}\"")),
+            "{first_line}"
+        );
+
+        // The source is whole: seven records, the second ask and its
+        // reply still in the log the fork copied from.
+        let source_records =
+            crate::session::replay(&crate::session::session_path(&home, &id)).expect("the source");
+        assert_eq!(source_records.len(), 7, "{}", source_records.len());
+
+        // An exchange past the end copies the whole log — a machine
+        // run's reply (no owner messages at all) forks as itself.
+        let full = post_query(
+            port,
+            &format!("/api/session/fork?session={id}"),
+            r#"{"exchange":9}"#,
+        );
+        assert!(full.starts_with("HTTP/1.1 200"), "{full}");
+        let full_records =
+            crate::session::replay(&crate::session::session_path(&home, &forked_id(&full)))
+                .expect("the full fork");
+        assert_eq!(full_records.len(), 7, "{}", full_records.len());
+
+        // A conversation that does not exist is refused by name, and
+        // a body without an exchange number is a400, not a 409.
+        let missing = post_query(
+            port,
+            "/api/session/fork?session=nope-not-real",
+            r#"{"exchange":1}"#,
+        );
+        assert!(missing.starts_with("HTTP/1.1 409"), "{missing}");
+        assert!(missing.contains("no conversation"), "{missing}");
+        let bad = post_query(port, "/api/session/fork", r#"{"exchange":"one"}"#);
+        assert!(bad.starts_with("HTTP/1.1 400"), "{bad}");
     }
 
     // ------------------------------------------------ the settings surface (G8)

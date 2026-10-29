@@ -581,6 +581,7 @@
     seat: null,
     seatKey: '',
     rules: [],
+    feedback: {},
     events: [],
     rows: [],
     stream: null,
@@ -959,6 +960,175 @@
     return button;
   }
 
+  // The reply's own controls: copy, the owner's verdict on this
+  // exchange, a fork carrying this point's history, and a hook that
+  // arms a scheduled job from this turn. Every verdict button names
+  // its exchange — the same count the header carries — so the key
+  // survives a reload and the pressed state can be repainted from the
+  // state document.
+  function assistantFooter(getText, ex) {
+    var tools = node('div', 'msg-tools');
+    tools.appendChild(makeCopy(getText, 'copy this reply'));
+    var held = (face.feedback || {})[String(ex)] || '';
+    var up = node('button', 'row-rewind msg-fb', held === 'up' ? 'liked' : 'like');
+    up.type = 'button';
+    up.title = 'this reply was right';
+    up.dataset.exchange = String(ex);
+    up.dataset.label = 'like';
+    up.dataset.state = held === 'up' ? 'up' : '';
+    up.addEventListener('click', function () { stampFeedback(ex, 'up'); });
+    var down = node('button', 'row-rewind msg-fb', held === 'down' ? 'disliked' : 'dislike');
+    down.type = 'button';
+    down.title = 'this reply missed';
+    down.dataset.exchange = String(ex);
+    down.dataset.label = 'dislike';
+    down.dataset.state = held === 'down' ? 'down' : '';
+    down.addEventListener('click', function () { stampFeedback(ex, 'down'); });
+    var fork = node('button', 'row-rewind msg-fork', 'fork');
+    fork.type = 'button';
+    fork.title = 'a new conversation carrying this reply’s history';
+    fork.addEventListener('click', function () { forkFrom(ex); });
+    var hook = node('button', 'row-rewind msg-hook', 'hook');
+    hook.type = 'button';
+    hook.title = 'arm a scheduled job from this turn';
+    hook.addEventListener('click', function () { openHook(ex, ownerMessageFor(ex)); });
+    tools.appendChild(up);
+    tools.appendChild(down);
+    tools.appendChild(fork);
+    tools.appendChild(hook);
+    return tools;
+  }
+
+  // One verdict, freshest wins: the same press clears, the other
+  // press switches, and the buttons repaint from what the server read
+  // back — the state document is the truth, the click is the request.
+  function stampFeedback(ex, verdict) {
+    var current = (face.feedback || {})[String(ex)];
+    var next = current === verdict ? 'clear' : verdict;
+    post('/api/feedback?session=' + encodeURIComponent(face.session || ''), {
+      exchange: ex,
+      verdict: next
+    }).then(function (reply) {
+      if (reply.status !== 200) {
+        notice('the verdict did not land',
+          (reply.body && reply.body.error) || 'the server refused it');
+        return;
+      }
+      face.feedback = reply.body.feedback || {};
+      paintFeedback();
+    }).catch(function () {
+      notice('the verdict did not land', 'the server did not answer');
+    });
+  }
+
+  // The pressed state as the state document holds it: one verdict per
+  // exchange, so only the button that verdict belongs to flips — its
+  // label to the past tense, its state to the accent. The trace is
+  // words as well as tint; an effect with no visible trace reads as
+  // broken.
+  function paintFeedback() {
+    if (!face.stream || !face.stream.querySelectorAll) return;
+    var held = face.feedback || {};
+    face.stream.querySelectorAll('.msg-fb').forEach(function (button) {
+      var label = button.dataset.label || '';
+      var state = held[button.dataset.exchange] || '';
+      var mine = (label === 'like' && state === 'up') ||
+        (label === 'dislike' && state === 'down');
+      button.dataset.state = mine ? state : '';
+      button.textContent = mine
+        ? (state === 'up' ? 'liked' : 'disliked')
+        : label;
+    });
+  }
+
+  // The owner message this exchange answered — a hook's task has to
+  // stand alone in a fresh session, so the task is the ask itself.
+  function ownerMessageFor(ex) {
+    var count = 0;
+    for (var i = 0; i < face.events.length; i += 1) {
+      var one = face.events[i];
+      if (one.type === 'message' && one.role === 'owner' && !systemFrame(one.text)) {
+        count += 1;
+        if (count === ex) return one.text || '';
+      }
+    }
+    return '';
+  }
+
+  // The fork: a new conversation carrying this exchange's history.
+  // The source log is left whole — the cut is the new file's own.
+  function forkFrom(ex) {
+    post('/api/session/fork', { exchange: ex }).then(function (reply) {
+      if (reply.status !== 200 || !reply.body || !reply.body.id) {
+        notice('the fork did not land',
+          (reply.body && reply.body.error) || 'the server refused it');
+        return;
+      }
+      notice('forked', 'the new conversation carries this reply’s history');
+      openWork(reply.body.id);
+    }).catch(function () {
+      notice('the fork did not land', 'the server did not answer');
+    });
+  }
+
+  // The hook as fleet can honestly arm it: a scheduled job seeded from
+  // this turn. A job sees its task and nothing else, so the task is
+  // the ask itself and the owner edits before arming — the write is
+  // the settings surface's own cron op, and nothing runs in-loop.
+  function openHook(ex, task) {
+    var session = face.session || 'launch';
+    var form = node('form', 'hook-form');
+    var nameLabel = node('label', 'hook-label', 'name');
+    var nameInput = node('input', 'hook-input');
+    nameInput.value = 'hook-' + session.slice(-8) + '-' + ex;
+    var scheduleLabel = node('label', 'hook-label', 'schedule');
+    var scheduleInput = node('input', 'hook-input');
+    scheduleInput.value = '0 9 * * *';
+    var taskLabel = node('label', 'hook-label', 'task');
+    var taskInput = node('textarea', 'hook-task');
+    taskInput.value = task;
+    var arm = node('button', 'row-rewind hook-arm', 'arm the job');
+    arm.type = 'button';
+    function armJob(event) {
+      if (event && event.preventDefault) event.preventDefault();
+      var body = {
+        op: 'cron',
+        name: (nameInput.value || '').trim(),
+        schedule: (scheduleInput.value || '').trim(),
+        task: taskInput.value
+      };
+      if (!body.name || !body.schedule || !body.task) {
+        notice('the hook needs all three', 'a name, a schedule, and a task');
+        return;
+      }
+      post('/api/settings', body).then(function (reply) {
+        if (reply.status !== 200) {
+          notice('the hook did not arm',
+            (reply.body && reply.body.error) || 'the settings write refused it');
+          return;
+        }
+        closeDrawer();
+        notice('hooked · ' + body.name, 'runs on ' + body.schedule);
+      }).catch(function () {
+        notice('the hook did not arm', 'the server did not answer');
+      });
+    }
+    arm.addEventListener('click', armJob);
+    form.addEventListener('submit', armJob);
+    form.appendChild(nameLabel);
+    form.appendChild(nameInput);
+    form.appendChild(scheduleLabel);
+    form.appendChild(scheduleInput);
+    form.appendChild(taskLabel);
+    form.appendChild(taskInput);
+    form.appendChild(arm);
+    openDrawer('hook this turn', [
+      ['the job', form],
+      ['what it sees', node('p', 'derivation',
+        'A scheduled job runs in its own session with this task and nothing else — write it to stand alone.')]
+    ]);
+  }
+
   function ownerRow(event) {
     var el0 = node('div', 'owner');
     el0.appendChild(node('span', 'owner-tag', 'you'));
@@ -1179,9 +1349,7 @@
     el0.classList.add('md-rendered');
     el0.textContent = '';
     if (text) el0.appendChild(markdown(text));
-    var replyTools = node('div', 'msg-tools');
-    replyTools.appendChild(makeCopy(function () { return text; }, 'copy this reply'));
-    el0.appendChild(replyTools);
+    el0.appendChild(assistantFooter(function () { return text; }, exchanges()));
   }
 
   // The value a call actually names — the command, the path, the content.
@@ -1905,9 +2073,7 @@
         if (!face.assistant && event.text) {
           var said = node('div', 'assistant md-rendered');
           said.appendChild(markdown(event.text));
-          var saidTools = node('div', 'msg-tools');
-          saidTools.appendChild(makeCopy(function () { return event.text; }, 'copy this reply'));
-          said.appendChild(saidTools);
+          said.appendChild(assistantFooter(function () { return event.text; }, exchanges()));
           row(said, event);
         }
         break;
@@ -6277,6 +6443,7 @@
     face.driving = state.driving || '';
     face.dropped = Number(state.dropped) || 0;
     face.rules = state.rules || [];
+    face.feedback = state.feedback || {};
     face.seat = state.approval || null;
     if (face.seat) face.seatSince = face.seat.since || Date.now();
     face.events = [];

@@ -679,6 +679,7 @@ impl Bridge {
                 "workspace": self.cwd.display().to_string(),
                 "folder": folder_value(state.effective_folder(session).as_deref(), &self.cwd),
             "goal": session_goal(&self.home, &key),
+                "feedback": feedback_for(&self.home, &key),
                 "budget": crate::compaction::COMPACTION_TOKEN_BUDGET,
                 "turn_budget": crate::route::run_config(&self.home).max_turns,
                 "gate": {
@@ -704,6 +705,7 @@ impl Bridge {
             "workspace": self.cwd.display().to_string(),
             "folder": folder_value(state.effective_folder(session).as_deref(), &self.cwd),
             "goal": session_goal(&self.home, &key),
+            "feedback": feedback_for(&self.home, &key),
             "budget": crate::compaction::COMPACTION_TOKEN_BUDGET,
             "turn_budget": crate::route::run_config(&self.home).max_turns,
             "gate": {
@@ -2519,6 +2521,79 @@ impl Bridge {
         }))
     }
 
+    /// One reply's verdict from the owner: `up` and `down` stamp,
+    /// `clear` removes, keyed by the exchange the reply answered —
+    /// the same count the header carries. It is stored beside the log
+    /// the way titles and archives are: grading is bookkeeping about
+    /// the conversation, never a message in it, so nothing here can
+    /// reach the model's context.
+    pub fn set_feedback(
+        &self,
+        session: &str,
+        exchange: u64,
+        verdict: &str,
+    ) -> Result<Value, String> {
+        let session = if session.is_empty() {
+            self.launch()
+        } else {
+            session.to_string()
+        };
+        if session.is_empty() {
+            return Err("there is no conversation to grade yet".to_string());
+        }
+        if !matches!(verdict, "up" | "down" | "clear") {
+            return Err(format!("`{verdict}` is not a verdict: up, down, or clear"));
+        }
+        let mut feedback = load_feedback(&self.home);
+        let entry = feedback.entry(session.clone()).or_default();
+        if verdict == "clear" {
+            entry.remove(&exchange.to_string());
+        } else {
+            entry.insert(exchange.to_string(), verdict.to_string());
+        }
+        if entry.is_empty() {
+            feedback.remove(&session);
+        }
+        save_feedback(&self.home, &feedback);
+        let own = feedback.get(&session).cloned().unwrap_or_default();
+        Ok(json!({
+            "type": "feedback",
+            "session": session,
+            "feedback": own,
+        }))
+    }
+
+    /// Fork a conversation at an exchange: a new session whose log is
+    /// the source's own records through the reply that answered it,
+    /// cut before the next owner message. The source is left whole —
+    /// the cut is the new file's own — and the face opens the fork
+    /// when the reply lands.
+    pub async fn fork(&self, session: &str, exchange: u64) -> Result<Value, String> {
+        let session = if session.is_empty() {
+            self.launch()
+        } else {
+            session.to_string()
+        };
+        if session.is_empty() {
+            return Err("there is no conversation to fork yet".to_string());
+        }
+        {
+            let state = lock(&self.state);
+            if state
+                .attached_if(&session)
+                .map(|attached| attached.running)
+                .unwrap_or(false)
+            {
+                return Err("a run is in flight; let it finish before forking".to_string());
+            }
+        }
+        let home = self.home.clone();
+        let model = self.model.clone();
+        tokio::task::spawn_blocking(move || fork_at(&home, &session, exchange, &model))
+            .await
+            .map_err(|error| format!("the fork could not be scheduled: {error}"))?
+    }
+
     /// One control into the run in flight, its body written verbatim:
     /// a fold, a pin, a pause, a resume, or a steer. The guards are the
     /// stop's own — the run must be in flight, and the driving session
@@ -3617,6 +3692,168 @@ fn save_archived(home: &std::path::Path, archived: &std::collections::HashMap<St
         return;
     }
     let _ = std::fs::rename(&temp, &path);
+}
+
+/// The sidecar each reply's verdict lives in — the titles' pattern
+/// again, keyed `id → exchange → up|down`. Owner sentiment is
+/// bookkeeping about the conversation, never a line in it: the file
+/// sits beside the log so no replay can mistake a grade for a message.
+const FEEDBACK_FILE: &str = "sessions-feedback.json";
+
+/// What one home holds: session id → exchange number (as JSON's string
+/// key) → the verdict.
+type SessionFeedback = std::collections::HashMap<String, std::collections::HashMap<String, String>>;
+
+fn feedback_path(home: &std::path::Path) -> PathBuf {
+    home.join(FEEDBACK_FILE)
+}
+
+fn load_feedback(home: &std::path::Path) -> SessionFeedback {
+    let text = match std::fs::read_to_string(feedback_path(home)) {
+        Ok(text) => text,
+        Err(_) => return SessionFeedback::new(),
+    };
+    let stored: SessionFeedback = serde_json::from_str(&text).unwrap_or_default();
+    stored
+        .into_iter()
+        .filter(|(id, _)| session::session_path(home, id).exists())
+        .collect()
+}
+
+/// Write the verdicts, atomically and with a writer-unique temp name,
+/// the titles' own rules: an emptied map is no file at all.
+fn save_feedback(home: &std::path::Path, feedback: &SessionFeedback) {
+    let path = feedback_path(home);
+    if feedback.is_empty() {
+        let _ = std::fs::remove_file(&path);
+        return;
+    }
+    let Ok(text) = serde_json::to_string_pretty(feedback) else {
+        return;
+    };
+    let temp = path.with_extension(format!("{}.tmp", std::process::id()));
+    if std::fs::write(&temp, text).is_err() {
+        return;
+    }
+    let _ = std::fs::rename(&temp, &path);
+}
+
+/// One session's verdicts as the state document carries them, read on
+/// demand the way the goal beside it is: `{"2": "up"}`, empty when
+/// nothing has been graded.
+fn feedback_for(home: &std::path::Path, session: &str) -> serde_json::Value {
+    let mut all = load_feedback(home);
+    let own = all.remove(session).unwrap_or_default();
+    serde_json::Value::Object(
+        own.into_iter()
+            .map(|(exchange, verdict)| (exchange, serde_json::Value::String(verdict)))
+            .collect(),
+    )
+}
+
+/// The two frames that ride the log as user records without being
+/// owner speech — byte for byte the face's `systemFrame` (app.js).
+/// The pair has to stay identical on both sides: the face counts
+/// exchanges with it, the fork cuts with it, and a drift between them
+/// would cut a conversation where the count says a reply ended but
+/// the log says a system frame began.
+fn is_system_frame(content: &str) -> bool {
+    content.starts_with("[the owner of this run steered it through its control file")
+        || content.starts_with("[scheduled run ")
+}
+
+/// One fork's own work, on the blocking pool: read the source, find
+/// the cut, write the new log. The source is never opened for write;
+/// every line that copies is a line the new file gains.
+fn fork_at(
+    home: &std::path::Path,
+    source: &str,
+    exchange: u64,
+    model: &str,
+) -> Result<Value, String> {
+    let source_path = session::session_path(home, source);
+    if !source_path.exists() {
+        return Err(format!("there is no conversation `{source}` to fork"));
+    }
+    let records = session::replay(&source_path)
+        .map_err(|error| format!("the source log could not be read: {error}"))?;
+    // Cut before the (exchange + 1)-th owner message that is not a
+    // system frame: everything through the reply to `exchange` copies,
+    // the next ask starts fresh. No such message — a machine run, or
+    // the last exchange — copies the whole log.
+    let mut owners = 0u64;
+    let mut cut = records.len();
+    for (index, record) in records.iter().enumerate() {
+        if let session::Record::User { content } = record {
+            if !is_system_frame(content) {
+                owners += 1;
+                if owners == exchange + 1 {
+                    cut = index;
+                    break;
+                }
+            }
+        }
+    }
+    let model = match records.first() {
+        Some(session::Record::Start { model, .. }) => model.as_str(),
+        _ => model,
+    };
+    let mut fresh = session::Session::create(home, model)
+        .map_err(|error| format!("the fork could not start a conversation: {error}"))?;
+    let new_id = fresh.id().to_string();
+    // The lineage rides the fork's own start line: one Value key on
+    // the record the fork just wrote, a tolerant reader's field — no
+    // record grammar changes, and the source's id stays readable from
+    // the new log alone.
+    let fresh_path = session::session_path(home, &new_id);
+    let written = std::fs::read_to_string(&fresh_path)
+        .map_err(|error| format!("the fork's start line could not be read: {error}"))?;
+    let first = written
+        .lines()
+        .next()
+        .ok_or_else(|| "the fork's start line is missing".to_string())?;
+    let mut lineage: serde_json::Value = serde_json::from_str(first)
+        .map_err(|error| format!("the fork's start line is not JSON: {error}"))?;
+    if let Some(object) = lineage.as_object_mut() {
+        object.insert("forked_from".to_string(), json!(source));
+    }
+    let patched = serde_json::to_string(&lineage)
+        .map_err(|error| format!("the fork's start line could not be written: {error}"))?;
+    if std::fs::write(&fresh_path, format!("{patched}\n")).is_err() {
+        return Err("the fork's start line could not be landed".to_string());
+    }
+    // The source's own start line has no place here: the fork's start
+    // is its own, and the history follows it.
+    for (index, record) in records[..cut].iter().enumerate() {
+        if index == 0 && matches!(record, session::Record::Start { .. }) {
+            continue;
+        }
+        fresh
+            .record(record)
+            .map_err(|error| format!("the fork could not copy the history: {error}"))?;
+    }
+    // The conversation's own furniture follows — folder, goal, title —
+    // as the new id's entries beside the source's, never moved.
+    let mut workdirs = load_workdirs(home);
+    if let Some(folder) = workdirs.get(source) {
+        workdirs.insert(new_id.clone(), folder.clone());
+        save_workdirs(home, &workdirs);
+    }
+    let mut goals = load_goals(home);
+    if let Some(goal) = goals.get(source) {
+        goals.insert(new_id.clone(), goal.clone());
+        save_goals(home, &goals);
+    }
+    let mut titles = load_titles(home);
+    if let Some(title) = titles.get(source) {
+        titles.insert(new_id.clone(), format!("fork of {title}"));
+        save_titles(home, &titles);
+    }
+    Ok(json!({
+        "type": "fork",
+        "id": new_id,
+        "forked_from": source,
+    }))
 }
 
 /// The sidecar each session's standing objective is stored in — the

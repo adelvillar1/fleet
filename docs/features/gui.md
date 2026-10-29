@@ -196,9 +196,14 @@ every visible `.tile`, `.badge`, `.rrow`, `.rank-row`, `.cal-cell`,
   markdown when their block closes: streamed text while it arrives, the
   rendered block at the boundary, and the receipt's closing report the
   same way. Every message then carries its own controls under its words
-  — **copy** on any reply, **edit** and **copy** on the owner's own —
-  visible without a hover, because a hover-only control does not exist
-  on a touch face.
+  — **copy**, **like**, **dislike**, **fork**, and **hook** on a reply,
+  **edit** and **copy** on the owner's own — visible without a hover,
+  because a hover-only control does not exist on a touch face. A
+  verdict is keyed by the exchange the reply answered and lands in the
+  feedback sidecar beside the log, never in it; a fork opens a new
+  conversation carrying this point's history with the source left
+  whole; a hook seeds a scheduled job from the ask the turn answered,
+  and the owner arms it in the drawer before anything is written.
 - **The activity rows.** One line per thing the run did, each opening on
   a press: `Thought · Ns` (the provider's `reasoning_content`, kept in a
   `reasoning` log record and never sent back), and a tool call, whose
@@ -275,7 +280,7 @@ Escape clears the object, never the dock.
 | `GET /api/access`, `POST /api/access/revoke` | the paired devices and channel peers, by name and digest only, and the revocation that forgets one |
 | `POST /api/session/new` | create a conversation: the log exists before its first message, and the next run posted with its id lands in it. The body may carry `{persona, goal}` — the bot's creation (see [`bot-app.md`](bot-app.md)); a persona that no role file carries is refused by name |
 | `POST /api/session/join`, `/api/session/leave` | one persona joins or leaves a conversation: a row in the log, refused by name when the persona does not resolve, is already present, or is the lead others still follow |
-| `POST /api/fact`, `/api/skill`, `/api/resume`, `/api/rewind`, `/api/diff/reject`, `/api/settings`, `/api/deck/render` | the writes, each through the writer the substrate already owns |
+| `POST /api/fact`, `/api/skill`, `/api/resume`, `/api/rewind`, `/api/feedback`, `/api/session/fork`, `/api/diff/reject`, `/api/settings`, `/api/deck/render` | the writes, each through the writer the substrate already owns |
 
 The channel control plane's routes are **not** on the remote face's
 allowlist: a paired phone answers 403 by name, the same rule settings
