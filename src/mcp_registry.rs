@@ -131,6 +131,22 @@ pub fn read_servers(home: &Path) -> Result<Vec<(String, ServerEntry)>, String> {
     Ok(servers)
 }
 
+/// The credential-shaped env name the `github` server card declares,
+/// when the registry carries that card. Names only, never values — the
+/// registry's own rule — and read from the card rather than restated,
+/// so the onboarding's PAT step follows a renamed variable.
+pub fn github_token_name(home: &Path) -> Option<String> {
+    let servers = read_servers(home).ok()?;
+    let (_, entry) = servers
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case("github"))?;
+    entry
+        .env_names
+        .iter()
+        .find(|name| crate::settings::is_secret_name(name))
+        .cloned()
+}
+
 /// One server's entry, or `None` when the registry does not name it.
 pub fn read_server(home: &Path, name: &str) -> Result<Option<ServerEntry>, String> {
     let document = read_registry(home)?;

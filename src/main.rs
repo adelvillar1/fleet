@@ -115,6 +115,7 @@ async fn dispatch(args: &[String]) -> ExitCode {
         Ok(Command::Gui(options)) => gui_command(&options).await,
         Ok(Command::Compact { session, force }) => compact_command(session.as_deref(), force).await,
         Ok(Command::Lanes) => lanes_command().await,
+        Ok(Command::Onboard(options)) => onboard_command(&options).await,
         Ok(Command::Mcp(options)) => mcp_command(&options).await,
         Ok(Command::Tools(options)) => tools_command(&options).await,
         Ok(Command::Lifecycle(options)) => lifecycle_command(&options),
@@ -288,6 +289,9 @@ async fn run_command(options: &RunOptions) -> ExitCode {
             );
             eprintln!(
                 "fleet: set one of them (in the environment or <FLEET_HOME>/.env), or run `fleet doctor`"
+            );
+            eprintln!(
+                "fleet: `fleet gui` walks this in one screen \u{2014} no account names needed"
             );
             return ExitCode::from(2);
         }
@@ -2154,6 +2158,150 @@ fn roles_command() -> ExitCode {
         return ExitCode::from(2);
     };
     print!("{}", fleet::roles::render(&fleet::roles::load_all(&home)));
+    ExitCode::SUCCESS
+}
+
+/// `fleet onboard`: the guided setup, one step at a time.
+///
+/// The presentation is cards, the same vocabulary the other surfaces
+/// render; `--json` prints the document the GUI reads, so a script and
+/// the face can never disagree about the state. Every flag is one
+/// decision — and the sequence resumes at the first incomplete step,
+/// because the machine's own state is the state.
+async fn onboard_command(options: &fleet::cli::OnboardOptions) -> ExitCode {
+    use fleet::onboard;
+
+    let home = match fleet_home() {
+        Ok(home) => home,
+        Err(message) => {
+            eprintln!("fleet: {message}");
+            return ExitCode::from(2);
+        }
+    };
+    let dotenv = fleet::home::read_dotenv_with_process_vault(&home);
+
+    // One decision per invocation, in the order the flags arrive.
+    if let Some(pair) = &options.key {
+        let Some((name, value)) = pair.split_once('=') else {
+            eprintln!("fleet: `--key` takes NAME=value");
+            return ExitCode::from(2);
+        };
+        match onboard::set_key(&home, name, value) {
+            Ok(()) => println!("the key is set — it is written once and never shown again"),
+            Err(message) => {
+                eprintln!("fleet: {message}");
+                return ExitCode::from(2);
+            }
+        }
+    }
+    if let Some(step) = &options.skip {
+        let name = if fleet::onboard::STEPS.contains(&step.as_str()) {
+            step.clone()
+        } else {
+            eprintln!("fleet: `{step}` is not an onboarding step");
+            return ExitCode::from(2);
+        };
+        let copy = onboard::narration(&name, &onboard::Facts::read(&home, &dotenv));
+        if copy.skip.is_empty() {
+            eprintln!("fleet: {name} is not a step that can be skipped");
+            return ExitCode::from(2);
+        }
+        match onboard::skip(&home, &name, &copy.skip) {
+            Ok(()) => println!("declined {name} — {}", copy.skip),
+            Err(message) => {
+                eprintln!("fleet: {message}");
+                return ExitCode::from(2);
+            }
+        }
+    }
+    if options.confirm {
+        let root = fleet::calib::resolve_root(&home, std::env::var("HOME").ok().as_deref());
+        let stream = fleet::calib::Stream::open(root);
+        fleet::calib::record_lifecycle(
+            &stream,
+            "onboarding",
+            onboard::STEP_ROSTER,
+            "confirm",
+            "the owner reviewed the strategy",
+        );
+        stream.flush();
+        println!("the strategy is confirmed");
+    }
+
+    let state = onboard::state(&home, &dotenv);
+    let facts = onboard::Facts::read(&home, &dotenv);
+
+    if options.json {
+        println!("{}", state.to_json(&facts));
+        return ExitCode::SUCCESS;
+    }
+
+    let card = |id: &str, step: &onboard::StepState| {
+        let copy = onboard::narration(id, &facts);
+        let mut out = String::new();
+        out.push_str(&format!("{}\n", copy.title));
+        out.push_str(&format!("  {}\n", copy.lede));
+        if step.done {
+            out.push_str(&format!("  \u{2713} {}\n", step.evidence));
+        } else if step.skipped {
+            out.push_str("  declined \u{2014} the consequence is on the calibration stream\n");
+        } else {
+            out.push_str(&format!("  next: {}\n", copy.action));
+            if !copy.skip.is_empty() {
+                out.push_str(&format!("  or decline it: {}\n", copy.skip));
+            }
+            out.push_str(&format!("  how this works: {}\n", copy.mechanism));
+        }
+        out
+    };
+
+    // One step when named, the whole walk otherwise — starting where the
+    // machine left off.
+    match &options.step {
+        Some(id) => {
+            let name = onboard::STEPS
+                .iter()
+                .find(|step| **step == id.as_str())
+                .copied();
+            let Some(name) = name else {
+                eprintln!("fleet: `{id}` is not an onboarding step");
+                return ExitCode::from(2);
+            };
+            let Some(step) = state.step(name) else {
+                eprintln!("fleet: {name} has no state");
+                return ExitCode::from(2);
+            };
+            print!("{}", card(name, step));
+            if options.verify && name == onboard::STEP_LANES {
+                let verified = onboard::verify_lanes().await;
+                println!("  {}", verified.said);
+                if !verified.ok {
+                    return ExitCode::from(1);
+                }
+            }
+        }
+        None => {
+            println!("fleet \u{00b7} setup\n");
+            for step in &state.steps {
+                if step.done && !options.verify {
+                    print!("{}", card(step.id, step));
+                    println!();
+                    continue;
+                }
+                print!("{}", card(step.id, step));
+                println!();
+            }
+            if let Some(next) = state.first_incomplete() {
+                println!("next: fleet onboard --step {next}");
+            } else {
+                println!("setup is complete \u{2014} `fleet gui` opens the work surface");
+            }
+            if options.verify {
+                let verified = onboard::verify_lanes().await;
+                println!("specialists: {}", verified.said);
+            }
+        }
+    }
     ExitCode::SUCCESS
 }
 

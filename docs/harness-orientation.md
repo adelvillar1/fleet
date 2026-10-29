@@ -190,3 +190,13 @@ drafter files its proposals under `<FLEET_HOME>/skills/proposals/`, and
 the gate is what writes an applied proposal into the library). A fact
 that stays only in the
 conversation is lost at session end; the corpus is the memory.
+
+## The first run
+
+A fresh machine has one question and the onboarding asks it once: an
+account to think with. `fleet gui` opens on the door — the welcome in
+its first-run state — and proves the account with a real answer;
+`fleet onboard` walks the same sequence in a terminal, resuming at the
+first incomplete step because the steps' completion *is* the machine's
+state. Everything else is a benefit card on demand. The rules the copy
+follows, and what each step proves: `docs/features/onboarding.md`.

@@ -44,6 +44,10 @@ pub enum Command {
     Delegate(DelegateOptions),
     /// List the named roles a delegation can run under, as cards.
     Roles,
+    /// The guided onboarding: the steps in their declared order, each
+    /// with what it gives you and what it proves — resumable at the
+    /// first incomplete step, because the machine's state is the state.
+    Onboard(OnboardOptions),
     /// Ask what this project already calls a concept: the established
     /// term with its sites, the plain statement that no established
     /// term exists, or the named variant to rename away from.
@@ -178,6 +182,25 @@ pub struct ChatOptions {
     pub model: Option<String>,
     pub yes: bool,
     pub session: Option<String>,
+}
+
+/// Options for `fleet onboard`. The bare command walks the sequence;
+/// every flag is a script's door into one decision.
+#[derive(Debug, PartialEq, Eq)]
+pub struct OnboardOptions {
+    /// One step by name; empty walks from the first incomplete one.
+    pub step: Option<String>,
+    /// Ask the live verify (one bounded call per lane) — opt-in because
+    /// it may cost money.
+    pub verify: bool,
+    /// Decline one step, recording the consequence it names.
+    pub skip: Option<String>,
+    /// Print the state as JSON instead of cards.
+    pub json: bool,
+    /// Set the first key: `NAME=value` on one argument, never echoed.
+    pub key: Option<String>,
+    /// Record the roster step's confirmation.
+    pub confirm: bool,
 }
 
 /// Options for `fleet calib`.
@@ -654,6 +677,15 @@ usage:
                                 under: description, what each narrows, and
                                 its file — the `subagent` tool's `role`
                                 argument names one
+  fleet onboard                  the guided setup, in its declared order:
+                                one step at a time, each with what it gives
+                                you; resumes where the machine left off
+  fleet onboard --verify         ask the opt-in live check (one bounded
+                                call per specialist — it may cost money)
+  fleet onboard --skip <step>    decline one step; the consequence it names
+                                is recorded with the decision
+  fleet onboard --key NAME=value set the first model key (never echoed)
+  fleet onboard --json           the state as a document, for a script
   fleet convention <concept>    what this project already calls a concept:
                                 the established term with its file:line
                                 sites, the plain statement that no
@@ -820,6 +852,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "judge" => parse_judge(rest),
         "delegate" => parse_delegate(rest),
         "roles" => no_flags(rest, Command::Roles),
+        "onboard" => parse_onboard(rest),
         "convention" => parse_convention(rest),
         "graph" => parse_graph(rest),
         "plan" => parse_plan(rest),
@@ -918,6 +951,39 @@ fn parse_chat(args: &[String]) -> Result<Command, String> {
         yes,
         session,
     }))
+}
+
+/// `fleet onboard [--step <id>] [--verify] [--skip <id>] [--json]
+/// [--key NAME=value] [--confirm]`. Every flag is one decision; the
+/// bare command walks the sequence.
+fn parse_onboard(args: &[String]) -> Result<Command, String> {
+    let mut options = OnboardOptions {
+        step: None,
+        verify: false,
+        skip: None,
+        json: false,
+        key: None,
+        confirm: false,
+    };
+    let mut index = 0;
+    while index < args.len() {
+        let arg = args[index].as_str();
+        match arg {
+            "--help" | "-h" => return Ok(Command::Help),
+            "--verify" => options.verify = true,
+            "--json" => options.json = true,
+            "--confirm" => options.confirm = true,
+            "--step" => options.step = Some(take_value(args, &mut index, arg)?),
+            "--skip" => options.skip = Some(take_value(args, &mut index, arg)?),
+            "--key" => options.key = Some(take_value(args, &mut index, arg)?),
+            _ if arg.starts_with('-') && arg != "-" => {
+                return Err(format!("unknown onboard option `{arg}`"));
+            }
+            _ => return Err(format!("`{arg}` is not an onboard option")),
+        }
+        index += 1;
+    }
+    Ok(Command::Onboard(options))
 }
 
 /// `fleet calib`: one optional `--day`, the calibration surface's

@@ -519,7 +519,7 @@ impl State {
 
 /// The env-var names whose values are never rendered. A provider key is
 /// a secret; the endpoint and the driver path are configuration.
-fn is_secret_name(name: &str) -> bool {
+pub(crate) fn is_secret_name(name: &str) -> bool {
     name.ends_with("_KEY") || name.ends_with("_TOKEN") || name.ends_with("_SECRET")
 }
 

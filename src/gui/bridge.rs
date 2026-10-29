@@ -2226,6 +2226,239 @@ impl Bridge {
             .map_err(|_| "the preview read did not land".to_string())?
     }
 
+    /// The onboarding's state and narration: one document, read from the
+    /// registries the runtime itself reads. The face paints the door from
+    /// this and nothing else.
+    pub async fn onboard(&self) -> Value {
+        let home = self.home.clone();
+        tokio::task::spawn_blocking(move || {
+            let dotenv = crate::home::read_dotenv_with_process_vault(&home);
+            let state = crate::onboard::state(&home, &dotenv);
+            let facts = crate::onboard::Facts::read(&home, &dotenv);
+            let mut document = state.to_json(&facts);
+            document["completion"] = crate::onboard::completion(&home, &dotenv).to_json();
+            document
+        })
+        .await
+        .unwrap_or_else(|_| json!({"type": "onboard", "refused": ["the read did not land"]}))
+    }
+
+    /// One onboarding decision. Every op writes through a seam that
+    /// already exists: the settings writer's secret path, the roster's
+    /// own schema, the calibration stream's `lifecycle` rows.
+    pub async fn onboard_op(&self, body: &str) -> Result<Value, String> {
+        let arguments: Value = serde_json::from_str(body)
+            .map_err(|error| format!("the decision is not a JSON object: {error}"))?;
+        let op = arguments
+            .get("op")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "a decision names its op".to_string())?
+            .to_string();
+        let home = self.home.clone();
+
+        match op.as_str() {
+            // The home's layout: the same two writes `fleet install`
+            // makes for the cheap half, and nothing that builds a venv.
+            "home" => {
+                let home_for_task = home.clone();
+                tokio::task::spawn_blocking(move || {
+                    for name in ["sessions", "memories", "skills"] {
+                        crate::install::layout_step(&home_for_task, name)
+                            .map_err(|error| format!("could not make {name}: {error}"))?;
+                    }
+                    crate::install::config_step(&home_for_task)
+                        .map(|_| ())
+                        .map_err(|error| format!("could not write the config: {error}"))
+                })
+                .await
+                .map_err(|_| "the home step did not land".to_string())??;
+            }
+            // The first key: written once through the settings writer's
+            // secret path, then proven by one bounded chat call.
+            "key" => {
+                let provider = arguments
+                    .get("provider")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                let value = arguments
+                    .get("value")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| "the key names its value".to_string())?
+                    .to_string();
+                let dotenv: std::collections::HashMap<String, String> =
+                    crate::home::read_dotenv_with_process_vault(&home);
+                // The account is named by the provider the door offers,
+                // or read from the value's own shape — never guessed
+                // silently: an unknown shape asks for the account.
+                let provider = if provider.is_empty() {
+                    crate::onboard::provider_for_key_shape(&value)
+                        .map(|found| found.to_string())
+                        .ok_or_else(|| {
+                            "which account is this key for? the door names the ones                              this machine can reach"
+                                .to_string()
+                        })?
+                } else {
+                    provider
+                };
+                let name = crate::onboard::key_env_for(&home, &provider)
+                    .ok_or_else(|| format!("`{provider}` is not an account this fleet knows"))?;
+                let home_for_write = home.clone();
+                let value_for_write = value.clone();
+                tokio::task::spawn_blocking(move || {
+                    crate::onboard::set_key(&home_for_write, &name, &value_for_write)
+                })
+                .await
+                .map_err(|_| "the key write did not land".to_string())??;
+                // The proof: one bounded call through the router, and
+                // the answer the owner reads is the router's own.
+                let proved = self.onboard_prove(&home, &dotenv).await;
+                return Ok(json!({
+                    "type": "onboard_op",
+                    "op": op,
+                    "proved": proved.is_ok(),
+                    "answer": proved.as_deref().unwrap_or(""),
+                    "refused": proved.err().map(|reason| vec![reason]).unwrap_or_default(),
+                }));
+            }
+            "skip" => {
+                let step = arguments
+                    .get("step")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| "the skip names its step".to_string())?
+                    .to_string();
+                let home_for_task = home.clone();
+                let step_for_task = step.clone();
+                let consequence = tokio::task::spawn_blocking(move || {
+                    let step = step_for_task;
+                    let dotenv = crate::home::read_dotenv_with_process_vault(&home_for_task);
+                    let facts = crate::onboard::Facts::read(&home_for_task, &dotenv);
+                    let copy = crate::onboard::narration(&step, &facts);
+                    if copy.skip.is_empty() {
+                        return Err(format!("{step} is not a step that can be declined"));
+                    }
+                    let consequence = copy.skip.clone();
+                    crate::onboard::skip(&home_for_task, &step, &consequence).map(|()| consequence)
+                })
+                .await
+                .map_err(|_| "the skip did not land".to_string())??;
+                return Ok(json!({
+                    "type": "onboard_op",
+                    "op": op,
+                    "step": step,
+                    "consequence": consequence,
+                }));
+            }
+            "confirm" => {
+                let root = crate::calib::resolve_root(&home, None);
+                let stream = crate::calib::Stream::open(root);
+                crate::calib::record_lifecycle(
+                    &stream,
+                    "onboarding",
+                    crate::onboard::STEP_ROSTER,
+                    "confirm",
+                    "the owner reviewed the strategy",
+                );
+                stream.flush();
+            }
+            "verify" => {
+                let verified = crate::onboard::verify_lanes().await;
+                return Ok(json!({
+                    "type": "onboard_op",
+                    "op": op,
+                    "step": verified.step,
+                    "ok": verified.ok,
+                    "said": verified.said,
+                }));
+            }
+            "projects" => {
+                let root = arguments
+                    .get("root")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+                if root.is_empty() {
+                    return Err("the folder step names its folder".to_string());
+                }
+                if !std::path::Path::new(&root).is_dir() {
+                    return Err(format!("{root} is not a folder on this machine"));
+                }
+                // The tower's own setting, through the settings writer —
+                // and the running process honours it at once, so the
+                // proof below reads the folder the owner just chose.
+                crate::settings::set(&home, "TOWER_LOG_PROJECTS_DIR", &root)?;
+                std::env::set_var("TOWER_LOG_PROJECTS_DIR", &root);
+            }
+            "remember" => {
+                let home_for_task = home.clone();
+                let name = tokio::task::spawn_blocking(move || {
+                    let dotenv = crate::home::read_dotenv_with_process_vault(&home_for_task);
+                    let facts = crate::onboard::Facts::read(&home_for_task, &dotenv);
+                    crate::onboard::remember_onboarding(&home_for_task, &facts)
+                })
+                .await
+                .map_err(|_| "the onboarding fact did not land".to_string())??;
+                return Ok(json!({"type": "onboard_op", "op": op, "fact": name}));
+            }
+            other => return Err(format!("`{other}` is not an onboarding decision")),
+        }
+
+        // Every op answers with the fresh state, so the face repaints
+        // from one read rather than patching its own copy.
+        Ok(self.onboard().await)
+    }
+
+    /// The door's proof: one bounded chat call through the router.
+    ///
+    /// The streamed call's closure is not `Send`, so the call runs on a
+    /// blocking thread that drives it on the current runtime's handle —
+    /// the same shape the run path uses for its own blocking work, and
+    /// the answer it returns is the router's, not a second renderer's.
+    async fn onboard_prove(
+        &self,
+        home: &std::path::Path,
+        dotenv: &std::collections::HashMap<String, String>,
+    ) -> Result<String, String> {
+        const TASK: &str = "say hello in five words";
+        let prepared =
+            crate::route::prepare_with_pin(home, dotenv, TASK, &Default::default(), None)
+                .await
+                .map_err(|error| format!("{error}"))?;
+        let client = crate::api::Client::routed(prepared.router.clone());
+        let model = prepared.decision.model.clone();
+        let handle = tokio::runtime::Handle::current();
+        tokio::task::spawn_blocking(move || {
+            handle.block_on(async move {
+                let messages = vec![crate::api::Message::text(crate::api::Role::User, TASK)];
+                let request = crate::api::ChatRequest {
+                    model: &model,
+                    messages: &messages,
+                    tools: Vec::new(),
+                };
+                let mut sink = |_: crate::api::StreamEvent| {};
+                client
+                    .chat_stream(&request, &mut sink)
+                    .await
+                    .map_err(|error| format!("the proof call failed: {error}"))
+            })
+        })
+        .await
+        .map_err(|_| "the proof call did not land".to_string())?
+        .and_then(|response| {
+            let answer = response
+                .choices
+                .first()
+                .and_then(|choice| choice.message.content.clone())
+                .unwrap_or_default();
+            if answer.trim().is_empty() {
+                Err("the proof call answered with nothing".to_string())
+            } else {
+                Ok(answer)
+            }
+        })
+    }
+
     /// The framing verdict the pane's browser needs: will the site
     /// allow being framed? The site's own headers answer; the reason
     /// names them, and the face offers the reader door beside it.
@@ -7202,6 +7435,7 @@ pub(crate) fn describe(event: &UiEvent) -> Value {
             json!({"type": "repair", "attempt": attempt})
         }
         UiEvent::Failed(reason) => json!({"type": "failed", "reason": reason}),
+        UiEvent::NeedsSetup(step) => json!({"type": "needs_setup", "step": step}),
     }
 }
 
@@ -7586,8 +7820,20 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
                                     if let Some(id) = current_session.as_deref() {
                                         clear_control(&session::session_path(&home, id));
                                     }
-                                    let _ = ui_tx
-                                        .send(UiEvent::Failed(format!("routing config: {error}")));
+                                    // A keyless machine is the door's
+                                    // case, not a routing error: the
+                                    // pre-flight names it before the
+                                    // run, and the face raises the
+                                    // onboarding screen inline.
+                                    let preflight = crate::route::preflight(&home, &dotenv);
+                                    let event = if preflight.is_err() {
+                                        UiEvent::NeedsSetup(
+                                            crate::onboard::STEP_LLM.to_string(),
+                                        )
+                                    } else {
+                                        UiEvent::Failed(format!("routing config: {error}"))
+                                    };
+                                    let _ = ui_tx.send(event);
                                     continue;
                                 }
                             }

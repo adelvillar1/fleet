@@ -478,6 +478,17 @@ async fn serve_connection(
             }
         }
         ("GET", "/api/contrast") => write_reply(&mut stream, api(200, bridge.contrast())).await,
+        ("GET", "/api/onboard") => write_reply(&mut stream, api(200, bridge.onboard().await)).await,
+        ("POST", "/api/onboard") => {
+            let body = match read_body(&mut stream, &request, rest).await {
+                Ok(body) => body,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            match bridge.onboard_op(&body).await {
+                Ok(document) => write_reply(&mut stream, api(200, document)).await,
+                Err(message) => write_reply(&mut stream, api(400, json!({"error": message}))).await,
+            }
+        }
         ("GET", "/api/web") => {
             let asked = decode_query(&request.query, "url");
             write_reply(&mut stream, api(200, bridge.web(&asked).await)).await

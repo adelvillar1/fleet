@@ -131,18 +131,26 @@ Effort levels per workload (research done, plan not written); the
 shell; the cron corpus-refresh repair. Each is named with its reason in
 the technical document's Sequencing section.
 
-Commissioned and drafted, not built: the guided onboarding. Five steps in dependency order — one LLM, the lanes in lane order, the projects landscape, the tower's token, the model roster — every fact narrated from the registries the runtime already reads, every step ending in a proof, completion equal to one green probe. The plan:
-`docs/plans/2026-10-29-guided-onboarding.md`.
+Shipped: the guided onboarding (`docs/features/onboarding.md`). A fresh
+`fleet gui` opens on the door — one account, one decision, and the
+answer it proves — and everything else (the lanes, the projects folder,
+the evidence token, the cost ceiling) arrives as benefit cards on
+demand, never as a checklist. `fleet onboard` walks the same sequence in
+a terminal, resuming where the machine left off.
 
 ## Start here
 
 ```sh
 cargo build --release                     # one binary at target/release/fleet
-export DEEPSEEK_API_KEY=sk-...            # or KEY=VALUE in ~/.fleet/.env
-target/release/fleet install              # the home, the config scaffold, the doctor gate
-target/release/fleet doctor               # the gate on its own
+target/release/fleet gui                  # the guided first run: the door
+target/release/fleet onboard              # or the same steps in a terminal
 target/release/fleet chat                 # the everyday surface
 ```
+
+`fleet gui` on a fresh home asks for one thing — an account to think
+with — and proves it with a real answer before anything else is offered.
+`fleet onboard` walks the sequence in a terminal and resumes at the first
+incomplete step; `--json` prints the document the face reads.
 
 `fleet install` is idempotent; its exit code is the doctor's. The lanes
 are vendored in this repository under `services/`, and their heavy

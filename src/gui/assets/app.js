@@ -432,6 +432,14 @@
     offers: document.getElementById('offers'),
     recent: document.getElementById('recent'),
     homeStats: document.getElementById('home-stats'),
+    onboardDoor: document.getElementById('onboard-door'),
+    doorDiscovered: document.getElementById('door-discovered'),
+    onboardKey: document.getElementById('onboard-key'),
+    onboardKeyValue: document.getElementById('onboard-key-value'),
+    onboardKeyGo: document.getElementById('onboard-key-go'),
+    onboardSaid: document.getElementById('onboard-said'),
+    onboardMechanismBody: document.getElementById('onboard-mechanism-body'),
+    onboardCards: document.getElementById('onboard-cards'),
     homeFacts: document.getElementById('home-facts'),
     homeSkills: document.getElementById('home-skills'),
     homeRuns: document.getElementById('home-runs'),
@@ -2213,6 +2221,24 @@
       case 'plan':
         planRow(event);
         break;
+      // The run could not start because the machine has nothing to
+      // answer with. The transcript never carries the error: the door
+      // rises in its place, and the owner's words go back to where they
+      // typed them (the abstraction rule: a refusal names the benefit).
+      case 'needs_setup':
+        face.running = false;
+        face.driving = '';
+        closeAssistant();
+        if (face.doorWords) {
+          el.task.value = face.doorWords;
+          face.doorWords = '';
+          grow();
+        }
+        el.log.hidden = true;
+        el.empty.hidden = false;
+        readOnboard(true);
+        notifyIfHidden('fleet \u00b7 setup', 'one account, and fleet can answer');
+        break;
       case 'finished':
       case 'failed':
         face.runFirstTurn = 0;
@@ -3315,6 +3341,10 @@
 
   function paintEmpty() {
     if (!el.emptyEyebrow) return;
+    // The door owns the welcome's copy while it is up: its three
+    // sentences are the screen, and the greeting must not paint over
+    // them (the owner's rule: one screen, one decision).
+    if (face.onboard && !face.onboard.ready && face.onboard.door) return;
     el.emptyEyebrow.textContent = greeting() + ' \u00b7 ' + workspaceName();
     if (el.emptyMeta) {
       el.emptyMeta.textContent = face.workspace
@@ -3360,6 +3390,211 @@
       });
       el.recent.appendChild(line);
     });
+  }
+
+  // ------------------------------------------------- the onboarding
+  //
+  // Two states of the home, decided by detected truth. The door is the
+  // welcome in its first-run state — the same .empty frame, its eyebrow
+  // and title swapped, one decision. The cards are the capabilities the
+  // machine can still gain, on demand, never blocking.
+
+  function readOnboard(force) {
+    var now = Date.now();
+    if (!force && face.onboard && now - face.onboardAt < 4000) return Promise.resolve();
+    face.onboardAt = now;
+    return fetch('/api/onboard', { headers: { accept: 'application/json' } })
+      .then(function (reply) {
+        if (reply.status === 401) throw new Error('token');
+        return reply.json();
+      })
+      .then(function (doc) {
+        face.onboard = doc;
+        paintOnboard();
+      })
+      .catch(function () { });
+  }
+
+  function paintOnboard() {
+    var doc = face.onboard;
+    if (!doc || doc.refused) return;
+    var door = !doc.ready;
+    var step = (doc.steps || []).filter(function (one) { return one.id === 'home'; })[0];
+    // The door's copy is the document's own; nothing here restates it.
+    if (door) {
+      var copy = doc.door || {};
+      if (el.emptyEyebrow) el.emptyEyebrow.textContent = copy.eyebrow || el.emptyEyebrow.textContent;
+      if (el.emptyTitle) el.emptyTitle.textContent = copy.title || el.emptyTitle.textContent;
+      if (el.emptyLede) el.emptyLede.textContent = copy.lede || el.emptyLede.textContent;
+      el.onboardDoor.hidden = false;
+      // One state on the welcome's frame: the CSS hides every block a
+      // first-run home has no business showing — the counts, the method
+      // strip, the lanes, the offers, the footnote. The door screen is
+      // three sentences and one decision.
+      el.empty.dataset.onboard = 'door';
+      // One decision per screen: the run composer stands down while the
+      // door is up — the door's own field is the only field.
+      el.composer.hidden = true;
+      var discovered = el.doorDiscovered;
+      discovered.textContent = '';
+      discovered.hidden = !copy.discovered;
+      if (copy.discovered) {
+        var press = node('button', 'offer');
+        press.type = 'button';
+        var mark = node('span', 'offer-mark');
+        mark.appendChild(icon('router'));
+        press.appendChild(mark);
+        var body = node('span', 'offer-body');
+        body.appendChild(node('span', 'offer-title', copy.discovered_label || 'Use it'));
+        body.appendChild(node('span', 'offer-said',
+          'This machine already holds an account fleet can answer with.'));
+        press.appendChild(body);
+        press.addEventListener('click', function () { onboardUseDiscovered(); });
+        discovered.appendChild(press);
+      }
+      if (el.onboardKeyGoLabel) el.onboardKeyGoLabel.textContent = copy.action || 'Use it';
+      el.onboardMechanismBody.textContent = copy.mechanism || '';
+      el.onboardDoor.dataset.step = (doc.first_incomplete || 'first-llm');
+      return;
+    }
+    // Fleet can answer: the work home is the home, and the welcome's
+    // own blocks come back.
+    el.onboardDoor.hidden = true;
+    el.composer.hidden = false;
+    el.empty.dataset.onboard = '';
+    paintOnboardCards(doc);
+  }
+
+  // The capability cards: only the ones the machine can still gain, each
+  // one sentence of benefit, one action, and a real "not now".
+  function paintOnboardCards(doc) {
+    if (!el.onboardCards) return;
+    var open = (doc.steps || []).filter(function (one) {
+      return !one.done && !one.skipped && one.id !== 'first-llm' && one.id !== 'home';
+    });
+    el.onboardCards.textContent = '';
+    el.onboardCards.hidden = !open.length;
+    if (!open.length) return;
+    open.forEach(function (one) {
+      var copy = one.narration || {};
+      var card = node('div', 'card onboard-card');
+      var head = node('header', 'card-head');
+      head.appendChild(node('h2', null, copy.title || one.id));
+      card.appendChild(head);
+      card.appendChild(node('p', 'card-note', copy.lede || ''));
+      var acts = node('div', 'onboard-acts');
+      var go = node('button', 'foot-btn', copy.action || 'Set it up');
+      go.type = 'button';
+      go.addEventListener('click', function () { onboardStep(one.id); });
+      acts.appendChild(go);
+      if (copy.skip) {
+        var later = node('button', 'row-rewind', 'not now');
+        later.type = 'button';
+        later.title = copy.skip;
+        later.addEventListener('click', function () { onboardSkip(one.id); });
+        acts.appendChild(later);
+      }
+      card.appendChild(acts);
+      var how = node('details', 'onboard-mechanism');
+      how.appendChild(node('summary', 'method-label', 'how this works'));
+      how.appendChild(node('p', 'onboard-mechanism-body', copy.mechanism || ''));
+      card.appendChild(how);
+      el.onboardCards.appendChild(card);
+    });
+  }
+
+  function onboardPost(body) {
+    return post('/api/onboard', body).then(function (reply) {
+      if (reply.status !== 200) {
+        onboardSaid((reply.body && reply.body.error) || 'that did not land');
+        return null;
+      }
+      return reply.body;
+    }).catch(function () {
+      onboardSaid('the face did not answer');
+      return null;
+    });
+  }
+
+  function onboardSaid(text, tone) {
+    if (!el.onboardSaid) return;
+    el.onboardSaid.hidden = !text;
+    el.onboardSaid.textContent = text || '';
+    el.onboardSaid.dataset.tone = tone || '';
+  }
+
+  // The press: use what the machine already holds. The proof is the
+  // product — one real answer, shown in the conversation.
+  function onboardUseDiscovered() {
+    onboardSaid('asking the account on this machine…');
+    onboardPost({ op: 'key', value: 'discovered' }).then(function (doc) {
+      if (!doc) return;
+      readOnboard(true);
+    });
+  }
+
+  // The field: one key, written once, then proven by one bounded call.
+  function onboardSubmitKey(event) {
+    event.preventDefault();
+    var value = (el.onboardKeyValue.value || '').trim();
+    if (!value) { onboardSaid('paste the key first'); return; }
+    onboardSaid('setting it up…');
+    el.onboardKeyGo.disabled = true;
+    onboardPost({ op: 'key', value: value }).then(function (doc) {
+      el.onboardKeyGo.disabled = false;
+      if (!doc) return;
+      el.onboardKeyValue.value = '';
+      if (doc.answer) {
+        onboardSaid('fleet answered: \u201c' + clip(doc.answer, 160) + '\u201d');
+      } else if (doc.refused && doc.refused.length) {
+        onboardSaid(doc.refused[0], 'warn');
+        return;
+      }
+      readOnboard(true).then(function () {
+        if (face.onboard && face.onboard.ready) {
+          // The work home: the answer stands in the conversation.
+          if (doc.answer) {
+            el.empty.hidden = true;
+            el.log.hidden = false;
+            apply({ type: 'message', role: 'owner', text: 'say hello' });
+            apply({ type: 'message', role: 'assistant', text: doc.answer });
+            notice('that answer came from a model the router chose',
+              'the chain is on the route bar if you\u2019re curious');
+          }
+        }
+      });
+    });
+  }
+
+  function onboardSkip(step) {
+    onboardPost({ op: 'skip', step: step }).then(function (doc) {
+      if (!doc) return;
+      if (doc.consequence) notice(step + ' declined', doc.consequence);
+      readOnboard(true);
+    });
+  }
+
+  function onboardStep(step) {
+    if (step === 'lanes') {
+      onboardPost({ op: 'verify' }).then(function (doc) {
+        if (!doc) return;
+        notice('the specialists', doc.said || '');
+        readOnboard(true);
+      });
+      return;
+    }
+    if (step === 'projects') {
+      var root = window.prompt('the folder your repositories live in',
+        (face.onboard && face.onboard.door && face.onboard.projects_root) || '');
+      if (!root) return;
+      onboardPost({ op: 'projects', root: root }).then(function (doc) {
+        if (doc) readOnboard(true);
+      });
+      return;
+    }
+    // Every other step is a settings surface away; the card says what it
+    // gives you and the surface does the write.
+    window.location.hash = '#/settings';
   }
 
   // The welcome's three readings: the same memory, skills and sessions
@@ -5976,6 +6211,7 @@
   function dispatchTask() {
     var task = el.task.value.trim();
     if (!task) return;
+    face.doorWords = task;
     el.task.value = '';
     grow();
     clearDraft();
@@ -7503,6 +7739,9 @@
       var end = el.task.value.length;
       el.task.setSelectionRange(end, end);
     } catch (error) { }
+  }
+  if (el.onboardKey) {
+    el.onboardKey.addEventListener('submit', onboardSubmitKey);
   }
   if (el.composerSteer) {
     el.composerSteer.addEventListener('click', function () { prefillCommand('/steer '); });
@@ -16053,6 +16292,9 @@
       // One archive read at boot: the rail's badge and the welcome's
       // recent fallback speak from it, whatever panel the owner landed on.
       readSessions(false);
+      // And one onboarding read: it decides which state of the home the
+      // owner sees — the door or the work home.
+      readOnboard(false);
     })
     .catch(function (error) {
       document.documentElement.setAttribute('data-fleet-mounted', '1');

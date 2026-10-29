@@ -352,6 +352,13 @@ function boot(options) {
           { type: 'file', path: asked, name: asked, language: 'text', text: '' }),
       });
     }
+    if (pathOnly === '/api/onboard') {
+      const body = init && init.body ? JSON.parse(init.body) : {};
+      const doc = typeof documents.onboard === 'function'
+        ? documents.onboard(body)
+        : documents.onboard;
+      return Promise.resolve({ status: 200, json: () => Promise.resolve(doc || onboardDoc()) });
+    }
     if (pathOnly === '/api/memory') {
       return Promise.resolve({
         status: 200,
@@ -3354,6 +3361,156 @@ async function thePreviewRendersTheCommonFormats() {
     'source');
 }
 
+
+// The onboarding's document shape, shared by the cases below.
+function onboardDoc(options) {
+  const opts = options || {};
+  const door = {
+    eyebrow: 'fleet \u00b7 first run',
+    title: 'One account, and fleet can think.',
+    lede: 'Fleet answers in this window, reads and writes files in a folder you choose, ' +
+      'and remembers what you decide. It needs one AI account, and nothing else.',
+    discovered: !!opts.discovered,
+    discovered_label: opts.discovered ? 'Use the account already on this machine' : '',
+    field_label: 'paste the account\u2019s key',
+    action: 'Use it',
+    mechanism: 'Fleet picks a model per task among the accounts it can reach.',
+  };
+  const steps = [
+    { id: 'home', done: true, skipped: false, evidence: 'the home is in place' },
+    { id: 'first-llm', done: !opts.door, skipped: false, evidence: '' },
+    { id: 'lanes', done: false, skipped: false, evidence: '' },
+    { id: 'projects', done: false, skipped: false, evidence: '' },
+    { id: 'github', done: false, skipped: false, evidence: '' },
+    { id: 'roster', done: false, skipped: false, evidence: '' },
+  ].map((step) => ({
+    ...step,
+    narration: {
+      eyebrow: 'fleet \u00b7 ' + step.id,
+      title: step.id === 'lanes' ? 'Small specialists, called when they help.'
+        : step.id === 'projects' ? 'Point fleet at your work.'
+          : step.id === 'github' ? 'Check claims against the record.'
+            : step.id === 'roster' ? 'Which model does what.' : 'Fleet can think already.',
+      lede: 'One sentence of benefit for ' + step.id + '.',
+      action: 'Set it up',
+      skip: step.id === 'first-llm' ? '' : 'Without it, fleet still works, with a named cost.',
+      mechanism: 'The mechanism words live here: KEY_NAME, endpoint, roster, tier, vault, port.',
+    },
+  }));
+  return {
+    type: 'onboard',
+    ready: !opts.door,
+    first_incomplete: opts.door ? 'first-llm' : 'lanes',
+    steps,
+    door,
+    completion: { doctor: false, routed_turn: false, recalled_fact: false, tower_project: false, green: false },
+  };
+}
+
+// The door: one screen, one decision, benefit before mechanism — inside
+// the welcome's own frame and its own typography, with the mechanism
+// words kept to the disclosure. And the cards: the capabilities the
+// machine can still gain, each with a real "not now".
+async function theDoorIsTheWelcomeInItsFirstRunState() {
+  const page = boot({
+    width: 1440, hash: '#/chat',
+    documents: { onboard: onboardDoc({ door: true }), state: (asked) => emptyState(asked) },
+  });
+  await flush();
+  page.open();
+  await flush(80);
+
+  // The door lives inside .empty and reuses its eyebrow, title and lede.
+  check('OB the door is the welcome\u2019s own frame',
+    HTML.indexOf('id="onboard-door"') > HTML.indexOf('class="empty"') &&
+      HTML.indexOf('id="onboard-door"') < HTML.indexOf('id="home-stats"'),
+    'markup order');
+  check('OB the door\u2019s eyebrow and title are the welcome\u2019s own',
+    page.text('empty-eyebrow') === 'fleet \u00b7 first run' &&
+      page.text('empty-title') === 'One account, and fleet can think.',
+    page.text('empty-eyebrow') + ' | ' + page.text('empty-title'));
+
+  // The default path carries no mechanism word; each lives in the
+  // disclosure only.
+  const shown = [page.text('empty-eyebrow'), page.text('empty-title'), page.text('empty-lede'),
+    page.text('onboard-key-go')].join(' ');
+  const banned = ['_API_KEY', 'KEY_NAME', 'endpoint', 'roster', 'tier', 'vault', 'port'];
+  check('OB the door\u2019s default path names no mechanism',
+    banned.every((word) => shown.indexOf(word) === -1),
+    shown);
+  check('OB the mechanism has its own disclosure',
+    page.text('onboard-mechanism-body').indexOf('Fleet picks a model') !== -1,
+    page.text('onboard-mechanism-body'));
+
+  // One decision per screen: the run composer stands down for the door's
+  // own field, which is the composer's shape.
+  check('OB one field on screen while the door is up',
+    page.IDS.composer.hidden === true && page.IDS['onboard-door'].hidden === false,
+    'composer hidden: ' + page.IDS.composer.hidden);
+  check('OB the door\u2019s field is the composer\u2019s own shape',
+    HTML.includes('class="composer onboard-key"') &&
+      HTML.includes('class="foot-btn send"') &&
+      CSS.includes('.onboard-key'),
+    'markup');
+
+  // No new design chrome: every colour/radius/font token the onboarding
+  // CSS names is one the console already declares.
+  const onboardCss = CSS.slice(CSS.indexOf('.onboard-door'), CSS.indexOf('.home-stats'));
+  const tokens = Array.from(onboardCss.matchAll(/var\((--[a-z0-9-]+)/g)).map((m) => m[1]);
+  const undeclared = Array.from(new Set(tokens)).filter((token) => !CSS.includes(token + ':'));
+  check('OB the onboarding introduces no new token',
+    undeclared.length === 0,
+    undeclared.join(', '));
+  const literalColours = Array.from(onboardCss.matchAll(/#[0-9a-f]{3,8}\b|rgb\(/gi));
+  check('OB the onboarding names no literal colour', literalColours.length === 0,
+    String(literalColours.length));
+  // And no font outside the declared set.
+  check('OB the onboarding names no new font',
+    !/font-family:/.test(onboardCss),
+    'font-family appears');
+}
+
+// The cards: only what can still be gained, one action and one real
+// "not now", and the stack disappears when nothing is left.
+async function theCapabilityCardsAreOnDemand() {
+  const page = boot({
+    width: 1440, hash: '#/chat',
+    documents: { onboard: onboardDoc({ door: false }), state: (asked) => emptyState(asked) },
+  });
+  await flush();
+  page.open();
+  await flush(80);
+
+  check('OB the door is down once fleet can answer',
+    page.IDS['onboard-door'].hidden === true && page.IDS.composer.hidden === false,
+    'door hidden: ' + page.IDS['onboard-door'].hidden);
+  const cards = page.rows('.onboard-card');
+  check('OB the cards are the capabilities still missing',
+    cards.length === 4, String(cards.length));
+  check('OB every card carries one action and a real not-now',
+    cards.every((card) => card.querySelectorAll('.foot-btn').length === 1 &&
+      card.querySelectorAll('.row-rewind').length === 1),
+    String(cards.length));
+  check('OB a card names its benefit before its mechanism',
+    cards[0].textContent.indexOf('One sentence of benefit') <
+      cards[0].textContent.indexOf('The mechanism words live here'),
+    cards[0].textContent.slice(0, 120));
+
+  // The stack shrinks to nothing when every card is settled.
+  const done = onboardDoc({ door: false });
+  done.steps = done.steps.map((step) => ({ ...step, done: true }));
+  const quiet = boot({
+    width: 1440, hash: '#/chat',
+    documents: { onboard: done, state: (asked) => emptyState(asked) },
+  });
+  await flush();
+  quiet.open();
+  await flush(80);
+  check('OB a settled fleet shows no setup at all',
+    quiet.rows('.onboard-card').length === 0 && quiet.IDS['onboard-cards'].hidden === true,
+    String(quiet.rows('.onboard-card').length));
+}
+
 const cases = [
   ['C1/C8 the list groups by attention and counts what the server counted', theListGroupsByAttentionAndCountsWhatTheServerCounted],
   ['C2 every state opens through one verb', everyStateOpensThroughOneVerb],
@@ -3393,6 +3550,8 @@ const cases = [
   ['Q the queued messages carry their actions', theQueuedMessagesCarryTheirActions],
   ['P the pane is one surface with the owner\u2019s hand on it', thePaneIsOneSurfaceWithTheOwnersHandOnIt],
   ['PV the preview renders the common formats', thePreviewRendersTheCommonFormats],
+  ['OB the door is the welcome in its first-run state', theDoorIsTheWelcomeInItsFirstRunState],
+  ['OB the capability cards are on demand', theCapabilityCardsAreOnDemand],
 ];
 
 for (const [name, run] of cases) {

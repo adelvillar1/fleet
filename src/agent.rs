@@ -644,6 +644,11 @@ pub enum UiEvent {
     ReportRepair { attempt: u32 },
     /// The loop failed; the run is over.
     Failed(String),
+    /// The run cannot start because the machine has nothing to answer
+    /// with: the first key is missing. The face raises its door with
+    /// this — the onboarding's own screen — rather than writing a
+    /// routing error into a conversation that has not begun.
+    NeedsSetup(String),
 }
 
 /// A turn's thinking: the text as it arrives, the clock its first delta

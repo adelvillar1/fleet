@@ -1229,6 +1229,107 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
 
 /* What fleet knows, at a glance: three readings from the same reads the
    panels use, so the welcome and the panels cannot disagree. */
+/* ---------------------------------------------------------- onboarding
+   The door is the welcome in its first-run state: the same .empty frame,
+   its eyebrow and title swapped, and this block for the one decision the
+   screen asks. Layout only — every colour, radius, font and space comes
+   from the console's own tokens, and the field is the composer's own
+   shape (.composer .foot-btn.send) because the first thing a fleet user
+   does must be the thing they keep doing. */
+/* A first-run home shows the door and nothing else: the counts, the
+   method strip, the lanes, the offers and the footnote are the work
+   home's furniture, and a machine that cannot answer has none of it. */
+.empty[data-onboard="door"] .home-stats,
+.empty[data-onboard="door"] .recent,
+.empty[data-onboard="door"] .since,
+.empty[data-onboard="door"] .next,
+.empty[data-onboard="door"] .method:not(.onboard-mechanism),
+.empty[data-onboard="door"] .lanes,
+.empty[data-onboard="door"] .offers:not(#door-discovered),
+.empty[data-onboard="door"] .home-known,
+.empty[data-onboard="door"] .empty-meta,
+.empty[data-onboard="door"] .onboard-cards { display: none; }
+
+.onboard-door {
+  display: grid;
+  gap: 12px;
+  max-width: 640px;
+  margin: 0 0 26px;
+}
+.onboard-door .offers {
+  grid-template-columns: minmax(0, 1fr);
+  max-width: 640px;
+  margin: 0;
+}
+.onboard-key {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.onboard-key input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--dsw-alias-ink);
+  font: inherit;
+  font-size: 13px;
+  padding: 4px 2px;
+}
+.onboard-key input:focus { outline: none; }
+.onboard-said {
+  margin: 0;
+  color: var(--dsw-alias-ink-secondary);
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+.onboard-said[data-tone="warn"] { color: var(--dsw-alias-warn); }
+.onboard-mechanism {
+  margin: 0;
+  padding-top: 12px;
+  border-top: var(--card-hairline);
+}
+.onboard-mechanism summary {
+  cursor: pointer;
+  list-style: none;
+}
+.onboard-mechanism summary::-webkit-details-marker { display: none; }
+.onboard-mechanism-body {
+  margin: 8px 0 0;
+  color: var(--dsw-alias-ink-tertiary);
+  font-size: 11.5px;
+  line-height: 1.6;
+  max-width: 72ch;
+}
+/* The capability cards: the console's own card, stacked under the offers
+   while a machine can still gain something. The list shrinks to nothing
+   when every card is done or declined. */
+.onboard-cards {
+  display: grid;
+  gap: 10px;
+  max-width: 640px;
+  margin: 22px 0 0;
+}
+.onboard-card {
+  padding: 15px 16px 16px;
+  border-radius: 12px;
+}
+.onboard-card .card-head h2 {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  text-transform: none;
+  color: var(--dsw-alias-ink);
+}
+.onboard-card .card-note { margin: 4px 0 10px; }
+.onboard-acts {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.onboard-acts .row-rewind { margin-left: 0; }
+
 .home-stats {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

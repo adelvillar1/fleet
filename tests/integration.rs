@@ -593,7 +593,8 @@ async fn parse_surfaces_the_documented_commands() {
         cli::parse(&args(&["sessions"])),
         Ok(cli::Command::SessionsView {
             recall: None,
-            view: None
+            view: None,
+            probes: Vec::new(),
         })
     );
     assert_eq!(
@@ -11387,4 +11388,131 @@ async fn a_settled_delegation_applies_the_merge_home() {
     );
     let _ = std::fs::remove_dir_all(&home);
     let _ = std::fs::remove_dir_all(&folder);
+}
+
+// --- the guided onboarding ------------------------------------------------
+
+/// A scratch home with nothing configured: the onboarding's own
+/// starting point. The lanes' homes are absent, no key resolves from
+/// the process (the caller's own dotenv is the only source), and the
+/// corpus is empty.
+fn onboard_home(name: &str) -> std::path::PathBuf {
+    let home = temp_home(name);
+    std::fs::create_dir_all(&home).unwrap();
+    home
+}
+
+/// The onboarding's sequence over a scratch home: the state derives
+/// from the machine, a decision survives a restart without any state of
+/// its own, and the completion probe reads back what the sequence wrote.
+#[test]
+fn the_onboarding_resumes_at_the_first_incomplete_step() {
+    use fleet::onboard;
+    let home = onboard_home("onboard-resume");
+    let dotenv = std::collections::HashMap::new();
+
+    // First launch: the home step is the first incomplete one.
+    let first = onboard::state(&home, &dotenv);
+    assert_eq!(first.first_incomplete(), Some(onboard::STEP_HOME));
+
+    // Do the home step's own work, then read again — the restart.
+    for name in ["sessions", "memories", "skills"] {
+        fleet::install::layout_step(&home, name).unwrap();
+    }
+    fleet::install::config_step(&home).unwrap();
+    let second = onboard::state(&home, &dotenv);
+    let home_step = second.step(onboard::STEP_HOME).expect("the home step");
+    assert!(home_step.done, "the home step's proof must hold");
+    assert_ne!(
+        second.first_incomplete(),
+        Some(onboard::STEP_HOME),
+        "a completed step must not be where the sequence resumes"
+    );
+
+    // Decline the lanes with the consequence the narration names, then
+    // read a third time: the skip survives, and the sequence moves past
+    // it without any onboarding state on disk.
+    let facts = onboard::Facts::read(&home, &dotenv);
+    let consequence = onboard::narration(onboard::STEP_LANES, &facts).skip;
+    onboard::skip(&home, onboard::STEP_LANES, &consequence).unwrap();
+    let third = onboard::state(&home, &dotenv);
+    assert!(
+        third.step(onboard::STEP_LANES).expect("lanes").skipped,
+        "the skip must be read back from the stream"
+    );
+    let decided = onboard::decisions(&home);
+    assert_eq!(decided.skipped, vec![onboard::STEP_LANES]);
+    let _ = std::fs::remove_dir_all(&home);
+}
+
+/// The completion probe: four real reads, and the recalled fact is the
+/// one the sequence itself wrote.
+#[test]
+fn the_onboarding_seeds_the_fact_its_completion_reads() {
+    use fleet::onboard;
+    let home = onboard_home("onboard-completion");
+    let dotenv = std::collections::HashMap::new();
+    // Before: no fact, no project, nothing routed — not green.
+    let before = onboard::completion(&home, &dotenv);
+    assert!(!before.recalled_fact, "an empty corpus recalls nothing");
+    assert!(!before.green());
+    // The sequence remembers itself; the probe reads it back.
+    let facts = onboard::Facts::read(&home, &dotenv);
+    let name = onboard::remember_onboarding(&home, &facts).expect("the fact lands");
+    assert!(name.starts_with("onboarding-"), "{name}");
+    let after = onboard::completion(&home, &dotenv);
+    assert!(
+        after.recalled_fact,
+        "the probe must read the fact the sequence wrote ({name})"
+    );
+    let _ = std::fs::remove_dir_all(&home);
+}
+
+/// The GUI's document: the door is up exactly when the machine cannot
+/// answer, and the narration's default path carries no mechanism word.
+#[test]
+fn the_onboarding_document_is_the_door_when_it_cannot_answer() {
+    use fleet::onboard;
+    let home = onboard_home("onboard-document");
+    let dotenv = std::collections::HashMap::new();
+    let state = onboard::state(&home, &dotenv);
+    let facts = onboard::Facts::read(&home, &dotenv);
+    let document = state.to_json(&facts);
+    assert_eq!(document["type"], "onboard");
+    assert_eq!(
+        document["ready"],
+        serde_json::json!(!facts.keyed.is_empty())
+    );
+    // Every step carries its narration, so the face paints one read.
+    let steps = document["steps"].as_array().expect("steps");
+    assert_eq!(steps.len(), onboard::STEPS.len());
+    for step in steps {
+        assert!(
+            step["narration"]["title"]
+                .as_str()
+                .unwrap_or_default()
+                .len()
+                > 4
+        );
+    }
+    // The door's own copy: the benefit before the mechanism, and no
+    // mechanism word on the default path.
+    let door = &document["door"];
+    let shown = format!(
+        "{} {} {}",
+        door["title"].as_str().unwrap_or_default(),
+        door["lede"].as_str().unwrap_or_default(),
+        door["action"].as_str().unwrap_or_default()
+    );
+    for banned in ["_API_KEY", "endpoint", "roster", "vault", "tier", "port"] {
+        assert!(
+            !shown.contains(banned),
+            "the door names `{banned}`: {shown}"
+        );
+    }
+    assert!(
+        door["mechanism"].as_str().unwrap_or_default().len() > 20,
+        "the mechanism must exist — it is where the words live"
+    );
+    let _ = std::fs::remove_dir_all(&home);
 }

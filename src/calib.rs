@@ -617,8 +617,14 @@ pub const OP_LIFECYCLE: &str = "lifecycle";
 /// One lifecycle action the harness took or proposed. The audit trail
 /// for "why is this tool disabled": the action, the kind it belongs to,
 /// and the evidence sentence the decision read.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LifecycleRow {
+    /// The op tag. The `Row` enum's own serde tag writes it, so this
+    /// field never serializes — it exists for the read, where the tag is
+    /// the first key of the line and is what keeps another op's row from
+    /// passing for a lifecycle one.
+    #[serde(default = "lifecycle_op", skip_serializing)]
+    pub op: String,
     pub ts: String,
     /// `tools`, `skills`, `loops`, or `workflows`.
     pub kind: String,
@@ -628,9 +634,23 @@ pub struct LifecycleRow {
     pub reason: String,
 }
 
+fn lifecycle_op() -> String {
+    OP_LIFECYCLE.to_string()
+}
+
+impl LifecycleRow {
+    /// Whether this row is really a lifecycle row: the typed read above
+    /// sees every JSON line in the file, and another op's row would
+    /// deserialize into these defaulted fields without its tag.
+    fn op_is_lifecycle(&self) -> bool {
+        self.op.is_empty() || self.op == OP_LIFECYCLE
+    }
+}
+
 /// Record one lifecycle action on the stream, when there is one.
 pub fn record_lifecycle(stream: &Stream, kind: &str, name: &str, action: &str, reason: &str) {
     stream.record(Row::Lifecycle(LifecycleRow {
+        op: OP_LIFECYCLE.to_string(),
         ts: stamp(),
         kind: kind.to_string(),
         name: name.to_string(),
@@ -1714,6 +1734,13 @@ pub struct ReadRow {
     /// other op.
     #[serde(default)]
     pub score: f64,
+    /// The kind and name a `lifecycle` row carries — `tools`/`skills`/
+    /// `loops`/`workflows` and the thing acted on, or `onboarding` and
+    /// the step. Empty for every other op.
+    #[serde(default)]
+    pub kind: String,
+    #[serde(default)]
+    pub name: String,
     /// The action a `consolidate` row names: `compress`, `supersede`,
     /// or `forget`. Empty for every other op.
     #[serde(default)]
@@ -2013,7 +2040,7 @@ pub const DEMOTION_WINDOW_DAYS: usize = 3;
 /// whose path order IS chronological order, so the read is a sorted
 /// listing rather than date arithmetic — and a day that does not
 /// exist is simply not in the list.
-fn read_days_recent(root: &Path, day: &str, days: usize) -> Vec<ReadRow> {
+pub(crate) fn read_days_recent(root: &Path, day: &str, days: usize) -> Vec<ReadRow> {
     let mut files: Vec<std::path::PathBuf> = Vec::new();
     if let Ok(years) = std::fs::read_dir(root) {
         for year in years.flatten() {
@@ -2046,6 +2073,79 @@ fn read_days_recent(root: &Path, day: &str, days: usize) -> Vec<ReadRow> {
         rows.extend(read_day(root, day, READ_CAP));
     }
     rows.sort_by_key(|row| row.ts.clone());
+    rows
+}
+
+/// The `lifecycle` rows of the newest `days` day-files under `root`,
+/// oldest first — the reader the onboarding's decisions come from.
+///
+/// It is a second reader rather than a wider [`OPS`]: that list is the
+/// demotion and calibration readers' own contract about the ops they
+/// grade, and a lifecycle row is not one of them. The day-walk and the
+/// torn-tail tolerance are shared; only the accepted op differs.
+pub(crate) fn lifecycle_rows_recent(root: &Path, day: &str, days: usize) -> Vec<LifecycleRow> {
+    let mut files: Vec<std::path::PathBuf> = Vec::new();
+    if let Ok(years) = std::fs::read_dir(root) {
+        for year in years.flatten() {
+            let Ok(months) = std::fs::read_dir(year.path()) else {
+                continue;
+            };
+            for month in months.flatten() {
+                let Ok(days_dir) = std::fs::read_dir(month.path()) else {
+                    continue;
+                };
+                for day_dir in days_dir.flatten() {
+                    let file = day_dir.path().join("events.jsonl");
+                    if file.is_file() {
+                        files.push(file);
+                    }
+                }
+            }
+        }
+    }
+    files.sort();
+    let mut names: Vec<String> = files.iter().map(|file| day_of(file)).collect();
+    if !names.iter().any(|name| name == day) {
+        names.push(day.to_string());
+    }
+    let window: Vec<String> = names.iter().rev().take(days).rev().cloned().collect();
+    let mut rows: Vec<LifecycleRow> = Vec::new();
+    for name in window {
+        let Ok(file) = File::open(day_path(root, &name)) else {
+            continue;
+        };
+        let mut reader = BufReader::new(file);
+        let mut line: Vec<u8> = Vec::new();
+        loop {
+            line.clear();
+            let read = reader
+                .by_ref()
+                .take(MAX_LINE_BYTES + 1)
+                .read_until(b'\n', &mut line);
+            match read {
+                Ok(0) => break,
+                Ok(_) => {}
+                Err(_) => break,
+            }
+            if line.len() as u64 > MAX_LINE_BYTES {
+                continue;
+            }
+            // The torn tail: a line without its newline is a writer mid-
+            // write, and the stream's own read drops it the same way.
+            if !line.ends_with(b"\n") {
+                continue;
+            }
+            let Ok(text) = std::str::from_utf8(&line) else {
+                continue;
+            };
+            if let Ok(row) = serde_json::from_str::<LifecycleRow>(text.trim()) {
+                if row.op_is_lifecycle() {
+                    rows.push(row);
+                }
+            }
+        }
+    }
+    rows.sort_by(|left, right| left.ts.cmp(&right.ts));
     rows
 }
 

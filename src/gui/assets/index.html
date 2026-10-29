@@ -285,6 +285,24 @@
           Your models, your memory, and your workspace are all here, on this machine.
           Ask for something and watch the run happen.
         </p>
+        <!-- The door's interaction: the press for an account already on
+             the machine, the field when none was found, and the mechanism
+             disclosure every other word is kept out of. -->
+        <div class="onboard-door" id="onboard-door" hidden>
+          <div class="offers" id="door-discovered"></div>
+          <form class="composer onboard-key" id="onboard-key">
+            <input type="password" id="onboard-key-value" autocomplete="off" spellcheck="false"
+                   aria-label="paste the account's key" placeholder="paste the account’s key">
+            <button type="submit" class="foot-btn send" id="onboard-key-go">
+              <span class="foot-label" id="onboard-key-go-label">Use it</span>
+            </button>
+          </form>
+          <p class="onboard-said" id="onboard-said" hidden></p>
+          <details class="method onboard-mechanism" id="onboard-mechanism">
+            <summary class="method-label">how this works</summary>
+            <p class="onboard-mechanism-body" id="onboard-mechanism-body"></p>
+          </details>
+        </div>
         <div class="home-stats" id="home-stats" hidden>
           <button class="home-stat" type="button" data-go="#/memory">
             <span class="home-stat-value" id="home-facts">&mdash;</span>
@@ -323,6 +341,7 @@
           <button class="lane" type="button" data-lane="deck">deck</button>
         </div>
         <div class="offers" id="offers"></div>
+        <div class="onboard-cards" id="onboard-cards" hidden></div>
         <div class="recent" id="recent" hidden></div>
         <p class="empty-meta" id="empty-meta">
           Your archive stays on this machine. Every turn is a card you can open; the providers

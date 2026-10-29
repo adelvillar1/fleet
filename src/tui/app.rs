@@ -1316,6 +1316,16 @@ impl App {
             // Thought block is a later increment, so the pane reads the
             // answer and the calls as it does today.
             UiEvent::Reasoning { .. } => {}
+            // The terminal has no door to raise: the run's own refusal
+            // names the missing keys, and `fleet onboard` walks the same
+            // steps here.
+            UiEvent::NeedsSetup(_) => {
+                self.flush_streaming();
+                self.entries.push(Entry::Assistant(
+                    "this machine has no account to answer with \u{2014} run `fleet onboard`"
+                        .to_string(),
+                ));
+            }
             UiEvent::Token(delta) => self.streaming.push_str(&delta),
             UiEvent::Turn(turn) => {
                 self.flush_streaming();

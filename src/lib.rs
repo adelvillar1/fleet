@@ -54,6 +54,7 @@ pub mod mcp_registry;
 pub mod memory;
 pub mod net;
 pub mod nomenclature;
+pub mod onboard;
 pub mod perception;
 pub mod plan_graph;
 pub mod plugins;

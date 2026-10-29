@@ -740,6 +740,13 @@ pub enum LaneHome {
     Unavailable { reason: String },
 }
 
+/// Whether a lane's home resolves — the cheap presence read behind the
+/// onboarding's "ready" count. It spawns nothing: the live verify is
+/// [`probe_lane`], and only that can say a lane answers.
+pub fn resolve_home_is_present(lane: &Lane) -> bool {
+    matches!(resolve_home(lane), LaneHome::Resolved { .. })
+}
+
 /// What one lane's probe found. The headless command and the TUI modal
 /// render this same value — one source of truth for lane health.
 #[derive(Debug, Clone, PartialEq, Eq)]
