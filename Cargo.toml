@@ -26,6 +26,16 @@ serde_json = "1"
 unicode-width = "0.2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "io-util", "process", "net", "signal"] }
 ureq = { version = "2", features = ["json", "gzip"] }
+# The relay's end-to-end seal. The frame key comes from an X25519
+# exchange through the relay, so neither side can be swapped for
+# hand-rolled bytes: the endpoints must agree on the curve and the AEAD
+# to the bit, and the phone's half is the browser's own WebCrypto.
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+aes-gcm = "0.10"
+hkdf = "0.12"
+sha2 = "0.10"
+base64 = "0.22"
+rand = "0.8"
 
 [profile.release]
 strip = true

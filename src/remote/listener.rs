@@ -330,15 +330,74 @@ pub struct RelayHandler {
     /// The face this relay answers as: the relay carries the owner's
     /// work traffic, so it speaks for the console face.
     face: RemoteFace,
+    /// The home, for the one frame route the socket path handles before
+    /// its own gate: the pairing redemption, which is unauthenticated by
+    /// design and must stay that way through a relay.
+    home: std::path::PathBuf,
+    /// The launch's half of the seal exchange, shared with the relay's
+    /// serve loop: the handshake route establishes it, the serve loop
+    /// seals with it.
+    keys: Arc<std::sync::Mutex<crate::remote::relay::RelayKeys>>,
 }
 
 impl RelayHandler {
     /// A handler answering as the named paired device.
-    pub fn new(bridge: Arc<Bridge>, device_name: String, face: RemoteFace) -> RelayHandler {
+    pub fn new(
+        bridge: Arc<Bridge>,
+        device_name: String,
+        face: RemoteFace,
+        home: std::path::PathBuf,
+        keys: Arc<std::sync::Mutex<crate::remote::relay::RelayKeys>>,
+    ) -> RelayHandler {
         RelayHandler {
             bridge,
             device_name,
             face,
+            home,
+            keys,
+        }
+    }
+
+    /// The handshake: the route that produces the seal. `GET` hands the
+    /// phone this launch's public key, its generation stamp, and the
+    /// session id the phone needs as its key-derivation salt. `POST`
+    /// takes the phone's public key and derives the shared secret — the
+    /// scalar never leaves either endpoint, so the relay and its edge
+    /// watch an exchange they cannot open.
+    fn handshake(&self, method: &str, body: &str) -> Reply {
+        let mut keys = self
+            .keys
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        match method {
+            "GET" => api(
+                200,
+                json!({
+                    "type": "relay-handshake",
+                    "public": keys.public_b64(),
+                    "gen": keys.gen(),
+                    "sid": keys.session(),
+                }),
+            ),
+            "POST" => {
+                let parsed: serde_json::Value = match serde_json::from_str(body) {
+                    Ok(parsed) => parsed,
+                    Err(message) => {
+                        return bad_request(&format!("the handshake's body is not JSON: {message}"))
+                    }
+                };
+                let Some(public) = parsed.get("public").and_then(serde_json::Value::as_str) else {
+                    return bad_request("the handshake's body names a public key");
+                };
+                match keys.establish(public) {
+                    Ok(()) => api(
+                        200,
+                        json!({"type": "relay-handshake", "established": true, "gen": keys.gen()}),
+                    ),
+                    Err(message) => bad_request(&message),
+                }
+            }
+            _ => bad_request("the handshake answers GET and POST"),
         }
     }
 }
@@ -352,12 +411,40 @@ impl crate::remote::relay::Handler for RelayHandler {
     > {
         let frame = frame.clone();
         Box::pin(async move {
+            // Two routes the socket path handles before its own gate,
+            // answered here for the same reason they are there: the
+            // redemption is unauthenticated by design (the one-time
+            // code and its attempt cap are the gate), and the handshake
+            // is what produces the seal, so neither can sit behind the
+            // seal they make possible.
+            let bare = frame.path.split('?').next().unwrap_or(&frame.path);
+            if (frame.method.as_str(), bare) == ("POST", "/api/pair") {
+                let reply = redeem(&frame.body, &self.home);
+                return crate::remote::relay::Answer {
+                    id: frame.id,
+                    status: status_of(&reply),
+                    headers: vec![("content-type".to_string(), reply.content_type.to_string())],
+                    body: reply.body,
+                    enc: None,
+                };
+            }
+            if bare == "/api/relay/handshake" {
+                let reply = self.handshake(&frame.method, &frame.body);
+                return crate::remote::relay::Answer {
+                    id: frame.id,
+                    status: status_of(&reply),
+                    headers: vec![("content-type".to_string(), reply.content_type.to_string())],
+                    body: reply.body,
+                    enc: None,
+                };
+            }
             let reply = answer_frame(&frame, &self.bridge, &self.device_name, self.face).await;
             crate::remote::relay::Answer {
                 id: frame.id,
                 status: status_of(&reply),
                 headers: vec![("content-type".to_string(), reply.content_type.to_string())],
                 body: reply.body,
+                enc: None,
             }
         })
     }
@@ -1138,6 +1225,15 @@ const PAIR_PAGE: &str = r#"<!doctype html>
   <div id="note" role="status"></div>
 </form>
 <script>
+  // A dialed relay's secret rides the entry URL's fragment, which
+  // browsers never send — file it away before the post-pairing redirect
+  // to `/` loses it, because the app seals its frames with what it
+  // derives from it. On the loopback face there is no fragment and this
+  // is a no-op.
+  try {
+    var relayKey = location.hash.match(/^#k=(.+)$/);
+    if (relayKey) localStorage.setItem('fleet_relay_k', relayKey[1]);
+  } catch (e) { /* a storage that refuses is a face that just stays unsealed */ }
   // The form posts JSON rather than navigating, so a wrong code answers
   // in place with its attempts left instead of a dead page.
   var form = document.getElementById('pair');
@@ -1377,6 +1473,7 @@ mod tests {
             path: path.to_string(),
             headers: vec![("host".to_string(), "127.0.0.1".to_string())],
             body: String::new(),
+            enc: None,
         };
         // The face the relay exists to carry: the console. Its shell
         // paths are the console's; the bot face answers its own shell
@@ -1403,6 +1500,7 @@ mod tests {
                 ("content-type".to_string(), "application/json".to_string()),
             ],
             body: "{\"task\":\"say hello\"}".to_string(),
+            enc: None,
         };
         let accepted = answer_frame(&posted, &bridge, "a relayed phone", RemoteFace::Console).await;
         // A detached bridge has no agent thread, so the run is refused —

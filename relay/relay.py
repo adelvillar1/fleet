@@ -18,14 +18,31 @@ And the phone speaks one:
     ANY  /s/<sid>/<path>                forwarded to the device; the reply
                                         is held until the device answers
 
+The dedicated-relay shape — the one this deployment is — also forwards
+the origin root to the single joined device:
+
+    ANY  /<path>                        forwarded to the device, so the
+                                        face's shell, manifest, and worker
+                                        resolve at the origin root and the
+                                        PWA installs
+
+The root is gated per path. A browser navigation cannot present headers,
+so the shell's own fetches — the page, its assets, the manifest, the
+worker, the icons, the pairing page, and the pairing redemption — pass
+without the secret. Everything else carries `x-fleet-relay: <secret>`;
+a request without it is refused before it becomes a frame.
+
 The device session's secret gates the phone's side too: a phone that
 cannot name it gets a 403 and learns nothing else.
 
-Threat model, stated plainly: the relay sees frame plaintext — a task's
-text, a seat's summary, a transcript. The secret gates the session, so an
-unpaired relay cannot stitch a phone to a device, but a compromised relay
-reads what crosses it. End-to-end encryption is a later increment; this
-server does not pretend to be it.
+Threat model, stated plainly: the relay sees metadata — paths, frame
+ids, sizes — and ciphertext for everything content-bearing. Frames the
+phone marked `x-fleet-enc: 1` carry bodies sealed end to end with a key
+from an X25519 exchange the relay only watched: it holds no scalar, so
+it cannot derive the key, and its capture is opaque. The shell's own
+plaintext frames are public code. The secret gates the session, so an
+unpaired relay cannot stitch a phone to a device; what a relay can do
+is refuse to carry frames, which is availability, not confidentiality.
 
     python3 relay.py --port 8421
 """
@@ -34,6 +51,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import queue
 import threading
 import time
@@ -44,12 +62,43 @@ from urllib.parse import urlparse
 # How long a poll is held before it answers empty. The client's own
 # timeout is 40 seconds, so a hold under it means every poll is answered
 # by the relay rather than cut off by the client — no error path, no
-# rejoin.
+# rejoin. It also has to sit under the ceilings public edges put on held
+# connections, which is the same bound doing double duty.
 POLL_SECONDS = 25
 
 # How long a phone's request is held waiting for the device's answer. A
 # device that has gone away must not leave a phone hanging forever.
 REQUEST_SECONDS = 65
+
+# The headers a root-mode phone presents. `x-fleet-relay` is the gate:
+# the session secret, compared against the joined device's. `x-fleet-enc`
+# marks a body sealed end to end, which the relay carries verbatim and
+# echoes back on the answer. Both are consumed here — they are relay
+# transport, and the device has no use for either.
+RELAY_HEADER = "x-fleet-relay"
+ENC_HEADER = "x-fleet-enc"
+STRIPPED_HEADERS = ("host", "content-length", RELAY_HEADER, ENC_HEADER)
+
+# The root paths a browser fetches on its own — no headers, no seal.
+# Everything here is public code or the one-time pairing form.
+ROOT_OPEN_GET = frozenset({
+    "/",
+    "/app.css",
+    "/app.js",
+    "/manifest.webmanifest",
+    "/sw.js",
+    "/icon-192.png",
+    "/icon-512.png",
+    "/apple-touch-icon.png",
+    "/bot.css",
+    "/bot.js",
+    "/bot.webmanifest",
+    "/bot-sw.js",
+    "/bot-icon-192.png",
+    "/bot-icon-512.png",
+    "/pair",
+})
+ROOT_OPEN_POST = frozenset({"/api/pair"})
 
 
 class Device:
@@ -72,6 +121,17 @@ DEVICES_LOCK = threading.Lock()
 def device_for(sid: str) -> Device | None:
     with DEVICES_LOCK:
         return DEVICES.get(sid)
+
+
+def the_joined_device() -> tuple[Device | None, int]:
+    """The single device a root path forwards to, and how many are
+    joined. A dedicated relay carries one fleet; zero means nothing has
+    dialed yet and more than one means the root is ambiguous."""
+    with DEVICES_LOCK:
+        devices = list(DEVICES.values())
+    if not devices:
+        return None, 0
+    return devices[0], len(devices)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -124,16 +184,18 @@ class Handler(BaseHTTPRequestHandler):
             # and unable to say anything through it.
             self._phone(parsed)
         else:
-            self._reply(404, {"error": "no route"})
+            self._root(parsed)
 
     def do_GET(self) -> None:  # noqa: N802 - stdlib shape
         parsed = urlparse(self.path)
         if parsed.path == "/poll":
             self._poll(parsed)
+        elif parsed.path == "/healthz":
+            self._reply(200, {"ok": True, "devices": len(DEVICES)})
         elif parsed.path.startswith("/s/"):
             self._phone(parsed)
         else:
-            self._reply(404, {"error": "no route"})
+            self._root(parsed)
 
     # The phone's verbs beyond GET: a run and a plan are POSTs and a
     # seat's answer is a POST with a smaller body. Only the phone's path
@@ -218,22 +280,65 @@ class Handler(BaseHTTPRequestHandler):
         if not self._secret_ok(device, secret):
             self._reply(403, {"error": "that session needs its secret"})
             return
+        self._forward(device, parsed, path, self._body())
 
-        # The phone's request, whole, becomes a frame. The body is read
-        # before the frame is queued: a POST's body is part of the request
-        # the device is being asked to answer.
-        body = self._body()
+    # ---------------------------------------------------- the root's verb
+
+    def _root(self, parsed) -> None:
+        """The origin root is the device: the shell, its assets, the
+        manifest, the worker, and every API call, forwarded to the one
+        joined device session. The browser-forced fetches pass without
+        the secret — they cannot present one — and everything else names
+        it in `x-fleet-relay` or is refused before it becomes a frame."""
+        bare = parsed.path.split("?")[0] or "/"
+        method = self.command
+        device, count = the_joined_device()
+        if device is None:
+            self._reply(503, {"error": "no device is joined; fleet dials this relay"})
+            return
+        if count > 1:
+            self._reply(
+                409,
+                {"error": "more than one device is joined; the root is ambiguous"},
+            )
+            return
+        open_path = (method == "GET" and bare in ROOT_OPEN_GET) or (
+            method == "POST" and bare in ROOT_OPEN_POST
+        )
+        presented = self.headers.get(RELAY_HEADER) or ""
+        if not open_path and not self._secret_ok(device, presented):
+            self._reply(403, {"error": "that origin needs its relay secret"})
+            return
+        enc = 1 if self.headers.get(ENC_HEADER) == "1" else None
+        self._forward(device, parsed, parsed.path, self._body(), enc)
+
+    # --------------------------------------------------------- the frame
+
+    def _forward(
+        self,
+        device: Device,
+        parsed,
+        path: str,
+        body: bytes,
+        enc: int | None = None,
+    ) -> None:
+        """One phone request, whole, becomes a frame and waits for the
+        device's answer. Shared by the per-session path and the root:
+        the gate already happened, and the frame shape is the same."""
         request_id = uuid.uuid4().hex
         frame = {
             "id": request_id,
             "method": self.command,
             "path": path + (f"?{parsed.query}" if parsed.query else ""),
             "headers": [
-                [name, value] for name, value in self.headers.items()
-                if name.lower() not in ("host", "content-length")
+                [name, value]
+                for name, value in self.headers.items()
+                if name.lower() not in STRIPPED_HEADERS
             ],
             "body": body.decode("utf-8", "replace"),
         }
+        if enc is not None:
+            frame["enc"] = enc
         waiting: queue.Queue = queue.Queue()
         with device.lock:
             device.answers[request_id] = waiting
@@ -250,7 +355,9 @@ class Handler(BaseHTTPRequestHandler):
 
         # The device's answer, whole, is the phone's reply. The headers it
         # chose are the ones the phone gets, which is what makes the page
-        # the device serves the page the phone sees.
+        # the device serves the page the phone sees — plus the two facts
+        # the phone needs to open a sealed body: that it is sealed, and
+        # which frame it answered.
         payload = answer.get("body", "")
         raw = payload.encode() if isinstance(payload, str) else b""
         self.send_response(int(answer.get("status") or 200))
@@ -259,6 +366,9 @@ class Handler(BaseHTTPRequestHandler):
             if name.lower() == "content-length":
                 sent_length = True
             self.send_header(name, value)
+        if answer.get("enc") == 1:
+            self.send_header(ENC_HEADER, "1")
+        self.send_header("x-fleet-frame", str(answer.get("id") or request_id))
         if not sent_length:
             self.send_header("content-length", str(len(raw)))
         self.end_headers()
@@ -268,12 +378,22 @@ class Handler(BaseHTTPRequestHandler):
 def main() -> None:
     parser = argparse.ArgumentParser(description="The reference Fleet relay.")
     parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8421)
+    parser.add_argument(
+        "--port",
+        type=int,
+        # A container is told its port from the outside; the environment
+        # is where a platform says so.
+        default=int(os.environ.get("PORT") or 8421),
+    )
     args = parser.parse_args()
     server = ThreadingHTTPServer((args.host, args.port), Handler)
-    print(f"relay listening on http://{args.host}:{args.port}")
+    # What actually bound: port 0 means the operating system picked, and
+    # the caller (a test, a launcher) reads the banner for the truth.
+    bound_port = server.server_address[1]
+    print(f"relay listening on http://{args.host}:{bound_port}")
     print("fleet joins it with `fleet gui --remote --relay http://{host}:{port}`".format(
-        host=args.host, port=args.port))
+        host=args.host, port=args.port
+    ))
     try:
         server.serve_forever()
     except KeyboardInterrupt:

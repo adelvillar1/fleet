@@ -281,31 +281,44 @@ pub async fn serve(options: GuiOptions) -> Result<(), String> {
                     .to_string(),
             );
         };
-        // The device session the pairing window minted is the relay's
-        // credential, so a relay can only ever be joined by a device that
-        // paired.
+        // The relay session is this launch's own: a session id and a
+        // secret minted at bind, joined at the relay, and handed to the
+        // phone through URLs whose secret part is a fragment browsers
+        // never send. The frame keys come from the X25519 exchange the
+        // handshake runs through the relay — the keys live here, shared
+        // between the serve loop that seals and the handler that
+        // answers the handshake.
         let sid = listener.device_session();
         let hash = listener.device_secret();
+        let keys = Arc::new(std::sync::Mutex::new(
+            crate::remote::relay::RelayKeys::mint(&sid),
+        ));
         let client = Arc::new(crate::remote::relay::Client::new(relay_url, sid, hash));
         let handler = Arc::new(listener::RelayHandler::new(
             Arc::clone(&bridge),
             "a relayed phone".to_string(),
             listener::RemoteFace::Console,
+            bridge.home_path(),
+            Arc::clone(&keys),
         ));
+        // The pairing card folds the same secret into its QR's URL as a
+        // fragment, so a phone that pairs through the relay origin can
+        // name the relay and seal its frames.
+        bridge.attach_relay_secret(listener.device_secret());
         let (shutdown, shutdown_rx) = tokio::sync::watch::channel(false);
         _relay_shutdown = Some(shutdown);
         let dialing = Arc::clone(&client);
-        tokio::spawn(
-            async move { crate::remote::relay::serve(dialing, handler, shutdown_rx).await },
-        );
+        tokio::spawn(async move {
+            crate::remote::relay::serve(dialing, handler, shutdown_rx, keys).await
+        });
         println!("fleet gui — dialing the relay at {relay_url}");
         // The entry point as text as well as a QR: a phone that cannot
-        // scan (a screenshot, a copy-paste) still has a way in, and the
-        // owner can see exactly what the code carries.
+        // scan (a screenshot, a copy-paste) still has a way in. The
+        // secret rides the fragment — browsers never send it — so the
+        // edge and the relay log a URL that names nothing.
         println!(
-            "  phone: {}/s/{}?hash={}",
+            "  phone: {}/#k={}",
             relay_url.trim_end_matches('/'),
-            listener.device_session(),
             listener.device_secret()
         );
         // The sender now lives in `_relay_shutdown`, held for the

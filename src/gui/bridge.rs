@@ -341,6 +341,12 @@ pub struct Bridge {
     /// and the port it reaches it on. Attached at launch, because the
     /// pairing card has to know whether a code can be redeemed at all.
     remote: Mutex<Option<(std::net::IpAddr, u16)>>,
+    /// The relay session's secret, when this face dials a relay. The
+    /// pairing card folds it into the QR's URL as a fragment — the part
+    /// of a URL browsers never send — so the paired phone can name the
+    /// relay and seal its frames without the secret touching a wire or
+    /// an edge log.
+    relay_secret: Mutex<Option<String>>,
     /// The workspace-calls feed's tail state: per-trace-file read
     /// offsets, so a poll answers only what moved. Shared because the
     /// reads run on blocking workers while the bridge answers requests.
@@ -410,6 +416,7 @@ impl Bridge {
             home_cache: Arc::new(Mutex::new(None)),
             channels: Mutex::new(None),
             remote: Mutex::new(None),
+            relay_secret: Mutex::new(None),
             trace_tail: Arc::new(std::sync::Mutex::new(
                 crate::layerfs_view::TraceTail::default(),
             )),
@@ -1414,6 +1421,12 @@ impl Bridge {
         *lock(&self.remote) = Some((address, port));
     }
 
+    /// Attach the relay session's secret, so the pairing card's URL can
+    /// carry it as a fragment and a paired phone can seal its frames.
+    pub fn attach_relay_secret(&self, secret: String) {
+        *lock(&self.relay_secret) = Some(secret);
+    }
+
     /// The remote face this process hosts, when it hosts one.
     pub fn remote_face(&self) -> Option<(std::net::IpAddr, u16)> {
         *lock(&self.remote)
@@ -1430,12 +1443,21 @@ impl Bridge {
                     .to_string(),
             );
         };
+        let relay_secret = lock(&self.relay_secret).clone();
         let home = self.home_path();
         tokio::task::spawn_blocking(move || {
             let (_window, code) = crate::remote::pairing::PairingWindow::mint(&home)
                 .map_err(|error| format!("could not mint a pairing code: {error}"))?;
             let origin = crate::remote::pairing_origin(&home, address, port);
-            let url = crate::remote::pairing_url_at(&origin.base, &code);
+            let mut url = crate::remote::pairing_url_at(&origin.base, &code);
+            // A dialed relay's secret rides the URL's fragment: browsers
+            // never send a fragment, so the edge and the relay log a URL
+            // that names nothing. The pairing page files it away for the
+            // app, which seals its frames with what it derives from it.
+            if let Some(secret) = &relay_secret {
+                url.push_str("#k=");
+                url.push_str(secret);
+            }
             let svg = crate::remote::qr::encode(&url)
                 .map(|qr| qr.to_svg())
                 .map_err(|error| format!("could not draw the QR: {error}"))?;

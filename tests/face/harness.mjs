@@ -16,7 +16,9 @@ const ROOT = path.resolve(HERE, '../..');
 const SRC = fs.readFileSync(path.join(ROOT, 'src/gui/assets/app.js'), 'utf8');
 const HTML = fs.readFileSync(path.join(ROOT, 'src/gui/assets/index.html'), 'utf8');
 const RUST = fs.readFileSync(path.join(ROOT, 'src/gui/bridge.rs'), 'utf8') +
-  fs.readFileSync(path.join(ROOT, 'src/gui/server.rs'), 'utf8');
+  fs.readFileSync(path.join(ROOT, 'src/gui/server.rs'), 'utf8') +
+  fs.readFileSync(path.join(ROOT, 'src/remote/listener.rs'), 'utf8') +
+  fs.readFileSync(path.join(ROOT, 'src/gui/mod.rs'), 'utf8');
 const CSS = fs.readFileSync(path.join(ROOT, 'src/gui/assets/app.css'), 'utf8');
 const flat = (text) => String(text).replace(/\s+/g, ' ').trim();
 const ruleBlock = (selector) => {
@@ -480,6 +482,7 @@ function boot(options) {
     confirm: () => true,
     prompt: () => opts.promptAnswer || 'a name',
     open: () => null,
+    fetch: fetchImpl,
     focus: () => {},
   };
   const clipboardWrites = [];
@@ -549,6 +552,7 @@ function boot(options) {
     IDS,
     calls,
     body,
+    documentElement,
     window: window_,
     sandbox,
     push(event) {
@@ -3591,6 +3595,44 @@ async function theStrategyStepShowsItsPreview() {
   void posts;
 }
 
+
+  // The relay transport: a face reached through a relay stores the
+  // secret from the entry URL's fragment, stands the seal up, and the
+  // address bar forgets the secret it carried. The loopback face stays
+  // inert, and the contract's own words live in the sources.
+  async function thePageSealsItsFramesThroughARelay() {
+    const page = boot({ hash: '#k=the-relay-secret' });
+    page.open();
+    await flush();
+    check('RL the transport stands up on a stored secret',
+      page.documentElement.getAttribute('data-relay') === '1',
+      String(page.documentElement.getAttribute('data-relay')));
+    check('RL the secret is filed and the address forgets it',
+      page.window.localStorage.getItem('fleet_relay_k') === 'the-relay-secret' &&
+        String(page.window.location.hash).indexOf('k=') === -1,
+      'hash=' + page.window.location.hash + ' stored=' +
+        page.window.localStorage.getItem('fleet_relay_k'));
+    const plain = boot({});
+    plain.open();
+    await flush();
+    check('RL the loopback face stays unsealed',
+      plain.documentElement.getAttribute('data-relay') == null,
+      String(plain.documentElement.getAttribute('data-relay')));
+    check('RL the wrapper names the relay and the seal',
+      SRC.indexOf("'x-fleet-relay'") !== -1 && SRC.indexOf("'x-fleet-enc'") !== -1, 'headers');
+    check('RL the install set rides bare',
+      SRC.indexOf("'/manifest.webmanifest': 1") !== -1 &&
+        SRC.indexOf("'/app.js': 1") !== -1 && SRC.indexOf("'/pair': 1") !== -1, 'table');
+    check('RL the exchange runs through its own route',
+      SRC.indexOf('/api/relay/handshake') !== -1, 'route');
+    check('RL the relayed stream is a poll, not a subscription',
+      SRC.indexOf('setInterval(tick, 2500)') !== -1, 'poll');
+    check('RL the pairing page files the fragment away',
+      RUST.indexOf('fleet_relay_k') !== -1, 'pair page');
+    check('RL the entry URL carries the secret as a fragment',
+      RUST.indexOf('#k=') !== -1, 'entry');
+  }
+
 const cases = [
   ['C1/C8 the list groups by attention and counts what the server counted', theListGroupsByAttentionAndCountsWhatTheServerCounted],
   ['C2 every state opens through one verb', everyStateOpensThroughOneVerb],
@@ -3633,6 +3675,7 @@ const cases = [
   ['OB the door is the welcome in its first-run state', theDoorIsTheWelcomeInItsFirstRunState],
   ['OB the capability cards are on demand', theCapabilityCardsAreOnDemand],
   ['PV the strategy step shows its preview', theStrategyStepShowsItsPreview],
+  ['RL the page seals its frames through a relay', thePageSealsItsFramesThroughARelay],
 ];
 
 for (const [name, run] of cases) {

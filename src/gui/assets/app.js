@@ -15,6 +15,199 @@
 (function () {
   'use strict';
 
+  // ---------------------------------------------------------- the relay
+  //
+  // When this page was reached through a relay — the entry URL carries
+  // the relay secret as a fragment, the part of a URL browsers never
+  // send — every content-bearing request is sealed end to end and names
+  // the relay in a header. The seal is the browser's own WebCrypto: an
+  // X25519 exchange through the relay (the relay holds no scalar) and
+  // AES-256-GCM over the derived key. On the loopback face there is no
+  // stored secret and every line here is inert.
+
+  var RELAY_KEY_STORE = 'fleet_relay_k';
+
+  // The paths a browser fetches on its own — the shell's install set and
+  // the pairing form. They ride as plaintext frames of public code: a
+  // navigation cannot present a header or open a ciphertext.
+  var RELAY_OPEN_PATHS = {
+    '/': 1, '/app.css': 1, '/app.js': 1, '/manifest.webmanifest': 1,
+    '/sw.js': 1, '/icon-192.png': 1, '/icon-512.png': 1, '/apple-touch-icon.png': 1,
+    '/bot.css': 1, '/bot.js': 1, '/bot.webmanifest': 1, '/bot-sw.js': 1,
+    '/bot-icon-192.png': 1, '/bot-icon-512.png': 1, '/pair': 1
+  };
+  var RELAY_HANDSHAKE_PATH = '/api/relay/handshake';
+
+  function relaySecretOf() {
+    try { return localStorage.getItem(RELAY_KEY_STORE) || ''; } catch (e) { return ''; }
+  }
+
+  function bytesToB64(bytes) {
+    var text = '';
+    for (var i = 0; i < bytes.length; i++) text += String.fromCharCode(bytes[i]);
+    return btoa(text);
+  }
+
+  function b64ToBytes(text) {
+    var raw = atob(text);
+    var out = new Uint8Array(raw.length);
+    for (var i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+    return out;
+  }
+
+  function concatBytes(left, right) {
+    var out = new Uint8Array(left.length + right.length);
+    out.set(left, 0);
+    out.set(right, left.length);
+    return out;
+  }
+
+  // The entry URL's fragment is the secret. It exists on the screen that
+  // showed the QR and in this page's storage after this line — never on
+  // a wire.
+  (function () {
+    var match = window.location.hash.match(/^#k=(.+)$/);
+    if (match) {
+      try { localStorage.setItem(RELAY_KEY_STORE, match[1]); } catch (e) { /* storage refused; the face stays unsealed */ }
+      history.replaceState(null, '', location.pathname + location.search);
+    }
+  })();
+
+  var RELAY_SECRET = relaySecretOf();
+  var RELAY_READY = null;
+
+  // The exchange: GET the device's public half, derive the shared
+  // secret against a scalar born here, POST the phone's public half.
+  // After the POST answers, the device's seal is established too, and
+  // both sides derive the same key — HKDF over the shared secret,
+  // salted with the session id both sides know.
+  function relayHandshake(secret) {
+    var headers = { 'x-fleet-relay': secret };
+    // The first fetch is deferred into a promise: a relay that is not
+    // there yet (or a face whose window has no real network) must fail
+    // this chain, not the boot.
+    var setup = Promise.resolve().then(function () {
+      return fetch(RELAY_HANDSHAKE_PATH, { headers: headers, cache: 'no-store' });
+    })
+      .then(function (reply) {
+        if (!reply.ok) throw new Error('the handshake did not answer: ' + reply.status);
+        return reply.json();
+      })
+      .then(function (doc) {
+        return crypto.subtle.generateKey({ name: 'X25519' }, true, ['deriveBits'])
+          .catch(function () { throw new Error('this browser cannot seal its frames (X25519 is unavailable); update iOS and reload'); })
+          .then(function (pair) {
+            return crypto.subtle.importKey('raw', b64ToBytes(doc.public), { name: 'X25519' }, true, [])
+              .then(function (deviceKey) {
+                return crypto.subtle.deriveBits({ name: 'X25519', public: deviceKey }, pair.privateKey, 256);
+              })
+              .then(function (shared) {
+                return crypto.subtle.importKey('raw', shared, 'HKDF', false, ['deriveBits'])
+                  .then(function (hk) {
+                    var salt = new TextEncoder().encode(doc.sid);
+                    var info = new TextEncoder().encode('fleet relay frame v1');
+                    return crypto.subtle.deriveBits({ name: 'HKDF', hash: 'SHA-256', salt: salt, info: info }, hk, 256);
+                  });
+              })
+              .then(function (keyBits) {
+                return crypto.subtle.importKey('raw', keyBits, 'AES-GCM', false, ['encrypt', 'decrypt']);
+              })
+              .then(function (key) {
+                return crypto.subtle.exportKey('raw', pair.publicKey).then(function (publicRaw) {
+                  return fetch(RELAY_HANDSHAKE_PATH, {
+                    method: 'POST',
+                    headers: Object.assign({ 'Content-Type': 'application/json' }, headers),
+                    body: JSON.stringify({ public: bytesToB64(new Uint8Array(publicRaw)) })
+                  }).then(function (posted) {
+                    if (!posted.ok) throw new Error('the handshake was refused: ' + posted.status);
+                    return { key: key };
+                  });
+                });
+              });
+          });
+      })
+      .then(function (seal) {
+        document.documentElement.setAttribute('data-relay-sealed', '1');
+        return seal;
+      });
+    RELAY_READY = setup;
+    // A handshake that fails is a face that stays unsealed: the request
+    // that forced it answers with the error, and the next reload tries
+    // the exchange again. The catch exists so the failure is consumed
+    // here rather than surfacing as an unhandled rejection.
+    setup.catch(function () { });
+    return setup;
+  }
+
+  // Open a sealed response: the nonce rides the body, the frame id —
+  // which the relay names in a header — is the binding.
+  function openSealedReply(key, reply) {
+    if (reply.headers.get('x-fleet-enc') !== '1') return Promise.resolve(reply);
+    var frameId = reply.headers.get('x-fleet-frame') || '';
+    return reply.arrayBuffer().then(function (buffer) {
+      var raw = new Uint8Array(buffer);
+      var nonce = raw.slice(0, 12);
+      var body = raw.slice(12);
+      return crypto.subtle.decrypt(
+        { name: 'AES-GCM', iv: nonce, additionalData: new TextEncoder().encode(frameId), tagLength: 128 },
+        key, body
+      ).then(function (plain) {
+        var headers = new Headers();
+        reply.headers.forEach(function (value, name) {
+          if (name.toLowerCase() !== 'content-length') headers.set(name, value);
+        });
+        return new Response(new TextDecoder().decode(plain), {
+          status: reply.status, statusText: reply.statusText, headers: headers
+        });
+      });
+    });
+  }
+
+  if (RELAY_SECRET && typeof window.fetch === 'function') {
+    document.documentElement.setAttribute('data-relay', '1');
+    relayHandshake(RELAY_SECRET);
+    var RAW_FETCH = window.fetch.bind(window);
+    window.fetch = function (input, init) {
+      init = init || {};
+      var asked = typeof input === 'string' ? input : input.url;
+      var url = new URL(asked, location.href);
+      if (url.origin !== location.origin) return RAW_FETCH(input, init);
+      var bare = url.pathname;
+      var method = (init.method || (typeof input === 'object' && input.method) || 'GET').toUpperCase();
+      if (method === 'GET' && RELAY_OPEN_PATHS[bare]) return RAW_FETCH(input, init);
+      var named = Object.assign({}, init.headers || {});
+      if (init.headers instanceof Headers) {
+        init.headers.forEach(function (value, name) { named[name] = value; });
+      } else if (typeof input === 'object' && input.headers instanceof Headers) {
+        input.headers.forEach(function (value, name) { named[name] = value; });
+      }
+      named['x-fleet-relay'] = RELAY_SECRET;
+      if (bare === RELAY_HANDSHAKE_PATH) {
+        return RAW_FETCH(url.href, Object.assign({}, init, { headers: named }));
+      }
+      // Everything else is content-bearing: wait for the seal, seal the
+      // body against the request's own path, and open the sealed reply
+      // against the frame id the relay names.
+      return RELAY_READY.then(function (seal) {
+        named['x-fleet-enc'] = '1';
+        var sendInit = Object.assign({}, init, { headers: named });
+        var send = function () { return RAW_FETCH(url.href, sendInit).then(function (reply) { return openSealedReply(seal.key, reply); }); };
+        var body = init.body;
+        if (body == null) return send();
+        var text = typeof body === 'string' ? body : String(body);
+        var nonce = crypto.getRandomValues(new Uint8Array(12));
+        var binding = bare + (url.search || '');
+        return crypto.subtle.encrypt(
+          { name: 'AES-GCM', iv: nonce, additionalData: new TextEncoder().encode(binding), tagLength: 128 },
+          seal.key, new TextEncoder().encode(text)
+        ).then(function (sealed) {
+          sendInit.body = bytesToB64(concatBytes(nonce, new Uint8Array(sealed)));
+          return send();
+        });
+      });
+    };
+  }
+
   // The plan's route table. The addresses are hash addresses and the
   // panels are keyed by them, so the browser never asks the server for
   // a page and a surface that is not built yet can say so honestly.
@@ -6936,6 +7129,29 @@
   // subscribe would otherwise be missed, and a reconnect starts clean
   // rather than appending to a log the server has moved past.
   function listen() {
+    // The relayed stream is a poll, not a subscription: a frame is a
+    // whole reply, so the device answers /events with the session's
+    // current state and the page reads it on an interval — the same
+    // replay the boot runs, on a clock. An EventSource through the
+    // relay would be a held-open connection the transport does badly
+    // and a header it cannot present.
+    if (document.documentElement.getAttribute('data-relay') === '1') {
+      var timer = null;
+      var tick = function () {
+        fetch('/events', { headers: { accept: 'application/json' } })
+          .then(function (reply) { return reply.json(); })
+          .then(function (doc) {
+            if (doc && doc.state) {
+              replay(doc.state);
+              paint();
+            }
+          })
+          .catch(function () { });
+      };
+      tick();
+      timer = setInterval(tick, 2500);
+      return { close: function () { if (timer) clearInterval(timer); } };
+    }
     var source = new EventSource('/events');
     source.onopen = function () {
       load().then(function () { paint(); }).catch(function () { });

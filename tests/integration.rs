@@ -11516,3 +11516,219 @@ fn the_onboarding_document_is_the_door_when_it_cannot_answer() {
     );
     let _ = std::fs::remove_dir_all(&home);
 }
+
+// --- the reference relay, in the loop ---------------------------------------
+
+use base64::Engine as _;
+
+/// The full remote path with the real reference relay running as a child
+/// process: the device joins, the phone's half of the X25519 exchange
+/// runs through the relay's root, a sealed task crosses it, the answer
+/// comes back sealed, and an unsealed content-bearing frame is refused by
+/// name. The wire assertions are the point: the bytes on the phone's
+/// side of the relay carry no plaintext. Skipped with a loud note when
+/// `python3` is absent.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_reference_relay_carries_sealed_frames() {
+    if std::process::Command::new("python3")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
+        println!("skipping: python3 is absent, the reference relay cannot run");
+        return;
+    }
+    let script = format!("{}/relay/relay.py", env!("CARGO_MANIFEST_DIR"));
+    let mut child = std::process::Command::new("python3")
+        .arg("-u")
+        .arg(&script)
+        .arg("--port")
+        .arg("0")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("the reference relay spawns");
+    let stdout = child.stdout.take().expect("the relay's stdout is piped");
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        use std::io::BufRead;
+        let reader = std::io::BufReader::new(stdout);
+        if let Some(Ok(line)) = reader.lines().next() {
+            let _ = sender.send(line);
+        }
+    });
+    let banner =
+        std::sync::mpsc::Receiver::recv_timeout(&receiver, std::time::Duration::from_secs(15))
+            .expect("the relay printed its address");
+    let port: u16 = banner
+        .rsplit(':')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .parse()
+        .expect("the relay's banner names its port");
+    let base = format!("http://127.0.0.1:{port}");
+
+    // The device: the real relay handler — the handshake and the
+    // redemption are its own routes — over a detached bridge, and the
+    // serve loop under this launch's keys. Nothing here is a test
+    // double: the reference relay, the real handler, the real seal.
+    let session = "itest-session-0123456789abcdef";
+    let secret = "itest-secret-9a8b7c6d";
+    let home = temp_home("relay-loop");
+    let (bridge, _sources) = fleet::gui::bridge::Bridge::detached(
+        home.clone(),
+        "deepseek-flash".to_string(),
+        Some("relay-loop".to_string()),
+    );
+    let keys = Arc::new(std::sync::Mutex::new(
+        fleet::remote::relay::RelayKeys::mint(session),
+    ));
+    let handler = Arc::new(fleet::remote::listener::RelayHandler::new(
+        Arc::new(bridge),
+        "a relayed phone".to_string(),
+        fleet::remote::listener::RemoteFace::Console,
+        home.clone(),
+        Arc::clone(&keys),
+    ));
+    let client = Arc::new(fleet::remote::relay::Client::new(
+        &base,
+        session.to_string(),
+        secret.to_string(),
+    ));
+    client.join().expect("the join lands");
+    let (shutdown, shutdown_rx) = tokio::sync::watch::channel(false);
+    let serving = tokio::spawn(fleet::remote::relay::serve(
+        Arc::clone(&client),
+        handler,
+        shutdown_rx,
+        Arc::clone(&keys),
+    ));
+
+    let task = "summarize the fleet repo quietly";
+    // The phone's half, on this test's own scalar — keyed the way the
+    // browser keys it: HKDF over the X25519 shared secret, salted with
+    // the session id the handshake names. The sealer comes back alive
+    // because the answer has to be opened with it.
+    let (phone, sealed_task) = {
+        let doc: serde_json::Value = ureq::get(&format!("{base}/api/relay/handshake"))
+            .set("x-fleet-relay", secret)
+            .timeout(std::time::Duration::from_secs(10))
+            .call()
+            .expect("the handshake answers")
+            .into_json()
+            .expect("the handshake's document");
+        assert_eq!(doc["sid"], *session, "the phone learns the salt it needs");
+        let device_public: [u8; 32] = base64::engine::general_purpose::STANDARD
+            .decode(doc["public"].as_str().expect("the public is base64"))
+            .expect("the public decodes")
+            .try_into()
+            .expect("the public is 32 bytes");
+        let peer = x25519_dalek::StaticSecret::random_from_rng(rand::rngs::OsRng);
+        let shared = peer.diffie_hellman(&x25519_dalek::PublicKey::from(device_public));
+        let phone = fleet::remote::relay::Sealer::from_shared(
+            shared.as_bytes(),
+            doc["sid"].as_str().expect("the sid"),
+        );
+        let announce = serde_json::json!({
+            "public": base64::engine::general_purpose::STANDARD
+                .encode(x25519_dalek::PublicKey::from(&peer).as_bytes()),
+        });
+        let posted = ureq::post(&format!("{base}/api/relay/handshake"))
+            .set("x-fleet-relay", secret)
+            .set("content-type", "application/json")
+            .timeout(std::time::Duration::from_secs(10))
+            .send_string(&announce.to_string())
+            .expect("the announcement lands");
+        assert_eq!(
+            posted.status(),
+            200,
+            "{}",
+            posted.into_string().unwrap_or_default()
+        );
+        // The body a POST route reads, sealed whole — the seal carries
+        // bytes, not meanings. The session/new route answers 200 on a
+        // detached bridge, which makes the round trip's end state
+        // deterministic; a run would honestly 409 with no agent thread.
+        let run_body = serde_json::json!({}).to_string();
+        let sealed = phone
+            .seal("/api/session/new", &run_body)
+            .expect("the seal lands");
+        (phone, sealed)
+    };
+
+    // A missing secret is refused before the frame exists.
+    let refused = ureq::post(&format!("{base}/api/run"))
+        .timeout(std::time::Duration::from_secs(10))
+        .send_string("{}");
+    assert!(refused.is_err(), "a headerless run must not become a frame");
+
+    // The sealed task crosses the relay: what goes on the wire is
+    // ciphertext, what comes back is ciphertext, and what opens at the
+    // ends is the task's answer under the frame's own binding.
+    let reply = ureq::post(&format!("{base}/api/session/new"))
+        .set("x-fleet-relay", secret)
+        .set("x-fleet-enc", "1")
+        .set("content-type", "application/json")
+        .timeout(std::time::Duration::from_secs(15))
+        .send_string(&sealed_task)
+        .expect("the sealed run lands");
+    assert_eq!(reply.status(), 200, "the detached bridge accepts the run");
+    let frame_id = reply
+        .header("x-fleet-frame")
+        .expect("the answer names its frame")
+        .to_string();
+    assert_eq!(
+        reply.header("x-fleet-enc"),
+        Some("1"),
+        "the answer says it is sealed"
+    );
+    let wire_body = reply.into_string().expect("the answer's bytes");
+    assert!(
+        !wire_body.contains("created") && !wire_body.contains(task),
+        "the wire carries ciphertext, not either side's text: {wire_body}"
+    );
+    let opened = phone
+        .open(&frame_id, wire_body.trim())
+        .expect("the answer opens for the phone");
+    assert!(
+        opened.contains("\"created\":true"),
+        "the answer is the session's own document: {opened}"
+    );
+
+    // An unsealed content-bearing frame is refused by name at the device.
+    // A 4xx comes back as ureq's Status error, which carries the reply.
+    let plaintext = match ureq::post(&format!("{base}/api/session/new"))
+        .set("x-fleet-relay", secret)
+        .set("content-type", "application/json")
+        .timeout(std::time::Duration::from_secs(15))
+        .send_string(&serde_json::json!({"task": task}).to_string())
+    {
+        Err(ureq::Error::Status(code, response)) => (code, response),
+        other => panic!("a plaintext run must be refused, got {other:?}"),
+    };
+    assert_eq!(
+        plaintext.0, 400,
+        "the device refuses it, not the relay's gate"
+    );
+    let refused_body = plaintext.1.into_string().unwrap_or_default();
+    assert!(
+        refused_body.contains("seals"),
+        "the refusal names the seal: {refused_body}"
+    );
+
+    // The shell's install set rides open, as a browser navigation must.
+    let shell = ureq::get(&format!("{base}/app.js"))
+        .timeout(std::time::Duration::from_secs(10))
+        .call()
+        .expect("the shell lands");
+    assert_eq!(shell.status(), 200, "the install set needs no secret");
+
+    let _ = shutdown.send(true);
+    let _ = serving.await;
+    let _ = child.kill();
+    // The kill is not the end: a reaped child is the difference between
+    // a finished test and a zombie the suite carries for its whole run.
+    let _ = child.wait();
+    let _ = std::fs::remove_dir_all(&home);
+}
