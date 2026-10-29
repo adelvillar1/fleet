@@ -152,13 +152,14 @@ harness's checkout.
 
 ## Foundations
 
-Six foundations, named rather than borrowed quietly. Two are external; four are the
+Ten foundations, named rather than borrowed quietly. Two are external; eight are the
 owner's own work that predates and feeds this harness. What grew from them is its own architecture.
 
 - **[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)** — the seed this repo grew from. Its architecture gave Fleet the agent loop, the session log, the reconstructability rule, the lanes' vendoring pattern, and the decision core the router keeps as its spec. The port to Rust is where the inheritance ends: memory, context, skills, workflows, and the verification loops are Fleet's own designs, and the harness they compose is its own thing — answerable to this repository's rulings, not its ancestor's shape.
 - **[LayerFS](https://github.com/Ephemeral-AI-Lab/layerfs)** (MIT, v1.1.0) — the substrate under collision-free delegation and the workspace-history instrument. Fleet drives the released tool through its command; every delegated child's copy-on-write workspace stands on it.
 - **[dev-decisions](https://github.com/adelvillar1/dev-decisions)** — the owner's verification and calibration layer, built before this harness and integrated by wire contract. Its plan, evidence, docs, and architecture gates run Fleet's development; its JSONL log vocabulary is what Fleet's calibration stream writes into; its judge-grading floors are the trust model Fleet reuses.
 - **[agnostic-router-kit](https://github.com/adelvillar1/agnostic-router-kit)** — the owner's harness-neutral router and workflow plane, the precursor to Fleet's router. Fleet owns routing in-process; the kit's decision core (roster, tiering, sys1-judged workload, quota-aware failover, and the journaled workflow plane) is the spec it was ported from.
+- **The sys1 house lanes**, each one its own repository under dev-decisions' umbrella and each vendored into Fleet under `services/`: [sys1](https://github.com/adelvillar1/sys1) (judgment), [sdm1](https://github.com/adelvillar1/sdm1) (tabular scores), [sem1](https://github.com/adelvillar1/sem1) (embeddings), [gen1](https://github.com/adelvillar1/gen1) (media), and [blend1](https://github.com/adelvillar1/blend1) (grounded composition). The five-lane structure itself is the owner's design; Fleet carries the bundled copies, not the architectural idea.
 
 ## Where things live
 
