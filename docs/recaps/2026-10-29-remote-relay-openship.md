@@ -190,6 +190,44 @@ polling tests hardened to the sixty-second loaded-machine bound after
 one caught flake. Same evening: KI-368 (the pairing-without-fragment
 hole) and the local-URL dead-code confusion both resolved.
 
+## The evening's defects, after the owner's first real use
+
+The first paired session surfaced four defects, each found by using the
+thing, each fixed the same night:
+
+- **KI-370 — per-launch relay sessions.** `Listener::bind` minted the
+  session and secret at every launch, and the relay routes headered
+  paths by the presented secret: every restart stranded every paired
+  phone (eleven restarts that day). The session is now
+  `<home>/relay-sessions.json` (0600, atomic, one entry per face);
+  verified live across two restarts with identical secrets. Phones
+  paired earlier needed one re-pairing.
+- **KI-371 — the paired read could not complete.** Three stacked
+  defects on one path: the wrapper marked bodyless GETs sealed (the
+  owner's 400 on `/api/inbox`); the sealed body is base64 *text* but
+  `openSealedReply` sliced the nonce off the ASCII (AES-GCM
+  `OperationError`, swallowed by an empty catch — the silent blank
+  face); and a mid-restart request waited the relay's full 65-second
+  answer timeout on a device row with no poller. All three fixed, the
+  handshake's failure now names itself (`data-relay-error` + console),
+  and the relay answers an instant named 503 mid-restart. Verified in a
+  real browser at both origins through sealed frames — the bot inbox
+  painted 50 conversations, the console painted whole, build stamps in
+  both.
+- **KI-372 — the phone's inbox listed the machine's work.** Thirteen
+  scheduled corpus-refresh runs (interrupted by that day's restarts)
+  read as "needs you" because `inbox_document` lacked the class
+  predicate every other owner surface applies. Now exactly
+  class-yours, the rail's own predicate; live 50 rows → 8 owner rows
+  and one genuine interruption.
+- **The build stamp.** Every window prints `build <hash>` in the
+  counters strip — the signal that settles "is this the new code"
+  without cache archaeology (the question that cost the evening:
+  [[triage-at-the-owners-register-deployment-facts-first]]).
+
+The owner's closing word: "all working good, the gateway is
+functional."
+
 ## Notes
 
 - The face runs `fleet gui --no-open --remote --relay
