@@ -64,7 +64,13 @@ it is ever spawned (`sys1_judges`, `src/route.rs:1919`).
    a plan for the deferred curator"* — after the surface-curation plan
    landed with C4 explicitly deferred. The instruction is criterion (b)
    speaking: the salience policy becomes a lane answer.
-2. **The standing shape, from the landed plan's own C4 text:** *"a
+2. **2026-10-30 — the award, over the contingency.** After the J6
+   replay put the judgment in the advisory seat (identical decisions,
+   no domination), the owner awarded the deciding seat anyway: *"award
+   the seat and we roll it back if needed"* — with the calib `curate`
+   rows as the evidence base a rollback would judge by, and the
+   one-constant flip as the rollback itself.
+3. **The standing shape, from the landed plan's own C4 text:** *"a
    `curate` task in sys1 answering `{focus, needs_recall, staleness}`
    with confidence, cached by turn hash exactly as `route` is cached,
    with `route.rs` still owning the selection. It would be sys1's
@@ -202,12 +208,13 @@ cosine decides — and the flip is recorded, not silently kept.
 
 ## Use cases
 
-- [ ] A: A steer that contradicts the thread it lands in ("stop — the
+- [x] A: A steer that contradicts the thread it lands in ("stop — the
       premise is wrong") re-curates even though its cosine against the
-      thread is high. **Not delivered — by the contingency's own
-      verdict.** The advisory seat means the cosine decides, and this
-      use case is the deciding seat's promise: it lands when a future
-      replay flips `CURATE_JUDGED_DECIDES` by the plan's bar.
+      thread is high. **Delivered by the owner's award** (2026-10-30:
+      *"award the seat and we roll it back if needed"*) — the seat the
+      replay declined to grant is the seat the owner granted, pinned
+      through `CURATE_JUDGED_DECIDES` itself in the composition test,
+      with the one-constant flip as the rollback.
 - [x] B: A steer that names no shape keyword still routes its
       re-curation under the shape the lane named, and the record says
       the lane did it.
@@ -471,3 +478,16 @@ J7: the gate green by exit code — fmt 0, clippy 0, build 0, test
 1,649 + 189, 0 failed; the two docs updated (features/memory.md's new
 "The curation judgment" section, TECHNICAL-DOCUMENTATION.md's
 `agent.rs` entry); no new ledger rows — the plan's work found none.
+
+## The award, 2026-10-30
+
+The owner read the J6 verdict and awarded the seat anyway: *"award the
+seat and we roll it back if needed."* `CURATE_JUDGED_DECIDES` is
+`true` — a confident judgment fires and holds where the cosine alone
+would not — and the award's shape is exactly the rollback the owner
+named: the advisory behavior stays pinned beside the awarded one in
+the composition test (one flip of the constant restores it), the
+cosine safety net and the fail-open row are unchanged, and the calib
+`curate` rows the landing writes are the evidence base any rollback
+decision would read. Use case A, unchecked by the contingency, is
+checked by the award.

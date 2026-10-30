@@ -203,9 +203,15 @@ pub const CURATE_GATE: f64 = 0.6;
 /// confidence, under the gate) and no focus fix. Three of the four
 /// votes sat below [`CURATE_GATE`] entirely. So the default is
 /// advisory — the lane votes in the calib row, the cosine decides —
-/// and this flag is what a future replay flips, on a replay where the
-/// judgment earns the seat by the plan's own bar.
-pub const CURATE_JUDGED_DECIDES: bool = false;
+/// and the owner awarded the seat anyway: *"award the seat and we roll
+/// it back if needed"* (2026-10-30). The award stands on the replay's
+/// own record — identical decisions, zero mis-fires — and the calib
+/// `curate` rows are what a rollback would judge by. The rollback is
+/// this constant flipped back to `false`: the advisory behavior stays
+/// pinned beside it, the cosine safety net and the fail-open row are
+/// unchanged, and the lane's confident `no` still holds only while the
+/// vectors agree.
+pub const CURATE_JUDGED_DECIDES: bool = true;
 
 /// The most tool calls one turn may run. A model that returns a hundred
 /// calls is looping, not planning; the calls past this line are refused
@@ -11645,10 +11651,20 @@ mod tier_tests {
             curate_decision(false, Some(&verdict(false, 0.95)), Some(0.5), false),
             (true, "cosine")
         );
-        // The seat is the replay's to award: the constant carries the
-        // advisory default and the numbers that decided it, and the
-        // advisory rows above pin the behavior it selects.
-        let _ = CURATE_JUDGED_DECIDES;
+        // The owner awarded the seat on the replay's record: the
+        // awarded path is pinned through the constant itself — a
+        // confident yes fires even where the cosine held — and the
+        // advisory rows above pin the behavior a rollback restores,
+        // one flip of the constant and nothing else.
+        assert_eq!(
+            curate_decision(
+                false,
+                Some(&verdict(true, 0.95)),
+                Some(0.95),
+                CURATE_JUDGED_DECIDES,
+            ),
+            (true, "judged")
+        );
     }
 
     /// The C2 drift trigger is a pure function of the vectors: the same

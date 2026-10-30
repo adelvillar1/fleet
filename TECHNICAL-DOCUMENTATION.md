@@ -250,10 +250,13 @@ from the last curated instruction re-ranks the block, and the note
 rides that one request's message tail — never the system prompt. The
 `curate` judgment in the vendored sys1 votes beside the floor (cached
 in the route cache's second namespace, behind the decision-keys gate);
-the J6 replay put it in the advisory seat (`CURATE_JUDGED_DECIDES` is
-false): its vote rides the calibration stream's `curate` rows, the
-cosine decides, and its focus label is the one contribution that acts —
-the re-curation's shape hint when the curation fires anyway.
+the owner awarded it the
+deciding seat over the replay's advisory verdict (`CURATE_JUDGED_DECIDES`
+is true — *"award the seat and we roll it back if needed"*): a
+confident vote fires and holds, the cosine stays the safety net under
+a confident `no` and decides under the gate and without the lane, its
+focus label is the re-curation's shape hint, and the calibration
+stream's `curate` rows are the record a rollback judges by.
 
 The run's system prompt is `SYSTEM_PROMPT` (the voice) followed by
 `REPORTING_CONTRACT` — the stop's contract: what happened, where it

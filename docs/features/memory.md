@@ -600,11 +600,15 @@ The composition is measured, and the measurement put the judgment in an
 advisory seat: replayed against real session `997a54b4`'s four steers
 through a real sys1 child, the judged decisions were identical to the
 cosine-only ones — zero new mis-fires — but did not dominate (no early
-fire; three of four votes under the 0.6 confidence gate). So the lane
-votes in the calibration stream's `curate` rows — verdict, cosine,
-decision, trigger — while the cosine decides. The flag that awards the
-seat (`CURATE_JUDGED_DECIDES`) flips on a replay where the judgment
-earns it, not on appetite. The focus label is the one contribution that
+fire; three of four votes under the 0.6 confidence gate). On that record the
+owner awarded the seat anyway (2026-10-30: *"award the seat and we
+roll it back if needed"*): a confident judgment fires and holds where
+the cosine alone would not, the cosine stays the safety net under a
+confident `no` and the whole decision under the gate, and every judged
+decision rides the calibration stream's `curate` rows — verdict,
+cosine, decision, trigger — which are the evidence base a rollback
+would judge by. The rollback is `CURATE_JUDGED_DECIDES` flipped back
+to `false`: one constant, and the advisory behavior is what ships. The focus label is the one contribution that
 acts today: when the lane names a shape the corpus's vocabulary carries
 and the curation fires anyway, the re-curation routes under it instead
 of the keyword classifier's word, and the `curated` record names which
