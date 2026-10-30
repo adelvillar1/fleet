@@ -334,6 +334,16 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self._reply(403, {"error": "that origin needs its relay secret"})
             return
+        # A device that has stopped polling is a face that restarted or
+        # died. Holding the phone's request the full answer timeout made
+        # every restart a visible hang (KI-371's third lesson); a named,
+        # instant answer is something a reload can act on.
+        if time.time() - device.last_poll > 40:
+            self._reply(
+                503,
+                {"error": "fleet is restarting — the device is not polling; try again in a moment"},
+            )
+            return
         enc = 1 if self.headers.get(ENC_HEADER) == "1" else None
         self._forward(device, parsed, parsed.path, self._body(), enc)
 

@@ -431,8 +431,18 @@ pub async fn serve_with_ready(
                         // the seal is refused by name, because a
                         // plaintext task text crossing the relay is
                         // the one thing this module exists to prevent.
+                        // Two directions, two facts. `enc` on the
+                        // frame means the PHONE sealed the body it
+                        // sent; the answer to a content path is sealed
+                        // whenever the exchange exists, whether or not
+                        // the request carried a body at all (a GET has
+                        // none to seal, and its answer still carries
+                        // the content). The refusal targets a body that
+                        // should have been sealed — an empty body is
+                        // not one.
                         let sealed = frame.enc == Some(1);
-                        let answer = if !sealed && is_sealed_path(&frame.path) {
+                        let content = is_sealed_path(&frame.path);
+                        let answer = if !sealed && content && !frame.body.is_empty() {
                             Answer {
                                 id: frame.id.clone(),
                                 status: 400,
@@ -487,7 +497,8 @@ pub async fn serve_with_ready(
                                 }
                             }
                             let mut answer = handler.answer(&frame).await;
-                            if sealed {
+                            let established = keys.lock().expect("the keys lock").established();
+                            if content && established {
                                 let sealed_body =
                                     keys.lock().expect("the keys lock").seal(&frame.id, &answer.body);
                                 match sealed_body {
@@ -951,9 +962,10 @@ mod tests {
         assert!(keys.established());
     }
 
-    /// A content-bearing frame that arrives without the seal is
-    /// refused by name: a plaintext task text crossing the relay is
-    /// the one thing this module exists to prevent.
+    /// A content-bearing frame with a body that arrives unsealed is
+    /// refused by name: a plaintext task text crossing the relay is the
+    /// one thing this module exists to prevent. An empty body is not a
+    /// body — a GET seals its ANSWER, not a request it never carried.
     #[tokio::test(flavor = "multi_thread")]
     async fn an_unsealed_api_frame_is_refused_by_name() {
         let relay = FakeRelay::new();
@@ -963,7 +975,10 @@ mod tests {
             "sid-refuse".to_string(),
             "hash".to_string(),
         ));
-        relay.offer(frame("r1", "/api/state"));
+        let mut carried = frame("r1", "/api/state");
+        carried.method = "POST".to_string();
+        carried.body = "the words that must not cross in the clear".to_string();
+        relay.offer(carried);
         let (shutdown, shutdown_rx) = tokio::sync::watch::channel(false);
         let serving = tokio::spawn(serve(
             Arc::clone(&client),

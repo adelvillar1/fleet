@@ -103,7 +103,14 @@ async function relayHandshake(secret) {
   })();
   setup
     .then(() => document.documentElement.setAttribute('data-relay-sealed', '1'))
-    .catch(() => {});
+    // A handshake that fails is a face that stays unsealed — and until
+    // this line it failed in silence: a blank page with no reason
+    // anywhere (KI-371's second lesson). The reason is named now.
+    .catch((error) => {
+      document.documentElement.setAttribute('data-relay-error', '1');
+      console.error('fleet relay: the frame seal did not come up —',
+        error && error.message ? error.message : error);
+    });
   RELAY_READY = setup;
   return setup;
 }
@@ -111,8 +118,10 @@ async function relayHandshake(secret) {
 function openSealedReply(key, reply) {
   if (reply.headers.get('x-fleet-enc') !== '1') return Promise.resolve(reply);
   const frameId = reply.headers.get('x-fleet-frame') || '';
-  return reply.arrayBuffer().then((buffer) => {
-    const raw = new Uint8Array(buffer);
+  // The sealed body is BASE64 TEXT (nonce ‖ ciphertext ‖ tag); reading
+  // it as raw bytes handed AES-GCM garbage (KI-371).
+  return reply.text().then((text) => {
+    const raw = b64ToBytes(String(text).trim());
     return crypto.subtle.decrypt(
       { name: 'AES-GCM', iv: raw.slice(0, 12), additionalData: new TextEncoder().encode(frameId), tagLength: 128 },
       key, raw.slice(12),
@@ -151,11 +160,13 @@ if (RELAY_SECRET && typeof window.fetch === 'function') {
       return RAW_FETCH(url.href, Object.assign({}, init, { headers: named }));
     }
     return RELAY_READY.then((seal) => {
-      named['x-fleet-enc'] = '1';
       const sendInit = Object.assign({}, init, { headers: named });
       const send = () => RAW_FETCH(url.href, sendInit).then((reply) => openSealedReply(seal.key, reply));
       const body = init.body;
+      // A GET has no body to seal: the flag means "this body is
+      // sealed", and the ANSWER is sealed either way (KI-371).
       if (body == null) return send();
+      named['x-fleet-enc'] = '1';
       const text = typeof body === 'string' ? body : String(body);
       const nonce = crypto.getRandomValues(new Uint8Array(12));
       const binding = bare + (url.search || '');
@@ -812,7 +823,9 @@ const ICON_CLOSE = `<svg width="17" height="17" viewBox="0 0 20 20" fill="none" 
 
 // ---------- the boot: the inbox, the events, the 5s floor ----------
 
-loadInbox();
+loadInbox()
+  .catch((error) => console.error('fleet bot: the inbox could not be read —',
+    error && error.message ? error.message : error));
 setInterval(() => {
   if (state.view === 'inbox') loadInbox();
 }, 5000);

@@ -144,8 +144,12 @@
   function openSealedReply(key, reply) {
     if (reply.headers.get('x-fleet-enc') !== '1') return Promise.resolve(reply);
     var frameId = reply.headers.get('x-fleet-frame') || '';
-    return reply.arrayBuffer().then(function (buffer) {
-      var raw = new Uint8Array(buffer);
+    // The sealed body is BASE64 TEXT (nonce ‖ ciphertext ‖ tag). Reading
+    // it as raw bytes sliced the nonce off the ASCII and handed AES-GCM
+    // garbage — every sealed read failed on the relay origins, which is
+    // the blank face the owner met (KI-371).
+    return reply.text().then(function (text) {
+      var raw = b64ToBytes(String(text).trim());
       var nonce = raw.slice(0, 12);
       var body = raw.slice(12);
       return crypto.subtle.decrypt(
@@ -189,11 +193,15 @@
       // body against the request's own path, and open the sealed reply
       // against the frame id the relay names.
       return RELAY_READY.then(function (seal) {
-        named['x-fleet-enc'] = '1';
         var sendInit = Object.assign({}, init, { headers: named });
         var send = function () { return RAW_FETCH(url.href, sendInit).then(function (reply) { return openSealedReply(seal.key, reply); }); };
         var body = init.body;
+        // A GET has no body to seal: the flag means "this body is
+        // sealed", and the ANSWER is sealed either way. Marking an
+        // empty body sealed was the 400 on the first paired load
+        // (KI-371).
         if (body == null) return send();
+        named['x-fleet-enc'] = '1';
         var text = typeof body === 'string' ? body : String(body);
         var nonce = crypto.getRandomValues(new Uint8Array(12));
         var binding = bare + (url.search || '');
