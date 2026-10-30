@@ -573,6 +573,41 @@ extraction and a 300-second job budget. A missing lane or tool is a named
 refusal; macros are never executed and embedded objects are never opened.
 The lane's tools and licences are listed in `services/documents/README.md`.
 
+## The settings surface
+
+Settings is a rail of eight sections and one section's items — the work
+rail's own idiom, one fold in the product rather than two:
+
+- **The sections**: models (the tiers, the gates, the provider accounts),
+  specialists (the lanes, the tools, the MCP servers), roles, trust (the
+  approvals mode, the remembered rules, the vault), money (the caps),
+  schedule (the cron jobs), interface (the UI knobs and the identity
+  slot), environment (the env names and the remaining scalars).
+- **The row is one line**: the item's name, its current value, and the
+  marks worth a glance — `set` when the value comes from this home's own
+  config, `env` when the environment supplies it, `default` for the
+  compiled value, a live mark on a rule or a job. A section reads as a
+  table; its count sits on the rail's row, and a section holding an
+  override carries a dot.
+- **The item opens in the pane**: the same object card the facts and
+  sessions use, the pane's tabs standing down while it is open. It
+  carries the fields, the provenance in plain words, the compiled
+  ceiling, the revert where the document offers one, and the save
+  through the writer the CLI uses. Closing returns the tabs; an edited
+  card that is closed without saving asks first.
+- **Long lists take a budget**: the first ten or twelve rows and one
+  press for the rest, the count named ("24 rules · 14 rules"). No stored
+  state, and the number is honest about what is behind the press.
+- **The filter at the head of the rail** searches every section's items
+  at once and lists the matches with the section that owns each.
+- **The addresses**: `#/settings/<section>` opens a section (bare
+  `#/settings` resumes the remembered one), and `#/settings/<section>/<item>`
+  is the item's own address — which is what lets the onboarding's cards
+  land on the setting they are about.
+
+Everything writes through `writeSettings` and the same ops as the CLI;
+the surface is the presentation, not the contract.
+
 ## The face's own tests
 
 `tests/face/harness.mjs` boots the real `src/gui/assets/app.js` against

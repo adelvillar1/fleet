@@ -3882,7 +3882,9 @@
     acts.appendChild(later);
     var adjust = node('button', 'row-rewind', 'change it');
     adjust.type = 'button';
-    adjust.addEventListener('click', function () { window.location.hash = '#/settings'; });
+    adjust.addEventListener('click', function () {
+      window.location.hash = '#/settings/models';
+    });
     acts.appendChild(adjust);
     card.appendChild(acts);
   }
@@ -3917,9 +3919,16 @@
       });
       return;
     }
-    // Every other step is a settings surface away; the card says what it
-    // gives you and the surface does the write.
-    window.location.hash = '#/settings';
+    // Every other step lands on the section that owns it: the deep link
+    // is what makes a card's action arrive somewhere useful rather than
+    // at the top of a board.
+    var landing = {
+      github: '#/settings/environment',
+      trust: '#/settings/trust',
+      roster: '#/settings/models',
+      money: '#/settings/money'
+    };
+    window.location.hash = landing[step] || '#/settings/models';
   }
 
   // The welcome's three readings: the same memory, skills and sessions

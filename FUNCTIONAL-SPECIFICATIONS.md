@@ -157,6 +157,13 @@ it. Read the day's routes, turns, eval runs, recall hits and tool
 screens; run a gate review; see which (provider × workload) cells are
 fit enough to move the failover.
 
+Settings in the console is a rail of eight sections — models,
+specialists, roles, trust, money, schedule, interface, environment —
+where each item is one line (its name, its value, what it costs) and its
+card opens in the right pane to read and change. Long lists take a
+budget with the count named, and a search at the head of the rail finds
+an item across every section.
+
 The terminal surface (`fleet` with no subcommand) is the same agent core,
 keyboard-first and denser: the conversation at the center, a tabbed right
 pane (run, router, brain, tower), the knowledge panels, the checkpoint
