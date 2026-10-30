@@ -695,6 +695,27 @@ pub fn summarize(path: &Path) -> Option<SessionSummary> {
             Ok(Record::Compaction { .. })
         )
     });
+    // The last plan-mode record's first meaningful line: the dynamic
+    // title ladder's plan rung — what the run was building when the
+    // plan was written. The LAST one, not the first: a conversation
+    // that planned twice is named by where it landed.
+    let last_plan = text
+        .lines()
+        .filter_map(|line| match serde_json::from_str::<Record>(line.trim()) {
+            Ok(Record::Plan { text }) => Some(text),
+            _ => None,
+        })
+        .next_back()
+        .map(|plan| {
+            plan.lines()
+                .map(str::trim)
+                .find(|line| !line.is_empty() && *line != "---")
+                .unwrap_or_default()
+                .trim_matches('#')
+                .trim()
+                .to_string()
+        })
+        .filter(|line| !line.is_empty());
     // The channel record, when the log carries one: the peer's
     // conversation says so beside its first line.
     let channel = text
@@ -742,6 +763,7 @@ pub fn summarize(path: &Path) -> Option<SessionSummary> {
         id,
         model,
         first_text,
+        last_plan,
         created,
         ended,
         resumed: saw_resume && !ended,
@@ -843,6 +865,10 @@ pub struct SessionSummary {
     /// the session. Read from the log already in hand, never a model
     /// call.
     pub first_text: Option<String>,
+    /// The last plan-mode record's first meaningful line — the dynamic
+    /// title ladder's plan rung. `None` when the log carries no plan
+    /// record. Read from the log already in hand, never a model call.
+    pub last_plan: Option<String>,
     pub created: String,
     /// True when the log's last record is `end`. A record after it —
     /// a `resume` above all — clears this, so a conversation the owner
@@ -968,6 +994,7 @@ pub fn list(home: &Path) -> io::Result<Vec<SessionSummary>> {
                     id,
                     model: "unreadable".to_string(),
                     first_text: None,
+                    last_plan: None,
                     personas: Vec::new(),
                     created: String::new(),
                     ended: false,
@@ -1338,6 +1365,48 @@ mod tests {
     /// five fields the full replay did, without materializing every
     /// record — and a log that cannot be summarized reads as `None`
     /// rather than as a wrong summary.
+    #[test]
+    fn the_summary_carries_the_last_plan() {
+        // The dynamic title ladder's plan rung: the last plan-mode
+        // record's first meaningful line, read from the log already in
+        // hand. The LAST plan, not the first — a conversation that
+        // planned twice is named by where it landed.
+        let home = temp_home("summarize-plan");
+        let mut session = Session::create(&home, "m").unwrap();
+        session
+            .record(&Record::User {
+                content: "the task".into(),
+            })
+            .unwrap();
+        session
+            .record(&Record::Plan {
+                text: "# the first plan\n\nbody".into(),
+            })
+            .unwrap();
+        session
+            .record(&Record::Plan {
+                text: "## the landing plan: the greet and the head\n\nbody".into(),
+            })
+            .unwrap();
+        let summary = summarize(session.path()).expect("the summary reads");
+        assert_eq!(
+            summary.last_plan.as_deref(),
+            Some("the landing plan: the greet and the head"),
+            "{summary:?}"
+        );
+        // A log with no plan record answers None — the ladder falls to
+        // its next rung.
+        let mut plain = Session::create(&home, "m").unwrap();
+        plain
+            .record(&Record::User {
+                content: "no plan here".into(),
+            })
+            .unwrap();
+        let summary = summarize(plain.path()).unwrap();
+        assert_eq!(summary.last_plan, None);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
     #[test]
     fn a_summary_is_a_head_and_tail_read() {
         let home = temp_home("summarize");

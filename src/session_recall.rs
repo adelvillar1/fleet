@@ -1651,6 +1651,7 @@ mod tests {
     fn row(id: &str, workspace: Option<&str>) -> crate::session::SessionSummary {
         crate::session::SessionSummary {
             first_text: None,
+            last_plan: None,
             personas: Vec::new(),
             id: id.to_string(),
             model: "deepseek-flash".to_string(),

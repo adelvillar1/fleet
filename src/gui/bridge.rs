@@ -5580,6 +5580,30 @@ fn work_class(entry: &session::SessionSummary) -> &'static str {
 /// off the user screen. An absent class reads as the owner's — the
 /// field is always present in the sessions document, and its absence
 /// has never meant system work.
+/// The dynamic title ladder: the owner's rename, the standing goal
+/// (what the conversation is FOR — it moves when the work moves), the
+/// last plan's line (what the run was building), the first words.
+/// Returns the name and the rung that served, so a derived name is
+/// marked as derived and a stale goal is diagnosable. The owner's
+/// rename is the truth at every rung: an explicit title is never
+/// overridden by a later goal or plan.
+fn title_ladder(
+    owner: Option<String>,
+    goal: Option<String>,
+    plan: Option<String>,
+    first: Option<String>,
+) -> (Option<String>, &'static str) {
+    if let Some(owner) = owner {
+        (Some(owner), "owner")
+    } else if let Some(goal) = goal {
+        (Some(goal), "goal")
+    } else if let Some(plan) = plan {
+        (Some(plan), "plan")
+    } else {
+        (first, "first")
+    }
+}
+
 fn owner_recent(runs: &[Value], take: usize) -> Vec<Value> {
     // Exactly the owner's rows — KI-372's rule, applied at the landing
     // after the work rail and the phone's inbox made it theirs. The
@@ -5984,15 +6008,19 @@ fn sessions_read(home: &std::path::Path, current: &str, live: &LiveFace, query: 
         .map(|entry| {
             let paused = paused_by_owner(home, &entry.id);
             let is_archived = archived.contains_key(&entry.id);
+            // The dynamic title ladder — the rungs and their order in
+            // `title_ladder`, where the pins live.
+            let goal = session_goal(home, &entry.id);
+            let (title, title_from) = title_ladder(
+                titles.get(&entry.id).cloned(),
+                goal.clone(),
+                entry.last_plan.clone(),
+                entry.first_text.clone(),
+            );
             json!({
                 "id": entry.id,
-                // The owner's title when one is set, else the session's
-                // first message line — the archive reads locally, never a
-                // model call.
-                "title": titles
-                    .get(&entry.id)
-                    .cloned()
-                    .or_else(|| entry.first_text.clone()),
+                "title": title,
+                "title_from": title_from,
                 // The model that actually served (KI-073's end record),
                 // or null while the run is in flight — never the start
                 // record's pre-route stamp, which is a default, not a
@@ -6022,7 +6050,6 @@ fn sessions_read(home: &std::path::Path, current: &str, live: &LiveFace, query: 
                 // on a pre-P2 log, which reads as unassigned rather than
                 // being invented into a persona.
                 "personas": entry.personas,
-                "goal": session_goal(home, &entry.id),
                 // Whose work this is, and — for a scheduled run — which
                 // job, so the background group can be one line per job
                 // instead of a pile of anonymous runs.
@@ -6034,6 +6061,7 @@ fn sessions_read(home: &std::path::Path, current: &str, live: &LiveFace, query: 
                 } else {
                     work_class(entry)
                 },
+                "goal": goal,
                 "job": scheduled_job(entry),
                 // The one derived word the list groups by.
                 "state": work_state(entry, live, paused, is_archived),
@@ -8673,6 +8701,54 @@ pub(crate) fn rank_with(
 #[cfg(test)]
 mod tests {
     #[test]
+    fn the_title_ladder_orders_the_rungs() {
+        // All four rungs: the owner's rename is the truth.
+        let (title, from) = title_ladder(
+            Some("the owner's words".into()),
+            Some("the standing goal".into()),
+            Some("the plan's line".into()),
+            Some("the first words".into()),
+        );
+        assert_eq!(title.as_deref(), Some("the owner's words"));
+        assert_eq!(from, "owner");
+        // The goal rung: what the conversation is FOR.
+        let (title, from) = title_ladder(
+            None,
+            Some("the standing goal".into()),
+            Some("the plan's line".into()),
+            Some("the first words".into()),
+        );
+        assert_eq!(title.as_deref(), Some("the standing goal"));
+        assert_eq!(from, "goal");
+        // The plan rung: what the run was building.
+        let (title, from) = title_ladder(
+            None,
+            None,
+            Some("the plan's line".into()),
+            Some("the first words".into()),
+        );
+        assert_eq!(title.as_deref(), Some("the plan's line"));
+        assert_eq!(from, "plan");
+        // The fallback: today's first words.
+        let (title, from) = title_ladder(None, None, None, Some("the first words".into()));
+        assert_eq!(title.as_deref(), Some("the first words"));
+        assert_eq!(from, "first");
+    }
+
+    #[test]
+    fn the_owners_rename_wins_after_a_goal_lands() {
+        // D3: a goal arriving later does not override the pencil.
+        let (title, from) = title_ladder(
+            Some("renamed by the owner".into()),
+            Some("a goal set after the rename".into()),
+            None,
+            None,
+        );
+        assert_eq!(title.as_deref(), Some("renamed by the owner"));
+        assert_eq!(from, "owner");
+    }
+
+    #[test]
     fn the_owner_recent_answers_the_owners_rows_only() {
         // KI-372's rule at the landing: the recent list carries the
         // owner's conversations and nothing else — a scheduled run, a
@@ -10385,6 +10461,7 @@ mod tests {
             id: id.to_string(),
             model: "deepseek-flash".to_string(),
             first_text: first_text.map(str::to_string),
+            last_plan: None,
             personas: Vec::new(),
             created: "2026-10-23T00:00:00Z".to_string(),
             ended,

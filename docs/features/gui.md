@@ -216,7 +216,12 @@ every visible `.tile`, `.badge`, `.rrow`, `.rank-row`, `.cal-cell`,
   owner's work only: system-initiated sessions — scheduled jobs,
   delegated children, peer channels — live in the log (`fleet cron`,
   `fleet sessions`), never on the user screen, and a log with no words
-  and no kind is not a conversation at all. A **probe** — verification
+  and no kind is not a conversation at all. A conversation's **name is
+  dynamic**: the owner's rename first — never overridden — then the
+  standing goal (what the conversation is for; it moves when the work
+  moves), then the last plan's line, then the first message. The rung
+  that served rides `title_from`, and the header's tooltip says what
+  named a conversation, so a derived name is marked as derived. A **probe** — verification
   traffic, birthed by `fleet run --probe` or marked by `fleet sessions
   --probe <id>` in the archive's sidecar — is the same: the log keeps
   everything, the rail renders none of it. Rows are grouped by what

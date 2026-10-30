@@ -345,6 +345,17 @@ nothing else. The left rail's collapse sits at the rail's head, level
 with the topbar's pane expand icon; the surface instruments' actions
 wrap as whole buttons and the card grows with them.
 
+## Conversation names
+
+A conversation's name is dynamic, read at read time from a four-rung
+ladder: the owner's rename first (never overridden), then the standing
+goal — what the conversation is for, re-set from the composer's `+goal`
+as the work moves — then the last plan's first line (what a plan-mode
+run was building), then the session's first message. The rail, the
+sessions list, the landing's recent rows, and the conversation header
+all read the same derived name, and `title_from` names the rung that
+served — the header's tooltip says what named a conversation.
+
 ## What Fleet tells you when
 
 | It says | Meaning |

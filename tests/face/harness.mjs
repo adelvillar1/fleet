@@ -4768,6 +4768,49 @@ async function theLandingGreetsTheOwnersWork() {
     recent.slice(0, 200));
 }
 
+
+async function theConversationNamesThemselvesByTheirWork() {
+  // The sessions document in the bridge's own shape: one session named
+  // by its standing goal, one by its last plan, one by the owner's
+  // rename — the ladder derived server-side, the rung riding beside
+  // the name.
+  const sessionsDoc = {
+    type: 'sessions', read_at: 'now', current: 'goal-1',
+    counts: { needs: 0, working: 1, background: 0, earlier: 2, total: 3 },
+    sessions: [
+      { ...row('goal-1', 'working', { title: 'rethink the landing for the owner\u2019s work',
+        title_from: 'goal' }) },
+      { ...row('plan-1', 'completed', { title: 'the landing plan: the greet and the head',
+        title_from: 'plan' }) },
+      { ...row('owner-1', 'completed', { title: 'renamed by the owner', title_from: 'owner' }) },
+    ],
+  };
+  const page = boot({
+    width: 1440, hash: '#/sessions/goal-1',
+    documents: {
+      sessions: sessionsDoc,
+      state: (asked) => ({ ...emptyState(asked), session: asked }),
+      onboard: onboardDoc({ door: false }),
+    },
+  });
+  await flush();
+  page.open();
+  await flush(120);
+
+  // The rail rows carry the dynamic names, the header names the open
+  // conversation and says what named it.
+  const workText = page.text('work-list') || page.rows('.work-row').map((r) => r.textContent).join(' | ');
+  check('NAME the rail rows carry the dynamic names',
+    workText.includes('rethink the landing') &&
+      workText.includes('the landing plan: the greet') &&
+      workText.includes('renamed by the owner'),
+    workText.slice(0, 220));
+  check('NAME the header names the open conversation and its rung',
+    page.text('conv-name').includes('rethink the landing') &&
+      (page.IDS['conv-title'] || { title: '' }).title.includes('the standing goal'),
+    page.text('conv-name') + ' / ' + (page.IDS['conv-title'] || { title: '?' }).title);
+}
+
 const cases = [
   ['C1/C8 the list groups by attention and counts what the server counted', theListGroupsByAttentionAndCountsWhatTheServerCounted],
   ['C2 every state opens through one verb', everyStateOpensThroughOneVerb],
@@ -4819,6 +4862,7 @@ const cases = [
   ['WORKSPACE the workspace rail carries the projects and the pane', theWorkspaceRailCarriesTheProjectsAndThePane],
   ['CAL the calibration rail carries the gate and the day', theCalibrationRailCarriesTheGateAndTheDay],
   ['LAND the landing greets the owner\u2019s work', theLandingGreetsTheOwnersWork],
+  ['NAME the conversation names themselves by their work', theConversationNamesThemselvesByTheirWork],
 ];
 
 for (const [name, run] of cases) {

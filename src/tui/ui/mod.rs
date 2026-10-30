@@ -2993,6 +2993,7 @@ mod tests {
         // The picker overlay.
         app.open_sessions(vec![SessionSummary {
             first_text: None,
+            last_plan: None,
             personas: Vec::new(),
             id: "20261013T101010Z-abcdef".to_string(),
             model: "deepseek-flash".to_string(),
@@ -3023,6 +3024,7 @@ mod tests {
         let mut children = fresh();
         children.open_sessions(vec![SessionSummary {
             first_text: None,
+            last_plan: None,
             personas: Vec::new(),
             id: "20261013T111111Z-fedcba".to_string(),
             model: "deepseek-flash".to_string(),
@@ -3049,6 +3051,7 @@ mod tests {
         let mut folded = fresh();
         folded.open_sessions(vec![SessionSummary {
             first_text: None,
+            last_plan: None,
             personas: Vec::new(),
             id: "20261013T121212Z-cabbag".to_string(),
             model: "deepseek-flash".to_string(),
@@ -3954,6 +3957,7 @@ mod tests {
             (0..40)
                 .map(|index| crate::session::SessionSummary {
                     first_text: None,
+                    last_plan: None,
                     personas: Vec::new(),
                     id: format!("20261013T1010{index:02}Z-{index:06x}"),
                     model: "deepseek-flash".to_string(),

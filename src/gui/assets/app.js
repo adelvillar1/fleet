@@ -9238,7 +9238,13 @@
     el.convHead.hidden = !face.session;
     if (!face.session) return;
     el.convName.textContent = (row && row.title) || sessionLabel(face.session);
-    el.convTitle.title = (row && row.title) || face.session;
+    // The name's rung rides the tooltip: a derived name says what
+    // named it — the owner's words, the standing goal, the plan, or
+    // the first message.
+    var rungWord = { owner: 'the owner\u2019s title', goal: 'the standing goal',
+      plan: 'the last plan', first: 'the first message' }[(row || {}).title_from];
+    el.convTitle.title = ((row && row.title) || face.session) +
+      (rungWord ? ' \u2014 named by ' + rungWord : '');
     if (row) {
       el.convState.hidden = false;
       el.convState.textContent = workStateWord(row.state);
