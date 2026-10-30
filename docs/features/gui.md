@@ -573,6 +573,34 @@ extraction and a 300-second job budget. A missing lane or tool is a named
 refusal; macros are never executed and embedded objects are never opened.
 The lane's tools and licences are listed in `services/documents/README.md`.
 
+## The bots surface
+
+The bots page is assistant-centric (the 2026-10-28 ruling): personas are
+the axis, and the plumbing is one section rather than the page.
+
+- **The rail** carries one row per persona — derived from the roles
+  registry, with the count of conversations that need the owner — then
+  `unassigned`, then `channels`. It is the settings rail's own
+  implementation, collapsed and remembered the same way.
+- **A persona's section** orders what to do: *needs you* (a seat waiting
+  on an approval, with the state word on the row), *turned back* (the
+  run ended its turn — the row carries the message it ended on), then
+  *recent*, budgeted when long.
+- **A conversation opens in the pane** as a card with three parts, all
+  from the replay and the state the face already reads: the **details**
+  (persona, model, turns, created, ended, workspace), the **decisions**
+  (the goal it served, the facts it chose to remember, the ask it ended
+  on), and the **history** (the whole transcript, newest first, tool
+  rows one line, the replay's own omitted count named).
+- **The channels section** keeps the transport: the service, the pairing
+  card, the Telegram token, the peers and the activity line.
+- **The addresses**: `#/bots/<persona>` and
+  `#/bots/channels`; a conversation has its own id in the row.
+
+Nothing on the page invents a state: `needs-approval` and `handed back`
+are the archive's own words, and no unread notion exists because the log
+cannot support one.
+
 ## The settings surface
 
 Settings is a rail of eight sections and one section's items — the work

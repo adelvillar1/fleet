@@ -157,6 +157,14 @@ it. Read the day's routes, turns, eval runs, recall hits and tool
 screens; run a gate review; see which (provider × workload) cells are
 fit enough to move the failover.
 
+The bots page in the console is assistant-centric: a rail of personas —
+taken from the roles registry, each counting what needs the owner — then
+the unassigned conversations and the channels. A persona's conversations
+are ordered by what you must do (an approval waiting, a run that handed
+its turn back with the message it ended on), and a conversation opens in
+the right pane with its details, the decisions it recorded, and its whole
+history.
+
 Settings in the console is a rail of eight sections — models,
 specialists, roles, trust, money, schedule, interface, environment —
 where each item is one line (its name, its value, what it costs) and its
