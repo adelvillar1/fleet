@@ -380,6 +380,12 @@ function boot(options) {
         : documents.onboard;
       return Promise.resolve({ status: 200, json: () => Promise.resolve(doc || onboardDoc()) });
     }
+    if (pathOnly === '/api/channels') {
+      return Promise.resolve({
+        status: 200,
+        json: () => Promise.resolve(documents.channels || emptyChannels()),
+      });
+    }
     if (pathOnly === '/api/memory') {
       return Promise.resolve({
         status: 200,
@@ -597,6 +603,12 @@ const emptyState = (session) => ({
   session: session || '', model: 'm', workspace: '/w', folder: null, goal: null,
   budget: 100000, turn_budget: 8, gate: { name: 'sys1', informs_failover: false },
   running: false, driving: null, dropped: 0, events: [], approval: null, rules: [], attached: true,
+});
+
+const emptyChannels = () => ({
+  type: 'channels', read_at: 'now', service: {}, telegram: { present: false },
+  channels: [], activity: [], activity_bound: 0, waiting_seats: 0,
+  conversations: { type: 'conversations', bound: 50, count: 0, needs: 0, personas: [] },
 });
 
 const emptySessions = () => ({
@@ -3702,7 +3714,9 @@ async function theStrategyStepShowsItsPreview() {
     });
     page.open();
     await flush();
-    page.hash('#/bots');
+    // The pairing card lives in the channels section: the rail picks the
+    // persona, and the plumbing has its own row.
+    page.hash('#/bots/channels');
     for (let i = 0; i < 8; i++) await flush();
     check('BOTS the bots panel is the one showing',
       !page.IDS['panel-bots'].hidden, 'panel-bots hidden=' + page.IDS['panel-bots'].hidden);
@@ -3860,6 +3874,90 @@ async function theSettingsRailCarriesOneSectionAtATime() {
     String(found.rows('.settings-matches .cfg-item').length));
 }
 
+
+// The bots surface on the same rail: the personas are the axis, each
+// section orders what needs the owner first, and a conversation opens in
+// the pane with its details, its decisions and its whole history.
+async function theBotsRailGroupsByPersona() {
+  const channelsDoc = {
+    type: 'channels', read_at: 'now', service: {}, telegram: { present: false },
+    channels: [], activity: [], activity_bound: 0, waiting_seats: 0,
+    conversations: {
+      type: 'conversations', bound: 50, count: 3, needs: 1,
+      personas: [
+        { name: 'tower', needs: 1, turned_back: 1, sessions: [
+          { id: 's-seat', title: 'a task waiting', state: 'needs-approval', needs: true,
+            turned_back: false, personas: ['tower'], last: 'wants to run bash' },
+          { id: 's-back', title: 'a task turned back', state: 'handed back', needs: false,
+            turned_back: true, personas: ['tower'], last: 'shall I commit?' },
+          { id: 's-done', title: 'an old task', state: 'completed', needs: false,
+            turned_back: false, personas: ['tower'], last: 'done' },
+        ] },
+        { name: 'auditor', needs: 0, turned_back: 0, sessions: [] },
+      ],
+    },
+  };
+  const page = boot({
+    width: 1440, hash: '#/bots/tower',
+    documents: {
+      channels: channelsDoc,
+      // The replay the pane's card reads (the stub's own key).
+      branch: {
+        id: 's-seat', model: 'm', turns: 3, created: '2026-10-30T09:00:00Z',
+        ended: true, stop_reason: 'handed back', omitted: 0,
+        cards: [
+          { type: 'goal', text: 'ship the thing' },
+          { type: 'message', role: 'owner', text: 'do it' },
+          { type: 'memory', name: 'the-decision' },
+          { type: 'tool_call', tool: 'bash', summary: 'echo hi' },
+          { type: 'message', role: 'assistant', text: 'shall I commit?' },
+        ],
+      },
+      state: (asked) => emptyState(asked),
+    },
+  });
+  await flush();
+  page.open();
+  await flush(120);
+
+  // The rail: the registry's personas plus the channels section.
+  const rail = page.rows('.section-rail-row');
+  check('BOTS the rail carries the personas and the channels',
+    rail.length >= 2 && rail.some((row) => row.textContent.includes('tower')) &&
+      rail.some((row) => row.textContent.includes('channels')),
+    String(rail.length));
+  check('BOTS the tower row counts what needs the owner',
+    rail.find((row) => row.textContent.includes('tower')).textContent.includes('2'),
+    rail.map((r) => r.textContent).join(' | '));
+
+  // The section orders needs → turned back → recent.
+  const lists = page.rows('.section-body .cfg-list h2').map((h) => h.textContent);
+  check('BOTS the section orders what needs the owner first',
+    lists[0] === 'needs you' && lists[1] === 'turned back' && lists[2] === 'recent',
+    lists.join(' | '));
+  check('BOTS a turned-back row shows the ending message',
+    page.text('bots-board').includes('shall I commit?'), 'last line');
+  check('BOTS a needs row carries the state word',
+    page.text('bots-board').includes('needs-approval'), 'state');
+
+  // The conversation's card: details, decisions, history.
+  page.rows('.section-body .cfg-item').find((row) => row.dataset.id === 's-seat').click();
+  await flush(120);
+  check('BOTS the conversation opens in the pane',
+    page.body.dataset.objectCard === 'open', String(page.body.dataset.objectCard));
+  const body = page.text('dock-object-body');
+  check('BOTS the card carries the details',
+    body.includes('m') && body.includes('handed back') && body.includes('3'),
+    body.slice(0, 120));
+  check('BOTS the card carries the decisions',
+    body.includes('ship the thing') && body.includes('the-decision') &&
+      body.includes('shall I commit?'),
+    body.slice(0, 200));
+  check('BOTS the card carries the history',
+    page.rows('.bot-history-row').length === 5,
+    String(page.rows('.bot-history-row').length));
+}
+
 const cases = [
   ['C1/C8 the list groups by attention and counts what the server counted', theListGroupsByAttentionAndCountsWhatTheServerCounted],
   ['C2 every state opens through one verb', everyStateOpensThroughOneVerb],
@@ -3905,6 +4003,7 @@ const cases = [
   ['RL the page seals its frames through a relay', thePageSealsItsFramesThroughARelay],
   ['BOTS the bots surface mints the bot card', theBotsSurfaceMintsTheBotCard],
   ['SET the settings rail carries one section at a time', theSettingsRailCarriesOneSectionAtATime],
+  ['BOTS the bots rail groups by persona', theBotsRailGroupsByPersona],
 ];
 
 for (const [name, run] of cases) {

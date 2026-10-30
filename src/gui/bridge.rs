@@ -1279,6 +1279,30 @@ impl Bridge {
             }
         }
         document["waiting_seats"] = json!(peer_waiting);
+        // The conversations half: the personas and their sessions, which
+        // the channels store itself does not carry (the 2026-10-30 plan).
+        // The live face is read under the lock and the lock dropped
+        // before the read awaits — a guard across an await is not Send.
+        let live = {
+            let state = lock(&self.state);
+            let seats: std::collections::HashSet<String> = state
+                .sessions
+                .iter()
+                .filter(|(_, attached)| attached.seat.is_some())
+                .map(|(id, _)| id.clone())
+                .collect();
+            LiveFace {
+                driving: state.driving.clone(),
+                seats,
+            }
+        };
+        let home = self.home.clone();
+        let conversations = tokio::task::spawn_blocking(move || {
+            conversations_document(&home, &live, CONVERSATIONS_BOUND)
+        })
+        .await
+        .unwrap_or_else(|_| json!({"type": "conversations", "refused": ["the read did not land"]}));
+        document["conversations"] = conversations;
         document
     }
 
@@ -5477,6 +5501,132 @@ fn session_match(home: &std::path::Path, id: &str, needle: &str) -> Option<Strin
 /// before it could be violated there). If `work_state`'s vocabulary
 /// grows, this match grows in the same commit — the plan's own risk
 /// note.
+/// How many conversations the bots surface groups: the plan's bound,
+/// carried on the document so a miss is honest about what it read.
+pub(crate) const CONVERSATIONS_BOUND: usize = 50;
+
+/// The bots surface's conversations half: the sessions a persona (or a
+/// channel) carries, grouped by the lead persona, each with what the
+/// owner must do about it.
+///
+/// Every figure is derived: the persona list from the roles registry, the
+/// rows from the archive's own summaries (the same ones the work rail
+/// reads), the state in the archive's own words, and the last line from
+/// the bounded tail read the inbox already uses. Nothing is a second
+/// derivation of what the archive holds.
+fn conversations_document(home: &std::path::Path, live: &LiveFace, bound: usize) -> Value {
+    let roster: Vec<String> = crate::roles::load_all(home)
+        .into_iter()
+        .map(|role| role.name)
+        .collect();
+    let document = sessions_read(home, "", live, "");
+    let rows = document
+        .get("sessions")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    // The conversations this surface is about: a session a persona works,
+    // or a channel's own. The rail's owner-only filter does NOT apply
+    // here — this is the surface that reads the system's traffic.
+    let rows: Vec<Value> = rows
+        .into_iter()
+        .filter(|row| {
+            let personas = row.get("personas").and_then(Value::as_array);
+            let has_persona = personas.map(|list| !list.is_empty()).unwrap_or(false);
+            let channel = row.get("channel").and_then(Value::as_str).is_some();
+            has_persona || channel
+        })
+        .take(bound)
+        .collect();
+
+    let mut groups: Vec<(String, Vec<Value>, u64, u64)> = Vec::new();
+    for row in &rows {
+        let id = row.get("id").and_then(Value::as_str).unwrap_or_default();
+        let state = row
+            .get("state")
+            .and_then(Value::as_str)
+            .unwrap_or("interrupted");
+        let lead = row
+            .get("personas")
+            .and_then(Value::as_array)
+            .and_then(|list| list.first())
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .unwrap_or_else(|| "unassigned".to_string());
+        let path = home.join("sessions").join(format!("{id}.jsonl"));
+        let tail = session::tail_lines(&path, TAIL_BYTES);
+        let (last, _refused) = last_line(&tail);
+        let entry = json!({
+            "id": id,
+            "title": row.get("title"),
+            "state": state,
+            "created": row.get("created"),
+            "at": row.get("last_write"),
+            "channel": row.get("channel"),
+            "model": row.get("model"),
+            "personas": row.get("personas"),
+            "goal": row.get("goal"),
+            "last": last,
+            // The two words the surface orders by, derived once here:
+            // a seat waiting, and a run that handed its turn back.
+            "needs": state == "needs-approval",
+            "turned_back": state == "handed back",
+        });
+        let needs = u64::from(state == "needs-approval");
+        let turned = u64::from(state == "handed back");
+        match groups.iter_mut().find(|(name, _, _, _)| name == &lead) {
+            Some((_, list, n, t)) => {
+                list.push(entry);
+                *n += needs;
+                *t += turned;
+            }
+            None => groups.push((lead, vec![entry], needs, turned)),
+        }
+    }
+    // The registry's order first (a persona with nothing yet still gets a
+    // row), then any persona the logs name that the registry does not,
+    // then the unassigned tail.
+    groups.sort_by_key(|(name, _, _, _)| {
+        let known = roster.iter().position(|role| role == name);
+        match (name.as_str(), known) {
+            ("unassigned", _) => (2usize, 0usize),
+            (_, Some(at)) => (0, at),
+            _ => (1, 0),
+        }
+    });
+    let mut personas: Vec<Value> = roster
+        .iter()
+        .map(|name| {
+            let found = groups.iter().find(|(role, _, _, _)| role == name);
+            json!({
+                "name": name,
+                "sessions": found.map(|(_, list, _, _)| list.clone()).unwrap_or_default(),
+                "needs": found.map(|(_, _, needs, _)| *needs).unwrap_or(0),
+                "turned_back": found.map(|(_, _, _, turned)| *turned).unwrap_or(0),
+            })
+        })
+        .collect();
+    for (name, list, needs, turned) in &groups {
+        if roster.iter().any(|role| role == name) {
+            continue;
+        }
+        personas.push(json!({
+            "name": name,
+            "sessions": list,
+            "needs": needs,
+            "turned_back": turned,
+        }));
+    }
+    let total_needs: u64 = groups.iter().map(|(_, _, needs, _)| *needs).sum();
+    json!({
+        "type": "conversations",
+        "bound": bound,
+        "personas": personas,
+        "needs": total_needs,
+        "count": rows.len(),
+    })
+}
+
 fn inbox_document(
     home: &std::path::Path,
     live: &LiveFace,

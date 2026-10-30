@@ -11684,6 +11684,382 @@
     }).catch(function () { });
   }
 
+  // --------------------------------------------------------- bots rail
+  //
+  // The same rail idiom as the settings surface: the personas are the
+  // axis (the 2026-10-28 ruling), each section is that persona's
+  // conversations ordered by what the owner must do, and the channels
+  // section keeps the plumbing.
+
+  function botsSectionId() {
+    var raw = (window.location.hash || '').replace(/^#\/?/, '');
+    var parts = raw.split('/');
+    if (parts[0] === 'bots' && parts[1]) return decodeURIComponent(parts[1]);
+    try {
+      var stored = window.localStorage.getItem('fleet-bots-section');
+      if (stored) return stored;
+    } catch (error) { }
+    return 'tower';
+  }
+
+  function botsConversations() {
+    var read = face.bots || {};
+    return read.conversations || { personas: [], needs: 0, count: 0 };
+  }
+
+  function botsRailRows() {
+    var conv = botsConversations();
+    var rows = (conv.personas || []).map(function (persona) {
+      var needs = (persona.needs || 0) + (persona.turned_back || 0);
+      return {
+        id: persona.name, icon: 'skills', name: persona.name,
+        badge: needs || 0,
+        badgeTitle: needs
+          ? needs + ' need' + (needs === 1 ? 's' : '') + ' you'
+          : (persona.sessions || []).length + ' conversations'
+      };
+    });
+    rows.push({ id: 'channels', icon: 'bots', name: 'channels',
+      badge: 0 });
+    return rows;
+  }
+
+  /// One conversation as a row: its state word, its title, its last line
+  /// when it ended a turn, and the age.
+  function botsConversationRow(entry) {
+    var row = node('button', 'cfg-item');
+    row.type = 'button';
+    row.dataset.kind = 'conversation';
+    row.dataset.id = entry.id || '';
+    var main = node('span', 'cfg-item-main');
+    main.appendChild(node('span', 'cfg-item-name', entry.title || entry.id || 'a conversation'));
+    if (entry.last) {
+      main.appendChild(node('span', 'cfg-item-value', clip(entry.last, 90)));
+    }
+    row.appendChild(main);
+    if (entry.state) {
+      var mark = node('span', 'cfg-item-mark', entry.state);
+      mark.dataset.tone = entry.needs ? 'warn' : (entry.turned_back ? 'own' : '');
+      row.appendChild(mark);
+    }
+    row.addEventListener('click', function () { openConversationCard(entry, row); });
+    return row;
+  }
+
+  /// A persona's section: what needs the owner first, then what ended its
+  /// turn, then the rest — each list budgeted when it is long.
+  function botsPersonaSection(persona) {
+    var sessions = persona.sessions || [];
+    var needs = sessions.filter(function (one) { return one.needs; });
+    var turned = sessions.filter(function (one) { return one.turned_back; });
+    var rest = sessions.filter(function (one) {
+      return !one.needs && !one.turned_back;
+    });
+    var out = [];
+    if (needs.length) {
+      out.push(cfgList('needs you', 'a seat is waiting on an answer',
+        needs.map(botsConversationRow)));
+    }
+    if (turned.length) {
+      out.push(cfgList('turned back', 'the run ended its turn and awaits you',
+        turned.map(botsConversationRow)));
+    }
+    if (rest.length) {
+      out.push(cfgList('recent', 'what this persona has worked',
+        rest.map(botsConversationRow), { limit: 8, label: 'conversations',
+          key: 'bots-' + persona.name }));
+    }
+    if (!out.length) {
+      out.push(cfgList('nothing yet', 'no conversation of this persona is on this home',
+        [node('p', 'board-empty', 'Pair a phone, or dispatch a task to this persona.')]));
+    }
+    return out;
+  }
+
+  /// The conversation's card: the details, the decisions it recorded, and
+  /// the whole transcript — every part from the reads the face already
+  /// makes (the replay and the state document).
+  function openConversationCard(entry, row) {
+    var sections = [
+      ['the conversation', node('p', 'derivation',
+        (entry.title || entry.id) + (entry.channel ? ' \u00b7 ' + entry.channel : '') +
+        (entry.state ? ' \u00b7 ' + entry.state : ''))],
+      ['loading its history\u2026', node('p', 'derivation', 'reading the log')]
+    ];
+    openDrawer(clip(entry.title || entry.id || 'the conversation', 64), sections);
+    document.body.dataset.objectCard = 'open';
+    Array.prototype.forEach.call(
+      document.querySelectorAll('.cfg-item[aria-current="true"]'),
+      function (one) { one.removeAttribute('aria-current'); });
+    if (row) row.setAttribute('aria-current', 'true');
+    // The replay carries the details, the decisions and the history.
+    fetch('/api/session?id=' + encodeURIComponent(entry.id), {
+      headers: { accept: 'application/json' }
+    }).then(function (reply) { return reply.json(); }).then(function (replay) {
+      if (replay && replay.refused && replay.refused.length) {
+        el.dockObjectBody.textContent = '';
+        renderSections(el.dockObjectBody, [['the read', node('p', 'derivation',
+          replay.refused.join(' \u00b7 '))]]);
+        return;
+      }
+      el.dockObjectBody.textContent = '';
+      renderSections(el.dockObjectBody, conversationSections(entry, replay || {}));
+    }).catch(function () { });
+  }
+
+  function conversationSections(entry, replay) {
+    var cards = replay.cards || [];
+    var facts = node('div', 'cfg-list-rows');
+    [
+      ['persona', (entry.personas || []).join(', ') || 'unassigned'],
+      ['model', replay.model || entry.model || '\u2014'],
+      ['turns', String(replay.turns == null ? '\u2014' : replay.turns)],
+      ['created', replay.created || entry.created || '\u2014'],
+      ['ended', replay.ended ? (replay.stop_reason || 'yes') : 'not ended'],
+      ['workspace', entry.workspace || '\u2014']
+    ].forEach(function (pair) {
+      var line = node('div', 'cfg-fallback');
+      line.appendChild(node('span', 'cfg-item-name', pair[0]));
+      line.appendChild(node('span', 'cfg-item-value', String(pair[1])));
+      facts.appendChild(line);
+    });
+    // The decisions: the goal it served, the facts it chose to remember,
+    // and the ask it ended on.
+    var decisions = node('div', 'cfg-list-rows');
+    var goals = cards.filter(function (card) { return card.type === 'goal'; });
+    var memories = cards.filter(function (card) { return card.type === 'memory'; });
+    if (goals.length) {
+      var goalLine = node('div', 'cfg-fallback');
+      goalLine.appendChild(node('span', 'cfg-item-name', 'the goal'));
+      goalLine.appendChild(node('span', 'cfg-item-value',
+        clip(goals[goals.length - 1].text || '', 140)));
+      decisions.appendChild(goalLine);
+    }
+    memories.forEach(function (card) {
+      var line = node('div', 'cfg-fallback');
+      line.appendChild(node('span', 'cfg-item-name', 'remembered'));
+      line.appendChild(node('span', 'cfg-item-value',
+        clip(card.name || card.text || '', 120)));
+      decisions.appendChild(line);
+    });
+    var asks = cards.filter(function (card) {
+      return card.type === 'message' && card.role === 'assistant';
+    });
+    if (entry.turned_back && asks.length) {
+      var askLine = node('div', 'cfg-fallback');
+      askLine.appendChild(node('span', 'cfg-item-name', 'it asked'));
+      askLine.appendChild(node('span', 'cfg-item-value',
+        clip(asks[asks.length - 1].text || '', 180)));
+      decisions.appendChild(askLine);
+    }
+    if (!decisions.children.length) {
+      decisions.appendChild(node('p', 'board-empty',
+        'Nothing decided or asked in this conversation.'));
+    }
+    // The history: the whole transcript, newest first, tool rows one line,
+    // the replay's own omitted count named when the read cut.
+    var history = node('div', 'bot-history');
+    var shown = cards.slice().reverse().slice(0, 60);
+    shown.forEach(function (card) { history.appendChild(historyRow(card)); });
+    if (cards.length > shown.length) {
+      history.appendChild(node('p', 'board-empty',
+        'the newest ' + shown.length + ' of ' + cards.length + ' records'));
+    }
+    if (replay.omitted) {
+      history.appendChild(node('p', 'board-empty',
+        replay.omitted + ' record(s) the read omitted'));
+    }
+    return [
+      ['the details', facts],
+      ['the decisions', decisions],
+      ['the history', history]
+    ];
+  }
+
+  function historyRow(card) {
+    var line = node('div', 'bot-history-row');
+    line.dataset.kind = card.type || '';
+    var who = card.type === 'message'
+      ? (card.role === 'owner' ? 'you' : 'fleet')
+      : (card.type === 'tool_call' ? 'tool \u00b7 ' + (card.tool || 'call')
+        : (card.type === 'memory' ? 'remembered' : card.type));
+    line.appendChild(node('span', 'bot-history-who', who));
+    line.appendChild(node('span', 'bot-history-text',
+      clip(card.text || card.summary || card.name || card.preview || '', 160)));
+    return line;
+  }
+
+  // ------------------------------------------------------------- bots
+
+  // The Bots surface: who can reach this fleet, whether the service that
+  // carries them is up, and what they have done. Five cards and the
+  // actions that change them — not a console. The tower is the one
+  // surface allowed cockpit density.
+  //
+  // The read is `GET /api/channels`, one bounded document: the service's
+  // own status (and whether its heartbeat still beats), every channel's
+  // paired and pending peers, and the newest activity with the bound
+  // named. The CLI and the TUI read the same files, so the three cannot
+  // disagree about who is in or whether anything is listening.
+
+  function readBots(force) {
+    var now = Date.now();
+    if (!force && face.bots && now - face.botsAt < 4000) return Promise.resolve();
+    face.botsAt = now;
+    return fetch('/api/channels', { headers: { accept: 'application/json' } })
+      .then(function (reply) {
+        if (reply.status === 401) throw new Error('token');
+        return reply.json();
+      })
+      .then(function (doc) {
+        face.bots = doc;
+        markBotsCount();
+        if (face.panel === 'bots') paintBots();
+      })
+      .catch(function () { });
+  }
+
+  /// The paired devices, read beside the channel peers. A device token is
+  /// stored as a digest, so this names who is paired and never what would
+  /// let them in.
+  function readAccess(force) {
+    var now = Date.now();
+    if (!force && face.access && now - face.accessAt < 4000) return Promise.resolve();
+    face.accessAt = now;
+    return fetch('/api/access', { headers: { accept: 'application/json' } })
+      .then(function (reply) {
+        if (reply.status === 401) throw new Error('token');
+        return reply.json();
+      })
+      .then(function (doc) {
+        face.access = doc;
+        if (face.panel === 'bots') paintBots();
+      })
+      .catch(function () { });
+  }
+
+  /// The paired phones and browsers. The store holds token digests, so a
+  /// row names the device and never the token; revoking forgets it.
+  function devicesCard() {
+    var read = face.access;
+    var devices = (read && read.devices) || [];
+    var card = boardCard(12, 'paired devices', devices.length
+      ? devices.length + (devices.length === 1 ? ' device' : ' devices')
+      : null,
+      'A device token is stored as a digest; this names who is paired and never what would ' +
+      'let them in. Revoking forgets the token.');
+    if (!read) {
+      card.appendChild(node('p', 'board-empty',
+        'The access read has not landed yet. It reads the home\u2019s device store.'));
+      return card;
+    }
+    if (!devices.length) {
+      card.appendChild(node('p', 'board-empty',
+        'No device is paired. Mint a code from the pair button to let a phone in.'));
+      return card;
+    }
+    devices.forEach(function (device) {
+      var row = node('div', 'bots-row');
+      var head = node('div', 'bots-row-main');
+      head.appendChild(node('span', 'bots-row-name', device.name || device.id));
+      head.appendChild(node('span', 'bots-row-meta', 'paired ' + (device.paired || '\u2014')));
+      if (device.seen) head.appendChild(node('span', 'bots-row-meta', 'last seen ' + device.seen));
+      row.appendChild(head);
+      var acts = node('div', 'bots-acts');
+      acts.appendChild(botsButton('revoke-device', 'revoke', function () {
+        if (!window.confirm('Revoke the device `' + (device.name || device.id) + '`?')) return;
+        post('/api/access/revoke', { kind: 'device', id: device.id }).then(function () {
+          readAccess(true);
+        });
+      }));
+      row.appendChild(acts);
+      card.appendChild(row);
+    });
+    return card;
+  }
+
+  /// The rail's count: the peers waiting at the door plus the peer seats
+  /// waiting on an answer. Both are things an owner has to act on, and
+  /// nothing else on this surface is.
+  function markBotsCount() {
+    var read = face.bots;
+    if (!read) return;
+    var pending = 0;
+    (read.channels || []).forEach(function (channel) {
+      pending += (channel.pending || []).length;
+    });
+    var waiting = Number(read.waiting_seats || 0);
+    var total = pending + waiting;
+    var spot = el.railTree.querySelector('[data-count="bots"]');
+    if (!spot) return;
+    if (total > 0) {
+      spot.textContent = String(total);
+      spot.hidden = false;
+      spot.title = pending + ' waiting at the door, ' + waiting + ' waiting on an answer';
+    } else {
+      spot.textContent = '';
+      spot.hidden = true;
+      spot.removeAttribute('title');
+    }
+  }
+
+  // One write, then the read again: the surface paints what the server
+  // confirmed, and a refusal says what the writer said rather than a
+  // generic failure.
+  function writeBots(path, body, onDone) {
+    return fetch(path, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body || {})
+    }).then(function (reply) {
+      return reply.json().then(function (doc) { return { ok: reply.ok, doc: doc }; });
+    }).then(function (result) {
+      if (!result.ok) {
+        notice(result.doc.error || 'the write was refused');
+        return null;
+      }
+      return readBots(true).then(function () {
+        paintBots();
+        if (onDone) onDone(result.doc);
+        return result.doc;
+      });
+    }).catch(function () { notice('could not reach fleet'); return null; });
+  }
+
+  /// Take the owner to a card without changing what the board shows. The
+  /// door and the activity are their own cards, not filters of the peers
+  /// list, so their tiles navigate instead of pressing an empty chip.
+  function revealCard(id, flash) {
+    var card = document.getElementById(id);
+    if (!card) return;
+    var smooth = !window.matchMedia ||
+      !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    card.scrollIntoView({ block: 'start', behavior: smooth ? 'smooth' : 'auto' });
+    if (flash) {
+      card.dataset.flash = 'on';
+      window.setTimeout(function () { delete card.dataset.flash; }, 1600);
+    }
+  }
+
+  function revealDoor() {
+    revealCard('bots-door', true);
+  }
+
+  function revealActivity() {
+    revealCard('bots-activity', true);
+  }
+
+  function phaseTone(phase) {
+    if (phase === 'live') return 'ok';
+    if (phase === 'failed') return 'down';
+    if (phase === 'starting') return 'warn';
+    return null;
+  }
+
+  function capabilityWord(value) {
+    return value === 'observe' ? 'may only listen' : 'may act';
+  }
+
   // ------------------------------------------------------------- bots
 
   // The Bots surface: who can reach this fleet, whether the service that
@@ -11858,6 +12234,9 @@
   function paintBots() {
     var read = face.bots;
     el.botsBoard.textContent = '';
+    // The head and the early branches append to the board; once the
+    // rail picks a section, `board` becomes that section's body.
+    var board = el.botsBoard;
     if (!read) {
       el.botsBoard.appendChild(pageHead('System', 'Bots',
         'The channels that carry work in from outside: who is paired, what they may do, ' +
@@ -11909,10 +12288,49 @@
         label: 'open settings',
         run: function () { window.location.hash = '#/settings'; }
       }]);
-    el.botsBoard.appendChild(surfaceHead('System', 'Bots',
+    board.appendChild(surfaceHead('System', 'Bots',
       'The channels that carry work in from outside: who is paired, what they may do, ' +
       'whether the service is listening, and what they have asked for.', instrument));
-    el.botsBoard.appendChild(surfaceStrip([
+    var conv = botsConversations();
+    var railRows = botsRailRows();
+    sectionRail(el.botsRail, railRows, {
+      current: botsSectionId(),
+      folded: !!face.botsRailFolded,
+      store: 'fleet-bots-rail',
+      onPick: function (id) {
+        try { window.localStorage.setItem('fleet-bots-section', id); } catch (error) { }
+        window.location.hash = '#/bots/' + id;
+        paintBots();
+      },
+      onFold: function (folded) {
+        face.botsRailFolded = folded;
+        try {
+          window.localStorage.setItem('fleet-bots-rail', folded ? 'folded' : 'open');
+        } catch (error) { }
+        paintBots();
+      }
+    });
+    var chosen = botsSectionId();
+    if (chosen !== 'channels') {
+      var persona = (conv.personas || []).filter(function (one) {
+        return one.name === chosen;
+      })[0] || { name: chosen, sessions: [], needs: 0, turned_back: 0 };
+      var personaBody = node('div', 'section-body');
+      personaBody.dataset.section = chosen;
+      botsPersonaSection(persona).forEach(function (card) { personaBody.appendChild(card); });
+      board.appendChild(personaBody);
+      return;
+    }
+    var channelsBody = node('div', 'section-body');
+    channelsBody.dataset.section = 'channels';
+    board.appendChild(channelsBody);
+    var boardTail = function (card) { channelsBody.appendChild(card); };
+    el.botsBoard.appendChild = el.botsBoard.appendChild;
+    // The channels section's cards go into the body, one after another.
+    var keepAppend = el.botsBoard.appendChild.bind(el.botsBoard);
+    var toBody = function (card) { channelsBody.appendChild(card); };
+    void toBody; void boardTail; void keepAppend;
+    board.appendChild(surfaceStrip([
       [live, 'channels live'],
       [failed, 'failed', failed ? 'down' : null],
       [peers.length, 'peers paired'],
@@ -11942,10 +12360,10 @@
       }));
       pairRow.appendChild(pairActs);
       pairCard.appendChild(pairRow);
-      el.botsBoard.appendChild(pairCard);
+      board.appendChild(pairCard);
     }
 
-    el.botsBoard.appendChild(filterBar([
+    board.appendChild(filterBar([
       { value: 'all', label: 'all', count: peers.length },
       { value: 'acting', label: 'may act',
         count: peers.filter(function (peer) { return peer.capability === 'task'; }).length },
@@ -12034,8 +12452,8 @@
       row.appendChild(acts);
       serviceCard.appendChild(row);
     });
-    el.botsBoard.appendChild(serviceCard);
-    el.botsBoard.appendChild(devicesCard());
+    board.appendChild(serviceCard);
+    board.appendChild(devicesCard());
 
     // Waiting at the door: a refusal recorded the peer, so it can be let
     // in from here instead of hunting an id out of a log.
@@ -12076,7 +12494,7 @@
       row.appendChild(acts);
       doorCard.appendChild(row);
     });
-    el.botsBoard.appendChild(doorCard);
+    board.appendChild(doorCard);
 
     // The pair form: a webhook peer's token is minted server-side and
     // shown exactly once, in a card that is dismissed rather than
@@ -12146,7 +12564,7 @@
       }, revealPairing);
     });
     pairCard.appendChild(form);
-    el.botsBoard.appendChild(pairCard);
+    board.appendChild(pairCard);
 
     // Who can reach the fleet: the peers, their capability, and the two
     // actions that change it.
@@ -12198,7 +12616,7 @@
       row.appendChild(acts);
       peersCard.appendChild(row);
     });
-    el.botsBoard.appendChild(peersCard);
+    board.appendChild(peersCard);
 
     // What they have done. The bound is the document's, named here: a
     // surface that shows fifty of three hundred silently is lying about
@@ -12239,7 +12657,7 @@
         'No line of this kind is in the read. Clear the filter to see the rest.'));
     }
     fedCard.appendChild(feed);
-    el.botsBoard.appendChild(fedCard);
+    board.appendChild(fedCard);
   }
 
   /// The pairing's one-time reveal: the token exists here and nowhere

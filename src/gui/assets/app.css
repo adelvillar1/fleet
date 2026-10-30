@@ -1464,6 +1464,38 @@ body[data-object-card="open"] .pane-tabs,
 body[data-object-card="open"] .pane-body { display: none; }
 body[data-object-card="open"] .dock-object { display: block; }
 
+/* A conversation's card: the details and decisions as label/value lines,
+   and the history as a two-column transcript, newest first — the pane's
+   own read of a log, never a second renderer of the live transcript. */
+.bot-history { display: grid; gap: 1px; max-height: 100%; }
+.bot-history-row {
+  display: grid;
+  grid-template-columns: 74px minmax(0, 1fr);
+  gap: 8px;
+  padding: 3px 0;
+  border-bottom: var(--card-hairline);
+}
+.bot-history-row:last-child { border-bottom: 0; }
+.bot-history-who {
+  color: var(--dsw-alias-ink-tertiary);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bot-history-text {
+  color: var(--dsw-alias-ink-secondary);
+  font-size: 11.5px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.bot-history-row[data-kind="message"] .bot-history-text { color: var(--dsw-alias-ink); }
+.cfg-fallback .cfg-item-name { flex: 0 1 auto; }
+.cfg-fallback .cfg-item-value { text-align: right; white-space: normal; }
+
 /* The row budget: the count is honest about what the press reveals. */
 .budget { display: grid; gap: 2px; }
 .budget-more {
