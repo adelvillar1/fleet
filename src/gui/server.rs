@@ -1245,7 +1245,12 @@ async fn serve_connection(
             write_reply(&mut stream, api(200, bridge.replay(&asked).await)).await
         }
         ("GET", "/api/calibration") => {
-            write_reply(&mut stream, api(200, bridge.calibration().await)).await
+            // The day the surface names, or today: the CLI's own flag,
+            // the substrate's own read_day, and a malformed day is the
+            // read's named refusal.
+            let day = decode_query(&request.query, "day");
+            let day = (!day.is_empty()).then_some(day);
+            write_reply(&mut stream, api(200, bridge.calibration(day).await)).await
         }
         // The tower console and the second-brain panel: the boards' own
         // reads, shaped for the browser. Both name the parts that did
@@ -3376,7 +3381,9 @@ mod tests {
         // face renders its note, and no dead row pretends otherwise.
         assert_eq!(document["type"], "workspace-history-rail", "{document}");
         assert!(
-            document["projects"].as_array().is_some_and(|p| p.is_empty()),
+            document["projects"]
+                .as_array()
+                .is_some_and(|p| p.is_empty()),
             "{document}"
         );
         assert!(
@@ -3480,6 +3487,116 @@ mod tests {
         assert!(unknown.starts_with("HTTP/1.1 400"), "{unknown}");
         assert!(unknown.contains("no fact named"), "{unknown}");
         let _ = std::fs::remove_dir_all(&corpus);
+    }
+
+    /// T1: the calibration read answers the day it is given — two
+    /// written day files, yesterday's and today's, read apart; a
+    /// malformed day is the read's named refusal; and the ops the
+    /// stream used to drop ride the document (the delegation row's
+    /// fields, the embed timing's measurement).
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_calibration_read_answers_the_day_it_is_given() {
+        let scratch = fresh_home();
+        let previous = std::env::var_os("FLEET_HOME");
+        std::env::set_var("FLEET_HOME", &scratch);
+        // The read resolves the home the bridge carries: router_home's
+        // config names its own logs root, so the fixture writes there.
+        let home = router_home();
+        let calib_root = home.join("logs");
+        let (token, port) = launch_over(home.clone(), fresh_home()).await;
+        // Two days, one row each: a delegation row yesterday, an embed
+        // timing today — the ops the surface used to drop.
+        let today = crate::calib::today();
+        // Yesterday, arithmetically: the day number the clock gives,
+        // minus one, rendered back to YYYY-MM-DD.
+        let day_before = {
+            let days = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() / 86_400)
+                .unwrap_or(0) as i64
+                - 1;
+            let z = days + 719_468;
+            let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+            let doe = z - era * 146_097;
+            let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+            let y = yoe + era * 400;
+            let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+            let mp = (5 * doy + 2) / 153;
+            let d = doy - (153 * mp + 2) / 5 + 1;
+            let m = if mp < 10 { mp + 3 } else { mp - 9 };
+            let y = if m <= 2 { y + 1 } else { y };
+            format!("{y:04}-{m:02}-{d:02}")
+        };
+        let write = |day: &str, line: serde_json::Value| {
+            let path = crate::calib::day_path(&calib_root, day);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, line.to_string() + "\n").unwrap();
+        };
+        write(
+            &day_before,
+            serde_json::json!({
+                "op": "delegation",
+                "ts": format!("{day_before}T10:00:00Z"),
+                "session": "child-one", "provider": "m", "outcome": "completed",
+                "workspace_branch": "fleet-child-one",
+            }),
+        );
+        write(
+            &today,
+            serde_json::json!({
+                "op": "embed_timing",
+                "ts": format!("{today}T10:00:00Z"),
+                "kind": "corpus-load", "ms": 1234, "facts": 42,
+            }),
+        );
+        // Yesterday's read answers the delegation row; today's answers
+        // the embed timing.
+        let read = |query: &str| {
+            // The token rides as a proper second parameter: the get
+            // helper hard-appends `?token=`, which would glue itself to
+            // the day value.
+            let reply = ask(
+                port,
+                &format!(
+                    "GET /api/calibration{query}&token={token} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"
+                ),
+                None,
+            );
+            let body = reply.split("\r\n\r\n").nth(1).expect("a body").to_string();
+            let document: serde_json::Value = serde_json::from_str(&body).expect("a JSON document");
+            document
+        };
+        let yesterday_doc = read(&format!("?day={}", day_before));
+        assert_eq!(yesterday_doc["day"], day_before, "{}", yesterday_doc);
+        let delegation = &yesterday_doc["stream"]["delegation"];
+        assert_eq!(
+            delegation.as_array().map(Vec::len),
+            Some(1),
+            "{}",
+            yesterday_doc
+        );
+        assert_eq!(delegation[0]["session"], "child-one");
+        assert_eq!(delegation[0]["workspace_branch"], "fleet-child-one");
+        let today_doc = read("?unused=1");
+        assert_eq!(today_doc["day"], today);
+        let timing = &today_doc["stream"]["embed_timing"];
+        assert_eq!(timing.as_array().map(Vec::len), Some(1), "{}", today_doc);
+        assert_eq!(timing[0]["ms"], 1234);
+        assert_eq!(timing[0]["facts"], 42);
+        // A malformed day is the read's own refusal, named.
+        let bad = read("?day=not-a-day");
+        assert!(
+            bad["refused"][0]
+                .as_str()
+                .unwrap_or_default()
+                .contains("not a day"),
+            "{bad}"
+        );
+        match previous {
+            Some(value) => std::env::set_var("FLEET_HOME", value),
+            None => std::env::remove_var("FLEET_HOME"),
+        }
+        let _ = std::fs::remove_dir_all(&calib_root);
     }
 
     /// The management verbs, over the substrate's own writers: a

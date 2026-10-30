@@ -1950,9 +1950,10 @@ impl Bridge {
     /// by op, the judged quality's fit cells with the readiness the fit
     /// rule computes, and the failover gate's state named rather than
     /// left to be inferred.
-    pub async fn calibration(&self) -> Value {
+    pub async fn calibration(&self, day: Option<String>) -> Value {
         let home = self.home.clone();
-        match tokio::task::spawn_blocking(move || calibration_read(&home)).await {
+        match tokio::task::spawn_blocking(move || calibration_read_at(&home, day.as_deref())).await
+        {
             Ok(document) => document,
             Err(_) => json!({
                 "type": "calibration",
@@ -6040,10 +6041,23 @@ fn sessions_read(home: &std::path::Path, current: &str, live: &LiveFace, query: 
 /// the calibration surface's own computation, not a re-derivation, so
 /// this panel and `fleet calib --calibration` cannot disagree about
 /// whether a provider's sample is fit.
-fn calibration_read(home: &std::path::Path) -> Value {
+fn calibration_read_at(home: &std::path::Path, day: Option<&str>) -> Value {
     let user_home = std::env::var("HOME").ok();
     let root = crate::calib::resolve_root(home, user_home.as_deref());
-    let day = crate::calib::today();
+    let day = match day {
+        Some(asked) => {
+            // The CLI's own words for a malformed day: the surface's
+            // day parameter and `fleet calib --day` refuse alike.
+            if !crate::cli::valid_calendar_day(asked) {
+                return json!({
+                    "type": "calibration",
+                    "refused": [format!("`{asked}` is not a day; use day YYYY-MM-DD")],
+                });
+            }
+            asked.to_string()
+        }
+        None => crate::calib::today(),
+    };
     let rows = crate::calib::read_day(&root, &day, crate::calib::READ_CAP);
     let gate = crate::route::calibration_config(home).informs_failover;
     let cells = crate::calib::calibration(&rows);
@@ -6133,6 +6147,28 @@ fn row_json(row: &crate::calib::ReadRow) -> Value {
             put("score", json!(row.score));
         }
         "consolidate" => {
+            put("action", json!(row.action));
+            put("reason", json!(row.reason));
+        }
+        "delegation" => {
+            put("session", json!(row.session));
+            put("provider", json!(row.provider));
+            put("workspace_branch", json!(row.workspace_branch));
+            put("outcome", json!(row.outcome));
+        }
+        "verify" => {
+            put("node", json!(row.node));
+            put("gates", json!(row.gates));
+            put("verified", json!(row.verified));
+        }
+        "embed_timing" => {
+            put("kind", json!(row.kind));
+            put("ms", json!(row.ms));
+            put("facts", json!(row.facts));
+        }
+        "lifecycle" => {
+            put("kind", json!(row.kind));
+            put("name", json!(row.name));
             put("action", json!(row.action));
             put("reason", json!(row.reason));
         }

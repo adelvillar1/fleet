@@ -877,8 +877,11 @@ pub const OP_ROUTE_JUDGED: &str = "route_judged";
 /// because it is a [`Row`] variant: the stream owns the op, and a beat
 /// that named its own op would be a second place for the word to drift.
 pub const OP_DELEGATION: &str = "delegation";
-/// The ops this slice emits, in the order `fleet calib` groups them.
-pub const OPS: [&str; 10] = [
+/// The ops the stream writes and the reads serve, in the order `fleet
+/// calib` groups them. The three the reads used to drop — `verify`,
+/// `embed_timing`, `lifecycle` — ride their own row shapes; the face's
+/// rail carries them beside the rest (the calibration revamp, 2026-10-30).
+pub const OPS: [&str; 13] = [
     OP_ROUTE,
     OP_TOOL_SCREEN,
     OP_TURN,
@@ -889,6 +892,9 @@ pub const OPS: [&str; 10] = [
     OP_EXPLAIN,
     OP_ROUTE_JUDGED,
     OP_DELEGATION,
+    OP_VERIFY,
+    OP_EMBED_TIMING,
+    OP_LIFECYCLE,
 ];
 
 /// The verdict a `propose` row carries when the change landed: the gate
@@ -1660,6 +1666,22 @@ pub struct ReadRow {
     #[serde(default)]
     pub ts: String,
     pub op: String,
+    /// The verify row's node id, and the gates that ran as
+    /// `name=passed` pairs, with the whole-row verdict. Defaults on
+    /// every other op — the face's verify section reads them.
+    #[serde(default)]
+    pub node: String,
+    #[serde(default)]
+    pub gates: Vec<String>,
+    #[serde(default)]
+    pub verified: Option<bool>,
+    /// The embed-timing row's measurement: the kind's duration in
+    /// milliseconds and, for a corpus load, the fact count. Defaults on
+    /// every other op.
+    #[serde(default)]
+    pub ms: Option<u128>,
+    #[serde(default)]
+    pub facts: Option<usize>,
     #[serde(default)]
     pub provider: String,
     /// The route row's workload (`quick`, `hard`, …), the word sys1
@@ -4227,8 +4249,9 @@ mod tests {
         assert!(!rows[0].gate[0].ok);
         assert_eq!(rows[0].gate[0].detail, "the_ranker");
         let _ = std::fs::remove_dir_all(&root);
-        // The op list names propose beside the rest, and the delegation
-        // op beside that.
+        // The op list names propose beside the rest, the delegation op
+        // beside that, and the three the reads used to drop — verify,
+        // embed timing, lifecycle — at the tail.
         assert_eq!(
             OPS,
             [
@@ -4241,7 +4264,10 @@ mod tests {
                 "eval_corpus",
                 "explain",
                 "route_judged",
-                "delegation"
+                "delegation",
+                "verify",
+                "embed_timing",
+                "lifecycle"
             ]
         );
     }

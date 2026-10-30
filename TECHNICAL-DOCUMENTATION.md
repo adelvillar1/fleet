@@ -455,9 +455,12 @@ and delivery through the same agent loop. `fleet cron` lists as cards.
 
 #### `calib.rs`
 The audit stream: one `events.jsonl` per UTC day, non-blocking bounded queue,
-serialized writer, and drain-at-teardown semantics. Supported ops include
-`route`, `tool_screen`, `turn`, `recall_hit`, `consolidate`, `propose`,
-`eval_corpus`, `explain`, `route_judged`, and `delegation`.
+serialized writer, and drain-at-teardown semantics. Thirteen ops ride the
+read — the ten the stream first carried plus `verify`, `embed_timing`, and
+`lifecycle`, whose row shapes `ReadRow` now speaks (all defaulted). The
+face's rail (the calibration revamp, 2026-10-30) reads the day through
+`calibration_read_at`, one section per op with rows, the gate's fit cells
+leading, the day taken from the route's `?day=`.
 
 #### `eval.rs`
 The graded eval corpus: fixed scenarios, headless mock-driven runs, pass/fail

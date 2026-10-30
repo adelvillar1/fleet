@@ -630,6 +630,7 @@
     skillsRail: document.getElementById('skills-rail'),
     sessionsBoard: document.getElementById('work-list'),
     calibrationBoard: document.getElementById('calibration-board'),
+    calibrationRail: document.getElementById('calibration-rail'),
     brainBoard: document.getElementById('brain-board'),
     workspaceHistoryBoard: document.getElementById('workspace-history-board'),
     workspaceHistoryRail: document.getElementById('workspace-history-rail'),
@@ -777,7 +778,6 @@
     // what make a table of that length usable rather than a wall.
     skillQuery: '',
     skillShowAll: false,
-    calibrationFilter: 'all',
     towerFilter: 'all',
     towerDay: '',
     routerHour: null,
@@ -9384,11 +9384,32 @@
 
   // ---------------------------------------------------- the calibration panel
 
+  // ---------------------------------------------------- the calibration rail
+  //
+  // The surface is a rail of sections and one section's cards: the gate
+  // leads — the failover decision the surface exists to serve — then
+  // the day's stream in the substrate's own words, one op per section,
+  // and the eval corpus readable. The day is at hand: a stepper in the
+  // instrument, the route carrying it.
+
+  /// The day the surface shows: the hash query's own, or today.
+  function calibrationDay() {
+    var hash = window.location.hash || '';
+    var at = hash.indexOf('?day=');
+    if (at > 0) return decodeURIComponent(hash.slice(at + 5).split('&')[0]);
+    return null;
+  }
+
   function readCalibration(force) {
     var now = Date.now();
-    if (!force && face.calibration && now - face.calibrationAt < 4000) return Promise.resolve();
+    var day = calibrationDay();
+    var fresh = face.calibration && face.calibration.day === (day || face.calibration.day);
+    if (!force && fresh && face.calibration && now - face.calibrationAt < 4000) {
+      return Promise.resolve();
+    }
     face.calibrationAt = now;
-    return fetch('/api/calibration', { headers: { accept: 'application/json' } })
+    var query = day ? '?day=' + encodeURIComponent(day) : '';
+    return fetch('/api/calibration' + query, { headers: { accept: 'application/json' } })
       .then(function (reply) {
         if (reply.status === 401) throw new Error('token');
         return reply.json();
@@ -9398,6 +9419,112 @@
         if (face.panel === 'calibration') paintCalibration();
       })
       .catch(function () { });
+  }
+
+  /// The section the hash names, or the remembered one, or the gate.
+  function calibrationSectionId() {
+    var raw = (window.location.hash || '').replace(/^#\/?/, '').split('?')[0];
+    var parts = raw.split('/');
+    if (parts[0] === 'calibration' && parts[1]) return decodeURIComponent(parts[1]);
+    try {
+      var stored = window.localStorage.getItem('fleet-calibration-section');
+      if (stored) return stored;
+    } catch (error) { }
+    return 'the-gate';
+  }
+
+  function rememberCalibrationSection(id) {
+    try { window.localStorage.setItem('fleet-calibration-section', id); } catch (error) { }
+  }
+
+  var CALIBRATION_OPS = [
+    ['route', 'routes', 'router'],
+    ['route_judged', 'judgments', 'calibration'],
+    ['turn', 'turns', 'sessions'],
+    ['delegation', 'delegations', 'delegation'],
+    ['propose', 'proposals', 'plan'],
+    ['eval_corpus', 'eval runs', 'gate'],
+    ['recall_hit', 'recall hits', 'memory'],
+    ['consolidate', 'consolidations', 'repo'],
+    ['tool_screen', 'tool screens', 'settings'],
+    ['explain', 'explains', 'chat'],
+    ['verify', 'verifies', 'plan'],
+    ['embed_timing', 'embed timings', 'budget'],
+    ['lifecycle', 'lifecycles', 'rows']
+  ];
+
+  /// The sections the day carries: the gate first, then the ops with
+  /// rows in the substrate's own order. An op with no rows renders no
+  /// section — the rail says what the day held, not what it might.
+  function calibrationSections(read) {
+    var stream = read.stream || {};
+    var sections = [{
+      id: 'the-gate', name: 'the gate', icon: 'gate',
+      badge: (read.cells || []).length, badgeTitle: (read.cells || []).length + ' fit cells',
+      paint: function () { return [calibrationGate(read)]; }
+    }];
+    CALIBRATION_OPS.forEach(function (named) {
+      var rows = stream[named[0]];
+      if (!rows || !rows.length) return;
+      sections.push({
+        id: named[0], name: named[1], icon: named[2],
+        badge: rows.length, badgeTitle: rows.length + ' rows',
+        paint: function () {
+          return [named[0] === 'eval_corpus'
+            ? calibrationEvalCard(read, rows)
+            : calibrationOpCard(named[0], named[1], rows)];
+        }
+      });
+    });
+    return sections;
+  }
+
+  function paintCalibrationRail(read) {
+    if (!el.calibrationRail) return;
+    var sections = read ? calibrationSections(read) : [];
+    sectionRail(el.calibrationRail, sections.map(function (section) {
+      return {
+        id: section.id, icon: section.icon, name: section.name,
+        badge: section.badge, badgeTitle: section.badgeTitle
+      };
+    }), {
+      current: read ? calibrationSectionId() : 'the-gate',
+      folded: !!face.calibrationRailFolded,
+      store: 'fleet-calibration-rail',
+      onPick: function (id) {
+        rememberCalibrationSection(id);
+        var day = calibrationDay();
+        window.location.hash = '#/calibration/' + id + (day ? '?day=' + day : '');
+        paintCalibration();
+        var row = el.calibrationRail.querySelector('[data-section="' + id + '"]');
+        if (row && row.focus) row.focus();
+      },
+      onFold: function (folded) {
+        face.calibrationRailFolded = folded;
+        try {
+          window.localStorage.setItem('fleet-calibration-rail', folded ? 'folded' : 'open');
+        } catch (error) { }
+        paintCalibrationRail(face.calibration);
+      }
+    });
+  }
+
+  /// One section's cards, and nothing else. The rail picks; this paints.
+  function paintCalibrationSection(id) {
+    var read = face.calibration;
+    if (!read) return;
+    Array.prototype.slice.call(el.calibrationBoard.children).forEach(function (child) {
+      if (child.classList && (child.classList.contains('section-body'))) {
+        el.calibrationBoard.removeChild(child);
+      }
+    });
+    var sections = calibrationSections(read);
+    var chosen = sections.filter(function (section) { return section.id === id; })[0]
+      || sections[0];
+    var body = node('div', 'section-body');
+    body.dataset.section = chosen.id;
+    chosen.paint().forEach(function (card) { body.appendChild(card); });
+    el.calibrationBoard.appendChild(body);
   }
 
   function paintCalibration() {
@@ -9422,16 +9549,31 @@
     var judged = cells.reduce(function (sum, cell) { return sum + cell.judged; }, 0);
     var fit = cells.filter(function (cell) { return cell.fit === 'fit'; }).length;
     var informing = cells.filter(function (cell) { return cell.informs_failover; }).length;
-    var filter = face.calibrationFilter || 'all';
+    var day = calibrationDay();
     var instrument = surfaceInstrument('the stream', read.rows_read + ' rows',
       read.day + ' \u00b7 failover gate ' +
       (read.gate && read.gate.informs_failover ? 'on' : 'off'),
-      [{
-        label: 'run a gate review',
-        run: function () {
-          ask('use the sys1 lane to grade today\u2019s route rows and report the fit');
+      [
+        {
+          label: 'the day before',
+          run: function () {
+            stepCalibrationDay(-1);
+          }
+        },
+        {
+          label: 'the day after',
+          run: function () {
+            stepCalibrationDay(1);
+          }
+        },
+        {
+          label: 'run a gate review',
+          run: function () {
+            ask('use the sys1 lane to grade ' + read.day +
+              '\u2019s route rows and report the fit');
+          }
         }
-      }]);
+      ]);
     el.calibrationBoard.appendChild(surfaceHead('System', 'Calibration',
       'The day\u2019s stream, the judged quality of what served, and the gate that decides whether the failover may learn from it.',
       instrument));
@@ -9442,74 +9584,163 @@
       [fit, 'fit', fit ? 'live' : null],
       [informing, 'informing the failover'],
       [read.gate && read.gate.informs_failover ? 'on' : 'off', 'failover gate']
-    ], read.day));
-    el.calibrationBoard.appendChild(filterBar([
-      { value: 'all', label: 'all', count: cells.length },
-      { value: 'fit', label: 'fit', count: fit },
-      { value: 'informing', label: 'informing', count: informing }
-    ], filter, function (value) {
-      face.calibrationFilter = value;
-      paintCalibration();
-    }));
+    ], read.day + (day ? ' \u00b7 a past day, the hash\u2019s own' : ' \u00b7 today')));
+    paintCalibrationRail(read);
+    paintCalibrationSection(calibrationSectionId());
+  }
 
-    var shownCells = cells.filter(function (cell) {
-      if (filter === 'fit') return cell.fit === 'fit';
-      if (filter === 'informing') return !!cell.informs_failover;
-      return true;
-    });
-    if (shownCells.length) {
-      var cellCard = boardCard(12, 'the judged quality, per provider and shape',
-        shownCells.length + (filter === 'all' ? '' : ' of ' + cells.length),
-        'a cell is fit when its sample is big enough and wide enough \u2014 ' +
-        read.fit_rule.rows + ' graded rows, a ' + read.fit_rule.span + ' confidence span');
-      shownCells.forEach(function (cell) { cellCard.appendChild(calibrationCell(cell)); });
-      el.calibrationBoard.appendChild(cellCard);
-    } else if (cells.length) {
-      var empty = boardCard(12, 'the judged quality', null, null);
-      empty.appendChild(node('p', 'board-empty',
-        'No cell matches ' + filter + '. The chip\u2019s count says how many there are; ' +
-        'clear the filter to see them.'));
-      el.calibrationBoard.appendChild(empty);
-    } else {
-      var none = boardCard(12, 'the judged quality', null, null);
-      none.appendChild(node('p', 'board-empty',
+  /// One day along: the hash carries it, the read follows.
+  function stepCalibrationDay(days) {
+    var base = calibrationDay() || face.calibrationDay || face.calibration.day;
+    var at = new Date(base + 'T12:00:00Z');
+    at.setUTCDate(at.getUTCDate() + days);
+    var next = at.toISOString().slice(0, 10);
+    face.calibrationDay = next;
+    var section = calibrationSectionId();
+    window.location.hash = '#/calibration/' + section + '?day=' + next;
+    readCalibration(true);
+  }
+
+  /// The gate section: the failover state, the fit rule, and the cells
+  /// as one-line rows — what the surface exists to serve, first.
+  function calibrationGate(read) {
+    var cells = read.cells || [];
+    var card = boardCard(12, 'the gate',
+      (read.gate && read.gate.informs_failover ? 'informs the failover' : 'not informing'),
+      'a cell is fit when its sample is big enough and wide enough \u2014 ' +
+      read.fit_rule.rows + ' graded rows, a ' + read.fit_rule.span + ' confidence span. ' +
+      'A fit cell past the wrong-rate floor moves the failover\u2019s preference.');
+    card.classList.add('lib-card');
+    if (!cells.length) {
+      card.appendChild(node('p', 'board-empty',
         'No judged routes for ' + read.day + ' yet. `fleet judge` grades a day\u2019s route ' +
         'rows through the sys1 lane, and a cell appears when a judgment lands.'));
-      el.calibrationBoard.appendChild(none);
+      return card;
     }
-
-    var stream = read.stream || {};
-    ['route', 'route_judged', 'turn', 'propose', 'eval_corpus', 'recall_hit', 'consolidate',
-      'tool_screen', 'explain'].forEach(function (op) {
-      var rows = stream[op];
-      if (rows && rows.length) el.calibrationBoard.appendChild(streamCard(op, rows));
+    var items = cells.map(function (cell) {
+      var row = node('button', 'cfg-item');
+      row.type = 'button';
+      row.dataset.item = 'cell:' + cell.provider + '::' + (cell.workload || '');
+      row.dataset.kind = 'cell';
+      row.setAttribute('aria-label', cell.provider + ' ' + (cell.workload || ''));
+      var main = node('span', 'cfg-item-main');
+      main.appendChild(node('span', 'cfg-item-name', cell.provider +
+        (cell.workload ? ' \u00b7 ' + cell.workload : ' \u00b7 no shape judged')));
+      main.appendChild(node('span', 'cfg-item-value',
+        cell.judged + ' judged \u00b7 ' + cell.right + ' right \u00b7 ' + cell.wrong + ' wrong'));
+      row.appendChild(main);
+      var state = node('span', 'cfg-item-mark', cell.fit);
+      state.dataset.tone = cell.fit === 'fit' ? 'own' : 'down';
+      row.appendChild(state);
+      var wants = [];
+      if (cell.fit !== 'fit') {
+        if (cell.needs_rows) wants.push(cell.needs_rows + ' more graded row' +
+          (cell.needs_rows === 1 ? '' : 's'));
+        if (cell.needs_span > 0) wants.push('a wider confidence span');
+      }
+      if (cell.fit === 'fit' && !cell.informs_failover) {
+        wants.push('short of the wrong-rate floor');
+      }
+      var want = node('span', 'cfg-item-mark', wants.join(' \u00b7 ') || 'informs the failover');
+      want.dataset.tone = cell.informs_failover ? 'own' : '';
+      row.appendChild(want);
+      row.addEventListener('click', function () { openCalibrationCell(cell, row); });
+      return row;
     });
+    card.appendChild(budgetRows(items, 30, 'cells', false, function () { }));
+    return card;
+  }
+
+  /// One op's rows as the section card: one line per row, the record in
+  /// the pane on press. The first 30, the count named.
+  function calibrationOpCard(op, name, rows) {
+    var card = boardCard(8, name, String(rows.length),
+      'the day\u2019s rows, oldest last. A row\u2019s press opens its record in the pane.');
+    card.classList.add('lib-card');
+    var items = rows.slice(-30).reverse().map(function (row) {
+      return calibrationRowItem(op, row);
+    });
+    card.appendChild(budgetRows(items, 30, 'rows', false, function () { }));
+    return card;
+  }
+
+  /// One stream row as a one-line item: the text the stream card drew,
+  /// the pane record on press.
+  function calibrationRowItem(op, row) {
+    var line = node('button', 'cfg-item');
+    line.type = 'button';
+    line.dataset.item = op + ':' + (row.ts || '');
+    line.dataset.kind = 'row';
+    var main = node('span', 'cfg-item-main');
+    main.appendChild(node('span', 'cfg-item-name', (row.ts || '').slice(11, 19) || '\u2014'));
+    var build = streamLineText(op, row);
+    var text = build ? build() : '';
+    if (text) main.appendChild(node('span', 'cfg-item-value', text));
+    line.appendChild(main);
+    line.addEventListener('click', function () {
+      openDrawer(op + ' row', [['the record', node('pre', 'raw', JSON.stringify(row, null, 2))]]);
+      document.body.dataset.objectCard = 'open';
+    });
+    return line;
+  }
+
+  /// The eval-corpus section: the aggregate and the twenty scenarios as
+  /// one-line rows — the harness's model of its own performance.
+  function calibrationEvalCard(read, rows) {
+    var last = rows[rows.length - 1];
+    var card = boardCard(8, 'eval runs', rows.length + ' runs',
+      'the fixed, graded suite \u2014 the harness\u2019s model of its own performance. The ' +
+      'last run\u2019s scenarios render below; a row\u2019s press opens its record.');
+    card.classList.add('lib-card');
+    var strip = node('p', 'rail-note',
+      'last: ' + last.passed + '/' + (last.passed + last.failed) + ' scenarios \u00b7 score ' +
+      fmtRate(last.score) + ' \u00b7 ' + (last.ts || '').slice(11, 19));
+    card.appendChild(strip);
+    var scenarios = last.scenarios || [];
+    if (!scenarios.length) {
+      card.appendChild(node('p', 'board-empty',
+        'The last run\u2019s row carries no per-scenario verdicts \u2014 an older row\u2019s ' +
+        'shape. The record has what it carried.'));
+      return card;
+    }
+    var items = scenarios.map(function (scenario) {
+      var row = node('button', 'cfg-item');
+      row.type = 'button';
+      row.dataset.item = 'scenario:' + scenario.scenario;
+      row.dataset.kind = 'scenario';
+      var main = node('span', 'cfg-item-main');
+      main.appendChild(node('span', 'cfg-item-name', scenario.scenario));
+      main.appendChild(node('span', 'cfg-item-value', scenario.family || ''));
+      row.appendChild(main);
+      var state = node('span', 'cfg-item-mark', scenario.passed ? 'passed' : 'failed');
+      state.dataset.tone = scenario.passed ? 'own' : 'down';
+      if (!scenario.passed && scenario.failure) {
+        state.title = scenario.failure;
+      }
+      row.appendChild(state);
+      row.addEventListener('click', function () {
+        openDrawer('scenario \u00b7 ' + scenario.scenario, [
+          ['the verdict', node('p', 'derivation',
+            (scenario.passed ? 'passed' : 'failed') +
+            (scenario.failure ? ' \u00b7 ' + scenario.failure : ''))],
+          ['the record', node('pre', 'raw', JSON.stringify(scenario, null, 2))]
+        ]);
+        document.body.dataset.objectCard = 'open';
+      });
+      return row;
+    });
+    card.appendChild(budgetRows(items, 30, 'scenarios', false, function () { }));
+    return card;
   }
 
   // One fit cell as a card: the counts, the weighted rates, the fit
   // state with what it still needs, and the spend. The numbers are the
   // surface's own computation riding through — the panel re-derives
   // nothing.
-  function calibrationCell(cell) {
-    var card = node('article', 'cal-cell');
-    card.dataset.act = 'inspect';
-    card.dataset.fit = cell.fit;
-    var title = node('h3', 'cal-cell-title',
-      cell.provider + (cell.workload ? ' \u00b7 ' + cell.workload : ' \u00b7 no shape judged'));
-    title.appendChild(badge(cell.fit, cell.fit === 'fit' ? 'live' : 'warn'));
-    card.appendChild(title);
-    var counts = node('p', 'cal-cell-counts',
-      cell.judged + ' judged \u00b7 ' + cell.right + ' right \u00b7 ' + cell.wrong + ' wrong \u00b7 ' +
-      cell.insufficient + ' insufficient' +
-      (cell.waived ? ' \u00b7 ' + cell.waived + ' waived' : '') +
-      (cell.overridden ? ' \u00b7 ' + cell.overridden + ' overridden' : ''));
-    card.appendChild(counts);
-    var rates = node('p', 'cal-cell-rates',
-      'weighted wrong ' + fmtRate(cell.weighted_wrong_rate) + ' \u00b7 insufficient ' +
-      fmtRate(cell.weighted_insufficient_rate) + ' \u00b7 span ' +
-      fmtRate(cell.confidence_span) +
-      (cell.zero_confidence ? ' \u00b7 ' + cell.zero_confidence + ' rows without confidence' : ''));
-    card.appendChild(rates);
+  /// One fit cell's pane card: the counts, the weighted rates, the
+  /// spend, and the ask-sys1 action — the tabs stood down, the same
+  /// object-card idiom every surface runs.
+  function openCalibrationCell(cell, row) {
     var wants = [];
     if (cell.fit !== 'fit') {
       if (cell.needs_rows) wants.push(cell.needs_rows + ' more graded row' +
@@ -9519,72 +9750,54 @@
     if (cell.fit === 'fit' && !cell.informs_failover) {
       wants.push('fit, and short of the wrong-rate floor that moves the failover');
     }
-    card.appendChild(node('p', 'cal-cell-wants',
-      wants.length ? wants.join(' \u00b7 ') : 'this cell informs the failover'));
-    var spend = node('p', 'cal-cell-spend',
-      'spend ' + cell.spend_usd.toFixed(4) +
-      (cell.cost_per_right === null || cell.cost_per_right === undefined
-        ? ''
-        : ' \u00b7 ' + cell.cost_per_right.toFixed(4) + ' per right'));
-    card.appendChild(spend);
-    card.tabIndex = 0;
-    card.setAttribute('role', 'button');
-    card.title = 'open this fit cell';
-    card.addEventListener('click', function () {
-      var actions = node('div', 'replay-actions');
-      var judge = node('button', 'replay-button replay-resume');
-      judge.type = 'button';
-      judge.textContent = 'ask sys1 about this cell';
-      judge.addEventListener('click', function () {
-        closeDrawer();
-        ask('use the sys1 lane to review the ' + cell.provider +
-          (cell.workload ? ' \u00b7 ' + cell.workload : '') +
-          ' fit cell and say what is still missing');
-      });
-      actions.appendChild(judge);
-      openDrawer('calibration \u00b7 ' + cell.provider, [
-        ['the cell', node('p', 'derivation',
-          (cell.workload || 'no shape judged') + ' \u00b7 ' + cell.fit +
-          ' \u00b7 ' + cell.judged + ' judged \u00b7 ' + cell.right + ' right \u00b7 ' +
-          cell.wrong + ' wrong \u00b7 span ' + fmtRate(cell.confidence_span))],
-        ['what it still needs', node('p', 'derivation',
-          wants.length ? wants.join(' \u00b7 ') : 'this cell informs the failover')],
-        ['related', relatedFor('cell', cell.provider + '::' + (cell.workload || ''))],
-        ['what you can do', actions]
-      ]);
+    var actions = node('div', 'replay-actions');
+    var judge = node('button', 'replay-button replay-resume');
+    judge.type = 'button';
+    judge.textContent = 'ask sys1 about this cell';
+    judge.addEventListener('click', function () {
+      closeDrawer();
+      ask('use the sys1 lane to review the ' + cell.provider +
+        (cell.workload ? ' \u00b7 ' + cell.workload : '') +
+        ' fit cell and say what is still missing');
     });
-    return card;
+    actions.appendChild(judge);
+    openDrawer('calibration \u00b7 ' + cell.provider, [
+      ['the cell', node('p', 'derivation',
+        (cell.workload || 'no shape judged') + ' \u00b7 ' + cell.fit +
+        ' \u00b7 ' + cell.judged + ' judged \u00b7 ' + cell.right + ' right \u00b7 ' +
+        cell.wrong + ' wrong \u00b7 ' + cell.insufficient + ' insufficient' +
+        (cell.waived ? ' \u00b7 ' + cell.waived + ' waived' : '') +
+        (cell.overridden ? ' \u00b7 ' + cell.overridden + ' overridden' : ''))],
+      ['the rates', node('p', 'derivation',
+        'weighted wrong ' + fmtRate(cell.weighted_wrong_rate) + ' \u00b7 insufficient ' +
+        fmtRate(cell.weighted_insufficient_rate) + ' \u00b7 span ' +
+        fmtRate(cell.confidence_span) +
+        (cell.zero_confidence ? ' \u00b7 ' + cell.zero_confidence + ' rows without confidence' : ''))],
+      ['what it still needs', node('p', 'derivation',
+        wants.length ? wants.join(' \u00b7 ') : 'this cell informs the failover')],
+      ['the spend', node('p', 'derivation',
+        'spend ' + cell.spend_usd.toFixed(4) +
+        (cell.cost_per_right === null || cell.cost_per_right === undefined
+          ? ''
+          : ' \u00b7 ' + cell.cost_per_right.toFixed(4) + ' per right'))],
+      ['related', relatedFor('cell', cell.provider + '::' + (cell.workload || ''))],
+      ['what you can do', actions]
+    ]);
+    document.body.dataset.objectCard = 'open';
+    Array.prototype.forEach.call(
+      document.querySelectorAll('.cfg-item[aria-current="true"]'),
+      function (one) { one.removeAttribute('aria-current'); });
+    if (row) row.setAttribute('aria-current', 'true');
   }
 
   function fmtRate(rate) {
     return (rate * 100).toFixed(1) + '%';
   }
 
-  // One op's rows as a card, newest last. The rows ride as the reader
-  // parsed them; the panel formats, it does not re-decide.
-  function streamCard(op, rows) {
-    var names = {
-      route: 'routes', route_judged: 'judgments', turn: 'turns',
-      propose: 'proposals', eval_corpus: 'eval runs', recall_hit: 'recall hits',
-      consolidate: 'consolidations', tool_screen: 'tool screens', explain: 'explains'
-    };
-    var card = boardCard(12, names[op] || op, rows.length + ' row' + (rows.length === 1 ? '' : 's'),
-      null);
-    var recent = rows.slice(-20);
-    if (rows.length > recent.length) {
-      card.appendChild(node('p', 'board-empty',
-        'showing the last ' + recent.length + ' of ' + rows.length));
-    }
-    recent.forEach(function (row) { card.appendChild(streamLine(op, row)); });
-    return card;
-  }
-
-  function streamLine(op, row) {
-    var line = node('div', 'stream-line');
-    line.dataset.act = 'inspect';
-    line.title = 'open this ' + op + ' record';
-    line.appendChild(node('span', 'stream-ts', (row.ts || '').slice(11, 19) || '\u2014'));
-    var text = {
+  // One stream row's line text, as the stream card drew it: the row's
+  // own fields, formatted, never re-decided.
+  function streamLineText(op, row) {
+    return {
       route: function () {
         return (row.provider || '?') + ' \u2192 ' + (row.model || '?') +
           (row.workload ? ' \u00b7 ' + row.workload : '') +
@@ -9602,6 +9815,11 @@
           (row.stop_reason ? ' \u00b7 ' + row.stop_reason : '') +
           ' \u00b7 ' + row.turns + ' turn' + (row.turns === 1 ? '' : 's') +
           (row.reason ? ' \u00b7 ' + clip(row.reason, 80) : '');
+      },
+      delegation: function () {
+        return (row.session || '?') +
+          (row.workspace_branch ? ' \u00b7 ' + row.workspace_branch : '') +
+          (row.outcome ? ' \u00b7 ' + row.outcome : '');
       },
       propose: function () {
         return (row.proposal || '?') + ' \u00b7 ' + (row.target || '?') +
@@ -9629,8 +9847,49 @@
       explain: function () {
         return (row.explained_op || '?') + ' \u00b7 ' + (row.selector || '?') +
           (row.eval_only ? ' \u00b7 eval-only' : '');
+      },
+      verify: function () {
+        return (row.node || '?') + ' \u00b7 ' +
+          (row.gates || []).join(', ') +
+          (row.verified === true ? ' \u00b7 verified' : ' \u00b7 not verified');
+      },
+      embed_timing: function () {
+        return (row.kind || '?') + ' \u00b7 ' + row.ms + ' ms' +
+          (row.facts ? ' \u00b7 ' + row.facts + ' facts' : '');
+      },
+      lifecycle: function () {
+        return (row.kind || '?') + ' \u00b7 ' + (row.action || '?') +
+          ' \u00b7 ' + (row.name || '?') +
+          (row.reason ? ' \u00b7 ' + clip(row.reason, 80) : '');
       }
     }[op];
+  }
+
+  // One op's rows as a card, newest last. The rows ride as the reader
+  // parsed them; the panel formats, it does not re-decide.
+  function streamCard(op, rows) {
+    var names = {
+      route: 'routes', route_judged: 'judgments', turn: 'turns',
+      propose: 'proposals', eval_corpus: 'eval runs', recall_hit: 'recall hits',
+      consolidate: 'consolidations', tool_screen: 'tool screens', explain: 'explains'
+    };
+    var card = boardCard(12, names[op] || op, rows.length + ' row' + (rows.length === 1 ? '' : 's'),
+      null);
+    var recent = rows.slice(-20);
+    if (rows.length > recent.length) {
+      card.appendChild(node('p', 'board-empty',
+        'showing the last ' + recent.length + ' of ' + rows.length));
+    }
+    recent.forEach(function (row) { card.appendChild(streamLine(op, row)); });
+    return card;
+  }
+
+  function streamLine(op, row) {
+    var line = node('div', 'stream-line');
+    line.dataset.act = 'inspect';
+    line.title = 'open this ' + op + ' record';
+    line.appendChild(node('span', 'stream-ts', (row.ts || '').slice(11, 19) || '\u2014'));
+    var text = streamLineText(op, row);
     line.appendChild(node('span', 'stream-text', text ? text() : op));
     line.tabIndex = 0;
     line.setAttribute('role', 'button');

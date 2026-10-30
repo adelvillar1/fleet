@@ -149,6 +149,21 @@ lane spawn, and no writer of its own: this is a read of the audit trail,
 and a day with no rows says so rather than failing. The exit code is
 always success — the stream is an artifact, not a gate.
 
+**The face's rail (2026-10-30).** The calibration surface is the work
+rail's idiom, the knowledge group's fifth: **the gate** leads — the
+failover state, the fit rule in its own numbers, and the fit cells as
+one-line rows whose press opens the pane card (counts, weighted rates,
+spend, ask-sys1, tabs stood down) — then one section per op the day
+carries, in the substrate's own order, badge = its row count. The
+sections carry the ops the face used to drop: `delegation` (the child
+session and its branch), `verify`, `embed_timing` (KI-249's
+measurements), `lifecycle` — the stream's `OPS` now answers all
+thirteen. The **eval runs** section renders the last run's twenty
+scenarios as one-line rows, pass badges, failures named. The **day is at
+hand**: the instrument steps back and forward, `#/calibration/<op>?day=`
+addresses a day directly, and an empty day renders its honest empty
+state. A row's press opens its record in the pane.
+
 **No new TUI surface this slice.** The stream is an audit artifact; the
 TUI's lane and provider surfaces already carry the live state a user
 watches, and a per-row stream view belongs with the dashboards that

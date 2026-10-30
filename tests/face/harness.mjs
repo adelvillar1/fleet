@@ -406,6 +406,20 @@ function boot(options) {
         json: () => Promise.resolve(documents.memory || { type: 'memory', facts: [], hits: [] }),
       });
     }
+    if (pathOnly === '/api/calibration') {
+      const askedDay = new URL('http://x' + url).searchParams.get('day') || '';
+      const doc = askedDay
+        ? (documents['calibration-days'] || {})[askedDay]
+        : documents.calibration;
+      return Promise.resolve({
+        status: 200,
+        json: () => Promise.resolve(doc || {
+          type: 'calibration', day: askedDay || '2026-10-30', rows_read: 0, cap: 512,
+          gate: { informs_failover: false, name: 'calibration.informs_failover' },
+          fit_rule: { rows: 8, span: 0.3 }, cells: [], stream: {},
+        }),
+      });
+    }
     if (pathOnly === '/api/workspace-history') {
       const askedProject = new URL('http://x' + url).searchParams.get('project') || '';
       if (askedProject) {
@@ -4546,6 +4560,145 @@ async function theWorkspaceRailCarriesTheProjectsAndThePane() {
     routed.text('dock-object-title'));
 }
 
+
+async function theCalibrationRailCarriesTheGateAndTheDay() {
+  const cell = (provider, workload, fit, extra) => ({
+    provider, workload, fit, judged: 12, right: 10, wrong: 2, insufficient: 0,
+    waived: 0, overridden: 0, weighted_wrong_rate: fit === 'fit' ? 0.04 : 0.3,
+    weighted_insufficient_rate: 0.0, confidence_span: 0.5, zero_confidence: 0,
+    needs_rows: fit === 'fit' ? 0 : 3, needs_span: 0,
+    informs_failover: fit === 'fit' && (extra || {}).informs !== false,
+    spend_usd: 0.02, cost_per_right: 0.002, ...(extra || {}),
+  });
+  const doc = {
+    type: 'calibration', read_at: 'now', day: '2026-10-30', cap: 512,
+    rows_read: 64,
+    gate: { informs_failover: true, name: 'calibration.informs_failover' },
+    fit_rule: { rows: 8, span: 0.3 },
+    cells: [
+      cell('alpha', 'quick', 'fit'),
+      cell('beta', 'hard', 'short'),
+      cell('gamma', '', 'fit', { informs: false }),
+    ],
+    stream: {
+      route: [{ ts: '2026-10-30T10:00:01Z', provider: 'alpha', model: 'm1', workload: 'quick', how: 'judged', judged_from: 'sys1' }],
+      delegation: [{ ts: '2026-10-30T10:00:02Z', session: 'child-one', workspace_branch: 'fleet-child-one', outcome: 'completed' }],
+      embed_timing: [{ ts: '2026-10-30T10:00:03Z', kind: 'corpus-load', ms: 1234, facts: 42 }],
+      lifecycle: [{ ts: '2026-10-30T10:00:04Z', kind: 'tools', name: 'docker', action: 'disable', reason: 'unkeyed' }],
+      eval_corpus: [{ ts: '2026-10-30T10:00:05Z', passed: 18, failed: 2, score: 0.9,
+        scenarios: [
+          { scenario: 'delegation-loop-closes', family: 'delegation', passed: true, failure: null },
+          { scenario: 'nomenclature-guard', family: 'nomenclature', passed: false, failure: 'the drift went unnamed' },
+        ] }],
+    },
+  };
+  const dayBefore = JSON.parse(JSON.stringify(doc));
+  dayBefore.day = '2026-10-29';
+  dayBefore.stream = { turn: [{ ts: '2026-10-29T10:00:00Z', outcome: 'completed', turns: 3 }] };
+  const bootCalibration = (hash) => boot({
+    width: 1440, hash,
+    documents: {
+      calibration: doc,
+      'calibration-days': { '2026-10-29': dayBefore },
+      state: (asked) => emptyState(asked),
+      onboard: onboardDoc({ door: false }),
+    },
+  });
+
+  const page = bootCalibration('#/calibration');
+  await flush();
+  page.open();
+  await flush(80);
+
+  // The rail: the gate first, then the ops the day carries — the four
+  // the surface used to drop among them. An op with no rows renders no
+  // section.
+  const railRows = page.rows('.section-rail-row');
+  const railText = railRows.map((row) => row.textContent);
+  check('CAL the rail leads with the gate and carries the day\u2019s ops',
+    railRows.length === 6 &&
+      railText[0].includes('the gate') &&
+      railText.some((t) => t.includes('delegations')) &&
+      railText.some((t) => t.includes('embed timings')) &&
+      railText.some((t) => t.includes('lifecycles')) &&
+      !railText.some((t) => t.includes('turns')),
+    railText.join(' | '));
+  check('CAL one section renders at a time',
+    page.rows('.section-body').length === 1 &&
+      page.rows('.section-body')[0].dataset.section === 'the-gate',
+    page.rows('.section-body').map((b) => b.dataset.section).join(','));
+
+  // The gate section: the cells as one-line rows with the fit badge and
+  // what each still needs.
+  const board = page.text('calibration-board');
+  check('CAL the gate names the rule and the cells',
+    board.includes('8 graded rows') && board.includes('alpha \u00b7 quick') &&
+      board.includes('short') && board.includes('3 more graded rows'),
+    board.slice(0, 260));
+
+  // A cell's press opens the pane card with the rates and the spend —
+  // the tabs stood down.
+  const gateRows = page.rows('.cfg-item');
+  gateRows.find((row) => row.textContent.includes('alpha')).click();
+  await flush(60);
+  check('CAL a cell opens its card in the pane',
+    page.body.dataset.objectCard === 'open' &&
+      page.text('dock-object-title').includes('alpha'),
+    page.text('dock-object-title'));
+  const cardText = page.text('dock-object-body');
+  check('CAL the card carries the rates, the spend, and the ask',
+    cardText.includes('weighted wrong') && cardText.includes('spend') &&
+      cardText.includes('ask sys1 about this cell'),
+    cardText.slice(0, 200));
+  page.fireOn('dock-object-close', 'click');
+  await flush(40);
+
+  // The section route; an op section's rows carry the four new ops and
+  // the record in the pane.
+  const routed = bootCalibration('#/calibration/delegation');
+  await flush();
+  routed.open();
+  await flush(80);
+  check('CAL a section is an address',
+    routed.rows('.section-body')[0].dataset.section === 'delegation',
+    routed.rows('.section-body')[0].dataset.section);
+  const row = routed.rows('.cfg-item')[0];
+  check('CAL the delegation row names the child and its branch',
+    row.textContent.includes('child-one') &&
+      row.textContent.includes('fleet-child-one'),
+    row.textContent.slice(0, 120));
+  row.click();
+  await flush(60);
+  check('CAL a row opens its record in the pane',
+    routed.body.dataset.objectCard === 'open' &&
+      routed.text('dock-object-body').includes('fleet-child-one'),
+    routed.text('dock-object-title'));
+
+  // The eval corpus: the aggregate and the scenarios with their badges.
+  const evals = bootCalibration('#/calibration/eval_corpus');
+  await flush();
+  evals.open();
+  await flush(80);
+  const evalText = evals.text('calibration-board');
+  check('CAL the corpus names the aggregate and the scenarios',
+    evalText.includes('18/20 scenarios') && evalText.includes('delegation-loop-closes') &&
+      evalText.includes('nomenclature-guard') && evalText.includes('failed'),
+    evalText.slice(0, 260));
+
+  // The day stepper: one step back reads yesterday, whose rail differs.
+  const home = bootCalibration('#/calibration');
+  await flush();
+  home.open();
+  await flush(80);
+  Array.from(home.rows('.surface-refresh'))
+    .find((b) => b.textContent === 'the day before').click();
+  await flush(80);
+  check('CAL the stepper reads the day before',
+    home.text('calibration-board').includes('2026-10-29') &&
+      home.rows('.section-rail-row').some((r) => r.textContent.includes('turns')),
+    home.rows('.section-rail-row').map((r) => r.textContent).join(' | '));
+}
+
 const cases = [
   ['C1/C8 the list groups by attention and counts what the server counted', theListGroupsByAttentionAndCountsWhatTheServerCounted],
   ['C2 every state opens through one verb', everyStateOpensThroughOneVerb],
@@ -4595,6 +4748,7 @@ const cases = [
   ['SKILL the skills rail carries the categories and the pane', theSkillsRailCarriesOneSectionAtATime],
   ['MEM the memory rail carries the queue and the verbs', theMemoryRailCarriesTheQueueAndTheVerbs],
   ['WORKSPACE the workspace rail carries the projects and the pane', theWorkspaceRailCarriesTheProjectsAndThePane],
+  ['CAL the calibration rail carries the gate and the day', theCalibrationRailCarriesTheGateAndTheDay],
 ];
 
 for (const [name, run] of cases) {

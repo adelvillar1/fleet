@@ -149,11 +149,14 @@ only), the roles, the vault, the spend caps, the remembered rules, the
 cron jobs, and the identity slot. Every value is picked from what this
 home already knows; every write rides the one writer the CLI rides.
 
-**System — calibration.** The day's stream, the judged quality of what
-served, and the gate that decides whether the failover may learn from
-it. Read the day's routes, turns, eval runs, recall hits and tool
-screens; run a gate review; see which (provider × workload) cells are
-fit enough to move the failover.
+**System — calibration.** The work rail's idiom: **the gate** first —
+the failover state, the fit rule, and the (provider × workload) cells as
+one-line rows whose press opens the pane card — then one section per op
+the day carries (routes, judgments, turns, delegations, proposals, eval
+runs, recall hits, consolidations, tool screens, explains, verifies,
+embed timings, lifecycles), the eval corpus's twenty scenarios
+readable, and a day stepper onto `?day=` — yesterday is one step back,
+not unreachable.
 
 The bots page in the console is assistant-centric: a rail of personas —
 taken from the roles registry, each counting what needs the owner — then
