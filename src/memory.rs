@@ -2603,6 +2603,16 @@ impl Memory {
         hits
     }
 
+    /// One instruction text's vector, for the run loop's drift trigger:
+    /// the same embedder the recall ranking uses, so a curation's
+    /// "has the topic moved" reads on the same scale its ranking does.
+    /// `None` when the corpus runs without a serving embedder — the
+    /// keyword fallback — which the caller reads as "every steer
+    /// drifted" (a steer is rare; re-curating on each is the safe bias).
+    pub fn instruction_vector(&self, text: &str) -> Option<Vec<f32>> {
+        self.embedder.embed(text)
+    }
+
     /// The working tier: every non-forgotten working fact that is not
     /// already protected (a protected fact enters through the protected
     /// tier — no fact enters a turn twice), most recent first. This is

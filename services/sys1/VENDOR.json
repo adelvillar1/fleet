@@ -3,7 +3,7 @@
   "upstream": "~/Projects/sys1",
   "commit": "f0faebc9bcc899a17ed0f184d5db4c1f41b9b55b",
   "committedAt": "2026-10-24",
-  "commitSubject": "feat: TypeLLM provider \u2014 one call answers every head (probed live)",
+  "commitSubject": "feat: TypeLLM provider — one call answers every head (probed live)",
   "license": "Apache-2.0",
   "upstreamAuthor": "adelvillar1 (same author as the fork; Apache-2.0)",
   "vendored": [
@@ -24,6 +24,14 @@
     "source": "~/Projects/sys1 branch feature/plan-surface at a landed commit",
     "forkCommit": "f0faebc9bc",
     "vendoredAt": "2026-10-24",
-    "note": "Re-vendored from the branch's own commits (KI-029 closed): src/ and service/mcp_server.py are byte-exact to f0faebc EXCEPT src/sys1/perception.py, which is fleet's carry \u2014 the documents session's parse_document lives only in the upstream working tree (never landed on feature/plan-surface), so the copy keeps fleet HEAD's file; rsync ran without --delete for exactly this reason. The same carried-file pattern KI-003 named, on a new file, until the module lands upstream."
+    "note": "Re-vendored from the branch's own commits (KI-029 closed): src/ and service/mcp_server.py are byte-exact to f0faebc EXCEPT src/sys1/perception.py, which is fleet's carry — the documents session's parse_document lives only in the upstream working tree (never landed on feature/plan-surface), so the copy keeps fleet HEAD's file; rsync ran without --delete for exactly this reason. The same carried-file pattern KI-003 named, on a new file, until the module lands upstream.",
+    "fleetAdditions": [
+      {
+        "file": "src/sys1/tasks.py",
+        "what": "the `tool_route` task — one choice head id `capability` over the nine-class closed set plus `none`, the deferred-tool search's judgment",
+        "why": "fleet's tool_search calls sys1_classify with task tool_route; the label set is the ranker's own class vocabulary (src/tool_router.rs class_terms), so the class the lane names is always one the ranker can act on",
+        "since": "2026-10-30"
+      }
+    ]
   }
 }

@@ -696,6 +696,7 @@ mod tests {
             .record(&crate::session::Record::Declarations {
                 names: vec!["grep".to_string()],
                 tier: "core".to_string(),
+                withheld: Vec::new(),
             })
             .unwrap();
         write_session(&home, "recorded", session);
@@ -716,6 +717,7 @@ mod tests {
                 .record(&crate::session::Record::Declarations {
                     names: vec!["bash".to_string(), "deck".to_string()],
                     tier: "core".to_string(),
+                    withheld: Vec::new(),
                 })
                 .unwrap();
             write_session(&home, &format!("s{index}"), session);

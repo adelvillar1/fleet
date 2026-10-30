@@ -2161,6 +2161,24 @@ fn entry_lines(entry: &Entry, width: usize) -> Vec<Line<'static>> {
         Entry::Lane(card) => {
             // A lane joining the run is a one-line fact in the same
             // family as a tool card: a dot, the lane, and what it brought.
+            // A withdrawn card is the same family with the death in the
+            // count's place — the lane's tools left the run, and the
+            // transcript says so where the join once did.
+            if card.withdrawn {
+                return vec![Line::from(vec![
+                    Span::styled(" \u{2717} ", Style::new().fg(palette::DENIED)),
+                    Span::styled(
+                        card.lane.clone(),
+                        Style::new()
+                            .fg(palette::ACCENT)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        " died \u{b7} its tools left the run",
+                        Style::new().fg(palette::DIM),
+                    ),
+                ])];
+            }
             let tools = if card.tool_count == 1 {
                 "1 tool"
             } else {
@@ -4169,6 +4187,24 @@ mod tests {
         });
         let one = draw(&single, 80, 24);
         assert!(one.contains("1 tool"), "{one}");
+    }
+
+    #[test]
+    fn a_withdrawn_lane_renders_the_death_where_the_join_rendered_the_count() {
+        let mut app = fresh();
+        app.entries.push(Entry::Lane(crate::tui::app::LaneCard {
+            lane: "sem1".to_string(),
+            tool_count: 4,
+            withdrawn: true,
+        }));
+        let drawn = draw(&app, 120, 24);
+        assert!(drawn.contains("sem1"), "{drawn}");
+        assert!(drawn.contains("died"), "{drawn}");
+        assert!(
+            drawn.contains("its tools left the run"),
+            "the withdrawal is the count's replacement: {drawn}"
+        );
+        assert!(!drawn.contains("joined"), "{drawn}");
     }
 
     #[test]

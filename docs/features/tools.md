@@ -47,9 +47,25 @@ while the request fits **32 tools and 9,000 definition tokens**. Past
 either bound the native set stays (byte-stable, so the prompt cache
 survives), the MCP tools are held back, and `tool_search` is declared.
 
+If the surface is over budget even with the lanes deferred — the core
+itself past the bound — the core's own unranked tail is withheld until
+it fits: the run's workload profile is the score, and the tools on the
+explicit keep list (the eight working tools, the capability trio, the
+memory pair, `subagent`, `process`, `use_skill`) are never withheld.
+The log's `declarations` record names what was withheld in its
+`withheld` field — the log says what the model did not see, not only
+what it did. On today's surface this never fires (the native surface
+measures 28 declarations and 7,293 definition tokens, inside both
+bounds); the mechanism is the guard for the day the surface grows past
+the measured degradation band.
+
 `tool_search(query)` returns the strongest candidates and activates up
-to five for the next request. Its selection is a decision plus
-geometry, and neither is a language model:
+to five **for the next three requests** — an activation is an answer to
+one question, not a permanent grant. The count includes the request it
+was activated on, the model is told the window in the search result,
+and a call to a lapsed tool re-activates it: reaching for the tool
+again is the freshest evidence it is still needed. Its selection is a
+decision plus geometry, and neither is a language model:
 
 1. **sys1 classifies** the request into a closed capability set —
    `read`, `search`, `edit`, `execute`, `web`, `memory`, `vision`,
@@ -67,10 +83,11 @@ geometry, and neither is a language model:
    says so. No search fails because a lane is cold, and the resolution
    completes with the model client unreachable.
 
-The sys1 lane gained one task for this: `tool_route` in
+The sys1 lane carries one task for this: `tool_route` in
 `services/sys1/src/sys1/tasks.py`, a single `capability` choice head
-over the closed set. It is a vendored-file change; the upstream core
-needs the same task to survive a re-vendor.
+over the closed set. It is a fleet addition to the vendored copy —
+recorded in `services/sys1/VENDOR.json`'s `fleetAdditions` — and the
+upstream core needs the same task to survive a re-vendor.
 
 ## The advisor
 

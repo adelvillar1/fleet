@@ -1,5 +1,5 @@
 ---
-status: draft
+status: completed
 created: 2026-10-30
 updated: 2026-10-30
 slug: surface-curation
@@ -249,18 +249,18 @@ selection. It would be sys1's shape, not a new process.
 
 ## Use cases
 
-- [ ] A: A session that changes subject by turn 20 carries the memories
+- [x] A: A session that changes subject by turn 20 carries the memories
       for the new subject, not the opening one.
-- [ ] B: A lane dies mid-run and the model stops seeing its tools, with
+- [x] B: A lane dies mid-run and the model stops seeing its tools, with
       the withdrawal named in the log.
-- [ ] C: A tool activated for one question is not carried for fifty
+- [x] C: A tool activated for one question is not carried for fifty
       turns.
-- [ ] D: A session that narrows to reading files declares fewer tools,
+- [x] D: A session that narrows to reading files declares fewer tools,
       and the log says which were withheld.
 
 ## Acceptance criteria
 
-- [ ] **K1 — a dead lane stops declaring.** A lane that goes `Dead`
+- [x] **K1 — a dead lane stops declaring.** A lane that goes `Dead`
       contributes nothing to `declarations()`; a call to one of its
       tools still returns the named refusal; a `LaneFailed` record names
       the lane and the reason, and every reader that reconstructs the
@@ -268,33 +268,33 @@ selection. It would be sys1's shape, not a new process.
       the same lane as withdrawing that lane's tools. Pinned by a test
       that kills a lane mid-run and reads the declarations, the refusal,
       and the reconstructed set.
-- [ ] **K2 — activation expires.** A tool activated at turn *n* is absent
+- [x] **K2 — activation expires.** A tool activated at turn *n* is absent
       from the declarations at turn *n + ACTIVATION_TURNS*; calling it at
       *n + 1* re-activates it through *n + 1 + ACTIVATION_TURNS*. Pinned
       by a unit test over `tier_declarations` with turn-stamped entries.
-- [ ] **K3 — the class arrives.** A `tool_search` call against the
+- [x] **K3 — the class arrives.** A `tool_search` call against the
       vendored sys1 returns a class from the nine-class set (or `none`),
       and the ranking reflects it; a sys1 that answers nothing still
       yields the named "ranked without the class" fallback. Pinned by a
       live lane call in the integration tests plus a scripted-child
       case.
-- [ ] **K4 — memory re-curates on drift, and the prefix is pinned.** A
+- [x] **K4 — memory re-curates on drift, and the prefix is pinned.** A
       steer mid-run produces a curated note at the message tail and the
       system message is byte-identical to turn 1's. Pinned by a test that
       hashes the system message across turns.
-- [ ] **K5 — the trigger is measured, not vibes.** `DRIFT_FLOOR` is
+- [x] **K5 — the trigger is measured, not vibes.** `DRIFT_FLOOR` is
       chosen from measured pairs (the `gui/related` bands, plus at least
       one real session replayed) and recorded here; the same input
       produces the same trigger decision.
-- [ ] **K6 — core tools can be withheld.** Over budget, a core tool that
+- [x] **K6 — core tools can be withheld.** Over budget, a core tool that
       scores below the floor is withheld and named in the log; the
       built-in `Tool` enum is unchanged and the surface never withholds
       a tool the run cannot proceed without (`edit` without `read`,
       etc. — held as an explicit allowlist).
-- [ ] **K7 — the measurement.** Before/after declaration tokens and tool
+- [x] **K7 — the measurement.** Before/after declaration tokens and tool
       count on one real run, quoted in this file; the native surface
       stays inside `MAX_DEFINITION_TOKENS`.
-- [ ] **K8 — the gate and the docs.** fmt, clippy, build, test green by
+- [x] **K8 — the gate and the docs.** fmt, clippy, build, test green by
       exit code; the feature docs updated; the KI rows filed in the
       commits that close them.
 
@@ -463,3 +463,76 @@ Expected: exit 0 each.
   router branch — `src/api.rs:603` vs `:628`), and `measure` is starved
   of `TABPFN_API_KEY` while blend1's tabular leg works (the two key
   universes). Both are diagnosed and recorded separately.
+
+## Landed 2026-10-30
+
+C0: the withdrawal is a logged transition — the `Live → Dead` death
+writes one `Record::LaneFailed` (widened from "did not join at run
+start" to any death; the doc names the rule), `declarations()` reads the
+new `declared_lane_tools()` (live only) while `lane_tools()` keeps the
+log's shape, the refusal text says the tools were withdrawn, and the
+three log→tool-set readers apply the rule: `reconstruct_document`
+retains out the withdrawn lane, the face emits a `withdrawn` mark on
+the lane card (the three render sites in `app.js` read it), and the
+TUI's `entry_of` renders the death where the join rendered the count
+(`LaneCard.withdrawn`). K1: `a_dead_lane_child_degrades_the_run_without_killing_it`
+(28 tools post-death where it pinned 29 declared, the withdrawal record
+after the join, the progress line),
+`a_dead_lane_keeps_its_log_tools_but_declares_none`,
+`a_lane_withdrawal_removes_the_lanes_tools_from_the_reconstruction`,
+`a_withdrawn_lane_renders_the_death_where_the_join_rendered_the_count`.
+
+C1: `activated` is a turn-stamped `BTreeMap<String, u64>`; an activation
+rides `ACTIVATION_TURNS = 3` requests counting the one it was activated
+on, the search result names the window, and `call_lane` re-stamps on
+call. The vendored sys1 registers `tool_route` — one `capability`
+choice head over the ranker's own nine-class set plus `none` — recorded
+in `VENDOR.json`'s `fleetAdditions`. K2:
+`an_activation_expires_after_its_turns`, `a_lapsed_tool_reactivates_on_call`.
+K3: `the_real_sys1_lane_answers_the_tool_route_task` (a real lane child,
+no providers configured in the test env, answering a classify envelope
+for the task — the exact call that raised KeyError before) plus the
+scripted `tool_search_asks_sys1_and_ranks_with_sem1_end_to_end`.
+
+C2: the drift trigger in the steer path. `Memory::instruction_vector`
+exposes the recall embedder for measurement; `maybe_curate` compares
+the steer against the last curated instruction's vector, the first
+steer curating by definition and a keyword-only corpus treating every
+steer as drifted. `DRIFT_FLOOR = 0.78`, measured live 2026-10-30 on
+this machine's embeddinggemma over steer-shaped pairs: unrelated
+0.647–0.729, paraphrases 0.846–0.925 — steer pairs read higher than the
+`related` surface's fact-to-fact bands (KI-058: 0.58–0.66) because two
+imperative asks share a register, so the floor takes the measured gap's
+midpoint. The note rides the request's message tail as a system message
+(never the system prompt — `the_system_prompt` pin below), turn-scoped,
+recorded as `Record::Curated { turn, shape, facts }` (a new variant,
+not a `Memory` stamp — the existing `.find()` readers keep meaning "the
+opening block"). Recall hits re-arm per curation. K4:
+`a_drifted_steer_recurates_memory_at_the_message_tail_and_the_prompt_holds`
+(the system message byte-identical across all three requests, the note
+at the first request's tail only, the steer as the owner's message, the
+record at turn 1) and `the_first_steer_curates_and_the_record_lands_once`.
+K5: `the_drift_floor_decides_deterministically`.
+
+C3: `withhold_core` — the workload profile's rank is the score, the
+explicit `CORE_KEEP` list (the eight working tools, the capability
+trio, the memory pair, `subagent`, `process`, `use_skill`) is the floor
+the score cannot cross, and the withheld names ride the `declarations`
+record's new `withheld` field (serde-default, so old logs load). The
+tier defers lanes first and reaches for core withholding only when even
+the deferred shape cannot fit. K6: `an_over_budget_core_withholds_its_unranked_tail_and_names_them`,
+`the_tier_withholds_the_core_only_when_even_the_deferred_lanes_cannot_fit_it`.
+K7, the measurement on the real surface: **28 declarations, 7,293
+definition tokens, 0 withheld** (`the_real_native_surface_fits_and_withholds_nothing`)
+— the mechanism is dormant on today's surface, which is the point: a
+fitting surface withholds nothing, and the record is the before/after
+pair.
+
+K8: the gate green by exit code (fmt, clippy, build, test — the counts
+in the day's commit); the docs updated (features/tools.md's tier
+section, features/memory.md's new "Mid-run curation" section,
+TECHNICAL-DOCUMENTATION.md's `agent.rs` entry); KI-375, KI-376 and
+KI-377 filed and closed in this landing.
+
+The plan's C4 stands deferred, untouched, with its entry criteria
+unchanged.

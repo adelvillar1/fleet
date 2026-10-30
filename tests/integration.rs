@@ -1153,7 +1153,7 @@ async fn tool_search_asks_sys1_and_ranks_with_sem1_end_to_end() {
         "{output}\n{records:?}"
     );
     assert!(
-        output.contains("activated for the next request: mcp__sys1__classify"),
+        output.contains("activated for the next 3 requests: mcp__sys1__classify"),
         "{output}"
     );
     // The resolution added no model request: the mock saw the turn that
@@ -1294,6 +1294,7 @@ async fn the_lifecycle_sweep_disables_only_what_the_gate_names() {
             .record(&Record::Declarations {
                 names: vec!["bash".to_string(), "deck".to_string()],
                 tier: "core".to_string(),
+                withheld: Vec::new(),
             })
             .unwrap();
         age_session(&home, session, &format!("s{index}"));
@@ -3238,6 +3239,16 @@ fn sem1_home() -> PathBuf {
     }
 }
 
+/// sys1's resolved home; the vendored copy must always answer.
+fn sys1_home() -> PathBuf {
+    match lanes::resolve_home(&lane("sys1")) {
+        LaneHome::Resolved { home, .. } => home,
+        LaneHome::Unavailable { reason } => {
+            panic!("sys1 must resolve from the vendored copy: {reason}")
+        }
+    }
+}
+
 /// The real vendored sem1 lane, driven end to end: initialize (with the
 /// `notifications/initialized` notification the servers deviate on),
 /// tools/list, a tools/call error path, and clean teardown.
@@ -3293,6 +3304,59 @@ async fn the_real_sem1_lane_round_trips_through_the_client() {
     assert!(report.get("reachable").is_some(), "{report}");
 
     // Teardown: stdin closes, the child exits 0, nothing lingers.
+    server.close().await.expect("clean teardown");
+}
+
+/// The vendored sys1 registers `tool_route` — the capability-class task
+/// the deferred-tool search asks for. Before the surface-curation plan's
+/// C1 this call raised KeyError and came back as an RPC error, so the
+/// class half of every search was dead. Against an unconfigured
+/// provider set the classify answers `verdict: error` without a
+/// network; the registration itself is what this pins, and a class the
+/// lane does name must come from the closed set the ranker knows.
+#[tokio::test]
+async fn the_real_sys1_lane_answers_the_tool_route_task() {
+    if !python3_available() {
+        eprintln!("python3 is not on PATH; skipping the real-lane tool_route probe");
+        return;
+    }
+    let spec = lanes::launch_spec(&lane("sys1"), &sys1_home());
+    let server = McpServer::spawn(&spec).expect("spawn the sys1 lane");
+
+    let result = server
+        .call_tool(
+            "sys1_classify",
+            serde_json::json!({
+                "task": "tool_route",
+                "text": "find where retries are counted\ntool_definitions: 7"
+            }),
+        )
+        .await
+        .expect("tool_route is a registered task — no unknown-task RPC error");
+
+    let report: serde_json::Value =
+        serde_json::from_str(result.content[0].data.as_str().expect("a text block"))
+            .expect("the classify report is JSON");
+    assert_eq!(report["task"], "tool_route", "{report}");
+    assert!(report.get("verdict").is_some(), "{report}");
+    // A class the lane actually named is one the ranker can act on.
+    const CLASSES: &[&str] = &[
+        "read", "search", "edit", "execute", "web", "memory", "vision", "media", "delegate", "none",
+    ];
+    for heads in report["answers"].as_object().into_iter().flatten() {
+        for head in heads.1.as_object().into_iter().flatten() {
+            if head.0 == "capability" {
+                let label = head.1["label"].as_str().unwrap_or_default();
+                if !label.is_empty() {
+                    assert!(
+                        CLASSES.contains(&label),
+                        "the lane named `{label}`, outside the closed set"
+                    );
+                }
+            }
+        }
+    }
+
     server.close().await.expect("clean teardown");
 }
 
@@ -4177,6 +4241,12 @@ async fn a_dead_lane_child_degrades_the_run_without_killing_it() {
         "the second call fails fast, it does not respawn: {}",
         outputs[1]
     );
+    // The refusal names the withdrawal, not the old keep-declared rule.
+    assert!(
+        outputs[1].contains("withdrawn from the tool set"),
+        "{}",
+        outputs[1]
+    );
     // The lane joined exactly once: no second `lane_tools` record, so no
     // second spawn and no second handshake.
     let joins = records
@@ -4185,13 +4255,35 @@ async fn a_dead_lane_child_degrades_the_run_without_killing_it() {
         .count();
     assert_eq!(joins, 1, "{records:?}");
 
-    // The lane's tools stayed in the model's tool set after it died: the
-    // model can still see them, and calling one is a typed failure.
+    // The C0 withdrawal, end to end: the log carries the lane's
+    // `lane_tools` record and then its `lane_failed` withdrawal, and
+    // every request AFTER the death declares none of the lane's tools.
+    // The model cannot call what it can no longer see, and the log is
+    // what keeps that reconstructable.
+    let failed_at = records
+        .iter()
+        .position(|record| matches!(record, Record::LaneFailed { lane, .. } if lane == "sem1"))
+        .expect("the withdrawal record");
+    assert!(
+        records[..failed_at]
+            .iter()
+            .any(|record| matches!(record, Record::LaneTools { lane, .. } if lane == "sem1")),
+        "the withdrawal follows the join: {records:?}"
+    );
     let bodies = mock.bodies();
     assert_eq!(bodies.len(), 3);
-    assert_eq!(declared_tools(&bodies[1]).len(), 29);
-    assert_eq!(declared_tools(&bodies[2]).len(), 29);
-    assert!(declared_tools(&bodies[1]).contains(&"mcp__sem1__probe".to_string()));
+    assert_eq!(declared_tools(&bodies[1]).len(), 28);
+    assert_eq!(declared_tools(&bodies[2]).len(), 28);
+    assert!(
+        !declared_tools(&bodies[1]).contains(&"mcp__sem1__probe".to_string()),
+        "a dead lane's tools are withdrawn from the declarations"
+    );
+    // The headless surface said the lane died and its tools left.
+    let progress = String::from_utf8(progress).unwrap();
+    assert!(
+        progress.contains("lane sem1 died \u{2014} its tools are withdrawn"),
+        "{progress}"
+    );
 
     std::fs::remove_dir_all(&home).ok();
 }
@@ -11732,4 +11824,198 @@ async fn the_reference_relay_carries_sealed_frames() {
     // a finished test and a zombie the suite carries for its whole run.
     let _ = child.wait();
     let _ = std::fs::remove_dir_all(&home);
+}
+
+/// The C2 curation, end to end: a steer whose conversation changed
+/// hands re-ranks the memory block against the new instruction, and the
+/// note rides THAT request's message tail — a system message at the
+/// end of the list, never inside the system prompt, which stays
+/// byte-identical across every turn (the prefix-cache rule). The note
+/// is turn-scoped: the next request does not carry it. The log's
+/// `curated` record names the turn, the shape, and the facts.
+#[tokio::test]
+async fn a_drifted_steer_recurates_memory_at_the_message_tail_and_the_prompt_holds() {
+    let mock = MockApi::start(vec![
+        tool_call_stream(
+            "c1",
+            "todo",
+            r#"{"items":[{"step":"read","status":"completed"}]}"#,
+        ),
+        tool_call_stream(
+            "c2",
+            "todo",
+            r#"{"items":[{"step":"edit","status":"in_progress"}]}"#,
+        ),
+        assistant_stream(TOOL_REPORT),
+    ]);
+    let home = temp_home("curate-drift");
+    let root = memory_corpus(
+        "drift",
+        &[
+            (
+                "identity",
+                fact_file(
+                    "identity",
+                    "the owner's standing rule about the gate",
+                    "confirmed-by",
+                    "feedback",
+                    "",
+                ),
+            ),
+            (
+                "spillover",
+                fact_file(
+                    "spillover",
+                    "the memory ranker's spillover pool keeps its own floor",
+                    "inferred",
+                    "project",
+                    "deploy",
+                ),
+            ),
+        ],
+    );
+    let calib_root = temp_home("curate-drift-calib");
+    let stream = fleet::calib::Stream::open(&calib_root);
+    let memory = std::sync::Arc::new(fleet::memory::Memory::load_with(
+        &root,
+        Box::new(fleet::memory::KeywordOnly),
+    ));
+    let mut session = Session::create(&home, "test-model").unwrap();
+    // The steer is on disk before the run's first control read, so the
+    // race-free path lands it at turn 1: the same seam a live steer
+    // crosses, only written earlier.
+    std::fs::write(
+        session.path().with_extension("control"),
+        r#"{"steer":"the spillover floor needs revisiting"}"#,
+    )
+    .unwrap();
+    run_with_memory(
+        &mock,
+        &mut session,
+        Box::new(ApproveAll),
+        Some(memory),
+        Some(stream.clone()),
+        "the railway deploy is failing",
+    )
+    .await
+    .unwrap();
+
+    let bodies = mock.bodies();
+    assert_eq!(bodies.len(), 3);
+    // The prefix pin: the system message is byte-identical across every
+    // request the run made — the curation never touched it.
+    let system_of =
+        |body: &serde_json::Value| body["messages"][0]["content"].as_str().unwrap().to_string();
+    assert_eq!(system_of(&bodies[0]), system_of(&bodies[1]));
+    assert_eq!(system_of(&bodies[0]), system_of(&bodies[2]));
+    assert!(system_of(&bodies[0]).contains("## Memory"));
+    // The tail delivery: the FIRST request carries the curated note as
+    // its last message, a system role at the end of the list. The note
+    // is the re-ranked block itself — the `## Memory` heading is the
+    // system prompt's frame, which the note never enters.
+    let first_messages = bodies[0]["messages"].as_array().unwrap();
+    let tail = first_messages.last().unwrap();
+    assert_eq!(tail["role"], "system", "{tail}");
+    let note = tail["content"].as_str().unwrap();
+    assert!(note.contains("Standing context (protected"), "{note}");
+    assert!(
+        note.contains("the memory ranker's spillover pool keeps its own floor"),
+        "the note is the re-ranked block: {note}"
+    );
+    // The steer itself landed as the owner's message before the note.
+    assert!(first_messages.iter().any(|message| {
+        message["role"] == "user"
+            && message["content"]
+                .as_str()
+                .unwrap()
+                .contains("spillover floor needs revisiting")
+    }));
+    // Turn-scoped: the second request's tail is the tool result, not
+    // the note.
+    let second_messages = bodies[1]["messages"].as_array().unwrap();
+    assert_ne!(second_messages.last().unwrap()["role"], "system");
+
+    // The log carries the curation: the turn whose request bore the
+    // note, the shape, and the facts — the record the replay reads.
+    let records = session::replay(session.path()).unwrap();
+    let curated = records
+        .iter()
+        .filter_map(|record| match record {
+            Record::Curated { turn, shape, facts } => Some((*turn, shape.clone(), facts.clone())),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(curated.len(), 1, "{curated:?}");
+    assert_eq!(curated[0].0, 1, "the turn whose request carried the note");
+    // The steer's wording routes no shape — the surface-recall fallback
+    // is the honest answer, and the record says so like the block does.
+    assert_eq!(curated[0].1, "");
+    assert!(curated[0].2.contains(&"identity".to_string()));
+    assert!(curated[0].2.contains(&"spillover".to_string()));
+
+    std::fs::remove_dir_all(&home).ok();
+}
+
+/// A steer that did not drift does not re-curate: the cosine over the
+/// same-shape instruction stays above the floor, the request carries no
+/// tail note, and the log carries no `curated` record. (KeywordOnly has
+/// no embedder, so this run pins the FIRST-steer rule instead: the very
+/// first steer always curates. The floor's own determinism is a unit
+/// pin beside the constant.)
+#[tokio::test]
+async fn the_first_steer_curates_and_the_record_lands_once() {
+    let mock = MockApi::start(vec![
+        tool_call_stream(
+            "c1",
+            "todo",
+            r#"{"items":[{"step":"read","status":"completed"}]}"#,
+        ),
+        assistant_stream(TOOL_REPORT),
+    ]);
+    let home = temp_home("curate-first");
+    let root = memory_corpus(
+        "first",
+        &[(
+            "top",
+            fact_file(
+                "top",
+                "the railway deploy is failing per branch",
+                "inferred",
+                "project",
+                "deploy",
+            ),
+        )],
+    );
+    let calib_root = temp_home("curate-first-calib");
+    let stream = fleet::calib::Stream::open(&calib_root);
+    let memory = std::sync::Arc::new(fleet::memory::Memory::load_with(
+        &root,
+        Box::new(fleet::memory::KeywordOnly),
+    ));
+    let mut session = Session::create(&home, "test-model").unwrap();
+    std::fs::write(
+        session.path().with_extension("control"),
+        r#"{"steer":"check the branch gate first"}"#,
+    )
+    .unwrap();
+    run_with_memory(
+        &mock,
+        &mut session,
+        Box::new(ApproveAll),
+        Some(memory),
+        Some(stream.clone()),
+        "the railway deploy is failing",
+    )
+    .await
+    .unwrap();
+    let records = session::replay(session.path()).unwrap();
+    assert_eq!(
+        records
+            .iter()
+            .filter(|record| matches!(record, Record::Curated { .. }))
+            .count(),
+        1,
+        "{records:?}"
+    );
+    std::fs::remove_dir_all(&home).ok();
 }

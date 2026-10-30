@@ -165,6 +165,28 @@ pub const MAX_VISIBLE_TOOLS: usize = 32;
 /// reason: the ceiling is a degradation guard, not a prose budget.
 pub const MAX_DEFINITION_TOKENS: usize = 9_000;
 
+/// How many requests a `tool_search` activation stays declared for. An
+/// activation is an answer to ONE question, not a permanent grant: the
+/// tool that served the model's search rides along for this and the
+/// next `ACTIVATION_TURNS - 1` requests, then it is back behind the
+/// search unless the model calls it — a call re-activates it. Before
+/// the expiry an activation never lapsed, so five tools pulled in on
+/// turn 2 were still declared on turn 40 (the surface-curation plan's
+/// C1); the measured selection band (30–50) is about the surface the
+/// model holds, and a surface that only grows walks out of it.
+pub const ACTIVATION_TURNS: u64 = 3;
+
+/// The cosine below which the conversation has drifted far enough from
+/// the last memory curation to re-curate. Measured on this machine's
+/// embeddinggemma (the same embedder the recall ranking runs on) over
+/// steer-shaped pairs, 2026-10-30: unrelated steer pairs score
+/// 0.647–0.729 and paraphrase pairs 0.846–0.925 — steer pairs read
+/// higher than the `related` surface's fact-to-fact bands (KI-058:
+/// 0.58–0.66) because two imperative asks share an register, so the
+/// floor takes the measured gap's midpoint, not the older band's. Not
+/// a setting: it moves only with a remeasure, like the tool router's.
+pub const DRIFT_FLOOR: f64 = 0.78;
+
 /// The most tool calls one turn may run. A model that returns a hundred
 /// calls is looping, not planning; the calls past this line are refused
 /// by name so the failure is visible rather than silently dropped.
@@ -1124,9 +1146,11 @@ pub struct Agent<'a> {
     /// tool spawns nothing; a run that does closes every child it
     /// spawned when it ends.
     lanes: LaneRoster,
-    /// Lane tools a `tool_search` activated. They append to the next
-    /// request's declarations, in name order, and nothing else reorders.
-    activated: std::collections::BTreeSet<String>,
+    /// Lane tools a `tool_search` activated, stamped with the turn the
+    /// activation happened on. They append to the request's declarations
+    /// while the stamp is inside [`ACTIVATION_TURNS`] of the current
+    /// turn, a call to the tool re-stamps it, and nothing else reorders.
+    activated: std::collections::BTreeMap<String, u64>,
     /// Cached card vectors, keyed by the catalog hash that produced them.
     tool_vectors: Option<(u64, Vec<Vec<f32>>)>,
     /// The files this run has successfully read. `edit` refuses a path
@@ -1211,8 +1235,25 @@ pub struct Agent<'a> {
     /// after the first successful response rather than at assembly — a
     /// run whose call fails before any response takes them unrecorded
     /// and the corpus stays untouched. Taken when they fire, so one
-    /// assembly records exactly once.
+    /// assembly records exactly once. A mid-run curation re-arms them.
     pending_hits: Option<PendingHits>,
+    /// The vector of the instruction the memory block was last curated
+    /// against — the opening task's at assembly, then each curation's
+    /// own steer. `None` until the opening assembly, and `None` after a
+    /// curation when the corpus runs without a serving embedder (the
+    /// keyword fallback), which is the drift trigger's own degrade.
+    curate_base: Option<Vec<f32>>,
+    /// Whether a steer has been seen this run. The first steer curates
+    /// by definition — the conversation changed hands mid-run, so the
+    /// opening block is stale whatever the vectors say — and only the
+    /// steers after it are measured.
+    steered_once: bool,
+    /// The curation note waiting for the next request build. Set when a
+    /// steer drifted past [`DRIFT_FLOOR`], taken by the turn loop and
+    /// appended at that request's message tail — never the system
+    /// prompt, whose byte-stability is what the provider-side prefix
+    /// cache keys on.
+    pending_curated: Option<String>,
     /// How many tool calls this run put through the gate. The report
     /// repair reads it: an acknowledgment-only stop is a missing report
     /// only when the run had tool work whose result the owner needs.
@@ -1365,7 +1406,7 @@ impl<'a> Agent<'a> {
             usage: Usage::default(),
             turns: 0,
             lanes,
-            activated: std::collections::BTreeSet::new(),
+            activated: std::collections::BTreeMap::new(),
             tool_vectors: None,
             reads: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
             resolutions: std::collections::BTreeMap::new(),
@@ -1388,6 +1429,9 @@ impl<'a> Agent<'a> {
             plan_mode,
             last_prompt_tokens: None,
             pending_hits: None,
+            curate_base: None,
+            steered_once: false,
+            pending_curated: None,
             improve_home,
             tool_calls_run: 0,
             repairs: 0,
@@ -1588,7 +1632,11 @@ impl<'a> Agent<'a> {
         file_access: &FileAccess,
     ) -> serde_json::Value {
         use crate::session::Record;
-        // The run's reconstructable facts, in record order.
+        // The run's reconstructable facts, in record order. A lane's
+        // tools enter the set at its `lane_tools` record and leave it at
+        // a later `lane_failed` for the same lane — the withdrawal rule
+        // the record's own doc names — so the last request's tool set is
+        // what the log says it was, dead lanes excluded.
         let mut goal: Option<&str> = None;
         let mut skills: Vec<crate::skills::SkillRef> = Vec::new();
         let mut lanes: Vec<tools::LaneTools> = Vec::new();
@@ -1602,6 +1650,9 @@ impl<'a> Agent<'a> {
                     lane: lane.clone(),
                     tools: tools.clone(),
                 }),
+                Record::LaneFailed { lane, .. } => {
+                    lanes.retain(|joined| joined.lane != *lane);
+                }
                 _ => {}
             }
         }
@@ -1693,6 +1744,14 @@ impl<'a> Agent<'a> {
     }
 
     fn declarations(&self) -> Vec<crate::api::ToolSpec> {
+        self.declaration_set().0
+    }
+
+    /// The declarations beside the core tools the tier withheld, when
+    /// the surface was over budget (the surface-curation plan's C3).
+    /// The pair is what the run-start `Declarations` record writes: the
+    /// names the model saw, and the names it did not.
+    fn declaration_set(&self) -> (Vec<crate::api::ToolSpec>, Vec<String>) {
         let mut specs: Vec<crate::api::ToolSpec> = match &self.scope {
             Some(scope) => crate::tools::ALL_TOOLS
                 .iter()
@@ -1831,11 +1890,15 @@ impl<'a> Agent<'a> {
         // A large catalog is declared in two tiers. The core above stays
         // byte-stable; the lanes' tools are held back when they would
         // push the request past the bound, and `tool_search` names the
-        // ones the model asks for. Below either bound nothing changes.
+        // ones the model asks for. A lane that died contributes
+        // nothing: its tools were withdrawn at the death (the
+        // `lane_failed` record), and the model's tool set never
+        // advertises what cannot run.
+        let mut withheld: Vec<String> = Vec::new();
         if self.scope.is_none() {
             let lane_specs: Vec<crate::api::ToolSpec> = self
                 .lanes
-                .lane_tools()
+                .declared_lane_tools()
                 .iter()
                 .flat_map(|lane| {
                     lane.tools.iter().map(|tool| {
@@ -1851,14 +1914,26 @@ impl<'a> Agent<'a> {
                 .into_iter()
                 .filter(|spec| !self.disabled.contains(spec.name()))
                 .collect();
-            specs = tier_declarations(specs, lane_specs, &self.activated);
+            let workload = self
+                .client
+                .route_decision()
+                .and_then(|decision| decision.workload.clone());
+            let (specs_tiered, core_withheld) = tier_declarations(
+                specs,
+                lane_specs,
+                &self.activated,
+                self.turns,
+                workload.as_deref(),
+            );
+            specs = specs_tiered;
+            withheld = core_withheld;
         }
         // The verdict the run already holds orders the native tools. A
         // profile reorders; it never removes an ability.
         if let Some(decision) = self.client.route_decision() {
             profile_order(&mut specs, decision.workload.as_deref());
         }
-        specs
+        (specs, withheld)
     }
 
     /// Whether this name is disabled. The resolved name is checked
@@ -1956,6 +2031,14 @@ impl<'a> Agent<'a> {
             recalled: assembly.recalled,
             shape: assembly.shape,
         });
+        // The drift trigger's base: the opening task's own vector, so
+        // the first steer is compared against the instruction the block
+        // was actually ranked for. One extra embed per run; the curation
+        // path reuses the same embedder and scale.
+        self.curate_base = self
+            .memory
+            .as_ref()
+            .and_then(|memory| memory.instruction_vector(task));
         self.record(&Record::Memory {
             shape: shape.clone(),
             facts: facts.clone(),
@@ -2234,9 +2317,13 @@ impl<'a> Agent<'a> {
         // list is computed from the same declarations() the request
         // reads, so the log and the wire cannot disagree.
         {
-            let specs = self.declarations();
+            let (specs, withheld) = self.declaration_set();
             let names: Vec<String> = specs.iter().map(|spec| spec.name().to_string()).collect();
-            let tier = if names.iter().any(|name| name == tools::TOOL_SEARCH_TOOL) {
+            let tier = if !withheld.is_empty() {
+                // The core's own tail was withheld: the record names both
+                // sides — what the model saw and what it did not.
+                "curated"
+            } else if names.iter().any(|name| name == tools::TOOL_SEARCH_TOOL) {
                 "deferred"
             } else {
                 "core"
@@ -2244,6 +2331,7 @@ impl<'a> Agent<'a> {
             self.record(&Record::Declarations {
                 names,
                 tier: tier.to_string(),
+                withheld,
             })?;
         }
         let _ = self.progress.flush();
@@ -2302,6 +2390,15 @@ impl<'a> Agent<'a> {
             let mut request_messages = Vec::with_capacity(self.messages.len() + 1);
             request_messages.push(Message::text(Role::System, &request_system));
             request_messages.extend(self.messages.iter().cloned());
+            // A drift curation's note rides THIS request's tail, at the
+            // end of the conversation: turn-scoped, request-scoped, and
+            // never inside the system message, whose byte-stability the
+            // provider-side prefix cache keys on (the surface-curation
+            // plan's C2 delivery rule). The `curated` record in the log
+            // is what keeps it reconstructable.
+            if let Some(note) = self.pending_curated.take() {
+                request_messages.push(Message::text(Role::System, &note));
+            }
             // The declarations are dynamic now: the four built-ins, the
             // `use_skill` tool when this run carries skills, plus every
             // lane that has joined this run so far, in join order. A
@@ -2843,11 +2940,102 @@ impl<'a> Agent<'a> {
     /// message framed as the owner's, recorded through `push_message`
     /// like every other model-visible message (hard rule 5), so a
     /// steered run's trajectory is reconstructable from its log alone.
+    /// The steer is also the drift trigger's input: a steer that moved
+    /// the conversation past [`DRIFT_FLOOR`] re-curates the memory
+    /// block for the next request (the surface-curation plan's C2).
     fn apply_steer(&mut self, text: &str) -> Result<(), AgentError> {
         let bounded = steer_text(text);
         let _ = writeln!(self.progress, "\u{2014} steer: {}", preview(&bounded, 72));
         let _ = self.progress.flush();
-        self.push_message(Message::text(Role::User, steer_frame(&bounded)))
+        self.push_message(Message::text(Role::User, steer_frame(&bounded)))?;
+        self.maybe_curate(&bounded)
+    }
+
+    /// Re-curate the memory block when the conversation has drifted:
+    /// the steer's vector against the last curated instruction's, and a
+    /// cosine under [`DRIFT_FLOOR`] re-runs the opening assembly's own
+    /// ranker against the new text. The first steer is a drift by
+    /// definition — the conversation changed hands mid-run, so the
+    /// block is stale whatever the vectors say — and a corpus with no
+    /// serving embedder treats every steer as drifted, the safe bias
+    /// when movement cannot be measured. The note rides the next
+    /// request's message tail, never the system prompt.
+    ///
+    /// The cost is bounded by the trigger: one instruction embed per
+    /// steer to measure, plus the ranking's own embed on a real
+    /// curation — the same shape the `recall` tool pays — against fact
+    /// vectors that are already cached. Recall hits re-arm with the
+    /// curation, so KI-068's rule holds per curation, not per run.
+    fn maybe_curate(&mut self, text: &str) -> Result<(), AgentError> {
+        let Some(memory) = self.memory.clone() else {
+            return Ok(());
+        };
+        let vector = memory.instruction_vector(text);
+        let drifted = if !self.steered_once {
+            // The first steer: a drift by definition, per the plan.
+            true
+        } else {
+            match (&self.curate_base, &vector) {
+                // No base to compare against, or nothing to compare
+                // with (a keyword-only corpus): re-curate.
+                (None, _) | (_, None) => true,
+                (Some(base), Some(new)) => memory::cosine(base, new) < DRIFT_FLOOR,
+            }
+        };
+        self.steered_once = true;
+        // The base advances to this steer whatever the verdict: the
+        // next comparison runs against the most recent instruction, so
+        // a slow walk of small shifts accumulates instead of hiding.
+        self.curate_base = vector;
+        if !drifted {
+            return Ok(());
+        }
+        let assembly = memory.assemble(text, &memory.working());
+        let block = memory::render_assembly(&assembly);
+        let shape = assembly.shape.unwrap_or_default().to_string();
+        let facts: Vec<String> = assembly
+            .protected
+            .iter()
+            .map(|hit| hit.fact.name.clone())
+            .chain(assembly.recalled.iter().map(|hit| hit.fact.name.clone()))
+            .chain(assembly.working.iter().map(|fact| fact.name.clone()))
+            .collect();
+        // KI-068's rule, one seam later: a hit means the model saw the
+        // fact, so the curation's hits re-arm here and fire after the
+        // next successful response. The take in `record_recall_hits`
+        // makes it exactly once per curation.
+        self.pending_hits = Some(PendingHits {
+            memory,
+            recalled: assembly.recalled,
+            shape: assembly.shape,
+        });
+        self.record(&Record::Curated {
+            turn: self.turns,
+            shape: shape.clone(),
+            facts: facts.clone(),
+        })?;
+        let named = if shape.is_empty() {
+            "no shape (surface recall)".to_string()
+        } else {
+            format!("shape {shape}")
+        };
+        let _ = writeln!(
+            self.progress,
+            "\u{2014} memory re-curated on drift: {named} \u{b7} {} fact{}",
+            facts.len(),
+            if facts.len() == 1 { "" } else { "s" },
+        );
+        let _ = self.progress.flush();
+        self.emit(UiEvent::Memory {
+            shape,
+            facts: facts.len(),
+        });
+        // An empty re-assembly adds nothing to the request — the block
+        // the model has is already the corpus's whole answer.
+        if !block.is_empty() {
+            self.pending_curated = Some(block);
+        }
+        Ok(())
     }
 
     /// Land an owner's stop: the progress line, the log's own ending
@@ -3945,6 +4133,7 @@ impl<'a> Agent<'a> {
                 tools,
             })?;
         }
+        self.note_withdrawal(&lane, &outcome.withdrawn)?;
         Ok((outcome.text, outcome.truncated))
     }
 
@@ -3955,6 +4144,12 @@ impl<'a> Agent<'a> {
         lane_tool: &str,
     ) -> Result<(String, bool), AgentError> {
         let arguments = parse_arguments(&call.function.arguments);
+        // A call re-activates: an activation is a grant that lapses, but
+        // the model reaching for the tool again is the freshest possible
+        // evidence it still needs it. Stamped here, so the lapsed name
+        // rides the next request too.
+        self.activated
+            .insert(call.function.name.clone(), self.turns);
         let outcome = self.lanes.call(lane, lane_tool, &arguments).await;
         if let Some(tools) = outcome.joined {
             let count = tools.len();
@@ -3973,6 +4168,7 @@ impl<'a> Agent<'a> {
                 tools,
             })?;
         }
+        self.note_withdrawal(lane, &outcome.withdrawn)?;
         // The `truncated` flag is the lane's, not a guess: it rode out of
         // the same `bound` the built-ins go through (KI-041), so the log
         // says whether the model read a whole answer or a cut one.
@@ -4006,6 +4202,31 @@ impl<'a> Agent<'a> {
         Ok(())
     }
 
+    /// Record a lane that died on a call this run made, so the log keeps
+    /// the withdrawal reconstructable: the `lane_failed` row after the
+    /// lane's `lane_tools` row is what tells every reader — the replay,
+    /// the face, the TUI — that the lane's tools left the model's tool
+    /// set here (the surface-curation plan's C0). The death is also one
+    /// progress line: the run carries on, but the owner reads why.
+    fn note_withdrawal(
+        &mut self,
+        lane: &str,
+        withdrawn: &Option<String>,
+    ) -> Result<(), AgentError> {
+        if let Some(reason) = withdrawn {
+            let _ = writeln!(
+                self.progress,
+                "\u{2192} lane {lane} died \u{2014} its tools are withdrawn: {reason}"
+            );
+            let _ = self.progress.flush();
+            self.record(&Record::LaneFailed {
+                lane: lane.to_string(),
+                reason: reason.clone(),
+            })?;
+        }
+        Ok(())
+    }
+
     /// One deferred-tool search. sys1 names the capability class from a
     /// closed set, sem1 ranks the candidates by meaning, and a declared
     /// floor decides whether anything fits. Nothing here calls a
@@ -4027,7 +4248,7 @@ impl<'a> Agent<'a> {
         }
         let candidates: Vec<crate::tool_router::Candidate> = self
             .lanes
-            .lane_tools()
+            .declared_lane_tools()
             .iter()
             .flat_map(|lane| {
                 lane.tools.iter().map(|tool| crate::tool_router::Candidate {
@@ -4060,6 +4281,7 @@ impl<'a> Agent<'a> {
             )
             .await;
         self.note_join("sys1", outcome.joined)?;
+        self.note_withdrawal("sys1", &outcome.withdrawn)?;
         let (class, confidence, class_note) =
             match crate::tool_router::parse_capability(&outcome.text) {
                 Some((label, confidence)) => (Some(label), confidence, String::new()),
@@ -4171,20 +4393,22 @@ impl<'a> Agent<'a> {
             crate::tool_router::Selection::Confident(_) => {
                 let names = selection.activate();
                 for name in &names {
-                    self.activated.insert(name.clone());
+                    self.activated.insert(name.clone(), self.turns);
                 }
                 text.push_str(&format!(
-                    "\nactivated for the next request: {}\n",
+                    "\nactivated for the next {} requests: {}\n",
+                    ACTIVATION_TURNS,
                     names.join(", ")
                 ));
             }
             crate::tool_router::Selection::Ambiguous(_) => {
                 let names = selection.activate();
                 for name in &names {
-                    self.activated.insert(name.clone());
+                    self.activated.insert(name.clone(), self.turns);
                 }
                 text.push_str(&format!(
-                    "\ntwo tools are close; both are activated \u{2014} choose one by name: {}\n",
+                    "\ntwo tools are close; both are activated for the next {} requests \u{2014} choose one by name: {}\n",
+                    ACTIVATION_TURNS,
                     names.join(", ")
                 ));
             }
@@ -5402,7 +5626,7 @@ impl Agent<'_> {
                 tier: "core".to_string(),
             },
             Some((tool, false)) => {
-                let retrieved = self.activated.contains(name);
+                let retrieved = self.activated.contains_key(name);
                 Resolution {
                     requested: name.to_string(),
                     resolved: tool.name().to_string(),
@@ -5424,7 +5648,7 @@ impl Agent<'_> {
                 }
             }
             None => {
-                let retrieved = self.activated.contains(name);
+                let retrieved = self.activated.contains_key(name);
                 Resolution {
                     requested: name.to_string(),
                     resolved: name.to_string(),
@@ -5497,28 +5721,139 @@ fn read_marker(access: &FileAccess, path: &str) -> Option<std::path::PathBuf> {
     }
 }
 
+/// Whether an activation stamped at `stamp` still rides at `turn`: the
+/// tool stays declared for `ACTIVATION_TURNS` requests counting the one
+/// it was activated on, so a tool pulled in at turn *n* is absent at
+/// turn *n + ACTIVATION_TURNS*. Pure, so the window is a test.
+fn activation_live(stamp: u64, turn: u64) -> bool {
+    turn < stamp.saturating_add(ACTIVATION_TURNS)
+}
+
+/// The core tools a run cannot proceed without, held explicit (the
+/// surface-curation plan's K6 guardrail): the working set every
+/// workload profile names, the capability trio the model cannot name
+/// any other way, the memory pair, and the loop's own control
+/// surfaces. Withholding skips these whatever the score says — a write
+/// without its read, or a `process` without its handle, is a run the
+/// model cannot finish.
+const CORE_KEEP: &[&str] = &[
+    "bash",
+    "read_file",
+    "write_file",
+    "list_dir",
+    "edit",
+    "grep",
+    "glob",
+    "todo",
+    "measure",
+    "imagine",
+    "browse",
+    "remember",
+    "supersede",
+    "recall",
+    "subagent",
+    "process",
+    "use_skill",
+];
+
+/// The core tools the surface withholds when it is over budget even
+/// with the lanes deferred, until it fits. The workload profile's rank
+/// is the score (`profile_rank`: a profile-listed tool survives, an
+/// unranked one is the withholding candidate pool), and the explicit
+/// [`CORE_KEEP`] list is the floor the score can never cross. Pure, so
+/// the withholding is a test.
+fn withhold_core(core: &[crate::api::ToolSpec], workload: Option<&str>) -> Vec<String> {
+    let candidates: Vec<&crate::api::ToolSpec> = core
+        .iter()
+        .filter(|spec| !CORE_KEEP.contains(&spec.name()))
+        .collect();
+    // The least important first: the profile's rank sorts descending —
+    // `usize::MAX` (unranked by this workload) withholds before a
+    // profile-listed tool does, and ties break by name so the
+    // withholding is deterministic.
+    let mut ranked: Vec<(usize, String, &crate::api::ToolSpec)> = candidates
+        .into_iter()
+        .map(|spec| {
+            (
+                workload
+                    .map(|w| profile_rank(w, spec.name()))
+                    .unwrap_or(usize::MAX),
+                spec.name().to_string(),
+                spec,
+            )
+        })
+        .collect();
+    ranked.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+    let mut budget = declaration_tokens(core);
+    let mut withheld: Vec<String> = Vec::new();
+    for (_, name, spec) in ranked {
+        if budget <= MAX_DEFINITION_TOKENS && core.len() - withheld.len() <= MAX_VISIBLE_TOOLS {
+            break;
+        }
+        budget -= declaration_tokens(std::slice::from_ref(spec));
+        withheld.push(name);
+    }
+    withheld
+}
+
 /// Declare everything when it fits, otherwise the core plus the
-/// activated tools plus the search. Pure, so the tier boundary is a
-/// test rather than a prompt experiment.
+/// still-live activated tools plus the search — and, when the core
+/// alone is still over budget, the profile-ranked withholding of the
+/// core's own tail. Pure, so the tier boundary is a test rather than a
+/// prompt experiment. Returns the declarations and the core tools the
+/// call withheld, which the log records (K6: the log names what the
+/// model did not see).
 fn tier_declarations(
     core: Vec<crate::api::ToolSpec>,
     lanes: Vec<crate::api::ToolSpec>,
-    activated: &std::collections::BTreeSet<String>,
-) -> Vec<crate::api::ToolSpec> {
+    activated: &std::collections::BTreeMap<String, u64>,
+    turn: u64,
+    workload: Option<&str>,
+) -> (Vec<crate::api::ToolSpec>, Vec<String>) {
     let tokens = declaration_tokens(&core) + declaration_tokens(&lanes);
     if core.len() + lanes.len() <= MAX_VISIBLE_TOOLS && tokens <= MAX_DEFINITION_TOKENS {
         let mut specs = core;
         specs.extend(lanes);
-        return specs;
+        return (specs, Vec::new());
     }
-    let mut specs = core;
+    // The lanes defer first — the tier's original rule, unchanged.
+    let mut specs: Vec<crate::api::ToolSpec> = Vec::new();
+    let mut withheld_lanes: Vec<crate::api::ToolSpec> = Vec::new();
     for spec in lanes {
-        if activated.contains(spec.name()) {
+        if activated
+            .get(spec.name())
+            .is_some_and(|stamp| activation_live(*stamp, turn))
+        {
             specs.push(spec);
+        } else {
+            withheld_lanes.push(spec);
         }
     }
-    specs.push(tools::tool_search_spec());
-    specs
+    if declaration_tokens(&specs) + declaration_tokens(&core) <= MAX_DEFINITION_TOKENS
+        && specs.len() + core.len() <= MAX_VISIBLE_TOOLS
+    {
+        let mut all = core;
+        all.extend(specs);
+        all.push(tools::tool_search_spec());
+        return (all, Vec::new());
+    }
+    // The core itself is over budget: withhold its tail, and name what
+    // went. The activated lane tools and the search ride beside the
+    // surviving core.
+    let keep: std::collections::BTreeSet<String> =
+        withhold_core(&core, workload).into_iter().collect();
+    let mut withheld: Vec<String> = Vec::new();
+    let mut surviving: Vec<crate::api::ToolSpec> = Vec::new();
+    for spec in core {
+        if keep.contains(spec.name()) {
+            withheld.push(spec.name().to_string());
+        } else {
+            surviving.push(spec);
+        }
+    }
+    surviving.extend(specs);
+    surviving.push(tools::tool_search_spec());
+    (surviving, withheld)
 }
 
 /// The rank a workload gives a tool, or `usize::MAX` for a tool the
@@ -6555,13 +6890,15 @@ struct LaneRoster {
 /// One lane's child process for the length of a run.
 enum LaneChild {
     /// Spawned, initialized, and listed: its tools are in the model's
-    /// tool set until the run ends, dead child or not.
+    /// tool set while it lives.
     Live {
         server: Box<McpServer>,
         tools: Vec<LaneTool>,
     },
-    /// Failed or gone: the tools it brought stay declared — the model saw
-    /// them, and the log records them — but every call fails fast.
+    /// Failed or gone: its tools are withdrawn from the declarations —
+    /// the `lane_failed` record the death wrote is what keeps the
+    /// withdrawal reconstructable — but a call to a withdrawn name
+    /// still answers, with the named refusal.
     Dead {
         reason: String,
         tools: Vec<LaneTool>,
@@ -6583,6 +6920,11 @@ struct LaneOutcome {
     /// records it: the log is what keeps the dynamic declarations
     /// reconstructable.
     joined: Option<Vec<LaneTool>>,
+    /// The reason a live lane died under this call, when it did. The
+    /// caller records it as the lane's `lane_failed` withdrawal record:
+    /// the one fact that lets a log reader stop declaring the lane's
+    /// tools from here on (the surface-curation plan's C0).
+    withdrawn: Option<String>,
 }
 
 impl LaneRoster {
@@ -6643,9 +6985,10 @@ impl LaneRoster {
     }
 
     /// Each joined lane's tools as the model sees them, in join order. A
-    /// lane that died after joining keeps its tools here: the model saw
-    /// them declared, so withdrawing them would make the log's
-    /// `lane_tools` record stop matching the requests that followed.
+    /// lane that died after joining keeps its tools here: the log's
+    /// `lane_tools` record has to keep matching what the model was
+    /// shown over the whole run, and the withdrawal is recorded
+    /// separately, as `lane_failed`.
     fn lane_tools(&self) -> Vec<LaneTools> {
         self.order
             .iter()
@@ -6657,6 +7000,24 @@ impl LaneRoster {
                     })
                 }
                 None => None,
+            })
+            .collect()
+    }
+
+    /// The joined lanes' tools that are still declared: a live lane's
+    /// tools. A lane that died has its tools withdrawn — the death
+    /// recorded one `lane_failed` row — so the declarations a request
+    /// carries never advertise a tool that cannot run. This is what
+    /// `declarations` reads; `lane_tools` is what the log reads.
+    fn declared_lane_tools(&self) -> Vec<LaneTools> {
+        self.order
+            .iter()
+            .filter_map(|lane| match self.children.get(lane) {
+                Some(LaneChild::Live { tools, .. }) => Some(LaneTools {
+                    lane: lane.clone(),
+                    tools: tools.clone(),
+                }),
+                _ => None,
             })
             .collect()
     }
@@ -6690,6 +7051,7 @@ impl LaneRoster {
             text: bounded.output,
             truncated: bounded.truncated,
             joined: outcome.joined,
+            withdrawn: outcome.withdrawn,
         }
     }
 
@@ -6723,7 +7085,7 @@ impl LaneRoster {
                     self.children.insert(
                         lane.to_string(),
                         LaneChild::Dead {
-                            reason,
+                            reason: reason.clone(),
                             tools: Vec::new(),
                         },
                     );
@@ -6731,6 +7093,7 @@ impl LaneRoster {
                         text,
                         truncated: false,
                         joined: None,
+                        withdrawn: Some(reason),
                     };
                 }
             }
@@ -6740,6 +7103,7 @@ impl LaneRoster {
                 text: format!("error: lane `{lane}` has no child to call"),
                 truncated: false,
                 joined,
+                withdrawn: None,
             };
         };
         let text = match child {
@@ -6762,6 +7126,7 @@ impl LaneRoster {
             text: bounded.output,
             truncated: bounded.truncated,
             joined,
+            withdrawn: None,
         }
     }
 
@@ -6802,7 +7167,7 @@ impl LaneRoster {
                     self.children.insert(
                         lane.to_string(),
                         LaneChild::Dead {
-                            reason,
+                            reason: reason.clone(),
                             tools: Vec::new(),
                         },
                     );
@@ -6810,6 +7175,7 @@ impl LaneRoster {
                         text,
                         truncated: false,
                         joined: None,
+                        withdrawn: Some(reason),
                     };
                 }
             }
@@ -6822,25 +7188,28 @@ impl LaneRoster {
                 text: format!("error: lane `{lane}` has no child to call"),
                 truncated: false,
                 joined,
+                withdrawn: None,
             };
         };
         match child {
             // Dead: fail fast. No respawn, and the run carries on.
             // KI-042: the text tells the model the lane is GONE, not
-            // merely that this call failed — its declarations stay in
-            // the tool set by design, and a model that keeps calling
-            // them needs to read, on the ordinary tool_result path, that
-            // there is nothing left to call.
+            // merely that this call failed — its tools were withdrawn
+            // from the tool set when it died (the `lane_failed` record
+            // is in the log), and a model that keeps calling them needs
+            // to read, on the ordinary tool_result path, that there is
+            // nothing left to call.
             LaneChild::Dead { reason, .. } => LaneOutcome {
                 text: format!(
                     "error: lane `{lane}` is gone for the rest of this run (its child \
-                     died: {reason}). Its tools remain declared \u{2014} the log keeps \
-                     them reconstructable \u{2014} but every call to them fails the \
-                     same way. Do the work another way, or tell the user the \
-                     lane is down."
+                     died: {reason}). Its tools were withdrawn from the tool set \u{2014} \
+                     the log's lane_failed record keeps that reconstructable \u{2014} and \
+                     every call to them fails the same way. Do the work another way, or \
+                     tell the user the lane is down."
                 ),
                 truncated: false,
                 joined,
+                withdrawn: None,
             },
             LaneChild::Live { server, tools } => {
                 // The model called `mcp__<lane>__<short>`; the declaration
@@ -6854,6 +7223,7 @@ impl LaneRoster {
                         text: format!("error: lane `{lane}` has no tool `{tool}`"),
                         truncated: false,
                         joined,
+                        withdrawn: None,
                     };
                 };
                 let lane_tool = listed.lane_tool.clone();
@@ -6897,11 +7267,14 @@ impl LaneRoster {
                         },
                         truncated: false,
                         joined,
+                        withdrawn: None,
                     },
                     // The child died under the call. The lane is dead for
                     // the rest of the run; the run itself carries on with
                     // the typed failure in its log and its conversation.
-                    // The tools it brought stay declared.
+                    // The tools it brought are withdrawn from the
+                    // declarations, and the caller records the
+                    // `lane_failed` withdrawal this reason becomes.
                     Err(error) => {
                         let reason = error.to_string();
                         *child = LaneChild::Dead {
@@ -6912,6 +7285,7 @@ impl LaneRoster {
                             text: format!("error: {reason}"),
                             truncated: false,
                             joined,
+                            withdrawn: Some(reason),
                         }
                     }
                 }
@@ -7360,13 +7734,17 @@ mod tests {
             second.text
         );
         // KI-042: the text tells the model the lane is gone and that its
-        // declarations stay — a model that keeps calling them needs to
-        // read why every call fails the same way.
-        assert!(second.text.contains("remain declared"), "{}", second.text);
-        // A dead lane contributes no declarations: the model never saw a
-        // tool that cannot run.
+        // tools were withdrawn — a model that keeps calling them needs
+        // to read why every call fails the same way.
+        assert!(
+            second.text.contains("withdrawn from the tool set"),
+            "{}",
+            second.text
+        );
+        // A lane that never joined brought no tools, so it declares none.
         assert_eq!(crate::tools::declarations(&roster.lane_tools()).len(), 11);
         assert!(roster.lane_tools().is_empty());
+        assert!(roster.declared_lane_tools().is_empty());
         // And an unknown lane is a named reason, not a panic — and not a
         // spawn: no registry lane carries this name, so nothing launches.
         let unknown = roster
@@ -7378,6 +7756,98 @@ mod tests {
             unknown.text
         );
         assert!(unknown.joined.is_none());
+        // The unknown lane's failed spawn is a withdrawal-shaped death:
+        // the reason rides out so the run-start precedent (a lane that
+        // did not join is recorded) holds on the lazy path too.
+        assert!(unknown.withdrawn.is_some());
+    }
+
+    /// The C0 withdrawal: a lane that died after joining keeps its tools
+    /// in the log's `lane_tools` shape, but the declarations read only
+    /// the live. A lane that never died declares as it always has.
+    #[test]
+    fn a_dead_lane_keeps_its_log_tools_but_declares_none() {
+        let probe = crate::tools::LaneTool {
+            name: "mcp__sem1__probe".to_string(),
+            lane_tool: "sem1_probe".to_string(),
+            description: "probe the endpoint".to_string(),
+            input_schema: serde_json::json!({ "type": "object" }),
+        };
+        let mut roster = LaneRoster::new(HashMap::new());
+        roster.order.push("sem1".to_string());
+        roster.children.insert(
+            "sem1".to_string(),
+            LaneChild::Dead {
+                reason: "the child died under the call".to_string(),
+                tools: vec![probe.clone()],
+            },
+        );
+        // The log's shape keeps what the model was shown: the
+        // `lane_tools` record's partner stays whole.
+        assert_eq!(roster.lane_tools().len(), 1);
+        assert_eq!(roster.lane_tools()[0].tools.len(), 1);
+        // The declarations read only the live: the withdrawal is real,
+        // and the helper's list is back to the built-ins alone.
+        assert!(roster.declared_lane_tools().is_empty());
+        assert_eq!(
+            crate::tools::declarations(&roster.declared_lane_tools()).len(),
+            11
+        );
+    }
+
+    /// The reconstruction applies the withdrawal rule the
+    /// `lane_failed` record's doc names: the lane's tools are in the
+    /// document until the record, and out of it after.
+    #[test]
+    fn a_lane_withdrawal_removes_the_lanes_tools_from_the_reconstruction() {
+        let probe = crate::tools::LaneTool {
+            name: "mcp__sem1__probe".to_string(),
+            lane_tool: "sem1_probe".to_string(),
+            description: "probe the endpoint".to_string(),
+            input_schema: serde_json::json!({ "type": "object" }),
+        };
+        let records = vec![
+            Record::User {
+                content: "probe it".to_string(),
+            },
+            Record::LaneTools {
+                lane: "sem1".to_string(),
+                tools: vec![probe],
+            },
+            Record::ToolResult {
+                call_id: "c1".to_string(),
+                name: "mcp__sem1__probe".to_string(),
+                output: "ok".to_string(),
+                truncated: false,
+                approved: true,
+            },
+        ];
+        let tool_names = |records: &[Record]| {
+            let doc = Agent::reconstruct_document(records, None, None, &FileAccess::None);
+            doc["tools"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|spec| spec["function"]["name"].as_str().unwrap().to_string())
+                .collect::<Vec<String>>()
+        };
+        assert!(
+            tool_names(&records).contains(&"mcp__sem1__probe".to_string()),
+            "the joined lane's tools reconstruct"
+        );
+        let withdrawn = vec![
+            records[0].clone(),
+            records[1].clone(),
+            Record::LaneFailed {
+                lane: "sem1".to_string(),
+                reason: "the child died under the call".to_string(),
+            },
+            records[2].clone(),
+        ];
+        assert!(
+            !tool_names(&withdrawn).contains(&"mcp__sem1__probe".to_string()),
+            "the withdrawal takes the lane's tools out of the document"
+        );
     }
 
     #[tokio::test]
@@ -10797,7 +11267,7 @@ You are auditing a change. Read the diff before you judge it.
 #[cfg(test)]
 mod tier_tests {
     use super::*;
-    use std::collections::BTreeSet;
+    use std::collections::BTreeMap;
 
     fn spec(name: &str) -> crate::api::ToolSpec {
         crate::api::ToolSpec::function(name, "a tool", serde_json::json!({"type": "object"}))
@@ -10807,20 +11277,89 @@ mod tier_tests {
     fn a_large_catalog_keeps_the_core_and_defers_the_rest() {
         let core: Vec<_> = (0..8).map(|i| spec(&format!("core{i}"))).collect();
         let lanes: Vec<_> = (0..32).map(|i| spec(&format!("mcp__x__t{i}"))).collect();
-        let tiers = tier_declarations(core.clone(), lanes.clone(), &BTreeSet::new());
+        let (tiers, withheld) =
+            tier_declarations(core.clone(), lanes.clone(), &BTreeMap::new(), 1, None);
         assert_eq!(tiers.len(), 9, "the eight core tools plus the search");
         assert_eq!(tiers.last().unwrap().name(), "tool_search");
+        assert!(
+            withheld.is_empty(),
+            "nothing is withheld when only lanes defer"
+        );
     }
 
     #[test]
     fn an_activated_tool_is_declared_beside_the_search() {
         let core: Vec<_> = (0..8).map(|i| spec(&format!("core{i}"))).collect();
         let lanes: Vec<_> = (0..32).map(|i| spec(&format!("mcp__x__t{i}"))).collect();
-        let mut activated = BTreeSet::new();
-        activated.insert("mcp__x__t7".to_string());
-        let tiers = tier_declarations(core, lanes, &activated);
+        let mut activated = BTreeMap::new();
+        activated.insert("mcp__x__t7".to_string(), 1);
+        let (tiers, withheld) = tier_declarations(core, lanes, &activated, 1, None);
         assert_eq!(tiers.len(), 10);
         assert!(tiers.iter().any(|spec| spec.name() == "mcp__x__t7"));
+        assert!(withheld.is_empty());
+    }
+
+    /// The C1 expiry: an activation lasts `ACTIVATION_TURNS` requests
+    /// counting the one it was activated on, then the tool is back
+    /// behind the search.
+    #[test]
+    fn an_activation_expires_after_its_turns() {
+        assert!(activation_live(1, 1), "the activation turn itself");
+        assert!(activation_live(1, 2));
+        assert!(
+            activation_live(1, ACTIVATION_TURNS),
+            "the last request the grant covers"
+        );
+        assert!(
+            !activation_live(1, 1 + ACTIVATION_TURNS),
+            "the request past the window"
+        );
+        // The declarations carry it inside the window and not outside.
+        let core: Vec<_> = (0..8).map(|i| spec(&format!("core{i}"))).collect();
+        let lanes: Vec<_> = (0..32).map(|i| spec(&format!("mcp__x__t{i}"))).collect();
+        let mut activated = BTreeMap::new();
+        activated.insert("mcp__x__t7".to_string(), 1);
+        let (inside, _) = tier_declarations(core.clone(), lanes.clone(), &activated, 1, None);
+        assert!(inside.iter().any(|spec| spec.name() == "mcp__x__t7"));
+        let (outside, _) = tier_declarations(core, lanes, &activated, 1 + ACTIVATION_TURNS, None);
+        assert!(!outside.iter().any(|spec| spec.name() == "mcp__x__t7"));
+    }
+
+    #[test]
+    fn a_lapsed_tool_reactivates_on_call() {
+        // The rule the loop applies: a call re-stamps, and the re-stamp
+        // opens a fresh window from the call's own turn.
+        let stamp = 9;
+        assert!(!activation_live(stamp, stamp + ACTIVATION_TURNS));
+        let restamped = stamp + ACTIVATION_TURNS;
+        assert!(activation_live(restamped, restamped));
+        assert!(activation_live(restamped, restamped + ACTIVATION_TURNS - 1));
+        assert!(!activation_live(restamped, restamped + ACTIVATION_TURNS));
+    }
+
+    /// The C2 drift trigger is a pure function of the vectors: the same
+    /// pair, the same verdict, whatever the conversation looked like
+    /// around it. The floor sits in the measured gap (unrelated steer
+    /// pairs 0.647–0.729, paraphrases 0.846–0.925), so the two sides of
+    /// the measurement land on the two sides of the decision.
+    #[test]
+    fn the_drift_floor_decides_deterministically() {
+        let orthogonal = vec![1.0, 0.0];
+        let unrelated = vec![0.2, 0.98];
+        let paraphrase = vec![0.9, 0.1];
+        let verdict = |a: &[f32], b: &[f32]| memory::cosine(a, b) < DRIFT_FLOOR;
+        assert!(verdict(&orthogonal, &unrelated), "below the floor: drift");
+        assert!(!verdict(&orthogonal, &paraphrase), "above the floor: hold");
+        // Same input, same verdict — no state, no clock, no sampling.
+        assert_eq!(
+            verdict(&orthogonal, &unrelated),
+            verdict(&orthogonal, &unrelated)
+        );
+        // The measured gap brackets the floor from both sides.
+        assert!(
+            memory::cosine(&orthogonal, &paraphrase) >= DRIFT_FLOOR
+                && memory::cosine(&orthogonal, &unrelated) < DRIFT_FLOOR,
+        );
     }
 
     #[test]
@@ -10872,9 +11411,162 @@ mod tier_tests {
     fn a_catalog_that_fits_is_declared_whole() {
         let core: Vec<_> = (0..8).map(|i| spec(&format!("core{i}"))).collect();
         let lanes: Vec<_> = (0..3).map(|i| spec(&format!("mcp__x__t{i}"))).collect();
-        let tiers = tier_declarations(core, lanes, &BTreeSet::new());
+        let (tiers, withheld) =
+            tier_declarations(core, lanes, &std::collections::BTreeMap::new(), 1, None);
         assert_eq!(tiers.len(), 11);
         assert!(!tiers.iter().any(|spec| spec.name() == "tool_search"));
+        assert!(withheld.is_empty());
+    }
+
+    /// The C3 withholding, over a synthetic core whose descriptions
+    /// blow the definition-token budget: the unranked, unlisted tail is
+    /// withheld and named, and the explicit [`CORE_KEEP`] floor is
+    /// never crossed — a write without its read is a run the model
+    /// cannot finish, so the allowlist survives even when the surface
+    /// cannot fully fit.
+    #[test]
+    fn an_over_budget_core_withholds_its_unranked_tail_and_names_them() {
+        let big = |name: &str| {
+            crate::api::ToolSpec::function(
+                name,
+                "a deliberately verbose tool description. ".repeat(40),
+                serde_json::json!({"type": "object"}),
+            )
+        };
+        let core: Vec<crate::api::ToolSpec> = [
+            "bash",
+            "read_file",
+            "write_file",
+            "list_dir",
+            "edit",
+            "grep",
+            "glob",
+            "todo",
+            "measure",
+            "imagine",
+            "browse",
+            "remember",
+            "supersede",
+            "recall",
+            "subagent",
+            "process",
+            "use_skill",
+            "apply_patch",
+            "repo_map",
+            "file_change",
+            "deck",
+            "extract",
+            "vision",
+            "web",
+            "read_document",
+            "send_file",
+            "computer_use",
+            "improve",
+            "convention",
+            "plan",
+            "mcp_resource",
+            "mcp_prompt",
+        ]
+        .iter()
+        .map(|name| big(name))
+        .collect();
+        assert!(
+            declaration_tokens(&core) > MAX_DEFINITION_TOKENS,
+            "the fixture is over budget: {}",
+            declaration_tokens(&core)
+        );
+        let withheld = withhold_core(&core, Some("standard_code"));
+        assert!(!withheld.is_empty(), "the over-budget core withholds");
+        // The unranked, unlisted tail goes first, by name.
+        for name in ["apply_patch", "repo_map", "file_change", "deck", "extract"] {
+            assert!(withheld.iter().any(|w| w == name), "{name} withheld");
+        }
+        // The floor the score cannot cross: every allowlisted tool
+        // survives, whatever the budget says.
+        for name in CORE_KEEP {
+            assert!(
+                !withheld.iter().any(|w| w == name),
+                "{name} is on the explicit keep list"
+            );
+        }
+        // The same input, the same withholding — pure.
+        assert_eq!(withheld, withhold_core(&core, Some("standard_code")));
+    }
+
+    /// The tier's full C3 path: when the core alone is over budget the
+    /// withheld tools leave the declarations, the search rides, and the
+    /// returned withheld list is what the log's Declarations record
+    /// carries.
+    #[test]
+    fn the_tier_withholds_the_core_only_when_even_the_deferred_lanes_cannot_fit_it() {
+        let big = |name: &str| {
+            crate::api::ToolSpec::function(
+                name,
+                "a deliberately verbose tool description. ".repeat(40),
+                serde_json::json!({"type": "object"}),
+            )
+        };
+        let core: Vec<crate::api::ToolSpec> = (0..24)
+            .map(|i| {
+                if i < 17 {
+                    big(CORE_KEEP[i])
+                } else {
+                    big(&format!("special{i}"))
+                }
+            })
+            .collect();
+        let lanes: Vec<crate::api::ToolSpec> =
+            (0..32).map(|i| spec(&format!("mcp__x__t{i}"))).collect();
+        let (tiers, withheld) =
+            tier_declarations(core, lanes, &std::collections::BTreeMap::new(), 1, None);
+        assert!(
+            tiers.iter().any(|spec| spec.name() == "tool_search"),
+            "the search rides"
+        );
+        assert!(!withheld.is_empty(), "the core's tail is withheld");
+        for name in withheld {
+            assert!(
+                !CORE_KEEP.contains(&name.as_str()),
+                "{name} is on the keep list"
+            );
+            assert!(
+                !tiers.iter().any(|spec| spec.name() == name),
+                "{name} is not declared"
+            );
+        }
+    }
+
+    /// The measurement (K7): today's real native surface fits its
+    /// bounds, so the C3 mechanism is dormant on a real run — nothing
+    /// withheld, the surface byte-identical to the pre-plan shape. The
+    /// numbers are the before/after pair the plan quotes.
+    #[test]
+    fn the_real_native_surface_fits_and_withholds_nothing() {
+        let core: Vec<crate::api::ToolSpec> = Agent::base_declarations(&[]).into_iter().collect();
+        let count = core.len();
+        let tokens = declaration_tokens(&core);
+        let (_, withheld) = tier_declarations(
+            core,
+            Vec::new(),
+            &std::collections::BTreeMap::new(),
+            1,
+            None,
+        );
+        assert!(
+            withheld.is_empty(),
+            "a fitting surface withholds nothing: {withheld:?}"
+        );
+        // The bounds hold today: the record of it is the test.
+        assert!(count <= MAX_VISIBLE_TOOLS, "{count} tools");
+        assert!(
+            tokens <= MAX_DEFINITION_TOKENS,
+            "{tokens} definition tokens"
+        );
+        println!(
+            "the real native surface: {count} declarations, {tokens} definition tokens, \
+             {withheld_len} withheld",
+            withheld_len = withheld.len()
+        );
     }
 }
 

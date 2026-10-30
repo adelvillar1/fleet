@@ -139,10 +139,27 @@ pub enum Record {
     Declarations {
         names: Vec<String>,
         tier: String,
+        /// The core tools the run withholds, when the surface is over
+        /// budget even with the lanes deferred (the surface-curation
+        /// plan's C3): the workload profile's rank is the score, and
+        /// the unranked, unlisted tail is withheld until the surface
+        /// fits. Empty on every run that fits — declare-by-default is
+        /// the rule, withholding is the exception — and named here so
+        /// the log says what the model did not see, not only what it
+        /// did. Absent on logs written before the field existed.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        withheld: Vec<String>,
     },
-    /// A server that did not join at run start, and why. Bookkeeping:
-    /// the model saw no declaration, so this record exists for the
-    /// owner and the audit rather than the conversation.
+    /// A lane that did not join at run start, or one that died after
+    /// joining. The run-start shape is bookkeeping only — the model saw
+    /// no declaration, so this record exists for the owner and the
+    /// audit. The after-joining shape is the withdrawal record: a
+    /// `lane_tools` record for the same lane earlier in the log plus
+    /// this record means the lane's tools left the model's tool set from
+    /// this point on, and every reader that rebuilds a tool set from the
+    /// log applies that rule — the record is what keeps the withdrawal
+    /// reconstructable (hard rule 5), in place of the declarations the
+    /// tools used to keep.
     LaneFailed {
         lane: String,
         reason: String,
@@ -239,6 +256,22 @@ pub enum Record {
         shape: String,
         /// Every fact name the block carried, in block order: the
         /// protected tier, then ranked recall, then working memory.
+        facts: Vec<String>,
+    },
+    /// A mid-run memory curation (the surface-curation plan's C2): the
+    /// run's topic moved past the floor and the block was re-ranked
+    /// against the new instruction. The note rides the named turn's
+    /// request as a tail message — never the system prompt — so this
+    /// record, not the message list, is what keeps the curation
+    /// reconstructable (hard rule 5). Bookkeeping, like `memory`: it
+    /// replays to no message.
+    Curated {
+        /// The turn whose request carried the note at its tail.
+        turn: u64,
+        /// The structure shape the new instruction routed under, empty
+        /// when unclassified.
+        shape: String,
+        /// Every fact name the note carried, in note order.
         facts: Vec<String>,
     },
     /// A rewind: the run was rewound to turn `turn`'s checkpoint, and
@@ -1073,6 +1106,7 @@ pub fn conversation(records: &[Record]) -> Conversation {
             | Record::Declarations { .. }
             | Record::Skills { .. }
             | Record::Memory { .. }
+            | Record::Curated { .. }
             | Record::Goal { .. }
             | Record::Routed { .. }
             | Record::ToolResolution { .. } => {}

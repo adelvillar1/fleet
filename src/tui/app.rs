@@ -114,6 +114,10 @@ pub struct ArtifactCard {
 pub struct LaneCard {
     pub lane: String,
     pub tool_count: usize,
+    /// The withdrawal (the surface-curation plan's C0): the lane died
+    /// and its tools left the run. A withdrawn card renders the death
+    /// where the join rendered the count.
+    pub withdrawn: bool,
 }
 
 /// The skills library at session start, when something was skipped: how
@@ -1447,8 +1451,11 @@ impl App {
                 self.run.stage = Stage::Act;
                 self.run.lanes += 1;
                 self.run.last = format!("lane {lane} \u{b7} {tool_count} tool(s)");
-                self.entries
-                    .push(Entry::Lane(LaneCard { lane, tool_count }));
+                self.entries.push(Entry::Lane(LaneCard {
+                    lane,
+                    tool_count,
+                    withdrawn: false,
+                }));
             }
             UiEvent::SkillsLoaded { loaded, skipped } => {
                 // The library's session-start report: a fact about the
@@ -3069,11 +3076,14 @@ fn entry_of(record: &Record) -> Option<Entry> {
         // kind of staffing fact; the TUI's transcript grows the join
         // row with the bot face, not here.
         Record::Channel { .. } | Record::Join { .. } | Record::Leave { .. } => None,
+        // The mid-run curation is the memory block's own bookkeeping,
+        // one seam later: the note rode one request's tail, and the
+        // run's memory line already told the owner. Not a conversation
+        // block.
+        Record::Curated { .. } => None,
         // Bookkeeping: how a call was resolved is audit material, not a
         // conversation block.
         Record::ToolResolution { .. } => None,
-        // Bookkeeping: a server that did not join is run metadata.
-        Record::LaneFailed { .. } => None,
         // Bookkeeping: what a run declared is lifecycle data, not a
         // conversation block.
         Record::Declarations { .. } => None,
@@ -3114,6 +3124,16 @@ fn entry_of(record: &Record) -> Option<Entry> {
         Record::LaneTools { lane, tools } => Some(Entry::Lane(LaneCard {
             lane: lane.clone(),
             tool_count: tools.len(),
+            withdrawn: false,
+        })),
+        // The withdrawal (the surface-curation plan's C0): a lane that
+        // died after joining renders the death where the join rendered
+        // the count, so a resumed conversation reads the tool set the
+        // run actually had.
+        Record::LaneFailed { lane, .. } => Some(Entry::Lane(LaneCard {
+            lane: lane.clone(),
+            tool_count: 0,
+            withdrawn: true,
         })),
         // A `compaction` record replays to one card: the turns it folded,
         // rebuilt from the range it names. The summary itself is not the
@@ -3949,7 +3969,8 @@ mod tests {
                 }),
                 Entry::Lane(LaneCard {
                     lane: "sem1".to_string(),
-                    tool_count: 4
+                    tool_count: 4,
+                    withdrawn: false,
                 }),
             ]
         );
@@ -4030,7 +4051,8 @@ mod tests {
                 Entry::User("probe it".to_string()),
                 Entry::Lane(LaneCard {
                     lane: "sem1".to_string(),
-                    tool_count: 2
+                    tool_count: 2,
+                    withdrawn: false,
                 }),
                 // The lane's own tool result, under its namespaced name.
                 Entry::Tool(ToolCard {

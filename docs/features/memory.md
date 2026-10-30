@@ -556,6 +556,35 @@ unrelated facts. The floor, the ranking, and the budget together are
 the mechanism; the floor alone is the coarse guard, the budget the fine
 one.
 
+## Mid-run curation: the block re-ranks when the conversation moves
+
+The assembly runs once, against the opening task — and a session does
+not stay on its opening task. The turn loop's drift trigger re-runs the
+same ranker against the current instruction when the conversation has
+moved: a steer's vector is compared against the last curated
+instruction's, and a cosine under `DRIFT_FLOOR` (0.78, measured on this
+machine's embeddinggemma over steer-shaped pairs — unrelated steer
+pairs score 0.647–0.729, paraphrases 0.846–0.925) re-curates. The
+**first steer always curates**: the conversation changed hands mid-run,
+so the opening block is stale whatever the vectors say. A corpus with
+no serving embedder treats every steer as drifted — the safe bias when
+movement cannot be measured.
+
+The curated note rides the **message tail**, not the system prompt: a
+system message at the end of that one request's message list, never
+inside the system message itself, whose byte-stability the
+provider-side prefix cache keys on. It is turn-scoped — the next
+request does not carry it — and the log's `curated` record names the
+turn, the shape, and the facts, so the note is reconstructable like the
+opening block is. Recall hits re-arm with the curation (KI-068's rule,
+one seam later): a hit means the model saw the fact, once per
+curation. The comparison base advances to each steer even when no
+curation fires, so a slow walk of small shifts accumulates instead of
+hiding. The cost is bounded by the trigger: one instruction embed per
+steer to measure, plus the ranking's own embed on a real curation —
+the same shape the `recall` tool pays — against fact vectors that are
+already cached.
+
 ## The consolidation cycle
 
 A timer runs the cycle — `CONSOLIDATE_INTERVAL` (hourly) — in the

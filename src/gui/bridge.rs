@@ -5002,8 +5002,8 @@ fn cards_from_records(records: &[session::Record]) -> (Vec<Value>, usize) {
             session::Record::Start { .. }
             | session::Record::End { .. }
             | session::Record::ToolResolution { .. }
-            | session::Record::LaneFailed { .. }
             | session::Record::Declarations { .. }
+            | session::Record::Curated { .. }
             | session::Record::Routed { .. }
             | session::Record::Resume { .. }
             // A leave only ends a participation the join row opened;
@@ -5107,6 +5107,18 @@ fn cards_from_records(records: &[session::Record]) -> (Vec<Value>, usize) {
             }
             session::Record::LaneTools { lane, tools } => {
                 cards.push(json!({"type": "lane", "lane": lane, "tools": tools.len()}));
+            }
+            session::Record::LaneFailed { lane, reason } => {
+                // The withdrawal: a lane whose earlier `lane` card
+                // announced tools now names them gone (the
+                // surface-curation plan's C0). Same card family, the
+                // withdrawn mark beside it — a replayed transcript shows
+                // the tool set the model actually had, not the one the
+                // join once declared.
+                cards.push(json!({
+                    "type": "lane", "lane": lane, "tools": 0,
+                    "withdrawn": true, "reason": reason,
+                }));
             }
             session::Record::Goal { text } => {
                 // The standing objective rides the prompt, so the replay

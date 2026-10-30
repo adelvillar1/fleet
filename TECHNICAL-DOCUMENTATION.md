@@ -234,6 +234,21 @@ folder: the four built-ins are refused by name before the approval
 gate, no checkpoint is captured, and the refusal asks the owner for a
 folder).
 
+The tool surface is curated per turn (the surface-curation plan): the
+tier declares everything while the request fits 32 tools and 9,000
+definition tokens, holds the lane tools behind `tool_search` past it,
+and — when even the deferred shape cannot fit — withholds the core's
+own unranked tail under the workload profile's rank, with an explicit
+keep list the score can never cross (`CORE_KEEP`); the withheld names
+ride the `declarations` record. A `tool_search` activation is
+turn-stamped and lasts `ACTIVATION_TURNS` requests, a call
+re-activating it. A lane that dies mid-run is withdrawn: its tools
+leave the declarations, the death writes one `lane_failed` record, and
+the replay readers apply the withdrawal rule. The memory block
+re-curates on drift: a steer whose vector falls under `DRIFT_FLOOR`
+from the last curated instruction re-ranks the block, and the note
+rides that one request's message tail — never the system prompt.
+
 The run's system prompt is `SYSTEM_PROMPT` (the voice) followed by
 `REPORTING_CONTRACT` — the stop's contract: what happened, where it
 stands, what is next, and never silence after a tool call. A `SOUL.md`

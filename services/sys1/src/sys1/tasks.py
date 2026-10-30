@@ -6,9 +6,11 @@ for the cases where one provider asks a different set than another (the
 existing dev-decisions "change" task: Jev asks 4 questions, Decide/local ask 2).
 
 Nine tasks are pre-registered: eight mirror `dev-decisions._TASK_BUILDERS`,
-and `vision_qc` is sys1's own (the liquid-only vision task — no dev-decisions
-counterpart). Add your own with `register_task(Task(...))` or load from a
-TOML/JSON file.
+`vision_qc` is sys1's own (the liquid-only vision task — no dev-decisions
+counterpart), and `route` carries the deepseek-harness router's judgment.
+Fleet adds `tool_route` (the deferred-tool search's capability class) as a
+fleet addition — recorded in the vendored copy's VENDOR.json. Add your own
+with `register_task(Task(...))` or load from a TOML/JSON file.
 """
 
 from __future__ import annotations
@@ -558,6 +560,59 @@ _ROUTE = Task(
 )
 
 
+# ── tool_route: the deferred-tool search's capability class ─────────────────
+# Fleet's `tool_search` asks this before sem1 ranks the deferred lane tools:
+# one closed-set label (or `none`) with confidence, read from the answer's
+# `capability` head (fleet's tool_router.parse_capability). The label set is
+# the same closed vocabulary the ranker's class boost uses, so the class the
+# lane names is always one the ranker can act on.
+# Fleet addition: this task is not upstream sys1's (f0faebc) — it is recorded
+# in services/sys1/VENDOR.json's fleetVendor note.
+
+TOOL_ROUTE_CAPABILITY_LABELS = [
+    "read",
+    "search",
+    "edit",
+    "execute",
+    "web",
+    "memory",
+    "vision",
+    "media",
+    "delegate",
+    "none",
+]
+
+_TOOL_ROUTE = Task(
+    id="tool_route",
+    description=(
+        "Deferred-tool capability judgment: name the one capability class a "
+        "request needs, or `none` when no tool would help. The input text is "
+        "the request plus the count of deferred tool definitions."
+    ),
+    heads=[
+        make_choice(
+            "A coding-agent request is described in state. Which single "
+            "capability class does completing it well need from a tool, or "
+            "is none needed?",
+            TOOL_ROUTE_CAPABILITY_LABELS,
+            id="capability",
+            descriptions={
+                "read": "Inspect a file or directory that is already known",
+                "search": "Find something not yet located",
+                "edit": "Change or create files",
+                "execute": "Run commands, builds, or tests",
+                "web": "Fetch or read live web sources",
+                "memory": "Store or recall standing facts",
+                "vision": "Look at images or screenshots",
+                "media": "Generate audio, images, or presentations",
+                "delegate": "Hand a self-contained task to another agent",
+                "none": "No tool is needed — the request answers from what the model already has",
+            },
+        ),
+    ],
+)
+
+
 # ── registry + detection ─────────────────────────────────────────────────────
 
 _TASKS: dict[str, Task] = {}
@@ -579,6 +634,7 @@ for _t in (
     _SAFETY,
     _VISION_QC,
     _ROUTE,
+    _TOOL_ROUTE,
 ):
     register_task(_t)
 
