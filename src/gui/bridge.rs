@@ -5492,7 +5492,23 @@ fn inbox_document(
     // Rows land newest-first from `sessions_read`; the bound is the
     // plan's own (`sessions: 50`), applied before any tail read so the
     // cost is rows × 16 KiB, named and bounded.
-    let rows: Vec<Value> = rows.into_iter().take(bound).collect();
+    //
+    // The owner's rule, the rail's own (N0): system-initiated traffic
+    // never lands on the owner's screen. Without this filter the phone's
+    // inbox listed thirteen scheduled corpus-refresh runs as "needs
+    // you" — the owner's first question about the paired face was what
+    // they were (KI-372). The predicate is the rail's, by name: exactly
+    // class-yours.
+    let rows: Vec<Value> = rows
+        .into_iter()
+        .filter(|row| {
+            row.get("class")
+                .and_then(Value::as_str)
+                .map(|class| class == "yours")
+                .unwrap_or(true)
+        })
+        .take(bound)
+        .collect();
     let mut out = Vec::with_capacity(rows.len());
     for row in &rows {
         let id = row.get("id").and_then(Value::as_str).unwrap_or_default();
@@ -5530,6 +5546,7 @@ fn inbox_document(
             "channel": row.get("channel"),
             "model": row.get("model"),
             "state": state,
+            "class": row.get("class"),
             "at": row.get("last_write"),
             "last": last,
             // Who works this conversation (join order, lead first) and
@@ -10258,6 +10275,64 @@ mod tests {
         // The document names its bound.
         assert_eq!(document["bound"], 50);
         std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// The owner's rule on the phone (KI-372): scheduled runs, probes,
+    /// and delegated children are the system's traffic, and the inbox is
+    /// the owner's screen — exactly class-yours, the rail's predicate.
+    /// Thirteen scheduled corpus refreshes read as "needs you" on the
+    /// owner's first paired look; this pins them out.
+    #[test]
+    fn the_inbox_keeps_the_owners_rows_and_only_those() {
+        let home = scratch("inbox-scope");
+        let mut mine = crate::session::Session::create(&home, "m").unwrap();
+        mine.record(&crate::session::Record::User {
+            content: "pair the phone".into(),
+        })
+        .unwrap();
+        let mut scheduled = crate::session::Session::create_scheduled(&home, "m").unwrap();
+        scheduled
+            .record(&crate::session::Record::User {
+                content: "corpus-refresh fleet".into(),
+            })
+            .unwrap();
+        let mut probe = crate::session::Session::create_probe(&home, "m").unwrap();
+        probe
+            .record(&crate::session::Record::User {
+                content: "say the single word: ok".into(),
+            })
+            .unwrap();
+        drop(mine);
+        drop(scheduled);
+        drop(probe);
+
+        let live = LiveFace {
+            driving: None,
+            seats: std::collections::HashSet::new(),
+        };
+        let document = inbox_document(&home, &live, &std::collections::HashMap::new(), 50);
+        let ids: Vec<String> = document["sessions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|row| row.get("id").and_then(Value::as_str).map(str::to_string))
+            .collect();
+        assert_eq!(ids.len(), 1, "only the owner's conversation: {ids:?}");
+        assert!(
+            ids[0].contains(&mine_id(&home).unwrap_or_default()),
+            "the owner's row is the one kept: {ids:?}"
+        );
+        assert_eq!(document["sessions"][0]["class"], "yours");
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// The one owner log's id: the newest non-kind log in the home.
+    fn mine_id(home: &std::path::Path) -> Option<String> {
+        crate::session::list(home)
+            .ok()?
+            .into_iter()
+            .find(|entry| entry.kind.is_none())
+            .map(|entry| entry.id)
     }
 
     #[test]
