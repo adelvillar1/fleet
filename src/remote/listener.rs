@@ -166,6 +166,11 @@ impl Listener {
         let bound = listener
             .local_addr()
             .map_err(|error| format!("fleet remote cannot read its own address: {error}"))?;
+        // Persisted, not minted per launch: the phone stores the secret
+        // it paired with, and the relay routes by the presented secret —
+        // a per-launch mint meant every restart stranded every paired
+        // phone until it paired again (KI-369).
+        let credentials = face_credentials(&home, face)?;
         let server = Listener {
             address: remote.address,
             port: bound.port(),
@@ -173,8 +178,8 @@ impl Listener {
             home,
             listener,
             bridge,
-            session: mint_session()?,
-            secret: mint_secret()?,
+            session: credentials.0.clone(),
+            secret: credentials.1.clone(),
         };
         Ok((server, bound.port()))
     }
@@ -1141,6 +1146,64 @@ fn asset(content_type: &'static str, body: &'static str) -> Reply {
     }
 }
 
+/// The relay session and secret for one face, from the home — minted on
+/// first use and stable across launches. The file is
+/// `<home>/relay-sessions.json`, one entry per face, mode 0600 (the
+/// home is the credential home; the own-home ruling applies). A file
+/// that cannot be read or parsed is replaced rather than fatal: a
+/// release that cannot boot is worse than a phone that must pair
+/// again, and the replacement is named in the log.
+fn face_credentials(home: &std::path::Path, face: RemoteFace) -> Result<(String, String), String> {
+    let key = match face {
+        RemoteFace::Console => "console",
+        RemoteFace::Bot => "bot",
+    };
+    let path = home.join("relay-sessions.json");
+    let mut document: serde_json::Value = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+    if let Some(entry) = document.get(key) {
+        let sid = entry.get("sid").and_then(serde_json::Value::as_str);
+        let secret = entry.get("secret").and_then(serde_json::Value::as_str);
+        if let (Some(sid), Some(secret)) = (sid, secret) {
+            if sid.len() == 32 && secret.len() >= 40 {
+                return Ok((sid.to_string(), secret.to_string()));
+            }
+        }
+    }
+    let sid = mint_session()?;
+    let secret = mint_secret()?;
+    document[key] = serde_json::json!({"sid": sid, "secret": secret});
+    if let Ok(text) = serde_json::to_string_pretty(&document) {
+        let temp = home.join(format!("relay-sessions.json.{}.tmp", std::process::id()));
+        let written = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open(&temp)
+            .and_then(|mut file| {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+                }
+                use std::io::Write;
+                file.write_all(text.as_bytes())?;
+                file.sync_all()
+            });
+        match written {
+            Ok(()) => std::fs::rename(&temp, &path)
+                .map_err(|error| format!("fleet remote cannot keep its relay session: {error}"))?,
+            Err(error) => eprintln!(
+                "fleet remote: the relay session could not be kept ({error}); this launch's \
+                 pairing will not survive a restart"
+            ),
+        }
+    }
+    Ok((sid, secret))
+}
+
 /// A relay session id: 16 random bytes, hex, which is where a guess
 /// stops being a threat model.
 fn mint_session() -> Result<String, String> {
@@ -1419,6 +1482,16 @@ mod tests {
     }
 
     async fn live_face(home: std::path::PathBuf, face: RemoteFace) -> (u16, String) {
+        let (_session, port, code) = live_face_session(home, face).await;
+        (port, code)
+    }
+
+    /// The live face's session id beside its port and code — the
+    /// persistence pin reads the session across launches.
+    async fn live_face_session(
+        home: std::path::PathBuf,
+        face: RemoteFace,
+    ) -> (String, u16, String) {
         let (_window, code) = PairingWindow::mint(&home).expect("a window");
         let (bridge, _) = Bridge::detached(
             home.clone(),
@@ -1432,10 +1505,11 @@ mod tests {
         let (listener, port) = Listener::bind(&remote, 0, face, home, Arc::new(bridge))
             .await
             .expect("bind");
+        let session = listener.device_session();
         tokio::spawn(async move {
             let _ = listener.serve().await;
         });
-        (port, code)
+        (session, port, code)
     }
 
     /// Redeem the window and return the token the reply's cookie carries.
@@ -1457,6 +1531,45 @@ mod tests {
             })
             .unwrap_or_default();
         (reply, cookie)
+    }
+
+    /// KI-369's pin: the relay session outlives the launch. Two binds
+    /// over one home answer the same session and secret — the phone's
+    /// stored secret keeps working across a restart — and the two faces
+    /// hold distinct ones, so a console phone cannot reach the bot
+    /// relay's session by accident.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_face_restart_keeps_the_relay_session() {
+        let home = fresh_home();
+        let (first, _port, _code) = live_face_session(home.clone(), RemoteFace::Console).await;
+        // Read the persisted file directly: the property is the file's,
+        // not one process's memory.
+        let persisted: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(home.join("relay-sessions.json")).unwrap(),
+        )
+        .unwrap();
+        let console_sid = persisted["console"]["sid"].as_str().unwrap().to_string();
+        let console_secret = persisted["console"]["secret"].as_str().unwrap().to_string();
+        assert_eq!(console_sid.len(), 32, "{persisted}");
+        assert!(console_secret.len() >= 40, "{persisted}");
+
+        // A second bind, same home: same credentials. A different face:
+        // its own.
+        let (again, _port, _code) = live_face_session(home.clone(), RemoteFace::Console).await;
+        let (bot, _port, _code) = live_face_session(home.clone(), RemoteFace::Bot).await;
+        let persisted: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(home.join("relay-sessions.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(persisted["console"]["sid"], console_sid);
+        assert_eq!(persisted["console"]["secret"], console_secret);
+        assert_ne!(persisted["bot"]["sid"], console_sid);
+        assert_ne!(persisted["bot"]["secret"], console_secret);
+        // The in-memory servers agree with the file.
+        assert_eq!(first, console_sid);
+        assert_eq!(again, console_sid);
+        assert_ne!(bot, console_sid);
+        std::fs::remove_dir_all(&home).ok();
     }
 
     #[tokio::test(flavor = "multi_thread")]

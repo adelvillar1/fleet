@@ -223,7 +223,13 @@ pairs the other, and the launch prints both entry URLs, each with its
 own fragment.
 
 **The entry URL.** The launch prints `https://<relay>/#k=<secret>`: the
-secret as a fragment, which browsers never send. The face's page files
+secret as a fragment, which browsers never send. The secret is a **home
+fact**, not a per-launch mint: `<home>/relay-sessions.json` holds one
+entry per face (0600, atomic write), so restarting the face never
+invalidates a paired phone's stored secret — a per-launch secret
+stranded every phone at every restart (KI-370). The device's X25519
+scalar stays per launch and the phone re-handshakes on each boot; only
+the gate credential is durable. The face's page files
 it into its own storage on boot and seals from then on; the pairing
 page does the same before the post-pairing redirect can lose it. On the
 wire the URL names nothing.
