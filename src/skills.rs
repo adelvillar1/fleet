@@ -535,6 +535,50 @@ pub fn proposals_dir(home: &Path) -> PathBuf {
     home.join(SKILLS_DIR).join(PROPOSALS_DIR)
 }
 
+// --- the category table ------------------------------------------------------
+
+/// The declared category table: one JSON object mapping a section's word
+/// to the exact skill names that live there, generated once from the real
+/// library and reviewed by the owner — editorial data in the repo, the
+/// nomenclature vocabulary's shape, not a runtime inference. The library's
+/// own frontmatter carries no categories (measured 2026-10-30: 452 live
+/// skills, six `category:` lines in all of them), so the table is the
+/// source of truth, and assignment is exact-name only: the same name
+/// always reads the same section.
+pub const CATEGORIES: &str = include_str!("skills-categories.json");
+
+/// The section a name the table does not carry lands in — the face's own
+/// rail row, visible by its badge, so a skill added to the library
+/// tomorrow is findable the moment it exists and its gap in the table is
+/// visible the moment it is.
+pub const CATEGORY_FALLBACK: &str = "everything-else";
+
+/// The name → section index, read once per process.
+fn category_index() -> &'static HashMap<&'static str, &'static str> {
+    static INDEX: std::sync::OnceLock<HashMap<&'static str, &'static str>> =
+        std::sync::OnceLock::new();
+    INDEX.get_or_init(|| {
+        serde_json::from_str::<HashMap<&'static str, Vec<&'static str>>>(CATEGORIES)
+            .map(|table| {
+                table
+                    .into_iter()
+                    .flat_map(|(section, names)| names.into_iter().map(move |name| (name, section)))
+                    .collect()
+            })
+            .unwrap_or_default()
+    })
+}
+
+/// The section `name` is declared under, or [`CATEGORY_FALLBACK`] when
+/// the table does not carry it. Deterministic by construction: exact
+/// names, no rules, no inference.
+pub fn category_of(name: &str) -> &'static str {
+    category_index()
+        .get(name)
+        .copied()
+        .unwrap_or(CATEGORY_FALLBACK)
+}
+
 /// Load every live skill under the canonical library directory, sorted
 /// by name, printing one stderr line per skip — the headless and CLI
 /// surfaces' shape. A surface that renders (the TUI) wants
@@ -2108,6 +2152,29 @@ mod tests {
     }
 
     // --- loading ---
+
+    #[test]
+    fn the_category_table_parses_and_assigns_deterministically() {
+        // The table parses, every declared section is non-empty, and the
+        // fallback is not a declared section — it is the face's row for
+        // what the table does not carry.
+        let table: HashMap<&str, Vec<&str>> = serde_json::from_str(CATEGORIES).unwrap();
+        assert!(!table.is_empty(), "the table declares sections");
+        for (section, names) in &table {
+            assert!(!names.is_empty(), "section {section} is empty");
+            assert_ne!(*section, CATEGORY_FALLBACK);
+        }
+        // Exact names read their declared sections.
+        assert_eq!(category_of("plan"), "building");
+        assert_eq!(category_of("docx"), "documents");
+        assert_eq!(category_of("threejs-3d-generator"), "media");
+        assert_eq!(category_of("github-code-review"), "platforms");
+        // Deterministic: the same name, the same section, every call.
+        assert_eq!(category_of("plan"), category_of("plan"));
+        // A name the table does not carry falls to the visible fallback —
+        // the skill added to the library tomorrow.
+        assert_eq!(category_of("a-skill-added-tomorrow"), CATEGORY_FALLBACK);
+    }
 
     #[test]
     fn a_malformed_skill_is_skipped_by_name_and_the_others_load() {

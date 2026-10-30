@@ -7394,6 +7394,7 @@ fn skills_read(home: &std::path::Path) -> Value {
         "skills": snapshot.skills.iter().map(|skill| json!({
             "name": skill.name,
             "description": skill.description,
+            "category": skill.category,
             "uses": skill.uses,
             "modified": skill.modified,
             "path": skill.path,

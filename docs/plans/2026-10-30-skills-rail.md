@@ -146,7 +146,12 @@ absent from the face's PATH) filed in the same commit.
 per skill in the face's document. The library is measured through the
 table once and the per-section counts are recorded below.
 
-*Counts (recorded when the table lands):* — pending S1.
+*Counts (recorded when the table lands):* the live library is **452**
+skills (the 453rd directory is `.git` — no `SKILL.md`, never a skill).
+Landed assignments: building 108, web 46, design 63, media 79,
+documents 41, data 73, platforms 28, machine 14, **everything else 0** —
+every live name is declared; the fallback section is the face's own row
+for what lands after this table was written.
 
 *Checks:* K3.
 

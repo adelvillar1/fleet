@@ -1499,6 +1499,10 @@ const SKILL_USAGE_SESSIONS: usize = crate::skills::DEFAULT_RETIRE_AFTER_SESSIONS
 pub struct SkillsSkill {
     pub name: String,
     pub description: String,
+    /// The declared section the skill reads under — the category table's
+    /// word for it, or the visible fallback when the table does not carry
+    /// the name. The rail groups by it; the table is the source of truth.
+    pub category: String,
     /// Times the scan saw this skill selected and approved. Zero names a
     /// skill the scan never saw used, which is the whole measure the
     /// substrate reports.
@@ -1635,6 +1639,7 @@ pub fn read_skills(canonical: Option<&Path>, home: &Path) -> SkillsSnapshot {
         .map(|skill| SkillsSkill {
             name: skill.name.clone(),
             description: skill.description.clone(),
+            category: crate::skills::category_of(&skill.name).to_string(),
             uses: usage.count(&skill.name),
             modified: skill
                 .modified
