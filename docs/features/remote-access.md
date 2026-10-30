@@ -55,6 +55,16 @@ storage, and never in a wire-visible URL or an edge log. The card mints
 one live window: opening it again invalidates the previous code. A
 paired phone cannot call the mint route; it is loopback only.
 
+The fragment is not the only way in — a phone that opened the origin
+and typed a code would otherwise pair unsealed (KI-368: the console's
+"stream down", the bot's 403). The relay marks its own forwarded
+frames, and a relay-forwarded redemption carries the face's relay
+secret in its reply (one the relay already holds at join, so nothing
+crosses that had not already crossed); the pairing page files it away
+before the redirect. The socket path never carries it, marker or not —
+pairing at an origin arms the transport whatever route the phone took
+there.
+
 The remote face is a second listener with a default-deny allowlist: a
 paired device may watch the stream, read state, list and open sessions,
 drive a run or a plan, and answer a seat. Everything else answers 403 by

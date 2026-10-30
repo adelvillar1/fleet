@@ -256,7 +256,10 @@ async fn serve_connection(
             Ok(body) => body,
             Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
         };
-        return write_reply(&mut stream, redeem(&body, home)).await;
+        // `None` no matter what headers this socket request carried: the
+        // marker only counts on frames a relay made, so a caller who
+        // writes `x-fleet-via` by hand gets no secret.
+        return write_reply(&mut stream, redeem(&body, home, None)).await;
     }
 
     // The token is resolved BEFORE deciding what `/` is. A paired phone
@@ -341,6 +344,12 @@ pub struct RelayHandler {
     /// serve loop: the handshake route establishes it, the serve loop
     /// seals with it.
     keys: Arc<std::sync::Mutex<crate::remote::relay::RelayKeys>>,
+    /// This face's own relay secret — the same one the relay was joined
+    /// with. It rides a redemption's reply ONLY when the request
+    /// arrived through a relay (`x-fleet-via`), so a phone that pairs
+    /// at the origin without the entry URL's fragment still arms its
+    /// transport, and a socket-path pairing never hands a secret out.
+    device_secret: String,
 }
 
 impl RelayHandler {
@@ -351,6 +360,7 @@ impl RelayHandler {
         face: RemoteFace,
         home: std::path::PathBuf,
         keys: Arc<std::sync::Mutex<crate::remote::relay::RelayKeys>>,
+        device_secret: String,
     ) -> RelayHandler {
         RelayHandler {
             bridge,
@@ -358,6 +368,7 @@ impl RelayHandler {
             face,
             home,
             keys,
+            device_secret,
         }
     }
 
@@ -458,7 +469,18 @@ impl crate::remote::relay::Handler for RelayHandler {
                 };
             }
             if (frame.method.as_str(), bare) == ("POST", "/api/pair") {
-                let reply = redeem(&frame.body, &self.home);
+                // A frame only exists because a relay forwarded it, and
+                // the relay marks its own frames: the paired phone gets
+                // the secret its transport needs, and the socket path
+                // (below) never does.
+                let via_relay = frame.headers.iter().any(|(name, value)| {
+                    name.eq_ignore_ascii_case("x-fleet-via") && value == "relay"
+                });
+                let reply = redeem(
+                    &frame.body,
+                    &self.home,
+                    via_relay.then_some(self.device_secret.as_str()),
+                );
                 return crate::remote::relay::Answer {
                     id: frame.id,
                     status: status_of(&reply),
@@ -1016,7 +1038,7 @@ async fn write_event(
 /// against it. A success writes the device record and hands the browser
 /// the token as an HttpOnly cookie, so the requests that follow carry
 /// it exactly as the loopback face's do.
-fn redeem(body: &str, home: &std::path::Path) -> Reply {
+fn redeem(body: &str, home: &std::path::Path, relay_secret: Option<&str>) -> Reply {
     let parsed: serde_json::Value = match serde_json::from_str(body) {
         Ok(parsed) => parsed,
         Err(message) => return bad_request(&message.to_string()),
@@ -1078,7 +1100,15 @@ fn redeem(body: &str, home: &std::path::Path) -> Reply {
     }
     // The token rides the cookie from here on. HttpOnly keeps the page's
     // own scripts from reading the capability back, and SameSite keeps
-    // another site's requests from sending it.
+    // another site's requests from sending it. The relay secret rides
+    // the BODY, deliberately — only for a relay-forwarded pairing, and
+    // the relay already holds this secret at join, so nothing crosses
+    // that did not already cross. The page files it away, and the app
+    // seals its frames with what it derives from it.
+    let mut document = json!({"type": "paired", "device": id, "name": name});
+    if let Some(secret) = relay_secret {
+        document["relay"] = json!({"secret": secret});
+    }
     Reply {
         status: "200 OK",
         content_type: "application/json; charset=utf-8",
@@ -1086,10 +1116,7 @@ fn redeem(body: &str, home: &std::path::Path) -> Reply {
             "Set-Cookie".to_string(),
             format!("{DEVICE_COOKIE}={token}; Path=/; HttpOnly; SameSite=Strict"),
         )],
-        body: format!(
-            "{}\n",
-            json!({"type": "paired", "device": id, "name": name})
-        ),
+        body: format!("{}\n", document),
     }
 }
 
@@ -1299,6 +1326,15 @@ const PAIR_PAGE: &str = r#"<!doctype html>
       return reply.json().then(function (body) { return { ok: reply.ok, body: body }; });
     }).then(function (result) {
       if (result.ok) {
+        // A relayed pairing hands the phone its relay secret (the
+        // relay already holds it), so pairing at the origin without
+        // the entry URL's fragment still arms the transport. A socket
+        // pairing carries none and changes nothing.
+        try {
+          if (result.body.relay && result.body.relay.secret) {
+            localStorage.setItem('fleet_relay_k', result.body.relay.secret);
+          }
+        } catch (e) { /* a storage that refuses is a face that stays unsealed */ }
         note.setAttribute('data-state', 'ok');
         note.textContent = 'paired — opening fleet';
         // The cookie is set; the app is one navigation away.
@@ -1859,6 +1895,7 @@ mod relay_handler_tests {
             RemoteFace::Console,
             home.clone(),
             keys,
+            "secret-for-this-test".to_string(),
         );
         let frame = crate::remote::relay::Frame {
             id: "pair-1".to_string(),
@@ -1871,6 +1908,70 @@ mod relay_handler_tests {
         let answer = handler.answer(&frame).await;
         assert_eq!(answer.status, 200, "{}", answer.body);
         assert!(answer.body.contains("Pair this device"), "{}", answer.body);
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// A relayed pairing hands the phone its relay secret — the one it
+    /// needs to arm the transport when the entry URL's fragment never
+    /// reached it (a typed origin) — and a frame without the relay's
+    /// own marker hands nothing out, so a caller who writes the header
+    /// by hand gets no secret either.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_relayed_redemption_carries_the_secret_and_a_plain_one_does_not() {
+        let home = fresh_home();
+        let (_window, code) = PairingWindow::mint(&home).expect("a window");
+        let (bridge, _sources) = Bridge::detached(
+            home.clone(),
+            "deepseek-flash".to_string(),
+            Some("s".to_string()),
+        );
+        let keys = Arc::new(std::sync::Mutex::new(
+            crate::remote::relay::RelayKeys::mint("sid-redemptions"),
+        ));
+        let handler = RelayHandler::new(
+            Arc::new(bridge),
+            "a relayed phone".to_string(),
+            RemoteFace::Console,
+            home.clone(),
+            keys,
+            "the-face-relay-secret".to_string(),
+        );
+        let redeem_frame = |marker: Option<(&str, &str)>| crate::remote::relay::Frame {
+            id: "redeem".to_string(),
+            method: "POST".to_string(),
+            path: "/api/pair".to_string(),
+            headers: marker
+                .map(|(name, value)| vec![(name.to_string(), value.to_string())])
+                .unwrap_or_default(),
+            body: serde_json::json!({"code": code, "name": "x"}).to_string(),
+            enc: None,
+        };
+
+        // Without the relay's marker: paired, no secret in the body.
+        let plain = handler
+            .answer(&redeem_frame(Some(("x-fleet-via", "forged"))))
+            .await;
+        assert_eq!(plain.status, 200, "{}", plain.body);
+        assert!(
+            !plain.body.contains("secret"),
+            "a forged marker hands nothing: {}",
+            plain.body
+        );
+
+        // With it (the window is one-use, so mint a second): the reply
+        // carries the secret the transport needs.
+        let (_window, code) = PairingWindow::mint(&home).expect("a second window");
+        let mut relayed = redeem_frame(Some(("x-fleet-via", "relay")));
+        relayed.body = serde_json::json!({"code": code, "name": "y"}).to_string();
+        let relayed = handler.answer(&relayed).await;
+        assert_eq!(relayed.status, 200, "{}", relayed.body);
+        assert!(
+            relayed
+                .body
+                .contains("\"secret\":\"the-face-relay-secret\""),
+            "the relayed pairing hands its phone the secret: {}",
+            relayed.body
+        );
         std::fs::remove_dir_all(&home).ok();
     }
 }

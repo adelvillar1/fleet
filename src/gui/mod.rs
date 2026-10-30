@@ -305,6 +305,7 @@ pub async fn serve(options: GuiOptions) -> Result<(), String> {
             listener::RemoteFace::Console,
             bridge.home_path(),
             Arc::clone(&keys),
+            listener.device_secret(),
         ));
         // The pairing card folds the same secret into its QR's URL as a
         // fragment, so a phone that pairs through the relay origin can
@@ -361,6 +362,7 @@ pub async fn serve(options: GuiOptions) -> Result<(), String> {
             listener::RemoteFace::Bot,
             bridge.home_path(),
             Arc::clone(&keys),
+            bot_hash.clone(),
         ));
         let (shutdown, shutdown_rx) = tokio::sync::watch::channel(false);
         _bot_relay_shutdown = Some(shutdown);

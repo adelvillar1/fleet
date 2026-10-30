@@ -50,6 +50,7 @@ is refuse to carry frames, which is availability, not confidentiality.
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import queue
@@ -69,6 +70,12 @@ POLL_SECONDS = 25
 # How long a phone's request is held waiting for the device's answer. A
 # device that has gone away must not leave a phone hanging forever.
 REQUEST_SECONDS = 65
+
+# How long a device session lives without a poll. A face that stopped —
+# killed, redeployed, asleep — held its relay session forever otherwise,
+# and a root that sees two sessions cannot tell which one is real. Three
+# poll holds and a margin: a live face polls every POLL_SECONDS.
+DEVICE_TTL_SECONDS = 90
 
 # The headers a root-mode phone presents. `x-fleet-relay` is the gate:
 # the session secret, compared against the joined device's. `x-fleet-enc`
@@ -112,6 +119,7 @@ class Device:
         self.answers: dict[str, queue.Queue] = {}
         self.lock = threading.Lock()
         self.joined_at = time.time()
+        self.last_poll = time.time()
 
 
 DEVICES: dict[str, Device] = {}
@@ -123,15 +131,20 @@ def device_for(sid: str) -> Device | None:
         return DEVICES.get(sid)
 
 
-def the_joined_device() -> tuple[Device | None, int]:
-    """The single device a root path forwards to, and how many are
-    joined. A dedicated relay carries one fleet; zero means nothing has
-    dialed yet and more than one means the root is ambiguous."""
+def prune_stale_devices() -> None:
+    """Drop the sessions that stopped polling. A face that died held
+    its session forever otherwise, and the root's choices rotted under
+    the corpses."""
+    cutoff = time.time() - DEVICE_TTL_SECONDS
     with DEVICES_LOCK:
-        devices = list(DEVICES.values())
-    if not devices:
-        return None, 0
-    return devices[0], len(devices)
+        for sid in [sid for sid, device in DEVICES.items()
+                    if device.last_poll < cutoff]:
+            del DEVICES[sid]
+
+
+def live_devices() -> list[Device]:
+    with DEVICES_LOCK:
+        return sorted(DEVICES.values(), key=lambda device: -device.last_poll)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -191,6 +204,7 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/poll":
             self._poll(parsed)
         elif parsed.path == "/healthz":
+            prune_stale_devices()
             self._reply(200, {"ok": True, "devices": len(DEVICES)})
         elif parsed.path.startswith("/s/"):
             self._phone(parsed)
@@ -206,6 +220,7 @@ class Handler(BaseHTTPRequestHandler):
     # ------------------------------------------------- the device's verbs
 
     def _join(self) -> None:
+        prune_stale_devices()
         body = self._json()
         sid = (body.get("sid") or "").strip()
         secret = (body.get("hash") or "").strip()
@@ -229,6 +244,7 @@ class Handler(BaseHTTPRequestHandler):
         if device is None:
             self._reply(404, {"error": "no such session"})
             return
+        device.last_poll = time.time()
         # Hold the poll: the frames arrive from the phone's side, which is
         # a different thread, so the queue is where they meet.
         frames = []
@@ -286,27 +302,36 @@ class Handler(BaseHTTPRequestHandler):
 
     def _root(self, parsed) -> None:
         """The origin root is the device: the shell, its assets, the
-        manifest, the worker, and every API call, forwarded to the one
-        joined device session. The browser-forced fetches pass without
-        the secret — they cannot present one — and everything else names
-        it in `x-fleet-relay` or is refused before it becomes a frame."""
+        manifest, the worker, and every API call, forwarded to a joined
+        device session. Headered paths route by the secret itself — the
+        device whose secret matches is the device the phone means — so
+        one stale session never stands between a phone and its fleet.
+        The browser-forced fetches cannot present a secret; they go to
+        the most recently polling device, which is the live one."""
+        prune_stale_devices()
         bare = parsed.path.split("?")[0] or "/"
         method = self.command
-        device, count = the_joined_device()
-        if device is None:
-            self._reply(503, {"error": "no device is joined; fleet dials this relay"})
-            return
-        if count > 1:
-            self._reply(
-                409,
-                {"error": "more than one device is joined; the root is ambiguous"},
-            )
-            return
         open_path = (method == "GET" and bare in ROOT_OPEN_GET) or (
             method == "POST" and bare in ROOT_OPEN_POST
         )
         presented = self.headers.get(RELAY_HEADER) or ""
-        if not open_path and not self._secret_ok(device, presented):
+        devices = live_devices()
+        if presented:
+            matches = [device for device in devices
+                       if self._secret_ok(device, presented)]
+            if not matches:
+                self._reply(403, {"error": "that origin needs its relay secret"})
+                return
+            device = matches[0]
+        elif open_path:
+            if not devices:
+                self._reply(
+                    503,
+                    {"error": "no device is joined; fleet dials this relay"},
+                )
+                return
+            device = devices[0]
+        else:
             self._reply(403, {"error": "that origin needs its relay secret"})
             return
         enc = 1 if self.headers.get(ENC_HEADER) == "1" else None
@@ -326,15 +351,22 @@ class Handler(BaseHTTPRequestHandler):
         device's answer. Shared by the per-session path and the root:
         the gate already happened, and the frame shape is the same."""
         request_id = uuid.uuid4().hex
+        forwarded = [
+            [name, value]
+            for name, value in self.headers.items()
+            if name.lower() not in STRIPPED_HEADERS
+        ]
+        # One fact the device cannot derive and needs: this request
+        # arrived through a relay. A pairing redemption uses it to hand
+        # the phone its relay secret (the relay already holds this
+        # secret at join, so nothing crosses that did not already
+        # cross); a socket redemption must never carry one.
+        forwarded.append(["x-fleet-via", "relay"])
         frame = {
             "id": request_id,
             "method": self.command,
             "path": path + (f"?{parsed.query}" if parsed.query else ""),
-            "headers": [
-                [name, value]
-                for name, value in self.headers.items()
-                if name.lower() not in STRIPPED_HEADERS
-            ],
+            "headers": forwarded,
             "body": body.decode("utf-8", "replace"),
         }
         if enc is not None:
@@ -357,12 +389,24 @@ class Handler(BaseHTTPRequestHandler):
         # chose are the ones the phone gets, which is what makes the page
         # the device serves the page the phone sees — plus the two facts
         # the phone needs to open a sealed body: that it is sealed, and
-        # which frame it answered.
+        # which frame it answered. An answer marked `x-fleet-b64` carries
+        # bytes (an icon) the text frame cannot: decode here, strip the
+        # marker, and the phone's browser sees the bytes it asked for.
         payload = answer.get("body", "")
-        raw = payload.encode() if isinstance(payload, str) else b""
+        reply_headers = [
+            (name, value) for name, value in answer.get("headers") or []
+        ]
+        if any(name.lower() == "x-fleet-b64" for name, _ in reply_headers):
+            reply_headers = [
+                (name, value) for name, value in reply_headers
+                if name.lower() != "x-fleet-b64"
+            ]
+            raw = base64.b64decode(payload) if payload else b""
+        else:
+            raw = payload.encode() if isinstance(payload, str) else b""
         self.send_response(int(answer.get("status") or 200))
         sent_length = False
-        for name, value in answer.get("headers") or []:
+        for name, value in reply_headers:
             if name.lower() == "content-length":
                 sent_length = True
             self.send_header(name, value)

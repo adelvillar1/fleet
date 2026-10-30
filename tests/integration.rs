@@ -11590,6 +11590,7 @@ async fn the_reference_relay_carries_sealed_frames() {
         fleet::remote::listener::RemoteFace::Console,
         home.clone(),
         Arc::clone(&keys),
+        secret.to_string(),
     ));
     let client = Arc::new(fleet::remote::relay::Client::new(
         &base,
