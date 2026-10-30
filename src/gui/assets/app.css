@@ -1464,6 +1464,23 @@ body[data-object-card="open"] .pane-tabs,
 body[data-object-card="open"] .pane-body { display: none; }
 body[data-object-card="open"] .dock-object { display: block; }
 
+/* A needs-you row: its main area presses, its answers sit beside it. */
+.cfg-item-press {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  padding: 0;
+}
+.cfg-item-act { flex: 0 0 auto; font-size: 9.5px; padding: 1px 7px; }
+
 /* A conversation's card: the details and decisions as label/value lines,
    and the history as a two-column transcript, newest first — the pane's
    own read of a log, never a second renderer of the live transcript. */

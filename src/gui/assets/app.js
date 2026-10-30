@@ -6930,6 +6930,13 @@
 
   function closeDrawer() {
     if (el.dockObject && !el.dockObject.hidden) {
+      // An edited card that is closed without saving asks first: the
+      // confirm is the rewind idiom's, and the card stays open on a no.
+      if (face.cardDirty &&
+          !window.confirm('this card has unsaved changes \u2014 close it anyway?')) {
+        return;
+      }
+      face.cardDirty = false;
       el.dockObject.hidden = true;
       el.dockObjectBody.textContent = '';
       el.faceCard.hidden = false;
@@ -11727,11 +11734,18 @@
   /// One conversation as a row: its state word, its title, its last line
   /// when it ended a turn, and the age.
   function botsConversationRow(entry) {
-    var row = node('button', 'cfg-item');
-    row.type = 'button';
+    // A needs-you row carries its actions: a pressable main area and the
+    // two answers beside it (buttons cannot nest, so the row is a div).
+    var row = node(entry.needs ? 'div' : 'button', 'cfg-item');
+    if (!entry.needs) row.type = 'button';
     row.dataset.kind = 'conversation';
     row.dataset.id = entry.id || '';
-    var main = node('span', 'cfg-item-main');
+    var main = node(entry.needs ? 'button' : 'span', 'cfg-item-main');
+    if (entry.needs) {
+      main.type = 'button';
+      main.classList.add('cfg-item-press');
+      main.addEventListener('click', function () { openConversationCard(entry, row); });
+    }
     main.appendChild(node('span', 'cfg-item-name', entry.title || entry.id || 'a conversation'));
     if (entry.last) {
       main.appendChild(node('span', 'cfg-item-value', clip(entry.last, 90)));
@@ -11742,7 +11756,37 @@
       mark.dataset.tone = entry.needs ? 'warn' : (entry.turned_back ? 'own' : '');
       row.appendChild(mark);
     }
-    row.addEventListener('click', function () { openConversationCard(entry, row); });
+    if (!entry.needs) {
+      row.addEventListener('click', function () { openConversationCard(entry, row); });
+    } else {
+      // The row itself presses too; the answers stop the bubble.
+      row.addEventListener('click', function (event) {
+        if (event.target && event.target.classList &&
+            event.target.classList.contains('cfg-item-act')) return;
+        openConversationCard(entry, row);
+      });
+      [['approve', 'once'], ['deny', 'deny']].forEach(function (pair) {
+        var act = node('button', 'row-rewind cfg-item-act', pair[0]);
+        act.type = 'button';
+        act.title = pair[0] === 'approve'
+          ? 'allow this call, once'
+          : 'refuse this call';
+        act.addEventListener('click', function (event) {
+          event.stopPropagation();
+          post('/api/approve?session=' + encodeURIComponent(entry.id || ''),
+            { decision: pair[1] }).then(function (reply) {
+            if (reply.status !== 200) {
+              notice('the answer was refused',
+                (reply.body && reply.body.error) || 'the face said no without a reason');
+              return;
+            }
+            notice('answered', pair[0] === 'approve' ? 'the call may run once' : 'the call is denied');
+            readBots(true);
+          }).catch(function () { });
+        });
+        row.appendChild(act);
+      });
+    }
     return row;
   }
 
@@ -11792,6 +11836,13 @@
       document.querySelectorAll('.cfg-item[aria-current="true"]'),
       function (one) { one.removeAttribute('aria-current'); });
     if (row) row.setAttribute('aria-current', 'true');
+    // The address names the conversation: a link to it lands on the
+    // section with the card open.
+    try {
+      window.history.replaceState(null, '',
+        '#/bots/' + encodeURIComponent(botsSectionId()) + '/' +
+        encodeURIComponent(entry.id || ''));
+    } catch (error) { }
     // The replay carries the details, the decisions and the history.
     fetch('/api/session?id=' + encodeURIComponent(entry.id), {
       headers: { accept: 'application/json' }
@@ -13033,6 +13084,16 @@
     var sections = item.card();
     openDrawer(item.name, sections);
     document.body.dataset.objectCard = 'open';
+    face.cardDirty = false;
+    // Any edit in the card arms the guard: closing with changes asks.
+    if (el.dockObjectBody) {
+      el.dockObjectBody.addEventListener('input', function () {
+        face.cardDirty = true;
+      });
+      el.dockObjectBody.addEventListener('change', function () {
+        face.cardDirty = true;
+      });
+    }
     Array.prototype.forEach.call(
       document.querySelectorAll('.cfg-item[aria-current="true"]'),
       function (one) { one.removeAttribute('aria-current'); });

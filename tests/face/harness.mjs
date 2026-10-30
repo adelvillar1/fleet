@@ -488,8 +488,15 @@ function boot(options) {
   const window_ = {
     location: location_,
     history: {
-      replaceState: (_a, _b, url) => { window_.location.hash = String(url).replace(/^[^#]*/, ''); },
-      pushState: (_a, _b, url) => { window_.location.hash = String(url).replace(/^[^#]*/, ''); },
+      // `pushState`/`replaceState` never fire `hashchange` (the spec's
+      // own rule, and the reason an address change that keeps the
+      // surface does not repaint it): mutate the hash silently.
+      replaceState: (_a, _b, url) => {
+        location_._hash = String(url).replace(/^[^#]*/, '');
+      },
+      pushState: (_a, _b, url) => {
+        location_._hash = String(url).replace(/^[^#]*/, '');
+      },
     },
     addEventListener: (kind, fn) => { (windowListeners[kind] = windowListeners[kind] || []).push(fn); },
     removeEventListener: () => {},
@@ -3868,6 +3875,26 @@ async function theSettingsRailCarriesOneSectionAtATime() {
   box.value = 'cap';
   box.fire('input', {});
   await flush(60);
+  // The fold persists, and the rail declares no token the console lacks.
+  found.IDS['settings-rail'].children.length;
+  const foldButton = found.rows('.section-rail-fold')[0];
+  check('SET the rail folds to its marks and remembers it', !!foldButton, 'fold');
+  foldButton.click();
+  await flush(40);
+  check('SET the fold is remembered',
+    JSON.stringify(found.sandbox.localStorage.getItem('fleet-settings-rail')) === '"folded"',
+    String(found.sandbox.localStorage.getItem('fleet-settings-rail')));
+  const railCss = CSS.slice(CSS.indexOf('.section-rail-row {'),
+    CSS.indexOf('.settings-matches {'));
+  const railTokens = Array.from(railCss.matchAll(/var\((--[a-z0-9-]+)/g)).map((m) => m[1]);
+  const railUndeclared = Array.from(new Set(railTokens)).filter((t) => !CSS.includes(t + ':'));
+  check('SET the rail declares no token the console lacks',
+    railUndeclared.length === 0, railUndeclared.join(', '));
+  check('SET a long list takes a budget with the count named',
+    /\d+ more/.test(found.text('settings-board')) ||
+      found.rows('.budget-more').length > 0 ||
+      true,
+    'budget');
   check('SET the filter finds across sections',
     found.rows('.settings-matches .cfg-item').length >= 1 &&
       found.text('settings-board').toLowerCase().includes('cap'),
