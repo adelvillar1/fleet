@@ -961,6 +961,20 @@ async function theDockIsClosedAndTheWorkColumnTakesItsPlace() {
   await flush();
   page.open();
   await flush();
+  // The pane's cards are the rail's cards: the dock carried
+  // `class="dock rail"`, and with it `.rail .card`'s box. Losing that
+  // ancestor left the run tab's cards flush against the frame, their
+  // text under the grip and against the edge.
+  check('C7 the pane\u2019s cards carry the rail card\u2019s box',
+    /\.rail \.card,\n\.pane \.card \{/.test(CSS) &&
+      ruleBlock('.rail .card,\n.pane .card').includes('padding: 16px') &&
+      ruleBlock('.rail .card,\n.pane .card').includes('border-radius: 12px'),
+    ruleBlock('.rail .card,\n.pane .card') || 'rule missing');
+  check('C7 the run tab insets its cards past the grip',
+    ruleBlock('#pane-run').includes('padding: 8px 12px') &&
+      ruleBlock('.pane-grip').includes('left: -4px') &&
+      ruleBlock('.pane-grip').includes('width: 9px'),
+    ruleBlock('#pane-run') + ' | ' + ruleBlock('.pane-grip'));
   check('C7 one entry: no aside toggle, one pane button',
     !HTML.includes('aside-toggle') && HTML.includes('id="pane-open"') &&
       !HTML.includes('class="dock rail"'),

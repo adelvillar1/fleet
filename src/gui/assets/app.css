@@ -2658,7 +2658,8 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
   gap: 14px;
 }
 
-.rail .card {
+.rail .card,
+.pane .card {
   padding: 16px;
   border: var(--card-hairline);
   border-radius: 12px;
@@ -5770,6 +5771,12 @@ body[data-rail="icons"][data-pane="open"] .face {
 
 .pane-body {
   overflow-y: auto; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+
+/* The run tab: the pane's own inset, and cards that breathe apart. */
+#pane-run {
+  padding: 8px 12px;
+  gap: 10px;
+}
 
 .pane-tree {
   flex: 0 0 auto;
