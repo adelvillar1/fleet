@@ -156,6 +156,11 @@ pub struct Proposal {
     pub name: String,
     pub description: String,
     pub kind: ProposalKind,
+    /// The gate's own word for where this draft stands — `pending` until
+    /// an apply stamps it `applied`, `refused`, or `waiting` (the stamp's
+    /// vocabulary is improve's). A draft the gate has disposed of leaves
+    /// the decisions queue: the surface shows what needs a decision.
+    pub status: String,
     /// The session id and the record or row that justifies the draft.
     pub evidence: String,
     pub body: String,
@@ -745,6 +750,7 @@ fn proposal(document: Document, stem: &str, path: PathBuf) -> Result<Proposal, S
         name,
         description,
         kind,
+        status: document.get("status").unwrap_or("pending").to_string(),
         evidence,
         body: document.body,
         path,

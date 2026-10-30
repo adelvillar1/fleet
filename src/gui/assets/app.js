@@ -626,6 +626,7 @@
     delegationBoard: document.getElementById('delegation-board'),
     memoryBoard: document.getElementById('memory-board'),
     skillsBoard: document.getElementById('skills-board'),
+    skillsRail: document.getElementById('skills-rail'),
     sessionsBoard: document.getElementById('work-list'),
     calibrationBoard: document.getElementById('calibration-board'),
     brainBoard: document.getElementById('brain-board'),
@@ -770,7 +771,6 @@
     turnFolded: {},
     sessionQuery: '',
     memoryFilter: 'live',
-    skillsFilter: 'all',
     // The library holds 442 rows; the query and the show-all toggle are
     // what make a table of that length usable rather than a wall.
     skillQuery: '',
@@ -5973,11 +5973,164 @@
       .catch(function () { });
   }
 
-  // The skills panel: the library with its loaded/skipped split, the
-  // proposals awaiting a decision, and the curation candidates. The
-  // approve rides improve's own apply, so its button says the gate is
-  // running while it does — the gate is the real one, and a reply that
-  // came back before it ran would be an approve of nothing.
+  // ------------------------------------------------------------- skills
+  //
+  // The surface is a rail of sections and one section's cards: the work
+  // rail's idiom, the shared sectionRail helper, and a route that makes
+  // a section addressable. What needs you leads; the declared categories
+  // follow in the table's own order; declined, curation and retired
+  // close the rail.
+
+  /// The section the hash names, or the remembered one, or `needs-you`.
+  function skillsSectionId() {
+    var raw = (window.location.hash || '').replace(/^#\/?/, '');
+    var parts = raw.split('/');
+    if (parts[0] === 'skills' && parts[1]) return decodeURIComponent(parts[1]);
+    try {
+      var stored = window.localStorage.getItem('fleet-skills-section');
+      if (stored) return stored;
+    } catch (error) { }
+    return 'needs-you';
+  }
+
+  function rememberSkillsSection(id) {
+    try { window.localStorage.setItem('fleet-skills-section', id); } catch (error) { }
+  }
+
+  /// The category sections the read actually holds, in the table's own
+  /// order. `everything-else` appears only when the read carries an
+  /// unmatched name — an empty fallback row would be a lie about the
+  /// library.
+  function skillCategoryIds(read) {
+    var seen = {};
+    (read.skills || []).forEach(function (skill) {
+      seen[skill.category || 'everything-else'] = true;
+    });
+    var order = ['building', 'web', 'design', 'media', 'documents', 'data',
+      'platforms', 'machine', 'everything-else'];
+    return order.filter(function (id) { return seen[id]; });
+  }
+
+  var SKILL_CATEGORY_NAMES = {
+    'building': 'building', 'web': 'web', 'design': 'design', 'media': 'media',
+    'documents': 'documents', 'data': 'data', 'platforms': 'platforms',
+    'machine': 'machine', 'everything-else': 'everything else'
+  };
+
+  var SKILL_CATEGORY_ICONS = {
+    'needs-you': 'pending', 'building': 'plan', 'web': 'router', 'design': 'theme',
+    'media': 'sessions', 'documents': 'repo', 'data': 'memory',
+    'platforms': 'bots', 'machine': 'settings', 'everything-else': 'dot',
+    'declined': 'dot', 'curation': 'rules', 'retired': 'rows'
+  };
+
+  /// The proposals that still need a decision: a draft the gate has
+  /// already disposed of (applied, refused, waiting on something else)
+  /// leaves the queue — the section shows what needs you, named exactly.
+  function pendingProposals(read) {
+    return (read.proposals || []).filter(function (proposal) {
+      var status = proposal.status || 'pending';
+      return status === 'pending' || status === 'waiting';
+    });
+  }
+
+  /// The declaration: id, icon, name, badge and paint per section.
+  function skillSections(read) {
+    var skills = read.skills || [];
+    var skips = read.skips || [];
+    var proposals = pendingProposals(read);
+    var sections = [{
+      id: 'needs-you', name: 'needs you',
+      badge: proposals.length, badgeTitle: proposals.length + ' waiting',
+      paint: function () { return [skillsDecisions(proposals)]; }
+    }];
+    skillCategoryIds(read).forEach(function (id) {
+      var rows = skills.filter(function (skill) {
+        return (skill.category || 'everything-else') === id;
+      });
+      sections.push({
+        id: id, name: SKILL_CATEGORY_NAMES[id] || id,
+        badge: rows.length, badgeTitle: rows.length + ' skills',
+        paint: function () { return [skillCategoryCard(read, id, rows)]; }
+      });
+    });
+    sections.push(
+      {
+        id: 'declined', name: 'declined',
+        badge: skips.length, badgeTitle: skips.length + ' skipped',
+        paint: function () { return [skillsSkips(skips)]; }
+      },
+      {
+        id: 'curation', name: 'curation',
+        badge: (read.merges || []).length,
+        badgeTitle: (read.merges || []).length + ' candidates',
+        paint: function () { return [skillsCuration(read)]; }
+      },
+      {
+        id: 'retired', name: 'retired',
+        badge: (read.retired || []).length,
+        badgeTitle: (read.retired || []).length + ' retired',
+        paint: function () { return [skillsRetired(read)]; }
+      }
+    );
+    return sections;
+  }
+
+  function paintSkillsRail(read) {
+    if (!el.skillsRail) return;
+    var sections = read ? skillSections(read) : [];
+    sectionRail(el.skillsRail, sections.map(function (section) {
+      return {
+        id: section.id, icon: SKILL_CATEGORY_ICONS[section.id] || 'dot',
+        name: section.name, badge: section.badge, badgeTitle: section.badgeTitle
+      };
+    }), {
+      current: read ? skillsSectionId() : 'needs-you',
+      folded: !!face.skillsRailFolded,
+      store: 'fleet-skills-rail',
+      onPick: function (id) {
+        rememberSkillsSection(id);
+        window.location.hash = '#/skills/' + id;
+        paintSkills();
+        var row = el.skillsRail.querySelector('[data-section="' + id + '"]');
+        if (row && row.focus) row.focus();
+      },
+      onFold: function (folded) {
+        face.skillsRailFolded = folded;
+        try {
+          window.localStorage.setItem('fleet-skills-rail', folded ? 'folded' : 'open');
+        } catch (error) { }
+        paintSkillsRail(face.skills);
+      }
+    });
+  }
+
+  /// One section's cards, and nothing else. The rail picks; this paints.
+  /// A query outranks the rail: the body becomes the results card across
+  /// every section until the query clears.
+  function paintSkillsSection(id) {
+    var read = face.skills;
+    if (!read) return;
+    Array.prototype.slice.call(el.skillsBoard.children).forEach(function (child) {
+      if (child.classList && (child.classList.contains('section-body'))) {
+        el.skillsBoard.removeChild(child);
+      }
+    });
+    var body = node('div', 'section-body');
+    if ((face.skillQuery || '').trim()) {
+      body.dataset.section = 'matches';
+      body.appendChild(skillSearchResults(read));
+      el.skillsBoard.appendChild(body);
+      return;
+    }
+    var sections = skillSections(read);
+    var chosen = sections.filter(function (section) { return section.id === id; })[0]
+      || sections[0];
+    body.dataset.section = chosen.id;
+    chosen.paint().forEach(function (card) { body.appendChild(card); });
+    el.skillsBoard.appendChild(body);
+  }
+
   function paintSkills() {
     var read = face.skills;
     el.skillsBoard.textContent = '';
@@ -5989,21 +6142,13 @@
         'The library read has not landed yet. It reads the canonical skills directory and the ' +
         'home\u2019s own proposals, both of which are this machine\u2019s.'));
       el.skillsBoard.appendChild(waiting);
+      paintSkillsRail(null);
       return;
     }
     var skills = read.skills || [];
     var skips = read.skips || [];
-    var proposals = read.proposals || [];
+    var proposals = pendingProposals(read);
     var used = skills.filter(function (skill) { return skill.uses > 0; }).length;
-    var filter = face.skillsFilter || 'all';
-    var query = face.skillQuery || '';
-    var shown = skills
-      .filter(function (skill) {
-        return skillFilterMatch(skill, filter) && skillMatches(skill, query);
-      })
-      .sort(function (left, right) {
-        return right.uses - left.uses || left.name.localeCompare(right.name);
-      });
     var instrument = surfaceInstrument('the library', skills.length + ' skills',
       (read.canonical || 'no library') + ' \u00b7 ' + read.sessions + ' sessions scanned',
       [
@@ -6035,22 +6180,64 @@
       [read.retired.length, 'retired', read.retired.length ? 'down' : null],
       [read.sessions, 'sessions scanned']
     ], 'the library at ' + (read.canonical || '\u2014')));
-    el.skillsBoard.appendChild(skillLibrary(read, shown, filter));
-    el.skillsBoard.appendChild(surfaceRail([
-      skillsDecisions(proposals),
-      skillsSkips(skips),
-      skillsCuration(read),
-      skillsRetired(read)
-    ]));
+    // The search reads across every section, so it sits above the
+    // section body — which is the only thing a section pick replaces.
+    el.skillsBoard.appendChild(skillSearch());
+    paintSkillsRail(read);
+    paintSkillsSection(skillsSectionId());
     if (read.refused && read.refused.length) {
       el.skillsBoard.appendChild(refusedCard(read.refused));
     }
   }
 
-  function skillFilterMatch(skill, filter) {
-    if (filter === 'used') return skill.uses > 0;
-    if (filter === 'unused') return !skill.uses;
-    return true;
+  /// One category's rows, and nothing else: one-line rows under the
+  /// row budget — the first 30, then the count named.
+  function skillCategoryCard(read, id, rows) {
+    var shown = rows
+      .slice()
+      .sort(function (left, right) {
+        return right.uses - left.uses || left.name.localeCompare(right.name);
+      });
+    var card = boardCard(8, SKILL_CATEGORY_NAMES[id] || id,
+      shown.length + (shown.length === 1 ? ' skill' : ' skills'),
+      'one line per skill: the name, the sentence, and its uses. A row opens the ' +
+      'skill — its body and its actions — in the pane.');
+    card.classList.add('lib-card');
+    var items = shown.map(skillItem);
+    if (!items.length) {
+      card.appendChild(node('p', 'board-empty',
+        'No skill in this section yet.'));
+      return card;
+    }
+    card.appendChild(budgetRows(items, 30, 'skills',
+      !!face.skillShowAll, function () {
+        face.skillShowAll = !face.skillShowAll;
+        paintSkills();
+      }));
+    return card;
+  }
+
+  /// A query turns the body into one results card across every section —
+  /// the search reads name and sentence wherever the match lives, and
+  /// the rail stays where it was.
+  function skillSearchResults(read) {
+    var query = (face.skillQuery || '').trim();
+    var shown = (read.skills || [])
+      .filter(function (skill) { return skillMatches(skill, query); })
+      .sort(function (left, right) {
+        return right.uses - left.uses || left.name.localeCompare(right.name);
+      });
+    var card = boardCard(8, 'matches', String(shown.length),
+      'searching every section for \u201c' + query + '\u201d \u2014 the name and the one sentence.');
+    card.classList.add('lib-card');
+    if (!shown.length) {
+      card.appendChild(node('p', 'board-empty',
+        'No skill matches \u201c' + query + '\u201d. The search reads the name and the one ' +
+        'sentence, in every section.'));
+      return card;
+    }
+    card.appendChild(budgetRows(shown.map(skillItem), 30, 'skills', true, function () { }));
+    return card;
   }
 
   function skillMatches(skill, query) {
@@ -6079,54 +6266,32 @@
     return wrap;
   }
 
-  function skillLibrary(read, shown, filter) {
-    var skills = read.skills || [];
-    var used = skills.filter(function (skill) { return skill.uses > 0; }).length;
-    var card = boardCard(8, 'the library', shown.length + ' of ' + skills.length,
-      'one row per skill the loader accepted. A row opens the skill; its buttons open the file, ' +
-      'ask the curator, or copy the name.');
-    card.classList.add('lib-card');
-    var tools = node('div', 'lib-tools');
-    tools.appendChild(skillSearch());
-    card.appendChild(tools);
-    card.appendChild(filterBar([
-      { value: 'all', label: 'all', count: skills.length },
-      { value: 'used', label: 'used', count: used },
-      { value: 'unused', label: 'never used', count: skills.length - used }
-    ], filter, function (value) {
-      face.skillsFilter = value;
-      face.skillShowAll = false;
-      paintSkills();
-    }));
-    var cols = node('div', 'skill-cols');
-    ['skill', 'uses', 'modified', 'actions'].forEach(function (label) {
-      cols.appendChild(node('span', null, label));
-    });
-    card.appendChild(cols);
-    var limit = face.skillShowAll || face.skillQuery
-      ? shown.length : Math.min(30, shown.length);
-    shown.slice(0, limit).forEach(function (skill) { card.appendChild(skillRow(skill)); });
-    if (!shown.length) {
-      card.appendChild(node('p', 'board-empty',
-        'No skill matches' + (face.skillQuery ? ' \u201c' + face.skillQuery + '\u201d' : ' this filter') +
-        '. The search reads the name and the one sentence.'));
+  /// One skill as a one-line row: the name, the sentence, and the uses
+  /// mark — the count the owner asked to see (the approved `use_skill`
+  /// selections across the scanned sessions). The row's press opens the
+  /// skill's card in the pane; the actions live there, not here.
+  function skillItem(skill) {
+    var row = node('button', 'cfg-item');
+    row.type = 'button';
+    row.dataset.item = 'skill:' + skill.name;
+    row.dataset.kind = 'skill';
+    row.setAttribute('aria-label',
+      skill.name + (skill.description ? ', ' + skill.description : ''));
+    var main = node('span', 'cfg-item-main');
+    main.appendChild(node('span', 'cfg-item-name', skill.name));
+    if (skill.description) {
+      main.appendChild(node('span', 'cfg-item-value', skill.description));
     }
-    var foot = node('div', 'lib-foot');
-    foot.appendChild(node('span', null,
-      'showing ' + limit + ' of ' + shown.length + (face.skillQuery ? ' matches' : '')));
-    if (!face.skillShowAll && !face.skillQuery && shown.length > limit) {
-      var more = node('button', 'row-action', 'show all ' + shown.length);
-      more.type = 'button';
-      more.addEventListener('click', function () { face.skillShowAll = true; paintSkills(); });
-      foot.appendChild(more);
-    } else if (face.skillShowAll && shown.length > 30) {
-      var less = node('button', 'row-action', 'show the first 30');
-      less.type = 'button';
-      less.addEventListener('click', function () { face.skillShowAll = false; paintSkills(); });
-      foot.appendChild(less);
-    }
-    card.appendChild(foot);
-    return card;
+    row.appendChild(main);
+    var uses = node('span', 'cfg-item-mark',
+      skill.uses > 0 ? skill.uses + (skill.uses === 1 ? ' use' : ' uses') : 'never selected');
+    uses.dataset.tone = skill.uses > 0 ? 'own' : 'down';
+    uses.title = skill.uses > 0
+      ? skill.uses + ' approved use_skill calls across the scanned sessions'
+      : 'no approved use_skill call in the scanned sessions';
+    row.appendChild(uses);
+    row.addEventListener('click', function () { inspectSkill(skill, row); });
+    return row;
   }
 
   // Retire a skill from every run's prompt, or return it: the owner's
@@ -6191,46 +6356,27 @@
     return card;
   }
 
-  function skillRow(skill) {
-    var row = node('div', 'skill-row');
-    row.tabIndex = 0;
-    row.setAttribute('role', 'button');
-    row.title = 'open ' + skill.name;
-    var main = node('div', 'mem-fact');
-    main.appendChild(node('b', null, skill.name));
-    main.appendChild(node('p', null, skill.description));
-    row.appendChild(main);
-    row.appendChild(node('span', 'mem-num', String(skill.uses)));
-    row.appendChild(node('span', 'skill-mod', (skill.modified || '').slice(0, 10) || '\u2014'));
-    var acts = node('div', 'row-actions');
-    acts.appendChild(rowAction('open', 'open the skill', function () {
-      inspectSkill(skill);
-    }, true));
-    acts.appendChild(rowAction('path', 'copy the skill path', function () {
-      if (navigator.clipboard) navigator.clipboard.writeText(skill.path).catch(function () { });
-      notice('the skill path is copied', skill.path);
-    }));
-    acts.appendChild(rowAction('ask', 'ask the curator about this skill', function () {
-      ask('review the ' + skill.name + ' skill against the sessions that used it and say whether it should change');
-    }));
-    acts.appendChild(rowAction('copy', 'copy the skill name', function () {
-      if (navigator.clipboard) navigator.clipboard.writeText(skill.name).catch(function () { });
-      notice('the skill name is copied', skill.name);
-    }));
-    var retire = rowAction('retire', 'retire this skill from every run\u2019s prompt', function () {
-      retireSkill(skill.name, retire, true);
-    });
-    acts.appendChild(retire);
-    row.appendChild(acts);
-    var open = function () { inspectSkill(skill); };
-    row.addEventListener('click', open);
-    row.addEventListener('keydown', function (event) {
-      if (event.key === 'Enter' || event.key === ' ') {
-        event.preventDefault();
-        open();
+  /// The approve, shared by the row's button and the pane card's: the
+  /// apply is the real one, so the button says so while it runs and the
+  /// refusal names itself (KI-374's depth rule makes a skills write
+  /// landable where the repo's cargo never reached).
+  function approveProposal(proposal, button) {
+    button.disabled = true;
+    button.textContent = 'applying\u2026';
+    post('/api/skill', { name: proposal.name }).then(function (reply) {
+      if (reply.status === 200) {
+        notice('the proposal landed', reply.body.summary || proposal.name + ' applied');
+        readSkills(true).then(paintSkills);
+        return;
       }
+      button.disabled = false;
+      button.textContent = 'approve';
+      notice('the approve was refused', reply.body.error || 'the apply refused it');
+    }).catch(function () {
+      button.disabled = false;
+      button.textContent = 'approve';
+      notice('the approve did not cross', 'the server did not answer');
     });
-    return row;
   }
 
   function skillsDecisions(proposals) {
@@ -6254,22 +6400,7 @@
       approve.title = 'apply this proposal';
       approve.addEventListener('click', function (event) {
         event.stopPropagation();
-        approve.disabled = true;
-        approve.textContent = 'applying\u2026';
-        post('/api/skill', { name: proposal.name }).then(function (reply) {
-          if (reply.status === 200) {
-            notice('the proposal landed', reply.body.summary || proposal.name + ' applied');
-            readSkills(true).then(paintSkills);
-            return;
-          }
-          approve.disabled = false;
-          approve.textContent = 'approve';
-          notice('the approve was refused', reply.body.error || 'the apply refused it');
-        }).catch(function () {
-          approve.disabled = false;
-          approve.textContent = 'approve';
-          notice('the approve did not cross', 'the server did not answer');
-        });
+        approveProposal(proposal, approve);
       });
       acts.appendChild(approve);
       acts.appendChild(rowAction('read', 'read the proposal', function () {
@@ -6359,7 +6490,7 @@
     return card;
   }
 
-  function inspectSkill(skill) {
+  function inspectSkill(skill, row) {
     var actions = node('div', 'replay-actions');
     var copy = node('button', 'replay-button');
     copy.type = 'button';
@@ -6370,7 +6501,15 @@
       window.setTimeout(function () { copy.textContent = 'copy the skill name'; }, 1200);
     });
     actions.appendChild(copy);
-    var curator = node('button', 'replay-button replay-resume');
+    var path = node('button', 'replay-button');
+    path.type = 'button';
+    path.textContent = 'copy the skill path';
+    path.addEventListener('click', function () {
+      if (navigator.clipboard) navigator.clipboard.writeText(skill.path).catch(function () { });
+      notice('the skill path is copied', skill.path);
+    });
+    actions.appendChild(path);
+    var curator = node('button', 'replay-button');
     curator.type = 'button';
     curator.textContent = 'ask the curator about it';
     curator.addEventListener('click', function () {
@@ -6378,8 +6517,18 @@
       ask('review the ' + skill.name + ' skill against the sessions that used it and say whether it should change');
     });
     actions.appendChild(curator);
+    var retire = node('button', 'replay-button');
+    retire.type = 'button';
+    retire.textContent = 'retire from every run';
+    retire.title = 'the skill leaves every run\u2019s prompt; the library keeps it (KI-215)';
+    retire.addEventListener('click', function () {
+      closeDrawer();
+      retireSkill(skill.name, retire, true);
+    });
+    actions.appendChild(retire);
     openDrawer(skill.name, [
       ['the skill', node('p', 'derivation',
+        (skill.category || 'everything-else') + ' \u00b7 ' +
         skill.uses + ' uses across ' + (face.skills ? face.skills.sessions : 0) + ' scanned sessions' +
         ' \u00b7 ' + skill.path)],
       ['related', relatedFor('skill', skill.name)],
@@ -6389,18 +6538,34 @@
         'the skill is selected, and then it is already in the log as that call\u2019s result.')],
       ['what you can do', actions]
     ]);
+    document.body.dataset.objectCard = 'open';
+    Array.prototype.forEach.call(
+      document.querySelectorAll('.cfg-item[aria-current="true"]'),
+      function (one) { one.removeAttribute('aria-current'); });
+    if (row) row.setAttribute('aria-current', 'true');
   }
 
   function inspectProposal(proposal) {
+    var actions = node('div', 'replay-actions');
+    var approve = node('button', 'replay-button replay-resume', 'approve');
+    approve.type = 'button';
+    approve.title = 'apply this proposal';
+    approve.addEventListener('click', function () {
+      closeDrawer();
+      approveProposal(proposal, approve);
+    });
+    actions.appendChild(approve);
     openDrawer(proposal.name, [
       ['the proposal', node('p', 'derivation',
         proposal.kind + ' \u00b7 ' + proposal.evidence + ' \u00b7 ' + proposal.path)],
       ['the proposed body', node('pre', 'drawer-code', proposal.body || '')],
       ['what an approve does', node('p', 'derivation',
-        'the change is staged, the four cargo steps run in the repo, and the change is kept only ' +
-        'when every step is green. A skills write is home-side, so it creates no commit; the ' +
-        'pre-image stash beside it is what `fleet improve undo` restores.')]
+        'the change is staged and lands on its own validations — a skills write is home-side, ' +
+        'so the repo\u2019s cargo gate does not judge it (KI-374) and it creates no commit; the ' +
+        'pre-image stash beside it is what `fleet improve undo` restores.')],
+      ['what you can do', actions]
     ]);
+    document.body.dataset.objectCard = 'open';
   }
 
   function readSkills(force) {

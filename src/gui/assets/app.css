@@ -1434,6 +1434,10 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* The library card's rows: the name wins the line, the sentence takes
+   the remainder — a long description shrinks the value, never the name. */
+.lib-card .cfg-item-name { flex: 0 0 220px; }
+
 .cfg-item-mark {
   flex: 0 0 auto;
   padding: 1px 6px;
@@ -1514,7 +1518,7 @@ body[data-object-card="open"] .dock-object { display: block; }
 .cfg-fallback .cfg-item-value { text-align: right; white-space: normal; }
 
 /* The row budget: the count is honest about what the press reveals. */
-.budget { display: grid; gap: 2px; }
+.budget { display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; }
 .budget-more {
   justify-self: start;
   margin-top: 4px;

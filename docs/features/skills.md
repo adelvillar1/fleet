@@ -210,6 +210,31 @@ memory upgrades it.
   and gets no separate retire draft — two drafts disposing of one skill
   is noise a reviewer should not have to reconcile.
 
+## The face's rail (2026-10-30)
+
+The skills surface is the work rail's idiom, shared with settings and
+bots: a rail of sections, one section at a time, one-line rows, and the
+right pane for the item. The sections: **needs you** — the proposals
+whose gate status is still pending or waiting, each with its approve and
+read; the **declared categories** — `src/skills-categories.json`, exact
+name to section, with `everything else` the visible row for a name the
+table does not carry; then **declined** (the loader's skips), **curation**
+(the merge candidates), and **retired**. A category is an address
+(`#/skills/<section>`, remembered); the search reads name and sentence
+across every section and renders one results card; rows carry the uses
+count (approved `use_skill` selections across the scanned sessions) and
+the row budget shows the first 30 with the count named. A row's press
+opens the pane card: the body, the uses, the path, related, and the
+actions — copy the name, copy the path, ask the curator, retire.
+
+The approve rides `improve`'s apply, whose gate now matches the change's
+blast radius: a skills write stages into the canonical library with no
+repo paths, so the cargo gate does not judge it (KI-374) — the stage's
+validations (the draft parses, the name matches, `proposed: true` is
+refused) and the pre-image stash are the protection, and `fleet improve
+undo` still reverts. A draft the gate disposed of carries its stamped
+status and leaves the queue.
+
 ## `fleet skills`
 
 The loaded skills as cards — name, description, usage count from the

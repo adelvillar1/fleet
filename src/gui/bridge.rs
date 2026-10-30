@@ -7407,6 +7407,7 @@ fn skills_read(home: &std::path::Path) -> Value {
             "name": proposal.name,
             "description": proposal.description,
             "kind": proposal.kind,
+            "status": proposal.status,
             "evidence": proposal.evidence,
             "body": proposal.body,
             "path": proposal.path,

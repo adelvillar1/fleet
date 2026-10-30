@@ -357,8 +357,15 @@ archive, never the session log.
 
 #### `skills.rs`
 Skills loading, progressive disclosure via `use_skill`, the self-authoring
-drafter, usage-scan curation, and the `fleet skills` surface. A malformed
-skill is skipped by name with one logged line.
+drafter, usage-scan curation, the declared category table
+(`src/skills-categories.json`, `category_of`), and the surfaces: the CLI's
+`fleet skills` and the face's rail — needs you, the categories, declined,
+curation, retired — with the pane card and the proposals' approve. A
+malformed skill is skipped by name with one logged line. The approve's
+apply runs the cargo gate only for a change that stages repo paths; a
+home-side skills write lands on its own validations (KI-374's depth
+rule), and a disposed draft carries its status so the queue shows what
+still needs a decision.
 
 #### `nomenclature.rs`
 The canonical identifier vocabulary and the `convention` lookup. It names the

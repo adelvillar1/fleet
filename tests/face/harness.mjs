@@ -392,6 +392,14 @@ function boot(options) {
         json: () => Promise.resolve(documents.memory || { type: 'memory', facts: [], hits: [] }),
       });
     }
+    if (pathOnly === '/api/skills') {
+      return Promise.resolve({
+        status: 200,
+        json: () => Promise.resolve(documents.skills || {
+          type: 'skills', skills: [], skips: [], proposals: [], merges: [], retired: [],
+        }),
+      });
+    }
     if (pathOnly === '/api/web/frame') {
       const asked = new URL('http://x' + url).searchParams.get('url') || '';
       return Promise.resolve({
@@ -3985,6 +3993,175 @@ async function theBotsRailGroupsByPersona() {
     String(page.rows('.bot-history-row').length));
 }
 
+// The skills surface's document, in the bridge's own shape: three
+// categories, one skip, one proposal, one retired name, and a building
+// section heavy enough to prove the row budget.
+const skillsDoc = (() => {
+  const skill = (name, category, uses) => ({
+    name, description: 'the ' + name + ' skill', category, uses,
+    modified: '2026-10-30', path: '/lib/' + name + '/SKILL.md',
+    body: 'the body of ' + name,
+  });
+  const building = [];
+  for (let i = 0; i < 32; i += 1) building.push(skill('skill-' + String(i).padStart(2, '0'), 'building', i));
+  return {
+    type: 'skills', read_at: 'now', canonical: '/lib', sessions: 20, unused: 1,
+    threshold: 0.8, curation_note: 'the note', refused: [],
+    skills: building.concat([
+      skill('web-one', 'web', 0),
+      skill('media-one', 'media', 2),
+    ]),
+    skips: [{ name: 'broken-one', reason: 'no readable SKILL.md' }],
+    proposals: [{
+      name: 'bash-recovery', description: 'recover a failed bash call', kind: 'create',
+      evidence: 'session x: bash failed then succeeded', body: 'the proposed body',
+      path: '/home/proposals/bash-recovery.md',
+    }],
+    merges: [], retired: ['old-one'],
+  };
+})();
+
+async function theSkillsRailCarriesOneSectionAtATime() {
+  const bootSkills = (hash) => boot({
+    width: 1440, hash,
+    documents: { skills: skillsDoc, state: (asked) => emptyState(asked),
+      onboard: onboardDoc({ door: false }) },
+  });
+
+  const page = bootSkills('#/skills');
+  await flush();
+  page.open();
+  await flush(80);
+
+  // The rail: needs you leads, the categories the document holds follow,
+  // the tails close it, and an empty fallback row never renders.
+  const railRows = page.rows('.section-rail-row');
+  const railText = railRows.map((row) => row.textContent);
+  check('SKILL the rail leads with needs you and names the sections',
+    railRows.length === 7 &&
+      railText[0].includes('needs you') &&
+      railText[1].includes('building') && railText[2].includes('web') &&
+      railText[3].includes('media') &&
+      railText[4].includes('declined') && railText[6].includes('retired') &&
+      !railText.join('|').includes('everything else'),
+    railText.join(' | '));
+  check('SKILL one section renders at a time', page.rows('.section-body').length === 1 &&
+    page.rows('.section-body')[0].dataset.section === 'needs-you',
+  page.rows('.section-body').map((b) => b.dataset.section).join(','));
+
+  // The needs-you section carries the proposal with its approve.
+  check('SKILL needs you carries the proposal and its approve',
+    page.text('skills-board').includes('bash-recovery') &&
+      page.rows('.row-action-primary').length === 1,
+    String(page.rows('.row-action-primary').length));
+
+  // A category section is an address, and its rows are one line with
+  // the uses mark the owner asked for.
+  const routed = bootSkills('#/skills/building');
+  await flush();
+  routed.open();
+  await flush(80);
+  check('SKILL a category is an address',
+    routed.rows('.section-body')[0].dataset.section === 'building', 'building route');
+  const items = routed.rows('.cfg-item');
+  check('SKILL the rows are one-line items with the uses mark',
+    items.length === 30 &&
+      items.every((row) => row.querySelector('.cfg-item-name')) &&
+      items.some((row) => row.textContent.includes('uses')),
+    String(items.length));
+
+  // The budget: the first 30 and the count named; the press reveals —
+  // and the revealed tail carries the never-selected mark.
+  const more = routed.rows('.budget-more');
+  check('SKILL the budget names what is behind the press',
+    more.length === 1 && more[0].textContent.includes('2 more skills'),
+    more.length ? more[0].textContent : 'no budget press');
+  more[0].click();
+  await flush(40);
+  const revealed = routed.rows('.cfg-item');
+  check('SKILL the press reveals the rest, never selected among them',
+    revealed.length === 32 &&
+      revealed.some((row) => row.textContent.includes('never selected')),
+    String(revealed.length));
+
+  // A row's press opens the pane card with the body and the actions —
+  // the tabs stood down, the uses count named. The section sorts by
+  // uses, so the first row is the most-used skill.
+  revealed[0].click();
+  await flush(60);
+  check('SKILL a row opens its card in the pane',
+    routed.body.dataset.objectCard === 'open' &&
+      routed.text('dock-object-title').includes('skill-31'),
+    routed.text('dock-object-title'));
+  const cardText = routed.text('dock-object-body');
+  check('SKILL the card carries the body, the uses, and the actions',
+    cardText.includes('the body of skill-31') &&
+      cardText.includes('31 uses across 20 scanned sessions') &&
+      cardText.includes('copy the skill path') &&
+      cardText.includes('retire from every run'),
+    cardText.slice(0, 160));
+  routed.fireOn('dock-object-close', 'click');
+  await flush(40);
+  check('SKILL closing returns the pane\u2019s tabs',
+    routed.body.dataset.objectCard !== 'open', String(routed.body.dataset.objectCard));
+
+  // The approve: the row's press posts the name, the reply repaints.
+  const deciding = bootSkills('#/skills');
+  await flush();
+  deciding.open();
+  await flush(80);
+  deciding.rows('.row-action-primary')[0].click();
+  await flush(60);
+  const posted = deciding.calls.filter((call) =>
+    call.url === '/api/skill' && call.method === 'POST');
+  check('SKILL the approve posts the proposal\u2019s name',
+    posted.length === 1 && JSON.parse(posted[0].body).name === 'bash-recovery',
+    JSON.stringify(posted.map((call) => call.body)));
+
+  // A query turns the body into the results card across every section:
+  // the match lives in web, the rail stood on building.
+  const box = routed.rows('.panel-search-box');
+  check('SKILL the search sits above the section',
+    box.length === 1, String(box.length));
+  box[0].value = 'web-one';
+  box[0].fire('input', {});
+  await flush(60);
+  const searched = routed.rows('.cfg-item');
+  check('SKILL a query searches every section',
+    routed.rows('.section-body')[0].dataset.section === 'matches' &&
+      searched.length === 1 && searched[0].textContent.includes('web-one'),
+    searched.map((row) => row.textContent).join(' | ').slice(0, 120));
+
+  // The retired section carries the return.
+  const gone = bootSkills('#/skills/retired');
+  await flush();
+  gone.open();
+  await flush(80);
+  check('SKILL the retired section carries the return',
+    gone.rows('.section-body')[0].dataset.section === 'retired' &&
+      gone.text('skills-board').includes('old-one') &&
+      gone.text('skills-board').includes('unretire'),
+    gone.rows('.section-body')[0].dataset.section);
+
+  // The retire, from the pane card: the press posts the name and the
+  // read repaints — the library never written (KI-215).
+  const retiring = bootSkills('#/skills/building');
+  await flush();
+  retiring.open();
+  await flush(80);
+  retiring.rows('.cfg-item')[0].click();
+  await flush(60);
+  Array.from(retiring.rows('.replay-button'))
+    .find((button) => button.textContent === 'retire from every run').click();
+  await flush(60);
+  const retiredPost = retiring.calls.filter((call) =>
+    call.url === '/api/skill/retire' && call.method === 'POST');
+  check('SKILL the retire posts the name and repaints',
+    retiredPost.length === 1 &&
+      JSON.parse(retiredPost[0].body).name === 'skill-31',
+    JSON.stringify(retiredPost.map((call) => call.body)));
+}
+
 const cases = [
   ['C1/C8 the list groups by attention and counts what the server counted', theListGroupsByAttentionAndCountsWhatTheServerCounted],
   ['C2 every state opens through one verb', everyStateOpensThroughOneVerb],
@@ -4031,6 +4208,7 @@ const cases = [
   ['BOTS the bots surface mints the bot card', theBotsSurfaceMintsTheBotCard],
   ['SET the settings rail carries one section at a time', theSettingsRailCarriesOneSectionAtATime],
   ['BOTS the bots rail groups by persona', theBotsRailGroupsByPersona],
+  ['SKILL the skills rail carries the categories and the pane', theSkillsRailCarriesOneSectionAtATime],
 ];
 
 for (const [name, run] of cases) {

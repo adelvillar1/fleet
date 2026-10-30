@@ -94,13 +94,21 @@ what the corpus already knows. Search the corpus; open a fact with its
 whole body and edit it in place; ask fleet what it knows; see today's
 recalls and their scores.
 
-**Knowledge — skills.** The library the model can reach, the names the
-loader declined and why, and the proposals waiting for a decision. Each
-run's prompt carries up to sixty of the library's skills, newest first,
-as a one-line trigger each — `use when …` — and the row's **retire**
-takes one out of every run's prompt, the library untouched, one click
-from returning. Open a skill, ask the curator about it, approve or read a
-proposal the harness drafted from session evidence.
+**Knowledge — skills.** The library the model can reach, arranged on the
+work rail's idiom: a rail of sections — **needs you** (the proposals that
+still need a decision), the declared categories (building, web, design,
+media, documents, data, platforms, machine, everything else for a name
+the table does not carry), then declined, curation, and retired — one
+section at a time, one-line rows with the uses count, and the skill's
+card in the right pane (its body, its uses, and its actions: copy, ask
+the curator, retire). The search reads every section; a category is an
+address (`#/skills/<section>`). Each run's prompt carries up to sixty of
+the library's skills, newest first, as a one-line trigger each —
+`use when …` — and **retire** takes one out of every run's prompt, the
+library untouched, one click from returning. Approving a proposal lands
+it on its own validations — a skills write is home-side, so the repo's
+cargo gate does not judge it — and a draft the gate already disposed of
+leaves the queue.
 
 **Knowledge — second brain.** The owner's control tower, read as an
 atlas: every project's six-week pulse, the plans it keeps open, and the

@@ -634,11 +634,13 @@
     <div class="board" id="memory-board"></div>
   </main>
 
-  <!-- The skills. The library with its loaded/skipped split, the
-       proposals awaiting a decision, and the curation candidates. An
-       approve rides improve's own apply — the same gate the CLI runs —
-       so the button says the gate is running while it does. -->
-  <main class="stage stage-board" id="panel-skills" hidden>
+  <!-- The skills. The library the model can reach, arranged on the
+       work rail's own idiom: a rail of sections (what needs you first,
+       then the declared categories), one section at a time, and the
+       right pane for a skill's details. An approve rides improve's own
+       apply — which a home-side write lands without the repo gate. -->
+  <main class="stage stage-board stage-split" id="panel-skills" hidden>
+    <nav class="section-rail" id="skills-rail" aria-label="skill sections"></nav>
     <div class="board" id="skills-board"></div>
   </main>
 

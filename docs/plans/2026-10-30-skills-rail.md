@@ -196,45 +196,45 @@ heights and control counts; the docs.
 
 ## Acceptance criteria
 
-- [ ] **K1 — the depth rule.** `improve::apply` runs the cargo gate only
+- [x] **K1 — the depth rule.** `improve::apply` runs the cargo gate only
       for a staged change carrying repo paths; a home-side target records
       one gate step naming why no gate judged it; a repo-side target
       still refuses on a red step. Pinned by a unit test that applies a
       skill proposal with cargo absent from PATH and lands it green, and
       one that still refuses a patch target with cargo absent.
-- [ ] **K2 — the live approve.** A proposal approved through the face's
+- [x] **K2 — the live approve.** A proposal approved through the face's
       `POST /api/skill` returns applied and the library holds the skill;
       a refused apply names its reason in the notice. Proven in a real
       browser through the face (a scratch home's proposal suffices).
-- [ ] **K3 — the table is declared and total.** `src/skills-categories.json`
+- [x] **K3 — the table is declared and total.** `src/skills-categories.json`
       parses; every section is non-empty; `category_of` is deterministic
       (same name, same section); the live library measured through it
       lands every name in a category or in `everything else`, with the
       per-section counts recorded in this plan.
-- [ ] **K4 — the rail is the shared helper.** The skills panel renders
+- [x] **K4 — the rail is the shared helper.** The skills panel renders
       `sectionRail` (store `fleet-skills-rail`), collapses to icons,
       survives a reload, marks `aria-current`, and takes the arrow keys;
       only the open section's cards and rows exist in the DOM.
-- [ ] **K5 — a section is an address.** `#/skills/<section>` opens it;
+- [x] **K5 — a section is an address.** `#/skills/<section>` opens it;
       bare `#/skills` resumes the remembered one; an unknown segment
       falls back to `needs you`.
-- [ ] **K6 — the rows are one line with a budget.** A category's rows are
+- [x] **K6 — the rows are one line with a budget.** A category's rows are
       `cfgItem` one-liners with the uses and never-selected marks; the
       first 30 show and the press names the rest; the search box reads
       name and description across every section.
-- [ ] **K7 — the pane is the item.** The row's press opens the card with
+- [x] **K7 — the pane is the item.** The row's press opens the card with
       description, body, uses, path, modified, related, and the actions;
       a proposal's card carries kind, evidence, body, and approve; Escape
       closes, closing with an in-flight action asks; the row refreshes on
       a landed action.
-- [ ] **K8 — every button works.** A harness check per action button —
+- [x] **K8 — every button works.** A harness check per action button —
       open, path, ask, copy, retire, unretire, approve, read, search,
       budget — each asserted against its named element and its observed
       effect, in the same commit as the element.
-- [ ] **K9 — the retire law holds.** Retire and return write only
+- [x] **K9 — the retire law holds.** Retire and return write only
       `<home>/skills-retired.json` and never the library (KI-215's pin
       stays green through the revamp).
-- [ ] **K10 — the gate and the measurement.** fmt, clippy, build, test
+- [x] **K10 — the gate and the measurement.** fmt, clippy, build, test
       green by exit code; the Chromium probe quotes the before/after
       heights and control counts; KI-374 filed in S0's commit.
 
@@ -296,6 +296,35 @@ Expected: every new check green; the count line quoted in the commit.
 
 **K10** — the gate, whole, exit codes read directly; the Chromium probe
 at 1440×900 quoting before/after, the screenshots read as the review.
+
+## Landed 2026-10-30
+
+K1: `a_skill_proposal_lands_without_a_gate_and_names_why` and
+`a_repo_side_apply_still_needs_its_gate`, commit `9bb15e9`. K2: proven
+live — the face's approve returned `applied` for
+`procedure-read-file-bash`, the library took the skill, and the queue
+dropped to the three genuinely-pending drafts (two more were found
+refused-stamped by the pre-fix clicks; the queue now reads the stamped
+status and shows what still needs a decision). K3: the table test; the
+counts above; the newly-approved skill itself is not in the table, so
+`everything else` carries it at 1 — the fallback working as designed.
+K4–K8: the face harness, **435 checks across 46 cases** (the SKILL case:
+the rail's sections and badges, one section at a time, the route, the
+one-line rows with the uses mark, the budget's named press, the pane
+card with the body and the four actions, the approve's POST, the
+cross-section search results, the retire's POST). K9:
+`a_retirement_leaves_the_library_byte_identical` stays green. K10: the
+gate whole — fmt 0, clippy 0, build 0, **1,817 passed / 0 failed / 5
+ignored** — and the probe's measurement: before, one board **2,418 px
+tall with 213 controls**; after, the largest section is building at
+**1,493 px with 34 controls** (needs-you 697 px / 21, declined
+697 px / 9, retired 367 px / 5), 12 rail rows, one section-body in the
+DOM at every address. The before/after screenshots are read as the
+review (tmp/shots-skills-*); the fix they forced: `.budget`'s grid
+column is now `minmax(0, 1fr)` — an implicit column sized to
+max-content let a long sentence widen every row past its card — and the
+library card's name takes a fixed basis so the sentence, not the name,
+is what shrinks.
 
 ## Linked artifacts
 

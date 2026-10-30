@@ -1527,6 +1527,9 @@ pub struct SkillsProposal {
     pub name: String,
     pub description: String,
     pub kind: String,
+    /// The gate's word for where the draft stands — the decisions queue
+    /// shows what still needs a decision, not what was disposed of.
+    pub status: String,
     pub evidence: String,
     pub body: String,
     pub path: String,
@@ -1670,6 +1673,7 @@ pub fn read_skills(canonical: Option<&Path>, home: &Path) -> SkillsSnapshot {
                 name: proposal.name.clone(),
                 description: proposal.description.clone(),
                 kind: proposal.kind.label().to_string(),
+                status: proposal.status.clone(),
                 evidence: proposal.evidence.clone(),
                 body: proposal.body.clone(),
                 path: proposal.path.display().to_string(),

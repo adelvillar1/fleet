@@ -13,9 +13,15 @@ use std::process::Command;
 /// One `fleet` invocation against a scratch home and a scratch working
 /// directory. Returns stdout, stderr, and the exit code.
 fn fleet(home: &Path, cwd: &Path, args: &[&str]) -> (String, String, i32) {
+    // The skills library is pinned to the scratch home too: an apply
+    // resolves `$FLEET_SKILLS_DIR` before the user home, and a test that
+    // left it unpinned would write its fixture into the real
+    // `~/.agents/skills` the moment an apply stopped refusing (it did).
+    let skills_dir = home.join("skills");
     let output = Command::new(env!("CARGO_BIN_EXE_fleet"))
         .args(args)
         .env("FLEET_HOME", home)
+        .env("FLEET_SKILLS_DIR", &skills_dir)
         .env_remove("DEEPSEEK_API_KEY")
         .current_dir(cwd)
         .output()
@@ -359,13 +365,16 @@ fn a_skill_proposal_applies_through_the_gate_and_lands_the_row() {
     assert_eq!(propose[0].basis, "inferred");
     let written = std::fs::read_to_string(skill.join("SKILL.md")).unwrap();
     if code == 0 {
-        // The green path: the skill changed, the gate ran all four
-        // steps, and the undo restores the pre-image byte-for-byte.
+        // The green path: the skill changed, the gate recorded its one
+        // honest home-side step (KI-374's depth rule — a skills write
+        // stages no repo paths, so the cargo gate does not judge it),
+        // and the undo restores the pre-image byte-for-byte.
         assert!(stdout.contains("applied"), "{stdout}");
         assert!(written.contains("new body"), "{written}");
         assert_eq!(propose[0].verdict, fleet::calib::VERDICT_APPLIED);
-        assert_eq!(propose[0].gate.len(), 4);
-        assert!(propose[0].gate.iter().all(|step| step.ok));
+        assert_eq!(propose[0].gate.len(), 1, "{:?}", propose[0].gate);
+        assert_eq!(propose[0].gate[0].step, "home-side write");
+        assert!(propose[0].gate[0].ok);
         let (_, stderr, code) = fleet(&home, &repo, &["improve", "undo", "demo-update"]);
         assert_eq!(code, 0, "{stderr}");
         let restored = std::fs::read_to_string(skill.join("SKILL.md")).unwrap();
