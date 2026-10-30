@@ -602,12 +602,17 @@ through a real sys1 child, the judged decisions were identical to the
 cosine-only ones — zero new mis-fires — but did not dominate (no early
 fire; three of four votes under the 0.6 confidence gate). On that record the
 owner awarded the seat anyway (2026-10-30: *"award the seat and we
-roll it back if needed"*): a confident judgment fires and holds where
-the cosine alone would not, the cosine stays the safety net under a
-confident `no` and the whole decision under the gate, and every judged
-decision rides the calibration stream's `curate` rows — verdict,
-cosine, decision, trigger — which are the evidence base a rollback
-would judge by. The rollback is `CURATE_JUDGED_DECIDES` flipped back
+roll it back if needed"*): the judgment is a
+**panel** — the three judges of sys1's own routed chain (glide, drex,
+jev), fanned out in one classify call, best of 3 wins: the majority of
+the judges that answered is the vote, the winning side's mean
+confidence is what the 0.6 gate reads, and a tie (a judge short, the
+answers split) is no verdict — the fail-open row takes it. A confident
+panel fires and holds where the cosine alone would not, the cosine
+stays the safety net under a confident `no` and the whole decision
+under the gate, and every judged decision rides the calibration
+stream's `curate` rows — verdict, split, cosine, decision, trigger —
+which are the evidence base a rollback would judge by. The rollback is `CURATE_JUDGED_DECIDES` flipped back
 to `false`: one constant, and the advisory behavior is what ships. The focus label is the one contribution that
 acts today: when the lane names a shape the corpus's vocabulary carries
 and the curation fires anyway, the re-curation routes under it instead

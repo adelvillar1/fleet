@@ -62,10 +62,21 @@ pub struct Verdict {
 /// route verdicts run on.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CurateVerdict {
-    /// The lane's fire/hold vote: re-rank the memory block or not.
+    /// The panel's fire/hold vote: re-rank the memory block or not —
+    /// the majority of the judges that answered, best of 3.
     pub needs_recall: bool,
-    /// The lane's confidence in that vote.
+    /// The winning side's mean confidence — the conviction the gate
+    /// reads, not the most optimistic judge's.
     pub confidence: f64,
+    /// The judges that answered, and the vote's split. A tie is no
+    /// verdict at all, so a formed verdict always has a strict
+    /// majority side.
+    #[serde(default)]
+    pub judges: usize,
+    #[serde(default)]
+    pub yes_votes: usize,
+    #[serde(default)]
+    pub no_votes: usize,
     /// The focus label the lane named, when it named one — the corpus's
     /// own shape word, or `none`. Whether the label acts as the
     /// re-curation's shape hint is the caller's decision; the cache
@@ -425,6 +436,9 @@ mod tests {
             CurateVerdict {
                 needs_recall: true,
                 confidence: 0.83,
+                judges: 3,
+                yes_votes: 2,
+                no_votes: 1,
                 focus: Some("deploy".to_string()),
                 staleness: Some("stale".to_string()),
             },
@@ -474,6 +488,9 @@ mod tests {
             CurateVerdict {
                 needs_recall: false,
                 confidence: 0.9,
+                judges: 3,
+                yes_votes: 0,
+                no_votes: 3,
                 focus: None,
                 staleness: None,
             },

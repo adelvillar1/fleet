@@ -194,6 +194,16 @@ pub const DRIFT_FLOOR: f64 = 0.78;
 /// did.
 pub const CURATE_GATE: f64 = 0.6;
 
+/// The curation panel: the three judges of sys1's own routed chain
+/// (`providers.route`'s default, `services/sys1/src/sys1/config.py`),
+/// named explicitly so one classify call fans out to all of them —
+/// per-judge answers in one lane round trip, a judge without its key
+/// filtered out at the lane before any spend. Best of 3 wins: the
+/// majority of the judges that answered is the vote, and a tie (a
+/// judge short, the answers split) is no verdict — the fail-open row
+/// takes it.
+pub const CURATE_JUDGES: &[&str] = &["glide", "drex", "jev"];
+
 /// Whether the `curate` judgment holds the deciding seat. The J6 replay
 /// (the plan's contingency, measured 2026-10-30 on real session
 /// `997a54b4`'s four steers through a real sys1 child) answered the
@@ -3029,7 +3039,17 @@ impl<'a> Agent<'a> {
             .call(
                 "sys1",
                 &sys1_tool,
-                &serde_json::json!({ "task": "curate", "text": state }),
+                &serde_json::json!({
+                    "task": "curate",
+                    "text": state,
+                    // The panel, named explicitly: one call fans out to
+                    // all three judges (per-judge answers, failures
+                    // swallowed per provider), and the parse takes the
+                    // majority. An explicit list bypasses the lane's
+                    // own routing — that is the panel, not the chain's
+                    // failover.
+                    "provider": CURATE_JUDGES.join(","),
+                }),
             )
             .await;
         self.note_join("sys1", outcome.joined).ok()?;
@@ -3180,6 +3200,9 @@ impl<'a> Agent<'a> {
             input_hash: hash.to_string(),
             needs_recall: verdict.needs_recall,
             confidence: verdict.confidence,
+            judges: verdict.judges,
+            yes_votes: verdict.yes_votes,
+            no_votes: verdict.no_votes,
             focus: verdict.focus.clone(),
             staleness: verdict.staleness.clone(),
             cosine,
@@ -6387,28 +6410,26 @@ fn curate_decision(
     }
 }
 
-/// The `curate` verdict in a sys1 classify answer: the lane's fire/hold
-/// vote with its confidence, the focus label it named, and the
-/// staleness diagnostic. The same answers-envelope shape
-/// `parse_capability` reads one seam over; a missing or empty
-/// `needs_recall` label is no verdict at all, and the composition's
-/// fail-open row takes it.
+/// The curation panel's verdict in a sys1 classify answer: the call
+/// fans out to [`CURATE_JUDGES`] in one round trip, and the answer's
+/// `answers` map carries one entry per judge that answered. Best of 3
+/// wins — the majority side of `needs_recall` is the vote, the winning
+/// side's mean confidence is the conviction the gate reads, and the
+/// focus and staleness labels take their own majorities. A tie (one
+/// judge short, the answers split) is no verdict at all, and the
+/// composition's fail-open row takes it; so is an answer with no
+/// usable `needs_recall` head anywhere.
 fn parse_curate(text: &str) -> Option<crate::route_cache::CurateVerdict> {
     let value: serde_json::Value = serde_json::from_str(text).ok()?;
     let answers = value.get("answers")?.as_object()?;
+    let mut yes: Vec<f64> = Vec::new();
+    let mut no: Vec<f64> = Vec::new();
+    let mut focuses: Vec<String> = Vec::new();
+    let mut stales: Vec<String> = Vec::new();
     for heads in answers.values() {
         let Some(answer) = heads.as_object() else {
             continue;
         };
-        let recall = answer.get("needs_recall")?.as_object()?;
-        let label = recall
-            .get("label")
-            .and_then(|label| label.as_str())
-            .filter(|label| !label.is_empty())?;
-        let confidence = recall
-            .get("confidence")
-            .and_then(|confidence| confidence.as_f64())
-            .unwrap_or(0.0);
         let read_label = |head: &str| -> Option<String> {
             answer
                 .get(head)
@@ -6418,14 +6439,64 @@ fn parse_curate(text: &str) -> Option<crate::route_cache::CurateVerdict> {
                 .filter(|label| !label.is_empty())
                 .map(|label| label.to_string())
         };
-        return Some(crate::route_cache::CurateVerdict {
-            needs_recall: label == "yes",
-            confidence,
-            focus: read_label("focus"),
-            staleness: read_label("staleness"),
-        });
+        // A judge without a usable vote head is absent from the panel,
+        // the same shape the lane's own fail-open gives a broken
+        // provider.
+        let recall = answer.get("needs_recall").and_then(|head| head.as_object());
+        let Some(recall) = recall else { continue };
+        let Some(label) = recall
+            .get("label")
+            .and_then(|label| label.as_str())
+            .filter(|label| !label.is_empty())
+        else {
+            continue;
+        };
+        let confidence = recall
+            .get("confidence")
+            .and_then(|confidence| confidence.as_f64())
+            .unwrap_or(0.0);
+        match label {
+            "yes" => yes.push(confidence),
+            "no" => no.push(confidence),
+            _ => continue,
+        }
+        if let Some(focus) = read_label("focus") {
+            focuses.push(focus);
+        }
+        if let Some(stale) = read_label("staleness") {
+            stales.push(stale);
+        }
     }
-    None
+    // Best of 3: the majority side wins, and a tie is no verdict.
+    let (needs_recall, confidence) = match (yes.len(), no.len()) {
+        (a, b) if a > b => (true, mean(&yes)),
+        (a, b) if b > a => (false, mean(&no)),
+        _ => return None,
+    };
+    let majority = |labels: &[String]| -> Option<String> {
+        let mut counts: std::collections::BTreeMap<&str, usize> = Default::default();
+        for label in labels {
+            *counts.entry(label.as_str()).or_insert(0) += 1;
+        }
+        let best = counts.iter().max_by_key(|(_, count)| **count)?;
+        let winners = counts.values().filter(|count| **count == *best.1).count();
+        // A strict majority of the votes cast; a split is no answer.
+        (winners == 1 && best.1 * 2 > labels.len()).then(|| best.0.to_string())
+    };
+    Some(crate::route_cache::CurateVerdict {
+        needs_recall,
+        confidence,
+        judges: yes.len() + no.len(),
+        yes_votes: yes.len(),
+        no_votes: no.len(),
+        focus: majority(&focuses),
+        staleness: majority(&stales),
+    })
+}
+
+/// The mean of a non-empty slice, as f64.
+fn mean(values: &[f64]) -> f64 {
+    values.iter().sum::<f64>() / values.len() as f64
 }
 
 fn steer_frame(text: &str) -> String {
@@ -11566,27 +11637,72 @@ mod tier_tests {
         assert!(!activation_live(restamped, restamped + ACTIVATION_TURNS));
     }
 
-    /// The parser, on the answer shape the lane actually produces — and
-    /// the named absence: no `needs_recall` label is no verdict, which
-    /// is the fail-open row's input.
+    /// The panel's parser, on the fan-out answer shape the lane
+    /// produces: one entry per judge, best of 3 wins, and every
+    /// degenerate shape lands on the fail-open row's input.
     #[test]
-    fn a_curate_answer_parses_into_a_verdict() {
-        let answer = r#"{"verdict":"ok","answers":{"jev":{"needs_recall":{"label":"yes","confidence":0.82},"focus":{"label":"deploy"},"staleness":{"label":"stale"}}}}"#;
-        let verdict = parse_curate(answer).expect("the verdict");
-        assert!(verdict.needs_recall);
-        assert_eq!(verdict.confidence, 0.82);
-        assert_eq!(verdict.focus.as_deref(), Some("deploy"));
-        assert_eq!(verdict.staleness.as_deref(), Some("stale"));
-        // A provider error carries no heads: no verdict, cosine decides.
-        assert!(parse_curate(r#"{"verdict":"error","answers":{}}"#).is_none());
-        // `none` focus and unknown heads parse as absences, not labels
-        // the hint would act on (the hint validator filters later).
-        let none_focus = parse_curate(
-            r#"{"verdict":"ok","answers":{"jev":{"needs_recall":{"label":"no","confidence":0.7},"focus":{"label":"none"}}}}"#,
+    fn a_curate_answer_parses_by_best_of_three() {
+        // A 2-1 majority: the vote, the winning side's MEAN confidence,
+        // the split recorded.
+        let two_one = parse_curate(
+            r#"{"verdict":"ok","answers":{
+                "glide":{"needs_recall":{"label":"yes","confidence":0.8},"focus":{"label":"deploy"},"staleness":{"label":"stale"}},
+                "drex":{"needs_recall":{"label":"yes","confidence":0.6},"focus":{"label":"deploy"}},
+                "jev":{"needs_recall":{"label":"no","confidence":0.9},"focus":{"label":"build"}}
+            }}"#,
         )
-        .expect("the verdict");
-        assert!(!none_focus.needs_recall);
-        assert_eq!(none_focus.focus.as_deref(), Some("none"));
+        .expect("the majority is a verdict");
+        assert!(two_one.needs_recall);
+        assert_eq!(two_one.confidence, 0.7, "the mean of the winning side");
+        assert_eq!(two_one.judges, 3);
+        assert_eq!(two_one.yes_votes, 2);
+        assert_eq!(two_one.no_votes, 1);
+        assert_eq!(two_one.focus.as_deref(), Some("deploy"), "2-1 focus");
+        assert_eq!(two_one.staleness.as_deref(), Some("stale"));
+        // A split focus — the judges naming two different shapes — is
+        // no hint at all, the same strict-majority rule the vote runs.
+        let split_focus = parse_curate(
+            r#"{"verdict":"ok","answers":{
+                "glide":{"needs_recall":{"label":"yes","confidence":0.8},"focus":{"label":"deploy"}},
+                "jev":{"needs_recall":{"label":"yes","confidence":0.9},"focus":{"label":"build"}}
+            }}"#,
+        )
+        .expect("the vote still decides");
+        assert_eq!(split_focus.focus, None, "1-1 focus is no hint");
+        // A split panel — one judge short, the answers tied — is no
+        // verdict: the fail-open row's input.
+        let tie = parse_curate(
+            r#"{"verdict":"ok","answers":{
+                "glide":{"needs_recall":{"label":"yes","confidence":0.8}},
+                "jev":{"needs_recall":{"label":"no","confidence":0.9}}
+            }}"#,
+        );
+        assert!(tie.is_none(), "1-1 is no verdict");
+        // A sweep is the cleanest majority: 3-0.
+        let sweep = parse_curate(
+            r#"{"verdict":"ok","answers":{
+                "glide":{"needs_recall":{"label":"no","confidence":0.7}},
+                "drex":{"needs_recall":{"label":"no","confidence":0.7}},
+                "jev":{"needs_recall":{"label":"no","confidence":0.8}}
+            }}"#,
+        )
+        .expect("the sweep");
+        assert!(!sweep.needs_recall);
+        assert_eq!(sweep.confidence, (0.7 + 0.7 + 0.8) / 3.0);
+        assert_eq!(sweep.no_votes, 3);
+        // A provider error carries no heads anywhere: no verdict.
+        assert!(parse_curate(r#"{"verdict":"error","answers":{}}"#).is_none());
+        // A judge whose vote head is unusable is absent from the panel;
+        // the other two still decide.
+        let partial = parse_curate(
+            r#"{"verdict":"ok","answers":{
+                "glide":{"needs_recall":{"label":"yes","confidence":0.8}},
+                "jev":{"telemetry":"broken"}
+            }}"#,
+        )
+        .expect("one answering judge decides");
+        assert!(partial.needs_recall);
+        assert_eq!(partial.judges, 1);
     }
 
     /// The curator-judgment plan's composition table, one test per row.
@@ -11599,6 +11715,9 @@ mod tier_tests {
         let verdict = |needs_recall: bool, confidence: f64| crate::route_cache::CurateVerdict {
             needs_recall,
             confidence,
+            judges: 3,
+            yes_votes: if needs_recall { 2 } else { 1 },
+            no_votes: if needs_recall { 1 } else { 2 },
             focus: None,
             staleness: None,
         };

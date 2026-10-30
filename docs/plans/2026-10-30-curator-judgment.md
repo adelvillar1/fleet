@@ -479,6 +479,24 @@ J7: the gate green by exit code — fmt 0, clippy 0, build 0, test
 "The curation judgment" section, TECHNICAL-DOCUMENTATION.md's
 `agent.rs` entry); no new ledger rows — the plan's work found none.
 
+## The panel, 2026-10-30
+
+The owner's next word on the award: *"use 3 sys1 judges and best of 3
+wins."* The vote behind the seat is now a panel — `CURATE_JUDGES`
+(glide, drex, jev: the routed chain's own trio, named explicitly so
+one classify call fans out to all three with per-judge answers, a
+judge without its key filtered at the lane before any spend). The
+majority of the judges that answered is the vote; the winning side's
+**mean** confidence is what the 0.6 gate reads; the focus and
+staleness labels take their own strict majorities; and a tie — one
+judge short, the answers split — is no verdict, which lands the
+composition on its fail-open row. The `curate` row and the cached
+verdict carry the split (`judges`/`yes_votes`/`no_votes`), so a 2-1
+majority and a 3-0 sweep stay different facts about the same verdict.
+Pinned by `a_curate_answer_parses_by_best_of_three` (the majority, the
+tie, the sweep, the unusable-judge absence, the split focus) beside the
+unchanged composition table.
+
 ## The award, 2026-10-30
 
 The owner read the J6 verdict and awarded the seat anyway: *"award the

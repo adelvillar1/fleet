@@ -252,11 +252,13 @@ rides that one request's message tail — never the system prompt. The
 in the route cache's second namespace, behind the decision-keys gate);
 the owner awarded it the
 deciding seat over the replay's advisory verdict (`CURATE_JUDGED_DECIDES`
-is true — *"award the seat and we roll it back if needed"*): a
-confident vote fires and holds, the cosine stays the safety net under
-a confident `no` and decides under the gate and without the lane, its
-focus label is the re-curation's shape hint, and the calibration
-stream's `curate` rows are the record a rollback judges by.
+is true — *"award the seat and we roll it back if needed"*): the
+judgment is a panel of sys1's three routed-chain judges fanned out in
+one call, best of 3 wins (the majority votes, the winning side's mean
+confidence meets the gate, a tie is no verdict and the cosine decides);
+its focus label is the re-curation's shape hint, and the calibration
+stream's `curate` rows — carrying the vote's split — are the record a
+rollback judges by.
 
 The run's system prompt is `SYSTEM_PROMPT` (the voice) followed by
 `REPORTING_CONTRACT` — the stop's contract: what happened, where it

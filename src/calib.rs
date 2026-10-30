@@ -440,10 +440,17 @@ pub struct CurateRow {
     /// The instruction pair's hash — the same 16 hex characters the
     /// cache entry keys on.
     pub input_hash: String,
-    /// The lane's fire/hold vote.
+    /// The panel's fire/hold vote — the majority of the judges that
+    /// answered, best of 3.
     pub needs_recall: bool,
-    /// The lane's confidence in that vote, in `[0, 1]`.
+    /// The winning side's mean confidence, in `[0, 1]`.
     pub confidence: f64,
+    /// The judges that answered, and the vote's split — the panel's
+    /// own shape, so a 2-1 majority and a 3-0 sweep are different facts
+    /// about the same verdict.
+    pub judges: usize,
+    pub yes_votes: usize,
+    pub no_votes: usize,
     /// The focus label the lane named, when it named one — the corpus's
     /// own shape word, or `none`.
     #[serde(skip_serializing_if = "Option::is_none")]
