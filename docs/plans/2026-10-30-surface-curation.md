@@ -247,6 +247,14 @@ answering `{focus, needs_recall, staleness}` with confidence, cached by
 turn hash exactly as `route` is cached, with `route.rs` still owning the
 selection. It would be sys1's shape, not a new process.
 
+**Landed follow-up:** the owner took criterion (b) on 2026-10-30 — the
+plan for the deferred curator is written at
+`docs/plans/2026-10-30-curator-judgment.md` (status draft, awaiting
+implementation), with the entry-criteria status named honestly: the
+cosine floor mis-fires on zero real pairs (the K5 replay), so the
+judgment buys policy — early fires, focus naming, swappability — and
+must earn the deciding seat on the replayed evidence or ship advisory.
+
 ## Use cases
 
 - [x] A: A session that changes subject by turn 20 carries the memories
