@@ -173,39 +173,46 @@ says so.
 
 ### Memory — *knowledge*
 
-**What it is.** One fact per file: what this run recalled and what the
-corpus already knows. Facts, live, protected, retired, today's hits,
-recalls this run.
+**What it is.** One fact per file, on the work rail's idiom: **needs
+you** (the consolidation cycle's queue, computed and written nowhere,
+runnable from the section), the substrate's own type words as sections,
+then retired, the archive, and today's recall. One-line rows carry the
+basis — the permission model's input — and the recall count.
 
-**What you do.** Search the corpus by name, sentence, type, shape or
-body; open a fact with its whole body and edit it in place; ask fleet
-what it knows; see what was recalled today and how strongly.
+**What you do.** Search every field across every section; open a fact
+with its whole body and edit it in place; **supersede** it from the pane
+(the click is the approval the provenance rule requires); run one
+consolidation pass; see what was recalled today and how strongly.
 
 **Why.** Memory is a git-tracked folder of markdown facts, not a database
-nobody can read — so a fact can be edited, protected, retired, diffed,
+nobody can read — so a fact can be edited, protected, superseded, diffed,
 and recalled by meaning. Each recall is scored, and recall feeds back
 into what rises next time.
 
-**State.** Complete, with 24 facts in this repo's corpus and the
-recall-count feedback live.
+**State.** Complete, with 114 live facts in this repo's corpus, 34
+retired, 13 archived, and the recall-count feedback live.
 
 ### Skills — *knowledge*
 
-**What it is.** The library the model can reach, the names the loader
-declined and why, and the proposals waiting for a decision. Loaded,
-used, never selected, proposals, skipped, sessions scanned.
+**What it is.** The library the model can reach on the work rail's
+idiom: **needs you** (the proposals that still need a decision), the
+declared categories (`src/skills-categories.json`, 452 skills in eight
+sections, `everything else` the visible fallback), then declined,
+curation, and retired. One-line rows carry the uses count; the skill's
+card — body, uses, actions — opens in the pane.
 
-**What you do.** Search the library; open a skill, its path, or ask the
-curator about it; approve or read a proposal the harness drafted from
-session evidence; see which skills the loader skipped, in its own words.
+**What you do.** Search every section; open a skill and retire it from
+every run's prompt (the library untouched); approve a proposal — a
+home-side write that lands on its own validations, no repo gate — or
+read it first; see which skills the loader skipped, in its own words.
 
 **Why.** Skills are procedural memory shared across every harness the
 owner runs, disclosed description-first and fetched on demand — and the
 harness writes its own, as proposals that never apply silently.
 
-**State.** The library loads 442 skills; the usage scan reports none
+**State.** The library loads 449 skills; the usage scan reports none
 selected yet across 20 sessions, which is the honest number and the
-curator's cue.
+curator's cue; three proposals wait.
 
 ### Second brain — *knowledge*
 
@@ -229,19 +236,23 @@ shows, with its own freshness stamp.
 
 ### Workspace history — *knowledge*
 
-**What it is.** The LayerFS substrate's tree, read as fleet's own
-history, in the substrate's own vocabulary: a **band** for every Layer
-on main's spine, a **lane** for every branch with work sprouting from
-its actual fork, a **leaf** for every commit, a **dashed stem** where
-a publish grafted work back, and one idle chip for the branches nobody
-worked. Beside it: the work those branches carried (`C<ordinal> ·
-↓ L<k>` with state, activity and the child session), the substrate's
-**live call feed** (every call the trace recorded, with its actor and
-cost), a **file's own instruments** (text, blame, revisions, diff), and
-the Store's **accounting** — on disk, unique, compressed, the metadata
-subset, the SQLite overhead named separately, the Init record, and what
-each commit cost. One backend read answers all of it in under 250 ms,
-and a read whose version still holds answers "unchanged" in 1 ms.
+**What it is.** The machine's registered projects on the work rail's
+idiom — one section per project with activity in the past six weeks
+(the newest commit, or the substrate's recorded creation), resolved by
+folder path — and the selected project's visual components on the
+board: a **band** for every Layer on main's spine, a **lane** for every
+branch with work sprouting from its actual fork, a **leaf** for every
+commit, a **dashed stem** where a publish grafted work back, and one
+idle chip for the branches nobody worked. Beside it: the work those
+branches carried (`C<ordinal> · ↓ L<k>` with state, activity and the
+child session), and the substrate's **live call feed** (machine-wide;
+the traces are not project-scoped). The pane carries **the store** (the
+accounting: on disk, unique, compressed, the metadata subset, the
+SQLite overhead named separately, the Init record, and what each commit
+cost) and **the files** (a ref's tree and a file's instruments — text,
+blame, revisions, diff), with the tree's click landing there at the
+ref. One backend read answers a project in under 250 ms, and a read
+whose version still holds answers "unchanged" in 1 ms.
 
 **What you do.** Read the tree as it stands — zoom, pan, follow the
 minimap, hover a node for its record; click a node and the file
@@ -323,21 +334,26 @@ same writer the CLI rides — the browser never has a second truth.
 
 ### Calibration — *system*
 
-**What it is.** The day's stream, the judged quality of what served, and
-the gate that decides whether the failover may learn from it. Rows,
-judged, fit cells, informing the failover; the day's routes, turns, eval
-runs, recall hits, tool screens.
+**What it is.** The work rail's idiom with **the gate** first — the
+failover state, the fit rule, and the (provider × workload) cells as
+one-line rows whose card opens in the pane — then one section per op
+the day carries, in the substrate's own vocabulary: routes, judgments,
+turns, delegations, proposals, eval runs, recall hits, consolidations,
+tool screens, explains, verifies, embed timings, lifecycles. The eval
+corpus's twenty scenarios are readable from the section; the day is at
+hand with a stepper onto `?day=`.
 
-**What you do.** Read what the day recorded; run a gate review; see
-which (provider × workload) cells are fit enough to move the failover.
+**What you do.** Judge the gate and its cells first; step back through
+the days; read any op's row trail; run a gate review; see which cells
+are fit enough to move the failover.
 
 **Why.** Recording is not enough — a routing decision has to be graded
 against an independent judgment before it may change behavior. The gate
 is explicit, visible, and can be turned off, so autonomy is earned on
 evidence rather than assumed.
 
-**State.** Complete; the stream is live and the judging beats exist,
-with no judged cells for the day until a review runs.
+**State.** Complete; the stream reads all thirteen ops and the judging
+beats exist, with no judged cells for the day until a review runs.
 
 ## What a first-time user meets today
 
