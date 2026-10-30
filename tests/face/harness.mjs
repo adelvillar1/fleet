@@ -74,6 +74,11 @@ class El {
   constructor(name) {
     this.name = name;
     this.children = [];
+    // The browser's alias: an element's childNodes IS its children.
+    // The bots board's activity feed reads childNodes on an element
+    // that has not appended yet, and an element without the alias
+    // throws where a browser answers zero.
+    this.childNodes = this.children;
     this.parentNode = null;
     this.dataset = {};
     this.style = {
@@ -447,6 +452,10 @@ function boot(options) {
   const fireHash = () => { (windowListeners.hashchange || []).forEach((fn) => fn({})); };
   const location_ = {
     search: '', hash: opts.hash || '', pathname: '/', href: 'http://127.0.0.1/',
+    // The harness models the desk face, and the desk face's host is the
+    // loopback one — canPair() reads this, and without it every boot
+    // looked like a phone to the pairing gate.
+    hostname: '127.0.0.1',
   };
   Object.defineProperty(location_, 'hash', {
     get() { return this._hash || ''; },
@@ -3647,6 +3656,48 @@ async function theStrategyStepShowsItsPreview() {
       RUST.indexOf('RemoteFace::Bot => crate::gui::server::bot_icon_for(path)') !== -1, 'bot icons');
   }
 
+
+  // The Robots surface mints the bot's pairing card the way the topbar
+  // mints the console's: one press, the same scrim, the same card —
+  // and the mint names the face so the server builds the bot origin.
+  // The panel arrives by hashchange (the fake window fires it like a
+  // real one), the row is found by class (the fake querySelectorAll
+  // speaks classes), and the fixture is a whole channels document —
+  // an empty object starves the board's later cards.
+  async function theBotsSurfaceMintsTheBotCard() {
+    const page = boot({
+      reply: {
+        service: { channels: [] },
+        channels: [],
+        activity: [],
+        activity_bound: 0,
+        devices: [],
+      },
+    });
+    page.open();
+    await flush();
+    page.hash('#/bots');
+    for (let i = 0; i < 8; i++) await flush();
+    check('BOTS the bots panel is the one showing',
+      !page.IDS['panel-bots'].hidden, 'panel-bots hidden=' + page.IDS['panel-bots'].hidden);
+    const show = page.rows('.bots-act').filter((button) =>
+      String(button.textContent).includes('show QR'));
+    check('BOTS the bots surface offers the bot pairing',
+      show.length === 1 && page.rows('.bots-row').length >= 2,
+      'acts=' + show.length + ' rows=' + page.rows('.bots-row').length);
+    if (!show.length) return;
+    show[0].click();
+    await flush();
+    await flush();
+    const mint = page.calls.find((call) => call.url === '/api/pair/window');
+    check('BOTS the press mints the bot face',
+      !!mint && String(mint.body).indexOf('bot') !== -1,
+      mint ? String(mint.body) : 'no mint call');
+    check('BOTS the card opens in the shared scrim',
+      page.IDS['pair-scrim'].hidden === false,
+      'scrim hidden=' + page.IDS['pair-scrim'].hidden);
+  }
+
 const cases = [
   ['C1/C8 the list groups by attention and counts what the server counted', theListGroupsByAttentionAndCountsWhatTheServerCounted],
   ['C2 every state opens through one verb', everyStateOpensThroughOneVerb],
@@ -3690,6 +3741,7 @@ const cases = [
   ['OB the capability cards are on demand', theCapabilityCardsAreOnDemand],
   ['PV the strategy step shows its preview', theStrategyStepShowsItsPreview],
   ['RL the page seals its frames through a relay', thePageSealsItsFramesThroughARelay],
+  ['BOTS the bots surface mints the bot card', theBotsSurfaceMintsTheBotCard],
 ];
 
 for (const [name, run] of cases) {

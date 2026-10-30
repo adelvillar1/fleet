@@ -11702,6 +11702,24 @@
       : null,
       'A device token is stored as a digest; this names who is paired and never what would ' +
       'let them in. Revoking forgets the token.');
+    // The bot experience pairs the way the console does — press, scan,
+    // paired — and this is its door: the same card the topbar mints,
+    // with the bot origin behind it (the owner's 2026-10-29 correction).
+    if (canPair()) {
+      var pairRow = node('div', 'bots-row');
+      var pairMain = node('div', 'bots-row-main');
+      pairMain.appendChild(node('span', 'bots-row-name',
+        'pair a phone to the bot experience'));
+      pairMain.appendChild(node('span', 'bots-row-meta',
+        'the same card as the topbar\u2019s \u2014 the QR opens the bot origin'));
+      pairRow.appendChild(pairMain);
+      var pairActs = node('div', 'bots-acts');
+      pairActs.appendChild(botsButton('pair-bot', 'show QR', function () {
+        openPair('bot');
+      }));
+      pairRow.appendChild(pairActs);
+      card.appendChild(pairRow);
+    }
     if (!read) {
       card.appendChild(node('p', 'board-empty',
         'The access read has not landed yet. It reads the home\u2019s device store.'));
@@ -16567,14 +16585,14 @@
     el.pairBody.appendChild(side);
   }
 
-  function mintPair() {
+  function mintPair(face) {
     el.pairBody.textContent = '';
     el.pairBody.appendChild(node('p', 'pair-loading',
       'minting a code\u2026 this asks this machine for a new single-use window.'));
     fetch('/api/pair/window', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: '{}'
+      body: JSON.stringify(face === 'bot' ? { face: 'bot' } : {})
     }).then(function (reply) {
       return reply.json().then(function (doc) { return { ok: reply.ok, doc: doc }; });
     }).then(function (result) {
@@ -16588,11 +16606,11 @@
     });
   }
 
-  function openPair() {
-    usageRecord('actions', 'pair:open', 'uses');
+  function openPair(face) {
+    usageRecord('actions', face === 'bot' ? 'pair:open-bot' : 'pair:open', 'uses');
     el.pairScrim.hidden = false;
     el.pairCard.hidden = false;
-    mintPair();
+    mintPair(face);
   }
 
   if (canPair()) {

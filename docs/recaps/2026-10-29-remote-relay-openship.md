@@ -174,6 +174,22 @@ the LaunchAgent now writes `~/Library/Logs/fleet-gui.log` — the launch
 words (both entry URLs) were dying in launchd's void, which is why the
 entry secrets kept escaping this session's probes.
 
+## The Robots card (the owner's correction, late)
+
+"This experience is wrong… it should show me a qr code for the bot
+experience like it works on the regular fleet experience." — built:
+`POST /api/pair/window {"face":"bot"}` builds the bot card (its relay
+origin with its own fragment; the LAN address with the plain-HTTP note
+when no bot relay dials; one shared window, newest code wins), and the
+Robots surface's paired-devices card leads with "pair a phone to the
+bot experience" whose `show QR` opens the same scrim. Plan
+`2026-10-29-bots-pairing-card.md` completed with proofs: the live
+route both ways, the bridge test, the harness at **392/43**, and the
+two screenshots read as the review. The gate 1,813 green; the two new
+polling tests hardened to the sixty-second loaded-machine bound after
+one caught flake. Same evening: KI-368 (the pairing-without-fragment
+hole) and the local-URL dead-code confusion both resolved.
+
 ## Notes
 
 - The face runs `fleet gui --no-open --remote --relay

@@ -347,10 +347,23 @@ pub struct Bridge {
     /// relay and seal its frames without the secret touching a wire or
     /// an edge log.
     relay_secret: Mutex<Option<String>>,
+    /// The bot face's own card facts: its port (the LAN fallback), and
+    /// its relay URL and secret when `--bot-relay` dials. Attached at
+    /// launch, because the Robots surface mints a pairing card for the
+    /// bot exactly as the topbar mints one for the console.
+    bot_face: Mutex<Option<BotFace>>,
     /// The workspace-calls feed's tail state: per-trace-file read
     /// offsets, so a poll answers only what moved. Shared because the
     /// reads run on blocking workers while the bridge answers requests.
     trace_tail: Arc<std::sync::Mutex<crate::layerfs_view::TraceTail>>,
+}
+
+/// The bot face's pairing-card facts, attached at launch.
+#[derive(Debug, Clone)]
+pub struct BotFace {
+    pub port: u16,
+    pub relay_url: Option<String>,
+    pub relay_secret: Option<String>,
 }
 
 impl Bridge {
@@ -417,6 +430,7 @@ impl Bridge {
             channels: Mutex::new(None),
             remote: Mutex::new(None),
             relay_secret: Mutex::new(None),
+            bot_face: Mutex::new(None),
             trace_tail: Arc::new(std::sync::Mutex::new(
                 crate::layerfs_view::TraceTail::default(),
             )),
@@ -1427,6 +1441,33 @@ impl Bridge {
         *lock(&self.relay_secret) = Some(secret);
     }
 
+    /// Attach the bot face's port, so the Robots surface's pairing card
+    /// has a LAN origin even when no relay dials.
+    pub fn attach_bot_face(&self, port: u16) {
+        let mut guard = lock(&self.bot_face);
+        let mut face = guard.take().unwrap_or(BotFace {
+            port,
+            relay_url: None,
+            relay_secret: None,
+        });
+        face.port = port;
+        *guard = Some(face);
+    }
+
+    /// Attach the bot relay's URL and secret when `--bot-relay` dials:
+    /// the origin the bot card points at, fragment and all.
+    pub fn attach_bot_relay(&self, url: String, secret: String) {
+        let mut guard = lock(&self.bot_face);
+        let mut face = guard.take().unwrap_or(BotFace {
+            port: 0,
+            relay_url: None,
+            relay_secret: None,
+        });
+        face.relay_url = Some(url);
+        face.relay_secret = Some(secret);
+        *guard = Some(face);
+    }
+
     /// The remote face this process hosts, when it hosts one.
     pub fn remote_face(&self) -> Option<(std::net::IpAddr, u16)> {
         *lock(&self.remote)
@@ -1435,8 +1476,77 @@ impl Bridge {
     /// Mint a pairing window and the card's document: the URL on the
     /// origin that will work from the phone, the code in display form,
     /// and the QR. Loopback only — the remote listener's allowlist has no
-    /// such route, and a paired phone does not pair phones.
+    /// such route, and a paired phone does not pair phones. The console's
+    /// card, unchanged; the Robots surface asks for the bot's with
+    /// [`pair_window_for`](Self::pair_window_for).
     pub async fn pair_window(&self) -> Result<Value, String> {
+        self.pair_window_for("console").await
+    }
+
+    /// The same window, the same card shape, the face's own origin:
+    /// `console` is the topbar's card (the relay origin or the LAN
+    /// address, secret fragment when a relay dials); `bot` is the
+    /// Robots surface's — `--bot-relay`'s origin with its own fragment,
+    /// else the bot face's LAN address and port with the plain-HTTP
+    /// note. One window is shared between both cards, which is the
+    /// "newest code wins" rule each card already speaks.
+    pub async fn pair_window_for(&self, face: &str) -> Result<Value, String> {
+        let home = self.home_path();
+        if face == "bot" {
+            let Some((address, _port)) = self.remote_face() else {
+                return Err(
+                    "the remote face is not running in this process; start `fleet gui --remote`"
+                        .to_string(),
+                );
+            };
+            let Some(bot) = lock(&self.bot_face).clone() else {
+                return Err(
+                    "the bot face is not running in this process; start `fleet gui --remote`"
+                        .to_string(),
+                );
+            };
+            return tokio::task::spawn_blocking(move || {
+                let (_window, code) = crate::remote::pairing::PairingWindow::mint(&home)
+                    .map_err(|error| format!("could not mint a pairing code: {error}"))?;
+                let (url, kind, label, note) = match (&bot.relay_url, &bot.relay_secret) {
+                    (Some(base), Some(secret)) => {
+                        let base = base.trim_end_matches('/');
+                        (
+                            format!("{base}/pair?c={code}#k={secret}"),
+                            "bot_relay",
+                            "your bot relay origin",
+                            None,
+                        )
+                    }
+                    _ => (
+                        crate::remote::pairing_url(address, bot.port, &code),
+                        "lan",
+                        "this machine's address",
+                        Some(
+                            "Plain HTTP: nearby devices only — the bot face on this machine's                              address. The QR carries no secret here; pairing over the socket                              arms nothing it should not."
+                                .to_string(),
+                        ),
+                    ),
+                };
+                let svg = crate::remote::qr::encode(&url)
+                    .map(|qr| qr.to_svg())
+                    .map_err(|error| format!("could not draw the QR: {error}"))?;
+                Ok(json!({
+                    "type": "pair-window",
+                    "face": "bot",
+                    "url": url,
+                    "code": crate::remote::pairing::display_code(&code),
+                    "origin": url.split("/pair?").next().unwrap_or(&url).to_string(),
+                    "origin_kind": kind,
+                    "origin_label": label,
+                    "note": note,
+                    "ttl_minutes": crate::remote::pairing::WINDOW_TTL_MINUTES,
+                    "svg": svg,
+                }))
+            })
+            .await
+            .map_err(|_| "the pairing window did not land".to_string())?;
+        }
         let Some((address, port)) = self.remote_face() else {
             return Err(
                 "the remote face is not running in this process; start `fleet gui --remote`"
@@ -1444,7 +1554,6 @@ impl Bridge {
             );
         };
         let relay_secret = lock(&self.relay_secret).clone();
-        let home = self.home_path();
         tokio::task::spawn_blocking(move || {
             let (_window, code) = crate::remote::pairing::PairingWindow::mint(&home)
                 .map_err(|error| format!("could not mint a pairing code: {error}"))?;
@@ -8309,6 +8418,66 @@ mod tests {
         // stops being the live one, which the card says.
         let again = bridge.pair_window().await.expect("a second window");
         assert_ne!(document["url"], again["url"]);
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// The Robots surface's card: the bot origin behind the same
+    /// window — the relay URL with its own secret fragment when
+    /// `--bot-relay` dials, the LAN address and port with the
+    /// plain-HTTP note when it does not. One window, newest code wins
+    /// across both cards, and the console's card is untouched.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_bots_card_names_the_bot_origin() {
+        let home = scratch("bots-card");
+        let (bridge, _sources) = Bridge::detached(
+            home.clone(),
+            "m".to_string(),
+            Some("session-bots-card".to_string()),
+        );
+        bridge.attach_remote(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), 3080);
+
+        // The LAN shape: no relay dialed, no secret anywhere.
+        bridge.attach_bot_face(3081);
+        let lan = bridge.pair_window_for("bot").await.expect("the LAN card");
+        let url = lan["url"].as_str().expect("a url");
+        assert!(url.starts_with("http://127.0.0.1:3081/pair?c="), "{url}");
+        assert!(
+            !url.contains("#k="),
+            "no secret rides a socket pairing: {url}"
+        );
+        assert_eq!(lan["origin_kind"], "lan", "{lan}");
+        assert_eq!(lan["face"], "bot", "{lan}");
+        assert!(
+            lan["note"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("Plain HTTP"),
+            "{lan}"
+        );
+
+        // The relay shape: --bot-relay's origin with its own fragment —
+        // the same shape the console card takes when its relay dials.
+        bridge.attach_bot_relay(
+            "https://fleetbot.opsh.io".to_string(),
+            "bot-secret-value".to_string(),
+        );
+        let relayed = bridge.pair_window_for("bot").await.expect("the relay card");
+        let url = relayed["url"].as_str().expect("a url");
+        assert!(url.starts_with("https://fleetbot.opsh.io/pair?c="), "{url}");
+        assert!(url.ends_with("#k=bot-secret-value"), "{url}");
+        assert_eq!(relayed["origin_kind"], "bot_relay", "{relayed}");
+        assert_eq!(relayed["origin"], "https://fleetbot.opsh.io", "{relayed}");
+
+        // The console card is the console's, whatever the bot asks for.
+        let console = bridge.pair_window().await.expect("the console card");
+        assert_ne!(console["url"], relayed["url"]);
+        assert!(
+            console["url"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("127.0.0.1:3080"),
+            "{console}"
+        );
         std::fs::remove_dir_all(&home).ok();
     }
 

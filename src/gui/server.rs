@@ -501,10 +501,26 @@ async fn serve_connection(
             let asked = decode_query(&request.query, "path");
             write_reply(&mut stream, api(200, bridge.file(&asked).await)).await
         }
-        ("POST", "/api/pair/window") => match bridge.pair_window().await {
-            Ok(document) => write_reply(&mut stream, api(200, document)).await,
-            Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
-        },
+        ("POST", "/api/pair/window") => {
+            // The body names the face: `{"face":"bot"}` is the Robots
+            // surface's card; an absent body is the console's, exactly
+            // as before.
+            let body = match read_body(&mut stream, &request, rest).await {
+                Ok(body) => body,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            let parsed: Option<serde_json::Value> =
+                serde_json::from_str::<serde_json::Value>(&body).ok();
+            let face = parsed
+                .as_ref()
+                .and_then(|parsed| parsed.get("face"))
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("console");
+            match bridge.pair_window_for(face).await {
+                Ok(document) => write_reply(&mut stream, api(200, document)).await,
+                Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
+            }
+        }
         ("POST", "/api/attach") => {
             let body = match read_body(&mut stream, &request, rest).await {
                 Ok(body) => body,

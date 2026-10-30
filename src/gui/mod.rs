@@ -161,6 +161,9 @@ pub async fn serve(options: GuiOptions) -> Result<(), String> {
             Arc::clone(&bridge),
         )
         .await?;
+        // The Robots surface mints a card for this face: its LAN port
+        // now, its relay origin when the bot block dials one.
+        bridge.attach_bot_face(bot_port);
         bot_relay_credentials = Some((bot_listener.device_session(), bot_listener.device_secret()));
         tokio::spawn(async move {
             if let Err(error) = bot_listener.serve().await {
@@ -364,6 +367,7 @@ pub async fn serve(options: GuiOptions) -> Result<(), String> {
             Arc::clone(&keys),
             bot_hash.clone(),
         ));
+        bridge.attach_bot_relay(bot_relay_url.clone(), bot_hash.clone());
         let (shutdown, shutdown_rx) = tokio::sync::watch::channel(false);
         _bot_relay_shutdown = Some(shutdown);
         let dialing = Arc::clone(&client);

@@ -8,6 +8,14 @@ one process, one agent thread, one log — never a second fleet. Plan:
 `docs/plans/2026-10-20-bot-pwa.md` (status: completed); the mockups it was
 built against live in `docs/plans/mockups/2026-10-20-bot-pwa/`.
 
+## Pairing
+
+The bot pairs exactly as the console does: from `#/bots` on the
+loopback face, press the pair action, scan the QR, paired — the same
+card, the same one-time window, only the origin behind it differs (the
+bot relay origin with its entry fragment; the LAN address when no bot
+relay dials). See `remote-access.md` for the origins and the seal.
+
 ## The rulings it implements
 
 1. **Assistant-centric, not work-centric.** The unit is a persona, not a

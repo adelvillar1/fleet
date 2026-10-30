@@ -971,7 +971,11 @@ mod tests {
             shutdown_rx,
             keys_for("sid-refuse"),
         ));
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+        // Sixty seconds, the sibling test's bound: a loaded suite
+        // starves the fake relay's accept loop, and a deadline tighter
+        // than the machine's worst moment reds a correct relay (KI-288's
+        // class).
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
         loop {
             // The lock lives inside the block and dies with it: a guard
             // that reached the await below would hold the fake relay's
@@ -1046,7 +1050,8 @@ mod tests {
             shutdown_rx,
             Arc::clone(&keys),
         ));
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+        // Sixty seconds: the same loaded-machine bound as its sibling.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
         loop {
             let landed = {
                 let answers = relay.answers.lock().unwrap_or_else(|p| p.into_inner());

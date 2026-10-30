@@ -43,8 +43,14 @@ Redeeming the code burns the window and writes a device record whose only
 trace of the token is its SHA-256 — a stolen `devices.json` is a roster
 of names and digests. `fleet devices` lists them; `--revoke` forgets one.
 
-The face has its own door: the topbar's QR icon mints a window and shows
-the URL, the code, and a scannable QR. The URL is `remote.public_url`
+The face has two doors with one pattern: the topbar's QR icon mints a
+window and shows the URL, the code, and a scannable QR for the console;
+the **Robots surface** (`#/bots`) mints the same card for the bot
+experience — `POST /api/pair/window {"face":"bot"}` — pointing at the
+bot relay origin with its own secret fragment (or the LAN address with
+the plain-HTTP note when no bot relay dials), because the owner's
+rule is that the bot pairs the way the console does. One window stands
+behind both cards: whichever opened last owns the live code. The URL is `remote.public_url`
 when set, else a detected tailnet HTTPS name that is verified to reach
 the remote face, else this machine's address with the plain-HTTP caveat.
 When the face dials a relay, the card's URL — and the entry URL the
