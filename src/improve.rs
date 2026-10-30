@@ -1687,9 +1687,11 @@ impl Landed {
 /// Apply one proposal through the gate. The order is the design's own:
 /// load and validate, ask for approval when the change is destructive
 /// (or the memory target is confirmed-by), apply to the tree, run the
-/// full gate, and keep the change only when every step is green —
-/// reverting and naming the failure otherwise. Every verdict lands
-/// exactly one `propose` row and stamps the proposal's status.
+/// gate at the change's own depth — the four cargo steps for a change
+/// that touches repo paths, one honest "no gate" step for a home-side
+/// write — and keep the change only when every step is green, reverting
+/// and naming the failure otherwise. Every verdict lands exactly one
+/// `propose` row and stamps the proposal's status.
 pub fn apply(name: &str, ctx: &Apply<'_>) -> Verdict {
     let Some(proposal) = load_one(ctx.home, name) else {
         return Verdict::Refused {
@@ -1729,7 +1731,25 @@ pub fn apply(name: &str, ctx: &Apply<'_>) -> Verdict {
             return finish(&proposal, Verdict::Refused { reason }, &[], ctx, false)
         }
     };
-    let mut steps = ctx.gate.run();
+    // The gate's depth matches the change's blast radius. The four cargo
+    // steps guard the REPO, so they run only when the staged change names
+    // repo paths. A home-side target — a skill into the canonical
+    // library, a fact into a home, a config write — lands on its stage
+    // validations (the parse, the name match, the proposed:true refusal)
+    // plus its pre-image stash, and records one honest step saying why no
+    // gate judged it. Running a release build to approve a markdown write
+    // was theatre, and on the face — whose process PATH carries no cargo
+    // — it refused every approve outright (KI-374).
+    let mut steps = if landed.repo_paths.is_empty() {
+        vec![GateStep {
+            label: "home-side write".to_string(),
+            ok: true,
+            detail: "no repo paths staged — the cargo gate judges the repo, not a home write"
+                .to_string(),
+        }]
+    } else {
+        ctx.gate.run()
+    };
     let gate_green = steps.iter().all(|step| step.ok);
     // The eval-corpus gate step, for a source edit only and only when a
     // probe is wired: the four cargo steps have already rebuilt the
@@ -3032,13 +3052,14 @@ mod tests {
     // --- the apply ---
 
     #[test]
-    fn a_skill_proposal_applies_through_a_green_gate_and_lands_the_row() {
+    fn a_skill_proposal_lands_without_a_gate_and_names_why() {
         let home = scratch("apply-skill");
         let repo = scratch_repo("apply-skill-repo");
-        let tools = scratch("apply-tools");
-        let log = tools.join("gate.log");
-        let bin = stand_in(&tools, 0, "", &log);
-        let gate = fake_gate(&repo, &bin);
+        // A gate whose cargo cannot exist: the depth rule must make the
+        // skill apply indifferent to it — this is the face's exact
+        // situation (KI-374), not a stand-in that happens to pass.
+        let mut gate = Gate::local(&repo);
+        gate.cargo = "definitely-not-cargo-on-any-path".to_string();
         // A live skill to update, and the proposal's new body.
         let canonical = skills_canon(&home);
         let skill_dir = canonical.join("demo");
@@ -3064,10 +3085,7 @@ mod tests {
         // The skill changed on disk.
         let written = fs::read_to_string(skill_dir.join(skills::SKILL_FILE)).unwrap();
         assert!(written.contains("new body"), "{written}");
-        // The gate ran.
-        let ran = fs::read_to_string(&log).unwrap();
-        assert!(ran.contains("build --release"), "{ran}");
-        // The row landed, with the verdict and the gate's per-step evidence.
+        // The row landed with the one honest step, not a gate's four.
         settle(&stream);
         let root = stream.root().to_path_buf();
         let rows = calib::read_day(&root, &calib::today(), 64);
@@ -3078,20 +3096,56 @@ mod tests {
         assert_eq!(row.proposal, "demo-update");
         assert_eq!(row.target, "skill");
         assert_eq!(row.target_name, "demo");
-        assert_eq!(row.basis, "inferred");
         assert_eq!(row.verdict, calib::VERDICT_APPLIED);
-        assert_eq!(row.gate.len(), 4);
-        assert!(row.gate.iter().all(|step| step.ok));
-        // The proposal's status is stamped.
+        assert_eq!(row.gate.len(), 1, "{:?}", row.gate);
+        assert_eq!(row.gate[0].step, "home-side write");
+        assert!(row.gate[0].ok);
+        // The proposal's status is stamped applied.
         let stamped = load_one(&home, "demo-update").unwrap();
         assert_eq!(stamped.status, Status::Applied);
-        assert!(stamped.gate.contains("fmt ok"), "{}", stamped.gate);
         // Exactly one row for the one verdict.
         assert_eq!(
             rows.iter()
                 .filter(|row| row.op == calib::OP_PROPOSE)
                 .count(),
             1
+        );
+    }
+
+    #[test]
+    fn a_repo_side_apply_still_needs_its_gate() {
+        // The depth rule's other half: a change that stages repo paths
+        // runs the cargo gate, and cargo absent refuses it — the gate is
+        // the repo's, so the repo's change cannot land past it.
+        let home = scratch("apply-patch-no-cargo");
+        let repo = scratch_repo("apply-patch-no-cargo-repo");
+        fs::create_dir_all(repo.join("docs")).unwrap();
+        let mut gate = Gate::local(&repo);
+        gate.cargo = "definitely-not-cargo-on-any-path".to_string();
+        let change = r#"{"op": "patch", "path": "docs/notes.md", "content": "rewritten\n"}"#;
+        skill_proposal(&home, "doc-patch", "docs/notes.md", change);
+        let stream = calib::Stream::open(scratch("apply-patch-no-cargo-calib"));
+        let ctx = Apply {
+            home: &home,
+            skills_dir: &skills_canon(&home),
+            repo: &repo,
+            gate: &gate,
+            approved: false,
+            stream: Some(&stream),
+            eval: None,
+        };
+        let verdict = apply("doc-patch", &ctx);
+        let Verdict::Refused { reason } = &verdict else {
+            panic!("expected refused, got {verdict:?}")
+        };
+        assert!(
+            reason.contains("fmt"),
+            "the refusal names the gate step that failed: {reason}"
+        );
+        // The staged file was reverted — the tree is untouched.
+        assert!(
+            !repo.join("docs/notes.md").exists(),
+            "the patch did not survive its refused gate"
         );
     }
 
