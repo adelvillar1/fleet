@@ -202,9 +202,12 @@ cosine decides — and the flip is recorded, not silently kept.
 
 ## Use cases
 
-- [x] A: A steer that contradicts the thread it lands in ("stop — the
+- [ ] A: A steer that contradicts the thread it lands in ("stop — the
       premise is wrong") re-curates even though its cosine against the
-      thread is high.
+      thread is high. **Not delivered — by the contingency's own
+      verdict.** The advisory seat means the cosine decides, and this
+      use case is the deciding seat's promise: it lands when a future
+      replay flips `CURATE_JUDGED_DECIDES` by the plan's bar.
 - [x] B: A steer that names no shape keyword still routes its
       re-curation under the shape the lane named, and the record says
       the lane did it.
