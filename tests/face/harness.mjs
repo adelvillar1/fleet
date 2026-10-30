@@ -1176,9 +1176,11 @@ async function theConversationTextSizeIsTheOwners() {
 // rows with their import buttons; an unsupported row's import disabled
 // with the reason; and a value the face is handed never prints.
 async function theServersCardCarriesTheRegistry() {
+  // The servers card lives in the specialists section: the address is
+  // what carries a reader there now, not the scroll position.
   const page = boot({
     width: 1440,
-    hash: '#/settings',
+    hash: '#/settings/specialists',
     documents: {
       settings: {
         type: 'settings', read_at: 'now',

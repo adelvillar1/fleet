@@ -1229,6 +1229,159 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
 
 /* What fleet knows, at a glance: three readings from the same reads the
    panels use, so the welcome and the panels cannot disagree. */
+/* ------------------------------------------------------- the section rail
+   One rail idiom for every surface with sections (settings, bots). It is
+   NOT a lookalike of the global rail — it is the same rule: the row, the
+   hover, the pressed state, the current mark (the accent bar at the left
+   edge), the icon box and the count's shape are declared once and both
+   surfaces use them. The one intentional variant is the count's ground:
+   the global rail's is an alert (accent fill), the section rail's is
+   inventory (quiet), same geometry and type either way. */
+.stage.stage-split {
+  display: grid;
+  grid-template-columns: 188px minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+.section-rail {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 2px 0 10px;
+  border-right: var(--card-hairline);
+  min-width: 0;
+}
+.section-rail-head {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 6px 4px;
+}
+.section-rail-fold {
+  border: 0;
+  background: transparent;
+  color: var(--dsw-alias-ink-tertiary);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  padding: 0 4px;
+}
+.section-rail-fold:hover { color: var(--dsw-alias-accent); }
+
+/* The row: the global rail's own. */
+.section-rail-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: 34px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dsw-alias-ink-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--fast) var(--ease), color var(--fast) var(--ease);
+}
+.section-rail-row:hover {
+  background: var(--dsw-alias-surface-raised);
+  color: var(--dsw-alias-ink);
+}
+.section-rail-row:active { transform: scale(0.98); }
+.section-rail-row[aria-current="page"] {
+  background: var(--dsw-alias-surface-raised);
+  color: var(--dsw-alias-ink);
+  box-shadow: inset 0 0 0 1px var(--dsw-alias-hairline);
+}
+.section-rail-row[aria-current="page"]::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 9px;
+  bottom: 9px;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--dsw-alias-accent);
+}
+.section-rail-mark {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  color: var(--dsw-alias-ink-tertiary);
+}
+.section-rail-mark svg { width: 17px; height: 17px; }
+.section-rail-row:hover .section-rail-mark { color: var(--dsw-alias-ink-secondary); }
+.section-rail-row[aria-current="page"] .section-rail-mark { color: var(--dsw-alias-accent); }
+.section-rail-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The count: the global rail's geometry and type, the quiet ground. */
+.section-rail-count {
+  margin-left: auto;
+  min-width: 16px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  color: var(--dsw-alias-ink-tertiary);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  line-height: 1.5;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.section-rail-row[aria-current="page"] .section-rail-count { color: var(--dsw-alias-ink-secondary); }
+.section-rail-changed {
+  flex: 0 0 auto;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--dsw-alias-accent);
+}
+/* Collapsed: the marks only, the names stood down. */
+.section-rail[data-folded="true"] .section-rail-name,
+.section-rail[data-folded="true"] .section-rail-count,
+.section-rail[data-folded="true"] .section-rail-changed { display: none; }
+.section-rail[data-folded="true"] .section-rail-row { justify-content: center; padding: 0; }
+.stage.stage-split:has(.section-rail[data-folded="true"]) {
+  grid-template-columns: 46px minmax(0, 1fr);
+}
+/* The section's body is the board's own grid, so the cards keep their
+   spans: without this it is a single grid item and every card collapses
+   to one column of the twelve. */
+.section-body {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 16px;
+  align-content: start;
+  min-width: 0;
+}
+
+/* The row budget: the count is honest about what the press reveals. */
+.budget { display: grid; gap: 2px; }
+.budget-more {
+  justify-self: start;
+  margin-top: 4px;
+  border: 0;
+  background: transparent;
+  color: var(--dsw-alias-accent-lift);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  padding: 2px 0;
+}
+.budget-more:hover { text-decoration: underline; }
+
 /* ---------------------------------------------------------- onboarding
    The door is the welcome in its first-run state: the same .empty frame,
    its eyebrow and title swapped, and this block for the one decision the

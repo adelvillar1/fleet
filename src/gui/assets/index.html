@@ -658,11 +658,15 @@
        source, the provider and workload editors, the remembered rules
        as the third list, the cron jobs, the identity slot, and the env
        names. Every write rides the one writer the CLI shares. -->
-  <main class="stage stage-board" id="panel-bots" hidden>
+  <main class="stage stage-board stage-split" id="panel-bots" hidden>
+    <nav class="section-rail" id="bots-rail" aria-label="bot sections"></nav>
     <div class="board" id="bots-board"></div>
   </main>
 
-  <main class="stage stage-board" id="panel-settings" hidden>
+  <main class="stage stage-board stage-split" id="panel-settings" hidden>
+    <!-- The settings rail: the sections, one at a time — the work rail's
+         own idiom (icons, a collapse, a remembered choice). -->
+    <nav class="section-rail" id="settings-rail" aria-label="settings sections"></nav>
     <div class="board" id="settings-board"></div>
   </main>
 

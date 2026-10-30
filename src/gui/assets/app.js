@@ -630,8 +630,10 @@
     calibrationBoard: document.getElementById('calibration-board'),
     brainBoard: document.getElementById('brain-board'),
     workspaceHistoryBoard: document.getElementById('workspace-history-board'),
+    botsRail: document.getElementById('bots-rail'),
     botsBoard: document.getElementById('bots-board'),
     vaultBoard: document.getElementById('vault-board'),
+    settingsRail: document.getElementById('settings-rail'),
     settingsBoard: document.getElementById('settings-board'),
     routePill: document.getElementById('route-pill'),
     statePill: document.getElementById('state-pill'),
@@ -7300,6 +7302,8 @@
   // paints so the page opens in the shape they left it in.
   try {
     face.workFolded = window.localStorage.getItem('fleet-work') === 'collapsed';
+    face.settingsRailFolded = window.localStorage.getItem('fleet-settings-rail') === 'folded';
+    face.botsRailFolded = window.localStorage.getItem('fleet-bots-rail') === 'folded';
   } catch (error) { }
   if (el.dockObjectClose) {
     el.dockObjectClose.addEventListener('click', closeDrawer);
@@ -12535,6 +12539,103 @@
     return card;
   }
 
+  // ---------------------------------------------------------- settings
+  //
+  // The surface is a rail of eight sections and one section's cards: the
+  // work rail's idiom, the shared sectionRail helper, and a route that
+  // makes both a section and an item addressable.
+
+  /// The section the hash names, or the remembered one, or `models`.
+  function settingsSectionId() {
+    var raw = (window.location.hash || '').replace(/^#\/?/, '');
+    var parts = raw.split('/');
+    if (parts[0] === 'settings' && parts[1]) return decodeURIComponent(parts[1]);
+    try {
+      var stored = window.localStorage.getItem('fleet-settings-section');
+      if (stored) return stored;
+    } catch (error) { }
+    return 'models';
+  }
+
+  function rememberSection(id) {
+    try { window.localStorage.setItem('fleet-settings-section', id); } catch (error) { }
+  }
+
+  /// The declaration: id, icon, name, badge, changed and paint per
+  /// section. The thirteen cards keep their bodies; only the page they
+  /// share changed.
+  function settingsSections(read) {
+    var lists = read.lists || [];
+    var rules = read.rules || [];
+    var cron = read.cron || [];
+    var roles = (read.roles && read.roles.entries) || [];
+    var servers = (read.servers && read.servers.servers) || read.servers || [];
+    var lanes = (read.lanes && read.lanes.lanes) || [];
+    var env = read.env || [];
+    var scalars = read.scalars || [];
+    var ownerSet = function (key) {
+      return scalars.some(function (knob) {
+        return knob.key === key && knob.source === 'file';
+      });
+    };
+    var budgets = ['FLEET_JUDGE_BUDGET_USD_DAY', 'FLEET_DELEGATE_BUDGET_USD_DAY',
+      'FLEET_EXPLAIN_BUDGET_USD_DAY'];
+    return [
+      {
+        id: 'models', icon: 'router', name: 'models',
+        badge: lists.length, badgeTitle: 'overrides in this section',
+        changed: lists.some(function (one) { return one.reverts; }) || ownerSet('pin'),
+        paint: function () { return [routerCard(), providersCard()]; }
+      },
+      {
+        id: 'specialists', icon: 'delegation', name: 'specialists',
+        badge: servers.length, badgeTitle: 'servers in this section',
+        changed: servers.length > 0,
+        paint: function () { return [lanesCard(), serversCard(), toolsCard()]; }
+      },
+      {
+        id: 'roles', icon: 'skills', name: 'roles',
+        badge: roles.length, badgeTitle: 'roles',
+        changed: false,
+        paint: function () { return [rolesCard()]; }
+      },
+      {
+        id: 'trust', icon: 'vault', name: 'trust',
+        badge: rules.length, badgeTitle: 'remembered rules',
+        changed: rules.length > 0 || ownerSet('approvals'),
+        paint: function () {
+          return [vaultCard('settings-vault'), knobsCard(read, ['approvals']), rulesCard(read)];
+        }
+      },
+      {
+        id: 'money', icon: 'calibration', name: 'money',
+        badge: 0,
+        changed: budgets.some(ownerSet),
+        paint: function () { return [spendCard(), knobsCard(read, budgets)]; }
+      },
+      {
+        id: 'schedule', icon: 'cron', name: 'schedule',
+        badge: cron.length, badgeTitle: 'cron jobs',
+        changed: cron.length > 0,
+        paint: function () { return [cronCard(read)]; }
+      },
+      {
+        id: 'interface', icon: 'theme', name: 'interface',
+        badge: 0,
+        changed: read.soul.present,
+        paint: function () {
+          return [knobsCard(read, ['ui.adapt'], 'interface'), soulCard(read)];
+        }
+      },
+      {
+        id: 'environment', icon: 'bots', name: 'environment',
+        badge: env.length, badgeTitle: 'names in this section',
+        changed: false,
+        paint: function () { return [envCard(read), knobsCard(read, ['environment'])]; }
+      }
+    ];
+  }
+
   function paintSettings() {
     var read = face.settings;
     el.settingsBoard.textContent = '';
@@ -12547,6 +12648,7 @@
         'The settings read has not landed yet. It reads this home\u2019s own config, routing, ' +
         'and env files.'));
       el.settingsBoard.appendChild(waiting);
+      paintSettingsRail(null);
       return;
     }
     if (read.refused && read.refused.length) {
@@ -12572,59 +12674,107 @@
       [read.cron.length, 'cron jobs'],
       [read.cron.filter(function (job) { return job.enabled; }).length, 'cron enabled']
     ], read.read_at));
-    el.settingsBoard.appendChild(sectionNav());
+    paintSettingsRail(read);
+    paintSettingsSection(settingsSectionId());
+  }
 
-    el.settingsBoard.appendChild(routerCard());
-    el.settingsBoard.appendChild(providersCard());
-    el.settingsBoard.appendChild(lanesCard());
-    el.settingsBoard.appendChild(serversCard());
-    el.settingsBoard.appendChild(toolsCard());
-    el.settingsBoard.appendChild(rolesCard());
-    el.settingsBoard.appendChild(vaultCard());
-    el.settingsBoard.appendChild(spendCard());
+  function paintSettingsRail(read) {
+    var sections = read ? settingsSections(read) : [
+      { id: 'models', icon: 'router', name: 'models' }
+    ];
+    sectionRail(el.settingsRail, sections.map(function (section) {
+      return {
+        id: section.id, icon: section.icon, name: section.name,
+        badge: section.badge, badgeTitle: section.badgeTitle,
+        changed: section.changed
+      };
+    }), {
+      current: read ? settingsSectionId() : 'models',
+      folded: !!face.settingsRailFolded,
+      store: 'fleet-settings-rail',
+      onPick: function (id) {
+        rememberSection(id);
+        window.location.hash = '#/settings/' + id;
+        paintSettings();
+        var row = el.settingsRail.querySelector('[data-section="' + id + '"]');
+        if (row && row.focus) row.focus();
+      },
+      onFold: function (folded) {
+        face.settingsRailFolded = folded;
+        try {
+          window.localStorage.setItem('fleet-settings-rail', folded ? 'folded' : 'open');
+        } catch (error) { }
+        paintSettingsRail(face.settings);
+      }
+    });
+  }
 
-    // The generic knobs. The router's own fields live in the router card,
-    // so they are filtered here rather than rendered twice.
+  /// One section's cards, and nothing else. The rail picks; this paints.
+  function paintSettingsSection(id) {
+    var read = face.settings;
+    if (!read) return;
+    var sections = settingsSections(read);
+    var chosen = sections.filter(function (section) { return section.id === id; })[0]
+      || sections[0];
+    // The section replaces everything below the surface head: the old
+    // board's thirteen cards are gone with it.
+    Array.prototype.slice.call(el.settingsBoard.children).forEach(function (child) {
+      if (child.classList && (child.classList.contains('section-body'))) {
+        el.settingsBoard.removeChild(child);
+      }
+    });
+    var body = node('div', 'section-body');
+    body.dataset.section = chosen.id;
+    chosen.paint().forEach(function (card) { body.appendChild(card); });
+    el.settingsBoard.appendChild(body);
+  }
+
+  // The knobs card: the generic scalars, grouped by their key's prefix.
+  // The router's own fields live in the router card, so they are filtered
+  // here rather than rendered twice; a section names the ones it owns.
+  function knobsCard(read, only, groupOnly) {
     var routerKeys = {
-      'pin': true,
-      'gates.min_confidence': true,
-      'gates.default_workload': true,
+      'pin': true, 'gates.min_confidence': true, 'gates.default_workload': true,
       'gates.allow_api_models': true,
-      'FLEET_JUDGE_BUDGET_USD_DAY': true,
-      'FLEET_DELEGATE_BUDGET_USD_DAY': true,
+      'FLEET_JUDGE_BUDGET_USD_DAY': true, 'FLEET_DELEGATE_BUDGET_USD_DAY': true,
       'FLEET_EXPLAIN_BUDGET_USD_DAY': true
     };
-    var knobs = boardCard(12, 'the other knobs', null,
+    var knobs = boardCard(12, 'the knobs', null,
       'the value in the box is what the home holds. A knob sourced from the environment says ' +
       'so \u2014 a file write would not take effect until the env var is unset.');
-    knobs.id = 'settings-knobs';
     var groups = {};
     var order = [];
     (read.scalars || []).forEach(function (knob) {
-      if (routerKeys[knob.key]) return;
+      if (only && only.length) {
+        var named = only.indexOf(knob.key) !== -1;
+        var prefixMatch = groupOnly && knob.key.indexOf(groupOnly + '.') === 0;
+        if (!named && !prefixMatch) return;
+      } else if (routerKeys[knob.key]) {
+        return;
+      }
       var prefix = knob.key.indexOf('.') > 0
         ? knob.key.split('.')[0]
         : (/^[A-Z0-9_]+$/.test(knob.key) ? 'environment' : 'general');
       if (!groups[prefix]) { groups[prefix] = []; order.push(prefix); }
       groups[prefix].push(knob);
     });
+    if (!order.length) {
+      knobs.appendChild(node('p', 'board-empty', 'No knob of this section is set.'));
+      return knobs;
+    }
     var groupNames = {
-      general: 'general',
-      environment: 'environment',
-      calib: 'calibration',
-      route_cache: 'route cache',
-      skills: 'skills',
-      ui: 'interface',
-      channels: 'channels',
-      remote: 'remote'
+      general: 'general', environment: 'environment', calib: 'calibration',
+      route_cache: 'route cache', skills: 'skills', ui: 'interface',
+      channels: 'channels', remote: 'remote'
     };
     order.forEach(function (prefix) {
-      knobs.appendChild(node('h3', 'form-section',
-        groupNames[prefix] || prefix.replace(/_/g, ' ')));
+      knobs.appendChild(node('h3', 'form-section', groupNames[prefix] || prefix.replace(/_/g, ' ')));
       groups[prefix].forEach(function (knob) { knobs.appendChild(knobRow(knob)); });
     });
-    el.settingsBoard.appendChild(knobs);
+    return knobs;
+  }
 
+  function rulesCard(read) {
     var ruleCard = boardCard(12, 'the remembered rules', null,
       'the third list, and the one that makes prompts thin out over time. The always-ask and ' +
       'destructive classes are refused by name \u2014 approval for those happens in the ' +
@@ -12647,72 +12797,161 @@
       ruleCard.appendChild(node('p', 'board-empty', 'No rule is remembered yet.'));
     }
     ruleCard.appendChild(addRuleForm());
-    el.settingsBoard.appendChild(ruleCard);
+    return ruleCard;
+  }
 
-    var cronCard = boardCard(12, 'the cron jobs', null,
+  function cronCard(read) {
+    var cronCard0 = boardCard(12, 'the cron jobs', null,
       'the scheduled runs. A fire is an ordinary headless run in its own session log, and the ' +
       'task is the instruction it is given.');
-    cronCard.id = 'settings-cron';
+    cronCard0.id = 'settings-cron';
     if (read.cron.length) {
-      read.cron.forEach(function (job) { cronCard.appendChild(cronRow(job)); });
+      read.cron.forEach(function (job) { cronCard0.appendChild(cronRow(job)); });
     } else {
-      cronCard.appendChild(node('p', 'board-empty',
+      cronCard0.appendChild(node('p', 'board-empty',
         'No jobs are scheduled. The five-field form is minute hour day-of-month month day-of-week.'));
     }
-    cronCard.appendChild(addCronForm());
-    el.settingsBoard.appendChild(cronCard);
+    cronCard0.appendChild(addCronForm());
+    return cronCard0;
+  }
 
-    var soulCard = boardCard(12, 'the identity slot', read.soul.present ? 'SOUL.md is set' : 'absent',
+  function soulCard(read) {
+    var soulCard0 = boardCard(12, 'the identity slot',
+      read.soul.present ? 'SOUL.md is set' : 'absent',
       'the file the model-visible base is read from per run. Absent, the compiled-in voice ' +
       'stands. Writing one replaces the base; the skills and memory frames still append.');
-    soulCard.id = 'settings-soul';
+    soulCard0.id = 'settings-soul';
     var soul = node('textarea', 'soul-box');
     soul.value = read.soul.text || '';
     soul.setAttribute('aria-label', 'the SOUL.md identity slot');
-    soulCard.appendChild(soul);
+    soulCard0.appendChild(soul);
     var saveSoul = node('button', 'replay-button replay-resume');
     saveSoul.type = 'button';
     saveSoul.textContent = 'write SOUL.md';
     saveSoul.addEventListener('click', function () {
       writeSettings('soul', { text: soul.value });
     });
-    soulCard.appendChild(saveSoul);
-    el.settingsBoard.appendChild(soulCard);
+    soulCard0.appendChild(saveSoul);
+    return soulCard0;
+  }
 
-    var envCard = boardCard(12, 'the env-var counterparts', null,
+  function envCard(read) {
+    var envCard0 = boardCard(12, 'the env-var counterparts', null,
       'by name only: whether each resolves right now, and from where. A value never rides ' +
       'this document \u2014 the doctor\u2019s masking rule.');
-    envCard.id = 'settings-env';
+    envCard0.id = 'settings-env';
     (read.env || []).forEach(function (entry) {
       var row = node('div', 'list-row');
       row.appendChild(node('span', 'list-row-key', entry.name));
       row.appendChild(badge(entry.present ? 'resolves' : 'unset', entry.present ? 'ok' : 'warn'));
-      envCard.appendChild(row);
+      envCard0.appendChild(row);
     });
-    el.settingsBoard.appendChild(envCard);
+    return envCard0;
   }
 
-  // The section chips. Ten surfaces under one page head would be a wall;
-  // a chip is a jump, not a second navigation.
-  function sectionNav() {
-    var nav = node('nav', 'cfg-nav');
-    [
-      ['router', 'router'], ['providers', 'providers'], ['lanes', 'lanes'],
-      ['roles', 'roles'], ['vault', 'vault'], ['spend', 'spend'],
-      ['knobs', 'knobs'], ['rules', 'rules'], ['cron', 'cron'],
-      ['soul', 'identity'], ['env', 'environment']
-    ].forEach(function (pair) {
-      var chip = node('button', 'cfg-chip', pair[1]);
-      chip.type = 'button';
-      chip.dataset.act = 'jump';
-      chip.title = 'jump to ' + pair[1];
-      chip.addEventListener('click', function () {
-        var target = document.getElementById('settings-' + pair[0]);
-        if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      });
-      nav.appendChild(chip);
+  // ------------------------------------------------ the section rail
+  //
+  // One rail idiom for every surface that has sections: the settings
+  // revamp built it, the bots page is its second consumer. Rows of
+  // (icon, name, badge, changed mark), a collapse to the icon strip, a
+  // remembered choice, aria-current and arrow-key roving, and a row
+  // budget helper for the lists that are long by nature.
+  //
+  // A declaration is [{ id, icon, name, badge, changed }]; `pick(id)` is
+  // called on a press and on a route change.
+
+  function railStore(key) {
+    return {
+      get: function () {
+        try { return window.localStorage.getItem(key) || ''; } catch (error) { return ''; }
+      },
+      set: function (value) {
+        try { window.localStorage.setItem(key, value); } catch (error) { }
+      }
+    };
+  }
+
+  function sectionRail(container, declaration, options) {
+    var opts = options || {};
+    var store = railStore(opts.store || 'fleet-rail-mode');
+    var current = opts.current || '';
+    container.textContent = '';
+    if (opts.folded) container.dataset.folded = 'true';
+    else delete container.dataset.folded;
+
+    var head = node('div', 'section-rail-head');
+    var toggle = node('button', 'section-rail-fold');
+    toggle.type = 'button';
+    toggle.setAttribute('aria-label', opts.folded ? 'expand the sections' : 'collapse the sections');
+    toggle.title = opts.folded ? 'expand the sections' : 'collapse the sections';
+    toggle.textContent = opts.folded ? '\u203a' : '\u2039';
+    toggle.addEventListener('click', function () {
+      opts.onFold(!opts.folded);
     });
-    return nav;
+    head.appendChild(toggle);
+    container.appendChild(head);
+
+    declaration.forEach(function (row) {
+      var button = node('button', 'section-rail-row');
+      button.type = 'button';
+      button.dataset.section = row.id;
+      button.setAttribute('aria-label', row.name);
+      button.title = row.name;
+      if (row.id === current) button.setAttribute('aria-current', 'page');
+      var mark = node('span', 'section-rail-mark');
+      mark.appendChild(icon(row.icon || 'dot'));
+      button.appendChild(mark);
+      button.appendChild(node('span', 'section-rail-name', row.name));
+      if (row.badge) {
+        var badge = node('span', 'section-rail-count', String(row.badge));
+        badge.title = row.badgeTitle || (row.badge + ' in this section');
+        button.appendChild(badge);
+      }
+      if (row.changed) {
+        var changed = node('span', 'section-rail-changed');
+        changed.title = 'this section holds something you set';
+        button.appendChild(changed);
+      }
+      button.addEventListener('click', function () { opts.onPick(row.id); });
+      button.addEventListener('keydown', function (event) {
+        var rows = Array.prototype.slice.call(
+          container.querySelectorAll('.section-rail-row'));
+        var at = rows.indexOf(button);
+        if (event.key === 'ArrowDown') {
+          event.preventDefault();
+          if (rows[at + 1]) rows[at + 1].focus();
+        } else if (event.key === 'ArrowUp') {
+          event.preventDefault();
+          if (rows[at - 1]) rows[at - 1].focus();
+        } else if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          opts.onPick(row.id);
+        }
+      });
+      container.appendChild(button);
+    });
+    return container;
+  }
+
+  // The row budget: the first N rows and one press for the rest, the
+  // count named. No stored state — deterministic, and the count is
+  // honest about what is behind the press.
+  function budgetRows(rows, limit, label, open, onToggle) {
+    var wrap = node('div', 'budget');
+    rows.slice(0, open ? rows.length : limit).forEach(function (row) {
+      wrap.appendChild(row);
+    });
+    if (rows.length > limit) {
+      var rest = rows.length - limit;
+      var more = node('button', 'budget-more', open
+        ? 'show fewer'
+        : String(rest) + ' more ' + label);
+      more.type = 'button';
+      more.setAttribute('aria-expanded', open ? 'true' : 'false');
+      more.addEventListener('click', onToggle);
+      wrap.appendChild(more);
+    }
+    return wrap;
   }
 
   // ------------------------------------------------------------- pickers
@@ -13261,7 +13500,7 @@
       card.appendChild(node('p', 'board-empty', read.refused.join(' \u00b7 ')));
       return card;
     }
-    var servers = read.servers || [];
+    var servers = (read.servers && read.servers.servers) || read.servers || [];
     var actions = node('div', 'bots-acts');
     actions.appendChild(serversButton('server-scan', 'scan this machine', function () {
       serversAction('server-scan', {}, function (body) {
