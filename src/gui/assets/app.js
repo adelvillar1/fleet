@@ -208,6 +208,22 @@
     };
   }
 
+  // The build this window is running: the served script's own ?v=
+  // hash, surfaced so a face can answer "is this the new code" — the
+  // question an evening of cache guessing could not settle without it.
+  var BUILD_TAG = (function () {
+    var tag = 'dev';
+    try {
+      var tags = document.getElementsByTagName ? document.getElementsByTagName('script') : [];
+      for (var i = 0; i < tags.length; i++) {
+        var match = /app\.js\?v=([0-9a-f]+)/.exec(tags[i].src || '');
+        if (match) { tag = match[1].slice(0, 8); break; }
+      }
+    } catch (error) { /* a page without script tags is a page in a test */ }
+    document.documentElement.setAttribute('data-build', tag);
+    return tag;
+  })();
+
   // The plan's route table. The addresses are hash addresses and the
   // panels are keyed by them, so the browser never asks the server for
   // a page and a surface that is not built yet can say so honestly.
@@ -11702,24 +11718,6 @@
       : null,
       'A device token is stored as a digest; this names who is paired and never what would ' +
       'let them in. Revoking forgets the token.');
-    // The bot experience pairs the way the console does — press, scan,
-    // paired — and this is its door: the same card the topbar mints,
-    // with the bot origin behind it (the owner's 2026-10-29 correction).
-    if (canPair()) {
-      var pairRow = node('div', 'bots-row');
-      var pairMain = node('div', 'bots-row-main');
-      pairMain.appendChild(node('span', 'bots-row-name',
-        'pair a phone to the bot experience'));
-      pairMain.appendChild(node('span', 'bots-row-meta',
-        'the same card as the topbar\u2019s \u2014 the QR opens the bot origin'));
-      pairRow.appendChild(pairMain);
-      var pairActs = node('div', 'bots-acts');
-      pairActs.appendChild(botsButton('pair-bot', 'show QR', function () {
-        openPair('bot');
-      }));
-      pairRow.appendChild(pairActs);
-      card.appendChild(pairRow);
-    }
     if (!read) {
       card.appendChild(node('p', 'board-empty',
         'The access read has not landed yet. It reads the home\u2019s device store.'));
@@ -11896,7 +11894,32 @@
       [pending.length, 'waiting at the door', pending.length ? 'warn' : null],
       [refusedAtTheDoor, 'refusals logged'],
       [waitingSeats, 'waiting on an answer']
-    ], read.read_at));
+    ], read.read_at + ' \u00b7 build ' + BUILD_TAG));
+
+    // The bot experience pairs the way the console does — press, scan,
+    // paired — and its door is the surface's FIRST card, not a row
+    // buried under the service card: the owner looked at this page and
+    // found nothing about pairing, because on a normal window the row
+    // sat below the fold (the 2026-10-29 correction, second look).
+    if (canPair()) {
+      var pairCard = boardCard(12, 'pair a phone', 'the bot experience',
+        'The same card the topbar mints for the console \u2014 the QR opens the bot origin, ' +
+        'and the code redeems there. One window stands behind both cards: the newest code wins.');
+      var pairRow = node('div', 'bots-row');
+      var pairMain = node('div', 'bots-row-main');
+      pairMain.appendChild(node('span', 'bots-row-name', 'pair a phone to the bot experience'));
+      pairMain.appendChild(node('span', 'bots-row-meta',
+        'press, scan, paired \u2014 the console\u2019s own pattern'));
+      pairRow.appendChild(pairMain);
+      var pairActs = node('div', 'bots-acts');
+      pairActs.appendChild(botsButton('pair-bot', 'show QR', function () {
+        openPair('bot');
+      }));
+      pairRow.appendChild(pairActs);
+      pairCard.appendChild(pairRow);
+      el.botsBoard.appendChild(pairCard);
+    }
+
     el.botsBoard.appendChild(filterBar([
       { value: 'all', label: 'all', count: peers.length },
       { value: 'acting', label: 'may act',

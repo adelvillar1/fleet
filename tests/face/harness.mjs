@@ -3685,6 +3685,13 @@ async function theStrategyStepShowsItsPreview() {
     check('BOTS the bots surface offers the bot pairing',
       show.length === 1 && page.rows('.bots-row').length >= 2,
       'acts=' + show.length + ' rows=' + page.rows('.bots-row').length);
+    // The owner's second look: the row existed but sat below the fold.
+    // The action is the FIRST control on the surface now, so a look at
+    // the top of the page is a look at the pairing.
+    const firstAct = page.rows('.bots-act')[0];
+    check('BOTS the pairing card leads the surface',
+      !!firstAct && String(firstAct.textContent).includes('show QR'),
+      firstAct ? String(firstAct.textContent) : 'no acts');
     if (!show.length) return;
     show[0].click();
     await flush();
