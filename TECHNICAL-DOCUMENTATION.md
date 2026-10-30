@@ -347,7 +347,15 @@ cycle, and provenance model. Facts are one markdown file per durable entry
 under `memories/`, with hybrid ranking from vector, keyword, history,
 freshness, trajectory, and provenance channels. The protected tier (`user`,
 `feedback`) never competes and is never evicted, even past budget. The
-consolidation cycle runs on a timer and logs `consolidate` rows.
+consolidation cycle runs on a timer and logs `consolidate` rows; its
+queue is computable without writing (`preview`, the same filters beside
+`consolidate`), the face's needs-you section reads it, and
+`POST /api/memories/consolidate` lands one pass on demand. The face's
+supersede rides `POST /api/fact/supersede` over `Memory::supersede`, the
+click carrying the approval the provenance rule requires. `section_of`
+maps a fact's type word to its rail section (the protected synonyms
+mapped, `everything-else` the fallback) and `load_archive` reads what
+the cycle forgot.
 
 #### `session_recall.rs`
 The session archive as synthetic facts through the same ranker. One synthetic

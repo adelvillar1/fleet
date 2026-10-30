@@ -1383,6 +1383,9 @@ pub struct MemoryFact {
     pub name: String,
     pub description: String,
     pub fact_type: String,
+    /// The rail section the fact reads under — the substrate's own type
+    /// word (synonyms mapped), or the visible fallback.
+    pub section: String,
     pub basis: String,
     pub tier: String,
     pub date: String,
@@ -1430,12 +1433,28 @@ pub struct MemorySnapshot {
     /// it is showing.
     pub root: String,
     pub facts: Vec<MemoryFact>,
+    /// The consolidation cycle's queue, computed and written nowhere —
+    /// the needs-you section's counts and rows, the same filters the
+    /// pass acts on.
+    pub preview: crate::memory::CyclePreview,
+    /// What the cycle forgot: the archive's facts, read-only on the face.
+    pub archive: Vec<MemoryArchived>,
     /// The day's recorded hits, oldest first. A `recall_hit` row names no
     /// session, so the bound is the day rather than one run; the live
     /// run's own recall is already in the event log as its `memory` card,
     /// and that is where the panel reads it from.
     pub hits: Vec<MemoryHit>,
     pub refused: Vec<String>,
+}
+
+/// One archived fact, as the face's archive section cards it: the name,
+/// the sentence, the day it expired, and where it moved.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MemoryArchived {
+    pub name: String,
+    pub description: String,
+    pub date: String,
+    pub path: String,
 }
 
 /// Read the corpus and the day's recall hits, off the two roots the
@@ -1451,6 +1470,7 @@ pub fn read_memory(root: &Path, calib_root: &Path, day: &str) -> MemorySnapshot 
             name: fact.name.clone(),
             description: fact.description.clone(),
             fact_type: fact.fact_type.clone(),
+            section: crate::memory::section_of(fact).to_string(),
             basis: fact.basis.label().to_string(),
             tier: fact.tier.label().to_string(),
             date: fact.date.clone(),
@@ -1476,11 +1496,23 @@ pub fn read_memory(root: &Path, calib_root: &Path, day: &str) -> MemorySnapshot 
                 score: row.score,
             })
             .collect();
+    let preview = crate::memory::preview(root, day);
+    let archive = crate::memory::load_archive(root)
+        .iter()
+        .map(|fact| MemoryArchived {
+            name: fact.name.clone(),
+            description: fact.description.clone(),
+            date: fact.valid_until.clone(),
+            path: fact.path.display().to_string(),
+        })
+        .collect();
     MemorySnapshot {
         read_at: now_stamp(),
         day: day.to_string(),
         root: root.display().to_string(),
         facts,
+        preview,
+        archive,
         hits,
         refused,
     }

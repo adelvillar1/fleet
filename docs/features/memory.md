@@ -703,6 +703,26 @@ fact.
 
 ## The surfaces
 
+The face's memory surface is the work rail's idiom, shared with settings,
+bots, and skills: a rail of sections, one section at a time, one-line
+rows, the right pane for the item. The sections: **needs you** — the
+consolidation cycle's queue, computed and written nowhere by the same
+filters the pass acts on (`memory::preview`), each set named with what
+the cycle would do and why the confirmed and incomplete exceptions were
+left, with **run the cycle now** landing one pass through the cycle's
+own function; the **type words** — user, feedback, project, reference,
+episodic (the protected synonyms mapped, KI-059), and `everything else`
+for the free-form types the substrate permits; then **retired**,
+**archive** (what the cycle forgot, read-only), and **today's recall**.
+A section is an address (`#/memory/<section>`, remembered); the search
+reads every field across every section; rows carry the basis (the
+permission model's input) and the recall count; the row budget shows the
+first 30 with the count named. A row's press opens the pane card: the
+body, the in-place edit (the substrate's own rewriter, unchanged), and
+**supersede** — the modify/forget verb, whose click is the approval the
+provenance rule requires and whose justification is the parser's
+requirement either way.
+
 ```
 fleet remember --name <name> --description "<fact>" --basis confirmed-by|inferred
                                 [--type <kind>] [--shape a,b] [--tier working|durable]

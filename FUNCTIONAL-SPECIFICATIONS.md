@@ -89,10 +89,14 @@ in this run, past runs, graph nodes, reads refused — the tree is rebuilt
 from the logs' own parent ids, and the graph is a file the plan's work
 writes; nothing is inferred from what a run did.
 
-**Knowledge — memory.** One fact per file: what this run recalled and
-what the corpus already knows. Search the corpus; open a fact with its
-whole body and edit it in place; ask fleet what it knows; see today's
-recalls and their scores.
+**Knowledge — memory.** One fact per file, arranged on the work rail's
+idiom: **needs you** (the consolidation cycle's queue, runnable from the
+section that names it), the substrate's own type words as sections, then
+retired, the archive, and today's recall. Search the corpus across every
+section; open a fact with its whole body and edit it in place;
+**supersede** it from the pane — the click is the approval the
+provenance rule requires, the justification is required either way; run
+one consolidation pass; see today's recalls and their scores.
 
 **Knowledge — skills.** The library the model can reach, arranged on the
 work rail's idiom: a rail of sections — **needs you** (the proposals that

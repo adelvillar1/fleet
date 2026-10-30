@@ -752,6 +752,29 @@ async fn serve_connection(
                 Err(message) => write_reply(&mut stream, api(400, json!({"error": message}))).await,
             }
         }
+        // Supersede one fact — the pane's modify/forget verb. The click
+        // is the approval the substrate's permission model requires; a
+        // refusal (already superseded, already expired, a missing
+        // justification) is the writer's own typed reason.
+        ("POST", "/api/fact/supersede") => {
+            let body = match read_body(&mut stream, &request, rest).await {
+                Ok(body) => body,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            match bridge.fact_supersede(&body).await {
+                Ok(superseded) => write_reply(&mut stream, api(200, superseded)).await,
+                Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
+            }
+        }
+        // One consolidation pass on demand — the needs-you section's
+        // press. The pass is the scheduled cycle's own function.
+        ("POST", "/api/memories/consolidate") => {
+            let _ = read_body(&mut stream, &request, rest).await;
+            match bridge.memories_consolidate().await {
+                Ok(result) => write_reply(&mut stream, api(200, result)).await,
+                Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
+            }
+        }
         // Retire a skill from the prompt, or return it: the owner's
         // click on the skills page, written fleet-locally, the library
         // untouched.
@@ -3448,6 +3471,46 @@ mod tests {
         );
         assert!(unknown.starts_with("HTTP/1.1 400"), "{unknown}");
         assert!(unknown.contains("no fact named"), "{unknown}");
+        let _ = std::fs::remove_dir_all(&corpus);
+    }
+
+    /// The management verbs, over the substrate's own writers: a
+    /// supersede lands through `Memory::supersede` with the click as the
+    /// approval (the justification the parser requires rides the body),
+    /// a missing justification is the parser's refusal, and one
+    /// consolidation pass lands through `consolidate` — the same
+    /// function the scheduled cycle runs.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_management_verbs_land_through_the_substrates_own_writers() {
+        let (home, corpus) = memory_home();
+        let (token, port) = launch_over(home, corpus.clone()).await;
+        // A missing justification is refused before anything is written.
+        let unjustified = post(port, "/api/fact/supersede", &token, r#"{"name":"a-fact"}"#);
+        assert!(unjustified.starts_with("HTTP/1.1 409"), "{unjustified}");
+        assert!(unjustified.contains("justification"), "{unjustified}");
+        // The click carries the approval: an inferred fact supersedes on
+        // the recorded justification.
+        let landed = post(
+            port,
+            "/api/fact/supersede",
+            &token,
+            r#"{"name":"a-fact","justification":"superseded from the face: the sentence moved on","description":"the replacement sentence"}"#,
+        );
+        assert!(landed.starts_with("HTTP/1.1 200"), "{landed}");
+        let body = landed.split("\r\n\r\n").nth(1).expect("a body");
+        let document: serde_json::Value = serde_json::from_str(body).expect("a JSON document");
+        assert_eq!(document["type"], "fact_superseded");
+        assert_eq!(document["from"], "a-fact");
+        let on_disk = std::fs::read_to_string(corpus.join("a-fact.md")).expect("the fact file");
+        assert!(on_disk.contains("superseded-by:"), "{on_disk}");
+        // One consolidation pass on demand: the pass runs and names what
+        // it did — here, nothing, which is itself the honest answer.
+        let pass = post(port, "/api/memories/consolidate", &token, "{}");
+        assert!(pass.starts_with("HTTP/1.1 200"), "{pass}");
+        let body = pass.split("\r\n\r\n").nth(1).expect("a body");
+        let document: serde_json::Value = serde_json::from_str(body).expect("a JSON document");
+        assert_eq!(document["type"], "consolidation");
+        assert!(document["actions"].is_array());
         let _ = std::fs::remove_dir_all(&corpus);
     }
 

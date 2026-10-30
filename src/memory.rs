@@ -4608,6 +4608,159 @@ fn aged_out(fact: &Fact, today_days: Option<i64>, days: i64) -> bool {
     matches!(day_age(&fact.date, today_days), Some(age) if age > days)
 }
 
+// --- the cycle's four sets, shared by the pass and the preview --------------
+
+/// The pass's compress set: working facts past their `valid-until` or
+/// older than [`WORKING_MAX_AGE_DAYS`], not already folded. Shared by
+/// [`consolidate`] and [`preview`], so the surface's queue and the
+/// cycle's actions can never disagree about who is in it.
+fn compress_candidates(facts: &[Fact], today: &str, today_days: Option<i64>) -> Vec<Fact> {
+    facts
+        .iter()
+        .filter(|fact| {
+            fact.tier == Tier::Working
+                && fact.superseded_by.trim().is_empty()
+                && (fact.forgotten(today) || aged_out(fact, today_days, WORKING_MAX_AGE_DAYS))
+        })
+        .cloned()
+        .collect()
+}
+
+/// The pass's supersede set: durable, inferred, never recalled, past
+/// [`STALE_AFTER_DAYS`], not already retired, and not incomplete — the
+/// third-vector rule: a summary bullet cannot carry the missing
+/// companions, and they are the fact's whole point.
+fn supersede_candidates(facts: &[Fact], today: &str, today_days: Option<i64>) -> Vec<Fact> {
+    facts
+        .iter()
+        .filter(|fact| {
+            fact.tier == Tier::Durable
+                && fact.basis == Basis::Inferred
+                && fact.superseded_by.trim().is_empty()
+                && !fact.forgotten(today)
+                && fact.recall_count == 0
+                && fact.sign() != Sign::Incomplete
+                && aged_out(fact, today_days, STALE_AFTER_DAYS)
+        })
+        .cloned()
+        .collect()
+}
+
+/// The provenance rule, from the cycle's side: confirmed-by facts in the
+/// supersede set's shape, named and left exactly as they are.
+fn untouched_candidates(facts: &[Fact], today: &str, today_days: Option<i64>) -> Vec<Fact> {
+    facts
+        .iter()
+        .filter(|fact| {
+            fact.tier == Tier::Durable
+                && fact.basis == Basis::ConfirmedBy
+                && fact.superseded_by.trim().is_empty()
+                && !fact.forgotten(today)
+                && fact.recall_count == 0
+                && aged_out(fact, today_days, STALE_AFTER_DAYS)
+        })
+        .cloned()
+        .collect()
+}
+
+/// The third-vector rule, from the cycle's side: incomplete facts in the
+/// supersede set's shape, named and left exactly as they are.
+fn kept_candidates(facts: &[Fact], today: &str, today_days: Option<i64>) -> Vec<Fact> {
+    facts
+        .iter()
+        .filter(|fact| {
+            fact.tier == Tier::Durable
+                && fact.basis == Basis::Inferred
+                && fact.sign() == Sign::Incomplete
+                && fact.superseded_by.trim().is_empty()
+                && !fact.forgotten(today)
+                && fact.recall_count == 0
+                && aged_out(fact, today_days, STALE_AFTER_DAYS)
+        })
+        .cloned()
+        .collect()
+}
+
+fn names_of(facts: &[Fact]) -> Vec<String> {
+    facts.iter().map(|fact| fact.name.clone()).collect()
+}
+
+/// What the cycle WOULD do, computed and written nowhere — the face's
+/// needs-you section. The same four filters [`consolidate`] acts on,
+/// through the same helpers, so the queue and the pass cannot drift.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CyclePreview {
+    /// Working facts the pass would compress.
+    pub compress: Vec<String>,
+    /// Stale never-recalled inferred facts the pass would fold.
+    pub supersede: Vec<String>,
+    /// The confirmed-by facts in the same shape the pass would leave —
+    /// named, because they are the owner's to judge.
+    pub untouched: Vec<String>,
+    /// The incomplete facts the pass would keep — the missing companions
+    /// cannot ride a summary bullet.
+    pub kept: Vec<String>,
+}
+
+impl CyclePreview {
+    /// Whether the cycle has nothing queued.
+    pub fn is_empty(&self) -> bool {
+        self.compress.is_empty()
+            && self.supersede.is_empty()
+            && self.untouched.is_empty()
+            && self.kept.is_empty()
+    }
+
+    /// How many facts the queue names in all.
+    pub fn total(&self) -> usize {
+        self.compress.len() + self.supersede.len() + self.untouched.len() + self.kept.len()
+    }
+}
+
+/// The cycle's queue, computed and written nowhere: `fleet memories
+/// --consolidate` acts on it, the face's needs-you section shows it.
+pub fn preview(root: &Path, today: &str) -> CyclePreview {
+    let facts = load_facts(root);
+    let today_days = parse_day(today);
+    CyclePreview {
+        compress: names_of(&compress_candidates(&facts, today, today_days)),
+        supersede: names_of(&supersede_candidates(&facts, today, today_days)),
+        untouched: names_of(&untouched_candidates(&facts, today, today_days)),
+        kept: names_of(&kept_candidates(&facts, today, today_days)),
+    }
+}
+
+/// The section the fact reads under on the face's rail: the type word
+/// with the documented synonyms mapped onto the protected types (KI-059's
+/// mapping — a `preference` sits with feedback, where the protection
+/// already put it), the cycle's episodic word beside the four canonical
+/// kinds, and `everything-else` for the free-form types the substrate
+/// deliberately permits. The declared words are the categories; nothing
+/// is inferred.
+pub fn section_of(fact: &Fact) -> &'static str {
+    let kind = fact.fact_type.trim().to_ascii_lowercase();
+    let canonical = PROTECTED_SYNONYMS
+        .iter()
+        .find(|(synonym, _)| *synonym == kind)
+        .map(|(_, protected)| *protected)
+        .unwrap_or(kind.as_str());
+    match canonical {
+        "user" => "user",
+        "feedback" => "feedback",
+        "project" => "project",
+        "reference" => "reference",
+        "episodic" => "episodic",
+        _ => "everything-else",
+    }
+}
+
+/// The archive's facts: what the cycle forgot, read with the
+/// stem-equals-name rule relaxed (a collision copy carries a serial on
+/// disk while its frontmatter still names the fact).
+pub fn load_archive(root: &Path) -> Vec<Fact> {
+    load_facts_archived(&root.join(ARCHIVE_DIR))
+}
+
 /// One consolidation pass over the corpus under `root`, against the
 /// day `today` names — the seam a test injects a fixed day through, so
 /// the cycle is deterministic rather than sleep-dependent.
@@ -4641,62 +4794,15 @@ pub fn consolidate(root: &Path, today: &str, stream: Option<&calib::Stream>) -> 
     let today_days = parse_day(today);
     let mut out = Consolidation::default();
 
-    let compress: Vec<Fact> = facts
-        .iter()
-        .filter(|fact| {
-            fact.tier == Tier::Working
-                && fact.superseded_by.trim().is_empty()
-                && (fact.forgotten(today) || aged_out(fact, today_days, WORKING_MAX_AGE_DAYS))
-        })
-        .cloned()
-        .collect();
-    let supersede: Vec<Fact> = facts
-        .iter()
-        .filter(|fact| {
-            fact.tier == Tier::Durable
-                && fact.basis == Basis::Inferred
-                && fact.superseded_by.trim().is_empty()
-                && !fact.forgotten(today)
-                && fact.recall_count == 0
-                // The third-vector rule: an incomplete fact is never
-                // folded, whatever its provenance or age. Its missing
-                // companions cannot ride a summary bullet, and they are
-                // the reason the fact exists.
-                && fact.sign() != Sign::Incomplete
-                && aged_out(fact, today_days, STALE_AFTER_DAYS)
-        })
-        .cloned()
-        .collect();
+    let compress = compress_candidates(&facts, today, today_days);
+    let supersede = supersede_candidates(&facts, today, today_days);
     // The provenance rule, from the cycle's side: a confirmed-by fact
     // in the stale shape is named and left exactly as it is.
-    out.untouched = facts
-        .iter()
-        .filter(|fact| {
-            fact.tier == Tier::Durable
-                && fact.basis == Basis::ConfirmedBy
-                && fact.superseded_by.trim().is_empty()
-                && !fact.forgotten(today)
-                && fact.recall_count == 0
-                && aged_out(fact, today_days, STALE_AFTER_DAYS)
-        })
-        .map(|fact| fact.name.clone())
-        .collect();
+    out.untouched = names_of(&untouched_candidates(&facts, today, today_days));
     // The third-vector rule, from the cycle's side: an incomplete
     // durable inferred fact in the stale shape is named and left exactly
     // as it is, so the surface can say why rather than skip it silently.
-    out.kept = facts
-        .iter()
-        .filter(|fact| {
-            fact.tier == Tier::Durable
-                && fact.basis == Basis::Inferred
-                && fact.sign() == Sign::Incomplete
-                && fact.superseded_by.trim().is_empty()
-                && !fact.forgotten(today)
-                && fact.recall_count == 0
-                && aged_out(fact, today_days, STALE_AFTER_DAYS)
-        })
-        .map(|fact| fact.name.clone())
-        .collect();
+    out.kept = names_of(&kept_candidates(&facts, today, today_days));
 
     let summary = if compress.is_empty() && supersede.is_empty() {
         None
@@ -8895,6 +9001,71 @@ mod tests {
         format!(
             "---\nname: {name}\ndescription: \"{description}\"\ntype: project\ndate: {date}\nbasis: inferred\ntier: working\nshape: []\nrecall-count: 0\nsuperseded-by:\nvalid-until: {valid_until}\n---\n\nThe note's body.\n"
         )
+    }
+
+    /// B1: the preview is the cycle's own filters — the sets it names
+    /// before the pass are exactly the actions the pass takes, on the
+    /// same fixture and the same day. The four shapes cover the four
+    /// sets: an expired working fact (compress), a stale never-recalled
+    /// inferred fact (supersede), the same shape confirmed-by
+    /// (untouched), and the same shape incomplete (kept).
+    #[test]
+    fn the_preview_names_what_the_cycle_would_do() {
+        let root = scratch("preview-agrees");
+        let old = days_ago(400);
+        write_fact(
+            &root,
+            "stale-working",
+            &working_fact("stale-working", "a stale note", &old, &days_ago(2)),
+        );
+        let durable = |name: &str, description: &str, basis: &str, shape: &str, missing: &str| {
+            format!(
+                "---\nname: {name}\ndescription: \"{description}\"\ntype: project\ndate: {old}\nbasis: {basis}\ntier: durable\nshape: [{shape}]\nmissing: [{missing}]\nrecall-count: 0\nsuperseded-by:\nvalid-until:\n---\n\nbody\n"
+            )
+        };
+        write_fact(
+            &root,
+            "stale-inferred",
+            &durable("stale-inferred", "a stale guess", "inferred", "", ""),
+        );
+        write_fact(
+            &root,
+            "stale-confirmed",
+            &durable(
+                "stale-confirmed",
+                "a stale verified fact",
+                "confirmed-by",
+                "",
+                "",
+            ),
+        );
+        write_fact(
+            &root,
+            "stalled",
+            &durable(
+                "stalled",
+                "a stalled trajectory",
+                "inferred",
+                "build, incomplete",
+                "the companion",
+            ),
+        );
+        let today = calib::today();
+        let before = preview(&root, &today);
+        assert_eq!(before.compress, vec!["stale-working".to_string()]);
+        assert_eq!(before.supersede, vec!["stale-inferred".to_string()]);
+        assert_eq!(before.untouched, vec!["stale-confirmed".to_string()]);
+        assert_eq!(before.kept, vec!["stalled".to_string()]);
+        // The pass acts on exactly those sets and nothing else.
+        let result = consolidate(&root, &today, None);
+        let acted: Vec<String> = result.actions.iter().map(|a| a.fact.clone()).collect();
+        assert!(acted.contains(&"stale-working".to_string()), "{acted:?}");
+        assert!(acted.contains(&"stale-inferred".to_string()), "{acted:?}");
+        assert!(!acted.contains(&"stale-confirmed".to_string()));
+        assert!(!acted.contains(&"stalled".to_string()));
+        assert_eq!(result.untouched, before.untouched);
+        assert_eq!(result.kept, before.kept);
+        let _ = fs::remove_dir_all(&root);
     }
 
     /// R4b: the third sign is only real if the companions are named. The

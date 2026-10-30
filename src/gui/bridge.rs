@@ -2099,6 +2099,73 @@ impl Bridge {
         }
     }
 
+    /// Supersede one fact. The face's click is the approval the
+    /// permission model requires — a `confirmed-by` fact refuses without
+    /// it, exactly as the CLI's `--approve` — and the justification is
+    /// required by the parser either way. The write is the substrate's
+    /// own `Memory::supersede`: the stamp, the replacement's inheritance
+    /// rules, and the calibration row are all its own.
+    pub async fn fact_supersede(&self, body: &str) -> Result<Value, String> {
+        let arguments: serde_json::Value = serde_json::from_str(body)
+            .map_err(|error| format!("the supersede is not a JSON object: {error}"))?;
+        let request =
+            crate::memory::Supersede::parse(&arguments).map_err(|error| error.to_string())?;
+        let home = self.home.clone();
+        let memories = self.memories.clone();
+        tokio::task::spawn_blocking(move || {
+            let user_home = std::env::var("HOME").ok();
+            let stream =
+                crate::calib::Stream::open(crate::calib::resolve_root(&home, user_home.as_deref()));
+            let memory = crate::memory::Memory::load(&memories);
+            memory
+                .supersede(&request, true, Some(&stream))
+                .map(|superseded| match superseded {
+                    crate::memory::Superseded::By { from, into } => json!({
+                        "type": "fact_superseded",
+                        "from": from,
+                        "into": into,
+                    }),
+                    crate::memory::Superseded::Forgotten { fact } => json!({
+                        "type": "fact_superseded",
+                        "from": fact,
+                        "forgotten": true,
+                    }),
+                })
+                .map_err(|error| error.to_string())
+        })
+        .await
+        .map_err(|_| "the supersede did not land".to_string())?
+    }
+
+    /// Run one consolidation pass on demand — the needs-you section's
+    /// press. The pass is the scheduled cycle's own function: the same
+    /// filters the read's preview computed, the same calibration rows,
+    /// the same archive moves.
+    pub async fn memories_consolidate(&self) -> Result<Value, String> {
+        let home = self.home.clone();
+        let memories = self.memories.clone();
+        tokio::task::spawn_blocking(move || {
+            let user_home = std::env::var("HOME").ok();
+            let stream =
+                crate::calib::Stream::open(crate::calib::resolve_root(&home, user_home.as_deref()));
+            let result =
+                crate::memory::consolidate(&memories, &crate::calib::today(), Some(&stream));
+            Ok(json!({
+                "type": "consolidation",
+                "actions": result.actions.iter().map(|action| json!({
+                    "action": action.action,
+                    "fact": action.fact,
+                    "reason": action.reason,
+                })).collect::<Vec<_>>(),
+                "untouched": result.untouched,
+                "kept": result.kept,
+                "summary": result.summary,
+            }))
+        })
+        .await
+        .map_err(|_| "the pass did not land".to_string())?
+    }
+
     /// Approve one skills proposal through the apply path.
     ///
     /// The click is the approval, and the gate is the real one: the same
@@ -3889,6 +3956,7 @@ fn memory_read(home: &std::path::Path, memories: &std::path::Path, cwd: &std::pa
             "name": fact.name,
             "description": fact.description,
             "fact_type": fact.fact_type,
+            "section": fact.section,
             "basis": fact.basis,
             "tier": fact.tier,
             "date": fact.date,
@@ -3910,6 +3978,18 @@ fn memory_read(home: &std::path::Path, memories: &std::path::Path, cwd: &std::pa
                 .ok()
                 .and_then(|path| path.to_str())
                 .map(str::to_string),
+        })).collect::<Vec<_>>(),
+        "preview": {
+            "compress": snapshot.preview.compress,
+            "supersede": snapshot.preview.supersede,
+            "untouched": snapshot.preview.untouched,
+            "kept": snapshot.preview.kept,
+        },
+        "archive": snapshot.archive.iter().map(|fact| json!({
+            "name": fact.name,
+            "description": fact.description,
+            "date": fact.date,
+            "path": fact.path,
         })).collect::<Vec<_>>(),
         "hits": snapshot.hits.iter().map(|hit| json!({
             "ts": hit.ts,

@@ -172,48 +172,48 @@ quoting before/after heights and control counts; the docs.
 
 ## Acceptance criteria
 
-- [ ] **B1 — the preview is the cycle's own filters.** `memory::preview`
+- [x] **B1 — the preview is the cycle's own filters.** `memory::preview`
       returns the same four sets `consolidate` would act on, writes
       nothing, and a unit test pins preview ∘ consolidate agreement on a
       written fixture (the sets before the pass equal the actions after
       it).
-- [ ] **B2 — the routes are the writers.** `POST /api/fact/supersede`
+- [x] **B2 — the routes are the writers.** `POST /api/fact/supersede`
       lands a supersession through `Memory::supersede` (the click carries
       `approved: true`; a confirmed-by fact supersedes, an unnamed
       justification is refused by the parser) and `POST
       /api/memories/consolidate` lands one pass whose calibration rows
       match the scheduled pass's; every refusal is the writer's own typed
       reason.
-- [ ] **B3 — the rail is the shared helper.** The memory panel renders
+- [x] **B3 — the rail is the shared helper.** The memory panel renders
       `sectionRail` (store `fleet-memory-rail`), collapses to icons,
       survives a reload, marks `aria-current`, takes the arrow keys, and
       only the open section's cards and rows exist in the DOM.
-- [ ] **B4 — a section is an address.** `#/memory/<section>` opens it;
+- [x] **B4 — a section is an address.** `#/memory/<section>` opens it;
       bare `#/memory` resumes the remembered one; an unknown segment
       falls back to `needs you`.
-- [ ] **B5 — the rows are one line with a budget.** A section's rows are
+- [x] **B5 — the rows are one line with a budget.** A section's rows are
       `cfgItem` one-liners carrying type, basis, recalls, and the
       protected/retired marks; the first 30 show and the press names the
       rest; the search box reads every field across every section.
-- [ ] **B6 — the pane is the fact.** The row's press opens the card with
+- [x] **B6 — the pane is the fact.** The row's press opens the card with
       the body, the existing edit form (unchanged fields, the rewriter
       untouched), related, and the actions; a save refreshes the row.
-- [ ] **B7 — supersede lives in the pane.** The supersede control asks
+- [x] **B7 — supersede lives in the pane.** The supersede control asks
       for the justification, lands through `Memory::supersede`, refuses
       in place with the writer's own reason (already superseded, already
       expired, missing justification), and refreshes the row to its
       retired state; needs you offers **run the cycle now**, and the
       section's untouched/kept rows name why they were left.
-- [ ] **B8 — every button works.** A harness check per action button —
+- [x] **B8 — every button works.** A harness check per action button —
       edit/save, supersede, run the cycle, ask, copy, file, search,
       budget, section pick — each asserted against its named element and
       its observed effect, in the same commit as the element.
-- [ ] **B9 — the categories are the substrate's own words.** Sections
+- [x] **B9 — the categories are the substrate's own words.** Sections
       come from the fact's `type` (with the protected synonyms mapped),
       nothing else; the live corpus measured through them is recorded in
       this plan (the 114/34/13 counts re-verified at landing); free-form
       types land in everything else, visible.
-- [ ] **B10 — the gate and the measurement.** fmt, clippy, build, test
+- [x] **B10 — the gate and the measurement.** fmt, clippy, build, test
       green by exit code; the Chromium probe quotes the before/after
       heights and control counts; the screenshots read as the review.
 
@@ -271,6 +271,35 @@ Expected: every new check green; the count line quoted in the commit.
 
 **B10** — the gate, whole, exit codes read directly; the Chromium probe
 at 1440×900 quoting before/after; the screenshots read as the review.
+
+## Landed 2026-10-30
+
+B1: `the_preview_names_what_the_cycle_would_do` — the four sets before
+the pass are the actions after it, on a fixture carrying all four
+shapes. B2: `the_management_verbs_land_through_the_substrates_own_writers`
+— a missing justification is the parser's 409, an inferred fact
+supersedes on the recorded justification through `POST
+/api/fact/supersede`, and one pass lands through `POST
+/api/memories/consolidate`. B3–B8: the face harness, **451 checks across
+47 cases** (the MEM case: the rail's sections and badges — empty type
+words never render — one section at a time, the route, the queue's four
+sets with the run-the-cycle POST, the one-line rows with the basis and
+recalls marks, the budget's named press, the pane card with the edit
+form and the supersede verb, the supersede POST carrying the
+justification, the cross-section search results, the archive, and the
+today section). B9: the live read — user 2, feedback 7, project 97,
+reference 1, episodic 2, everything else 5 (the `state-sync`-typed
+facts), retired 34, archive 13; the live queue honestly empty (every
+inferred fact has been recalled or confirmed). B10: the gate whole —
+fmt 0, clippy 0, build 0, the full suite green — and the probe's
+measurement: before, one board **7,207 px tall with 339 controls**;
+after, the largest section is project at **1,493 px with 34 controls**
+(needs-you 439 px / 4, archive 1,141 px / 3, today 1,210 px / 15), 10
+rail rows, one section-body at every address. The before/after
+screenshots are read as the review (tmp/shots-memory-*). One defect the
+build caught on itself: the dead-code sweep that retired the old board
+took `memHits` with it and the today section threw — restored, and the
+harness now opens every section so a missing builder cannot come back.
 
 ## Linked artifacts
 

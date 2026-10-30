@@ -39,14 +39,28 @@ const ruleBlock = (selector) => {
 function matchesSimple(el, sel) {
   const text = String(sel || '').trim();
   if (!text) return false;
-  const tag = text.match(/^[a-zA-Z][\w-]*/);
+  // Attribute parts — `[name="description"]`, the shape the face's own
+  // form handlers read — are pulled off first and matched against the
+  // element's property of that name (a stub sets `.name`, which in a
+  // browser reflects to the attribute).
+  const attrs = [];
+  const bare = text.replace(/\[[^\]=]+="[^"]*"\]/g, (part) => {
+    attrs.push(part);
+    return '';
+  });
+  const tag = bare.match(/^[a-zA-Z][\w-]*/);
   if (tag && el.name !== tag[0]) return false;
-  const ids = text.match(/#[^.#\s]+/g) || [];
+  const ids = bare.match(/#[^.#\s]+/g) || [];
   if (ids.some((id) => el.id !== id.slice(1))) return false;
-  const classes = text.match(/\.[^.#\s]+/g) || [];
+  const classes = bare.match(/\.[^.#\s]+/g) || [];
   const held = el.className.split(/\s+/).filter(Boolean);
   if (classes.some((cls) => !held.includes(cls.slice(1)))) return false;
-  return Boolean(tag || ids.length || classes.length);
+  for (const attr of attrs) {
+    const m = attr.match(/\[([^\]=]+)="([^"]*)"\]/);
+    const value = typeof el[m[1]] === 'string' ? el[m[1]] : null;
+    if (value !== m[2]) return false;
+  }
+  return Boolean(tag || ids.length || classes.length || attrs.length);
 }
 
 function descendantAll(root, sel) {
@@ -3252,7 +3266,11 @@ async function thePaneIsOneSurfaceWithTheOwnersHandOnIt() {
   // body, and the run's own cards stand down while it speaks.
   page.rows('.surfaces-link').find((l) => l.dataset.address === 'memory').click();
   await flush(40);
-  const objectRow = page.rows('.mem-row')[0];
+  const projectRow = page.rows('.section-rail-row')
+    .find((row) => row.textContent.includes('everything else'));
+  if (projectRow) projectRow.click();
+  await flush(40);
+  const objectRow = page.rows('.cfg-item')[0];
   if (objectRow) objectRow.click();
   await flush(40);
   check('P the object card opens in the pane',
@@ -4162,6 +4180,201 @@ async function theSkillsRailCarriesOneSectionAtATime() {
     JSON.stringify(retiredPost.map((call) => call.body)));
 }
 
+
+// The memory surface's document, in the bridge's own shape: sections
+// across the substrate's own type words, the cycle's queue, the
+// archive, and the day's hits.
+const memoryDoc = (() => {
+  const fact = (name, section, extra) => ({
+    name, description: 'the ' + name + ' fact', fact_type: section, section,
+    basis: 'inferred', tier: 'durable', date: '2026-10-01', recall_count: 0,
+    protected: false, retired: false, superseded_by: '', valid_until: '',
+    shape: [], phrases: [], missing: [], body: 'the body of ' + name,
+    path: '/repo/memories/' + name + '.md', relative: 'memories/' + name + '.md',
+    ...extra,
+  });
+  const projects = [];
+  for (let i = 0; i < 31; i += 1) {
+    projects.push(fact('fact-' + String(i).padStart(2, '0'), 'project',
+      { recall_count: i }));
+  }
+  return {
+    type: 'memory', read_at: 'now', day: '2026-10-30', root: '/repo/memories',
+    facts: projects.concat([
+      fact('owners-ruling', 'feedback', { basis: 'confirmed-by', protected: true,
+        recall_count: 4 }),
+      fact('odd-typed', 'everything-else', { fact_type: 'state-sync' }),
+      fact('folded-away', 'project', { retired: true, superseded_by: 'fact-00' }),
+    ]),
+    preview: {
+      compress: ['stale-working'], supersede: ['stale-inferred'],
+      untouched: ['stale-confirmed'], kept: ['stalled'],
+    },
+    archive: [{ name: 'archived-one', description: 'the expired fact',
+      date: '2026-10-01', path: '/repo/memories/.archive/archived-one.md' }],
+    hits: [{ ts: '2026-10-30T09:00:00Z', fact: 'fact-03', shape: 'build',
+      score: 0.61 }],
+    refused: [],
+  };
+})();
+
+async function theMemoryRailCarriesTheQueueAndTheVerbs() {
+  const bootMemory = (hash) => boot({
+    width: 1440, hash,
+    documents: { memory: memoryDoc, state: (asked) => emptyState(asked),
+      onboard: onboardDoc({ door: false }) },
+  });
+
+  const page = bootMemory('#/memory');
+  await flush();
+  page.open();
+  await flush(80);
+
+  // The rail: needs you leads, the type sections the corpus holds
+  // follow (an empty type never renders), the tails close it.
+  const railRows = page.rows('.section-rail-row');
+  const railText = railRows.map((row) => row.textContent);
+  check('MEM the rail leads with needs you and carries the type words',
+    railRows.length === 7 &&
+      railText[0].includes('needs you') &&
+      railText[1].includes('feedback') && railText[2].includes('project') &&
+      railText.some((t) => t.includes('everything else')) &&
+      railText.some((t) => t.includes('retired')) &&
+      railText.some((t) => t.includes('archive')) &&
+      railText.some((t) => t.includes('today')),
+    railText.join(' | '));
+  check('MEM one section renders at a time',
+    page.rows('.section-body').length === 1 &&
+      page.rows('.section-body')[0].dataset.section === 'needs-you',
+    page.rows('.section-body').map((b) => b.dataset.section).join(','));
+
+  // The needs-you section names the four sets and offers the pass.
+  const board = page.text('memory-board');
+  check('MEM the queue names all four sets and the exceptions',
+    board.includes('the pass would compress') &&
+      board.includes('the pass would fold') &&
+      board.includes('left alone \u2014 the owner confirmed it') &&
+      board.includes('left alone \u2014 the missing companions') &&
+      board.includes('run the cycle now'),
+    board.slice(0, 200));
+  page.rows('.row-action-primary')[0].click();
+  await flush(60);
+  const passPosted = page.calls.filter((call) =>
+    call.url === '/api/memories/consolidate' && call.method === 'POST');
+  check('MEM the press runs one pass',
+    passPosted.length === 1, JSON.stringify(passPosted));
+
+  // A type section is an address; its rows are one line with the
+  // permission model's mark and the recalls.
+  const routed = bootMemory('#/memory/project');
+  await flush();
+  routed.open();
+  await flush(80);
+  check('MEM a type section is an address',
+    routed.rows('.section-body')[0].dataset.section === 'project', 'project route');
+  const items = routed.rows('.cfg-item');
+  check('MEM the rows are one line with the basis mark',
+    items.length === 30 &&
+      items.every((row) => row.querySelector('.cfg-item-name')) &&
+      items.some((row) => row.textContent.includes('inferred')),
+    String(items.length));
+  const more = routed.rows('.budget-more');
+  check('MEM the budget names what is behind the press',
+    more.length === 1 && more[0].textContent.includes('1 more facts'),
+    more.length ? more[0].textContent : 'none');
+  more[0].click();
+  await flush(40);
+  const revealed = routed.rows('.cfg-item');
+  check('MEM the press reveals the rest, never recalled among them',
+    revealed.length === 31 &&
+      revealed.some((row) => row.textContent.includes('never recalled')),
+    String(revealed.length));
+
+  // A row's press opens the pane card: the body, the edit form, and the
+  // supersede verb — the tabs stood down.
+  routed.rows('.cfg-item')[0].click();
+  await flush(60);
+  check('MEM a row opens its card in the pane',
+    routed.body.dataset.objectCard === 'open' &&
+      routed.text('dock-object-title').includes('fact-30'),
+    routed.text('dock-object-title'));
+  const cardText = routed.text('dock-object-body');
+  check('MEM the card carries the edit form', cardText.includes('save the fact'),
+    cardText.slice(0, 400));
+  check('MEM the card carries the supersede verb',
+    cardText.includes('supersede the fact'), 'supersede');
+  const editForm = Array.from(routed.rows('form'))
+    .find((form) => form.textContent.includes('everything after the frontmatter fence'));
+  const bodyWrap = editForm
+    ? Array.from(editForm.querySelectorAll('.fact-field'))
+        .find((wrap) => wrap.textContent.includes('everything after the frontmatter fence'))
+    : null;
+  const bodyBox = bodyWrap
+    ? bodyWrap.children[bodyWrap.children.length - 1]
+    : null;
+  check('MEM the card carries the body',
+    !!bodyBox && bodyBox.value === 'the body of fact-30',
+    bodyWrap ? 'children: ' + bodyWrap.children.map((c) => c.name).join(',') : 'no wrap');
+
+  // The supersede submits through the substrate's own writer, with the
+  // justification the permission model requires.
+  routed.rows('.cfg-item')[0].click();
+  await flush(40);
+  const supersedeForm = Array.from(routed.rows('form'))
+    .find((form) => form.textContent.includes('why this fact stops being true'));
+  if (!supersedeForm) {
+    throw new Error('no supersede form; forms: ' + routed.rows('form').length +
+      ' board: ' + routed.text('dock-object-body').slice(0, 300));
+  }
+  const justField = Array.from(supersedeForm.querySelectorAll('.fact-field'))
+    .find((wrap) => wrap.textContent.includes('why this fact stops being true'));
+  const justBox = justField.children[justField.children.length - 1];
+  justBox.value = 'the sentence moved on';
+  supersedeForm.fire('submit', { preventDefault() {} });
+  await flush(60);
+  const supersedes = routed.calls.filter((call) =>
+    call.url === '/api/fact/supersede' && call.method === 'POST');
+  check('MEM the supersede posts the fact and its justification',
+    supersedes.length === 1 &&
+      JSON.parse(supersedes[0].body).name === 'fact-30' &&
+      JSON.parse(supersedes[0].body).justification === 'the sentence moved on',
+    JSON.stringify(supersedes.map((call) => call.body)));
+  routed.fireOn('dock-object-close', 'click');
+  await flush(40);
+
+  // A query searches every field across every section.
+  const box = routed.rows('.panel-search-box');
+  box[0].value = 'owners-ruling';
+  box[0].fire('input', {});
+  await flush(60);
+  const searched = routed.rows('.cfg-item');
+  check('MEM a query searches every section',
+    routed.rows('.section-body')[0].dataset.section === 'matches' &&
+      searched.length === 1 && searched[0].textContent.includes('owners-ruling'),
+    searched.map((row) => row.textContent).join(' | ').slice(0, 120));
+
+  // The archive section names what the cycle forgot.
+  const gone = bootMemory('#/memory/archive');
+  await flush();
+  gone.open();
+  await flush(80);
+  check('MEM the archive names what the cycle forgot',
+    gone.rows('.section-body')[0].dataset.section === 'archive' &&
+      gone.text('memory-board').includes('archived-one'),
+    gone.rows('.section-body')[0].dataset.section);
+
+  // The today section carries the day's hits with their scores.
+  const today = bootMemory('#/memory/today');
+  await flush();
+  today.open();
+  await flush(80);
+  check('MEM the today section carries the day\u2019s hits',
+    today.rows('.section-body')[0].dataset.section === 'today' &&
+      today.text('memory-board').includes('fact-03') &&
+      today.text('memory-board').includes('0.61'),
+    today.rows('.section-body')[0].dataset.section);
+}
+
 const cases = [
   ['C1/C8 the list groups by attention and counts what the server counted', theListGroupsByAttentionAndCountsWhatTheServerCounted],
   ['C2 every state opens through one verb', everyStateOpensThroughOneVerb],
@@ -4209,6 +4422,7 @@ const cases = [
   ['SET the settings rail carries one section at a time', theSettingsRailCarriesOneSectionAtATime],
   ['BOTS the bots rail groups by persona', theBotsRailGroupsByPersona],
   ['SKILL the skills rail carries the categories and the pane', theSkillsRailCarriesOneSectionAtATime],
+  ['MEM the memory rail carries the queue and the verbs', theMemoryRailCarriesTheQueueAndTheVerbs],
 ];
 
 for (const [name, run] of cases) {

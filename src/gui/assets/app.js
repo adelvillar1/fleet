@@ -625,6 +625,7 @@
     routerBoard: document.getElementById('router-board'),
     delegationBoard: document.getElementById('delegation-board'),
     memoryBoard: document.getElementById('memory-board'),
+    memoryRail: document.getElementById('memory-rail'),
     skillsBoard: document.getElementById('skills-board'),
     skillsRail: document.getElementById('skills-rail'),
     sessionsBoard: document.getElementById('work-list'),
@@ -5498,6 +5499,166 @@
     openFile(path);
   }
 
+  // ------------------------------------------------------------- memory
+  //
+  // The surface is a rail of sections and one section's cards: the work
+  // rail's idiom, the shared sectionRail helper, and a route that makes
+  // a section addressable. What needs you leads — the consolidation
+  // cycle's own queue, computed and written nowhere — then the
+  // substrate's own type words, then retired, the archive, and today's
+  // recall.
+
+  /// The section the hash names, or the remembered one, or `needs-you`.
+  function memorySectionId() {
+    var raw = (window.location.hash || '').replace(/^#\/?/, '');
+    var parts = raw.split('/');
+    if (parts[0] === 'memory' && parts[1]) return decodeURIComponent(parts[1]);
+    try {
+      var stored = window.localStorage.getItem('fleet-memory-section');
+      if (stored) return stored;
+    } catch (error) { }
+    return 'needs-you';
+  }
+
+  function rememberMemorySection(id) {
+    try { window.localStorage.setItem('fleet-memory-section', id); } catch (error) { }
+  }
+
+  var MEMORY_SECTION_NAMES = {
+    'needs-you': 'needs you', 'user': 'user', 'feedback': 'feedback',
+    'project': 'project', 'reference': 'reference', 'episodic': 'episodic',
+    'everything-else': 'everything else', 'retired': 'retired',
+    'archive': 'archive', 'today': 'today\u2019s recall'
+  };
+
+  var MEMORY_SECTION_ICONS = {
+    'needs-you': 'pending', 'user': 'seat', 'feedback': 'rules',
+    'project': 'repo', 'reference': 'memory', 'episodic': 'events',
+    'everything-else': 'dot', 'retired': 'rows', 'archive': 'sessions',
+    'today': 'recent'
+  };
+
+  /// The type sections the read actually holds, in the substrate's own
+  /// prominence order. `everything-else` appears only when a free-form
+  /// type is present — an empty fallback row would be a lie.
+  function memoryTypeIds(read) {
+    var seen = {};
+    (read.facts || []).forEach(function (fact) {
+      seen[fact.section || 'everything-else'] = true;
+    });
+    var order = ['user', 'feedback', 'project', 'reference', 'episodic',
+      'everything-else'];
+    return order.filter(function (id) { return seen[id]; });
+  }
+
+  /// The cycle's queue: the four sets the read's preview names.
+  function memoryPreviewTotal(read) {
+    var preview = read.preview || {};
+    return (preview.compress || []).length + (preview.supersede || []).length +
+      (preview.untouched || []).length + (preview.kept || []).length;
+  }
+
+  /// The declaration: id, icon, name, badge and paint per section.
+  function memorySections(read) {
+    var facts = read.facts || [];
+    var retired = facts.filter(function (fact) { return fact.retired; });
+    var sections = [{
+      id: 'needs-you', name: 'needs you',
+      badge: memoryPreviewTotal(read), badgeTitle: memoryPreviewTotal(read) + ' queued',
+      paint: function () { return [memoryNeedsYou(read)]; }
+    }];
+    memoryTypeIds(read).forEach(function (id) {
+      var rows = facts.filter(function (fact) {
+        return !fact.retired && (fact.section || 'everything-else') === id;
+      });
+      sections.push({
+        id: id, name: MEMORY_SECTION_NAMES[id] || id,
+        badge: rows.length, badgeTitle: rows.length + ' facts',
+        paint: function () { return [memoryCategoryCard(read, id, rows)]; }
+      });
+    });
+    sections.push(
+      {
+        id: 'retired', name: 'retired',
+        badge: retired.length, badgeTitle: retired.length + ' retired',
+        paint: function () {
+          return [memoryCategoryCard(read, 'retired', retired)];
+        }
+      },
+      {
+        id: 'archive', name: 'archive',
+        badge: (read.archive || []).length,
+        badgeTitle: (read.archive || []).length + ' archived',
+        paint: function () { return [memoryArchive(read)]; }
+      },
+      {
+        id: 'today', name: 'today\u2019s recall',
+        badge: (read.hits || []).length,
+        badgeTitle: (read.hits || []).length + ' hits',
+        paint: function () {
+          var recalls = face.events.filter(function (event) { return event.type === 'memory'; });
+          return [memHits(read, read.hits || [], recalls)];
+        }
+      }
+    );
+    return sections;
+  }
+
+  function paintMemoryRail(read) {
+    if (!el.memoryRail) return;
+    var sections = read ? memorySections(read) : [];
+    sectionRail(el.memoryRail, sections.map(function (section) {
+      return {
+        id: section.id, icon: MEMORY_SECTION_ICONS[section.id] || 'dot',
+        name: section.name, badge: section.badge, badgeTitle: section.badgeTitle
+      };
+    }), {
+      current: read ? memorySectionId() : 'needs-you',
+      folded: !!face.memoryRailFolded,
+      store: 'fleet-memory-rail',
+      onPick: function (id) {
+        rememberMemorySection(id);
+        window.location.hash = '#/memory/' + id;
+        paintMemory();
+        var row = el.memoryRail.querySelector('[data-section="' + id + '"]');
+        if (row && row.focus) row.focus();
+      },
+      onFold: function (folded) {
+        face.memoryRailFolded = folded;
+        try {
+          window.localStorage.setItem('fleet-memory-rail', folded ? 'folded' : 'open');
+        } catch (error) { }
+        paintMemoryRail(face.memory);
+      }
+    });
+  }
+
+  /// One section's cards, and nothing else. A query outranks the rail:
+  /// the body becomes the results card across every section until the
+  /// query clears.
+  function paintMemorySection(id) {
+    var read = face.memory;
+    if (!read) return;
+    Array.prototype.slice.call(el.memoryBoard.children).forEach(function (child) {
+      if (child.classList && (child.classList.contains('section-body'))) {
+        el.memoryBoard.removeChild(child);
+      }
+    });
+    var body = node('div', 'section-body');
+    if ((face.query || '').trim()) {
+      body.dataset.section = 'matches';
+      body.appendChild(memorySearchResults(read));
+      el.memoryBoard.appendChild(body);
+      return;
+    }
+    var sections = memorySections(read);
+    var chosen = sections.filter(function (section) { return section.id === id; })[0]
+      || sections[0];
+    body.dataset.section = chosen.id;
+    chosen.paint().forEach(function (card) { body.appendChild(card); });
+    el.memoryBoard.appendChild(body);
+  }
+
   function paintMemory() {
     var read = face.memory;
     el.memoryBoard.textContent = '';
@@ -5509,6 +5670,7 @@
         'The corpus read has not landed yet. It reads the memories tree and the day\u2019s ' +
         'calibration stream, both of which are this machine\u2019s own.'));
       el.memoryBoard.appendChild(waiting);
+      paintMemoryRail(null);
       return;
     }
     var facts = read.facts || [];
@@ -5517,10 +5679,6 @@
     var retired = facts.filter(function (fact) { return fact.retired; });
     var hits = read.hits || [];
     var recalls = face.events.filter(function (event) { return event.type === 'memory'; });
-    var filter = face.memoryFilter || 'live';
-    var shown = facts.filter(function (fact) {
-      return memoryFilterMatch(fact, filter) && matchesQuery(fact);
-    });
     var instrument = surfaceInstrument('the corpus', facts.length + ' facts',
       read.root + ' \u00b7 ' + hits.length + ' hits on ' + read.day,
       [
@@ -5548,98 +5706,194 @@
       [hits.length, 'hits ' + read.day],
       [recalls.length, 'recalls this run']
     ], 'the corpus at ' + read.root));
-    el.memoryBoard.appendChild(memCorpus(shown, filter, facts.length));
-    el.memoryBoard.appendChild(surfaceRail([memHits(read, hits, recalls), memMix(facts)]));
+    // The search reads every field across every section, so it sits
+    // above the section body — the only thing a section pick replaces.
+    el.memoryBoard.appendChild(memorySearch());
+    paintMemoryRail(read);
+    paintMemorySection(memorySectionId());
     if (read.refused && read.refused.length) {
       el.memoryBoard.appendChild(refusedCard(read.refused));
     }
   }
 
-  function memCorpus(shown, filter, total) {
-    var card = boardCard(8, 'the corpus',
-      shown.length + (filter === 'all' ? ' of ' + total : ' ' + filter),
-      'a fact is one file. A row opens it with its whole body and its edit, written through ' +
-      'the substrate\u2019s own rewriter; the row\u2019s own buttons do the three things you ' +
-      'reach for while reading.');
-    card.classList.add('lib-card');
-    var tools = node('div', 'lib-tools');
-    tools.appendChild(memorySearch());
-    card.appendChild(tools);
-    var facts = (face.memory && face.memory.facts) || [];
-    var live = facts.filter(function (fact) { return !fact.retired; });
-    card.appendChild(filterBar([
-      { value: 'all', label: 'all', count: facts.length },
-      { value: 'live', label: 'live', count: live.length },
-      { value: 'protected', label: 'protected', count: live.filter(function (fact) { return fact.protected; }).length },
-      { value: 'retired', label: 'retired', count: facts.filter(function (fact) { return fact.retired; }).length }
-    ], filter, function (value) {
-      face.memoryFilter = value;
-      paintMemory();
-    }));
-    var cols = node('div', 'mem-cols');
-    ['fact', 'type', 'basis', 'recalls', 'state', 'actions'].forEach(function (label) {
-      cols.appendChild(node('span', null, label));
-    });
-    card.appendChild(cols);
-    shown.forEach(function (fact) { card.appendChild(memRow(fact)); });
-    if (!shown.length) {
-      card.appendChild(node('p', 'board-empty',
-        facts.length
-          ? 'No fact matches' + (face.query ? ' \u201c' + face.query + '\u201d' : ' this filter') +
-            '. The search reads the name, the sentence, the type, the shape tags and the body.'
-          : 'This home holds no facts. The agent writes them through the substrate\u2019s own writer.'));
+  /// One fact as a one-line row: the name, the sentence, and the marks
+  /// that decide what to do with it — the basis (the permission model's
+  /// input), the recalls, and the protected or retired state. The row's
+  /// press opens the fact's card in the pane; the verbs live there.
+  function memoryItem(fact) {
+    var row = node('button', 'cfg-item');
+    row.type = 'button';
+    row.dataset.item = 'fact:' + fact.name;
+    row.dataset.kind = 'fact';
+    row.setAttribute('aria-label',
+      fact.name + (fact.description ? ', ' + fact.description : ''));
+    var main = node('span', 'cfg-item-main');
+    main.appendChild(node('span', 'cfg-item-name', fact.name));
+    if (fact.description) {
+      main.appendChild(node('span', 'cfg-item-value', fact.description));
     }
-    return card;
-  }
-
-  function memRow(fact) {
-    var row = node('div', 'mem-row');
-    row.tabIndex = 0;
-    row.setAttribute('role', 'button');
-    row.title = 'open ' + fact.name + ' and its edit';
-    var main = node('div', 'mem-fact');
-    main.appendChild(node('b', null, fact.name));
-    main.appendChild(node('p', null, fact.description));
     row.appendChild(main);
-    row.appendChild(badge(fact.fact_type, null));
-    var basis = node('div', 'mem-basis');
-    basis.appendChild(node('span', null, fact.basis));
-    basis.appendChild(node('span', 'mem-tier', fact.tier));
+    var basis = node('span', 'cfg-item-mark', fact.basis || '\u2014');
+    basis.dataset.tone = fact.basis === 'confirmed-by' ? 'own' : '';
+    basis.title = fact.basis === 'confirmed-by'
+      ? 'the owner verified this fact — a supersede asks for the confirmation'
+      : 'the session produced this fact — supersedable on a recorded justification';
     row.appendChild(basis);
-    row.appendChild(node('span', 'mem-num', String(fact.recall_count)));
-    var state = node('div', 'mem-state');
-    if (fact.retired) state.appendChild(badge('retired', 'down'));
-    else if (fact.protected) state.appendChild(badge('protected', 'accent'));
-    else state.appendChild(node('span', 'mem-live', 'live'));
-    if (fact.valid_until) state.appendChild(node('span', 'mem-tier', 'until ' + fact.valid_until));
-    row.appendChild(state);
-    var acts = node('div', 'row-actions');
-    acts.appendChild(rowAction('edit', 'open the fact and its edit', function () {
-      inspectFact(fact);
-    }, true));
-    acts.appendChild(rowAction('ask', 'ask fleet about this fact', function () {
-      ask('what do the memories say about ' + fact.name + '? cite the fact and its evidence.');
-    }));
-    acts.appendChild(rowAction('file', 'open the fact file', function () {
-      if (fact.relative) {
-        openPath(fact.relative);
-        return;
-      }
-      if (navigator.clipboard) navigator.clipboard.writeText(fact.path).catch(function () { });
-      notice('the fact is outside the working directory', 'its path is copied: ' + fact.path);
-    }));
-    row.appendChild(acts);
-    var open = function () { inspectFact(fact); };
-    row.addEventListener('click', open);
-    row.addEventListener('keydown', function (event) {
-      if (event.key === 'Enter' || event.key === ' ') {
-        event.preventDefault();
-        open();
-      }
-    });
+    var recalls = node('span', 'cfg-item-mark',
+      fact.recall_count > 0 ? fact.recall_count + ' recalls' : 'never recalled');
+    recalls.dataset.tone = fact.recall_count > 0 ? 'own' : 'down';
+    row.appendChild(recalls);
+    if (fact.retired) {
+      var retiredMark = node('span', 'cfg-item-mark', 'retired');
+      retiredMark.dataset.tone = 'down';
+      row.appendChild(retiredMark);
+    } else if (fact.protected) {
+      var protectedMark = node('span', 'cfg-item-mark', 'protected');
+      protectedMark.dataset.tone = 'accent';
+      row.appendChild(protectedMark);
+    }
+    row.addEventListener('click', function () { inspectFact(fact, row); });
     return row;
   }
 
+  /// One type section's rows under the row budget.
+  function memoryCategoryCard(read, id, rows) {
+    var shown = rows
+      .slice()
+      .sort(function (left, right) {
+        return right.recall_count - left.recall_count || left.name.localeCompare(right.name);
+      });
+    var card = boardCard(8, MEMORY_SECTION_NAMES[id] || id,
+      shown.length + (shown.length === 1 ? ' fact' : ' facts'),
+      'one line per fact: the name, the sentence, its basis and its recalls. A row opens ' +
+      'the fact \u2014 its body, its edit, its verbs \u2014 in the pane.');
+    card.classList.add('lib-card');
+    var items = shown.map(memoryItem);
+    if (!items.length) {
+      card.appendChild(node('p', 'board-empty',
+        'No fact in this section yet.'));
+      return card;
+    }
+    card.appendChild(budgetRows(items, 30, 'facts',
+      !!face.memoryShowAll, function () {
+        face.memoryShowAll = !face.memoryShowAll;
+        paintMemory();
+      }));
+    return card;
+  }
+
+  /// A query turns the body into one results card across every section —
+  /// every field the fact carries is searched, wherever the match lives.
+  function memorySearchResults(read) {
+    var asked = (face.query || '').trim();
+    var shown = (read.facts || []).filter(function (fact) { return matchesQuery(fact); })
+      .sort(function (left, right) {
+        return right.recall_count - left.recall_count || left.name.localeCompare(right.name);
+      });
+    var card = boardCard(8, 'matches', String(shown.length),
+      'searching every section for \u201c' + asked + '\u201d \u2014 the name, the sentence, the ' +
+      'type, the shape tags, and the body.');
+    card.classList.add('lib-card');
+    if (!shown.length) {
+      card.appendChild(node('p', 'board-empty',
+        'No fact matches \u201c' + asked + '\u201d. The search reads every field the fact ' +
+        'carries, in every section.'));
+      return card;
+    }
+    card.appendChild(budgetRows(shown.map(memoryItem), 30, 'facts', true, function () { }));
+    return card;
+  }
+
+  /// The cycle's queue: the four sets the preview computed, named with
+  /// what the cycle would do and why the exceptions were left. The
+  /// press runs one pass \u2014 the scheduled cycle's own function.
+  function memoryNeedsYou(read) {
+    var preview = read.preview || {};
+    var facts = read.facts || [];
+    var byName = {};
+    facts.forEach(function (fact) { byName[fact.name] = fact; });
+    var total = memoryPreviewTotal(read);
+    var card = boardCard(12, 'needs you', total + (total === 1 ? ' fact' : ' facts') + ' queued',
+      'what the consolidation cycle would do, computed and written nowhere. A pass folds ' +
+      'stale working memory and never-recalled inferred facts into an episodic summary, ' +
+      'and archives what has expired.');
+    card.classList.add('lib-card');
+    var acts = node('div', 'row-actions');
+    var run = node('button', 'row-action row-action-primary', 'run the cycle now');
+    run.type = 'button';
+    run.title = 'one consolidation pass \u2014 the scheduled cycle\u2019s own function';
+    run.addEventListener('click', function () {
+      run.disabled = true;
+      run.textContent = 'running\u2026';
+      post('/api/memories/consolidate', {}).then(function (reply) {
+        if (reply.status === 200) {
+          var acted = (reply.body.actions || []).length;
+          notice('the pass landed', acted + (acted === 1 ? ' action' : ' actions'));
+          readMemory(true).then(paintMemory);
+          return;
+        }
+        run.disabled = false;
+        run.textContent = 'run the cycle now';
+        notice('the pass was refused', reply.body.error || 'the cycle said no');
+      }).catch(function () {
+        run.disabled = false;
+        run.textContent = 'run the cycle now';
+        notice('the pass did not cross', 'the server did not answer');
+      });
+    });
+    acts.appendChild(run);
+    card.appendChild(acts);
+    if (!total) {
+      card.appendChild(node('p', 'board-empty',
+        'The cycle has nothing queued. Working memory is fresh and every inferred fact has ' +
+        'been recalled or confirmed.'));
+      return card;
+    }
+    var list = node('div', 'rail-list');
+    var groups = [
+      ['compress', 'the pass would compress \u2014 working memory past its valid-until',
+        preview.compress || []],
+      ['supersede', 'the pass would fold \u2014 inferred, never recalled, past the stale bound',
+        preview.supersede || []],
+      ['untouched', 'left alone \u2014 the owner confirmed it; the cycle never folds a confirmed fact',
+        preview.untouched || []],
+      ['kept', 'left alone \u2014 the missing companions cannot ride a summary bullet',
+        preview.kept || []]
+    ];
+    groups.forEach(function (group) {
+      if (!group[2].length) return;
+      var holder = node('div', 'rail-group');
+      holder.appendChild(node('p', 'rail-label', group[1] + ' \u00b7 ' + group[2].length));
+      group[2].forEach(function (name) {
+        var row = node('div', 'rail-row');
+        row.tabIndex = 0;
+        row.setAttribute('role', 'button');
+        var body = node('div');
+        body.appendChild(node('b', null, name));
+        var fact = byName[name];
+        body.appendChild(node('p', null, fact ? clip(fact.description, 120) : 'the fact'));
+        row.appendChild(body);
+        row.addEventListener('click', function () {
+          if (fact) inspectFact(fact);
+        });
+        row.addEventListener('keydown', function (event) {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            row.click();
+          }
+        });
+        holder.appendChild(row);
+      });
+      list.appendChild(holder);
+    });
+    card.appendChild(list);
+    return card;
+  }
+
+  /// What the cycle forgot: the archive's facts, read-only, the
+  /// collision serials named by their own file names.
+  /// One day's recall: the facts the stream recorded as surfaced, plus
+  /// this run's own recalls from the event log. The today section's card.
   function memHits(read, hits, recalls) {
     var card = boardCard(4, 'today\u2019s recall', hits.length + ' hits',
       'one row per fact a recall surfaced, plus this run\u2019s own recalls from the event log.');
@@ -5689,39 +5943,32 @@
     return card;
   }
 
-  function memMix(facts) {
-    var types = {};
-    var bases = {};
-    facts.forEach(function (fact) {
-      types[fact.fact_type] = (types[fact.fact_type] || 0) + 1;
-      bases[fact.basis] = (bases[fact.basis] || 0) + 1;
-    });
-    var card = boardCard(4, 'the corpus mix', facts.length + ' facts', null);
+  function memoryArchive(read) {
+    var archived = read.archive || [];
+    var card = boardCard(12, 'archive', archived.length + ' archived',
+      'what the consolidation cycle forgot \u2014 expired facts the summary carries. A rename, ' +
+      'never a delete; git keeps what was committed.');
     card.classList.add('lib-card');
+    if (!archived.length) {
+      card.appendChild(node('p', 'board-empty',
+        'The archive holds nothing. A fact arrives when its valid-until passes and a pass ' +
+        'archives it.'));
+      return card;
+    }
     var list = node('div', 'rail-list');
-    var max = Object.keys(types).reduce(function (value, key) { return Math.max(value, types[key]); }, 0);
-    Object.keys(types).sort(function (left, right) { return types[right] - types[left]; })
-      .forEach(function (type) {
-        var row = node('div', 'mix-row');
-        row.appendChild(node('span', null, type));
-        var bar = node('span', 'mix-bar');
-        var fill = node('i');
-        fill.style.width = Math.round(100 * types[type] / max) + '%';
-        bar.appendChild(fill);
-        row.appendChild(bar);
-        row.appendChild(node('span', 'rail-em', String(types[type])));
-        list.appendChild(row);
-      });
-    Object.keys(bases).sort().forEach(function (basis) {
-      var row = node('div', 'mix-row');
-      row.appendChild(node('span', null, basis));
-      row.appendChild(node('span'));
-      row.appendChild(node('span', 'rail-em', String(bases[basis])));
+    archived.forEach(function (fact) {
+      var row = node('div', 'rail-row');
+      var body = node('div');
+      body.appendChild(node('b', null, fact.name));
+      body.appendChild(node('p', null, clip(fact.description, 140) +
+        (fact.date ? ' \u00b7 expired ' + fact.date : '')));
+      row.appendChild(body);
       list.appendChild(row);
     });
     card.appendChild(list);
     return card;
   }
+
 
   // The search box, and the query it holds. It is built once per paint
   // and keeps its own value, so typing in it repaints the grid without
@@ -5743,16 +5990,6 @@
     return wrap;
   }
 
-  // The corpus's tier filter. A protected fact is always live by the
-  // corpus's own rule, so the two chips agree rather than double-count.
-  function memoryFilterMatch(fact, filter) {
-    switch (filter) {
-      case 'live': return !fact.retired;
-      case 'protected': return !!fact.protected && !fact.retired;
-      case 'retired': return !!fact.retired;
-      default: return true;
-    }
-  }
 
   // Whether one fact matches the panel's query: every field the fact
   // carries, lowercased, because a search that read only the name would
@@ -5772,7 +6009,52 @@
   // the substrate's own rewriter. The form carries the fields the
   // rewriter owns and nothing else — the name, the tier and the basis
   // are the corpus's own, not a surface's.
-  function inspectFact(fact) {
+  function inspectFact(fact, row) {
+    // The supersede control: the modify/forget verb the CLI and the
+    // model's tool have, delivered from the pane. The click is the
+    // approval the substrate's permission model requires; the
+    // justification is required either way.
+    var supersedes = node('form', 'fact-edit');
+    supersedes.appendChild(field('supersede-justification',
+      'why this fact stops being true (required)', '', 'area'));
+    supersedes.appendChild(field('supersede-replacement',
+      'fold into a replacement named (empty = forget: expire it)', '', 'text'));
+    supersedes.appendChild(field('supersede-description',
+      'the replacement as one sentence (with a replacement name)', '', 'text'));
+    var supersedeBtn = node('button', 'fact-save', 'supersede the fact');
+    supersedeBtn.type = 'submit';
+    supersedes.appendChild(supersedeBtn);
+    supersedes.addEventListener('submit', function (event) {
+      event.preventDefault();
+      supersedeBtn.disabled = true;
+      supersedeBtn.textContent = 'superseding\u2026';
+      var body = {
+        name: fact.name,
+        justification: supersedes.querySelector('[name="supersede-justification"]').value
+      };
+      var replacement = supersedes.querySelector('[name="supersede-replacement"]').value.trim();
+      if (replacement) {
+        body.replacement = replacement;
+        body.description = supersedes.querySelector('[name="supersede-description"]').value;
+      }
+      post('/api/fact/supersede', body).then(function (reply) {
+        if (reply.status === 200) {
+          closeDrawer();
+          notice('the fact is superseded',
+            reply.body.into ? fact.name + ' folded into ' + reply.body.into
+              : fact.name + ' expired; the cycle archives it');
+          readMemory(true).then(paintMemory);
+          return;
+        }
+        supersedeBtn.disabled = false;
+        supersedeBtn.textContent = 'supersede the fact';
+        notice('the supersede was refused', reply.body.error || 'the substrate refused it');
+      }).catch(function () {
+        supersedeBtn.disabled = false;
+        supersedeBtn.textContent = 'supersede the fact';
+        notice('the supersede did not cross', 'the server did not answer');
+      });
+    });
     var form = node('form', 'fact-edit');
     form.appendChild(field('description', 'the fact as one sentence', fact.description, 'text'));
     form.appendChild(field('type', 'the kind the corpus files it under', fact.fact_type, 'text'));
@@ -5857,8 +6139,18 @@
         ' \u00b7 ' + fact.recall_count + ' recalls \u00b7 ' + fact.path)],
       ['related', relatedFor('fact', fact.name)],
       ['edit in place', form],
+      ['supersede \u2014 the modify/forget path', fact.retired
+        ? node('p', 'derivation',
+          'a retired fact is a record, not a draft: it was folded into ' +
+          (fact.superseded_by || 'another fact') + ' and the substrate refuses to rewrite it.')
+        : supersedes],
       ['what you can do', related]
     ]);
+    document.body.dataset.objectCard = 'open';
+    Array.prototype.forEach.call(
+      document.querySelectorAll('.cfg-item[aria-current="true"]'),
+      function (one) { one.removeAttribute('aria-current'); });
+    if (row) row.setAttribute('aria-current', 'true');
   }
 
   function field(name, label, value, kind) {

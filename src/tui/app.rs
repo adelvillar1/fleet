@@ -4833,6 +4833,7 @@ mod tests {
             name: "a-fact".to_string(),
             description: "the sentence".to_string(),
             fact_type: "project".to_string(),
+            section: "project".to_string(),
             basis: "inferred".to_string(),
             tier: "durable".to_string(),
             date: "2026-10-20".to_string(),
@@ -4852,6 +4853,8 @@ mod tests {
             day: "2026-10-20".to_string(),
             root: "memories".to_string(),
             facts: vec![fact],
+            preview: crate::memory::CyclePreview::default(),
+            archive: Vec::new(),
             hits: Vec::new(),
             refused: Vec::new(),
         }
