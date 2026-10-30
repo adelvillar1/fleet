@@ -428,6 +428,42 @@ pub struct RouteJudgedRow {
     pub lane: String,
 }
 
+/// One memory-curation judgment through the sys1 lane (the
+/// curator-judgment plan's calib leg): the lane's verdict beside the
+/// cosine that would have decided alone, and the decision the
+/// composition landed on. The pair-hash keys the row to the cache
+/// entry it rode; the texts themselves are never stored, the same
+/// never-the-text rule the route rows run on.
+#[derive(Debug, Clone, Serialize)]
+pub struct CurateRow {
+    pub ts: String,
+    /// The instruction pair's hash — the same 16 hex characters the
+    /// cache entry keys on.
+    pub input_hash: String,
+    /// The lane's fire/hold vote.
+    pub needs_recall: bool,
+    /// The lane's confidence in that vote, in `[0, 1]`.
+    pub confidence: f64,
+    /// The focus label the lane named, when it named one — the corpus's
+    /// own shape word, or `none`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub focus: Option<String>,
+    /// The staleness diagnostic, when the lane named one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub staleness: Option<String>,
+    /// The cosine between the pair's vectors, when both embedded — the
+    /// number the fail-open would have decided on.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cosine: Option<f64>,
+    /// What the composition decided: `curated` or `held`.
+    pub decision: String,
+    /// Which row of the composition decided it: `first-steer`,
+    /// `judged`, or `cosine`.
+    pub trigger: String,
+    /// The lane that answered: `sys1`.
+    pub lane: String,
+}
+
 /// One delegated run, as the orchestrator records it the moment a
 /// subagent stops. The row the beat reads and the row the parent chain
 /// joins on.
@@ -569,6 +605,7 @@ pub enum Row {
     RouteJudged(RouteJudgedRow),
     Delegation(DelegatedRunRow),
     EmbedTiming(EmbedTimingRow),
+    Curate(CurateRow),
 }
 
 impl Row {
@@ -586,6 +623,7 @@ impl Row {
             Row::EvalCorpus(_) => OP_EVAL_CORPUS,
             Row::Explain(_) => OP_EXPLAIN,
             Row::RouteJudged(_) => OP_ROUTE_JUDGED,
+            Row::Curate(_) => OP_CURATE,
             Row::Delegation(_) => OP_DELEGATION,
             Row::EmbedTiming(_) => OP_EMBED_TIMING,
         }
@@ -605,6 +643,7 @@ impl Row {
             Row::EvalCorpus(row) => &row.ts,
             Row::Explain(row) => &row.ts,
             Row::RouteJudged(row) => &row.ts,
+            Row::Curate(row) => &row.ts,
             Row::Delegation(row) => &row.ts,
             Row::EmbedTiming(row) => &row.ts,
         }
@@ -869,6 +908,12 @@ pub const OP_EXPLAIN: &str = "explain";
 /// per-provider calibration surface reads and what the failover's
 /// preference consults.
 pub const OP_ROUTE_JUDGED: &str = "route_judged";
+/// The curation op: one memory-curation judgment through the sys1 lane,
+/// beside the run's own rows (the curator-judgment plan's J3). The row
+/// exists so the upgrade is gradeable — the verdict, the cosine that
+/// would have decided alone, and the decision the composition landed
+/// on — not so anything acts on it in flight.
+pub const OP_CURATE: &str = "curate";
 /// The delegation op: one delegated run, recorded by the orchestrator
 /// the moment a subagent stops. Keyed by the child's own session id —
 /// the join to the child's session log, the value

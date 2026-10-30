@@ -247,7 +247,13 @@ leave the declarations, the death writes one `lane_failed` record, and
 the replay readers apply the withdrawal rule. The memory block
 re-curates on drift: a steer whose vector falls under `DRIFT_FLOOR`
 from the last curated instruction re-ranks the block, and the note
-rides that one request's message tail — never the system prompt.
+rides that one request's message tail — never the system prompt. The
+`curate` judgment in the vendored sys1 votes beside the floor (cached
+in the route cache's second namespace, behind the decision-keys gate);
+the J6 replay put it in the advisory seat (`CURATE_JUDGED_DECIDES` is
+false): its vote rides the calibration stream's `curate` rows, the
+cosine decides, and its focus label is the one contribution that acts —
+the re-curation's shape hint when the curation fires anyway.
 
 The run's system prompt is `SYSTEM_PROMPT` (the voice) followed by
 `REPORTING_CONTRACT` — the stop's contract: what happened, where it

@@ -3360,6 +3360,81 @@ async fn the_real_sys1_lane_answers_the_tool_route_task() {
     server.close().await.expect("clean teardown");
 }
 
+/// The vendored sys1 registers `curate` — the memory curator's
+/// judgment (the curator-judgment plan's J1). The text contract is a
+/// two-part pair; the answer carries three heads (`needs_recall`,
+/// `focus`, `staleness`), and every label the lane names is inside the
+/// closed sets the corpus's vocabulary carries. Against an
+/// unconfigured provider set the classify answers `verdict: error`
+/// without a network; the registration itself is what this pins.
+#[tokio::test]
+async fn the_real_sys1_lane_answers_the_curate_task() {
+    if !python3_available() {
+        eprintln!("python3 is not on PATH; skipping the real-lane curate probe");
+        return;
+    }
+    let spec = lanes::launch_spec(&lane("sys1"), &sys1_home());
+    let server = McpServer::spawn(&spec).expect("spawn the sys1 lane");
+
+    let result = server
+        .call_tool(
+            "sys1_classify",
+            serde_json::json!({
+                "task": "curate",
+                "text": "previous instruction:\nthe railway deploy is failing per branch\n\nnew steer:\nrewrite the memory ranker's spillover pool"
+            }),
+        )
+        .await
+        .expect("curate is a registered task — no unknown-task RPC error");
+
+    let report: serde_json::Value =
+        serde_json::from_str(result.content[0].data.as_str().expect("a text block"))
+            .expect("the classify report is JSON");
+    assert_eq!(report["task"], "curate", "{report}");
+    assert!(report.get("verdict").is_some(), "{report}");
+    const FOCUS: &[&str] = &[
+        "rendering",
+        "state-sync",
+        "deploy",
+        "build",
+        "change",
+        "deps",
+        "docs",
+        "fail-open",
+        "drops-the-row",
+        "bound-exceeded",
+        "claim-outran-evidence",
+        "fixed-width-clip",
+        "foreign-root",
+        "none",
+    ];
+    for heads in report["answers"].as_object().into_iter().flatten() {
+        for (head, body) in heads.1.as_object().into_iter().flatten() {
+            let label = body["label"].as_str().unwrap_or_default();
+            if label.is_empty() {
+                continue;
+            }
+            match head.as_str() {
+                "needs_recall" => assert!(
+                    label == "yes" || label == "no",
+                    "the lane named `{label}` for needs_recall"
+                ),
+                "focus" => assert!(
+                    FOCUS.contains(&label),
+                    "the lane named `{label}`, outside the shape vocabulary"
+                ),
+                "staleness" => assert!(
+                    label == "fresh" || label == "stale",
+                    "the lane named `{label}` for staleness"
+                ),
+                _ => {}
+            }
+        }
+    }
+
+    server.close().await.expect("clean teardown");
+}
+
 /// The registry's probe wrapper over the real lane: the health row the
 /// headless command and the TUI both render.
 #[tokio::test]
@@ -11941,7 +12016,9 @@ async fn a_drifted_steer_recurates_memory_at_the_message_tail_and_the_prompt_hol
     let curated = records
         .iter()
         .filter_map(|record| match record {
-            Record::Curated { turn, shape, facts } => Some((*turn, shape.clone(), facts.clone())),
+            Record::Curated {
+                turn, shape, facts, ..
+            } => Some((*turn, shape.clone(), facts.clone())),
             _ => None,
         })
         .collect::<Vec<_>>();

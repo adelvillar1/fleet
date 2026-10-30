@@ -8,8 +8,9 @@ existing dev-decisions "change" task: Jev asks 4 questions, Decide/local ask 2).
 Nine tasks are pre-registered: eight mirror `dev-decisions._TASK_BUILDERS`,
 `vision_qc` is sys1's own (the liquid-only vision task — no dev-decisions
 counterpart), and `route` carries the deepseek-harness router's judgment.
-Fleet adds `tool_route` (the deferred-tool search's capability class) as a
-fleet addition — recorded in the vendored copy's VENDOR.json. Add your own
+Fleet adds `tool_route` (the deferred-tool search's capability class) and
+`curate` (the memory curator's needs_recall/focus/staleness judgment) as
+fleet additions — recorded in the vendored copy's VENDOR.json. Add your own
 with `register_task(Task(...))` or load from a TOML/JSON file.
 """
 
@@ -613,6 +614,100 @@ _TOOL_ROUTE = Task(
 )
 
 
+# ── curate: the memory curator's judgment ────────────────────────────────────
+# Fleet's mid-run memory curation (the surface-curation plan's C4) asks this
+# beside its cosine drift floor. The input text names BOTH ends of the move —
+# the instruction the memory block was last curated against, then the new
+# steer — because the judgment is of the MOVE, not of one text in isolation:
+# a steer that contradicts the thread it lands in scores high against that
+# thread's own words, and only the pair can say the conversation changed
+# direction. Three heads:
+#   needs_recall — should the block be re-ranked for the new instruction;
+#   focus        — the shape class the re-curation routes under, drawn from
+#                  the corpus's own structure and failure shape vocabulary
+#                  (or `none` when the words name no class);
+#   staleness    — whether the block the model already holds is stale, beside
+#                  the vote: the record's diagnostic, not a second trigger.
+# Fleet addition: recorded in services/sys1/VENDOR.json's fleetAdditions.
+
+CURATE_FOCUS_LABELS = [
+    # the structure shapes (the corpus's `SHAPES`)
+    "rendering",
+    "state-sync",
+    "deploy",
+    "build",
+    "change",
+    "deps",
+    "docs",
+    # the failure shapes (the corpus's `FAILURE_SHAPES`)
+    "fail-open",
+    "drops-the-row",
+    "bound-exceeded",
+    "claim-outran-evidence",
+    "fixed-width-clip",
+    "foreign-root",
+    "none",
+]
+
+_CURATE = Task(
+    id="curate",
+    description=(
+        "Memory-curation judgment over a conversation move: did the topic "
+        "drift far enough to re-rank the standing memory block, what shape "
+        "does the new instruction route under, and is the block the model "
+        "holds stale? The input text is a two-part pair: the instruction "
+        "the block was last curated against, then the new steer."
+    ),
+    heads=[
+        make_choice(
+            "An instruction pair is given: what the memory block was last "
+            "curated against, then the owner's new steer. Has the "
+            "conversation's subject moved far enough that re-ranking the "
+            "memory block for the steer would surface different, more "
+            "relevant facts?",
+            ["yes", "no"],
+            id="needs_recall",
+            descriptions={
+                "yes": "The subject moved — the block re-ranked for the steer would read differently",
+                "no": "Same subject — the block the model holds is still the right one",
+            },
+        ),
+        make_choice(
+            "The same pair. What single shape class best describes the new "
+            "steer's subject, or none when it names no class?",
+            CURATE_FOCUS_LABELS,
+            id="focus",
+            descriptions={
+                "rendering": "What the user sees: interfaces, rendering, visual state",
+                "state-sync": "Two views of one state disagreeing, or a stale copy winning",
+                "deploy": "Shipping, releasing, installing, or the environment a thing runs in",
+                "build": "Compiling, toolchains, dependencies resolving, the build graph",
+                "change": "Editing code or documents: the diff, the refactor, the rewrite",
+                "deps": "Package dependencies: versions, registries, vendoring",
+                "docs": "Documentation, prose, plans, records",
+                "fail-open": "A dependency was unavailable and the path degraded instead of refusing",
+                "drops-the-row": "A record or event silently absent from a read that should carry it",
+                "bound-exceeded": "A budget, cap, or limit crossed and the behavior past it unwared",
+                "claim-outran-evidence": "Something was asserted as done or true before it was verified",
+                "fixed-width-clip": "Text or layout cut at a width, losing its tail",
+                "foreign-root": "A path or config resolved against the wrong root or another system's home",
+                "none": "The steer names no class the corpus's shapes carry",
+            },
+        ),
+        make_choice(
+            "The same pair. Is the memory block the model currently holds "
+            "stale for the steer's subject?",
+            ["fresh", "stale"],
+            id="staleness",
+            descriptions={
+                "fresh": "The block still fits the steer's subject",
+                "stale": "The block is about something the steer has moved past",
+            },
+        ),
+    ],
+)
+
+
 # ── registry + detection ─────────────────────────────────────────────────────
 
 _TASKS: dict[str, Task] = {}
@@ -635,6 +730,7 @@ for _t in (
     _VISION_QC,
     _ROUTE,
     _TOOL_ROUTE,
+    _CURATE,
 ):
     register_task(_t)
 

@@ -56,6 +56,27 @@ pub struct Verdict {
     pub execution: Option<crate::route::ExecutionHead>,
 }
 
+/// One recorded curation judgment (the curator-judgment plan's J1):
+/// what the lane said about one instruction pair. The pair itself is
+/// never stored — its hash is the key, the same never-the-text rule the
+/// route verdicts run on.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CurateVerdict {
+    /// The lane's fire/hold vote: re-rank the memory block or not.
+    pub needs_recall: bool,
+    /// The lane's confidence in that vote.
+    pub confidence: f64,
+    /// The focus label the lane named, when it named one — the corpus's
+    /// own shape word, or `none`. Whether the label acts as the
+    /// re-curation's shape hint is the caller's decision; the cache
+    /// records what the lane said.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub focus: Option<String>,
+    /// The staleness diagnostic, when the lane named one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub staleness: Option<String>,
+}
+
 /// The loaded cache: the key it was written under, one entry per task
 /// hash, and the file it reads and writes.
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -71,6 +92,13 @@ pub struct Cache {
     /// One recorded verdict per task hash.
     #[serde(default)]
     entries: HashMap<String, Verdict>,
+    /// One recorded curation verdict per instruction-pair hash — the
+    /// curator-judgment plan's second namespace, under the same
+    /// producer key and the same rekey discipline. A re-vendored lane
+    /// invalidates both maps together, which is correct: both are
+    /// judgments of the same producer.
+    #[serde(default)]
+    curate: HashMap<String, CurateVerdict>,
 }
 
 impl Cache {
@@ -130,6 +158,7 @@ impl Cache {
     pub fn rekey(&mut self, key: &str) {
         if !self.keyed_for(key) {
             self.entries.clear();
+            self.curate.clear();
         }
     }
 
@@ -144,6 +173,19 @@ impl Cache {
     /// writes the file once does not rewrite it per call.
     pub fn put(&mut self, task_hash: String, verdict: Verdict) {
         self.entries.insert(task_hash, verdict);
+    }
+
+    /// The recorded curation verdict for `pair_hash`, when this cache
+    /// is the loading lane's. The second namespace reads under the same
+    /// `keyed_for` discipline the route verdicts run on.
+    pub fn get_curate(&self, pair_hash: &str) -> Option<&CurateVerdict> {
+        self.curate.get(pair_hash)
+    }
+
+    /// Record one curation verdict under `pair_hash`; `flush` persists
+    /// it with the route verdicts, in one write.
+    pub fn put_curate(&mut self, pair_hash: String, verdict: CurateVerdict) {
+        self.curate.insert(pair_hash, verdict);
     }
 
     /// Persist under `key`, through a unique temp file and a rename.
@@ -367,6 +409,87 @@ mod tests {
     /// workload mix they carry. Two caches holding the same number of
     /// entries over different mixes are different routers, and the mix
     /// is what says which one this is.
+    /// The curator-judgment plan's second namespace: a curate verdict
+    /// round-trips the same file, and the pre-judgment format — no
+    /// `curate` key at all — loads with an empty map.
+    #[test]
+    fn a_curate_verdict_round_trips_and_an_old_file_loads_empty() {
+        let home = scratch("route-cache-curate");
+        let mut cache = Cache::load(&home);
+        assert!(
+            cache.get_curate("pair1").is_none(),
+            "a fresh cache is empty"
+        );
+        cache.put_curate(
+            "pair1".to_string(),
+            CurateVerdict {
+                needs_recall: true,
+                confidence: 0.83,
+                focus: Some("deploy".to_string()),
+                staleness: Some("stale".to_string()),
+            },
+        );
+        cache.put("route1".to_string(), verdict());
+        cache.flush(&Cache::key_for(&spec("python3", "/lane")));
+        let reloaded = Cache::load(&home);
+        let recorded = reloaded.get_curate("pair1").expect("the curate verdict");
+        assert!(recorded.needs_recall);
+        assert_eq!(recorded.confidence, 0.83);
+        assert_eq!(recorded.focus.as_deref(), Some("deploy"));
+        assert_eq!(recorded.staleness.as_deref(), Some("stale"));
+        // The route namespace rode the same write, untouched.
+        assert_eq!(
+            reloaded.get("route1").expect("the route verdict").workload,
+            "hard"
+        );
+        let _ = std::fs::remove_dir_all(&home);
+
+        // An old file — written before the second namespace existed —
+        // loads, and its curate map is simply empty.
+        let old = scratch("route-cache-curate-old");
+        std::fs::write(
+            old.join(CACHE_FILE),
+            format!(
+                r#"{{"key":"{}","entries":{{}}}}"#,
+                Cache::key_for(&spec("python3", "/lane"))
+            ),
+        )
+        .unwrap();
+        let loaded = Cache::load(&old);
+        assert!(loaded.get_curate("pair1").is_none(), "no map, no entries");
+        let _ = std::fs::remove_dir_all(&old);
+    }
+
+    /// One rekey clears both namespaces: a re-vendored lane is a
+    /// different producer for the route verdicts and the curation
+    /// verdicts alike, and neither map may outlive the key it was
+    /// computed under.
+    #[test]
+    fn a_rekey_clears_both_namespaces() {
+        let home = scratch("route-cache-curate-rekey");
+        let mut cache = Cache::load(&home);
+        cache.put("route1".to_string(), verdict());
+        cache.put_curate(
+            "pair1".to_string(),
+            CurateVerdict {
+                needs_recall: false,
+                confidence: 0.9,
+                focus: None,
+                staleness: None,
+            },
+        );
+        cache.flush(&Cache::key_for(&spec("python3", "/lane-a")));
+        let mut reloaded = Cache::load(&home);
+        let lane_b = Cache::key_for(&spec("python3", "/lane-b"));
+        reloaded.rekey(&lane_b);
+        assert_eq!(reloaded.stats().entries, 0, "the route map cleared");
+        assert!(
+            reloaded.get_curate("pair1").is_none(),
+            "the curate map cleared with it"
+        );
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
     #[test]
     fn the_stats_count_the_entries_and_the_workload_mix() {
         let home = scratch("route-cache-stats");

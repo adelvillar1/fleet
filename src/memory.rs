@@ -2006,6 +2006,19 @@ pub fn is_outcome_shape(tag: &str) -> bool {
     OUTCOME_SHAPES.contains(&tag)
 }
 
+/// The static shape word behind `label`, when the corpus's vocabulary
+/// carries it — the structure and failure tables together, the two
+/// axes a partition can route under. The curation focus hint's
+/// validator: a lane label outside these tables never becomes a hint,
+/// so a label the lane names is always one the partition can act on.
+pub fn known_shape(label: &str) -> Option<&'static str> {
+    SHAPES
+        .iter()
+        .chain(FAILURE_SHAPES.iter())
+        .copied()
+        .find(|shape| *shape == label)
+}
+
 /// The axis a shape name belongs to, for the surfaces' naming.
 pub fn shape_axis(shape: &str) -> &'static str {
     if is_failure_shape(shape) {
@@ -2423,7 +2436,16 @@ impl Memory {
     /// either axis — and every other fact above the floor is spillover,
     /// marked as such.
     pub fn partition(&self, instruction: &str) -> Partition {
-        let shape = classify_shape(instruction);
+        self.partition_with_shape(instruction, None)
+    }
+
+    /// The partition with an explicit shape: `hint` wins over
+    /// [`classify_shape`]'s keyword match when it names a shape the
+    /// vocabulary carries, and falls back to the keyword match when it
+    /// does not. The curation focus hint's seam — the lane names what
+    /// the words did not, and the partition routes under it.
+    pub fn partition_with_shape(&self, instruction: &str, hint: Option<&'static str>) -> Partition {
+        let shape = hint.or_else(|| classify_shape(instruction));
         let query_vector = self.embedder.embed(instruction);
         // The two-stage prefilter, when the setting is on: the slice
         // stage's top-K is the only set whose vector term survives.
@@ -3062,6 +3084,22 @@ impl Memory {
         self.assemble_within(instruction, working, ASSEMBLY_TOKEN_BUDGET)
     }
 
+    /// Assemble with an explicit shape hint: a validated shape word
+    /// routes the partition where [`classify_shape`]'s keyword match
+    /// found nothing (or found wrong), and `None` — or a label the
+    /// vocabulary does not carry — is the ordinary assembly. The
+    /// curation focus hint's entry point; production callers without a
+    /// hint keep [`Memory::assemble`].
+    pub fn assemble_with_shape(
+        &self,
+        instruction: &str,
+        working: &[Fact],
+        hint: Option<&str>,
+    ) -> Assembly {
+        let hint = hint.and_then(known_shape);
+        self.assemble_within_shape(instruction, working, ASSEMBLY_TOKEN_BUDGET, hint)
+    }
+
     /// Assemble within an explicit budget — the seam the budget-pressure
     /// test uses; production calls [`Memory::assemble`].
     ///
@@ -3086,7 +3124,20 @@ impl Memory {
     /// fact that enters is marked `off-shape` in its line. Never
     /// silently mixed.
     pub fn assemble_within(&self, instruction: &str, working: &[Fact], budget: usize) -> Assembly {
-        let partition = self.partition(instruction);
+        self.assemble_within_shape(instruction, working, budget, None)
+    }
+
+    /// The assembly's body, with the partition's shape hint explicit.
+    /// Production calls the two wrappers; this is where the budget
+    /// pressure and the three spillover routes live.
+    fn assemble_within_shape(
+        &self,
+        instruction: &str,
+        working: &[Fact],
+        budget: usize,
+        hint: Option<&'static str>,
+    ) -> Assembly {
+        let partition = self.partition_with_shape(instruction, hint);
         let shape = partition.shape;
         let protected = self.protected();
         let ranked = self.ranked_of(&partition);

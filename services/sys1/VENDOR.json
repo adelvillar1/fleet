@@ -31,6 +31,12 @@
         "what": "the `tool_route` task — one choice head id `capability` over the nine-class closed set plus `none`, the deferred-tool search's judgment",
         "why": "fleet's tool_search calls sys1_classify with task tool_route; the label set is the ranker's own class vocabulary (src/tool_router.rs class_terms), so the class the lane names is always one the ranker can act on",
         "since": "2026-10-30"
+      },
+      {
+        "file": "src/sys1/tasks.py",
+        "what": "the `curate` task — three heads over one call: needs_recall (yes/no), focus (the corpus's 7 structure + 6 failure shapes + none), staleness (fresh/stale) — the memory curator's judgment",
+        "why": "fleet's mid-run memory curation composes this verdict with its cosine drift floor; the text contract is a two-part pair (last-curated instruction + new steer) because the judgment is of the move, not one text",
+        "since": "2026-10-30"
       }
     ]
   }

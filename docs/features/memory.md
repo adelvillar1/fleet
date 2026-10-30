@@ -585,6 +585,31 @@ steer to measure, plus the ranking's own embed on a real curation —
 the same shape the `recall` tool pays — against fact vectors that are
 already cached.
 
+## The curation judgment: the lane's vote beside the floor
+
+The drift trigger's cosine is a distance, and a distance cannot read a
+move: a steer that contradicts the thread it lands in scores high
+against that thread's own words. The `curate` task in the vendored sys1
+judges the move — a two-part pair (the instruction the block was last
+curated against, then the steer) answered with `needs_recall`,
+`focus`, and `staleness`, cached in the route cache under the pair's
+hash and behind the same decision-keys gate the router runs (an
+unconfigured machine pays nothing).
+
+The composition is measured, and the measurement put the judgment in an
+advisory seat: replayed against real session `997a54b4`'s four steers
+through a real sys1 child, the judged decisions were identical to the
+cosine-only ones — zero new mis-fires — but did not dominate (no early
+fire; three of four votes under the 0.6 confidence gate). So the lane
+votes in the calibration stream's `curate` rows — verdict, cosine,
+decision, trigger — while the cosine decides. The flag that awards the
+seat (`CURATE_JUDGED_DECIDES`) flips on a replay where the judgment
+earns it, not on appetite. The focus label is the one contribution that
+acts today: when the lane names a shape the corpus's vocabulary carries
+and the curation fires anyway, the re-curation routes under it instead
+of the keyword classifier's word, and the `curated` record names which
+did it.
+
 ## The consolidation cycle
 
 A timer runs the cycle — `CONSOLIDATE_INTERVAL` (hourly) — in the

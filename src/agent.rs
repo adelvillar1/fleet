@@ -187,6 +187,26 @@ pub const ACTIVATION_TURNS: u64 = 3;
 /// a setting: it moves only with a remeasure, like the tool router's.
 pub const DRIFT_FLOOR: f64 = 0.78;
 
+/// The confidence a curation judgment needs before its vote decides —
+/// the route gate's own default (`gates.min_confidence`), applied to
+/// the `curate` verdict for the same reason: a tentative judgment is
+/// not a policy, and under the gate the cosine decides as it always
+/// did.
+pub const CURATE_GATE: f64 = 0.6;
+
+/// Whether the `curate` judgment holds the deciding seat. The J6 replay
+/// (the plan's contingency, measured 2026-10-30 on real session
+/// `997a54b4`'s four steers through a real sys1 child) answered the
+/// question the plan posed: the judged decisions were IDENTICAL to the
+/// cosine-only ones — zero new mis-fires — but did not dominate: no
+/// early fire (the lane's only `yes` votes landed at 0.174 and 0.536
+/// confidence, under the gate) and no focus fix. Three of the four
+/// votes sat below [`CURATE_GATE`] entirely. So the default is
+/// advisory — the lane votes in the calib row, the cosine decides —
+/// and this flag is what a future replay flips, on a replay where the
+/// judgment earns the seat by the plan's own bar.
+pub const CURATE_JUDGED_DECIDES: bool = false;
+
 /// The most tool calls one turn may run. A model that returns a hundred
 /// calls is looping, not planning; the calls past this line are refused
 /// by name so the failure is visible rather than silently dropped.
@@ -1243,6 +1263,11 @@ pub struct Agent<'a> {
     /// curation when the corpus runs without a serving embedder (the
     /// keyword fallback), which is the drift trigger's own degrade.
     curate_base: Option<Vec<f32>>,
+    /// The instruction text the memory block was last curated against
+    /// — the opening task's, then each curation's own steer. The pair
+    /// the curate judgment reads: it judges the MOVE, so both ends
+    /// have to be on the wire.
+    curate_text: Option<String>,
     /// Whether a steer has been seen this run. The first steer curates
     /// by definition — the conversation changed hands mid-run, so the
     /// opening block is stale whatever the vectors say — and only the
@@ -1430,6 +1455,7 @@ impl<'a> Agent<'a> {
             last_prompt_tokens: None,
             pending_hits: None,
             curate_base: None,
+            curate_text: None,
             steered_once: false,
             pending_curated: None,
             improve_home,
@@ -2039,6 +2065,7 @@ impl<'a> Agent<'a> {
             .memory
             .as_ref()
             .and_then(|memory| memory.instruction_vector(task));
+        self.curate_text = Some(task.to_string());
         self.record(&Record::Memory {
             shape: shape.clone(),
             facts: facts.clone(),
@@ -2357,7 +2384,7 @@ impl<'a> Agent<'a> {
             // owner's; a stop ends the run here, before another token
             // is spent and with the partial result still in hand.
             match self.read_control() {
-                Some(Control::Steer(text)) => self.apply_steer(&text)?,
+                Some(Control::Steer(text)) => self.apply_steer(&text).await?,
                 Some(Control::Stop) => return self.stop_by_owner(),
                 Some(Control::Fold) => self.compact_now = true,
                 Some(Control::Pin(text)) => self.apply_pin(&text).await?,
@@ -2941,56 +2968,142 @@ impl<'a> Agent<'a> {
     /// like every other model-visible message (hard rule 5), so a
     /// steered run's trajectory is reconstructable from its log alone.
     /// The steer is also the drift trigger's input: a steer that moved
-    /// the conversation past [`DRIFT_FLOOR`] re-curates the memory
-    /// block for the next request (the surface-curation plan's C2).
-    fn apply_steer(&mut self, text: &str) -> Result<(), AgentError> {
+    /// the conversation past [`DRIFT_FLOOR`] — or one the `curate`
+    /// judgment fires on — re-curates the memory block for the next
+    /// request (the surface-curation plan's C2, its judgment the
+    /// curator-judgment plan's C4). Async because the judgment is a
+    /// lane call; the loop awaits it.
+    async fn apply_steer(&mut self, text: &str) -> Result<(), AgentError> {
         let bounded = steer_text(text);
         let _ = writeln!(self.progress, "\u{2014} steer: {}", preview(&bounded, 72));
         let _ = self.progress.flush();
         self.push_message(Message::text(Role::User, steer_frame(&bounded)))?;
-        self.maybe_curate(&bounded)
+        self.maybe_curate(&bounded).await
     }
 
-    /// Re-curate the memory block when the conversation has drifted:
-    /// the steer's vector against the last curated instruction's, and a
-    /// cosine under [`DRIFT_FLOOR`] re-runs the opening assembly's own
-    /// ranker against the new text. The first steer is a drift by
-    /// definition — the conversation changed hands mid-run, so the
-    /// block is stale whatever the vectors say — and a corpus with no
-    /// serving embedder treats every steer as drifted, the safe bias
-    /// when movement cannot be measured. The note rides the next
-    /// request's message tail, never the system prompt.
+    /// The `curate` judgment: what the sys1 lane says about this move,
+    /// or `None` when the lane cannot answer — no keys, no spec, a dead
+    /// lane, an unparseable reply — in which case the cosine decides
+    /// exactly as the landed plan built it. The verdict is cached under
+    /// the route cache's producer key, keyed by the instruction pair's
+    /// hash, so a repeat pair is free and a re-vendored lane
+    /// invalidates the curate verdicts with the route ones. The texts
+    /// themselves are never stored.
+    async fn curate_judgment(
+        &mut self,
+        pair: &str,
+        hash: &str,
+    ) -> Option<crate::route_cache::CurateVerdict> {
+        // The KI-044 gate, one seam over: an unconfigured judgment lane
+        // costs no spawn. The answer is taken once per process, shared
+        // with the route's own gate.
+        if !crate::route::sys1_judges() {
+            return None;
+        }
+        let spec = self.lanes.spec_for("sys1").ok()?;
+        let key = crate::route_cache::Cache::key_for(&spec);
+        let home = crate::home::fleet_home(
+            std::env::var("FLEET_HOME").ok().as_deref(),
+            std::env::var("HOME").ok().as_deref(),
+        )
+        .ok()?;
+        let mut cache = crate::route_cache::Cache::load(&home);
+        cache.rekey(&key);
+        if let Some(verdict) = cache.get_curate(hash) {
+            return Some(verdict.clone());
+        }
+        let state =
+            format!("{pair}\ncurating: the memory block ranked for the previous instruction");
+        let sys1_tool = self
+            .lanes
+            .short_for("sys1", "sys1_classify")
+            .unwrap_or_else(|| "sys1_classify".to_string());
+        let outcome = self
+            .lanes
+            .call(
+                "sys1",
+                &sys1_tool,
+                &serde_json::json!({ "task": "curate", "text": state }),
+            )
+            .await;
+        self.note_join("sys1", outcome.joined).ok()?;
+        self.note_withdrawal("sys1", &outcome.withdrawn).ok()?;
+        let verdict = parse_curate(&outcome.text)?;
+        cache.put_curate(hash.to_string(), verdict.clone());
+        cache.flush(&key);
+        Some(verdict)
+    }
+
+    /// Re-curate the memory block when the conversation has moved: the
+    /// `curate` judgment's vote when it is confident enough to decide,
+    /// the cosine floor when it is not — and the cosine as the safety
+    /// net under a confident `no`, so the lane can hold a thread only
+    /// while the vectors agree it is one thread. The first steer is a
+    /// drift by definition, and a corpus with no serving embedder
+    /// treats every steer as drifted, the safe bias when movement
+    /// cannot be measured. The note rides the next request's message
+    /// tail, never the system prompt.
     ///
-    /// The cost is bounded by the trigger: one instruction embed per
-    /// steer to measure, plus the ranking's own embed on a real
-    /// curation — the same shape the `recall` tool pays — against fact
-    /// vectors that are already cached. Recall hits re-arm with the
-    /// curation, so KI-068's rule holds per curation, not per run.
-    fn maybe_curate(&mut self, text: &str) -> Result<(), AgentError> {
+    /// The composition (the curator-judgment plan's table): a confident
+    /// `yes` fires before the cosine would; a confident `no` holds
+    /// unless the cosine fires; under [`CURATE_GATE`] or without the
+    /// lane, [`DRIFT_FLOOR`] decides alone — byte-identical to the
+    /// landed behavior. The focus label, when the lane named one the
+    /// corpus's vocabulary carries, becomes the re-curation's shape
+    /// hint. Every judged decision writes one calib row, so the
+    /// upgrade is gradeable beside the verdicts it changed.
+    async fn maybe_curate(&mut self, text: &str) -> Result<(), AgentError> {
         let Some(memory) = self.memory.clone() else {
             return Ok(());
         };
         let vector = memory.instruction_vector(text);
-        let drifted = if !self.steered_once {
-            // The first steer: a drift by definition, per the plan.
-            true
-        } else {
-            match (&self.curate_base, &vector) {
-                // No base to compare against, or nothing to compare
-                // with (a keyword-only corpus): re-curate.
-                (None, _) | (_, None) => true,
-                (Some(base), Some(new)) => memory::cosine(base, new) < DRIFT_FLOOR,
-            }
+        // The pair on the wire, captured BEFORE the state advances: the
+        // judgment is of the move, so both ends ride, and the row's
+        // hash and cosine must describe the same pair the judgment saw.
+        // The first steer never reaches the judgment call (it fires by
+        // definition), so the prior instruction is always present; the
+        // defensive default keeps that invariant out of the wire format.
+        let prior = self
+            .curate_text
+            .clone()
+            .unwrap_or_else(|| "(no prior instruction)".to_string());
+        let pair = format!("previous instruction:\n{prior}\n\nnew steer:\n{text}");
+        let hash = crate::calib::hash16(&pair);
+        let cosine = match (&self.curate_base, &vector) {
+            (Some(base), Some(new)) => Some(memory::cosine(base, new)),
+            _ => None,
         };
+        let judged = self.curate_judgment(&pair, &hash).await;
+        let (drifted, trigger) = curate_decision(
+            !self.steered_once,
+            judged.as_ref(),
+            cosine,
+            CURATE_JUDGED_DECIDES,
+        );
+        // The calib row FIRST, while the pair's facts are still the
+        // state's: every judged decision, fire or hold, so the upgrade
+        // is gradeable beside the verdicts it changed.
+        if let Some(verdict) = &judged {
+            self.record_curate_row(verdict, &hash, cosine, trigger, drifted);
+        }
         self.steered_once = true;
         // The base advances to this steer whatever the verdict: the
         // next comparison runs against the most recent instruction, so
         // a slow walk of small shifts accumulates instead of hiding.
         self.curate_base = vector;
+        self.curate_text = Some(text.to_string());
         if !drifted {
             return Ok(());
         }
-        let assembly = memory.assemble(text, &memory.working());
+        // The focus hint: when the lane named a shape the corpus's
+        // vocabulary carries, the re-curation routes under it instead
+        // of the keyword classifier's word. An unknown label is no
+        // hint at all.
+        let focus_hint = judged
+            .as_ref()
+            .and_then(|verdict| verdict.focus.as_deref())
+            .and_then(memory::known_shape);
+        let assembly = memory.assemble_with_shape(text, &memory.working(), focus_hint);
         let block = memory::render_assembly(&assembly);
         let shape = assembly.shape.unwrap_or_default().to_string();
         let facts: Vec<String> = assembly
@@ -3013,6 +3126,8 @@ impl<'a> Agent<'a> {
             turn: self.turns,
             shape: shape.clone(),
             facts: facts.clone(),
+            trigger: trigger.to_string(),
+            focus_shape: focus_hint.unwrap_or_default().to_string(),
         })?;
         let named = if shape.is_empty() {
             "no shape (surface recall)".to_string()
@@ -3021,7 +3136,7 @@ impl<'a> Agent<'a> {
         };
         let _ = writeln!(
             self.progress,
-            "\u{2014} memory re-curated on drift: {named} \u{b7} {} fact{}",
+            "\u{2014} memory re-curated ({trigger}): {named} \u{b7} {} fact{}",
             facts.len(),
             if facts.len() == 1 { "" } else { "s" },
         );
@@ -3036,6 +3151,36 @@ impl<'a> Agent<'a> {
             self.pending_curated = Some(block);
         }
         Ok(())
+    }
+
+    /// One calib row per judged curation decision — the gradeable
+    /// record of the upgrade: the verdict, the cosine that would have
+    /// decided alone, and the decision the composition landed on. The
+    /// pair's texts are never stored; the hash is the join to the cache
+    /// entry.
+    fn record_curate_row(
+        &mut self,
+        verdict: &crate::route_cache::CurateVerdict,
+        hash: &str,
+        cosine: Option<f64>,
+        trigger: &str,
+        drifted: bool,
+    ) {
+        let Some(calib) = self.calib.clone() else {
+            return;
+        };
+        calib.record(crate::calib::Row::Curate(crate::calib::CurateRow {
+            ts: crate::calib::stamp(),
+            input_hash: hash.to_string(),
+            needs_recall: verdict.needs_recall,
+            confidence: verdict.confidence,
+            focus: verdict.focus.clone(),
+            staleness: verdict.staleness.clone(),
+            cosine,
+            decision: if drifted { "curated" } else { "held" }.to_string(),
+            trigger: trigger.to_string(),
+            lane: "sys1".to_string(),
+        }));
     }
 
     /// Land an owner's stop: the progress line, the log's own ending
@@ -6199,6 +6344,84 @@ const STEER_LIMIT: usize = 2_000;
 /// subagent it came from. A model that could not tell its own reasoning
 /// from the owner's interruption would read a steer as something it
 /// thought of.
+/// The curation composition (the curator-judgment plan's table), pure
+/// so every row is a test. Returns the decision and the row of the
+/// table that made it: the first steer fires by definition; a
+/// confident `yes` fires before the cosine would; a confident `no`
+/// holds unless the cosine fires past it (the safety net); under
+/// [`CURATE_GATE`] or with no lane at all, [`DRIFT_FLOOR`] decides
+/// alone — the fail-open row, byte-identical to the landed behavior.
+fn curate_decision(
+    first: bool,
+    judged: Option<&crate::route_cache::CurateVerdict>,
+    cosine: Option<f64>,
+    judged_decides: bool,
+) -> (bool, &'static str) {
+    if first {
+        return (true, "first-steer");
+    }
+    let cosine_drift = match cosine {
+        // No cosine to compare (a keyword-only corpus, or no base yet):
+        // re-curate.
+        None => true,
+        Some(value) => value < DRIFT_FLOOR,
+    };
+    if !judged_decides {
+        // Advisory (the J6 contingency's flip): the lane's vote rides
+        // the calib row, and the cosine decides. The focus hint still
+        // acts on a fired curation — naming the shape is the lane's
+        // least risky contribution, and it is guarded by the
+        // vocabulary check at the call site.
+        return (cosine_drift, "cosine");
+    }
+    match judged.filter(|verdict| verdict.confidence >= CURATE_GATE) {
+        Some(verdict) if verdict.needs_recall => (true, "judged"),
+        Some(_) => (cosine_drift, if cosine_drift { "cosine" } else { "judged" }),
+        None => (cosine_drift, "cosine"),
+    }
+}
+
+/// The `curate` verdict in a sys1 classify answer: the lane's fire/hold
+/// vote with its confidence, the focus label it named, and the
+/// staleness diagnostic. The same answers-envelope shape
+/// `parse_capability` reads one seam over; a missing or empty
+/// `needs_recall` label is no verdict at all, and the composition's
+/// fail-open row takes it.
+fn parse_curate(text: &str) -> Option<crate::route_cache::CurateVerdict> {
+    let value: serde_json::Value = serde_json::from_str(text).ok()?;
+    let answers = value.get("answers")?.as_object()?;
+    for heads in answers.values() {
+        let Some(answer) = heads.as_object() else {
+            continue;
+        };
+        let recall = answer.get("needs_recall")?.as_object()?;
+        let label = recall
+            .get("label")
+            .and_then(|label| label.as_str())
+            .filter(|label| !label.is_empty())?;
+        let confidence = recall
+            .get("confidence")
+            .and_then(|confidence| confidence.as_f64())
+            .unwrap_or(0.0);
+        let read_label = |head: &str| -> Option<String> {
+            answer
+                .get(head)
+                .and_then(|head| head.as_object())
+                .and_then(|head| head.get("label"))
+                .and_then(|label| label.as_str())
+                .filter(|label| !label.is_empty())
+                .map(|label| label.to_string())
+        };
+        return Some(crate::route_cache::CurateVerdict {
+            needs_recall: label == "yes",
+            confidence,
+            focus: read_label("focus"),
+            staleness: read_label("staleness"),
+        });
+    }
+    None
+}
+
 fn steer_frame(text: &str) -> String {
     format!(
         "[the owner of this run steered it through its control file \u{2014} this is the owner speaking, not you]\n{text}"
@@ -10662,7 +10885,7 @@ You are auditing a change. Read the diff before you judge it.
         assert_eq!(agent.read_control(), None);
         // It rides the next turn as a user-role message labelled as the
         // owner's, never as the model's own words.
-        agent.apply_steer("check the gate first").unwrap();
+        agent.apply_steer("check the gate first").await.unwrap();
         let last = agent.messages.last().expect("the steer rode");
         assert_eq!(last.role, Role::User);
         let content = last.content.clone().unwrap_or_default();
@@ -11335,6 +11558,97 @@ mod tier_tests {
         assert!(activation_live(restamped, restamped));
         assert!(activation_live(restamped, restamped + ACTIVATION_TURNS - 1));
         assert!(!activation_live(restamped, restamped + ACTIVATION_TURNS));
+    }
+
+    /// The parser, on the answer shape the lane actually produces — and
+    /// the named absence: no `needs_recall` label is no verdict, which
+    /// is the fail-open row's input.
+    #[test]
+    fn a_curate_answer_parses_into_a_verdict() {
+        let answer = r#"{"verdict":"ok","answers":{"jev":{"needs_recall":{"label":"yes","confidence":0.82},"focus":{"label":"deploy"},"staleness":{"label":"stale"}}}}"#;
+        let verdict = parse_curate(answer).expect("the verdict");
+        assert!(verdict.needs_recall);
+        assert_eq!(verdict.confidence, 0.82);
+        assert_eq!(verdict.focus.as_deref(), Some("deploy"));
+        assert_eq!(verdict.staleness.as_deref(), Some("stale"));
+        // A provider error carries no heads: no verdict, cosine decides.
+        assert!(parse_curate(r#"{"verdict":"error","answers":{}}"#).is_none());
+        // `none` focus and unknown heads parse as absences, not labels
+        // the hint would act on (the hint validator filters later).
+        let none_focus = parse_curate(
+            r#"{"verdict":"ok","answers":{"jev":{"needs_recall":{"label":"no","confidence":0.7},"focus":{"label":"none"}}}}"#,
+        )
+        .expect("the verdict");
+        assert!(!none_focus.needs_recall);
+        assert_eq!(none_focus.focus.as_deref(), Some("none"));
+    }
+
+    /// The curator-judgment plan's composition table, one test per row.
+    /// A no-keys machine reaches the fail-open row with `judged: None`
+    /// (the `sys1_judges` gate answers before any lane work), so the
+    /// last two rows are the fail-open pin as well: the decision and
+    /// the trigger are the landed behavior's own.
+    #[test]
+    fn the_curate_composition_decides_row_by_row() {
+        let verdict = |needs_recall: bool, confidence: f64| crate::route_cache::CurateVerdict {
+            needs_recall,
+            confidence,
+            focus: None,
+            staleness: None,
+        };
+        // Row 1: the first steer fires, whatever the vectors say.
+        assert_eq!(
+            curate_decision(true, Some(&verdict(false, 0.95)), Some(0.99), true),
+            (true, "first-steer")
+        );
+        // Row 2: a confident yes fires even when the cosine held.
+        assert_eq!(
+            curate_decision(false, Some(&verdict(true, 0.9)), Some(0.95), true),
+            (true, "judged")
+        );
+        // Row 3: a confident no holds while the cosine agrees.
+        assert_eq!(
+            curate_decision(false, Some(&verdict(false, 0.9)), Some(0.9), true),
+            (false, "judged")
+        );
+        // Row 4: the safety net — a confident no does not hold the floor.
+        assert_eq!(
+            curate_decision(false, Some(&verdict(false, 0.9)), Some(0.5), true),
+            (true, "cosine")
+        );
+        // Row 5: under the gate the lane does not decide; the floor does.
+        assert_eq!(
+            curate_decision(false, Some(&verdict(true, 0.4)), Some(0.95), true),
+            (false, "cosine")
+        );
+        // Row 6: no lane at all — the fail-open machine's shape — is
+        // byte-identical to the landed cosine-only behavior.
+        assert_eq!(
+            curate_decision(false, None, Some(0.95), true),
+            (false, "cosine")
+        );
+        assert_eq!(
+            curate_decision(false, None, Some(0.5), true),
+            (true, "cosine")
+        );
+        // The gate is the route gate's own default, named for the seam.
+        assert_eq!(CURATE_GATE, 0.6);
+        // The advisory default (the J6 flip): the lane's vote never
+        // decides — a confident yes against a cosine that held is a
+        // hold, and the trigger names the cosine because that is what
+        // decided.
+        assert_eq!(
+            curate_decision(false, Some(&verdict(true, 0.95)), Some(0.95), false),
+            (false, "cosine")
+        );
+        assert_eq!(
+            curate_decision(false, Some(&verdict(false, 0.95)), Some(0.5), false),
+            (true, "cosine")
+        );
+        // The seat is the replay's to award: the constant carries the
+        // advisory default and the numbers that decided it, and the
+        // advisory rows above pin the behavior it selects.
+        let _ = CURATE_JUDGED_DECIDES;
     }
 
     /// The C2 drift trigger is a pure function of the vectors: the same

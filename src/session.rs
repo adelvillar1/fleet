@@ -273,6 +273,15 @@ pub enum Record {
         shape: String,
         /// Every fact name the note carried, in note order.
         facts: Vec<String>,
+        /// Which row of the composition decided the curation:
+        /// `first-steer`, `judged`, or `cosine`. Absent (empty) on logs
+        /// written before the curator-judgment plan landed.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        trigger: String,
+        /// The focus shape the judgment named, when its hint routed the
+        /// re-curation — empty when the keyword classifier decided.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        focus_shape: String,
     },
     /// A rewind: the run was rewound to turn `turn`'s checkpoint, and
     /// every record after this one describes a future that did not

@@ -1916,7 +1916,7 @@ fn any_key_resolves(names: &[&str], lookup: impl Fn(&str) -> Option<String>) -> 
 /// seconds for a fallback the absent keys had already decided
 /// (KI-044). The answer rarely changes within a process's life, so it
 /// is taken once.
-fn sys1_judges() -> bool {
+pub(crate) fn sys1_judges() -> bool {
     static AVAILABLE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *AVAILABLE.get_or_init(|| {
         let home = crate::home::fleet_home(

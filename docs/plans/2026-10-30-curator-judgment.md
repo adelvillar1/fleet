@@ -1,5 +1,5 @@
 ---
-status: draft
+status: completed
 created: 2026-10-30
 updated: 2026-10-30
 slug: curator-judgment
@@ -202,44 +202,44 @@ cosine decides — and the flip is recorded, not silently kept.
 
 ## Use cases
 
-- [ ] A: A steer that contradicts the thread it lands in ("stop — the
+- [x] A: A steer that contradicts the thread it lands in ("stop — the
       premise is wrong") re-curates even though its cosine against the
       thread is high.
-- [ ] B: A steer that names no shape keyword still routes its
+- [x] B: A steer that names no shape keyword still routes its
       re-curation under the shape the lane named, and the record says
       the lane did it.
-- [ ] C: A machine with no sys1 keys runs the curation path exactly as
+- [x] C: A machine with no sys1 keys runs the curation path exactly as
       the landed plan built it — no spawn, no latency, cosine decides.
-- [ ] D: A re-vendored sys1 invalidates the curate verdicts with the
+- [x] D: A re-vendored sys1 invalidates the curate verdicts with the
       route verdicts, in one write.
 
 ## Acceptance criteria
 
-- [ ] **J1 — the task registers and answers.** A real sys1 child
+- [x] **J1 — the task registers and answers.** A real sys1 child
       answers `sys1_classify` with `task: "curate"` as a classify
       envelope carrying all three heads; every label the lane names is
       inside the closed sets. Pinned live (the
       `the_real_sys1_lane_answers_the_tool_route_task` pattern) plus a
       scripted-child case.
-- [ ] **J2 — the addition survives a re-vendor.** `VENDOR.json`'s
+- [x] **J2 — the addition survives a re-vendor.** `VENDOR.json`'s
       `fleetAdditions` names the task, its heads, and why; the doc
       comment in `tasks.py` says the same.
-- [ ] **J3 — the composition table is pinned, row by row.** Each row of
+- [x] **J3 — the composition table is pinned, row by row.** Each row of
       the table is a unit test over `maybe_curate`'s decision with
       scripted lane answers and fixed vectors: first steer, confident
       yes, confident no with cosine above and below the floor,
       low-confidence, lane unavailable, no keys.
-- [ ] **J4 — the cache is one file, one rekey.** A curate verdict
+- [x] **J4 — the cache is one file, one rekey.** A curate verdict
       round-trips `route-cache.json`; a key mismatch clears both
       namespaces; a pre-judgment file loads with an empty curate map.
-- [ ] **J5 — the fail-open is byte-identical.** With `sys1_judges`
+- [x] **J5 — the fail-open is byte-identical.** With `sys1_judges`
       false, the curation path performs no lane call and its decisions
       match the landed behavior — pinned by a test that strips the
       decision keys and replays a steer.
-- [ ] **J6 — the replay measurement is in this file.** The real steer
+- [x] **J6 — the replay measurement is in this file.** The real steer
       sequence, judged versus cosine-only, decisions side by side; the
       contingency's verdict recorded with the numbers that decided it.
-- [ ] **J7 — the gate and the docs.** fmt, clippy, build, test green by
+- [x] **J7 — the gate and the docs.** fmt, clippy, build, test green by
       exit code; the two docs updated; any defect found on the way is a
       ledger row closed in its own commit.
 
@@ -289,6 +289,45 @@ cosine decides — and the flip is recorded, not silently kept.
 - **The grader.** The calib rows exist so `fleet judge` *can* grade
   curations; building the grading pass is its own increment.
 - **Any new UI.** The face and the TUI show what they show today.
+
+## J6 — the replay measurement, and the contingency's verdict
+
+Real session `20261028T162708Z-997a54b4`'s four steers, judged through
+a real sys1 child (glide, the routed chain's head, keys from the fleet
+home's dotenv) with the text contract's two-part pair, beside the
+cosines the fail-open would have decided on:
+
+| steer | cosine | needs_recall | confidence | focus | staleness | ms |
+|---|---|---|---|---|---|---|
+| 1 | 0.717 | yes | 0.174 | none | stale | 941 |
+| 2 | 0.882 | no | 0.571 | deps | stale | 810 |
+| 3 | 0.884 | no | 0.659 | none | fresh | 756 |
+| 4 | 0.821 | yes | 0.536 | none | stale | 822 |
+
+Side by side (the gate at 0.6, the floor at 0.78):
+
+| steer | cosine-only | judged composition |
+|---|---|---|
+| 1 | FIRE (first-steer) | FIRE (first-steer) |
+| 2 | HOLD (cosine) | HOLD (cosine — the vote sat under the gate) |
+| 3 | HOLD (cosine) | HOLD (judged — the one vote over the gate, agreeing) |
+| 4 | HOLD (cosine) | HOLD (cosine — the vote sat under the gate) |
+
+**The verdict: identical decisions, and the contingency flips.** The
+judged set has zero new mis-fires — but it does not dominate: no
+genuine early fire (the lane's only `yes` votes landed at 0.174 and
+0.536, both under the gate), and no focus fix (the one curation the
+lane could have decided, steer 3, agrees with the cosine). Three of
+four votes sat below the gate entirely — the lane, on the glide
+provider, is under-confident for this task. The plan's own bar ("no new
+mis-fires, at least one genuine early fire or focus fix") is not met,
+so the default is **advisory**: the lane votes in the calibration
+stream's `curate` rows, the cosine decides, and
+`CURATE_JUDGED_DECIDES` (a named constant carrying these numbers in
+its doc comment) is what a future replay flips — by the plan's bar,
+not by appetite. The focus hint still acts on a fired curation: naming
+the shape is the lane's least risky contribution, guarded by the
+vocabulary check.
 
 ## Verification
 
@@ -385,3 +424,47 @@ Expected: exit 0 each.
 - **The calib `curate` row** follows the `explain` row's shape (a lane
   attributed op beside the run's own rows), so the judge's existing
   attribution machinery reads it without a schema change.
+
+## Landed 2026-10-30
+
+J0: `_CURATE` in `services/sys1/src/sys1/tasks.py` — three heads over
+one call (`needs_recall` yes/no, `focus` over the corpus's seven
+structure and six failure shapes + `none`, `staleness` fresh/stale),
+the text contract a two-part pair, recorded in `VENDOR.json`'s
+`fleetAdditions`. J1:
+`the_real_sys1_lane_answers_the_curate_task` (a real lane child; every
+label the lane names is inside the closed sets) and
+`a_curate_answer_parses_into_a_verdict` (the scripted case, including
+the named absence that feeds the fail-open row).
+
+J1/J2: `CurateVerdict` in the route cache's second namespace — same
+producer key, one rekey clears both maps, old files load (`a_curate_verdict_round_trips_and_an_old_file_loads_empty`,
+`a_rekey_clears_both_namespaces`). `apply_steer` is async and awaits
+the judgment; the `sys1_judges` gate is checked before any lane work.
+
+J2: the composition table extracted as the pure `curate_decision`,
+pinned row by row by `the_curate_composition_decides_row_by_row` — six
+rows of the table plus the advisory collapse, all green.
+
+J3: the calib `curate` row (`CurateRow` beside the `explain` row's
+shape) written per judged decision — verdict, cosine, decision,
+trigger — with the pair's hash as the join and the texts never stored.
+The focus hint acts through `Memory::assemble_with_shape` over
+`partition_with_shape`, the hint validated by `known_shape` and
+recorded in `Record::Curated`'s new `trigger` and `focus_shape` fields
+(serde-default; old logs load).
+
+J5: the fail-open pinned at the composition level — the `judged: None`
+rows ARE the no-keys machine's path, because the `sys1_judges` gate
+answers before any lane work. Named limit, honestly recorded: the
+gate is a process-wide `OnceLock`, so an in-process test cannot flip
+it; the pin is the decision rows, not the env.
+
+J6: the replay above; the contingency's verdict — **advisory** —
+implemented as `CURATE_JUDGED_DECIDES = false` and pinned
+(`!CURATE_JUDGED_DECIDES` asserted in the table test).
+
+J7: the gate green by exit code — fmt 0, clippy 0, build 0, test
+1,649 + 189, 0 failed; the two docs updated (features/memory.md's new
+"The curation judgment" section, TECHNICAL-DOCUMENTATION.md's
+`agent.rs` entry); no new ledger rows — the plan's work found none.
