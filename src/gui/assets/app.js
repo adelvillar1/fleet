@@ -655,6 +655,7 @@
     offers: document.getElementById('offers'),
     recent: document.getElementById('recent'),
     homeStats: document.getElementById('home-stats'),
+    greet: document.getElementById('greet'),
     onboardDoor: document.getElementById('onboard-door'),
     doorDiscovered: document.getElementById('door-discovered'),
     onboardKey: document.getElementById('onboard-key'),
@@ -3583,6 +3584,68 @@
   // The last few runs, one click from the welcome. A console that opens
   // blank after a night of scheduled work is a console that forgot the
   // owner was there.
+  // The landing's greet: what needs you and what is waiting — the
+  // door's rows, read from the home document so the door and the
+  // surfaces cannot disagree. A queue that has not landed renders
+  // nothing rather than a stale count.
+  function paintGreet() {
+    if (!el.greet) return;
+    var home = face.home || {};
+    var needs = (home.runs && home.runs.needs_yours) || [];
+    var waiting = home.waiting || {};
+    var rows = [];
+    needs.forEach(function (run) {
+      rows.push({
+        kind: 'needs you',
+        label: run.title || run.id,
+        note: run.state === 'paused' ? 'paused run' : 'waiting at an approval seat',
+        go: '#/sessions/' + encodeURIComponent(run.id)
+      });
+    });
+    if (waiting.skills > 0) {
+      rows.push({
+        kind: 'waiting', label: waiting.skills + ' skill proposal' +
+          (waiting.skills === 1 ? '' : 's') + ' awaiting an approve',
+        note: 'the decisions queue', go: '#/skills/needs-you'
+      });
+    }
+    if (waiting.memory > 0) {
+      rows.push({
+        kind: 'waiting', label: waiting.memory + ' fact' +
+          (waiting.memory === 1 ? '' : 's') + ' queued for the cycle',
+        note: 'the consolidation queue', go: '#/memory/needs-you'
+      });
+    }
+    if (waiting.calibration > 0) {
+      rows.push({
+        kind: 'waiting', label: waiting.calibration + ' fit cell' +
+          (waiting.calibration === 1 ? '' : 's') + ' short of fit',
+        note: 'the gate', go: '#/calibration/the-gate'
+      });
+    }
+    el.greet.hidden = !rows.length;
+    el.greet.textContent = '';
+    if (!rows.length) return;
+    var head = node('div', 'greet-head');
+    head.appendChild(node('span', 'greet-title', 'what needs you'));
+    el.greet.appendChild(head);
+    rows.forEach(function (row) {
+      var line = node('button', 'greet-row');
+      line.type = 'button';
+      var state = node('span', 'greet-kind', row.kind);
+      state.dataset.tone = row.kind === 'needs you' ? 'warn' : '';
+      line.appendChild(state);
+      var main = node('span', 'greet-main');
+      main.appendChild(node('b', null, row.label));
+      main.appendChild(node('span', 'greet-note', row.note));
+      line.appendChild(main);
+      line.addEventListener('click', function () {
+        window.location.hash = row.go;
+      });
+      el.greet.appendChild(line);
+    });
+  }
+
   function paintRecent() {
     paintHome();
     var rows = (face.home && face.home.runs && face.home.runs.recent)
@@ -3603,8 +3666,15 @@
       var dot = node('span', 'recent-dot');
       dot.dataset.state = row.ended ? 'done' : 'live';
       line.appendChild(dot);
+      // The owner's title when one is set; an untitled conversation
+      // reads as what it is — a conversation from that moment — never
+      // as a bare id fragment that reads as machine noise.
+      var when = String(row.created || '');
+      var fallback = 'a conversation' +
+        (when ? ' \u00b7 ' + when.slice(5, 16).replace('T', ' ') : '');
       var id = node('span', 'recent-id',
-        (row.current ? 'this face \u00b7 ' : '') + sessionLabel(row.id));
+        (row.current ? 'this face \u00b7 ' : '') +
+        (row.title || fallback));
       id.title = row.id;
       line.appendChild(id);
       var when = String(row.created || '');
@@ -3953,6 +4023,7 @@
       : face.skills ? (face.skills.skills || []).length : null;
     var runs = h.runs ? h.runs.count
       : face.sessions ? (face.sessions.sessions || []).length : null;
+    paintGreet();
     if (facts === null && skills === null && runs === null) {
       el.homeStats.hidden = true;
       return;

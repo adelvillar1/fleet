@@ -202,8 +202,15 @@ every visible `.tile`, `.badge`, `.rrow`, `.rank-row`, `.cal-cell`,
   with its composer, so reading and continuing are the same act and
   there is no separate read-only replay. `#/sessions/<id>` is the
   address of the open row and survives a reload; `#/chat` is the home —
-  the welcome with the counts and "pick up where you left off", and the
-  one place every surface's Escape returns to; arriving there detaches
+  the welcome with **what needs you** (the owner's runs at approval
+  seats or paused, one row each, straight to the conversation), **what
+  is waiting** (the queues the rail revamps made legible — skills
+  proposals, the memory cycle's queue, calibration's short-of-fit cells
+  — each with its count and surface address, rendered only when
+  non-empty), the counts, and "pick up where you left off" (the owner's
+  recent conversations, titled — an untitled one reads as "a
+  conversation · <when>", never a bare id fragment), and the one place
+  every surface's Escape returns to; arriving there detaches
   from the conversation being read (nothing server-side changes, and
   the recent list's live row is the way back). The rail renders the
   owner's work only: system-initiated sessions — scheduled jobs,
@@ -329,7 +336,7 @@ Escape clears the object, never the dock.
 | Route | What it does |
 |---|---|
 | `GET /api/state` | the session, model, gate, budget, ordered log, seat, the session this face is *driving*, and remembered rules |
-| `GET /api/home` | the welcome's bounded read, cached 30s |
+| `GET /api/home` | the welcome's bounded read — needs-you rows, the waiting queues, the owner's recent — cached 30s |
 | `GET /events` | the live half of the same ordered log (SSE) |
 | `POST /api/run`, `/api/plan` | hand a task to the agent thread; the body may carry `folder`, which is validated and stored for the chat before dispatch |
 | `POST /api/folder` | set or clear a chat's working folder without a run; the reply is the transcript line it recorded |

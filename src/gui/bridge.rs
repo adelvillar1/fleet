@@ -866,10 +866,23 @@ impl Bridge {
             .and_then(Value::as_array)
             .map(|rows| rows.len())
             .unwrap_or(0);
+        // The waiting count is the queue's own: a proposal the gate
+        // already disposed of (applied, refused) is not waiting, and a
+        // greet that counted it would send the owner to a queue that
+        // is not there.
         let proposals = skills
             .get("proposals")
             .and_then(Value::as_array)
-            .map(|rows| rows.len())
+            .map(|rows| {
+                rows.iter()
+                    .filter(|row| {
+                        matches!(
+                            row.get("status").and_then(Value::as_str),
+                            None | Some("pending") | Some("waiting")
+                        )
+                    })
+                    .count()
+            })
             .unwrap_or(0);
 
         let nodes = delegation
@@ -908,6 +921,54 @@ impl Bridge {
             }
         }
 
+        // The landing's greet: what needs you — the owner's own runs
+        // sitting at an approval seat or paused — and what is waiting,
+        // from the queues the rail revamps made legible. Computed here
+        // so the door and the surfaces cannot disagree about the
+        // counts.
+        let needs_yours: Vec<Value> = runs
+            .iter()
+            .filter(|row| row.get("class").and_then(Value::as_str) == Some("yours"))
+            .filter(|row| {
+                matches!(
+                    row.get("state").and_then(Value::as_str),
+                    Some("needs-approval") | Some("paused")
+                )
+            })
+            .map(|row| {
+                json!({
+                    "id": row.get("id").cloned().unwrap_or(Value::Null),
+                    "title": row.get("title").cloned().unwrap_or(Value::Null),
+                    "state": row.get("state").cloned().unwrap_or(Value::Null),
+                })
+            })
+            .collect();
+        let home_root = self.home.clone();
+        let memories_root = self.memories.clone();
+        let proposals_for_wait = proposals;
+        let waiting = tokio::task::spawn_blocking(move || {
+            let today = crate::calib::today();
+            let queue = crate::memory::preview(&memories_root, &today).total();
+            let calib = calibration_read_at(&home_root, None);
+            let short = calib
+                .get("cells")
+                .and_then(Value::as_array)
+                .map(|cells| {
+                    cells
+                        .iter()
+                        .filter(|cell| cell.get("fit").and_then(Value::as_str) != Some("fit"))
+                        .count()
+                })
+                .unwrap_or(0);
+            json!({
+                "skills": proposals_for_wait,
+                "memory": queue,
+                "calibration": short,
+            })
+        })
+        .await
+        .unwrap_or_else(|_| json!({"skills": proposals_for_wait, "memory": 0, "calibration": 0}));
+
         let document = json!({
             "type": "home",
             "workspace": state.get("workspace").cloned().unwrap_or(Value::Null),
@@ -916,8 +977,10 @@ impl Bridge {
             "runs": {
                 "count": runs.len(),
                 "recent": recent,
+                "needs_yours": needs_yours,
                 "timeline": timeline,
             },
+            "waiting": waiting,
             "memory": {
                 "live": live.len(),
                 "protected": protected,
@@ -5518,13 +5581,14 @@ fn work_class(entry: &session::SessionSummary) -> &'static str {
 /// field is always present in the sessions document, and its absence
 /// has never meant system work.
 fn owner_recent(runs: &[Value], take: usize) -> Vec<Value> {
+    // Exactly the owner's rows — KI-372's rule, applied at the landing
+    // after the work rail and the phone's inbox made it theirs. The
+    // `None` arm was a fossil of the era before the class stamping:
+    // kind-less rows read as the owner's, and the machine's sessions
+    // — scheduled runs, subagents, shells — landed on "pick up where
+    // you left off" as bare session ids.
     runs.iter()
-        .filter(|row| {
-            matches!(
-                row.get("class").and_then(Value::as_str),
-                None | Some("yours")
-            )
-        })
+        .filter(|row| row.get("class").and_then(Value::as_str) == Some("yours"))
         .take(take)
         .cloned()
         .collect()
@@ -8608,6 +8672,28 @@ pub(crate) fn rank_with(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_owner_recent_answers_the_owners_rows_only() {
+        // KI-372's rule at the landing: the recent list carries the
+        // owner's conversations and nothing else — a scheduled run, a
+        // delegated child, and an unclassed shell are the machine's,
+        // whatever their vintage.
+        let rows = vec![
+            serde_json::json!({"id": "sched", "class": "background"}),
+            serde_json::json!({"id": "child", "class": "delegated"}),
+            serde_json::json!({"id": "kindless"}),
+            serde_json::json!({"id": "probe", "class": "probe"}),
+            serde_json::json!({"id": "mine-1", "class": "yours"}),
+            serde_json::json!({"id": "mine-2", "class": "yours"}),
+        ];
+        let recent = owner_recent(&rows, 3);
+        let ids: Vec<&str> = recent
+            .iter()
+            .filter_map(|row| row.get("id").and_then(Value::as_str))
+            .collect();
+        assert_eq!(ids, vec!["mine-1", "mine-2"], "{recent:?}");
+    }
+
     use super::*;
     use crate::api::FunctionCall;
 

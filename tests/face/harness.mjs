@@ -4699,6 +4699,75 @@ async function theCalibrationRailCarriesTheGateAndTheDay() {
     home.rows('.section-rail-row').map((r) => r.textContent).join(' | '));
 }
 
+
+async function theLandingGreetsTheOwnersWork() {
+  // The home document in the bridge's own shape: one owner run at an
+  // approval seat, the queues (skills and calibration waiting, memory
+  // honestly empty), and the owner's recent conversations — titled.
+  // The machine's unclassed runs are the server's to omit (L1's pin);
+  // the face renders what the document carries.
+  const home = {
+    type: 'home',
+    memory: { live: 5, protected: 1, top: [], dates: [], day: '2026-10-30' },
+    skills: { count: 10, proposals: 2 },
+    runs: {
+      count: 3,
+      needs_yours: [{
+        id: 'seat-1', title: 'the run at the approval seat', state: 'needs-approval',
+      }],
+      recent: [
+        { id: 'mine-1', title: 'the titled conversation', created: '2026-10-30T09:00:00Z', ended: true, current: false },
+        { id: 'mine-2', title: null, created: '2026-10-29T09:00:00Z', ended: true, current: false },
+      ],
+      timeline: [],
+    },
+    waiting: { skills: 2, memory: 0, calibration: 3 },
+    next: null,
+    refused: [],
+  };
+  const page = boot({
+    width: 1440, hash: '#/chat',
+    documents: {
+      home,
+      state: (asked) => emptyState(asked),
+      onboard: onboardDoc({ door: false }),
+    },
+  });
+  await flush();
+  page.open();
+  await flush(120);
+
+  // The greet: what needs you first, then the waiting queues — an
+  // empty queue renders no row.
+  const greet = page.text('greet');
+  check('LAND the greet names what needs you',
+    !page.IDS['greet'].hidden &&
+      greet.includes('what needs you') &&
+      greet.includes('the run at the approval seat') &&
+      greet.includes('waiting at an approval seat'),
+    greet.slice(0, 200));
+  check('LAND the greet carries the waiting queues, empty ones absent',
+    greet.includes('2 skill proposals') && greet.includes('3 fit cells') &&
+      !greet.includes('queued for the cycle'),
+    greet.slice(0, 300));
+
+  // The rows address their surfaces.
+  const seatRow = page.rows('.greet-row')
+    .find((row) => row.textContent.includes('approval seat'));
+  check('LAND the seat row addresses the conversation',
+    seatRow && seatRow.textContent.includes('the run at the approval seat'),
+    seatRow ? seatRow.textContent.slice(0, 80) : 'missing');
+
+  // The recent list carries the owner's conversations, titled — the
+  // titled one by its name, the untitled one by its label.
+  const recent = page.text('recent');
+  check('LAND the recent list carries the owner\u2019s conversations, titled',
+    recent.includes('the titled conversation') &&
+      !recent.includes('mine-1') &&
+      recent.includes('pick up where you left off'),
+    recent.slice(0, 200));
+}
+
 const cases = [
   ['C1/C8 the list groups by attention and counts what the server counted', theListGroupsByAttentionAndCountsWhatTheServerCounted],
   ['C2 every state opens through one verb', everyStateOpensThroughOneVerb],
@@ -4749,6 +4818,7 @@ const cases = [
   ['MEM the memory rail carries the queue and the verbs', theMemoryRailCarriesTheQueueAndTheVerbs],
   ['WORKSPACE the workspace rail carries the projects and the pane', theWorkspaceRailCarriesTheProjectsAndThePane],
   ['CAL the calibration rail carries the gate and the day', theCalibrationRailCarriesTheGateAndTheDay],
+  ['LAND the landing greets the owner\u2019s work', theLandingGreetsTheOwnersWork],
 ];
 
 for (const [name, run] of cases) {

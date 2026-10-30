@@ -329,6 +329,22 @@ head, the rail and the panels keep the measure they have.
   configuration, `3` the turn cap was reached (resume with
   `--session <id>`).
 
+## The landing
+
+The conversation is the door, and the door greets the owner's own work:
+**what needs you** — runs at approval seats or paused, one row each,
+straight to the conversation — then **what is waiting** (skill proposals
+awaiting an approve, facts queued for the consolidation cycle, fit cells
+short of fit; each row only when non-empty, each addressing its
+surface), then the counts and "pick up where you left off" — the
+owner's recent conversations, titled, with an untitled one reading as
+"a conversation · <when>". The machine's own sessions — scheduled runs,
+delegated children, unclassed shells — are the rail's omission rule
+applied at the door: the recent list carries `class == "yours"` and
+nothing else. The left rail's collapse sits at the rail's head, level
+with the topbar's pane expand icon; the surface instruments' actions
+wrap as whole buttons and the card grows with them.
+
 ## What Fleet tells you when
 
 | It says | Meaning |

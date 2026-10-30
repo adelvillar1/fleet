@@ -89,7 +89,8 @@
        name. The mark, the jump row and the collapse switch are static;
        the tree between them is built from GROUPS. -->
   <nav class="surfaces" id="rail" aria-label="surfaces">
-    <a class="mark" href="#/chat" aria-label="fleet, the conversation">
+    <div class="surfaces-head">
+      <a class="mark" href="#/chat" aria-label="fleet, the conversation">
       <span class="mark-glyph" aria-hidden="true">
         <svg viewBox="0 0 32 32" focusable="false">
           <defs>
@@ -111,7 +112,13 @@
         <span class="mark-name">fleet</span>
         <span class="mark-tag">local console</span>
       </span>
-    </a>
+      </a>
+      <button class="surfaces-toggle" id="rail-toggle" type="button"
+              aria-label="collapse the surfaces rail" aria-expanded="true">
+        <span class="surfaces-toggle-mark" aria-hidden="true">‹</span>
+        <span class="surfaces-toggle-name" id="rail-toggle-name">collapse the rail</span>
+      </button>
+    </div>
     <div class="surfaces-tree" id="rail-tree"></div>
     <div class="surfaces-foot">
       <span class="surfaces-where" id="rail-where">this machine</span>
@@ -120,11 +127,6 @@
         <span class="surfaces-mark" aria-hidden="true">⌘</span>
         <span class="surfaces-name">jump to anything</span>
         <kbd>⌘K</kbd>
-      </button>
-      <button class="surfaces-toggle" id="rail-toggle" type="button"
-              aria-label="collapse the surfaces rail" aria-expanded="true">
-        <span class="surfaces-toggle-mark" aria-hidden="true">‹</span>
-        <span class="surfaces-toggle-name" id="rail-toggle-name">collapse the rail</span>
       </button>
     </div>
   </nav>
@@ -303,6 +305,7 @@
             <p class="onboard-mechanism-body" id="onboard-mechanism-body"></p>
           </details>
         </div>
+        <div class="greet" id="greet" hidden></div>
         <div class="home-stats" id="home-stats" hidden>
           <button class="home-stat" type="button" data-go="#/memory">
             <span class="home-stat-value" id="home-facts">&mdash;</span>
