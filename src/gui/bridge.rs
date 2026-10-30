@@ -356,6 +356,11 @@ pub struct Bridge {
     /// offsets, so a poll answers only what moved. Shared because the
     /// reads run on blocking workers while the bridge answers requests.
     trace_tail: Arc<std::sync::Mutex<crate::layerfs_view::TraceTail>>,
+    /// The rail document's thirty-second cache: one read per registered
+    /// project is bounded work, but a poll-driven face repaints often
+    /// enough to pay it per repaint without one. The home read's own
+    /// pattern, carried here.
+    workspace_rail: std::sync::Mutex<Option<(std::time::Instant, serde_json::Value)>>,
 }
 
 /// The bot face's pairing-card facts, attached at launch.
@@ -431,6 +436,7 @@ impl Bridge {
             remote: Mutex::new(None),
             relay_secret: Mutex::new(None),
             bot_face: Mutex::new(None),
+            workspace_rail: std::sync::Mutex::new(None),
             trace_tail: Arc::new(std::sync::Mutex::new(
                 crate::layerfs_view::TraceTail::default(),
             )),
@@ -1071,6 +1077,59 @@ impl Bridge {
     /// read is the substrate's own, so an unprovisioned machine or an
     /// unregistered folder names itself here rather than drawing an
     /// empty tree.
+    /// The rail document: every registered project read once, the
+    /// six-week filter applied, the answer cached for thirty seconds —
+    /// the same window the home read holds, so a poll-driven face never
+    /// pays one spawn per registered project per repaint.
+    pub async fn workspace_projects(&self) -> Value {
+        const RAIL_CACHE: std::time::Duration = std::time::Duration::from_secs(30);
+        {
+            let cached = self
+                .workspace_rail
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Some((at, document)) = cached.as_ref() {
+                if at.elapsed() < RAIL_CACHE {
+                    return document.clone();
+                }
+            }
+        }
+        let landed =
+            match tokio::task::spawn_blocking(crate::layerfs_view::workspace_projects).await {
+                Ok(document) => document,
+                Err(_) => json!({
+                    "type": "workspace-history-rail",
+                    "refused": ["the workspace rail read did not land"],
+                }),
+            };
+        let mut cached = self
+            .workspace_rail
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *cached = Some((std::time::Instant::now(), landed.clone()));
+        landed
+    }
+
+    /// One project's full view, by its registered folder's path — the
+    /// control tower's and the second brain's project identity. The
+    /// rail section's own read. Uncached: the section is the thing
+    /// being looked at, and the substrate's `since` version answers in
+    /// 1 ms when nothing moved.
+    pub async fn workspace_project(&self, folder: &str, since: Option<String>) -> Value {
+        let asked = folder.to_string();
+        match tokio::task::spawn_blocking(move || {
+            crate::layerfs_view::workspace_history_for_registered(&asked, since.as_deref())
+        })
+        .await
+        {
+            Ok(document) => document,
+            Err(_) => json!({
+                "type": "workspace-history",
+                "refused": ["the project read did not land"],
+            }),
+        }
+    }
+
     pub async fn workspace_history(&self, since: Option<String>) -> Value {
         let cwd = self.cwd.clone();
         match tokio::task::spawn_blocking(move || {

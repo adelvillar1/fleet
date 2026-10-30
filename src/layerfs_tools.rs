@@ -354,6 +354,29 @@ pub fn read_registrations() -> Vec<(String, Registration)> {
         .collect()
 }
 
+/// When the substrate created a project's Store, from its own runtime
+/// record — `<layerfs-home>/.runtime/projects/<name>.json` carries the
+/// registration's `created` in wall-clock millis. This is the activity
+/// fact for a store that has never committed: the import is the
+/// store's origin, and the substrate recorded when it happened. A
+/// record that does not read (a store provisioned before the record
+/// existed) answers `None` and the caller falls back to its commits.
+pub fn runtime_created(name: &str) -> Option<i64> {
+    let home = crate::home::fleet_home(
+        std::env::var("FLEET_HOME").ok().as_deref(),
+        std::env::var("HOME").ok().as_deref(),
+    )
+    .ok()?;
+    let path = home
+        .join("layerfs-home")
+        .join(".runtime")
+        .join("projects")
+        .join(format!("{name}.json"));
+    let document: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
+    document.get("created").and_then(|created| created.as_i64())
+}
+
 /// Every folder the machine has registered, cached once per process
 /// — the arm's read; the config does not change under a running
 /// fleet except through registration itself, which records before it

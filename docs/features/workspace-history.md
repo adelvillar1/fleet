@@ -91,8 +91,25 @@ here" is the one shape the surface never draws.
 
 ## The section
 
-Five cards, all from one read — the vocabulary the substrate itself
-carries (the reference the `dsh-layerfs` plugin draws with):
+The surface is the work rail's idiom, shared with settings, skills, and
+memory (2026-10-30): a rail of **projects** — the machine's registered
+folders whose newest commit, or whose substrate-recorded creation, falls
+inside the six-week activity window — one project's components at a
+time, and the right pane for the two browsing cards. A project resolves
+by its **folder path** (the control tower's and the second brain's
+identity), the rail remembers the choice, and `#/workspace-history/<encoded
+path>` addresses one. The rail document reads every registration once,
+caches for thirty seconds, and a read that dies names the substrate's
+own refusal on one compact card after the section — a broken read is not
+inactivity, and an unexplained absence is the one shape this surface
+never draws.
+
+The board carries the **visual components** — the tree, the work, and
+the calls feed (machine-wide, as the traces are) — and the pane carries
+**the store** and **the files** as one object card, the tree's node
+click landing there at the ref it named. The cards, all from one read —
+the vocabulary the substrate itself carries (the reference the
+`dsh-layerfs` plugin draws with):
 
 - **the tree** — main's spine with a **band** for every Layer (coloured
   by the branch that published it), one **lane** per branch with work —

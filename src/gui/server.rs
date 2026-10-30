@@ -367,9 +367,19 @@ async fn serve_connection(
         // read takes the last `version` it saw: a substrate that still
         // holds it current answers `unchanged` in 1 ms.
         ("GET", "/api/workspace-history") => {
+            // A project name asks for that project's full view (the
+            // rail section's own read); no name asks for the rail
+            // document — every registered project, the six-week filter
+            // applied, cached for thirty seconds.
+            let project = decode_query(&request.query, "project");
             let since = decode_query(&request.query, "since");
             let since = (!since.is_empty()).then_some(since);
-            write_reply(&mut stream, api(200, bridge.workspace_history(since).await)).await
+            let document = if project.is_empty() {
+                bridge.workspace_projects().await
+            } else {
+                bridge.workspace_project(&project, since).await
+            };
+            write_reply(&mut stream, api(200, document)).await
         }
         ("GET", "/api/workspace-history/calls") => {
             let since = decode_query(&request.query, "since");
@@ -3361,22 +3371,20 @@ mod tests {
             .nth(1)
             .expect("a body past the head");
         let document: serde_json::Value = serde_json::from_str(body).expect("a JSON document");
-        assert_eq!(document["type"], "workspace-history");
-        assert_eq!(document["registered"], false, "{document}");
+        // A home with no registrations answers the rail document with
+        // no projects: the absence is the panel's own named state, the
+        // face renders its note, and no dead row pretends otherwise.
+        assert_eq!(document["type"], "workspace-history-rail", "{document}");
         assert!(
-            document["branches"]
-                .as_array()
-                .is_some_and(|branches| branches.is_empty()),
+            document["projects"].as_array().is_some_and(|p| p.is_empty()),
             "{document}"
         );
         assert!(
-            document["refused"]
+            document["refused_projects"]
                 .as_array()
                 .is_some_and(|refused| refused.is_empty()),
-            "an unregistered folder is a named state, not a refused read: {document}"
+            "no registrations is a named state, not a refused read: {document}"
         );
-        let note = document["note"].as_str().unwrap_or_default();
-        assert!(note.contains("no LayerFS project"), "{document}");
         // The live feed's route: the same absence, named — a machine
         // with no substrate refuses the read rather than answering an
         // empty feed that would read as "nothing is happening".

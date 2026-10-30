@@ -379,6 +379,33 @@ still needs a decision.
 The canonical identifier vocabulary and the `convention` lookup. It names the
 project's established terms and warns on drift.
 
+### The LayerFS substrate
+
+| Module | Source |
+|---|---|
+| `layerfs_tools.rs` | `docs/features/workspace-history.md` |
+| `layerfs_view.rs` | `docs/features/workspace-history.md` |
+
+#### `layerfs_tools.rs`
+The substrate's driver: the machine facts and the folder registrations
+read from `<FLEET_HOME>/config.json`'s `layerfs.projects` map, the
+composed environment every spawn inherits (store path, daemon, image —
+machine paths and a digest, never secrets), the CLI's verbs, the
+Workspace cadence, and the config writers. `runtime_created` reads the
+substrate's own per-project record — `<layerfs-home>/.runtime/projects/
+<name>.json`'s `created` — the activity fact for a store that has never
+committed.
+
+#### `layerfs_view.rs`
+The view model: the branches and commits, the backend's trunk, the child
+join, the section's document, and the Files pane's page. The face's rail
+reads `workspace_projects` — every registration once, the six-week
+activity window applied (the newest commit, or the substrate's runtime
+`created` for a store that has never committed), cached thirty seconds in
+the bridge — and one project's full view answers by its registered
+folder's path (`workspace_history_for_registered`), the control tower's
+and the second brain's project identity.
+
 ### Delegation and scheduling
 
 | Module | Source |

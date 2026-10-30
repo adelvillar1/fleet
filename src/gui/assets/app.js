@@ -632,6 +632,7 @@
     calibrationBoard: document.getElementById('calibration-board'),
     brainBoard: document.getElementById('brain-board'),
     workspaceHistoryBoard: document.getElementById('workspace-history-board'),
+    workspaceHistoryRail: document.getElementById('workspace-history-rail'),
     botsRail: document.getElementById('bots-rail'),
     botsBoard: document.getElementById('bots-board'),
     vaultBoard: document.getElementById('vault-board'),
@@ -10757,16 +10758,84 @@
   // substrate's own, so a machine that has not provisioned — or a
   // folder no delegation has registered — is named where the tree would
   // be, never drawn as an empty one.
+  // ------------------------------------------------- the workspace rail
+  //
+  // The surface is a rail of projects and one project's components: the
+  // work rail's idiom, the shared sectionRail helper, and a route that
+  // makes a project addressable. The projects are the machine's
+  // registrations whose newest commit falls inside the six-week window
+  // — the server's filter, named in its document — and a project
+  // resolves by its folder path, the way the control tower and the
+  // second brain resolve them.
+
+  /// The project the hash names, or the remembered one, or the rail's
+  /// first (its newest-active). The address carries the folder path,
+  /// encoded — the path is the project's identity.
+  function workspaceSectionId(read) {
+    var raw = (window.location.hash || '').replace(/^#\/?/, '');
+    var parts = raw.split('/');
+    if (parts[0] === 'workspace-history' && parts[1]) {
+      return decodeURIComponent(parts[1]);
+    }
+    try {
+      var stored = window.localStorage.getItem('fleet-workspace-section');
+      if (stored) return stored;
+    } catch (error) { }
+    var projects = (read && read.projects) || [];
+    return projects.length ? projects[0].folder : '';
+  }
+
+  function rememberWorkspaceSection(folder) {
+    try { window.localStorage.setItem('fleet-workspace-section', folder); } catch (error) { }
+  }
+
+  /// The rail read: the document is the server's own thirty-second
+  /// cache, so a poll-driven face never pays one spawn per project per
+  /// repaint. The selected project's full view rides its own read,
+  /// accelerated by the version the last view named.
   function readWorkspaceHistory(force) {
     var now = Date.now();
-    if (!force && face.history && now - face.historyAt < 5000) return Promise.resolve();
+    if (!force && face.historyRail && now - face.historyRailAt < 5000) {
+      if (!face.history) face.workspaceCardAsked = true;
+      return readWorkspaceProject(false);
+    }
+    face.historyRailAt = now;
+    return fetch('/api/workspace-history', { headers: { accept: 'application/json' } })
+      .then(function (reply) {
+        if (reply.status === 401) throw new Error('token');
+        return reply.json();
+      })
+      .then(function (doc) {
+        face.historyRail = doc;
+        if (face.panel === 'workspace-history') paintWorkspaceHistory();
+        return readWorkspaceProject(true);
+      })
+      .catch(function () { });
+  }
+
+  function readWorkspaceProject(force) {
+    var rail = face.historyRail;
+    var projects = (rail && rail.projects) || [];
+    if (!projects.length) return Promise.resolve();
+    var folder = workspaceSectionId(rail);
+    var chosen = projects.filter(function (p) { return p.folder === folder; })[0];
+    if (!chosen) {
+      chosen = projects[0];
+      rememberWorkspaceSection(chosen.folder);
+    }
+    var now = Date.now();
+    if (!force && face.history && face.history.project === chosen.name
+      && now - face.historyAt < 5000) {
+      return Promise.resolve();
+    }
     face.historyAt = now;
-    // The refresh rides the version the last read named: a substrate
+    // The refresh rides the version the last view named: a substrate
     // that still holds it current answers unchanged in one flag and the
-    // view stands — no repaint, no re-read of the files pane.
-    var since = (face.history && face.history.version)
-      ? '?since=' + encodeURIComponent(face.history.version) : '';
-    return fetch('/api/workspace-history' + since, { headers: { accept: 'application/json' } })
+    // view stands.
+    var since = (face.history && face.history.project === chosen.name && face.history.version)
+      ? '&since=' + encodeURIComponent(face.history.version) : '';
+    return fetch('/api/workspace-history?project=' + encodeURIComponent(chosen.folder) + since,
+      { headers: { accept: 'application/json' } })
       .then(function (reply) {
         if (reply.status === 401) throw new Error('token');
         return reply.json();
@@ -10774,9 +10843,9 @@
       .then(function (doc) {
         if (doc.unchanged) return;
         face.history = doc;
-        // The Files pane's branch follows the tree: the first branch
-        // that is not main, or main itself, so a fresh read lands
-        // somewhere real rather than on an empty selector.
+        // The files card's ref follows the tree: the first branch that
+        // is not main, or main itself, so a fresh read lands somewhere
+        // real rather than on an empty selector.
         var branches = doc.branches || [];
         if (!face.historyBranch || !branches.some(function (b) { return b.name === face.historyBranch; })) {
           var child = branches.filter(function (b) { return b.name !== 'main'; })[0];
@@ -10785,9 +10854,168 @@
         if (face.panel === 'workspace-history') {
           paintWorkspaceHistory();
           readWorkspaceFiles(face.historyBranch, face.historyPath || '', true);
+          if (face.workspaceCardAsked) {
+            face.workspaceCardAsked = false;
+            openWorkspaceCard();
+          }
         }
       })
       .catch(function () { });
+  }
+
+  function workspaceSections(read) {
+    var projects = (read && read.projects) || [];
+    return projects.map(function (project) {
+      return {
+        id: project.folder,
+        icon: 'repo',
+        name: project.name,
+        badge: project.branches,
+        badgeTitle: project.branches + ' branches \u00b7 newest '
+          + (project.newest ? new Date(project.newest).toISOString().slice(0, 10) : '\u2014'),
+        paint: function () { return []; }
+      };
+    });
+  }
+
+  function paintWorkspaceRail(read) {
+    if (!el.workspaceHistoryRail) return;
+    var sections = read ? workspaceSections(read) : [];
+    sectionRail(el.workspaceHistoryRail, sections, {
+      current: read && sections.length ? workspaceSectionId(read) : '',
+      folded: !!face.workspaceRailFolded,
+      store: 'fleet-workspace-rail',
+      onPick: function (id) {
+        rememberWorkspaceSection(id);
+        window.location.hash = '#/workspace-history/' + encodeURIComponent(id);
+        face.historyBranch = null;
+        face.history = null;
+        face.workspaceCardAsked = true;
+        paintWorkspaceHistory();
+        readWorkspaceProject(true);
+        var row = el.workspaceHistoryRail.querySelector('[data-section]');
+        Array.prototype.forEach.call(
+          el.workspaceHistoryRail.querySelectorAll('.section-rail-row'),
+          function (one) { one.removeAttribute('aria-current'); });
+        var picked = el.workspaceHistoryRail.querySelectorAll('.section-rail-row')[
+          sections.map(function (s) { return s.id; }).indexOf(id)];
+        if (picked && picked.focus) picked.focus();
+      },
+      onFold: function (folded) {
+        face.workspaceRailFolded = folded;
+        try {
+          window.localStorage.setItem('fleet-workspace-rail', folded ? 'folded' : 'open');
+        } catch (error) { }
+        paintWorkspaceRail(face.historyRail);
+      }
+    });
+  }
+
+  /// The two cards in the pane: the store's accounting and the files
+  /// browser, one object card for the selected project. The tree's
+  /// click lands here at the ref it named.
+  function openWorkspaceCard() {
+    var read = face.history;
+    if (!read || read.registered === false) return;
+    openDrawer(read.project || 'the project', [
+      ['the store', historyStorage(read)],
+      ['the files', historyFiles(read)]
+    ]);
+    document.body.dataset.objectCard = 'open';
+  }
+
+  function paintWorkspaceHistory() {
+    var rail = face.historyRail;
+    el.workspaceHistoryBoard.textContent = '';
+    if (!rail) {
+      el.workspaceHistoryBoard.appendChild(surfaceHead('Knowledge', 'Workspace history',
+        'One Store, every branch a delegated child worked: the tree as it stands, and the ' +
+        'figures behind it.', null));
+      var waiting = boardCard(12, 'reading', null, null);
+      waiting.appendChild(node('p', 'board-empty',
+        'The substrate read has not landed yet. It reads the LayerFS Store through the ' +
+        'same composed environment a delegation spawns with.'));
+      el.workspaceHistoryBoard.appendChild(waiting);
+      paintWorkspaceRail(null);
+      return;
+    }
+    paintWorkspaceRail(rail);
+    if (!(rail.projects || []).length) {
+      el.workspaceHistoryBoard.appendChild(surfaceHead('Knowledge', 'Workspace history',
+        'The machine\u2019s registered projects, the ones with recent work at hand.', null));
+      var none = boardCard(12, 'no project with recent activity', null, null);
+      none.appendChild(node('p', 'board-empty', rail.note ||
+        'No registered project has a commit inside the last six weeks. The first ' +
+        'delegation launched in a folder registers its project, and the tree it worked ' +
+        'appears on this surface.'));
+      none.appendChild(node('p', 'board-empty',
+        'The substrate is the isolation a delegated run works in: the child\u2019s writes ' +
+        'land on its own branch, and nothing reaches the working tree until a merge is ' +
+        'published. A folder that has never delegated has no history to show.'));
+      el.workspaceHistoryBoard.appendChild(none);
+      return;
+    }
+    // The reads that did not land: one card, after the section — a
+    // broken read is not inactivity, and the reason names itself, but
+    // five walls of script output is not what the owner came to read.
+    // Each line is the project's name and the substrate's own first
+    // sentence, clipped.
+    var refusedNames = (rail.refused_projects || []).map(function (project) {
+      var reason = (project.refused || []).join(' ') || 'the read did not land';
+      var at = reason.indexOf('\u2014');
+      if (at > 0) reason = reason.slice(0, at);
+      return project.name + ': ' + clip(reason.trim(), 140);
+    });
+    var read = face.history;
+    if (!read) {
+      el.workspaceHistoryBoard.appendChild(boardCard(12, 'reading', null, null));
+      return;
+    }
+    // The section body: only the open project's cards exist in the DOM,
+    // the same contract the other rails run.
+    var body = node('div', 'section-body');
+    body.dataset.section = workspaceSectionId(rail);
+    el.workspaceHistoryBoard.appendChild(body);
+    var branches = read.branches || [];
+    var layers = read.layers || [];
+    var commits = (read.commits || []).length;
+    var storage = read.storage || null;
+    var instrument = surfaceInstrument('the store',
+      read.project || 'the project',
+      (read.truncated ? 'the newest ' : '') +
+        branches.length + (branches.length === 1 ? ' branch' : ' branches') +
+        ' \u00b7 ' + commits + ' commits \u00b7 ' + layers.length +
+        (layers.length === 1 ? ' layer' : ' layers'),
+      [{
+        label: 'refresh',
+        run: function () {
+          readWorkspaceHistory(true).then(paintWorkspaceHistory);
+          readWorkspaceCalls(true);
+          readWorkspaceFiles(face.historyBranch, face.historyPath || '', true);
+        }
+      }]);
+    body.appendChild(surfaceHead('Knowledge', 'Workspace history',
+      'One Store, every branch a delegated child worked: the tree as it stands — the ' +
+      'store\u2019s figures and the files live in the pane.', instrument));
+    body.appendChild(surfaceStrip([
+      [branches.length, 'branches'],
+      [commits, 'commits'],
+      [layers.length, 'layers'],
+      [storage ? Math.round(storage.stored / 1048576) : 0, 'MB stored'],
+      [storage && storage.canonical > 0
+        ? Math.round((storage.logical / storage.canonical) * 100) / 100
+        : '\u2014', 'dedupe'],
+      [(read.refused || []).length, 'reads refused', (read.refused || []).length ? 'down' : null]
+    ], read.project ? 'project ' + read.project : 'no project registered'));
+    if ((read.refused || []).length) {
+      body.appendChild(refusedCard(read.refused));
+    }
+    body.appendChild(historyDag(read));
+    body.appendChild(historyWork(read));
+    body.appendChild(face.calls ? historyCalls(face.calls) : historyCalls({ calls: [] }));
+    if (refusedNames.length) {
+      el.workspaceHistoryBoard.appendChild(refusedCard(refusedNames));
+    }
   }
 
   // The live feed's page: one read per refresh, riding `since` so a
@@ -10842,79 +11070,17 @@
         face.historyFiles = doc;
         face.historyFilesKey = key;
         if (face.panel === 'workspace-history') paintWorkspaceHistory();
+        // The files card lives in the pane: an open project card
+        // re-renders with what just landed, so the listing and the
+        // instruments are never a stale reading state.
+        if (document.body.dataset.objectCard === 'open'
+          && face.history && el.dockObjectTitle.textContent === face.history.project) {
+          openWorkspaceCard();
+        }
       })
       .catch(function () { });
   }
 
-  function paintWorkspaceHistory() {
-    var read = face.history;
-    el.workspaceHistoryBoard.textContent = '';
-    if (!read) {
-      el.workspaceHistoryBoard.appendChild(surfaceHead('Knowledge', 'Workspace history',
-        'One Store, every branch a delegated child worked: the tree as it stands, and the ' +
-        'figures behind it.', null));
-      var waiting = boardCard(12, 'reading', null, null);
-      waiting.appendChild(node('p', 'board-empty',
-        'The substrate read has not landed yet. It reads the LayerFS Store through the ' +
-        'same composed environment a delegation spawns with.'));
-      el.workspaceHistoryBoard.appendChild(waiting);
-      return;
-    }
-    var branches = read.branches || [];
-    var layers = read.layers || [];
-    var commits = (read.commits || []).length;
-    var storage = read.storage || null;
-    var instrument = surfaceInstrument('the store',
-      read.registered === false ? 'no project' : (read.project || 'the project'),
-      read.registered === false
-        ? 'the launch folder has no LayerFS project yet'
-        : (read.truncated ? 'the newest ' : '') +
-           branches.length + (branches.length === 1 ? ' branch' : ' branches') +
-           ' \u00b7 ' + commits + ' commits \u00b7 ' + layers.length +
-           (layers.length === 1 ? ' layer' : ' layers'),
-      [{
-        label: 'refresh',
-        run: function () {
-          readWorkspaceHistory(true).then(paintWorkspaceHistory);
-          readWorkspaceCalls(true);
-          readWorkspaceFiles(face.historyBranch, face.historyPath || '', true);
-        }
-      }]);
-    el.workspaceHistoryBoard.appendChild(surfaceHead('Knowledge', 'Workspace history',
-      'One Store, every branch a delegated child worked: the tree as it stands, and the ' +
-      'figures behind it.', instrument));
-    el.workspaceHistoryBoard.appendChild(surfaceStrip([
-      [branches.length, 'branches'],
-      [commits, 'commits'],
-      [layers.length, 'layers'],
-      [storage ? Math.round(storage.stored / 1048576) : 0, 'MB stored'],
-      [storage && storage.canonical > 0
-        ? Math.round((storage.logical / storage.canonical) * 100) / 100
-        : '\u2014', 'dedupe'],
-      [(read.refused || []).length, 'reads refused', (read.refused || []).length ? 'down' : null]
-    ], read.project ? 'project ' + read.project : 'no project registered'));
-
-    if (read.registered === false) {
-      var none = boardCard(12, 'the tree', null, null);
-      none.appendChild(node('p', 'board-empty', read.note ||
-        'This folder has no LayerFS project. The first delegation launched here registers ' +
-        'one, and the tree it worked appears on this surface.'));
-      none.appendChild(node('p', 'board-empty',
-        'The substrate is the isolation a delegated run works in: the child\u2019s writes ' +
-        'land on its own branch, and nothing reaches the working tree until a merge is ' +
-        'published. A folder that has never delegated has no history to show.'));
-      el.workspaceHistoryBoard.appendChild(none);
-      return;
-    }
-    if ((read.refused || []).length) {
-      el.workspaceHistoryBoard.appendChild(refusedCard(read.refused));
-    }
-    el.workspaceHistoryBoard.appendChild(historyDag(read));
-    el.workspaceHistoryBoard.appendChild(historyWork(read));
-    el.workspaceHistoryBoard.appendChild(face.calls ? historyCalls(face.calls) : historyCalls({ calls: [] }));
-    el.workspaceHistoryBoard.appendChild(historyFiles(read));
-    el.workspaceHistoryBoard.appendChild(historyStorage(read));
-  }
 
   // The tree: the substrate's history as the reference draws it —
   // main's spine carries a BAND for every Layer, each branch with work
@@ -11502,6 +11668,7 @@
     face.historyPage = 0;
     readWorkspaceFiles(ref, '', true);
     paintWorkspaceHistory();
+    openWorkspaceCard();
   }
 
   // The Work pane: every branch with work as one row — its head
@@ -11933,6 +12100,10 @@
         face.historyFile = doc;
         face.historyFileKey = key;
         if (face.panel === 'workspace-history') paintWorkspaceHistory();
+        if (document.body.dataset.objectCard === 'open'
+          && face.history && el.dockObjectTitle.textContent === face.history.project) {
+          openWorkspaceCard();
+        }
       })
       .catch(function () { });
   }

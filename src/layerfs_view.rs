@@ -535,24 +535,75 @@ fn truncation_word(view: &HistoryView) -> Option<String> {
 /// substrate still holds current answers `unchanged` and the caller's
 /// view stands.
 pub fn workspace_history(cwd: &Path, since: Option<&str>) -> serde_json::Value {
+    workspace_history_for(cwd, since)
+}
+
+/// The section's document for one folder, made explicit — the rail's
+/// per-project read. The launch-folder path delegates here.
+pub fn workspace_history_for(folder: &Path, since: Option<&str>) -> serde_json::Value {
     let Ok(home) = crate::home::fleet_home(
         std::env::var("FLEET_HOME").ok().as_deref(),
         std::env::var("HOME").ok().as_deref(),
     ) else {
         return json!({ "type": "workspace-history", "refused": ["no fleet home is known"] });
     };
-    let Some((folder, registration)) = registered_folder(cwd) else {
+    let Some((folder, registration)) = registered_folder(folder) else {
         return json!({
             "type": "workspace-history",
             "registered": false,
-            "folder": cwd.display().to_string(),
+            "folder": folder.display().to_string(),
             "branches": [],
             "layers": [],
             "refused": [],
             "note": "this folder has no LayerFS project — the first delegation here registers one",
         });
     };
-    match history(&registration, &home, since) {
+    project_document(&folder, &registration, &home, since)
+}
+
+/// One project's section document, by its registered folder's path —
+/// the rail's per-project read for a face that serves every registered
+/// folder. The path is the project's identity the way the control
+/// tower and the second brain resolve projects: the registration map's
+/// own key, canonicalized the same way the arm's lookup is. A path no
+/// registration carries is refused by name.
+pub fn workspace_history_for_registered(folder: &str, since: Option<&str>) -> serde_json::Value {
+    let Ok(home) = crate::home::fleet_home(
+        std::env::var("FLEET_HOME").ok().as_deref(),
+        std::env::var("HOME").ok().as_deref(),
+    ) else {
+        return json!({ "type": "workspace-history", "refused": ["no fleet home is known"] });
+    };
+    let canonical = std::path::Path::new(folder)
+        .canonicalize()
+        .unwrap_or_else(|_| std::path::PathBuf::from(folder));
+    let Some((registered, registration)) = crate::layerfs_tools::read_registrations()
+        .into_iter()
+        .find(|(path, _)| std::path::Path::new(path) == canonical.as_path())
+    else {
+        return json!({
+            "type": "workspace-history",
+            "registered": false,
+            "folder": folder,
+            "branches": [],
+            "layers": [],
+            "refused": [],
+            "note": format!("no registered project at `{folder}`"),
+        });
+    };
+    project_document(&registered, &registration, &home, since)
+}
+
+/// The read for one resolved registration, rendered either way it can
+/// answer — the full view, the `unchanged` version stamp, or the named
+/// refusal. One body, three callers.
+fn project_document(
+    folder: &str,
+    registration: &Registration,
+    home: &Path,
+    since: Option<&str>,
+) -> serde_json::Value {
+    match history(registration, home, since) {
         Ok(HistoryRead::Unchanged(version)) => json!({
             "type": "workspace-history",
             "unchanged": true,
@@ -652,6 +703,93 @@ pub fn workspace_history(cwd: &Path, since: Option<&str>) -> serde_json::Value {
             "refused": [reason],
         }),
     }
+}
+
+/// The activity window the owner set, in days: a project whose newest
+/// commit is older than this is absent from the rail — the rule is the
+/// owner's own words, fixed, not a knob.
+pub const ACTIVITY_WINDOW_DAYS: i64 = 42;
+
+/// The rail document: every registered folder read once, named by its
+/// registration, ordered newest-activity first. A project whose newest
+/// commit falls inside [`ACTIVITY_WINDOW_DAYS`] carries its full view;
+/// one outside is absent — the owner's filter is the rule. A project
+/// whose read died names the substrate's own refusal in
+/// `refused_projects`, because a broken read is not inactivity and an
+/// unexplained absence is the one shape this surface never draws. A
+/// project with no commits at all has no activity to measure and is
+/// absent with the rest.
+pub fn workspace_projects() -> serde_json::Value {
+    let Ok(home) = crate::home::fleet_home(
+        std::env::var("FLEET_HOME").ok().as_deref(),
+        std::env::var("HOME").ok().as_deref(),
+    ) else {
+        return json!({ "type": "workspace-history-rail", "refused": ["no fleet home is known"] });
+    };
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|since| since.as_millis() as i64)
+        .unwrap_or(0);
+    let window_ms = ACTIVITY_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+    let mut projects: Vec<(i64, serde_json::Value)> = Vec::new();
+    let mut refused_projects: Vec<serde_json::Value> = Vec::new();
+    for (folder, registration) in crate::layerfs_tools::read_registrations() {
+        match history(&registration, &home, None) {
+            Ok(HistoryRead::Full(view)) => {
+                let newest = view.commits.iter().map(|commit| commit.time).max();
+                // The activity measure is two-sided: the newest
+                // commit, and — for a store that has never committed —
+                // the creation the substrate itself recorded in the
+                // project's runtime record. The import IS the store's
+                // first activity (the fleet store restarted empty when
+                // its volume was re-created, and the project's origin
+                // is exactly that event); the record's `created` keeps
+                // a freshly-registered project visible until real work
+                // or the window retires it. A project neither dated
+                // falls back to its commits alone — absent.
+                let birth = crate::layerfs_tools::runtime_created(&registration.name);
+                let active = match (newest, birth) {
+                    (Some(time), Some(at)) => now_ms - time.max(at) <= window_ms,
+                    (Some(time), None) => now_ms - time <= window_ms,
+                    (None, Some(at)) => now_ms - at <= window_ms,
+                    (None, None) => false,
+                };
+                if !active {
+                    continue;
+                }
+                let document = project_document(&folder, &registration, &home, None);
+                let summary = json!({
+                    "name": registration.name,
+                    "folder": folder,
+                    "active": true,
+                    "newest": newest,
+                    "branches": document["branches"].as_array().map(Vec::len).unwrap_or(0),
+                    "commits": document["commits"].as_array().map(Vec::len).unwrap_or(0),
+                    "layers": document["layers"].as_array().map(Vec::len).unwrap_or(0),
+                    "stored": document["storage"]["stored"],
+                    "truncated": document["truncated"],
+                    "view": document,
+                });
+                projects.push((newest.unwrap_or(0), summary));
+            }
+            // A version stamp never reaches the rail: the rail reads
+            // whole, once per window.
+            Ok(HistoryRead::Unchanged(_)) => {}
+            Err(reason) => refused_projects.push(json!({
+                "name": registration.name,
+                "folder": folder,
+                "refused": [reason],
+            })),
+        }
+    }
+    projects.sort_by(|left, right| right.0.cmp(&left.0));
+    json!({
+        "type": "workspace-history-rail",
+        "window_days": ACTIVITY_WINDOW_DAYS,
+        "projects": projects.into_iter().map(|(_, summary)| summary).collect::<Vec<_>>(),
+        "refused_projects": refused_projects,
+        "refused": [],
+    })
 }
 
 /// The live feed's tail state: per-file read offsets and the partial
@@ -2481,6 +2619,162 @@ if (process.argv[4] === "--comparable") {
             .and_then(serde_json::Value::as_array)
             .unwrap()
             .is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// H1: the rail document filters to the owner's six-week window —
+    /// a project whose newest commit sits inside it carries its full
+    /// view, one outside is absent, and a read that dies names the
+    /// substrate's own refusal rather than an unexplained absence. The
+    /// stub keys its answers off the store path the composed
+    /// environment carries, so one config holds all four cases.
+    #[test]
+    fn the_rail_document_filters_to_the_six_week_window() {
+        let _lock = crate::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let root = std::env::temp_dir().join(format!(
+            "fleet-layerfs-rail-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let fleet_home = view_home(&root);
+        let _home = EnvGuard::set("FLEET_HOME", &fleet_home);
+        // Three registrations: two active, one stale, one whose read
+        // dies. The config carries all four; the stub tells them apart
+        // by the store path the composed environment sets.
+        let document = serde_json::json!({
+            "calib": { "log_root": root.join("calib").display().to_string() },
+            "layerfs": { "projects": {
+                "/proj/active-a": { "name": "active-a", "store": "/stores/active-a.sqlite" },
+                "/proj/active-b": { "name": "active-b", "store": "/stores/active-b.sqlite" },
+                "/proj/stale": { "name": "stale", "store": "/stores/stale.sqlite" },
+                "/proj/dead": { "name": "dead", "store": "/stores/dead.sqlite" },
+                "/proj/imported": {
+                    "name": "imported",
+                    "store": root.join("stores/imported.sqlite").display().to_string(),
+                },
+            } },
+        });
+        // The imported store's activity is the substrate's own runtime
+        // record: created now, zero commits — the import is the origin.
+        let runtime = fleet_home.join("layerfs-home/.runtime/projects");
+        std::fs::create_dir_all(&runtime).unwrap();
+        std::fs::write(
+            runtime.join("imported.json"),
+            serde_json::json!({
+                "name": "imported",
+                "created": std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis() as i64)
+                    .unwrap_or(0),
+            })
+            .to_string(),
+        )
+        .unwrap();
+        std::fs::write(fleet_home.join("config.json"), document.to_string()).unwrap();
+        let cli = stub_cli_refuses_calls(&root.join("stub"));
+        let _cli = EnvGuard::set("FLEET_LAYERFS_BIN", &cli);
+        // The stub: the live answer for the active stores, a commit
+        // fifty days old for the stale one, and a refusal for the dead
+        // one — keyed on LAYERFS_STORE_PATH, which backend_answer sets
+        // from the registration before the spawn.
+        let script = root.join("history");
+        std::fs::create_dir_all(&script).unwrap();
+        let script = script.join("history.mjs");
+        std::fs::write(
+            &script,
+            r#"import { writeFileSync } from "node:fs";
+const store = process.env.LAYERFS_STORE_PATH || "";
+const now = Date.now();
+const commit = (time) => ({
+  branches: [{ name: "main", commits: [] }, { name: "child", commits: ["c1"] }],
+  commits: [{ id: "c1", branch: "child", time, via: "fs", lww: [] }],
+  layers: [{ id: "l1" }],
+  storage: { logical: 10, canonical: 8, stored: 6, metadata: 2, file: 4096, free: 100 },
+  version: "v1",
+});
+if (store.endsWith("stale.sqlite")) {
+  console.log(JSON.stringify(commit(now - 50 * 24 * 3600 * 1000)));
+} else if (store.endsWith("dead.sqlite")) {
+  console.error("the store volume is gone");
+  process.exit(1);
+} else if (store.endsWith("imported.sqlite")) {
+  console.log(JSON.stringify({
+    branches: [{ name: "main", commits: [] }],
+    commits: [],
+    layers: [{ id: "l1" }],
+    storage: { logical: 10, canonical: 8, stored: 6, metadata: 2, file: 4096, free: 100 },
+    version: "v1",
+  }));
+} else {
+  console.log(JSON.stringify(commit(now - 3600 * 1000)));
+}
+"#,
+        )
+        .unwrap();
+        let _history = EnvGuard::set("FLEET_LAYERFS_HISTORY", &script);
+
+        let rail = workspace_projects();
+        assert_eq!(rail["type"], "workspace-history-rail");
+        assert_eq!(rail["window_days"], ACTIVITY_WINDOW_DAYS);
+        let projects = rail["projects"].as_array().expect("the projects");
+        let names: Vec<&str> = projects.iter().filter_map(|p| p["name"].as_str()).collect();
+        // The stale project is absent, the two active ones carry their
+        // views, newest first — the two stubs answer milliseconds
+        // apart, so the pair is asserted as a set and the order by the
+        // sort's own rule.
+        assert_eq!(names.len(), 3, "{rail}");
+        assert!(
+            names.contains(&"active-a") && names.contains(&"active-b"),
+            "{rail}"
+        );
+        // The imported store: no commits, a fresh birthtime — active.
+        assert!(names.contains(&"imported"), "{rail}");
+        assert!(!names.contains(&"stale"), "{rail}");
+        assert!(projects[0]["newest"].as_i64().unwrap() >= projects[1]["newest"].as_i64().unwrap());
+        for project in projects {
+            assert_eq!(project["active"], true);
+            if project["name"] == "imported" {
+                // The imported store's own shape: no commits, the
+                // import's origin.
+                assert!(project["view"]["commits"].as_array().unwrap().is_empty());
+            } else {
+                assert!(project["view"]["branches"].as_array().unwrap().len() == 2);
+                assert!(project["newest"].as_i64().unwrap() > 0);
+            }
+        }
+        // The dead read names the substrate's own refusal — a broken
+        // read is not inactivity, and an unexplained absence is the one
+        // shape the surface never draws.
+        let refused = rail["refused_projects"].as_array().expect("the refusals");
+        assert_eq!(refused.len(), 1, "{rail}");
+        assert_eq!(refused[0]["name"], "dead");
+        assert!(
+            refused[0]["refused"][0]
+                .as_str()
+                .unwrap_or_default()
+                .contains("store volume"),
+            "{refused:?}"
+        );
+        // By path: the rail section's own read answers the project's
+        // full view, and an unknown path is refused by name — the
+        // control tower's and the second brain's resolution.
+        let one = workspace_history_for_registered("/proj/active-a", None);
+        assert_eq!(one["project"], "active-a");
+        assert_eq!(one["branches"].as_array().unwrap().len(), 2);
+        let unknown = workspace_history_for_registered("/proj/nowhere", None);
+        assert!(
+            unknown["note"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("no registered project"),
+            "{unknown}"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 }

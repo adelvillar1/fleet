@@ -120,28 +120,14 @@ one line its last session left behind, with the decisions that need a
 person kept beside them. Fleet surfaces what the tool publishes and
 forwards its actions; it does not reimplement the tool.
 
-**Knowledge — workspace history.** The LayerFS substrate's tree as
-fleet's own history, drawn the way the substrate talks about it: a band
-per published layer, a lane per branch that has work, a leaf per
-commit, a dashed stem where a publish grafted work back, and one chip
-for the branches nobody worked. Beside the tree sit the work (each
-branch's head, fork layer, state and the child session that worked it),
-the substrate's live call feed, a file's own instruments (its text, its
-blame, its revisions, and the diff it last took), and the Store's
-accounting — on disk, unique, compressed, the metadata subset, the
-SQLite overhead named apart, the Import record, and what each commit
-cost. The whole thing answers from one backend read in under a
-quarter-second, and a refresh that found nothing moved re-reads
-nothing. Read the tree; follow a commit to its branch; see which
-children merged back and which are still open — and from the
-Delegation panel, click a child's branch straight through.
-A settled merge comes home through the parent's own gated write path,
-holding any file the owner touched since the fork; the import carries
-what a git repo declares (its tracked files), so a build tree never
-blocks a registration, and each spawn syncs the host's newer tracked
-files onto the fresh fork — the child works from the folder as it
-stands. A machine that has not provisioned the substrate
-says so rather than drawing an empty tree.
+**Knowledge — workspace history.** The substrate's projects on the work
+rail's idiom: one section per registered project with activity in the
+past six weeks (the newest commit, or the substrate's own creation
+record), newest first, resolved by folder path. The tree, the work, and
+the live call feed render for the project whose section is open; the
+store's accounting and the files browser live in the right pane, one
+press from the project, with the tree's click landing there at the ref.
+A read that dies names the substrate's own refusal on one card.
 
 **System — bots.** The channels that carry work in from outside: who is
 paired, what they may do, whether the service is listening, and what

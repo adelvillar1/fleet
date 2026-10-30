@@ -406,6 +406,54 @@ function boot(options) {
         json: () => Promise.resolve(documents.memory || { type: 'memory', facts: [], hits: [] }),
       });
     }
+    if (pathOnly === '/api/workspace-history') {
+      const askedProject = new URL('http://x' + url).searchParams.get('project') || '';
+      if (askedProject) {
+        const project = documents['workspace-project'];
+        const document = typeof project === 'function'
+          ? project(askedProject)
+          : (project || documents['workspace-history'] || {});
+        return Promise.resolve({
+          status: 200,
+          json: () => Promise.resolve(document),
+        });
+      }
+      if (documents['workspace-history-rail']) {
+        return Promise.resolve({
+          status: 200,
+          json: () => Promise.resolve(documents['workspace-history-rail']),
+        });
+      }
+      // A case that carried only the flat document: the rail wraps it,
+      // the way the server's own enumeration would.
+      const flat = documents['workspace-history'];
+      if (flat && flat.registered !== false) {
+        const newest = (flat.commits || []).reduce((at, commit) =>
+          Math.max(at, commit.time || 0), 0);
+        return Promise.resolve({
+          status: 200,
+          json: () => Promise.resolve({
+            type: 'workspace-history-rail', window_days: 42,
+            projects: [{
+              name: flat.project, folder: flat.folder, active: true, newest,
+              branches: (flat.branches || []).length,
+              commits: (flat.commits || []).length,
+              layers: (flat.layers || []).length,
+              stored: flat.storage ? flat.storage.stored : null,
+              truncated: flat.truncated, view: flat,
+            }],
+            refused_projects: [], refused: [],
+          }),
+        });
+      }
+      return Promise.resolve({
+        status: 200,
+        json: () => Promise.resolve({
+          type: 'workspace-history-rail', projects: [], refused_projects: [],
+          refused: [], note: flat && flat.note,
+        }),
+      });
+    }
     if (pathOnly === '/api/skills') {
       return Promise.resolve({
         status: 200,
@@ -2154,6 +2202,14 @@ async function theStripsLinesOpenTheirRecord() {
 // bars. An unregistered folder names itself instead of drawing an
 // empty tree.
 async function theWorkspaceHistorySectionDrawsTheTreeItRead() {
+
+  // The section press: the rail row's click lands the project's pane
+  // card (the store and the files) — one press from the project.
+  const pressRail = async (aPage) => {
+    const railRow = aPage.rows('.section-rail-row')[0];
+    if (railRow) railRow.click();
+    await flush(60);
+  };
   // The one-read payload: branches with their fork bases, the commits
   // flat (each naming its branch and base), the layers with their
   // publish evidence, the nine figures with the Init record.
@@ -2211,6 +2267,8 @@ async function theWorkspaceHistorySectionDrawsTheTreeItRead() {
   await flush();
   page.open();
   await flush();
+  await pressRail(page);
+
 
   // The rail carries the destination under knowledge, beside its
   // siblings — the fourth entry, not a fifth top-level group.
@@ -2284,6 +2342,7 @@ async function theWorkspaceHistorySectionDrawsTheTreeItRead() {
   await flush();
   fed.open();
   await flush();
+  await pressRail(fed);
   const feedText = fed.rows('.board-card').map((c) => c.textContent).join(' ');
   check('the feed names the actor and the call',
     feedText.includes('20261026T010000Z-abc123') && feedText.includes('fs.write'),
@@ -2304,6 +2363,7 @@ async function theWorkspaceHistorySectionDrawsTheTreeItRead() {
   await flush();
   quiet.open();
   await flush();
+  await pressRail(quiet);
   check('traces off is named, never read as no activity',
     quiet.rows('.board-note').some((n) => /traces are off/.test(n.textContent)),
     quiet.rows('.board-note').map((n) => n.textContent.slice(0, 60)).join(' | '));
@@ -2339,6 +2399,7 @@ async function theWorkspaceHistorySectionDrawsTheTreeItRead() {
   await flush();
   instrument.open();
   await flush();
+  await pressRail(instrument);
   check('the files pane lists the folder',
     instrument.rows('.board-table td').some((n) => n.textContent === 'notes.txt'),
     'the listing');
@@ -2374,6 +2435,7 @@ async function theWorkspaceHistorySectionDrawsTheTreeItRead() {
   await flush();
   blamed.open();
   await flush();
+  await pressRail(blamed);
   // Open the file first — the file's instruments stand on an open
   // file — then switch the mode.
   const blameFile = blamed.rows('.board-table button.link')
@@ -2423,6 +2485,7 @@ async function theWorkspaceHistorySectionDrawsTheTreeItRead() {
   await flush();
   noInit.open();
   await flush();
+  await pressRail(noInit);
   check('a store with no Init record names the absence',
     noInit.rows('.board-note').some((n) => /no Init record/.test(n.textContent)),
     noInit.rows('.board-note').map((n) => n.textContent.slice(0, 50)).join(' | '));
@@ -2433,6 +2496,7 @@ async function theWorkspaceHistorySectionDrawsTheTreeItRead() {
   await flush();
   noFigures.open();
   await flush();
+  await pressRail(noFigures);
   check('a read without figures names its absence',
     noFigures.rows('.board-empty').some((n) => /figures have not landed/.test(n.textContent)),
     noFigures.rows('.board-empty').map((n) => n.textContent.slice(0, 40)).join(' | '));
@@ -2449,6 +2513,7 @@ async function theWorkspaceHistorySectionDrawsTheTreeItRead() {
   await flush();
   cut.open();
   await flush();
+  await pressRail(cut);
   check('the cut is named in words',
     cut.rows('.dag-truncated').some((n) => /more remain in the Store/.test(n.textContent)),
     cut.rows('.dag-truncated').map((n) => n.textContent).join(' | '));
@@ -2525,6 +2590,7 @@ async function theWorkspaceHistorySectionDrawsTheTreeItRead() {
   await flush();
   truth.open();
   await flush();
+  await pressRail(truth);
 
   const truthCards = truth.rows('.board-card').map((c) => c.textContent).join(' ');
   check('a merged branch with no head is work, not idle',
@@ -2596,6 +2662,7 @@ async function theWorkspaceHistorySectionDrawsTheTreeItRead() {
   await flush();
   busy.open();
   await flush();
+  await pressRail(busy);
   const plotOf = (aPage) => aPage.rows('svg')
     .find((svgEl) => svgEl.getAttribute('aria-label') === 'the workspace history tree');
   const busyPlot = plotOf(busy);
@@ -2623,6 +2690,7 @@ async function theWorkspaceHistorySectionDrawsTheTreeItRead() {
   await flush();
   empty.open();
   await flush();
+  await pressRail(empty);
   check('the unregistered folder names its absence',
     empty.rows('.board-empty').some((n) => /no LayerFS project/.test(n.textContent)),
     empty.rows('.board-empty').map((n) => n.textContent.trim().slice(0, 60)).join(' | '));
@@ -4375,6 +4443,109 @@ async function theMemoryRailCarriesTheQueueAndTheVerbs() {
     today.rows('.section-body')[0].dataset.section);
 }
 
+
+async function theWorkspaceRailCarriesTheProjectsAndThePane() {
+  // Two registered projects with recent activity; a third outside the
+  // six-week window is the server's to omit (the Rust pin owns that
+  // rule — the face renders what the rail carries).
+  const view = (name) => ({
+    type: 'workspace-history', registered: true, folder: '/proj/' + name,
+    project: name, version: 'v-' + name,
+    branches: [
+      { name: 'main', base: 'aa11', head: null, forked_from: null, state: 'idle', child: null },
+      { name: name + '-child', base: 'aa11', head: 'cc11', forked_from: 'aa11',
+        state: 'merged', child: { session: name + '-session', outcome: 'completed' } },
+    ],
+    commits: [{ id: 'cc11', branch: name + '-child', parent: null, second_parent: null,
+      base: 'aa11', merged_from: null, displaced: null, lww: [], lww_truncated: false,
+      logical: 100, new_canonical: 10, new_stored: 6, new_metadata: 2, via: 'fs',
+      message: 'fleet: write_file', time: Date.now() - 3600 * 1000, root: 'r1' }],
+    layers: [{ id: 'l1', logical: 100, parent: 'aa11', root: null,
+      source_branch: 'merge-' + name + '-child', source_commit: 'cc11', overwrote_count: 0 }],
+    storage: { logical: 100, canonical: 80, stored: 60, metadata: 10, file: 4096,
+      free: 0, dedupe: 1.25, compression: 1.6,
+      init: { entries: 5, files: 4, bytes: 80, canonical: 80, stored: 60, metadata: 10, millis: 5 } },
+    cut_branches: [], truncated: null, note: null, refused: [],
+  });
+  const rail = {
+    type: 'workspace-history-rail', window_days: 42,
+    projects: [
+      { name: 'beta', folder: '/proj/beta', active: true, newest: Date.now() - 60 * 1000,
+        branches: 2, commits: 1, layers: 1, stored: 60, truncated: null, view: view('beta') },
+      { name: 'alpha', folder: '/proj/alpha', active: true, newest: Date.now() - 3600 * 1000,
+        branches: 2, commits: 1, layers: 1, stored: 60, truncated: null, view: view('alpha') },
+    ],
+    refused_projects: [],
+    refused: [],
+  };
+  const bootRail = (hash) => boot({
+    width: 1440, hash,
+    documents: {
+      'workspace-history-rail': rail,
+      'workspace-project': (asked) => {
+        // The project read is keyed by the folder path — the control
+        // tower's identity; the view carries the registration's name.
+        return view(asked.split('/').pop());
+      },
+      'workspace-history/files': {
+        type: 'workspace-files', branch: 'beta-child', path: '/', items: [],
+      },
+    },
+  });
+
+  const page = bootRail('#/workspace-history');
+  await flush();
+  page.open();
+  await flush(80);
+
+  // The rail: the projects the document carries, newest first, badges
+  // the branch counts.
+  const railRows = page.rows('.section-rail-row');
+  const railText = railRows.map((row) => row.textContent);
+  check('WORKSPACE the rail carries the active projects, newest first',
+    railRows.length === 2 && railText[0].includes('beta') && railText[1].includes('alpha'),
+    railText.join(' | '));
+  check('WORKSPACE one section renders at a time',
+    page.rows('.section-body').length === 1 &&
+      page.rows('.section-body')[0].dataset.section === '/proj/beta',
+    page.rows('.section-body').map((b) => b.dataset.section).join(','));
+
+  // A project is an address: the encoded folder path opens it.
+  const routed = bootRail('#/workspace-history/' + encodeURIComponent('/proj/alpha'));
+  await flush();
+  routed.open();
+  await flush(80);
+  check('WORKSPACE a project is an address',
+    routed.rows('.section-body')[0].dataset.section === '/proj/alpha' &&
+      routed.text('workspace-history-board').includes('project alpha'),
+    routed.rows('.section-body')[0].dataset.section);
+
+  // The press opens the pane card: the store and the files, one card.
+  routed.rows('.section-rail-row')[0].click();
+  await flush(80);
+  check('WORKSPACE the press opens the pane card',
+    routed.body.dataset.objectCard === 'open' &&
+      routed.text('dock-object-title') === 'beta',
+    routed.text('dock-object-title'));
+  const cardText = routed.text('dock-object-body');
+  check('WORKSPACE the card carries the store and the files',
+    cardText.includes('the store') && cardText.includes('the files') &&
+      cardText.includes('on disk') && cardText.includes('init:'),
+    cardText.slice(0, 200));
+  routed.fireOn('dock-object-close', 'click');
+  await flush(40);
+  check('WORKSPACE closing returns the pane\u2019s tabs',
+    routed.body.dataset.objectCard !== 'open', String(routed.body.dataset.objectCard));
+
+  // The tree's click lands in the pane at the ref it named.
+  routed.rows('.dag-tag')[0].click();
+  await flush(80);
+  check('WORKSPACE the tree click opens the card at the ref',
+    routed.body.dataset.objectCard === 'open' &&
+      routed.text('dock-object-title') === 'beta',
+    routed.text('dock-object-title'));
+}
+
 const cases = [
   ['C1/C8 the list groups by attention and counts what the server counted', theListGroupsByAttentionAndCountsWhatTheServerCounted],
   ['C2 every state opens through one verb', everyStateOpensThroughOneVerb],
@@ -4423,6 +4594,7 @@ const cases = [
   ['BOTS the bots rail groups by persona', theBotsRailGroupsByPersona],
   ['SKILL the skills rail carries the categories and the pane', theSkillsRailCarriesOneSectionAtATime],
   ['MEM the memory rail carries the queue and the verbs', theMemoryRailCarriesTheQueueAndTheVerbs],
+  ['WORKSPACE the workspace rail carries the projects and the pane', theWorkspaceRailCarriesTheProjectsAndThePane],
 ];
 
 for (const [name, run] of cases) {
