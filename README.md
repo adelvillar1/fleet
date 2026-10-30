@@ -86,7 +86,7 @@ named, not implied — see Sequencing in
 - **Memory that reads, edits, and remembers its failures** — one
   markdown fact per file, git-tracked, recalled by meaning, shape-first: the problem's shape partitions recall and the words corroborate within it. Facts carry the vocabulary of trajectories that diverged as anti-vectors, the three endings of a problem (diverged, incomplete, resolved), the owner's own corrections as a tier that is never evicted, and an hourly consolidation that supersedes and archives what aged out. The corpus and its recall counts are both inspectable.
 - **Compaction that scales with the model** — the trigger is three fifths of the serving model's declared window, with a 100k floor, a 32k reserve at the edge, and the last four turns verbatim, so a 128k model and a 1M model run the same rule at different scales.
-- **Skills as procedural memory** — the canonical cross-harness library read in place, disclosed description-first, fetched on demand, with the harness's own drafts waiting as proposals that never apply silently.
+- **Skills as procedural memory** — the canonical cross-harness library read in place, disclosed description-first, fetched on demand, arranged on the rail by declared category, with the harness's own drafts waiting as proposals that never apply silently — and an approve that lands a home-side write on its own validations, no repo gate required.
 - **Delegation with a record** — a child is a real session on a scoped
   tool set, routed by the router over its own brief, with the plan's
   dependency graph carried beside it.
@@ -95,7 +95,11 @@ named, not implied — see Sequencing in
 - **Credentials that seal** — a vault that lists names and renders no
   value, with onboarding that migrates the plaintext `.env`.
 
-The console, surface by surface — every destination a user lands on:
+The console, surface by surface — every destination a user lands on.
+The long pages run one idiom: a rail of sections (what needs you first,
+then the substrate's own categories), one section at a time, one-line
+rows, and the right pane for the item — settings, bots, skills, memory,
+workspace history, and calibration all share it.
 
 | | |
 |---|---|
