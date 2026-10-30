@@ -512,7 +512,26 @@ opening block"). Recall hits re-arm per curation. K4:
 (the system message byte-identical across all three requests, the note
 at the first request's tail only, the steer as the owner's message, the
 record at turn 1) and `the_first_steer_curates_and_the_record_lands_once`.
-K5: `the_drift_floor_decides_deterministically`.
+K5: `the_drift_floor_decides_deterministically`, **and the real-session
+replay the criterion names**: the steer sequence of real session
+`20261028T162708Z-997a54b4` (four control-file steers, read from
+`~/.fleet/sessions`, frame-stripped) replayed against the production
+embedder at 8901 through `maybe_curate`'s exact algorithm — opening
+task as the base, the base advancing to each steer whatever the
+verdict. The decisions: steer 1 fires (definition), steers 2 and 3
+**hold** (cosine 0.882 and 0.884 — both continue the same
+router-discussion thread, and holding is right), steer 9 **fires**
+(cosine 0.689 against steer 3 — it pivots to a genuinely new
+instruction, and firing is right). Zero mis-fires on the real pairs,
+and the decision set is identical at floors 0.72, 0.78 and 0.84 — the
+real data's gap (0.689 vs 0.882) brackets 0.78 with margin on both
+sides, so the floor is not knife-edge. One honest observation recorded
+for whatever later work touches the trigger: the session's plain
+(non-steer) owner turns — "continue", "create a plan to fix both
+issues" — embed low (0.644–0.701) against longer bases because short
+imperatives lose to length; they never reach `maybe_curate` today
+(only steers do), but a chat-mode curation path would need
+length-normalized comparison before trusting this floor on them.
 
 C3: `withhold_core` — the workload profile's rank is the score, the
 explicit `CORE_KEEP` list (the eight working tools, the capability
