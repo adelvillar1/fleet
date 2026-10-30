@@ -3256,6 +3256,13 @@ impl Bridge {
     /// Set or clear this session's standing objective, and show the
     /// change where the owner is: one transcript line, carrying what
     /// every following run will be told.
+    /// The standing objective's bound: a goal rides EVERY following
+    /// run's system prompt, so a paste gone wrong into the goal chip is
+    /// a silent per-run tax until someone re-sets it (KI-378's find).
+    /// The ceiling is the composer chip's own scale — an objective is a
+    /// sentence or a paragraph, not a document.
+    pub const GOAL_MAX_CHARS: usize = 2_000;
+
     pub fn set_goal(&self, session: &str, asked: Option<&str>) -> Result<Value, String> {
         // A goal set before the first run rides the pending key, the
         // workdirs' own shape: the thread names the launch session on the
@@ -3268,7 +3275,17 @@ impl Bridge {
         let text = asked
             .map(str::trim)
             .filter(|text| !text.is_empty())
-            .map(str::to_string);
+            .map(|text| {
+                if text.chars().count() > Self::GOAL_MAX_CHARS {
+                    return Err(format!(
+                        "the goal is {} characters; the standing objective rides every run's prompt, and the ceiling is {} — say what the work is for, not everything about it",
+                        text.chars().count(),
+                        Self::GOAL_MAX_CHARS,
+                    ));
+                }
+                Ok(text.to_string())
+            })
+            .transpose()?;
         let mut goals = load_goals(&self.home);
         match &text {
             Some(text) => {
@@ -8733,6 +8750,31 @@ mod tests {
         let (title, from) = title_ladder(None, None, None, Some("the first words".into()));
         assert_eq!(title.as_deref(), Some("the first words"));
         assert_eq!(from, "first");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_goal_refuses_past_its_ceiling() {
+        // KI-378: the standing objective rides every run's prompt, so
+        // the writer bounds it — a paste gone wrong into the goal chip
+        // is a silent per-run tax until someone re-sets it.
+        let home = std::env::temp_dir().join(format!("fleet-goal-bound-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        let (bridge, _sources) = Bridge::detached(
+            home,
+            "deepseek-flash".to_string(),
+            Some("session-test".to_string()),
+        );
+        let over = "g".repeat(Bridge::GOAL_MAX_CHARS + 1);
+        let refused = bridge.set_goal("", Some(&over));
+        assert!(refused.is_err(), "{refused:?}");
+        assert!(
+            refused.unwrap_err().contains("ceiling"),
+            "the refusal names the bound"
+        );
+        // A goal at the ceiling lands.
+        let landed = bridge.set_goal("", Some(&"g".repeat(Bridge::GOAL_MAX_CHARS)));
+        assert!(landed.is_ok(), "{landed:?}");
     }
 
     #[test]
