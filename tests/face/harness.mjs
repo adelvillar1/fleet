@@ -142,6 +142,19 @@ class El {
   get firstChild() { return this.children.length ? this.children[0] : null; }
   get firstElementChild() { return this.firstChild; }
   appendChild(child) { child.parentNode = this; this.children.push(child); return child; }
+  insertBefore(child, before) {
+    child.parentNode = this;
+    const at = before ? this.children.indexOf(before) : -1;
+    if (at < 0) this.children.push(child);
+    else this.children.splice(at, 0, child);
+    return child;
+  }
+  removeChild(child) {
+    const at = this.children.indexOf(child);
+    if (at >= 0) this.children.splice(at, 1);
+    child.parentNode = null;
+    return child;
+  }
   setAttribute(k, v) {
     this.attrs[k] = String(v);
     if (k === 'id') this.id = String(v);
@@ -1176,8 +1189,10 @@ async function theConversationTextSizeIsTheOwners() {
 // rows with their import buttons; an unsupported row's import disabled
 // with the reason; and a value the face is handed never prints.
 async function theServersCardCarriesTheRegistry() {
-  // The servers card lives in the specialists section: the address is
-  // what carries a reader there now, not the scroll position.
+  // The servers live in the specialists section as one-line rows; their
+  // probe, source, env names and the enable toggle live in the item card
+  // the row opens (the 2026-10-30 revamp), and the scan keeps its own
+  // action row so discovery did not leave with the card.
   const page = boot({
     width: 1440,
     hash: '#/settings/specialists',
@@ -1187,82 +1202,77 @@ async function theServersCardCarriesTheRegistry() {
         scalars: [], lists: [], rules: [], env: [],
         cron: [], soul: { present: false, text: '' },
         router: {}, catalog: {}, roles: { entries: [] }, vault: { names: [] },
-        lanes: [],
+        lanes: { lanes: [] },
         servers: {
+          type: 'servers',
           servers: [
-            { name: 'github', enabled: true, program: 'docker',
-              args: ['run', '-i', '--rm', '-e', 'GITHUB_PERSONAL_ACCESS_TOKEN', 'ghcr.io/github/github-mcp-server'],
-              env_names: ['GITHUB_PERSONAL_ACCESS_TOKEN'],
-              last_probe: { at: '2026-10-23T16:30Z', ok: true, server_name: 'github-mcp',
-                server_version: '0.9.0', tools: 12, reason: '' },
-              source: { harness: 'claude-desktop', imported: '2026-10-23' } },
-            { name: 'time', enabled: false, program: 'npx', args: ['-y', 'server-time'],
-              env_names: [], last_probe: null, source: null },
+            { name: 'github', program: 'docker',
+              args: ['run', '-i', '-e', 'GITHUB_PERSONAL_ACCESS_TOKEN=x', 'ghcr.io/github/github-mcp-server'],
+              env_names: ['GITHUB_PERSONAL_ACCESS_TOKEN'], enabled: true,
+              source: { harness: 'claude-desktop', imported: '2026-10-23' },
+              last_probe: { state: 'ok', server_version: 'github-mcp v0.9.0' } },
+            { name: 'time', program: 'npx', args: ['-y', 'server-time'], env_names: [],
+              enabled: false, source: null, last_probe: null },
           ],
         },
       },
     },
-    reply: { type: 'settings_write', op: 'server-scan',
-      scan: { rows: [
-        { name: 'weather', harness: 'claude-desktop', file: '/x/config.json',
-          badge: 'bare interpreter', status: 'available',
-          launch: 'python3 -m weather', env_names: ['OWM_API_KEY'] },
-        { name: 'tinyfish', harness: 'cursor', file: '/x/mcp.json',
-          badge: 'remote endpoint', status: 'unsupported',
-          launch: 'remote endpoint: needs a transport', env_names: [] },
-      ], skips: [] } },
   });
   await flush();
   page.open();
   await flush();
   await flush();
-  const board = () => page.rows('#settings-servers')[0];
-  // The server rows live under the servers card; the plain query caught
-  // none — the board's own rows sit beneath it, so scope the walk.
-  // The stub's selector engine takes no :not() — the scan rows are
-  // filtered by their own class.
-  const serverRows = () =>
-    board() ? board().all('.server-row').filter((row) => !row.className.includes('scan')) : [];
-  check('C8 the servers card is on the board', !!board(), String(!!board()));
-  check('C8 one row per configured server', serverRows().length === 2,
-    String(serverRows().length));
-  const text = board().textContent;
-  check('C8 the row names its server and its probe', text.includes('github') &&
-      text.includes('github-mcp v0.9.0'), text.slice(0, 200));
-  check('C8 the source badge names the harness',
-    text.includes('imported from claude-desktop'), text.slice(0, 300));
-  check('C8 the env line says it resolves at spawn',
-    text.includes('env GITHUB_PERSONAL_ACCESS_TOKEN') && text.includes('resolves at spawn'),
-    text.slice(0, 300));
-  check('C8 the disabled server says so', text.includes('disabled'), '');
-  // The scan: the discovery rows carry the badge, and the unsupported
-  // import is disabled. Every action repaints the board, so each step
-  // re-queries what it clicks.
-  board().all('.bots-act').find((b) => b.dataset.act === 'server-scan').click();
-  await flush(80);
-  check('C8 the scan\'s discovery rows are on the card',
-    serverRows().length === 2 && board().all('.server-row.scan').length === 2,
-    String(board().all('.server-row.scan').length));
-  check('C8 the badge rides the discovery row',
-    board().textContent.includes('bare interpreter'), '');
-  const importButtons = board().all('.server-row.scan').map((row) =>
-    row.all('.bots-act').find((b) => b.dataset.act === 'server-import'));
-  check('C8 the available entry imports', importButtons[0] && !importButtons[0].disabled, '');
-  check('C8 the unsupported entry\'s import is disabled',
-    importButtons[1] && importButtons[1].disabled, '');
-  // The toggle posts the registry's own op and the read repaints.
-  serverRows()[1].all('.bots-act').find((b) => b.dataset.act === 'server-toggle').click();
+
+  const rows = () => page.rows('.cfg-item').filter((row) => row.dataset.kind === 'server');
+  check('C8 one row per configured server', rows().length === 2, String(rows().length));
+  check('C8 a row names its server and its state',
+    rows()[0].textContent.includes('github') && rows()[1].textContent.includes('time') &&
+      rows()[1].textContent.toLowerCase().includes('off'),
+    rows().map((r) => r.textContent).join(' | '));
+
+  // The card carries what the row cannot: the command, the source, the
+  // env names and the toggle.
+  rows()[0].click();
+  await flush(60);
+  const body = () => page.text('dock-object-body');
+  check('C8 the card names the command and its probe',
+    body().includes('ghcr.io/github/github-mcp-server') &&
+      body().includes('github-mcp v0.9.0'),
+    body().slice(0, 200));
+  check('C8 the card names the source harness', body().includes('claude-desktop'),
+    body().slice(0, 300));
+  check('C8 the card says the env name resolves at spawn',
+    body().includes('GITHUB_PERSONAL_ACCESS_TOKEN') && body().includes('at spawn'),
+    body().slice(0, 300));
+  check('C8 the card carries the enable toggle',
+    page.rows('.cfg-card-acts .replay-button').some((b) => /disable|enable/.test(b.textContent)),
+    String(page.rows('.cfg-card-acts .replay-button').length));
+  page.rows('.cfg-card-acts .replay-button')
+    .find((b) => /disable/.test(b.textContent)).click();
   await flush(80);
   const posted = page.calls.filter((c) => c.method === 'POST' && c.url === '/api/settings');
-  check('C8 the toggle posts the registry\'s op',
+  check('C8 the toggle posts the registry\u2019s op',
     posted.some((c) => c.body && c.body.includes('"op":"server"') &&
-      c.body.includes('"name":"time"')),
+      c.body.includes('"name":"github"')),
     JSON.stringify(posted.map((c) => c.body)));
-  // A probe writes its outcome through the same route.
-  serverRows()[0].all('.bots-act').find((b) => b.dataset.act === 'server-probe').click();
+
+  // The scan keeps its own row: discovery is a press, and the import is
+  // one more.
+  check('C8 the scan row is on the list',
+    page.rows('.cfg-item').some((row) => row.dataset.kind === 'action' &&
+      row.textContent.includes('scan this machine')),
+    'scan');
+  page.rows('.cfg-item').find((row) => row.dataset.kind === 'action').click();
+  await flush(60);
+  check('C8 the scan card offers the scan and names what it found',
+    body().includes('scan this machine') && body().includes('Not scanned yet'),
+    body().slice(0, 200));
+  page.rows('.cfg-card-acts .replay-button')
+    .find((b) => /scan this machine/.test(b.textContent)).click();
   await flush(80);
-  check('C8 the probe posts its op',
-    page.calls.some((c) => c.body && c.body.includes('"op":"server-probe"')), '');
+  check('C8 the scan posts the registry\u2019s own op',
+    page.calls.some((c) => c.body && c.body.includes('"op":"server-scan"')),
+    'scan op');
 }
 
 // C1 (the goal): the run bar carries the goal field on every visit —
@@ -3721,6 +3731,135 @@ async function theStrategyStepShowsItsPreview() {
       'scrim hidden=' + page.IDS['pair-scrim'].hidden);
   }
 
+
+// The settings revamp: the rail's eight sections, one at a time, rows
+// that are one line, the item's card in the pane, and the filter that
+// finds across sections.
+async function theSettingsRailCarriesOneSectionAtATime() {
+  const settingsDoc = {
+    type: 'settings', read_at: 'now',
+    scalars: [
+      { key: 'pin', value: '', kind: 'text', source: 'default', summary: 'the pin' },
+      { key: 'approvals', value: 'yes-guarded', kind: 'choice', source: 'file',
+        summary: 'whether tool calls ask', choices: ['ask', 'yes', 'yes-guarded'] },
+      { key: 'FLEET_JUDGE_BUDGET_USD_DAY', value: 0.05, kind: 'usd', source: 'default',
+        summary: 'the judge cap', ceiling: 0.05 },
+      { key: 'ui.adapt', value: 'on', kind: 'text', source: 'default', summary: 'adapt' },
+      { key: 'runs.max_turns', value: 12, kind: 'number', source: 'default', summary: 'turns' },
+    ],
+    lists: [{ key: 'quick', kind: 'workload', detail: '', reverts: true, seed: '' }],
+    rules: [{ label: 'bash · pwd', tool: 'bash', program: 'pwd' }],
+    env: [{ name: 'FLEET_EMBEDDING_ENDPOINT', present: true, source: 'env' },
+      { name: 'FLEET_JUDGE_BUDGET_USD_DAY', present: true, source: 'env' }],
+    cron: [{ name: 'nightly', schedule: '0 3 * * *', task: 'sweep', enabled: true }],
+    soul: { present: false, text: '' },
+    router: { pin: '', tiers: [{ workload: 'quick', candidates: ['a/one', 'b/two'],
+      resolved: 'a/one', reverts: false }], min_confidence: 0.5, default_workload: 'quick',
+      allow_api_models: false },
+    catalog: { providers: [{ id: 'alpha', kind: 'http', billing: 'plan', enabled: true,
+      key_present: true }] },
+    roles: { dir: '/tmp', entries: [{ name: 'tower', description: 'runs it', tools: ['bash'],
+      skills: ['s1'], shapes: [], path: '/tmp/tower.md', broken: false, overlay: false }] },
+    vault: { names: [] },
+    lanes: { lanes: [{ name: 'sys1', role: 'judgment', state: 'ready', choices: [] }] },
+    servers: { servers: [] },
+    tools: { calls_per_turn: 40, deferred_above: 32, definition_tokens: 9000, disabled: [] },
+    telegram: { present: false, source: 'unset' }, service: {},
+  };
+  const bootSettings = (hash) => boot({
+    width: 1440, hash,
+    documents: { settings: settingsDoc, state: (asked) => emptyState(asked),
+      onboard: onboardDoc({ door: false }) },
+  });
+
+  const page = bootSettings('#/settings');
+  await flush();
+  page.open();
+  await flush(80);
+
+  // S1: one section at a time — the rail has eight rows, the body one.
+  const railRows = page.rows('.section-rail-row');
+  check('SET the rail declares the eight sections',
+    railRows.length === 8 &&
+      railRows[0].textContent.includes('models') &&
+      railRows[7].textContent.includes('environment'),
+    String(railRows.length));
+  check('SET one section renders at a time', page.rows('.section-body').length === 1,
+    String(page.rows('.section-body').length));
+  // S2: the row is the app rail's row, and the current one is marked.
+  check('SET the current section is marked', !!page.rows('.section-rail-row[aria-current="page"]')
+    || railRows[0].getAttribute('aria-current') === 'page', 'current');
+  check('SET the rail row is the global rail\u2019s own metrics',
+    ruleBlock('.section-rail-row').includes('height: 34px') &&
+      ruleBlock('.section-rail-row').includes('gap: 10px') &&
+      ruleBlock('.section-rail-row').includes('font-size: 13px'),
+    ruleBlock('.section-rail-row').slice(0, 120));
+
+  // S5: counts and changed marks come from the document.
+  check('SET the rail counts what the document counts',
+    railRows.some((row) => row.textContent.includes('trust') && row.textContent.includes('1')) &&
+      railRows.some((row) => row.textContent.includes('schedule') && row.textContent.includes('1')),
+    railRows.map((r) => r.textContent).join(' | '));
+
+  // S3: the section route.
+  const trust = bootSettings('#/settings/trust');
+  await flush();
+  trust.open();
+  await flush(80);
+  check('SET a section is an address',
+    (trust.rows('.section-body')[0] || {}).dataset &&
+      trust.rows('.section-body')[0].dataset.section === 'trust',
+    'trust route');
+
+  // S8/S9: the rows are one line, and a row's press opens its card in the
+  // pane with the tabs stood down.
+  const rows = page.rows('.cfg-item');
+  check('SET the rows are one-line items', rows.length > 3 &&
+    rows.every((row) => row.querySelector('.cfg-item-name')), String(rows.length));
+  rows.find((row) => row.dataset.kind === 'tier').click();
+  await flush(60);
+  check('SET a row opens its card in the pane',
+    page.body.dataset.objectCard === 'open' &&
+      page.text('dock-object-title').includes('quick'),
+    page.text('dock-object-title'));
+  check('SET the card carries the write',
+    page.rows('.cfg-card-acts .replay-button').length >= 1,
+    String(page.rows('.cfg-card-acts .replay-button').length));
+  page.fireOn('dock-object-close', 'click');
+  await flush(40);
+  check('SET closing returns the pane\u2019s tabs',
+    page.body.dataset.objectCard !== 'open', String(page.body.dataset.objectCard));
+
+  // S7: a write repaints its own section, not the board.
+  const before = page.rows('.cfg-item').length;
+  rows.find((row) => row.dataset.kind === 'tier').click();
+  await flush(40);
+  page.rows('.cfg-card-acts .replay-button')[0].click();
+  await flush(80);
+  const writes = page.calls.filter((c) => c.method === 'POST' && c.url === '/api/settings');
+  check('SET the card writes through the one writer',
+    writes.some((c) => String(c.body).includes('"op":"workload"')),
+    JSON.stringify(writes.map((c) => c.body)));
+  check('SET the write keeps one section on the board',
+    page.rows('.section-body').length === 1 && page.rows('.cfg-item').length === before,
+    page.rows('.section-body').length + ' / ' + page.rows('.cfg-item').length);
+
+  // S4: the filter finds across sections and names the owner.
+  const found = bootSettings('#/settings');
+  await flush();
+  found.open();
+  await flush(60);
+  const box = found.rows('.section-rail-search')[0];
+  check('SET the filter is at the head of the rail', !!box, 'search');
+  box.value = 'cap';
+  box.fire('input', {});
+  await flush(60);
+  check('SET the filter finds across sections',
+    found.rows('.settings-matches .cfg-item').length >= 1 &&
+      found.text('settings-board').toLowerCase().includes('cap'),
+    String(found.rows('.settings-matches .cfg-item').length));
+}
+
 const cases = [
   ['C1/C8 the list groups by attention and counts what the server counted', theListGroupsByAttentionAndCountsWhatTheServerCounted],
   ['C2 every state opens through one verb', everyStateOpensThroughOneVerb],
@@ -3765,6 +3904,7 @@ const cases = [
   ['PV the strategy step shows its preview', theStrategyStepShowsItsPreview],
   ['RL the page seals its frames through a relay', thePageSealsItsFramesThroughARelay],
   ['BOTS the bots surface mints the bot card', theBotsSurfaceMintsTheBotCard],
+  ['SET the settings rail carries one section at a time', theSettingsRailCarriesOneSectionAtATime],
 ];
 
 for (const [name, run] of cases) {

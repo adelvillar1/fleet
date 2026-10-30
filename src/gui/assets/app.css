@@ -1269,6 +1269,23 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
 }
 .section-rail-fold:hover { color: var(--dsw-alias-accent); }
 
+/* The filter at the head of the rail: the one way to find a knob
+   without knowing which section owns it. */
+.section-rail-filter { padding: 0 2px 8px; }
+.section-rail-search {
+  width: 100%;
+  border: var(--card-hairline);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--dsw-alias-ink);
+  font: inherit;
+  font-size: 11.5px;
+  padding: 5px 8px;
+}
+.section-rail-search:focus { outline: none; border-color: var(--dsw-alias-accent); }
+.section-rail[data-folded="true"] .section-rail-filter { display: none; }
+.settings-matches { margin-bottom: 16px; }
+
 /* The row: the global rail's own. */
 .section-rail-row {
   position: relative;
@@ -1366,6 +1383,86 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
   align-content: start;
   min-width: 0;
 }
+
+/* A settings item is one line: name, value, marks. Its card opens in the
+   pane, so the list stays a table and the depth lives where there is
+   room. */
+.cfg-list { padding: 12px 14px 14px; }
+.cfg-list .board-head { margin-bottom: 2px; }
+.cfg-list .board-note { margin: 0 0 8px; }
+.cfg-item {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--dsw-alias-ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-bottom: var(--card-hairline);
+}
+.cfg-item:last-of-type { border-bottom: 0; }
+.cfg-item:hover { background: var(--dsw-alias-surface-raised); }
+.cfg-item[aria-current="true"] { background: var(--dsw-alias-accent-wash); }
+.cfg-item-main {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.cfg-item-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cfg-item-value {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--dsw-alias-ink-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cfg-item-mark {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border: var(--card-hairline);
+  border-radius: 999px;
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--dsw-alias-ink-tertiary);
+}
+.cfg-item-mark[data-tone="ok"] { color: var(--dsw-alias-ok); border-color: currentColor; }
+.cfg-item-mark[data-tone="warn"] { color: var(--dsw-alias-warn); border-color: currentColor; }
+.cfg-item-mark[data-tone="own"] { color: var(--dsw-alias-accent); border-color: currentColor; }
+.cfg-item-mark[data-tone="env"] { color: var(--dsw-alias-ink-secondary); }
+.cfg-card-acts { display: flex; flex-wrap: wrap; gap: 8px; }
+.cfg-fallback {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 4px 0;
+  border-bottom: var(--card-hairline);
+}
+.cfg-inline { display: inline-flex; align-items: center; gap: 6px; }
+
+/* While a setting's card is open the pane is the card: the tab strip and
+   the tab bodies stand down, and closing returns them. */
+body[data-object-card="open"] .pane-tabs,
+body[data-object-card="open"] .pane-body { display: none; }
+body[data-object-card="open"] .dock-object { display: block; }
 
 /* The row budget: the count is honest about what the press reveals. */
 .budget { display: grid; gap: 2px; }

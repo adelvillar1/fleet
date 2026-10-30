@@ -6925,6 +6925,10 @@
       el.dockObjectBody.textContent = '';
       el.faceCard.hidden = false;
       el.trustCard.hidden = false;
+      document.body.dataset.objectCard = '';
+      Array.prototype.forEach.call(
+        document.querySelectorAll('.cfg-item[aria-current="true"]'),
+        function (one) { one.removeAttribute('aria-current'); });
       return;
     }
     el.drawer.hidden = true;
@@ -12539,6 +12543,111 @@
     return card;
   }
 
+  // ------------------------------------------------- settings: the item
+  //
+  // A setting is one row in its section's list; its card opens in the
+  // right pane, where the fields have room. The row is the glance, the
+  // card is the read-and-write — and both use the primitives the console
+  // already has (cfgField, cfgSelect, the writer, the object card).
+
+  /// One row: name, current value, and the marks worth a glance.
+  function cfgItem(opts) {
+    var row = node('button', 'cfg-item');
+    row.type = 'button';
+    row.dataset.item = opts.id || opts.name;
+    if (opts.kind) row.dataset.kind = opts.kind;
+    row.setAttribute('aria-label', opts.name + (opts.value ? ', ' + opts.value : ''));
+    var main = node('span', 'cfg-item-main');
+    main.appendChild(node('span', 'cfg-item-name', opts.name));
+    if (opts.value != null && String(opts.value) !== '') {
+      main.appendChild(node('span', 'cfg-item-value', String(opts.value)));
+    }
+    row.appendChild(main);
+    (opts.marks || []).forEach(function (mark) {
+      var one = node('span', 'cfg-item-mark', mark[0]);
+      if (mark[1]) one.dataset.tone = mark[1];
+      if (mark[2]) one.title = mark[2];
+      row.appendChild(one);
+    });
+    row.addEventListener('click', function () { openSettingCard(opts, row); });
+    return row;
+  }
+
+  /// The list: a card whose body is rows, and a head that says what the
+  /// list is. One line per item, so a section reads as a table. A list
+  /// that is long by nature takes a budget: the first N, then the count
+  /// of what the press reveals — no stored state, an honest number.
+  function cfgList(title, note, rows, budget) {
+    var card = boardCard(12, title, null, note);
+    card.classList.add('cfg-list');
+    if (!rows.length) {
+      card.appendChild(node('p', 'board-empty', 'Nothing here yet.'));
+      return card;
+    }
+    if (!budget || rows.length <= budget.limit) {
+      rows.forEach(function (row) { card.appendChild(row); });
+      return card;
+    }
+    var key = budget.key || title;
+    var open = !!(face.cfgOpen || {})[key];
+    // The wrapper goes in whole: `children` is an HTMLCollection and has
+    // no forEach, which is exactly the error this line used to throw.
+    card.appendChild(budgetRows(rows, budget.limit, budget.label || 'more', open, function () {
+      face.cfgOpen = face.cfgOpen || {};
+      face.cfgOpen[key] = !open;
+      paintSettings();
+    }));
+    return card;
+  }
+
+  /// The card in the pane. The tabs stand down while a card is open, so
+  /// the pane is the item and not the item plus a tab strip.
+  function openSettingCard(item, row) {
+    var sections = item.card();
+    openDrawer(item.name, sections);
+    document.body.dataset.objectCard = 'open';
+    Array.prototype.forEach.call(
+      document.querySelectorAll('.cfg-item[aria-current="true"]'),
+      function (one) { one.removeAttribute('aria-current'); });
+    if (row) row.setAttribute('aria-current', 'true');
+  }
+
+  /// A labelled control with its save, the shape every scalar card uses.
+  function cfgWriteField(label, note, control, op, fields) {
+    var act = node('button', 'replay-button replay-resume', 'save');
+    act.type = 'button';
+    act.addEventListener('click', function () {
+      var body = typeof fields === 'function' ? fields() : (fields || {});
+      writeSettings(op, body, function () {
+        notice('saved', label);
+      });
+    });
+    var wrap = node('span', 'cfg-inline');
+    wrap.appendChild(control);
+    wrap.appendChild(act);
+    return cfgField(label, wrap, note);
+  }
+
+  /// A card's closing acts: one save, one cancel, and an optional remove.
+  function cfgCardActs(acts) {
+    var row = node('div', 'cfg-card-acts');
+    acts.forEach(function (act) {
+      var button = node('button', act.primary ? 'replay-button replay-resume' : 'replay-button',
+        act.label);
+      button.type = 'button';
+      button.addEventListener('click', act.run);
+      row.appendChild(button);
+    });
+    return row;
+  }
+
+  function sourceMark(knob) {
+    if (!knob || knob.source == null) return [];
+    if (knob.source === 'file') return [['set', 'own', 'set in this home\u2019s config']];
+    if (knob.source === 'env') return [['env', 'env', 'from the environment']];
+    return [['default', '', 'the compiled default']];
+  }
+
   // ---------------------------------------------------------- settings
   //
   // The surface is a rail of eight sections and one section's cards: the
@@ -12580,58 +12689,250 @@
     };
     var budgets = ['FLEET_JUDGE_BUDGET_USD_DAY', 'FLEET_DELEGATE_BUDGET_USD_DAY',
       'FLEET_EXPLAIN_BUDGET_USD_DAY'];
+    var tiers = (read.router && read.router.tiers) || [];
+    var catalog = read.catalog || {};
+    var providers = catalog.providers || [];
+    var laneRows = (read.lanes && read.lanes.lanes) || [];
+    var toolsRead = read.tools || {};
+    var disabled = toolsRead.disabled || [];
+
+    // One row per workload tier: its resolved candidate is the value, its
+    // fallback count a mark. The card holds the editor.
+    var tierRows = tiers.map(function (tier) {
+      return cfgItem({
+        id: 'tier:' + tier.workload, kind: 'tier', name: tier.workload,
+        value: tier.resolved || (tier.candidates || [])[0] || '\u2014',
+        marks: [
+          [(tier.candidates || []).length > 1
+            ? (tier.candidates.length - 1) + ' fallback' +
+              (tier.candidates.length === 2 ? '' : 's')
+            : 'no fallback', ''],
+          tier.reverts ? ['own', 'own', 'set in this home'] : ['built-in', '']
+        ],
+        card: function () { return tierSections(read, tier); }
+      });
+    });
+    // The gates: four rows, each a scalar the router reads.
+    var gateKeys = [
+      ['pin', 'the pin', 'the provider every workload walks first'],
+      ['gates.min_confidence', 'the confidence floor',
+        'a verdict below this falls to the default workload'],
+      ['gates.default_workload', 'the default workload',
+        'an absent or below-floor judgment routes here'],
+      ['gates.allow_api_models', 'hosted API models',
+        'off keeps every HTTP candidate out of every order']
+    ];
+    var gateRows = gateKeys.map(function (pair) {
+      var knob = scalars.filter(function (one) { return one.key === pair[0]; })[0] || null;
+      return cfgItem({
+        id: 'knob:' + pair[0], kind: 'knob', name: pair[1],
+        value: knob && knob.value !== '' ? String(knob.value) : (knob ? '' : '\u2014'),
+        marks: sourceMark(knob),
+        card: function () { return knobSections(read, pair[0], pair[1], pair[2]); }
+      });
+    });
+    // One row per provider the catalog names: its key state is the mark
+    // the owner needs, and the card carries the endpoint and models.
+    var providerRows = providers.map(function (provider) {
+      var override = lists.filter(function (one) {
+        return one.kind === 'provider' && one.key === provider.id;
+      })[0];
+      return cfgItem({
+        id: 'provider:' + provider.id, kind: 'provider', name: provider.id,
+        value: provider.billing + ' \u00b7 ' + provider.kind,
+        marks: [
+          provider.key_present ? ['key', 'ok', 'a key resolves'] : ['no key', 'warn'],
+          provider.enabled ? [] : ['off', 'warn', 'disabled']
+        ].filter(function (one) { return one.length; }),
+        card: function () { return providerSections(read, provider, override); }
+      });
+    });
+
     return [
       {
         id: 'models', icon: 'router', name: 'models',
         badge: lists.length, badgeTitle: 'overrides in this section',
         changed: lists.some(function (one) { return one.reverts; }) || ownerSet('pin'),
-        paint: function () { return [routerCard(), providersCard()]; }
+        paint: function () {
+          return [
+            cfgList('the tiers', 'which candidate a workload walks first, and its fallbacks',
+              tierRows.concat(gateRows)),
+            cfgList('the providers', 'the accounts fleet can reach, and whether each answers',
+              providerRows)
+          ];
+        }
       },
       {
         id: 'specialists', icon: 'delegation', name: 'specialists',
         badge: servers.length, badgeTitle: 'servers in this section',
         changed: servers.length > 0,
-        paint: function () { return [lanesCard(), serversCard(), toolsCard()]; }
+        paint: function () {
+          return [
+            cfgList('the lanes', 'the vendored specialists, and the model each one runs on',
+              laneRows.map(function (lane) {
+                return cfgItem({
+                  id: 'lane:' + (lane.name || lane.role), kind: 'lane',
+                  name: lane.name || lane.role || 'lane',
+                  value: lane.model || lane.state || '',
+                  marks: [lane.state ? [lane.state, lane.state === 'ready' ? 'ok' : ''] : []]
+                    .filter(function (one) { return one.length; }),
+                  card: function () { return laneSections(read, lane); }
+                });
+              }).concat(toolsRows(toolsRead, disabled))),
+            cfgList('the servers', 'the MCP servers a run pre-joins',
+              [cfgItem({
+                id: 'server-scan', kind: 'action', name: 'scan this machine',
+                value: 'find the other harnesses\u2019 servers',
+                card: function () { return serverScanSections(); }
+              })].concat(servers.map(function (server) {
+                return cfgItem({
+                  id: 'server:' + server.name, kind: 'server', name: server.name,
+                  value: [server.program].concat(server.args || []).join(' '),
+                  marks: server.enabled ? [['on', 'ok']] : [['off', 'warn']],
+                  card: function () { return serverSections(read, server); }
+                });
+              })))
+          ];
+        }
       },
       {
         id: 'roles', icon: 'skills', name: 'roles',
         badge: roles.length, badgeTitle: 'roles',
         changed: false,
-        paint: function () { return [rolesCard()]; }
+        paint: function () {
+          return [cfgList('the roles', 'the named specializations a delegation can run under',
+            roles.map(function (role) {
+              return cfgItem({
+                id: 'role:' + role.name, kind: 'role', name: role.name,
+                value: (role.skills || []).length + ' skills',
+                marks: role.broken ? [['unreadable', 'warn']]
+                  : (role.overlay ? [['overlay', 'own']] : []),
+                card: function () { return roleSections(read, role); }
+              });
+            }))];
+        }
       },
       {
         id: 'trust', icon: 'vault', name: 'trust',
         badge: rules.length, badgeTitle: 'remembered rules',
         changed: rules.length > 0 || ownerSet('approvals'),
         paint: function () {
-          return [vaultCard('settings-vault'), knobsCard(read, ['approvals']), rulesCard(read)];
+          return [
+            cfgList('the approvals', 'how tool calls are answered, and the rules already stood',
+              [cfgItem({
+                id: 'knob:approvals', kind: 'knob', name: 'the approvals mode',
+                value: (scalars.filter(function (one) {
+                  return one.key === 'approvals';
+                })[0] || {}).value || 'ask',
+                marks: sourceMark(scalars.filter(function (one) {
+                  return one.key === 'approvals';
+                })[0]),
+                card: function () { return knobSections(read, 'approvals',
+                  'the approvals mode', 'whether tool calls ask'); }
+              })].concat([])),
+            cfgList('the remembered rules', 'the yeses already given, and the forget for each',
+              ruleRows(read, rules), { limit: 10, label: 'rules', key: 'trust-rules' }),
+            cfgList('the vault', 'keys encrypted at rest with a passphrase you hold',
+              [cfgItem({
+                id: 'vault', kind: 'vault', name: 'the vault',
+                value: ((read.vault && read.vault.names) || []).length + ' sealed',
+                card: function () { return vaultCard('settings-vault-card'); }
+              })])
+          ];
         }
       },
       {
         id: 'money', icon: 'calibration', name: 'money',
         badge: 0,
         changed: budgets.some(ownerSet),
-        paint: function () { return [spendCard(), knobsCard(read, budgets)]; }
+        paint: function () {
+          return [cfgList('the ceilings', 'what a day may spend, per beat',
+            budgets.map(function (key) {
+              var knob = scalars.filter(function (one) { return one.key === key; })[0] || null;
+              // `FLEET_JUDGE_BUDGET_USD_DAY` reads as "the judge's cap": the
+              // key is the mechanism, the label is the thing it bounds.
+              var beat = key.replace(/^FLEET_/, '').replace(/_BUDGET_USD_DAY$/, '')
+                .toLowerCase();
+              return cfgItem({
+                id: 'knob:' + key, kind: 'knob',
+                name: beat === 'delegate' ? 'the delegation cap' : 'the ' + beat + "'s cap",
+                value: knob ? '$' + Number(knob.value || knob.ceiling || 0).toFixed(2) : '\u2014',
+                marks: sourceMark(knob),
+                card: function () { return knobSections(read, key,
+                  (knob && knob.summary) || key, 'the compiled ceiling can only be tightened'); }
+              });
+            }))];
+        }
       },
       {
         id: 'schedule', icon: 'cron', name: 'schedule',
         badge: cron.length, badgeTitle: 'cron jobs',
         changed: cron.length > 0,
-        paint: function () { return [cronCard(read)]; }
+        paint: function () {
+          return [cfgList('the cron jobs', 'the scheduled runs: each fires as an ordinary run',
+            cronRows(read, cron))];
+        }
       },
       {
         id: 'interface', icon: 'theme', name: 'interface',
         badge: 0,
         changed: read.soul.present,
         paint: function () {
-          return [knobsCard(read, ['ui.adapt'], 'interface'), soulCard(read)];
+          return [
+            cfgList('the interface', 'how the face reads',
+              scalars.filter(function (knob) {
+                return knob.key.indexOf('ui.') === 0;
+              }).map(function (knob) {
+                return cfgItem({
+                  id: 'knob:' + knob.key, kind: 'knob', name: knob.key,
+                  value: String(knob.value || ''), marks: sourceMark(knob),
+                  card: function () { return knobSections(read, knob.key, knob.key,
+                    knob.summary || ''); }
+                });
+              })),
+            cfgList('the identity', 'the voice the model-visible base is read from',
+              [cfgItem({
+                id: 'soul', kind: 'soul', name: 'the identity slot',
+                value: read.soul.present ? 'set' : 'absent',
+                card: function () { return [['the identity slot', soulCard(read)]]; }
+              })])
+          ];
         }
       },
       {
         id: 'environment', icon: 'bots', name: 'environment',
         badge: env.length, badgeTitle: 'names in this section',
         changed: false,
-        paint: function () { return [envCard(read), knobsCard(read, ['environment'])]; }
+        paint: function () {
+          return [
+            cfgList('the names', 'the env vars this home reads, and whether each resolves',
+              env.filter(function (entry) {
+                return budgets.indexOf(entry.name) === -1;
+              }).map(function (entry) {
+                return cfgItem({
+                  id: 'env:' + entry.name, kind: 'env', name: entry.name,
+                  value: entry.present ? 'resolves' : 'unset',
+                  marks: [[entry.source || (entry.present ? 'set' : 'unset'),
+                    entry.present ? 'ok' : 'warn']],
+                  card: function () { return envSections(entry); }
+                });
+              })),
+            cfgList('the other knobs', 'every remaining scalar this home carries',
+              scalars.filter(function (knob) {
+                return routerKeySet()[knob.key] !== true &&
+                  knob.key.indexOf('ui.') !== 0 &&
+                  budgets.indexOf(knob.key) === -1 &&
+                  knob.key !== 'approvals';
+              }).map(function (knob) {
+                return cfgItem({
+                  id: 'knob:' + knob.key, kind: 'knob', name: knob.key,
+                  value: String(knob.value || ''), marks: sourceMark(knob),
+                  card: function () { return knobSections(read, knob.key, knob.key,
+                    knob.summary || ''); }
+                });
+              }), { limit: 12, label: 'knobs', key: 'env-knobs' })
+          ];
+        }
       }
     ];
   }
@@ -12676,6 +12977,90 @@
     ], read.read_at));
     paintSettingsRail(read);
     paintSettingsSection(settingsSectionId());
+    paintSettingsMatches();
+  }
+
+  // Every item, flattened with its section: the filter's source, and the
+  // same rows the sections render.
+  function settingsIndex(read) {
+    var index = [];
+    settingsSections(read).forEach(function (section) {
+      var body = section.paint();
+      body.forEach(function (card) {
+        var rows = card.querySelectorAll ? card.querySelectorAll('.cfg-item') : [];
+        Array.prototype.forEach.call(rows, function (row) {
+          var name = (row.querySelector('.cfg-item-name') || {}).textContent || '';
+          var value = (row.querySelector('.cfg-item-value') || {}).textContent || '';
+          index.push({ section: section.id, sectionName: section.name,
+            name: name, value: value, hay: (name + ' ' + value).toLowerCase() });
+        });
+      });
+    });
+    return index;
+  }
+
+  function settingsMatches(read) {
+    var asked = (face.settingsFilter || '').trim().toLowerCase();
+    if (asked.length < 2) return null;
+    return settingsIndex(read).filter(function (entry) {
+      return entry.hay.indexOf(asked) !== -1;
+    });
+  }
+
+  function paintSettingsFilter(read) {
+    var wrap = node('div', 'section-rail-filter');
+    var box = node('input', 'section-rail-search');
+    box.type = 'search';
+    box.placeholder = 'find a setting';
+    box.value = face.settingsFilter || '';
+    box.setAttribute('aria-label', 'find a setting');
+    box.addEventListener('input', function () {
+      face.settingsFilter = box.value;
+      paintSettingsRail(face.settings);
+      paintSettingsMatches();
+      var again = el.settingsRail.querySelector('.section-rail-search');
+      if (again && again.focus) {
+        again.focus();
+        if (again.setSelectionRange) {
+          again.setSelectionRange(again.value.length, again.value.length);
+        }
+      }
+    });
+    wrap.appendChild(box);
+    el.settingsRail.appendChild(wrap);
+  }
+
+  /// The matches, under the rail's rows: choosing one opens that section
+  /// with the item marked.
+  function paintSettingsMatches() {
+    Array.prototype.forEach.call(
+      el.settingsBoard.querySelectorAll('.settings-matches'),
+      function (one) { one.parentNode.removeChild(one); });
+    var matches = settingsMatches(face.settings);
+    if (!matches || !matches.length) return;
+    var card = node('div', 'settings-matches card');
+    var head = node('header', 'card-head');
+    head.appendChild(node('h2', null, matches.length +
+      (matches.length === 1 ? ' match' : ' matches')));
+    card.appendChild(head);
+    matches.slice(0, 40).forEach(function (entry) {
+      var row = node('button', 'cfg-item');
+      row.type = 'button';
+      row.dataset.section = entry.section;
+      var main = node('span', 'cfg-item-main');
+      main.appendChild(node('span', 'cfg-item-name', entry.name));
+      main.appendChild(node('span', 'cfg-item-value', entry.value));
+      row.appendChild(main);
+      row.appendChild(node('span', 'cfg-item-mark', entry.sectionName));
+      row.addEventListener('click', function () {
+        rememberSection(entry.section);
+        window.location.hash = '#/settings/' + entry.section;
+        face.settingsFilter = '';
+        paintSettings();
+      });
+      card.appendChild(row);
+    });
+    el.settingsBoard.insertBefore(card, el.settingsBoard.children[3] || null);
   }
 
   function paintSettingsRail(read) {
@@ -12707,6 +13092,9 @@
         paintSettingsRail(face.settings);
       }
     });
+    // After the rail: sectionRail owns its container and clears it, so a
+    // control appended before the call would be wiped with the old rows.
+    paintSettingsFilter(read);
   }
 
   /// One section's cards, and nothing else. The rail picks; this paints.
@@ -12727,6 +13115,365 @@
     body.dataset.section = chosen.id;
     chosen.paint().forEach(function (card) { body.appendChild(card); });
     el.settingsBoard.appendChild(body);
+  }
+
+  // The card builders the rows open. Each returns `[[label, node]]`
+  // sections for the pane's object card — the same shape every selected
+  // object already uses — and writes through the one writer.
+
+  function routerKeySet() {
+    return {
+      'pin': true, 'gates.min_confidence': true, 'gates.default_workload': true,
+      'gates.allow_api_models': true
+    };
+  }
+
+  /// One scalar's card: the value, its source, and the save.
+  function knobSections(read, key, label, note) {
+    var knob = (read.scalars || []).filter(function (one) { return one.key === key; })[0];
+    var source = knob && knob.source ? knob.source : 'the compiled default';
+    var value = knob ? String(knob.value == null ? '' : knob.value) : '';
+    var input;
+    if (knob && knob.kind === 'choice') {
+      input = cfgSelect(value, (knob.choices || []).map(function (choice) {
+        return { value: choice, label: choice };
+      }), label);
+    } else if (knob && knob.kind === 'bool') {
+      input = cfgSelect(value, [{ value: 'true', label: 'on' }, { value: 'false', label: 'off' }],
+        label);
+    } else {
+      input = node('input', 'knob-box');
+      input.type = 'text';
+      input.value = value;
+      input.setAttribute('aria-label', label);
+    }
+    var saved = cfgWriteField(label, note || '', input, 'set', function () {
+      return { key: key, value: input.value };
+    });
+    return [
+      ['the value', saved],
+      ['where it comes from', node('p', 'derivation',
+        'source: ' + source + (source === 'file'
+          ? ' \u2014 a write here lands in this home\u2019s own config'
+          : ' \u2014 a write here lands in the config; an env var still wins'))],
+      ['the ceiling', node('p', 'derivation',
+        (knob && knob.ceiling != null)
+          ? 'the compiled ceiling is ' + knob.ceiling + '; a value above it is refused'
+          : 'no compiled ceiling on this knob')]
+    ];
+  }
+
+  /// One workload tier's card: the target, the fallbacks, and the add.
+  function tierSections(read, tier) {
+    var options = cfgModelOptions ? cfgModelOptions() : [];
+    var target = cfgSelect(tier.resolved || (tier.candidates || [])[0] || '', options,
+      'the tier target');
+    var save = cfgCardActs([{
+      label: 'save the tier', primary: true, run: function () {
+        var rest = (tier.candidates || []).filter(function (one) {
+          return one !== (tier.resolved || tier.candidates[0]);
+        });
+        writeSettings('workload', {
+          workload: tier.workload,
+          candidates: [target.value].concat(rest)
+        }, function () { notice('the tier is saved', tier.workload); });
+      }
+    }]);
+    var fallbacks = node('div', 'cfg-list-rows');
+    (tier.candidates || []).slice(1).forEach(function (candidate) {
+      var row = node('div', 'cfg-fallback');
+      row.appendChild(node('span', 'cfg-item-value', candidate));
+      row.appendChild(node('span', 'cfg-item-mark', 'fallback'));
+      fallbacks.appendChild(row);
+    });
+    if (!fallbacks.children.length) {
+      fallbacks.appendChild(node('p', 'board-empty', 'No fallback: this tier walks one candidate.'));
+    }
+    return [
+      ['the target', target],
+      ['the fallbacks, in order', fallbacks],
+      ['the write', save],
+      ['what it costs', node('p', 'derivation',
+        'the tier names the first candidate a walk tries; the fallbacks follow in order and ' +
+        'the declared last resort closes the walk.')]
+    ];
+  }
+
+  /// One provider's card: the endpoint, the models, the key state.
+  function providerSections(read, provider, override) {
+    var detail = (override && override.detail) || '';
+    var base = node('input', 'knob-box');
+    base.type = 'text';
+    base.value = detail;
+    base.placeholder = 'the provider\u2019s own endpoint, when it overrides the compiled one';
+    base.setAttribute('aria-label', 'the endpoint');
+    var save = cfgCardActs([{
+      label: 'save the endpoint', primary: true, run: function () {
+        writeSettings('provider', {
+          entry: JSON.stringify({
+            id: provider.id,
+            base_url: base.value.trim(),
+            key_env: '',
+            models: [],
+            enabled: provider.enabled
+          })
+        }, function () { notice('the provider is saved', provider.id); });
+      }
+    }, {
+      label: provider.enabled ? 'disable it' : 'enable it', run: function () {
+        writeSettings('provider', {
+          entry: JSON.stringify({
+            id: provider.id,
+            base_url: detail,
+            key_env: '',
+            models: [],
+            enabled: !provider.enabled
+          })
+        }, function () { notice('the provider is ' +
+          (provider.enabled ? 'disabled' : 'enabled'), provider.id); });
+      }
+    }, {
+      label: override ? 'remove the override' : 'no override', run: function () {
+        if (!override) return;
+        writeSettings('provider-remove', { id: provider.id }, function () {
+          notice('the override is gone', provider.id);
+        });
+      }
+    }]);
+    return [
+      ['the account', node('p', 'derivation',
+        provider.id + ' \u00b7 ' + provider.billing + ' \u00b7 ' + provider.kind +
+        (provider.key_present ? ' \u00b7 a key resolves' : ' \u00b7 no key resolves'))],
+      ['the endpoint', base],
+      ['the write', save],
+      ['the models', node('p', 'derivation',
+        'the roster\u2019s own models for this provider are ordered in the router\u2019s ' +
+        'table; a pin here is the router card\u2019s business.')]
+    ];
+  }
+
+  function laneSections(read, lane) {
+    var choices = (lane.choices || []).map(function (choice) {
+      return choice.label + ' \u2014 ' + choice.value;
+    });
+    return [
+      ['the lane', node('p', 'derivation',
+        (lane.name || lane.role) + (lane.state ? ' \u00b7 ' + lane.state : ''))],
+      ['what it can run on', node('p', 'derivation',
+        choices.length ? choices.join(' \u00b7 ') : 'no model choice is declared')],
+      ['the tools it brings', node('p', 'derivation',
+        (lane.tools || []).length ? lane.tools.join(', ') : 'none listed')]
+    ];
+  }
+
+  /// The discovery card: the scan, and what it found to import. The
+  /// registry's own ops, unchanged — the affordance moved into the pane
+  /// with every other settings action.
+  function serverScanSections() {
+    var scan = face.serversScan;
+    var found = ((scan && scan.rows) || []).filter(function (row) {
+      return row.status === 'available';
+    });
+    var listed = node('div', 'cfg-list-rows');
+    if (!scan) {
+      listed.appendChild(node('p', 'board-empty',
+        'Not scanned yet. The scan reads the machine\u2019s other harness configs and names ' +
+        'what it finds; nothing is imported without a press.'));
+    } else if (!found.length) {
+      listed.appendChild(node('p', 'board-empty', 'Nothing new on this machine.'));
+    } else {
+      found.forEach(function (row) {
+        var line = node('div', 'cfg-fallback');
+        line.appendChild(node('span', 'cfg-item-name', row.name));
+        line.appendChild(node('span', 'cfg-item-value', row.harness));
+        var act = node('button', 'replay-button', 'import');
+        act.type = 'button';
+        act.addEventListener('click', function () {
+          serversAction('server-import', { name: row.name, harness: row.harness },
+            function () { notice('imported', row.name + ' \u00b7 from ' + row.harness); });
+        });
+        line.appendChild(act);
+        listed.appendChild(line);
+      });
+    }
+    var scanActs = cfgCardActs([{
+      label: 'scan this machine', primary: true, run: function () {
+        serversAction('server-scan', {}, function (body) {
+          var rows = (body.scan && body.scan.rows) || [];
+          var skips = (body.scan && body.scan.skips) || [];
+          notice('the scan finished',
+            rows.length + ' entries across the other harnesses' +
+              (skips.length ? ' \u00b7 ' + skips.length + ' file(s) skipped' : ''));
+        });
+      }
+    }]);
+    return [
+      ['the scan', scanActs],
+      ['what it found', listed]
+    ];
+  }
+
+  function serverSections(read, server) {
+    return [
+      ['the command', node('p', 'derivation',
+        [server.program].concat(server.args || []).join(' '))],
+      ['the env names', node('p', 'derivation',
+        (server.env_names || []).length
+          ? server.env_names.join(', ') + ' \u2014 names only, never values'
+          : 'none')],
+      ['the state', node('p', 'derivation',
+        (server.enabled ? 'enabled' : 'disabled') +
+        (server.last_probe
+          ? ' \u00b7 last probe: ' + (server.last_probe.state || 'unknown') +
+            (server.last_probe.server_version ? ' \u00b7 ' + server.last_probe.server_version : '')
+          : '') +
+        (server.source && server.source.harness
+          ? ' \u00b7 imported from ' + server.source.harness : ''))],
+      ['the env at spawn', node('p', 'derivation',
+        (server.env_names || []).length
+          ? (server.env_names || []).map(function (name) {
+              return 'env ' + name + ' resolves at spawn';
+            }).join(' \u00b7 ')
+          : 'no name is needed')],
+      ['the write', cfgCardActs([{
+        label: server.enabled ? 'disable it' : 'enable it', primary: true, run: function () {
+          writeSettings('server', {
+            name: server.name,
+            config: { program: server.program, args: server.args, env_names: server.env_names,
+              enabled: !server.enabled }
+          }, function () { notice('the server is ' +
+            (server.enabled ? 'disabled' : 'enabled'), server.name); });
+        }
+      }])]
+    ];
+  }
+
+  function roleSections(read, role) {
+    return [
+      ['the role', node('p', 'derivation', role.description || '(no description)')],
+      ['its tools', node('p', 'derivation',
+        (role.tools || []).length ? role.tools.join(', ') : 'inherits the run\u2019s')],
+      ['its skills', node('p', 'derivation',
+        (role.skills || []).length ? role.skills.join(', ') : 'none')],
+      ['its file', node('p', 'derivation', role.path || '')]
+    ];
+  }
+
+  function envSections(entry) {
+    return [
+      ['the name', node('p', 'derivation', entry.name)],
+      ['whether it resolves', node('p', 'derivation',
+        entry.present ? 'yes \u2014 from ' + (entry.source || 'the environment') : 'no')],
+      ['why the value never rides this document', node('p', 'derivation',
+        'the doctor\u2019s masking rule: a name yes, a value never.')]
+    ];
+  }
+
+  function ruleRows(read, rules) {
+    return rules.map(function (rule) {
+      return cfgItem({
+        id: 'rule:' + rule.tool + ':' + (rule.program || ''), kind: 'rule',
+        name: rule.label, value: rule.tool,
+        marks: [['live', 'ok']],
+        card: function () {
+          return [
+            ['the rule', node('p', 'derivation',
+              rule.label + ' \u2014 a remembered yes for this tool' +
+              (rule.program ? ' and program' : ''))],
+            ['the write', cfgCardActs([{
+              label: 'forget it', primary: true, run: function () {
+                writeSettings('rule-remove',
+                  { tool: rule.tool, program: rule.program || null },
+                  function () { notice('the rule is forgotten', rule.label); });
+              }
+            }])]
+          ];
+        }
+      });
+    });
+  }
+
+  function cronRows(read, cron) {
+    return cron.map(function (job) {
+      return cfgItem({
+        id: 'cron:' + job.name, kind: 'cron', name: job.name,
+        value: job.schedule,
+        marks: [job.enabled ? ['on', 'ok'] : ['off', 'warn']],
+        card: function () {
+          var task = node('textarea', 'hook-task');
+          task.value = job.task || '';
+          task.setAttribute('aria-label', 'the job\u2019s task');
+          var schedule = node('input', 'knob-box');
+          schedule.type = 'text';
+          schedule.value = job.schedule || '';
+          schedule.setAttribute('aria-label', 'the job\u2019s schedule');
+          var save = node('button', 'replay-button replay-resume', 'save the job');
+          save.type = 'button';
+          save.addEventListener('click', function () {
+            writeSettings('cron', {
+              name: job.name, schedule: schedule.value, task: task.value,
+              enabled: job.enabled
+            }, function () { notice('the job is saved', job.name); });
+          });
+          var toggle = node('button', 'replay-button', job.enabled ? 'disable' : 'enable');
+          toggle.type = 'button';
+          toggle.addEventListener('click', function () {
+            writeSettings('cron-enabled', { name: job.name, enabled: !job.enabled },
+              function () { notice('the job is ' + (job.enabled ? 'disabled' : 'enabled'),
+                job.name); });
+          });
+          var remove = node('button', 'replay-button', 'remove');
+          remove.type = 'button';
+          remove.addEventListener('click', function () {
+            writeSettings('cron-remove', { name: job.name },
+              function () { notice('the job is gone', job.name); });
+          });
+          var acts = node('div', 'cfg-card-acts');
+          acts.appendChild(save);
+          acts.appendChild(toggle);
+          acts.appendChild(remove);
+          return [
+            ['the schedule', schedule],
+            ['the task', task],
+            ['the write', acts],
+            ['the last fire', node('p', 'derivation', job.last_outcome || 'not fired yet')]
+          ];
+        }
+      });
+    });
+  }
+
+  function toolsRows(toolsRead, disabled) {
+    var rows = [
+      cfgItem({
+        id: 'tools:disabled', kind: 'tool', name: 'disabled tools',
+        value: disabled.length ? disabled.join(', ') : 'none',
+        marks: disabled.length ? [['off', 'warn']] : [['all on', 'ok']],
+        card: function () {
+          return [
+            ['what is off', node('p', 'derivation',
+              disabled.length ? disabled.join(', ') : 'every declared tool is on')],
+            ['why', node('p', 'derivation',
+              'a disabled tool is not declared to the model, so it cannot be called.')]
+          ];
+        }
+      }),
+      cfgItem({
+        id: 'tools:budget', kind: 'tool', name: 'the call budget',
+        value: (toolsRead.calls_per_turn || 0) + ' calls a turn',
+        marks: [['deferred above ' + (toolsRead.deferred_above || 0), '']],
+        card: function () {
+          return [
+            ['the budget', node('p', 'derivation',
+              (toolsRead.calls_per_turn || 0) + ' calls a turn; above ' +
+              (toolsRead.deferred_above || 0) + ' tools load on demand')],
+            ['the weight', node('p', 'derivation',
+              (toolsRead.definition_tokens || 0) + ' tokens of declarations')]
+          ];
+        }
+      })
+    ];
+    return rows;
   }
 
   // The knobs card: the generic scalars, grouped by their key's prefix.
@@ -16276,7 +17023,9 @@
   }
 
   function markRail() {
-    var which = (window.location.hash || '').replace(/^#\/?/, '');
+    // The address names a surface and, for a split surface, a section
+    // below it: `#/settings/trust` is still the settings destination.
+    var which = (window.location.hash || '').replace(/^#\/?/, '').split('/')[0];
     Array.prototype.forEach.call(el.rail.querySelectorAll('.surfaces-link'), function (link) {
       if (link.dataset.address === which) {
         link.setAttribute('aria-current', 'page');
