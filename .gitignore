@@ -50,3 +50,9 @@ docs/plans/*.graph.json
 # harness's own plan store for a session, not fleet's.
 /tmp/
 /.zcode/
+
+# Doc locks: the same seam as the memory locks above — fleet's filelock
+# leaves a sibling `.lock` beside a document it is editing, and unlinking
+# a flocked file another process holds is a race, so they stay on disk
+# and out of the tree.
+/docs/**/*.lock
