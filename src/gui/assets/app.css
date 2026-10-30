@@ -1463,10 +1463,19 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
 .cfg-inline { display: inline-flex; align-items: center; gap: 6px; }
 
 /* While a setting's card is open the pane is the card: the tab strip and
-   the tab bodies stand down, and closing returns them. */
+   the tab bodies stand down, and closing returns them. The card scrolls
+   ITSELF — the pane's column is bounded by the face's grid row, and an
+   overflowing card used to paint past it, turning .face into the scroll
+   trap scrollIntoView then dragged: the top bar left the viewport the
+   moment a memory's card opened. */
 body[data-object-card="open"] .pane-tabs,
 body[data-object-card="open"] .pane-body { display: none; }
-body[data-object-card="open"] .dock-object { display: block; }
+body[data-object-card="open"] .dock-object {
+  display: block;
+  overflow-y: auto;
+  min-height: 0;
+  flex: 1 1 auto;
+}
 
 /* A needs-you row: its main area presses, its answers sit beside it. */
 .cfg-item-press {
