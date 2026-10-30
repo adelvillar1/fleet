@@ -1,5 +1,5 @@
 ---
-status: active
+status: completed
 created: 2026-10-30
 updated: 2026-10-30
 slug: calibration-rail
