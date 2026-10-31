@@ -178,22 +178,35 @@ A shakeout run is a fleet run whose task is this manifest:
 
 ## Acceptance criteria
 
-- [ ] **B1 — the manifest is walked once, shallow, whole.** Every
+- [x] **B1 — the manifest is walked once, shallow, whole.** Every
       probe in the manifest carries a verdict in its pass table —
       held (with what held), find (with its KI row), or skip (with the
       reason) — and no row is left unattempted without a named skip.
-- [ ] **B2 — every find is a row.** Each bug carries a KI row with its
+      *Pass one (2026-10-30, eight shallow probes) and pass two
+      (2026-10-31, the whole manifest deep) both walked; the pass-two
+      table below carries every verdict with its evidence.*
+- [x] **B2 — every find is a row.** Each bug carries a KI row with its
       repro and evidence before any fix is written; the ledger checker
-      stays green.
-- [ ] **B3 — crashers and data-loss fix first.** A find that loses
+      stays green. *KI-378, KI-380, KI-381 — all three filed, fixed,
+      and closed in the walks that found them; the checker reads 381
+      rows, 34 open, zero problems.*
+- [x] **B3 — crashers and data-loss fix first.** A find that loses
       work, corrupts a file, or wedges the face is fixed (with its pin)
-      before cosmetic finds are touched.
-- [ ] **B4 — the deep pass re-runs the fixed rows.** A fix's repro is
+      before cosmetic finds are touched. *KI-380 (the zombie tab, the
+      owner's own real-use find) fixed at four surfaces with the face
+      harness's case; KI-381 (onboard unreachable, a crasher) fixed
+      with its end-to-end pin within the session that found it.*
+- [x] **B4 — the deep pass re-runs the fixed rows.** A fix's repro is
       re-run live and the harness carries its pin; the matrix's row
-      moves to "held".
+      moves to "held". *KI-378's goal bound re-run live in pass two
+      (A3); KI-380's recovery paths pinned by the harness's KI-380
+      case (482 checks / 52 cases); KI-381's walk pinned end to end.*
 - [ ] **B5 — the beta ships.** The pass ends with the matrix whole, no
       open crasher, and the shakeout's summary in the recap — the beta
-      gate the owner's declaration set.
+      gate the owner's declaration set. *The matrix is whole and no
+      open crasher remains; the recap is this session's, and pass
+      three (the re-walk after the owner's restart of the face and
+      their own use) is what closes the box.*
 
 ## Files to be touched
 
@@ -230,6 +243,72 @@ refusal naming the bound and why; pinned by
 `the_goal_refuses_past_its_ceiling`. The task's send bound is the
 owner's triage (a one-shot spend, not a standing tax). Pass two goes
 deep on whatever the owner's own use shakes loose.
+
+## Pass two — the matrix, walked deep 2026-10-31
+
+Walked by the session itself (the runbook's "a shakeout run is a fleet
+run" taken literally), scratch-home isolation except where the row
+needs the live face; model-spend rows rode the keyless scratch face so
+every failure was a named absence, not a bill. Two finds, both fixed
+with pins in the same session; everything else held, with what held
+named. Rows covered by a pinned test rather than a live probe say so.
+
+| # | Probe | Outcome |
+|---|---|---|
+| A1 | the giant task (100 KB H1) | held — the wire cap refuses: "a body of 156751 bytes; the cap is 65536" (the scratch face; zero spend) |
+| A3 | the goal at the ceiling | held live — 1,999 lands; H1 (102 KB) refused at the wire cap first, then the 2,000 bound is the second wall (KI-378's pin re-run, B4) |
+| A4 | the goal cleared | held — the clear answers 200, `text: None`; the run-side is the bridge's per-run read |
+| A5 | the steer with H3 | held — idle steer refused named: "no run is in flight to stop or steer" |
+| A6 | the whitespace send | held — "a run needs a task" (409) |
+| A7 | two sends in one second | held — one 200 accepted, one 409 "a run is already in flight" (the face queues; the API refuses) |
+| A8 | the seat with its session gone | held — "no approval is waiting" (409), no hang; `AnswerError::NoSeat` pinned in the bridge tests |
+| A2/A9/A10 | draft, verdict controls, controls paste | held — pinned by the face harness (the draft case, the TURN case, pass one's S1) |
+| B1–B2 | hostile rename, cleared rename | held live on my own probe session — 2 KB emoji/HTML/control titles served verbatim and restorable; the clear falls to the ladder's next rung (`title_from: "first"`, rendered as "a conversation · when") |
+| B3 | archive a running session | held — the guard names it: "has a run in flight — stop it first"; it even caught this probe's own wrong-shaped fork aimed at the owner's live session |
+| B4 | resume the archived session | held — the body-shaped resume reopens it; restore via `archived: false` |
+| B5–B6 | the 20k query, the backtracking query | held — `sessions --recall` with a 40 KB emoji/JSON query and `(a+)+$`: exit 0, ranked, no hang |
+| B7 | the seat's session gone | held — "no session named" pinned (the bridge's `nobody` test) |
+| B8 | the fork's byte-identical prefix | held — the 0-owner fork's records match the source's byte for byte; `forked_from` rides the start line |
+| C1–C2 | the giant description / body | held — description cut at the marked 512; body refused past 64 KB named (the CLI writer path, HH3's live probes) |
+| C3 | the hostile name | held — `../../../etc/passwd` and `..` refused by the name rule, named |
+| C4–C5 | the hostile edit, the empty justification | held — sanitize + marked cut pinned (`the_writer_bounds_the_type_and_the_justification`); whitespace justification → the typed error pinned |
+| C6 | the confirmed supersede click | held — the bridge's `fact_supersede(.., true, ..)` is the click-is-approval path |
+| C7 | the unreadable valid-until | held live — `2026-13-45` left live by the cycle (HH7); not an expiry |
+| C8 | the zalgo search | held — the pool ranked, the surface fallback named |
+| C9 | the honest empty | held — 0 facts reads "no facts yet · a fact is memories/<name>.md …" |
+| C10 | the archive serials | held — `<name>.md` and `<name>.2.md` both served |
+| D1–D2 | the double approve, the gone proposal | held — already-disposed refused with its status label; gone named "no proposal named … awaiting" (pinned in `improve`'s match) |
+| D3 | the regex search | held — `skillMatches` is an `indexOf` (linear; no engine to hang), verified with the catastrophic patterns |
+| D4 | the retire race | held by construction — pid-suffixed temp + rename = whole-file swap; last writer wins, never torn |
+| D5 | the hostile frontmatter | held — skip reasons named in their own words (the live library's skips) |
+| D6 | the unmatched name | held — `use_skill` names the miss; over-cap skills named by the growth line |
+| E1 | the hostile day | held both faces — CLI exit 2 with the typed refusal (HH1); the face read refuses with the CLI's own words |
+| E2 | the far dates | held — 1970-01-01 and 9999-12-31 serve the honest empty |
+| E3 | the lane down | held live — the scratch face's run: "sys1 gave no usable verdict … walks hard's chain … no usable roster candidate remained" — degraded and named, never hung |
+| E4 | the zero-confidence day | held — the scratch day's failed turn renders its counters honestly |
+| E5 | the 512 cap | held live — 2026-10-26 (3,600+ rows) reads `rows_read: 512, cap: 512`, the document names the cap |
+| F1 | the path-y project | held — "no registered project at `../../../etc/passwd`"; the encoded form too |
+| F2 | the escaping path | held — `view_path` refuses the escape by name (pinned); the live read hits the substrate's named absence first (F4's shape) |
+| F3 | the NotComparable ref | held — "the left ref layer:abc cannot ride a diff: ref must be a saved Commit or Layer id" |
+| F4 | the dead worker | held — the substrate's own refusal before any script runs |
+| F5 | the idle-chip click | held — the 0-commit branch serves an honest files page |
+| G1–G2 | two writers, one home | held live — 8 distinct + 4 same-name concurrent writers and a reader loop: 9/9 facts whole, one winner, three named "already exists; the modify path is supersede", no torn file, no `.tmp` litter |
+| G3 | the restart mid-flow | held — pinned by the face harness's poll/relay cases; the live face restart stays the owner's hand (KI-380's fix makes the recovery loud now) |
+| G4 | the relay's hostile path | held at the gate — the relayed request rides the same route allowlist, refused by name before session resolution; the device rows stay the manifest's named skip |
+| G5 | the credentials absent | held live — the keyless scratch face ran a real task to "no usable roster candidate remained" before any model call, zero spend |
+| G6 | the read-only home | held — reads hold (exit 0); the write names the os error at its own tmp file |
+| G7 | the clock edge | held — the day files rollover verified (10/30 and 10/31 both populated; the day is computed once at record time) |
+| HH1 | the hostile day | held — typed refusal, exit 2 (the pin stands) |
+| HH2 | the path-y draft | held — "not a proposal name: a name carries no path separator", exit 1 |
+| HH3 | the giant remember | held — the marked 512 cut, the body under its bound; the fact lands whole |
+| HH4 | the eval on the mock | held — 21 scenarios, score 1.00, green |
+| HH5 | the second onboard | **FIND — KI-381**, fixed: the missing `needs_runtime` arm; the walk + resume pinned end to end |
+| HH6 | the scratch doctor | held — the seven facts with the absences named; exit 1 is the honest missing credential |
+| HH7 | the hostile archive | held — the unreadable date left alone, the far date untouched, the expired compressed→archived, every action named |
+
+**Pass two's tally: 2 finds (KI-380's disposition + KI-381), 52 rows
+held, 1 named skip (the device-side relay rows).** The beta's open
+crasher count is zero.
 
 ## Notes
 
