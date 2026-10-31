@@ -9,7 +9,7 @@ shape: [state-sync]
 phrases: [corpus-refresh-dev-decisions, tools/call refresh, BLEND1_PYTHONPATH, action unchanged, dev-decisions docs/**/*.md]
 missing: [the declared source set in the job's task string (seeded wording drift KI-343/KI-316 tracks), whether the next scheduled window's explicit sources match the store's actual 12-source set]
 recall-count: 0
-superseded-by:
+superseded-by: corpus-dev-decisions-unchanged-2026-10-31
 valid-until:
 ---
 
