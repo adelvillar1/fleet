@@ -473,9 +473,12 @@ P4: the harness case PM — the provider row, the card's key field,
 the two-row catalog with `window 262144 (from the provider)` and the
 `off` mark, the toggle states, the reload writing through the one
 writer, the tier card's primary/secondary names with the reorder
-controls, and the unjudged mark. **The gate green by exit code: fmt 0,
-clippy 0, build 0, test 1,854 passed / 0 failed across all targets;
-the face harness 521 checks across 54 cases.**
+controls, the unjudged mark, and the two assignment pins: the add
+picker offers the enabled model only (the disabled one filtered at the
+roster load), and raising the first secondary writes the swapped order
+to the workload write's unchanged `candidates` shape. **The gate green
+by exit code: fmt 0, clippy 0, build 0, test 1,854 passed / 0 failed
+across all targets; the face harness 525 checks across 54 cases.**
 
 Notes for the record: three `ChatRequest` literals and the fixture
 shape take the new `max_tokens` field (15 sites, all pinned by the

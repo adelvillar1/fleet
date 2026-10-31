@@ -3926,7 +3926,9 @@ async function theSettingsRailCarriesOneSectionAtATime() {
         disabled_models: ['m-two'],
         model_settings: { 'm-one': { context_window: 262144,
           context_window_source: 'provider' } } }] },
-    catalog: { providers: [{ id: 'alpha', kind: 'http', billing: 'plan', enabled: true,
+    catalog: { models: [{ value: 'alpha/m-one', provider: 'alpha', model: 'm-one',
+        known: true, enabled: true, key_present: true, billing: 'plan', kind: 'http' }],
+      providers: [{ id: 'alpha', kind: 'http', billing: 'plan', enabled: true,
       key_present: true, key_env: 'ALPHA_API_KEY', disabled_reason: null,
       models: ['m-one', 'm-two'], disabled_models: ['m-two'],
       model_settings: { 'm-one': { context_window: 262144,
@@ -4099,6 +4101,42 @@ async function theSettingsRailCarriesOneSectionAtATime() {
   check('PM a workload outside the judged set is marked unjudged, with the reason',
     unjudgedText.includes('outside the judged set'),
     unjudgedText.slice(0, 160));
+
+  // The assignment, driven: the add picker offers the enabled model
+  // only (the disabled one was filtered at the roster load), raising
+  // the first secondary swaps it with the primary, and the save writes
+  // the new order to routing.json's unchanged shape.
+  tierCard.fireOn('dock-object-close', 'click');
+  await flush(40);
+  quickRow.click();
+  await flush(60);
+  const assignPane = tierCard.el('dock-object-body');
+  const addHolder = assignPane.find((one) => one.className === 'cfg-inline')[0];
+  const picker = addHolder ? addHolder.children.find((one) => one.name === 'select') : null;
+  const pickerOptions = picker ? picker.options.map((one) => one.value) : [];
+  check('PM the assignment picker offers the enabled model only',
+    pickerOptions.indexOf('alpha/m-one') !== -1 &&
+      pickerOptions.indexOf('alpha/m-two') === -1,
+    pickerOptions.join(','));
+  const secondaryRow = assignPane.find((one) => one.className === 'cfg-fallback')[0];
+  const raise = secondaryRow ?
+    secondaryRow.children.find((one) => one.name === 'button' &&
+      String(one.textContent || '') === '\u2191') : null;
+  check('PM the first secondary can be raised', !!raise, String(!!raise));
+  raise.click();
+  await flush(40);
+  const saveWorkload = assignPane.find((one) => one.name === 'button' &&
+    String(one.textContent || '').includes('save the workload'))[0];
+  check('PM the save names the workload', !!saveWorkload, String(!!saveWorkload));
+  saveWorkload.click();
+  await flush(60);
+  const reorderWrites = tierCard.calls.filter((c) => c.method === 'POST' &&
+    c.url === '/api/settings' && String(c.body).includes('"op":"workload"'));
+  const lastWorkload = reorderWrites[reorderWrites.length - 1];
+  check('PM raising a secondary writes the new order to the workload',
+    !!lastWorkload && String(lastWorkload.body).includes('b/two') &&
+      String(lastWorkload.body).indexOf('b/two') < String(lastWorkload.body).indexOf('a/one'),
+    lastWorkload ? String(lastWorkload.body) : 'no workload write');
 
   // S4: the filter finds across sections and names the owner.
   const found = bootSettings('#/settings');
