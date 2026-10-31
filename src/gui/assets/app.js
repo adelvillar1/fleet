@@ -715,6 +715,7 @@
     folderUse: document.getElementById('folder-use'),
     folderReset: document.getElementById('folder-reset'),
     folderPopInput: document.getElementById('folder-pop-input'),
+    connDown: document.getElementById('conn-down'),
     attach: document.getElementById('attach'),
     composerSteer: document.getElementById('composer-steer'),
     composerBtw: document.getElementById('composer-btw'),
@@ -1092,6 +1093,73 @@
         new Notification(title, { body: body });
       }
     } catch (error) { }
+  }
+
+  // ------------------------------------------------- the tab's own cue
+  //
+  // KI-380: a seat's cue that lives only on the page can be hidden by
+  // the very page that cannot recover — the zombie tab rendered its
+  // waiting cards for hours while the seat stood. The cue therefore
+  // rides the three places a page cannot swallow: the tab's own title
+  // (visible in the strip of tabs and in the dock, from any distance),
+  // the desktop notification (already the D6 channel), and the banner
+  // element, which lives in index.html and so is rebuilt whole by a
+  // reload. paintTabCue derives from the one face; every painter calls
+  // it, so no state can hold a stale cue.
+  var TAB_CUE = '— needs you';
+
+  function paintTabCue() {
+    var base = 'fleet';
+    var panel = el.statePill && el.statePill.textContent;
+    if (panel && panel !== 'idle' && panel !== 'no route yet' &&
+        panel !== 'stream down') base = panel + ' · fleet';
+    document.title = face.seat
+      ? TAB_CUE + ' ' + base
+      : base;
+  }
+
+  // The connection banner: raised by any read or stream that found the
+  // server gone, cleared by the first proof of life after. It is one
+  // element in the page's own markup, so even a zombie's reload — the
+  // one act the banner asks for — rebuilds it from zero.
+  function connectionDown(what) {
+    if (el.connDown) {
+      el.connDown.hidden = false;
+      el.connDown.textContent =
+        'the connection was lost \u00b7 ' + (what || 'a read') +
+        ' failed \u00b7 the page retries on its own, or reload to reach fleet now';
+    }
+    document.title = '\u26a0 ' + document.title;
+    notifyIfHidden('fleet \u00b7 the connection was lost',
+      'the page will keep retrying \u00b7 reload once fleet is back');
+  }
+
+  function connectionUp() {
+    if (el.connDown) el.connDown.hidden = true;
+    paintTabCue();
+  }
+
+  // The stream's own heartbeat proves the page's live half. The
+  // zombie's silence is not an event — it is the absence of one — so
+  // absence is measured: if no heartbeat has crossed for 15s (the
+  // server's is a 10s clock; three missed beats and change), the page
+  // declares the connection down, retries its reads, and shows the
+  // banner. Any event or heartbeat clears it.
+  var HEARTBEAT_AFTER = 15000;
+  var lastBeat = 0;
+  var beatWatch = null;
+
+  function armBeatWatch() {
+    if (beatWatch) return;
+    beatWatch = window.setInterval(function () {
+      if (!lastBeat) return;
+      if (Date.now() - lastBeat > HEARTBEAT_AFTER) connectionDown('the stream fell silent');
+    }, 5000);
+  }
+
+  function beat() {
+    lastBeat = Date.now();
+    connectionUp();
   }
 
   function markSeen() {
@@ -2499,6 +2567,9 @@
         face.running = true;
         face.seat = event;
         face.seatSince = event.since || Date.now();
+        // KI-380: the cue moves to the tab itself, where a dead page's
+        // styling cannot reach it.
+        paintTabCue();
         break;
       case 'seat_cleared':
         face.seat = null;
@@ -2539,6 +2610,11 @@
       }
       case 'rules':
         face.rules = event.rules || [];
+        break;
+      case 'heartbeat':
+        // KI-380: the beat is the proof the live half lives. Its absence
+        // is the zombie's signature, so the watch measures the gap.
+        beat();
         break;
       case 'dropped':
         face.dropped = Number(event.dropped) || face.dropped;
@@ -2631,6 +2707,7 @@
     paintFacts();
     paintRules();
     paintSeat();
+    paintTabCue();
     paintComposer();
     paintQueue();
     paintProcess();
@@ -6260,7 +6337,14 @@
         paintRecent();
         paintSince();
       })
-      .catch(function () { });
+      .catch(function () {
+        // KI-380: the swallow here was the zombie tab's floor. A read
+        // that fails re-arms itself on a bounded clock and raises the
+        // connection banner, so a server that goes away and comes back
+        // is followed without the owner reloading by hand.
+        connectionDown('the home read');
+        window.setTimeout(function () { readHome(true); }, 5000);
+      });
   }
 
   // The usage counters: one read when the page boots and one after
@@ -6339,7 +6423,11 @@
         face.memory = doc;
         if (face.panel === 'memory') paintMemory();
       })
-      .catch(function () { });
+      .catch(function () {
+        // KI-380: re-armed, never swallowed.
+        connectionDown('the memory read');
+        window.setTimeout(function () { readMemory(true); }, 5000);
+      });
   }
 
   // ------------------------------------------------------------- skills
@@ -6950,7 +7038,11 @@
         face.skills = doc;
         if (face.panel === 'skills') paintSkills();
       })
-      .catch(function () { });
+      .catch(function () {
+        // KI-380: re-armed, never swallowed.
+        connectionDown('the skills read');
+        window.setTimeout(function () { readSkills(true); }, 5000);
+      });
   }
 
   // ------------------------------------------------------------- actions
@@ -7619,6 +7711,11 @@
     face.feedback = state.feedback || {};
     face.seat = state.approval || null;
     if (face.seat) face.seatSince = face.seat.since || Date.now();
+    // KI-380: a seat that arrived with the state read — the only path a
+    // zombie's fresh boot has — raises the same cue the live event
+    // does. The tab title is the one surface the dead page could not
+    // hide the seat on.
+    if (face.seat) paintTabCue();
     face.events = [];
     face.rows = [];
     face.assistant = null;
@@ -7733,19 +7830,36 @@
       return { close: function () { if (timer) clearInterval(timer); } };
     }
     var source = new EventSource('/events');
+    armBeatWatch();
     source.onopen = function () {
-      load().then(function () { paint(); }).catch(function () { });
+      // KI-380: the stream is the page's proof of life, so its return
+      // clears the banner and re-reads the state — the server that came
+      // back may hold a standing seat this page has never seen.
+      beat();
+      load().then(function () { paint(); }).catch(function () {
+        connectionDown('the state read after the stream returned');
+        window.setTimeout(function () {
+          load().then(function () { paint(); }).catch(function () { });
+        }, 5000);
+      });
     };
     source.onmessage = function (event) {
       var data = JSON.parse(event.data);
-      if (data.type === 'hello') return;
-      if (data.type === 'heartbeat') return;
+      if (data.type === 'hello') { beat(); return; }
+      if (data.type === 'heartbeat') { beat(); return; }
       apply(data);
       settle();
     };
     source.onerror = function () {
+      // KI-380: a dead stream is declared, not swallowed — the banner
+      // rises, the state read re-arms on its own clock, and the title
+      // carries the cue in case the page never wakes.
+      connectionDown('the stream died');
       el.statePill.textContent = 'stream down';
       el.statePill.dataset.state = 'down';
+      window.setTimeout(function () {
+        load().then(function () { paint(); }).catch(function () { });
+      }, 5000);
     };
     return source;
   }
@@ -8894,7 +9008,12 @@
         paintConvHead();
         paintRailCounts();
       })
-      .catch(function () { });
+      .catch(function () {
+        // KI-380: re-armed, never swallowed — the rail is the seat's
+        // other road home (the needs-you row), so its read dies loud.
+        connectionDown('the archive read');
+        window.setTimeout(function () { readSessions(true); }, 5000);
+      });
   }
 
   function workRows() {
@@ -19107,9 +19226,11 @@
       // failed boot, even if a panel's read is still in flight.
       document.documentElement.setAttribute('data-fleet-mounted', '1');
       listen();
-      // One archive read at boot: the rail's badge and the welcome's
-      // recent fallback speak from it, whatever panel the owner landed on.
-      readSessions(false);
+      armBeatWatch();
+      // KI-380: the boot's own reads are the first thing a zombie's
+      // reload runs, so they carry the banner too — a boot that cannot
+      // reach the server says so on the page it failed on.
+      readSessions(false).catch(function () { });
       // And one onboarding read: it decides which state of the home the
       // owner sees — the door or the work home.
       readOnboard(false);

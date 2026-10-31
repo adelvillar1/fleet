@@ -133,6 +133,11 @@
 
   <div class="rail-scrim" id="rail-scrim" hidden></div>
 
+  <!-- KI-380: the one element a dead page cannot repaint away. Hidden
+       until a read or the stream finds the server gone; its reload
+       advice is the zombie's one-way door back to a live face. -->
+  <div class="conn-down" id="conn-down" role="alert" hidden></div>
+
   <header class="topbar">
     <div class="topbar-left">
       <button class="rail-menu" id="rail-menu" type="button"

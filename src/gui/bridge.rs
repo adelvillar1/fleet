@@ -9682,6 +9682,90 @@ mod tests {
         assert!(bridge.state(&attached)["approval"].is_null());
     }
 
+    /// KI-380's third leg, resolved as a pin: the seat's four words are
+    /// four different promises, and the wire names which one an answer
+    /// kept. `always` is the run-scoped latch — the run continues
+    /// without asking again and no file is touched — so its reply
+    /// carries `"rule": null` BY DESIGN; the standing rule is the
+    /// `remember` word, and its write lands or the reply names why. The
+    /// zombie-tab session answered a seat with `always` and read
+    /// `rule: null` as a lost write; this pin is the difference made
+    /// checkable: `always` never writes, `remember` writes.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn always_answers_the_run_and_remember_writes_the_rule() {
+        let (bridge, sources, _door) = bridge().await;
+        let attached = bridge.launch();
+        // A plain read-only search: allowlistable, so `remember` is
+        // offered and would write.
+        let shell = call("bash", r#"{"command":"grep -rn pins src/"}"#);
+        let (responder, reply) = std::sync::mpsc::channel();
+        sources
+            .seat
+            .send(ApprovalRequest {
+                call: shell.clone(),
+                summary: "search the source".to_string(),
+                responder,
+            })
+            .expect("the seat arrives");
+        for _ in 0..50 {
+            if bridge.state(&attached)["approval"].is_object() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        let config = bridge.home_path().join("config.json");
+        let always = bridge
+            .answer(&attached, "always", &AnsweredBy::Desktop)
+            .expect("the seat is answered");
+        assert_eq!(always["answered"], "always");
+        assert!(
+            always["rule"].is_null(),
+            "`always` is the run-scoped latch: no rule rides its reply"
+        );
+        assert!(
+            !config.exists(),
+            "`always` writes nothing — the file must not appear"
+        );
+        assert_eq!(
+            reply.try_recv().unwrap(),
+            crate::agent::Approval::Always,
+            "the run's latch receives the run-scoped yes"
+        );
+
+        // The same call through `remember`: the rule lands on the wire
+        // and in the file — the write KI-380's probe looked for under
+        // the wrong word.
+        let (responder, reply) = std::sync::mpsc::channel();
+        sources
+            .seat
+            .send(ApprovalRequest {
+                call: shell,
+                summary: "search the source again".to_string(),
+                responder,
+            })
+            .expect("the seat arrives");
+        for _ in 0..50 {
+            if bridge.state(&attached)["approval"].is_object() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        let remembered = bridge
+            .answer(&attached, "remember", &AnsweredBy::Desktop)
+            .expect("the seat is answered");
+        assert_eq!(remembered["answered"], "remember");
+        assert_eq!(remembered["rule"], "bash · grep");
+        assert!(
+            config.exists(),
+            "`remember` writes the rule through the one writer"
+        );
+        assert_eq!(
+            reply.try_recv().unwrap(),
+            crate::agent::Approval::Once,
+            "the remembered grant releases this seat as a one-call yes"
+        );
+    }
+
     /// KI-286: a seat belongs to the session being driven, and a
     /// session-less answer — the shape a page that predates the seat's
     /// own name posts — belongs there too. Answering it against the

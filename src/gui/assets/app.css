@@ -668,6 +668,40 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
   backdrop-filter: blur(2px);
 }
 
+/* KI-380: the connection banner. Fixed under the topbar, above the work
+   (the topbar's own z-index band, below the drawer's 39), in the warn
+   register the state pill's down state speaks. Hidden by default; the
+   reads and the stream raise it, proof of life clears it. */
+.conn-down {
+  position: fixed;
+  top: 52px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 36;
+  max-width: min(680px, calc(100vw - 32px));
+  padding: 9px 16px;
+  border: 1px solid var(--dsw-static-warn-on-light);
+  border-radius: 10px;
+  background: var(--dsw-static-paper-800);
+  color: var(--dsw-static-warn-on-light);
+  font: 500 13px/1.45 var(--font-text);
+  box-shadow: 0 6px 24px rgb(12 14 18 / 14%);
+  text-align: center;
+}
+
+:root[data-theme="console"] .conn-down,
+:root[data-theme="graphite"] .conn-down {
+  background: var(--dsw-static-graph-800);
+  color: var(--dsw-static-warn-on-dark);
+  border-color: var(--dsw-static-warn-on-dark);
+}
+
+:root[data-theme="contrast"] .conn-down {
+  background: #ffffff;
+  color: #000000;
+  border-color: #000000;
+}
+
 /* --------------------------------------------------------------- topbar */
 
 .topbar {

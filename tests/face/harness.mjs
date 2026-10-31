@@ -240,11 +240,17 @@ function boot(options) {
   const events = [];
   let streamSource = null;
   const storage = new Map(Object.entries(opts.storage || {}));
+  const intervals = [];
+  let failNext = null;
 
   const documents = opts.documents || {};
   const fetchImpl = (url, init) => {
     const method = (init && init.method) || 'GET';
     calls.push({ url, method, body: init && init.body ? init.body : null });
+    if (failNext && failNext(url, method)) {
+      failNext = null;
+      return Promise.reject(new Error('the harness failed this fetch'));
+    }
     const pathOnly = String(url).split('?')[0];
     if (pathOnly === '/api/state') {
       const asked = new URL('http://x' + url).searchParams.get('session') || '';
@@ -595,7 +601,7 @@ function boot(options) {
     matchMedia: () => ({ matches: false, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {} }),
     setTimeout: (fn) => { fn(); return (timerIds += 1); },
     clearTimeout: () => {},
-    setInterval: () => (timerIds += 1),
+    setInterval: (fn) => { intervals.push(fn); return (timerIds += 1); },
     clearInterval: () => {},
     requestAnimationFrame: (fn) => { fn(); return (timerIds += 1); },
     scrollTo: () => {},
@@ -687,6 +693,14 @@ function boot(options) {
     text: (id) => (IDS[id] ? IDS[id].textContent : ''),
     rows: (sel) => documentElement.querySelectorAll(sel),
     clipboardWrites,
+    // The timers the page armed (KI-380's beat watch) and the harness's
+    // own failure hook, so a case can fail a fetch mid-flight.
+    intervals,
+    title: () => document_.title,
+    // The failure hook takes a setter: the closure's own variable, so
+    // the next fetch the page issues inside the vm fails.
+    setFailNext: (hook) => { failNext = hook; },
+    theStream: () => streamSource,
   };
 }
 
@@ -4811,7 +4825,102 @@ async function theConversationNamesThemselvesByTheirWork() {
     page.text('conv-name') + ' / ' + (page.IDS['conv-title'] || { title: '?' }).title);
 }
 
+// KI-380 (the zombie tab): the page whose server died never said so and
+// never recovered — every read failed into a silent swallow, the stream
+// died without arming anything, and a seat's cue lived only on the page
+// that could not paint it. The fix has four faces, and each is pinned
+// here: a failed read raises the banner and re-arms itself; the seat
+// from a state read moves the cue to the tab title; the run-scoped
+// `always` word is named on the seat card; a heartbeat's return clears
+// the banner and the stream's silence is measured.
+async function theZombieTabCannotHideASeatOrLoseTheReads() {
+  const doc = {
+    sessions: {
+      type: 'sessions', read_at: 'now', current: '',
+      counts: { needs: 0, working: 0, background: 0, earlier: 1, total: 1 },
+      sessions: [row('zomb-1', 'needs-approval', {
+        title: 'the run at the seat', needs: true, state: 'needs-approval',
+      })],
+    },
+    state: (asked) => ({ ...emptyState(asked), session: asked }),
+  };
+  const page = boot({ width: 1440, hash: '#/chat', documents: doc });
+  await flush();
+  page.open();
+  await flush(120);
+
+  // 1. A failed read is declared, not swallowed: the banner rises with
+  // the reload advice, the title carries the warning, and the read
+  // re-arms itself for the bounded retry. The read is one the page
+  // itself issues — the memory surface's arrival read.
+  const before = page.calls.filter((c) => c.url.startsWith('/api/memory')).length;
+  page.setFailNext((url) => url.startsWith('/api/memory'));
+  page.hash('#/memory');
+  await flush(80);
+  const banner = page.IDS['conn-down'];
+  check('KI-380 a failed read raises the banner',
+    banner && banner.hidden === false && banner.textContent.includes('reload'),
+    banner && banner.textContent.slice(0, 90));
+  check('KI-380 the failed read re-arms itself',
+    page.calls.filter((c) => c.url.startsWith('/api/memory')).length > before,
+    String(page.calls.filter((c) => c.url.startsWith('/api/memory')).length));
+
+  // 2. The seat arrives on the state read — the only path a zombie's
+  // fresh boot has — and the tab title carries the cue where a dead
+  // page's styling cannot reach. The state changes behind the page and
+  // the stream's return re-reads it: the onopen contract.
+  doc.state = (asked) => ({
+    ...emptyState(asked), session: asked,
+    approval: {
+      session: 'zomb-1', since: 1, tool: 'tool_search', label: 'tool_search',
+      summary: 'find a tool', destructive: false, allowlistable: true,
+    },
+  });
+  page.open();
+  await flush(120);
+  check('KI-380 the seat from the state read moves the cue to the tab',
+    page.title().includes('needs you'),
+    page.title());
+  check('KI-380 the seat card stands on the state path',
+    page.IDS['seat'].hidden === false &&
+      page.text('seat-label') === 'tool_search',
+    page.text('seat-label') + ' hidden=' + page.IDS['seat'].hidden);
+
+  // 3. The four words are named: `always` is the run-scoped latch, and
+  // the seat card says so in its own words — the misread that started
+  // KI-380's third leg (`rule: null` taken for a lost write).
+  const always = page.rows('#seat-actions .decision')
+    .find((b) => b.dataset.decision === 'always');
+  check('KI-380 the seat names the run scope of the always word',
+    always && /this run/.test(always.textContent),
+    always && always.textContent);
+
+  // 4. A heartbeat proves the live half and clears what the failure
+  // raised; the beat watch is armed on boot and on the stream.
+  page.push({ type: 'heartbeat' });
+  await flush(20);
+  check('KI-380 a heartbeat clears the banner',
+    banner.hidden === true, 'hidden=' + banner.hidden);
+  check('KI-380 the beat watch is armed',
+    page.intervals.length >= 1, String(page.intervals.length));
+
+  // 5. The stream's death is declared: the banner rises on onerror and
+  // the state read re-arms, so the zombie is loud from the first beat
+  // it misses. The harness holds the EventSource the boot created.
+  const stream = page.theStream();
+  if (stream && stream.onerror) {
+    stream.onerror(new Error('the server went away'));
+    await flush(40);
+    check('KI-380 a dead stream raises the banner',
+      page.IDS['conn-down'].hidden === false,
+      'hidden=' + page.IDS['conn-down'].hidden);
+  } else {
+    check('KI-380 a dead stream raises the banner', false, 'no stream source');
+  }
+}
+
 const cases = [
+  ['KI-380 the zombie tab cannot hide a seat or lose the reads', theZombieTabCannotHideASeatOrLoseTheReads],
   ['C1/C8 the list groups by attention and counts what the server counted', theListGroupsByAttentionAndCountsWhatTheServerCounted],
   ['C2 every state opens through one verb', everyStateOpensThroughOneVerb],
   ['C3 the head carries the way out and the switcher', theHeadCarriesTheWayOutAndTheSwitcher],
