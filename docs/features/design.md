@@ -10,6 +10,10 @@ lives in `docs/plans/2026-10-31-design-canvas-native.md`.
 
 ## The surface
 
+The canvas sits directly under the conversation in the rail's work
+group — it is work the owner opens the way they open a chat, not a
+listing to browse after one.
+
 `#/design` is a stage of its own: a head with the board picker and the
 frame count, an instrument strip (zoom out / fit / zoom in / grid / pin
 mode / the zoom readout), the **viewport**, and the brief composer at the
@@ -133,6 +137,18 @@ preset's spec, and the board's slug, and it asks for the page through
 `frame` result lands — and the conversation appears in `#/sessions` with
 its full log. The style presets are the source project's curated set,
 embedded once.
+
+## What is proven, and what is not
+
+The gate pins the document and its caps, the injection (including a
+hostile value and the unit rule), the scan's facts, the tools'
+validation, delete/duplicate/restore, the exports (a real ZIP), the
+preview's injected page, the composer's run and the canvas's gestures
+and writes; a live Chromium render at 1440×900 is the visual review, and
+the PNG export ran against the browser lane. **Not yet exercised end to
+end:** the review ask — browse → screenshot → vision → `review_frame` —
+whose pieces are each pinned but which no model run has walked. A design
+run also cannot see its own output: the review is a second run.
 
 ## What it is not
 

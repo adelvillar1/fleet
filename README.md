@@ -69,6 +69,12 @@ named, not implied — see Sequencing in
   (`fleet gui`), the terminal surface (`fleet`), and the headless CLI —
   each with the conversation first. What the surfaces are for, one by
   one, is [docs/architecture/surfaces.md](docs/architecture/surfaces.md).
+- **A design canvas** — the console's `design` board: pages from a brief
+  by a Fleet run, side by side on a pan/zoom canvas, with live token
+  tweaks, comment pins, versions, measured accessibility checks and
+  exports (HTML, tokens, a hand-off packet, a PNG). A frame is a complete
+  self-contained page, so the board holds what the deck renders and the
+  document preview reads — and any run can put one there.
 - **A router that owns its decisions** — the owner's declared chain,
   sys1-judged per task, failover by failure class, and deepseek-flash as
   the tail every walk closes on. Work is judged into tiers — quick,
@@ -182,7 +188,7 @@ owner's own work that predates and feeds this harness. What grew from them is it
 - [FUNCTIONAL-SPECIFICATIONS.md](FUNCTIONAL-SPECIFICATIONS.md) — what
   the product does, surface by surface, in the user's terms.
 - [docs/architecture/surfaces.md](docs/architecture/surfaces.md) · the
-  what and why of all twelve destinations.
+  what and why of all thirteen destinations.
   [docs/architecture/lanes.md](docs/architecture/lanes.md) — the five-lane
   case.
 - `CLAUDE.md` — the house rules, the pointer index, and the session

@@ -25,7 +25,7 @@ services decide, measure, index, and render before it
 
 ## The surfaces
 
-Eleven destinations in four groups, one flat level, reachable from the
+Thirteen destinations in four groups, one flat level, reachable from the
 rail or the ⌘K palette. Every destination shares the grammar: a
 one-sentence purpose, an identity card with **ask** buttons, a strip of
 counts, a column of substance, and a rail of secondary reads. The ask
@@ -53,6 +53,26 @@ the counts (facts known, skills in reach, runs under this home), the
 method in three words — plan, delegate, verify — and where a run's work
 goes: local to the machine, turns to the providers that serve them, a
 document escalated to Perception to Nace.
+
+**Work — design.** The board. Your pages, side by side on a canvas you
+can pan and zoom: a page is a complete HTML design — a landing screen, a
+pricing table, a component sheet — and the board is where they live. The
+head names the board and offers another; the strip carries zoom out,
+**fit**, zoom in, the grid, pin mode and the zoom readout. Drag a page by
+its title bar to move it; wheel zooms toward the pointer; space-drag
+pans; a board seen for the first time opens fitted to its pages. A page
+that a deepseek/GLM run wrote is a version, and the card's verbs are its
+own: **tweaks** (the page's declared colors, type scale and spacing as
+sliders that change the page as you drag — no model call), **review**
+(the page's own measured checks beside the designer's scores), versions
+with restore, **export** (the page, its design tokens, a hand-off
+packet, a PNG), copy, duplicate, open, delete. Drop a **pin** anywhere on
+a page to say what is wrong; a pin's thread carries replies and **fix
+this pin**, which refines exactly that page as a new version. Below the
+board, the **brief**: write what to design, pick a style direction, press
+generate, and pages land on the board as the run works — the run is an
+ordinary Fleet run, visible in the work list, and any run can put a page
+here with the `frame` tool.
 
 **Work — the work list.** Every conversation and background run under
 this home, grouped by what needs the owner rather than by project:
@@ -141,7 +161,14 @@ passphrase is lost.
 
 **System — settings.** Every knob the home has: the router (spend gate,
 workload tiers with a resolved-now column, thresholds, pin), the
-provider roster as field editors, the lanes, the MCP servers
+provider roster — open a provider's card, paste its key, and the card
+comes back with **every model that provider serves**, each with an
+on-off toggle and the context window and output ceiling the provider
+declared; **reload models** re-lists on demand, and a workload's card
+names its **primary** and its **secondaries** in walk order, addable
+from the enabled models only (a workload name the judgment cannot answer
+is marked as serving only by pin or default) — the lanes, the MCP
+servers
 (`docs/features/mcp.md`: the registry's rows with their probe dots and
 enable/probe/remove, the machine scan's discovery rows with their
 advisorial badges and one import each — the registry carries env NAMES
@@ -189,6 +216,7 @@ store and its diff, and a command palette over every pane and panel
 | the archive of runs | `fleet sessions` (add `--recall <query>` to rank it, `--consolidate`, `--archive`, `--probe <id>` to mark verification traffic) |
 | what the lanes are doing | `fleet lanes` |
 | the routing roster | `fleet providers` |
+| a designed page | the console's **design** (`#/design`) — or any run, through the `frame` tool |
 | the day's calibration stream | `fleet calib` (then `fleet judge`, `fleet delegate` for the grading beats) |
 | why a verdict stood | `fleet explain` |
 | the harness's own performance | `fleet eval` (`--last` for the last run) |
@@ -407,7 +435,8 @@ prints house cards and lands one `eval_corpus` row (`docs/features/eval.md`).
 |---|---|---|
 | TUI settings list surfaces | Partially implemented | `src/settings.rs`, `src/tui/app.rs` |
 | Human TUI open | Unclosed | `docs/architecture/deep-dive-2026-10-15.md` |
-| Structured provider editor | Implemented: field editor over the roster, key presence by name, pin, add/remove | `src/gui/assets/app.js`, `src/settings.rs` |
+| Structured provider editor | Implemented: paste a key (vault or `.env`, never shown) → discovery lists every model the provider serves, with per-model settings and toggles; reload on demand; primary/secondary per workload | `src/gui/assets/app.js`, `src/settings.rs`, `src/canvas.rs` |
+| Design canvas review loop | Partially proven: the scan, the review store and the review card are pinned; the browse → screenshot → vision → `review_frame` ask is wired but not yet exercised end to end | `docs/features/design.md`, `src/tools.rs` |
 
 These gaps are noted as missing coverage, not as defects in code. When
 this file falls out of sync with the sources, fix the source feature doc

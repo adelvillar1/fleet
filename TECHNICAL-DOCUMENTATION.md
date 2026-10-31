@@ -66,8 +66,11 @@ non-loopback host is refused by name. The routes: `/api/run`,
 `/api/folder`, `/api/tree` (the pane's contained listing, and
 `abs=1` for the folder picker's whole-hierarchy listing),
 `/api/file`, `/api/attach`, `/api/settings`, `/api/state`,
-`/api/rank`, `/api/related`, `/api/pair/*`, and `/events` — the ordered
-event stream the transcript is built from. A paired device reaches the
+`/api/rank`, `/api/related`, `/api/pair/*`, `/api/design` (read and
+write), `/api/design/inject` (the stateless tweak transform),
+`/api/design/frame/<slug>/<id>` (a page under a strict CSP) and
+`/api/design/export`, and `/events` — the ordered event stream the
+transcript is built from. A paired device reaches the
 allowlisted routes with its cookie; the device token is stored as a
 digest; `Host`/`Origin` are checked. Every write rides `settings.rs`.
 

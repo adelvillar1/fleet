@@ -3,7 +3,8 @@
 A read of the browser face as a user meets it, taken live on
 2026-10-21 against every destination in the rail — eleven then;
 **workspace history** joined the knowledge group when the LayerFS
-instrument landed, making twelve. This is the what and
+instrument landed, making twelve, and the design canvas makes
+thirteen. This is the what and
 the why of each surface — the terms the README and the functional
 specification should speak. The how stays in the code.
 
@@ -95,6 +96,46 @@ else, hidden in panes and logs. Here they are the transcript.
 
 **State.** The core surface; complete. The working-folder picker now
 browses the whole disk and takes a typed path.
+
+### Design — *work*
+
+**What it is.** The board: pages side by side on a canvas you pan and
+zoom, each an opaque, self-contained HTML design in its own frame —
+a landing screen, a pricing table, a component sheet. Frames are not
+shapes or layers: a frame is a *page*, whatever the page is, which is
+why one surface holds a site, a deck-sized poster and a component
+catalogue without a second editor. The chrome is Fleet's; the page is
+the artifact.
+
+**What you do.** Write the brief under the board — what to design, for
+whom, in which style direction — and press generate: an ordinary Fleet
+run fills the board as it works, and it reads in the work list like any
+other run. Then move the pages (title-bar drag, arrow nudge), pan and
+zoom, and open a page's own verbs: **tweaks** (the page's declared
+colors, type scale and spacing as sliders that repaint it live, with no
+model call), **review** (the page's own measured checks — token
+contrast, alt text, focus, viewport — beside the designer's stored
+scores and fixes), **versions** (each generate, refine and restore
+snapshotted; a restore is itself a version), **export** (the page, its
+design tokens, a hand-off packet, a PNG rendered by the browser lane),
+copy, duplicate, open, delete. Drop a **pin** on a page to say what is
+wrong; the thread carries replies and *fix this pin*, which refines that
+page as a new version. Any run can put a page here through the `frame`
+tool — the board is where design artifacts land, not a separate app.
+
+**Why.** Designers were the one craft Fleet could show but not *make*:
+the deck renders, the document previews, the vision tool reads an image
+— and a whole page was the missing unit. A page is the unit that carries
+its own tokens, so it can be tweaked, measured, versioned, reviewed and
+handed off without a second tool.
+
+**State.** Implemented: the document and its caps, the viewport's
+pan/zoom/fit, tweaks with live injection, pins, versions, the scan, the
+review store, the exports, the composer's run — proven by the gate and
+a live render. Not yet: an in-run review loop (a design run cannot see
+its own output; the review is a second run), undo for geometry beyond
+version restore, and no vector/shape editing (deliberately — a frame is
+a page).
 
 ### Work — *work*
 
@@ -330,7 +371,8 @@ write the identity slot.
 form asks you to retype a model id or a path, and every write rides the
 same writer the CLI rides — the browser never has a second truth.
 
-**State.** Complete across all eleven sections.
+**State.** Complete across all eight sections (models, specialists,
+roles, trust, money, schedule, interface, environment).
 
 ### Calibration — *system*
 
