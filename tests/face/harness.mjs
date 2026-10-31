@@ -379,10 +379,19 @@ function boot(options) {
           json: () => Promise.resolve({ type: 'design_write', op: 'x', wrote: { slug: 'sample-board' } }),
         });
       }
-      return Promise.resolve({
-        status: 200,
-        json: () => Promise.resolve(documents.design || { type: 'design', projects: [], refused: [] }),
-      });
+      const base = documents.design || { type: 'design', projects: [], refused: [] };
+      const asked = /project=([^&]+)/.exec(String(url || ''));
+      const slug = asked ? decodeURIComponent(asked[1]) : '';
+      const document_ = (!slug || (base.active && base.active.slug === slug))
+        ? base
+        : Object.assign({}, base, {
+          active: Object.assign({}, base.active, {
+            slug,
+            name: slug === 'another-board' ? 'Another board' : slug,
+            frames: slug === 'another-board' ? [] : (base.active ? base.active.frames : []),
+          }),
+        });
+      return Promise.resolve({ status: 200, json: () => Promise.resolve(document_) });
     }
     if (pathOnly === '/api/design/inject') {
       return Promise.resolve({
@@ -3959,8 +3968,12 @@ async function theDesignCanvasCarriesItsFramesAndWritesGeometry() {
   const designDoc = {
     type: 'design',
     read_at: 'now',
-    projects: [{ slug: 'sample-board', name: 'Sample board', frames: 2,
-      updated: '2026-10-31T09:00:00Z' }],
+    projects: [
+      { slug: 'sample-board', name: 'Sample board', frames: 2,
+        updated: '2026-10-31T09:00:00Z' },
+      { slug: 'another-board', name: 'Another board', frames: 3,
+        updated: '2026-10-30T09:00:00Z' },
+    ],
     active: {
       slug: 'sample-board',
       name: 'Sample board',
@@ -3984,11 +3997,13 @@ async function theDesignCanvasCarriesItsFramesAndWritesGeometry() {
     !!page.IDS['panel-design'] && page.IDS['panel-design'].hidden === false,
     String(page.IDS['panel-design'] && page.IDS['panel-design'].hidden));
   const railRows = page.rows('#design-rail .section-rail-row');
-  check('PM-D the boards rail lists the projects, the open one marked',
-    railRows.length === 1 &&
+  check('PM-D the boards rail lists every board, the open one marked',
+    railRows.length === 2 &&
       railRows[0].dataset.section === 'sample-board' &&
       railRows[0].getAttribute('aria-current') === 'page' &&
-      String(railRows[0].textContent).includes('Sample board'),
+      String(railRows[0].textContent).includes('Sample board') &&
+      String(railRows[1].textContent).includes('Another board') &&
+      !railRows[1].getAttribute('aria-current'),
     railRows.map((one) => one.dataset.section + '/' +
       one.getAttribute('aria-current')).join(','));
   check('PM-D the rail is the shared section rail',
@@ -4017,14 +4032,6 @@ async function theDesignCanvasCarriesItsFramesAndWritesGeometry() {
   // `[data-act=…]` never matches; the controls are found by their dataset.
   const byAct = (parent, act) => parent.find((one) => one.dataset &&
     one.dataset.act === act)[0] || null;
-  // The rail is the switcher: a press on another board reads it by slug.
-  // (The fixture holds one board, so the press is asserted on the row's
-  // own contract: the pick handler reads `project=<slug>`.)
-  const reads = page.calls.filter((one) => String(one.url || '').includes('/api/design'));
-  check('PM-D opening a board is a read by slug',
-    reads.some((one) => String(one.url || '').includes('project=')) || reads.length >= 1,
-    JSON.stringify(reads.map((one) => one.url)));
-
   // S1: zoom is a transform change, persisted; select is a class.
   const world = page.IDS['design-world'];
   const before = world.style.transform;
@@ -4130,6 +4137,21 @@ async function theDesignCanvasCarriesItsFramesAndWritesGeometry() {
     run.length === 1 && String(run[0].body).includes('frame') &&
       String(run[0].body).includes('sample-board'),
     JSON.stringify(run.map((one) => String(one.body).slice(0, 160))));
+  // The rail is the switcher: a press on another board reads it by slug
+  // and remembers the choice.
+  railRows[1].click();
+  await flush(60);
+  const switched = page.calls.filter((one) =>
+    String(one.url || '').includes('/api/design') &&
+    String(one.url || '').includes('project=another-board'));
+  check('PM-D a rail press opens that board by slug',
+    switched.length >= 1, JSON.stringify(page.calls.map((one) => one.url).slice(-4)));
+  const remembered = String(
+    (page.sandbox && page.sandbox.window && page.sandbox.window.localStorage
+      ? page.sandbox.window.localStorage.getItem('fleet-design-project')
+      : '') || '');
+  check('PM-D the board choice is remembered',
+    remembered === 'another-board', remembered);
 }
 
 async function theSettingsRailCarriesOneSectionAtATime() {
