@@ -245,16 +245,31 @@ head, the rail and the panels keep the measure they have.
 
 ## Run behavior
 
-- **The transcript is an activity list, one line per thing that
-  happened.** A provider that streams its thinking gets a `Thought ·
-  Ns` row per response, closed by default and opening to the words on a
-  press; the reasoning is logged and shown, and never sent back to the
-  provider. A tool call is one line naming the tool and the command,
-  opening to the full command (or path), the time it took, the output it
-  returned, and a `raw record` button. The run strip's folded lines
-  (route, memory, skills, lane, compaction, checkpoint, folder, control,
-  repair, rewind) each open their own record on a press. Nothing on the
-  transcript is a dead label, and none of it adds height until asked.
+- **The transcript is dense: one line while the run runs, one fold at
+  the end, the answer full.** The answer is the surface — the final
+  output renders fully expanded, and everything the run did to reach it
+  is one line. A provider that streams its thinking streams it to one
+  live line while the turn runs (a thinking event per frame, transport
+  only — the log's `reasoning` record is unchanged, and a provider that
+  reports no thinking emits nothing); when the block closes, the live
+  line is replaced by a `Thought · Ns` card, collapsed, opening to the
+  words on a press — the reasoning is logged and shown, and never sent
+  back to the provider. A tool call is one line — its icon, the tool,
+  the live status — opening to the summary, the full command (or path),
+  the time it took, the output it returned, and a `raw record` button.
+  Both cards wear an icon that names what they are. At the final
+  output the exchange summarizes: its tool and thinking rows fold under
+  their turn marks and each mark carries the counts it hides (`turn 3 ·
+  4 tools · thought 2s`), one press from every row; the answer is never
+  folded, and a history loaded from a log keeps its rows as the record
+  stands. While a run works, the conversation's tail carries the
+  working line — a spinner, "working", the turn, and the elapsed time —
+  and a seat shows how long it has waited; the run's state lives on
+  the conversation, never in the composer, which keeps its idle words.
+  The run strip's folded lines (route, memory, skills, lane,
+  compaction, checkpoint, folder, control, repair, rewind) each open
+  their own record on a press. Nothing on the transcript is a dead
+  label, and none of it adds height until asked.
 - **The registry's servers ride every owner-facing run.** An enabled
   server in the fleet home's `mcp.json` pre-joins before the first
   request — its tools are declared from the first turn under

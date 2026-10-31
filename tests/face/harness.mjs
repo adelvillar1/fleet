@@ -2890,12 +2890,18 @@ async function theChatCountsExchangesAndShowsItsControls() {
   check('chat the owner message renders once', spans.length === 1, String(spans.length));
 
   // The turn is the model's request; the count the header carries is
-  // exchanges — the hint and the pill name the exchange in flight.
+  // exchanges — the working line and the pill name the exchange in
+  // flight. The composer's hint keeps its idle words: the run reports
+  // on the conversation, not on where the owner types (the density
+  // plan, R9).
   page.push({ type: 'turn', turn: 1 });
   await flush(40);
+  const live = page.IDS['working-live'].textContent;
+  check('chat the working line names the exchange in flight',
+    live.includes('exchange 1') && !live.includes('turn 1'), live);
   const hint = page.IDS['hint'].textContent;
-  check('chat the hint names the exchange in flight',
-    hint.includes('exchange 1') && !hint.includes('turn 1'), hint);
+  check('chat the hint keeps its idle words while the run works',
+    hint === 'Shift+Enter makes a newline', hint);
   const pill = page.IDS['process-pill'].textContent;
   check('chat the pill names the exchange, not the round',
     pill.includes('exchange 1') && !pill.includes('turn 1'), pill);
@@ -4998,6 +5004,165 @@ async function theFreshnessSurfacesReadTheFoldCount() {
     note.includes('completed') && !note.includes('turns'), note);
 }
 
+// D1 (the density plan): the conversation's own density — the cards
+// wear their icons, the thinking streams to its card, the finished
+// exchange folds to its marks' summary with the answer open, and the
+// working line reports on the conversation while the composer keeps
+// its idle words.
+async function theConversationDensityHolds() {
+  const doc = {
+    sessions: {
+      type: 'sessions', read_at: 'now', current: '',
+      counts: { needs: 0, working: 0, background: 0, earlier: 1, yours: 1, total: 1 },
+      sessions: [row('dens-1', 'completed', { title: 'a dense conversation' })],
+    },
+    state: (asked) => ({ ...emptyState(asked), session: asked }),
+  };
+  const page = boot({ width: 1440, hash: '#/sessions/dens-1', documents: doc });
+  await flush();
+  page.open();
+  await flush();
+
+  // A run starts: the working line reports on the conversation and the
+  // composer keeps its idle words (R9).
+  page.push({ type: 'message', role: 'owner', text: 'count the things' });
+  await flush();
+  const live = page.IDS['working-live'];
+  check('D1 the working line stands at the run',
+    !!live && live.hidden === false, live ? 'hidden=' + live.hidden : 'no line');
+  check('D1 it names working and a clock',
+    !!live && /working/.test(live.textContent) && /\d+:\d\d/.test(live.textContent),
+    live ? live.textContent : '');
+  check('D1 the composer keeps its idle words',
+    page.text('hint') === 'Shift+Enter makes a newline', page.text('hint'));
+
+  // The thinking streams to one live line (R2's face half).
+  page.push({ type: 'thinking', text: 'Count the rows ' });
+  page.push({ type: 'thinking', text: 'first.' });
+  await flush();
+  const line = page.rows('.thinking-live');
+  check('D1 the thinking streams to one live line',
+    line.length === 1 && /Count the rows first\./.test(line[0].textContent),
+    line.length === 1 ? line[0].textContent : String(line.length));
+
+  // The block closes: the line is gone, the card stands collapsed (R3).
+  page.push({ type: 'turn', turn: 1 });
+  page.push({ type: 'reasoning', text: 'Count the rows first.', seconds: 2 });
+  await flush();
+  check('D1 the live line is replaced by the card',
+    page.rows('.thinking-live').length === 0 && page.rows('.thought').length === 1,
+    page.rows('.thinking-live').length + '/' + page.rows('.thought').length);
+  const thought = page.rows('.thought')[0];
+  check('D1 the thought card is collapsed with its block',
+    !!thought && thought.querySelector('.thought-body').hidden === true,
+    thought ? String(thought.querySelector('.thought-body').hidden) : 'no card');
+
+  // The tool call: one line, the tools icon, the summary in the detail
+  // (R1, R4).
+  page.push({ type: 'tool_call', tool: 'bash', summary: 'wc -l src/lib.rs',
+    arguments: '{"command":"wc -l src/lib.rs"}' });
+  await flush();
+  const tools = page.rows('.card-row.tool');
+  check('D1 one tool card', tools.length === 1, String(tools.length));
+  const tool = tools[0];
+  check('D1 the tool card wears the tools icon',
+    !!tool.querySelector('.glyph svg'), '');
+  check('D1 the thought card wears the thinking icon',
+    page.rows('.thought-head svg').length === 1,
+    String(page.rows('.thought-head svg').length));
+  check('D1 the collapsed card carries no summary line',
+    tool.querySelector('.sub') === null &&
+      !!tool.querySelector('.tool-detail .tool-summary'),
+    String(tool.querySelector('.sub') === null));
+  check('D1 the summary is hidden until asked',
+    tool.querySelector('.tool-detail').hidden === true, '');
+  page.push({ type: 'tool_result', tool: 'bash', preview: '42 src/lib.rs',
+    approved: true, resolution: 'exact \u00b7 declared' });
+  await flush();
+  check('D1 the done card is still one line',
+    tool.querySelector('.sub') === null &&
+      /42 src\/lib\.rs/.test(tool.querySelector('.tool-output').textContent),
+    tool.querySelector('.tool-output').textContent);
+
+  // The answer lands: the exchange folds to its marks' summary, the
+  // answer stays open (R5, R6), the working line stands down (R9).
+  page.push({ type: 'token', text: 'Forty-two rows.' });
+  await flush();
+  page.push({ type: 'finished', stop_reason: 'completed' });
+  await flush(60);
+  check('D1 the exchange folded to its summary',
+    tool.hidden === true && thought.hidden === true,
+    'tool=' + tool.hidden + ' thought=' + thought.hidden);
+  check('D1 the answer stays open',
+    page.rows('.assistant').every((one) => !one.hidden), '');
+  const fold = page.rows('.turn-fold')[0];
+  check('D1 the mark carries the counts',
+    !!fold && /turn 1/.test(fold.textContent) && /1 tool/.test(fold.textContent) &&
+      /thought 2s/.test(fold.textContent),
+    fold ? fold.textContent : 'no mark');
+  check('D1 the mark starts folded',
+    !!fold && fold.getAttribute('aria-expanded') === 'false',
+    fold ? String(fold.getAttribute('aria-expanded')) : 'no mark');
+  check('D1 the working line stands down',
+    page.IDS['working-live'].hidden === true,
+    String(page.IDS['working-live'].hidden));
+
+  // One press brings the rows back (R5's press).
+  if (fold) fold.click();
+  await flush(20);
+  check('D1 one press expands the rows',
+    tool.hidden === false && thought.hidden === false,
+    'tool=' + tool.hidden + ' thought=' + thought.hidden);
+
+  // A seat: the line swaps to its own wait (R9's variant).
+  page.push({ type: 'seat', tool: 'bash', label: 'run a command',
+    summary: 'echo hi', since: Date.now() - 65000 });
+  await flush(40);
+  check('D1 a standing seat shows its wait on the conversation',
+    page.IDS['working-live'].hidden === false &&
+      page.IDS['working-live'].dataset.mode === 'seat' &&
+      /waiting for an answer/.test(page.IDS['working-live'].textContent),
+    page.IDS['working-live'].textContent);
+  check('D1 the composer still keeps its idle words',
+    page.text('hint') === 'Shift+Enter makes a newline', page.text('hint'));
+  page.push({ type: 'seat_cleared' });
+  page.push({ type: 'finished', stop_reason: 'completed' });
+  await flush(40);
+  check('D1 the line is gone when nothing is live',
+    page.IDS['working-live'].hidden === true,
+    String(page.IDS['working-live'].hidden));
+
+  // R7: history loaded from a log is never folded — a second page
+  // reads the same exchange from its state document and keeps every
+  // row as the record stands.
+  const history = {
+    sessions: doc.sessions,
+    state: (asked) => ({
+      ...emptyState(asked), session: asked,
+      events: [
+        { type: 'message', role: 'owner', text: 'count the things' },
+        { type: 'turn', turn: 1 },
+        { type: 'reasoning', text: 'Count the rows first.', seconds: 2 },
+        { type: 'tool_call', tool: 'bash', summary: 'wc -l src/lib.rs',
+          arguments: '{"command":"wc -l src/lib.rs"}' },
+        { type: 'tool_result', tool: 'bash', preview: '42 src/lib.rs',
+          approved: true, resolution: 'exact \u00b7 declared' },
+        { type: 'message', role: 'assistant', text: 'Forty-two rows.' },
+      ],
+    }),
+  };
+  const past = boot({ width: 1440, hash: '#/sessions/dens-1', documents: history });
+  await flush();
+  past.open();
+  await flush(60);
+  check('D1 history is never re-folded',
+    past.rows('.card-row.tool').every((one) => !one.hidden) &&
+      past.rows('.thought').every((one) => !one.hidden), '');
+  check('D1 history carries no working line',
+    past.IDS['working-live'].hidden === true,
+    String(past.IDS['working-live'].hidden));
+}
+
 const cases = [
   ['KI-380 the zombie tab cannot hide a seat or lose the reads', theZombieTabCannotHideASeatOrLoseTheReads],
   ['C1/C8 the list groups by attention and counts what the server counted', theListGroupsByAttentionAndCountsWhatTheServerCounted],
@@ -5052,6 +5217,7 @@ const cases = [
   ['LAND the landing greets the owner\u2019s work', theLandingGreetsTheOwnersWork],
   ['NAME the conversation names themselves by their work', theConversationNamesThemselvesByTheirWork],
   ['FOLD the freshness surfaces read the fold count', theFreshnessSurfacesReadTheFoldCount],
+  ['D1 the conversation density holds', theConversationDensityHolds],
 ];
 
 for (const [name, run] of cases) {

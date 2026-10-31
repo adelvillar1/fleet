@@ -7888,6 +7888,7 @@ fn record(state: &Mutex<GuiState>, events: &broadcast::Sender<Value>, session: &
 pub(crate) fn describe(event: &UiEvent) -> Value {
     match event {
         UiEvent::Token(text) => json!({"type": "token", "text": text}),
+        UiEvent::Thinking(delta) => json!({"type": "thinking", "text": delta}),
         UiEvent::Reasoning { text, seconds } => json!({
             "type": "reasoning",
             "text": text,
@@ -11901,6 +11902,16 @@ mod tests {
             "the other conversation is told too"
         );
         std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn the_thinking_delta_shape() {
+        // The live line's wire pin: one delta, `type: thinking`, the
+        // text under `text` — the shape the face's reducer reads, and
+        // the one a provider that reports no thinking never sends.
+        let value = describe(&UiEvent::Thinking("count the rows".to_string()));
+        assert_eq!(value["type"], "thinking", "{value:?}");
+        assert_eq!(value["text"], "count the rows", "{value:?}");
     }
 
     #[test]

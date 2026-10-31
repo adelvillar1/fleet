@@ -365,6 +365,14 @@
         <button type="button" class="to-live" id="to-live" hidden></button>
       </div>
 
+      <!-- The working line (the density plan, P4): the run's live
+           state where the reading is — a spinner, "working", the turn,
+           and the elapsed time at the tail of the conversation. It sits
+           outside the stream's rows, so a repaint cannot swallow it,
+           and never in the composer: the run reports where it works,
+           the composer is where the owner acts. -->
+      <div class="working-live" id="working-live" hidden></div>
+
       <!-- The process, compact: the same live card's state in one line
            when the aside is closed or the screen is narrow. Clicking it
            opens the process rather than navigating away from the work. -->

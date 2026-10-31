@@ -988,23 +988,36 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
   background: currentColor;
 }
 
-.composer-hint.busy::before {
+/* P4: the working line lives at the tail of the conversation — the
+   run reports where the reading is, and never in the composer. */
+.working-live {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 14px 8px;
+  color: var(--dsw-alias-accent-lift);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.01em;
+  font-variant-numeric: tabular-nums;
+}
+.working-live[hidden] { display: none; }
+.working-live::before {
   content: "";
-  display: inline-block;
+  flex: none;
   width: 8px;
   height: 8px;
-  margin-right: 6px;
   border: 1.5px solid var(--dsw-alias-accent);
   border-top-color: transparent;
   border-radius: 50%;
-  vertical-align: -1px;
   animation: fleet-spin 0.9s linear infinite;
 }
+.working-live[data-mode="seat"] { color: var(--dsw-alias-warn); }
 
 @media (prefers-reduced-motion: reduce) {
   .pill[data-state="working"]::before,
   .pill[data-state="waiting"]::before,
-  .composer-hint.busy::before { animation: none; }
+  .working-live::before { animation: none; }
 }
 
 .process-pill {
@@ -2263,18 +2276,29 @@ body[data-object-card="open"] .dock-object {
 }
 .receipt-continue[disabled] { opacity: 0.6; cursor: default; }
 
-/* C2: a done tool collapses to one line; its preview rides the note,
-   hidden until the row is clicked. A refused call keeps everything. */
-.card-row.tool.collapsed .card-open { padding: 6px 14px; }
-.card-row.tool.collapsed .glyph { width: 18px; height: 18px; font-size: 9px; }
-.card-row.tool.collapsed .title { font-size: calc(11px * var(--chat-scale, 1)); }
-.card-row.tool.collapsed .sub {
-  max-width: 60%;
+/* C2 + the density plan (P2): a tool card is one line whether it
+   runs or stands done — icon, tool, live status. The summary and
+   the command ride the detail, one press away. A refused call
+   keeps everything expanded. */
+.card-row.tool .card-open { padding: 6px 14px; }
+.card-row.tool .glyph { width: 18px; height: 18px; font-size: 9px; }
+/* The one line, honestly: the body is a baseline row, the title
+   truncates, and the status rides the right end — a grid would
+   stack the two and the card would be two lines tall. */
+.card-row.tool .body {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.card-row.tool .title {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: calc(11px * var(--chat-scale, 1));
 }
-.card-row.tool.collapsed .status {
+.card-row.tool .status { margin-left: auto; }
+.card-row.tool .status {
   font-family: var(--font-mono);
   font-size: calc(9.5px * var(--chat-scale, 1));
   color: var(--dsw-alias-ink-tertiary);
@@ -2533,12 +2557,14 @@ body[data-object-card="open"] .dock-object {
   font-size: 10.5px;
   font-weight: 600;
 }
+.card-row .glyph svg { display: block; width: 13px; height: 13px; }
 
 .card-row[data-kind="route"] .glyph,
 .card-row[data-kind="memory"] .glyph,
 .card-row[data-kind="skills"] .glyph,
 .card-row[data-kind="delegation"] .glyph,
 .card-row[data-kind="lane"] .glyph,
+.card-row[data-kind="tool"] .glyph,
 .card-row[data-kind="deck"] .glyph { color: var(--dsw-alias-accent); }
 
 .card-row[data-kind="notice"] .glyph,
@@ -7711,7 +7737,7 @@ body[data-work="collapsed"] .work-list { display: none; }
   text-align: left;
 }
 .thought-head:hover { color: var(--dsw-alias-ink-secondary); }
-.thought-glyph { font-size: calc(13px * var(--chat-scale, 1)); line-height: 1; }
+.thought-glyph { flex: none; width: 13px; height: 13px; }
 .thought.open .thought-glyph { color: var(--dsw-alias-accent-lift); }
 .thought-body {
   margin: 2px 0 8px 21px;
@@ -7727,8 +7753,26 @@ body[data-work="collapsed"] .work-list { display: none; }
 }
 .thought-body .md-code { font-size: calc(11px * var(--chat-scale, 1)); }
 
+/* P1: the live thinking line — one line that grows with the stream,
+   replaced by the thought's card when the block closes. */
+.thinking-live {
+  padding: 2px 14px 6px;
+  max-width: 68ch;
+  color: var(--dsw-alias-ink-tertiary);
+  font-size: calc(11px * var(--chat-scale, 1));
+  font-style: italic;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 /* A command's expanded detail: what ran, how long, what came back. */
 .tool-detail { margin: 4px 10px 8px 34px; }
+.tool-summary {
+  margin: 0 0 6px;
+  color: var(--dsw-alias-ink-secondary);
+  font-size: calc(11px * var(--chat-scale, 1));
+  white-space: pre-wrap;
+}
 .tool-command,
 .tool-output {
   margin: 0 0 6px;

@@ -1318,8 +1318,10 @@ impl App {
         match event {
             // The model's thinking is the face's row first; the TUI's own
             // Thought block is a later increment, so the pane reads the
-            // answer and the calls as it does today.
+            // answer and the calls as it does today. The live line's
+            // deltas ride the same ignore.
             UiEvent::Reasoning { .. } => {}
+            UiEvent::Thinking(_) => {}
             // The terminal has no door to raise: the run's own refusal
             // names the missing keys, and `fleet onboard` walks the same
             // steps here.
@@ -4447,6 +4449,7 @@ mod tests {
             workspace_inferred: false,
             channel: None,
             compacted: false,
+            compactions: None,
             served_model: None,
             stop_reason: None,
             turns: None,

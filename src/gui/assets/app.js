@@ -523,6 +523,18 @@
       ['path', { d: 'M9 4h6v3H9z' }],
       ['path', { d: 'M9 4H7a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-2' }]
     ],
+    // The conversation's two card types wear their names (the density
+    // plan, P0): a call at the prompt for a tool, the diamond that was
+    // the thought card's ◇ drawn as a shape. Both are the table's own
+    // idiom — one stroke weight, geometry, no second alphabet.
+    tools: [
+      ['path', { d: 'M5 7l5 5-5 5' }],
+      ['path', { d: 'M12.5 17H19' }]
+    ],
+    thinking: [
+      ['path', { d: 'M12 3.5 20.5 12 12 20.5 3.5 12z' }],
+      ['circle', { cx: 12, cy: 12, r: 1.8 }]
+    ],
     repo: [
       ['path', { d: 'M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z' }]
     ],
@@ -697,6 +709,7 @@
     goalPopClose: document.getElementById('goal-pop-close'),
     plan: document.getElementById('plan'),
     hint: document.getElementById('hint'),
+    workingLive: document.getElementById('working-live'),
     runPerms: document.getElementById('run-perms'),
     runMode: document.getElementById('run-mode'),
     runProvider: document.getElementById('run-provider'),
@@ -774,6 +787,7 @@
     dividerShown: false,
     // Turn navigation (D8): which turns are folded.
     turnFolded: {},
+    turnSummaries: null,
     sessionQuery: '',
     memoryFilter: 'live',
     // The library holds 442 rows; the query and the show-all toggle are
@@ -1636,6 +1650,59 @@
     });
   }
 
+  // The turn's summary at the final output (the density plan, P3):
+  // the exchange's tool and thinking rows fold under their marks,
+  // each mark carrying the counts — `turn 3 \u00b7 4 tools \u00b7 thought 2s`
+  // — and the answer row is never a fold target, because the answer
+  // is the surface. The fold lands in the turn's own state, so the
+  // mark's press expands every row back and folds them under the
+  // rule the owner set for a manual fold (D8).
+  function summarizeRun(from, to) {
+    if (!to) return;
+    var start = from && from <= to ? from : to;
+    for (var turn = start; turn <= to; turn += 1) summarizeTurn(turn);
+  }
+
+  function summarizeTurn(turn) {
+    var tools = 0;
+    var thoughtSeconds = 0;
+    face.rows.forEach(function (one) {
+      if (one.turn !== turn || !one.el) return;
+      var cls = one.el.className || '';
+      if (cls.includes('turn-mark') || cls.includes('assistant')) return;
+      if (cls.includes('tool')) {
+        tools += 1;
+        one.el.hidden = true;
+      } else if (cls.includes('thought')) {
+        thoughtSeconds += Number(one.event && one.event.seconds) || 0;
+        one.el.hidden = true;
+      }
+    });
+    var parts = [];
+    if (tools) parts.push(tools + (tools === 1 ? ' tool' : ' tools'));
+    if (thoughtSeconds) parts.push('thought ' + thoughtSeconds + 's');
+    if (!parts.length) return;
+    face.turnFolded[turn] = true;
+    face.turnSummaries = face.turnSummaries || {};
+    face.turnSummaries[turn] = 'turn ' + turn + ' \u00b7 ' + parts.join(' \u00b7 ');
+    paintTurnSummary(turn);
+  }
+
+  // The mark's own line after a summary — restored on a replay from
+  // the same state, so a reload cannot lose what the fold named.
+  function paintTurnSummary(turn) {
+    if (!face.turnSummaries || !face.turnSummaries[turn]) return;
+    var mark = face.rows.filter(function (one) {
+      return one.turn === turn && one.el && (one.el.className || '').includes('turn-mark');
+    })[0];
+    if (!mark) return;
+    var fold = mark.el.querySelector('.turn-fold');
+    if (fold) {
+      fold.textContent = face.turnSummaries[turn];
+      fold.setAttribute('aria-expanded', 'false');
+    }
+  }
+
   // One thought block, closed: a row that says how long it took and opens
   // its words on a press. The reasoning is display material — the log
   // holds it, the provider never sees it again.
@@ -1644,7 +1711,10 @@
     var head = node('button', 'thought-head');
     head.type = 'button';
     head.setAttribute('aria-expanded', 'false');
-    head.appendChild(node('span', 'thought-glyph', '\u25c7'));
+    // The card wears the thinking icon — the diamond the ◇ was, drawn
+    // (the density plan, P0). One line: icon, "Thought \u00b7 Ns"; the
+    // block is one press away.
+    head.appendChild(icon('thinking', 'thought-glyph'));
     head.appendChild(node('span', 'thought-label',
       'Thought' + (event.seconds != null ? ' \u00b7 ' + event.seconds + 's' : '')));
     var body = node('div', 'thought-body');
@@ -1704,18 +1774,23 @@
   }
 
   function toolRow(event) {
-    var status = node('span', 'status', 'running \u00b7 0s');
-    var el0 = card('tool', GLYPHS[event.tool] || event.tool.charAt(0).toUpperCase(),
-      event.tool, event.summary, null, null);
+    var status = node('span', 'status', 'running · 0s');
+    // The card wears the tools icon and is one line while it stands —
+    // icon, tool, live status (the density plan, P0/P2). The summary
+    // rides the detail beside the command, one press away; nothing
+    // about the card's collapsed weight changes when the call lands.
+    var el0 = card('tool', null, event.tool, null, null, null);
     el0.classList.add('tool');
     el0.dataset.tool = event.tool;
     el0.dataset.status = 'running';
+    el0.querySelector('.glyph').appendChild(icon('tools', 'glyph-icon'));
     el0.querySelector('.body').appendChild(status);
-    // The expanded detail: what ran, how long, what came back, and the
-    // raw record one more press away. Closed by default, one line while
-    // closed.
+    // The expanded detail: what the call said it would do, what ran,
+    // how long, what came back, and the raw record one more press
+    // away. Closed by default, one line while closed.
     var detail = node('div', 'tool-detail');
     detail.hidden = true;
+    if (event.summary) detail.appendChild(node('p', 'tool-summary', event.summary));
     var command = toolArgumentText(event);
     if (command) detail.appendChild(node('pre', 'tool-command', command));
     var facts = node('p', 'tool-facts', 'running');
@@ -2418,7 +2493,13 @@
           row(said, event);
         }
         break;
+      case 'thinking':
+        thinkingLive(event);
+        break;
       case 'reasoning':
+        // The live line is done: it is replaced by the thought's own
+        // card, already collapsed (the density plan, P1).
+        dropThinking();
         thoughtRow(event);
         break;
       case 'token':
@@ -2532,10 +2613,17 @@
         break;
       case 'finished':
       case 'failed':
+        var endedFrom = face.runFirstTurn;
         face.runFirstTurn = 0;
         notifyIfHidden('fleet \u00b7 the run ' + (event.type === 'finished' ? 'finished' : 'failed'),
           event.stop_reason || 'the outcome is in the conversation');
         closeAssistant();
+        // The exchange is over: its tool and thinking rows fold under
+        // their marks, each mark naming what it hides — and only the
+        // run that finished live. A log replayed into the page keeps
+        // its rows as the record stands (the density plan, P3/R7).
+        if (!face.replaying) summarizeRun(endedFrom, face.lastTurn);
+        dropThinking();
         face.running = false;
         // The run this face was executing is over: no conversation is
         // driving, so the next send anywhere starts a run rather than
@@ -2653,6 +2741,28 @@
       return;
     }
     made.update(event);
+  }
+
+  // The thinking line (the density plan, P1): one live line that
+  // grows with the reasoning deltas while the turn runs, replaced by
+  // the thought's card when the block closes. Transport-only events,
+  // so a replay never rebuilds the line — the card is the record.
+  function thinkingLive(event) {
+    if (!face.thinkingEl) {
+      face.thinkingEl = node('div', 'thinking-live');
+      face.stream.appendChild(face.thinkingEl);
+    }
+    face.thinkingText = (face.thinkingText || '') + (event.text || '');
+    face.thinkingEl.textContent = face.thinkingText;
+    settle();
+  }
+
+  function dropThinking() {
+    if (face.thinkingEl && face.thinkingEl.parentNode) {
+      face.thinkingEl.parentNode.removeChild(face.thinkingEl);
+    }
+    face.thinkingEl = null;
+    face.thinkingText = '';
   }
 
   // Streamed tokens land one at a time; the DOM is written once a
@@ -3008,29 +3118,57 @@
         ? 'stop the run \u00b7 a tool call already running finishes first, then the run ends'
         : 'send the task';
     }
-    if (el.hint) el.hint.classList.toggle('busy', busy);
-    if (face.seat) {
-      // How long the owner has kept the run waiting is the number that
-      // matters here: a seat is the run's whole state.
-      el.hint.textContent = 'the seat above is waiting for an answer \u00b7 ' +
-        elapsed(Date.now() - (face.seatSince || Date.now()));
-    } else if (face.running) {
-      // Seconds since the last event: a live run shows a small number, a
-      // long tool call shows the number climb — which is the honest
-      // answer to "is it doing anything", rather than a spinner that
-      // claims work it cannot see.
-      var since = face.process && face.process.at ? Date.now() - face.process.at : 0;
-      var ex = exchanges();
-      var turn = face.turn ? (ex ? ' \u00b7 exchange ' + ex : ' \u00b7 turn ' + face.turn) : '';
-      el.hint.textContent = 'working' + turn + ' \u00b7 ' + elapsed(since) +
-        ' since the last event';
-    } else {
-      el.hint.textContent = 'Shift+Enter makes a newline';
+    // The hint keeps its idle words in every state — the run's live
+    // state is the conversation's working line, not a property of
+    // where the owner types (the steer: it should not show in the
+    // composer). Plan mode's own words are the composer's, and they
+    // stay.
+    if (el.hint) {
+      el.hint.textContent = face.planMode
+        ? 'Plan mode: the run plans and writes nothing \u00b7 Enter plans'
+        : 'Shift+Enter makes a newline';
     }
-    // One ticker, alive only while something is: a run moves the seconds,
-    // a seat counts the owner's wait, and an idle face has no timer.
+    paintWorking();
+  }
+
+  // The working line (the density plan, P4): the run's live state at
+  // the tail of the conversation, and nowhere else — a spinner,
+  // "working", the turn, and the elapsed time, drawn from the same
+  // anchor the composer's countdown used and ticked by the same
+  // one-second timer. A seat swaps the words to its own wait. The
+  // line is display only: it never becomes a log record, and it sits
+  // outside the stream's rows, so a repaint cannot swallow it.
+  function paintWorking() {
+    var live = el.workingLive;
+    if (live) {
+      if (face.seat) {
+        live.hidden = false;
+        live.dataset.mode = 'seat';
+        live.textContent = 'the seat is waiting for an answer \u00b7 ' +
+          elapsed(Date.now() - (face.seatSince || Date.now()));
+      } else if (face.running) {
+        // Seconds since the last event: a live run shows a small
+        // number, a long tool call shows the number climb — the
+        // honest answer to "is it doing anything".
+        var since = face.process && face.process.at ? Date.now() - face.process.at : 0;
+        var ex = exchanges();
+        var turn = face.turn ? (ex ? ' \u00b7 exchange ' + ex : ' \u00b7 turn ' + face.turn) : '';
+        live.hidden = false;
+        live.dataset.mode = 'working';
+        live.textContent = 'working' + turn + ' \u00b7 ' + elapsed(since) +
+          ' since the last event';
+      } else {
+        live.hidden = true;
+        live.dataset.mode = '';
+        live.textContent = '';
+      }
+    }
+    // One ticker, alive only while something is: a run moves the
+    // seconds, a seat counts the owner's wait, and an idle face has
+    // no timer.
+    var busy = face.running || !!face.seat;
     if (busy && !busyTick) {
-      busyTick = setInterval(paintComposer, 1000);
+      busyTick = setInterval(paintWorking, 1000);
     } else if (!busy && busyTick) {
       clearInterval(busyTick);
       busyTick = null;
@@ -7707,6 +7845,10 @@
     // seed on that pass would erase the divider the first one drew.
     if (face.seedSession !== face.session) {
       face.seedSession = face.session;
+      // A conversation's folds and summaries are its own: a fresh
+      // visit starts from the record, and only a live run folds.
+      face.turnFolded = {};
+      face.turnSummaries = null;
       var seen = seenStamp();
       face.dividerAt = seen != null && !isNaN(Number(seen)) ? Number(seen) : null;
     }
@@ -7734,6 +7876,7 @@
     face.events = [];
     face.rows = [];
     face.assistant = null;
+    dropThinking();
     face.strip = null;
     face.stripEl = null;
     face.stripLog = [];
@@ -7769,7 +7912,16 @@
     });
     el.log.hidden = !talked;
     el.empty.hidden = talked;
+    face.replaying = true;
     (state.events || []).forEach(apply);
+    face.replaying = false;
+    // The folds a live run applied survive the rebuild: the rows are
+    // new, the state is the same — restored, never invented (R7).
+    Object.keys(face.turnFolded).forEach(function (turn) {
+      if (!face.turnFolded[turn]) return;
+      if (face.turnSummaries && face.turnSummaries[turn]) summarizeTurn(Number(turn));
+      else paintTurnFold(Number(turn));
+    });
     // The log is the truth about what happened; the snapshot is the
     // truth about now. A replayed log with no end record is an
     // interrupted run, not a live one, so the process card says so.

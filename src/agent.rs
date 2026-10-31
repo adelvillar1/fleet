@@ -508,6 +508,12 @@ impl Default for AgentOptions {
 pub enum UiEvent {
     /// One streamed content delta.
     Token(String),
+    /// One streamed thinking delta. The face grows a live line from
+    /// these while the turn runs; the `Reasoning` event still carries
+    /// the closed block for the record, exactly as `Token` rides beside
+    /// the message record. Transport only — a provider that reports no
+    /// thinking emits none, and the log is written as before.
+    Thinking(String),
     /// The model's thinking for one response, when the provider streams
     /// it (`reasoning_content`). One event per response, at the moment
     /// the answer begins (or the stream ends, for a turn that only calls
@@ -2466,7 +2472,16 @@ impl<'a> Agent<'a> {
             let mut thinking = ReasoningBlock::default();
             let response = client
                 .chat_stream(&request, |event| match event {
-                    StreamEvent::Reasoning(delta) => thinking.push(&delta),
+                    StreamEvent::Reasoning(delta) => {
+                        thinking.push(&delta);
+                        // The live line's feed, one send per delta —
+                        // the `Token` precedent, the same queue. The
+                        // closed block still rides `Reasoning` when the
+                        // answer begins, so the record is unchanged.
+                        if let Some(tx) = &ui_tx {
+                            let _ = tx.send(UiEvent::Thinking(delta.clone()));
+                        }
+                    }
                     StreamEvent::Content(delta) => {
                         // The answer begins: the thought block closes
                         // first, so the transcript reads in the order it

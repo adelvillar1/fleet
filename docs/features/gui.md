@@ -286,13 +286,39 @@ every visible `.tile`, `.badge`, `.rrow`, `.rank-row`, `.cal-cell`,
   is what the next run sends), **edit** returns its words to the
   composer and takes the row out, **drop** removes it; rows still drag
   to reorder, and an emptied queue leaves no rows behind.
-- **The activity rows.** One line per thing the run did, each opening on
-  a press: `Thought · Ns` (the provider's `reasoning_content`, kept in a
-  `reasoning` log record and never sent back), and a tool call, whose
-  expanded detail carries the full command or path from the call's own
-  arguments, the elapsed time, the output preview, and a `raw record`
-  button. The tool card's press opens that detail rather than the raw
-  event. The run strip's folded lines open their records the same way.
+- **The activity rows — the conversation's density.** The answer is the
+  surface: the final output renders fully expanded, and everything the
+  run did to reach it is one line while it runs and a fold at the end.
+  A **tool card** wears the `tools` icon and is one line — icon, tool,
+  live status (`running · Ns`, then `12s · ran`) — with the summary,
+  the command, the output, the raw record, and the re-run one press
+  away in its detail. A **thought card** wears the `thinking` icon —
+  the diamond the old `◇` was, drawn — and is one line, `Thought · Ns`,
+  with the block one press away (the provider's `reasoning_content`,
+  kept in a `reasoning` log record and never sent back). While the turn
+  runs, the thinking **streams**: a `thinking` delta event per frame
+  (the token path's precedent, transport-only — a provider that reports
+  no thinking emits none and the log is unchanged) grows one live line
+  that the `reasoning` event replaces with the collapsed card. At the
+  final output the exchange **summarizes**: its tool and thinking rows
+  fold under their turn marks — the D8 fold state, one mechanism — and
+  each mark carries the counts it hides (`turn 3 · 4 tools · thought
+  2s`), its press expanding every row back. The answer row is never a
+  fold target, and a history loaded from a log is never re-folded: only
+  the turn that finished during this session folds. Both icons come
+  from the shared `ICONS` table the rail draws from. The run strip's
+  folded lines open their records the same way.
+- **The working line.** While a run works, the tail of the conversation
+  itself carries the run's live state — a spinner, "working", the
+  turn or exchange, and an elapsed time since the last event, ticked
+  once a second from the same anchor — and a standing seat swaps the
+  words to its own wait, the seat's answer card beside it. The line
+  sits outside the stream's rows, so a replay repaint cannot swallow
+  it, and it is display only: never a log record. The composer's hint
+  keeps its idle words in every state (plan mode's words are the
+  composer's own): the run reports where the reading is, the composer
+  is where the owner acts — the run's state is a property of the
+  conversation, not of where you type.
 - **The conversation's text size is the owner's.** `A−`/`A+` in the
   conversation's head — and `Alt+↓`/`Alt+↑` from the composer — step a
   multiplier (85% to 170%, 100% by default) on the transcript. The
