@@ -276,8 +276,25 @@ turn, and the ask is emitted as a `ReportRepair` event so the extra
 model call is visible. One ask per run; a second silent stop ends with
 the stop reason `completed without a report` rather than `completed`.
 
+#### `canvas.rs`
+The design canvas's document and transforms. One project per
+`<home>/canvas/<slug>/project.json`: frames in array order (which is the
+z-order), each an opaque HTML page with its token spec, pins and version
+snapshots; caps 512 KiB of HTML, 20 versions, 10 reviews, refused by name.
+`inject_tweaks` is the one sanctioned frame mutation — the live srcdoc,
+the preview route, the exports and the PNG source all run it, and the
+face reaches it through the stateless `/api/design/inject` so no second
+implementation exists. `extract_root_tokens` feeds the token exports;
+`a11y_scan` is a scanner (token contrast plus alt/label/focus/viewport
+checks), never a parser, so no HTML crate is added. `frame_from_tool` and
+`review_from_tool` are the `frame`/`review_frame` handlers: validation,
+the refine snapshot, and the board the model named.
+
 #### `tools.rs`
-The closed built-in tool set. Every failure is a model-visible result, never a
+The closed built-in tool set — now including the design canvas's
+`frame` (a complete page onto a board) and `review_frame` (a structured
+review onto a frame), beside `deck` as the family of structured
+deliverables a surface renders. Every failure is a model-visible result, never a
 panic. This module also declares the tool vocabulary the dynamic surfaces
 assemble: built-ins, `mcp__<svc>__<tool>`, skills, memory tools, `subagent`,
 and `web`. [`Tool::execute`] is the unrestricted run (the process's working

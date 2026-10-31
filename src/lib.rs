@@ -13,6 +13,7 @@ pub mod apply_patch;
 pub mod approvals;
 pub mod boards;
 pub mod calib;
+pub mod canvas;
 pub mod capabilities;
 pub mod channels;
 pub mod checkpoints;

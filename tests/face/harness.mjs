@@ -185,6 +185,10 @@ class El {
   blur() {}
   scrollIntoView() {}
   setSelectionRange() {}
+  // Pointer capture: the canvas's drag and the pane's grip both hold the
+  // pointer for a gesture; the stub has no capture, only the calls.
+  setPointerCapture() {}
+  releasePointerCapture() {}
   click() { this.fire('click', {}); }
   fire(kind, event) {
     const ev = event || {};
@@ -366,6 +370,30 @@ function boot(options) {
       return Promise.resolve({
         status: 200,
         json: () => Promise.resolve(documents.settings || {}),
+      });
+    }
+    if (pathOnly === '/api/design') {
+      if (method === 'POST') {
+        return Promise.resolve({
+          status: 200,
+          json: () => Promise.resolve({ type: 'design_write', op: 'x', wrote: { slug: 'sample-board' } }),
+        });
+      }
+      return Promise.resolve({
+        status: 200,
+        json: () => Promise.resolve(documents.design || { type: 'design', projects: [], refused: [] }),
+      });
+    }
+    if (pathOnly === '/api/design/inject') {
+      return Promise.resolve({
+        status: 200,
+        json: () => Promise.resolve({ type: 'design_inject', html: '<!doctype html><html>injected</html>' }),
+      });
+    }
+    if (pathOnly === '/api/design/export') {
+      return Promise.resolve({
+        status: 200,
+        json: () => Promise.resolve({ type: 'design_export', kind: 'html', path: '/tmp/frame.html', bytes: 12 }),
       });
     }
     if (pathOnly === '/api/resume') {
@@ -698,6 +726,13 @@ function boot(options) {
       window_.location.hash = next;
     },
     fireOn(id, kind, event) { IDS[id].fire(kind, event || {}); },
+    // The window's own listeners (a surface's keyboard): dispatch one.
+    fireWindow(kind, event) {
+      const ev = Object.assign({
+        preventDefault() {}, stopPropagation() {},
+      }, event || {});
+      (windowListeners[kind] || []).slice().forEach((fn) => fn(ev));
+    },
     text: (id) => (IDS[id] ? IDS[id].textContent : ''),
     // The registered element itself: the pane's contents live in it, and
     // a card-level query needs the element, not its text.
@@ -3895,6 +3930,193 @@ async function theStrategyStepShowsItsPreview() {
 // The settings revamp: the rail's eight sections, one at a time, rows
 // that are one line, the item's card in the pane, and the filter that
 // finds across sections.
+// PM-D (the design-canvas plan, S0-S2): the canvas is a stage whose world
+// carries frames, and every gesture writes through the one design writer.
+async function theDesignCanvasCarriesItsFramesAndWritesGeometry() {
+  const frame = (id, name, x, model) => ({
+    id,
+    name,
+    description: '',
+    html: '<!doctype html><html><body><h1>' + name + '</h1></body></html>',
+    html_raw: '<!doctype html><html><body><h1>' + name + '</h1></body></html>',
+    x,
+    y: 0,
+    w: 1280,
+    h: 900,
+    tweak_spec: [
+      { key: 'accent', label: 'accent', kind: 'color', default: '#3b6cf6', css_var: 'accent' },
+      { key: 'scale', label: 'type scale', kind: 'slider', min: 0.8, max: 1.4, step: 0.05,
+        default: 1, css_var: 'scale' },
+    ],
+    tweak_values: { accent: '#3b6cf6', scale: 1 },
+    model,
+    versions: [{ id: 'v-one', name, source: 'generate', created: '2026-10-31T09:00:00Z' }],
+    pins: name === 'hero'
+      ? [{ id: 'p-one', x: 0.5, y: 0.25, text: 'the spacing is off', source: 'owner',
+        created: '2026-10-31T09:00:00Z', replies: [] }]
+      : [],
+  });
+  const designDoc = {
+    type: 'design',
+    read_at: 'now',
+    projects: [{ slug: 'sample-board', name: 'Sample board', frames: 2,
+      updated: '2026-10-31T09:00:00Z' }],
+    active: {
+      slug: 'sample-board',
+      name: 'Sample board',
+      frames: [frame('f-hero', 'hero', 0, 'glm'), frame('f-pricing', 'pricing', 1376, 'qwen')],
+    },
+    presets: [{ id: 'agency-grid', label: 'Agency grid', summary: 'editorial grid',
+      source: 'x', spec: 'LAYOUT: grid' }],
+    caps: { max_frame_bytes: 524288, max_versions: 20,
+      viewports: [{ name: 'desktop', w: 1280, h: 900 }, { name: 'tablet', w: 768, h: 1024 },
+        { name: 'phone', w: 390, h: 844 }] },
+    refused: [],
+  };
+  const page = boot({ width: 1440, hash: '#/design',
+    documents: { design: designDoc, state: (asked) => emptyState(asked) } });
+  await flush();
+  page.open();
+  await flush(80);
+
+  // S0: the stage, the board picker, and the two frames on the world.
+  check('PM-D the design stage renders',
+    !!page.IDS['panel-design'] && page.IDS['panel-design'].hidden === false,
+    String(page.IDS['panel-design'] && page.IDS['panel-design'].hidden));
+  const projectSelect = page.IDS['design-project'];
+  const projectOptions = projectSelect.children.filter((one) => one.name === 'option');
+  check('PM-D the board picker lists the projects',
+    projectOptions.length === 1 && projectOptions[0].value === 'sample-board',
+    projectOptions.map((one) => one.value).join(','));
+  const cards = page.rows('.canvas-frame');
+  check('PM-D the world carries a card per frame, at its own position',
+    cards.length === 2 &&
+      cards[0].style.left === '0px' &&
+      cards[1].style.left === '1376px',
+    cards.map((card) => card.style.left).join(' | '));
+  const iframes = page.rows('.canvas-frame-page');
+  check('PM-D each frame renders its page in a sandboxed iframe',
+    iframes.length === 2 &&
+      iframes[0].getAttribute('sandbox') === 'allow-scripts' &&
+      String(iframes[0].srcdoc).includes('<h1>hero</h1>'),
+    iframes.length + ' iframes');
+  check('PM-D a pin renders at its normalized mark',
+    page.rows('.canvas-pin').length === 1 &&
+      page.rows('.canvas-pin')[0].style.left === '640px' &&
+      page.rows('.canvas-pin')[0].style.top === '225px',
+    page.rows('.canvas-pin').map((one) => one.style.left).join(','));
+
+  // The fake DOM matches attribute selectors against element properties, so
+  // `[data-act=…]` never matches; the controls are found by their dataset.
+  const byAct = (parent, act) => parent.find((one) => one.dataset &&
+    one.dataset.act === act)[0] || null;
+  // S1: zoom is a transform change, persisted; select is a class.
+  const world = page.IDS['design-world'];
+  const before = world.style.transform;
+  byAct(page.IDS['design-instrument'], 'design-zoom-in').click();
+  await flush(20);
+  check('PM-D zoom-in moves the world transform',
+    world.style.transform !== before && String(world.style.transform).includes('scale('),
+    String(world.style.transform));
+  const storedView = String(
+    (page.sandbox && page.sandbox.window && page.sandbox.window.localStorage
+      ? page.sandbox.window.localStorage.getItem('fleet-canvas-sample-board')
+      : '') || '');
+  check('PM-D the zoom is remembered for the board',
+    storedView.includes('"z"'), storedView);
+  byAct(page.IDS['design-instrument'], 'design-fit').click();
+  await flush(20);
+  const fitted = String(world.style.transform).match(/scale\(([^)]+)\)/);
+  check('PM-D fit scales the board into the viewport',
+    !!fitted && Number(fitted[1]) > 0 && Number(fitted[1]) <= 1,
+    String(world.style.transform));
+  cards[1].querySelector('.canvas-frame-bar').fire('pointerdown',
+    { button: 0, clientX: 10, clientY: 10, pointerId: 1 });
+  check('PM-D pressing a title bar selects the frame',
+    cards[1].classList.contains('selected'),
+    cards[1].className);
+  check('PM-D the instrument names the selection',
+    page.text('design-instrument').includes('selected'),
+    page.text('design-instrument'));
+
+  // S1: the move writes geometry through the one writer.
+  const writes = page.calls.filter((one) => one.method === 'POST' &&
+    String(one.body || '').includes('"op":"frame-update"'));
+  cards[1].querySelector('.canvas-frame-bar').fire('pointermove',
+    { clientX: 210, clientY: 60, pointerId: 1 });
+  cards[1].querySelector('.canvas-frame-bar').fire('pointerup', { pointerId: 1 });
+  await flush(40);
+  const moved = page.calls.filter((one) => one.method === 'POST' &&
+    String(one.body || '').includes('"op":"frame-update"'));
+  check('PM-D a drag writes the new position',
+    moved.length > writes.length &&
+      String(moved[moved.length - 1].body).includes('"x"'),
+    JSON.stringify(moved.map((one) => one.body)));
+
+  // S1: delete persists (the source's own bug, not ported).
+  byAct(cards[0], 'delete-the-frame-hero').click();
+  await flush(40);
+  check('PM-D delete writes through the one writer',
+    page.calls.some((one) => one.method === 'POST' &&
+      String(one.body || '').includes('"op":"frame-delete"')),
+    JSON.stringify(page.calls.filter((one) => one.method === 'POST').map((one) => one.body)));
+
+  // S1: a nudge is a keyboard geometry write (16 units, 1 with Shift).
+  const nudges = page.calls.filter((one) => one.method === 'POST' &&
+    String(one.body || '').includes('"op":"frame-update"')).length;
+  page.fireWindow('keydown', { key: 'ArrowRight', shiftKey: false, target: { tagName: 'DIV' } });
+  await flush(40);
+  const nudged = page.calls.filter((one) => one.method === 'POST' &&
+    String(one.body || '').includes('"op":"frame-update"'));
+  check('PM-D an arrow key nudges the selected frame by 16',
+    nudged.length > nudges, JSON.stringify(nudged.map((one) => String(one.body).slice(0, 90))));
+
+  // S2: a pin's thread opens in the pane with its text.
+  page.rows('.canvas-pin')[0].click();
+  await flush(40);
+  const pinPane = page.el('dock-object-body');
+  check('PM-D a pin opens its thread in the pane',
+    !!pinPane && String(pinPane.textContent).includes('the spacing is off'),
+    pinPane ? String(pinPane.textContent).slice(0, 120) : 'no pane');
+  page.fireOn('dock-object-close', 'click');
+  await flush(30);
+
+  // S2: the tweak panel injects live and persists on commit.
+  byAct(page.rows('.canvas-frame')[0], 'tweaks-hero').click();
+  await flush(40);
+  const pane = page.el('dock-object-body');
+  check('PM-D the tweak card opens in the pane with its controls',
+    !!pane && pane.find((one) => one.className === 'canvas-range').length === 1 &&
+      pane.find((one) => one.className === 'canvas-color').length === 1,
+    pane ? String(pane.find((one) => one.name === 'input').length) + ' inputs' : 'no pane');
+  const range = pane.find((one) => one.className === 'canvas-range')[0];
+  range.value = '1.2';
+  range.fire('input', {});
+  await flush(30);
+  check('PM-D a live tweak asks the server to inject',
+    page.calls.some((one) => one.method === 'POST' &&
+      String(one.url || '').includes('/api/design/inject')),
+    JSON.stringify(page.calls.filter((one) => String(one.url || '').includes('inject')).map((one) => one.body)));
+  range.fire('change', {});
+  await flush(40);
+  check('PM-D a committed tweak persists',
+    page.calls.some((one) => one.method === 'POST' &&
+      String(one.body || '').includes('"tweak_values"')),
+    JSON.stringify(page.calls.filter((one) => one.method === 'POST').map((one) => String(one.body).slice(0, 80))));
+
+  // S3: the composer dispatches a run rather than generating in the page.
+  const brief = page.IDS['design-composer'].querySelector('.canvas-brief');
+  brief.value = 'a pricing page for a developer tool';
+  byAct(page.IDS['design-composer'], 'design-generate').click();
+  await flush(40);
+  const run = page.calls.filter((one) => one.method === 'POST' &&
+    String(one.url || '').includes('/api/run'));
+  check('PM-D the brief starts a fleet run naming the board and the frame tool',
+    run.length === 1 && String(run[0].body).includes('frame') &&
+      String(run[0].body).includes('sample-board'),
+    JSON.stringify(run.map((one) => String(one.body).slice(0, 160))));
+}
+
 async function theSettingsRailCarriesOneSectionAtATime() {
   const settingsDoc = {
     type: 'settings', read_at: 'now',
@@ -5346,6 +5568,7 @@ const cases = [
   ['RL the page seals its frames through a relay', thePageSealsItsFramesThroughARelay],
   ['BOTS the bots surface mints the bot card', theBotsSurfaceMintsTheBotCard],
   ['SET the settings rail carries one section at a time', theSettingsRailCarriesOneSectionAtATime],
+  ['PM-D the design canvas carries its frames and writes geometry', theDesignCanvasCarriesItsFramesAndWritesGeometry],
   ['BOTS the bots rail groups by persona', theBotsRailGroupsByPersona],
   ['SKILL the skills rail carries the categories and the pane', theSkillsRailCarriesOneSectionAtATime],
   ['MEM the memory rail carries the queue and the verbs', theMemoryRailCarriesTheQueueAndTheVerbs],

@@ -419,6 +419,7 @@ a maze. The rail's collapsed state is remembered across launches.
 | `#/skills` | the library with its loaded/skipped split, the proposals, the curation candidates |
 | `#/sessions` | the archive newest-first; a row opens its replay, and the replay's resume re-anchors the face to that log. A row also names the project it was born in and, when a channel started it, `via <channel> · <peer>`; `via a channel` is a filter chip |
 | `#/calibration` | the day's stream rows by op and the judged quality's fit cells, the same computation `fleet calib --calibration` rides |
+| `#/design` | the design canvas: boards of frames on a pan/zoom world, each frame an opaque HTML page from a run's `frame` tool — see `docs/features/design.md` |
 | `#/second-brain` | the project atlas: the attention queue, the six-week pulse, the commit ribbon, the report feed with the harness trust lines, and the method band (gates, loops, harness, maturity) |
 | `#/bots` | the channel control plane: the service and its heartbeat, the write-only Telegram token, the paired devices with revoke, who can reach the fleet with an editable capability, the peers waiting at the door, the pair form with its callback and one-time token reveal, and what they have done. The rail entry carries a count only when something is waiting |
 | `#/vault` | the vault as its own surface: first-run onboarding (choose the passphrase, create, migrate the plaintext `.env` entries), the sealed names, the plaintext ledger with seal/drop, lock, and start-over for a forgotten passphrase |

@@ -1,0 +1,138 @@
+{
+ "version": 1,
+ "name": "Sample board",
+ "created": "2026-10-31T00:00:00Z",
+ "updated": "2026-10-31T00:00:00Z",
+ "frames": [
+  {
+   "id": "f-6e0cc6ec",
+   "name": "Sample \u2014 Landing hero",
+   "description": "Editorial landing hero for a fictional coffee roaster (sample content)",
+   "html": "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Draft \u2014 Ember & Oak Coffee</title><style>:root{--bg:#f7f3ec;--ink:#241c14;--muted:#6b5d4d;--accent:#9a5b32;--radius:6px;--space-unit:8px;--font-scale:1}body{margin:0;background:var(--bg);color:var(--ink);font-family:Georgia,'Times New Roman',serif;line-height:1.5}.wrap{max-width:960px;margin:0 auto;padding:calc(6*var(--space-unit)) calc(4*var(--space-unit))}header{display:flex;justify-content:space-between;align-items:baseline;padding-bottom:calc(4*var(--space-unit));border-bottom:1px solid #e4dbcb}nav a{color:var(--muted);text-decoration:none;font-family:system-ui,sans-serif;font-size:.85rem;margin-left:calc(2.5*var(--space-unit))}h1{font-size:calc(var(--font-scale)*3.4rem);line-height:1.08;margin:.8em 0 .4em;letter-spacing:-.01em}p.lede{font-size:calc(var(--font-scale)*1.15rem);color:var(--muted);max-width:52ch}a.cta{display:inline-block;margin-top:calc(3*var(--space-unit));background:var(--accent);color:#fff;text-decoration:none;padding:12px 28px;border-radius:var(--radius);font-family:system-ui,sans-serif;font-weight:600;font-size:.95rem}.origins{margin-top:calc(7*var(--space-unit));display:flex;gap:calc(4*var(--space-unit))}.origin{flex:1;border-top:2px solid var(--ink);padding-top:calc(2*var(--space-unit))}.origin h3{margin:0 0 .25em;font-size:1rem}.origin p{margin:0;color:var(--muted);font-size:.85rem;font-family:system-ui,sans-serif}.draft{margin-top:calc(6*var(--space-unit));font-family:system-ui,sans-serif;font-size:.7rem;color:#b3a68f;letter-spacing:.08em;text-transform:uppercase}@media(max-width:640px){.origins{flex-direction:column}}</style></head><body><div class=\"wrap\"><header><strong>Ember &amp; Oak</strong><nav><a href=\"#\">Beans</a><a href=\"#\">Subscriptions</a><a href=\"#\">Visit</a></nav></header><main><h1>Coffee roasted the slow way, since 1987.</h1><p class=\"lede\">Small-batch roasting over oak embers. No automation, no shortcuts \u2014 just a drum, a fire, and someone paying attention.</p><a class=\"cta\" href=\"#\">Shop this week's roast</a><div class=\"origins\"><div class=\"origin\"><h3>Yirgacheffe</h3><p>Washed \u00b7 floral, bergamot finish</p></div><div class=\"origin\"><h3>Huila</h3><p>Honey \u00b7 caramel, red apple</p></div><div class=\"origin\"><h3>Nyeri</h3><p>Natural \u00b7 blackberry, cocoa</p></div></div><p class=\"draft\">Draft sample content</p></main></div></body></html>",
+   "x": 0,
+   "y": 0,
+   "w": 1280,
+   "h": 900,
+   "tweak_spec": [
+    {
+     "key": "font-scale",
+     "label": "Font scale",
+     "type": "slider",
+     "min": 0.8,
+     "max": 1.3,
+     "step": 0.05,
+     "default": 1,
+     "cssVar": "font-scale"
+    },
+    {
+     "key": "space-unit",
+     "label": "Spacing",
+     "type": "slider",
+     "min": 2,
+     "max": 24,
+     "step": 1,
+     "unit": "px",
+     "default": 8,
+     "cssVar": "space-unit"
+    },
+    {
+     "key": "accent",
+     "label": "Accent color",
+     "type": "color",
+     "default": "#9a5b32",
+     "cssVar": "accent",
+     "options": [
+      "#9a5b32",
+      "#2563EB",
+      "#16A34A"
+     ]
+    },
+    {
+     "key": "radius",
+     "label": "Corner radius",
+     "type": "slider",
+     "min": 0,
+     "max": 24,
+     "step": 1,
+     "unit": "px",
+     "default": 6,
+     "cssVar": "radius"
+    }
+   ],
+   "tweak_values": {},
+   "model": "deepseek",
+   "gen_meta": {
+    "source": "design-canvas fixtures/sample-project"
+   },
+   "versions": [],
+   "pins": [],
+   "created": "2026-10-31T00:00:00Z",
+   "updated": "2026-10-31T00:00:00Z"
+  },
+  {
+   "id": "f-3e291410",
+   "name": "Sample \u2014 Pricing",
+   "description": "Pricing page sharing the sample design language",
+   "html": "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Draft \u2014 Ember &amp; Oak pricing</title><style>:root{--bg:#f7f3ec;--ink:#241c14;--muted:#6b5d4d;--accent:#9a5b32;--radius:6px;--space-unit:8px;--font-scale:1}body{margin:0;background:var(--bg);color:var(--ink);font-family:Georgia,'Times New Roman',serif;line-height:1.5}.wrap{max-width:960px;margin:0 auto;padding:calc(6*var(--space-unit)) calc(4*var(--space-unit))}header{display:flex;justify-content:space-between;align-items:baseline;padding-bottom:calc(4*var(--space-unit));border-bottom:1px solid #e4dbcb}nav a{color:var(--muted);text-decoration:none;font-family:system-ui,sans-serif;font-size:.85rem;margin-left:calc(2.5*var(--space-unit))}h1{font-size:calc(var(--font-scale)*2.4rem);line-height:1.1;margin:.8em 0 .3em}.plans{display:flex;gap:calc(4*var(--space-unit));margin-top:calc(5*var(--space-unit));align-items:stretch}.plan{flex:1;border:1px solid #e4dbcb;border-radius:var(--radius);padding:calc(3*var(--space-unit));background:#fffdf8;display:flex;flex-direction:column}.plan.featured{border-color:var(--accent);border-width:2px}.plan h2{font-size:1.05rem;margin:0 0 .3em}.price{font-size:calc(var(--font-scale)*2rem);font-weight:bold;margin:.2em 0}.price span{font-size:.85rem;color:var(--muted);font-family:system-ui,sans-serif;font-weight:normal}.plan ul{list-style:none;padding:0;margin:calc(2*var(--space-unit)) 0;font-family:system-ui,sans-serif;font-size:.85rem;color:var(--muted)}.plan li{padding:.35em 0;border-bottom:1px dashed #eee5d4}button{margin-top:auto;background:var(--accent);color:#fff;border:0;padding:11px 20px;border-radius:var(--radius);font-family:system-ui,sans-serif;font-weight:600;cursor:pointer}.note{font-family:system-ui,sans-serif;font-size:.7rem;color:#b3a68f;letter-spacing:.08em;text-transform:uppercase;margin-top:calc(6*var(--space-unit))}@media(max-width:640px){.plans{flex-direction:column}}</style></head><body><div class=\"wrap\"><header><strong>Ember &amp; Oak</strong><nav><a href=\"#\">Beans</a><a href=\"#\">Subscriptions</a><a href=\"#\">Visit</a></nav></header><main><h1>Simple subscriptions.</h1><div class=\"plans\"><div class=\"plan\"><h2>Solo</h2><div class=\"price\">$14<span>/mo</span></div><ul><li>One 250g bag monthly</li><li>Roaster's choice</li><li>Free shipping</li></ul><button>Choose Solo</button></div><div class=\"plan featured\"><h2>Household</h2><div class=\"price\">$26<span>/mo</span></div><ul><li>Two 250g bags monthly</li><li>Pick your origins</li><li>Free shipping</li><li>Early access to experiments</li></ul><button>Choose Household</button></div><div class=\"plan\"><h2>Office</h2><div class=\"price\">$90<span>/mo</span></div><ul><li>Eight bags monthly</li><li>Pick your origins</li><li>Invoice billing</li></ul><button>Choose Office</button></div></div><p class=\"note\">Draft sample content</p></main></div></body></html>",
+   "x": 1376,
+   "y": 0,
+   "w": 1280,
+   "h": 900,
+   "tweak_spec": [
+    {
+     "key": "font-scale",
+     "label": "Font scale",
+     "type": "slider",
+     "min": 0.8,
+     "max": 1.3,
+     "step": 0.05,
+     "default": 1,
+     "cssVar": "font-scale"
+    },
+    {
+     "key": "space-unit",
+     "label": "Spacing",
+     "type": "slider",
+     "min": 2,
+     "max": 24,
+     "step": 1,
+     "unit": "px",
+     "default": 8,
+     "cssVar": "space-unit"
+    },
+    {
+     "key": "accent",
+     "label": "Accent color",
+     "type": "color",
+     "default": "#9a5b32",
+     "cssVar": "accent",
+     "options": [
+      "#9a5b32",
+      "#2563EB",
+      "#16A34A"
+     ]
+    },
+    {
+     "key": "radius",
+     "label": "Corner radius",
+     "type": "slider",
+     "min": 0,
+     "max": 24,
+     "step": 1,
+     "unit": "px",
+     "default": 6,
+     "cssVar": "radius"
+    }
+   ],
+   "tweak_values": {},
+   "model": "deepseek",
+   "gen_meta": {
+    "source": "design-canvas fixtures/sample-project"
+   },
+   "versions": [],
+   "pins": [],
+   "created": "2026-10-31T00:00:00Z",
+   "updated": "2026-10-31T00:00:00Z"
+  }
+ ]
+}

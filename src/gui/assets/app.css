@@ -7887,3 +7887,98 @@ body[data-work="collapsed"] .work-list { display: none; }
 .figure-bar-fill { display: block; height: 100%; border-radius: 999px; background: var(--dsw-alias-accent); }
 .figure-bar-value { font-family: var(--font-mono); font-size: 10px; color: var(--dsw-alias-ink); text-align: right; }
 .figure-bar-note { grid-column: 2 / 4; font-size: 9.5px; color: var(--dsw-alias-ink-tertiary); }
+
+/* --- the design canvas ----------------------------------------------------
+   The stage is a spatial surface, not a card grid: a clipping viewport with
+   a world under one transform. Fleet's tokens govern the chrome; the frame
+   inside the iframe is the artifact, and the dot grid is the board's own
+   floor so a page's edges read against something. */
+.stage-canvas {
+  display: grid;
+  grid-template-rows: auto auto 1fr auto;
+  min-height: 0;
+  padding: 0 var(--space-4) 0;
+  gap: var(--space-2);
+}
+.canvas-head { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--space-4); }
+.canvas-head-acts { display: flex; align-items: center; gap: var(--space-2); padding-bottom: 4px; }
+.canvas-head-acts .knob-box { min-width: 220px; }
+.canvas-instrument { display: flex; justify-content: flex-start; }
+.canvas-tools { display: flex; align-items: center; gap: var(--space-1); }
+.canvas-zoom { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--dsw-alias-ink-secondary); min-width: 44px; text-align: center; }
+.canvas-count { font-size: var(--text-xs); color: var(--dsw-alias-ink-tertiary); margin-left: var(--space-2); }
+.canvas-viewport {
+  position: relative;
+  overflow: hidden;
+  min-height: 320px;
+  border: 1px solid var(--dsw-alias-hairline);
+  border-radius: var(--card-radius);
+  background: var(--dsw-alias-page);
+  cursor: grab;
+  touch-action: none;
+}
+.canvas-viewport[data-grid="on"] {
+  background-image: radial-gradient(var(--dsw-alias-hairline-strong) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+.canvas-viewport:active { cursor: grabbing; }
+.canvas-world { position: absolute; left: 0; top: 0; transform-origin: 0 0; will-change: transform; }
+.canvas-empty { color: var(--dsw-alias-ink-tertiary); font-size: var(--text-sm); margin: var(--space-6); }
+.canvas-frame {
+  position: absolute;
+  border: 1px solid var(--dsw-alias-hairline);
+  border-radius: var(--radius-md);
+  background: var(--card-bg);
+  overflow: hidden;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+}
+.canvas-frame.selected { border-color: var(--dsw-alias-accent); box-shadow: 0 0 0 1px var(--dsw-alias-accent); }
+.canvas-frame-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: 30px;
+  padding: 0 var(--space-2);
+  background: var(--dsw-alias-surface-raised);
+  border-bottom: 1px solid var(--dsw-alias-hairline);
+  cursor: grab;
+  user-select: none;
+}
+.canvas-frame-name { font-size: var(--text-xs); color: var(--dsw-alias-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.canvas-frame-acts { margin-left: auto; display: flex; gap: 2px; }
+.canvas-act {
+  appearance: none;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--dsw-alias-ink-secondary);
+  font-size: 10px;
+  font-family: var(--font-mono);
+  padding: 1px 4px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.canvas-act:hover { color: var(--dsw-alias-ink); border-color: var(--dsw-alias-hairline-strong); }
+.canvas-frame-body { position: relative; overflow: hidden; background: #fff; }
+.canvas-frame-page { display: block; border: 0; width: 100%; height: 100%; pointer-events: none; }
+.canvas-pins { position: absolute; inset: 0; pointer-events: none; }
+.canvas-pin {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  margin: -7px 0 0 -7px;
+  border-radius: 50%;
+  border: 2px solid var(--dsw-alias-page);
+  background: var(--dsw-alias-warn);
+  pointer-events: auto;
+  cursor: pointer;
+  padding: 0;
+}
+.canvas-pin.resolved { background: var(--dsw-alias-ok); }
+.canvas-composer { padding: var(--space-1) 0 var(--space-3); }
+.canvas-composer-row { display: flex; align-items: flex-start; gap: var(--space-2); }
+.canvas-brief { flex: 1; resize: vertical; font: inherit; color: inherit; background: var(--dsw-alias-surface); border: 1px solid var(--dsw-alias-hairline); border-radius: var(--radius-md); padding: var(--space-2); }
+.canvas-note { width: 100%; resize: vertical; font: inherit; color: inherit; background: var(--dsw-alias-surface); border: 1px solid var(--dsw-alias-hairline); border-radius: var(--radius-md); padding: var(--space-2); }
+.canvas-inline { display: flex; flex-wrap: wrap; gap: var(--space-1); }
+.canvas-range { width: 100%; }
+.canvas-color { width: 44px; height: 26px; padding: 0; border: 1px solid var(--dsw-alias-hairline); border-radius: var(--radius-sm); background: transparent; }
+.replay-button.on { border-color: var(--dsw-alias-accent); color: var(--dsw-alias-accent); }

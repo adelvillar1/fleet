@@ -2025,6 +2025,159 @@ impl Bridge {
         }
     }
 
+    /// The design canvas's document: the boards the home holds, the
+    /// active board with its frames (each one's HTML already carrying its
+    /// tweak overrides — the one injection path), the presets the
+    /// composer offers, and the caps the writer enforces. The read adopts
+    /// the bundled sample board on a home with no canvas yet, so a fresh
+    /// surface has something real on it.
+    pub async fn design(&self, project: Option<String>) -> Value {
+        let home = self.home.clone();
+        match tokio::task::spawn_blocking(move || design_read(&home, project.as_deref())).await {
+            Ok(document) => document,
+            Err(_) => json!({
+                "type": "design",
+                "refused": ["the design read did not land"],
+            }),
+        }
+    }
+
+    /// The design canvas's one writer: every board edit is one op in the
+    /// same shape the settings writer uses. The face is a client of it,
+    /// never a second writer.
+    pub fn design_write(&self, body: &str) -> Result<Value, String> {
+        design_write(&self.home, body)
+    }
+
+    /// The stateless tweak injection: HTML in, injected HTML out, no home
+    /// write. The live `srcdoc` rides this so the face never reimplements
+    /// the transform the preview route and the exporters run.
+    pub fn design_inject(&self, body: &str) -> Result<Value, String> {
+        let body: Value = serde_json::from_str(body)
+            .map_err(|error| format!("the injection is not a JSON object: {error}"))?;
+        let html = body
+            .get("html")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "the injection names no html".to_string())?;
+        let specs: Vec<crate::canvas::TweakSpec> = body
+            .get("tweak_spec")
+            .and_then(|specs| serde_json::from_value(specs.clone()).ok())
+            .unwrap_or_default();
+        let values: std::collections::BTreeMap<String, Value> = body
+            .get("tweak_values")
+            .and_then(|values| serde_json::from_value(values.clone()).ok())
+            .unwrap_or_default();
+        Ok(json!({
+            "type": "design_inject",
+            "html": crate::canvas::inject_tweaks(html, &specs, &values),
+        }))
+    }
+
+    /// One frame's HTML for the preview route: the stored document with
+    /// its tweak overrides injected. The route wraps it in a CSP; the
+    /// transform is the same one the exporters run.
+    pub fn design_frame_html(&self, slug: &str, frame_id: &str) -> Result<String, String> {
+        let project = crate::canvas::load(&self.home, slug)?;
+        let frame = project
+            .frames
+            .iter()
+            .find(|frame| frame.id == frame_id)
+            .ok_or_else(|| format!("no frame `{frame_id}` on this board"))?;
+        Ok(crate::canvas::inject_tweaks(
+            &frame.html,
+            &frame.tweak_spec,
+            &frame.tweak_values,
+        ))
+    }
+
+    /// The PNG export: the frame rendered by the browser lane — the one
+    /// rasterizer fleet ships. The lane opens the preview route (the
+    /// served bytes, under its CSP) and captures it into the exports
+    /// directory. The lane is spawned for this one capture and closed.
+    pub async fn design_png(&self, body: &str) -> Result<Value, String> {
+        let arguments: Value = serde_json::from_str(body)
+            .map_err(|error| format!("the export is not a JSON object: {error}"))?;
+        let slug = arguments
+            .get("project")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "the export names its project".to_string())?;
+        let frame_id = arguments
+            .get("id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "the export names its frame".to_string())?;
+        let project = crate::canvas::load(&self.home, slug)?;
+        let frame = project
+            .frames
+            .iter()
+            .find(|frame| frame.id == frame_id)
+            .ok_or_else(|| format!("no frame `{frame_id}` on this board"))?;
+        let dir = crate::canvas::canvas_root(&self.home)
+            .join(slug)
+            .join("exports");
+        std::fs::create_dir_all(&dir)
+            .map_err(|error| format!("could not make {}: {error}", dir.display()))?;
+        let stem = format!(
+            "{}-png-{}",
+            crate::canvas::slug_of(&frame.name),
+            crate::calib::stamp().replace([':', '-'], "")
+        );
+        let path = dir.join(format!("{stem}.png"));
+        // The face names its own loopback origin — it is the one address
+        // this capture must reach, and the check refuses anything else so
+        // the export cannot be aimed at a foreign host.
+        let origin = arguments
+            .get("origin")
+            .and_then(Value::as_str)
+            .unwrap_or("http://127.0.0.1:3080")
+            .trim_end_matches('/')
+            .to_string();
+        let loopback = origin.starts_with("http://127.0.0.1:")
+            || origin.starts_with("http://localhost:")
+            || origin.starts_with("http://[::1]:");
+        if !loopback {
+            return Err(format!(
+                "`{origin}` is not this machine's loopback address; the capture stays local"
+            ));
+        }
+        let url = format!("{origin}/api/design/frame/{slug}/{frame_id}");
+        let spec = crate::lanes::spec_for("browser")?;
+        let server = crate::mcp::McpServer::spawn(&spec)
+            .map_err(|error| format!("the browser lane could not start: {error}"))?;
+        server
+            .initialize()
+            .await
+            .map_err(|error| format!("the browser lane did not answer: {error}"))?;
+        server
+            .call_tool("browser_navigate", json!({ "url": url }))
+            .await
+            .map_err(|error| format!("the frame page did not open: {error}"))?;
+        server
+            .call_tool(
+                "browser_screenshot",
+                json!({ "path": path.display().to_string(), "width": frame.w as i64,
+                        "height": frame.h as i64 }),
+            )
+            .await
+            .map_err(|error| format!("the page did not capture: {error}"))?;
+        let _ = server.close().await;
+        let bytes = std::fs::metadata(&path).map(|meta| meta.len()).unwrap_or(0);
+        Ok(json!({
+            "type": "design_export",
+            "kind": "png",
+            "path": path.display().to_string(),
+            "bytes": bytes,
+        }))
+    }
+
+    /// The hand-off export: the frame's HTML, its token stylesheet and
+    /// token JSON, or the ZIP packet — written beside the board and
+    /// answered with the path (the terminal handed a file, fleet's own
+    /// hand-over shape). The ZIP's writer is `deck.rs`'s, already pinned
+    /// by `the_export_is_a_zip_a_reader_can_open`.
+    pub fn design_export(&self, body: &str) -> Result<Value, String> {
+        design_export(&self.home, body)
+    }
+
     /// The tower console's document: the git facts per project from the
     /// tower board's own read, and the second-brain's reports and tower
     /// aggregates beside them. Two reads, one document, and every number
@@ -6633,6 +6786,322 @@ fn roles_document(home: &std::path::Path) -> Value {
     })
 }
 
+// --- the design canvas ------------------------------------------------------
+
+/// The presets the composer's style chips offer, embedded once.
+fn design_presets() -> Value {
+    serde_json::from_str(include_str!("assets/design-presets.json")).unwrap_or(Value::Array(vec![]))
+}
+
+/// The design document: the boards, the active board with its frames, the
+/// presets, the caps. A home with no canvas adopts the bundled sample on
+/// this read — the read is where a surface first exists.
+fn design_read(home: &std::path::Path, project: Option<&str>) -> Value {
+    let mut refused: Vec<String> = Vec::new();
+    if let Err(error) = crate::canvas::ensure_sample(home) {
+        refused.push(error);
+    }
+    let summaries = crate::canvas::projects(home);
+    let active_slug = project
+        .map(str::to_string)
+        .or_else(|| summaries.first().map(|summary| summary.slug.clone()));
+    let mut active: Option<Value> = None;
+    if let Some(slug) = &active_slug {
+        match crate::canvas::load(home, slug) {
+            Ok(document) => {
+                let frames: Vec<Value> = document
+                    .frames
+                    .iter()
+                    .map(|frame| {
+                        json!({
+                            "id": frame.id,
+                            "name": frame.name,
+                            "description": frame.description,
+                            // The one injection path: the face paints
+                            // what the server wrote, never its own copy.
+                            "html": crate::canvas::inject_tweaks(
+                                &frame.html,
+                                &frame.tweak_spec,
+                                &frame.tweak_values,
+                            ),
+                            // The page before any override: the live
+                            // tweak panel re-injects from this through
+                            // the stateless endpoint, so the face never
+                            // reimplements the transform.
+                            "html_raw": frame.html,
+                            "x": frame.x,
+                            "y": frame.y,
+                            "w": frame.w,
+                            "h": frame.h,
+                            "tweak_spec": frame.tweak_spec,
+                            "tweak_values": frame.tweak_values,
+                            "model": frame.model,
+                            "versions": frame
+                                .versions
+                                .iter()
+                                .map(|version| {
+                                    json!({
+                                        "id": version.id,
+                                        "name": version.name,
+                                        "source": version.source,
+                                        "created": version.created,
+                                    })
+                                })
+                                .collect::<Vec<_>>(),
+                            "pins": frame.pins,
+                            "review": frame.review,
+                            // The deterministic facts, computed on the
+                            // same injected bytes every consumer gets.
+                            "a11y": crate::canvas::a11y_scan(&crate::canvas::inject_tweaks(
+                                &frame.html,
+                                &frame.tweak_spec,
+                                &frame.tweak_values,
+                            )),
+                            "created": frame.created,
+                            "updated": frame.updated,
+                        })
+                    })
+                    .collect();
+                active = Some(json!({
+                    "slug": slug,
+                    "name": document.name,
+                    "created": document.created,
+                    "updated": document.updated,
+                    "frames": frames,
+                }));
+            }
+            Err(error) => refused.push(error),
+        }
+    }
+    json!({
+        "type": "design",
+        "read_at": crate::calib::stamp(),
+        "projects": summaries,
+        "active": active,
+        "presets": design_presets(),
+        "caps": {
+            "max_frame_bytes": crate::canvas::MAX_FRAME_BYTES,
+            "max_versions": crate::canvas::MAX_VERSIONS,
+            "viewports": crate::canvas::VIEWPORT_PRESETS
+                .iter()
+                .map(|(name, w, h)| json!({"name": name, "w": w, "h": h}))
+                .collect::<Vec<_>>(),
+        },
+        "refused": refused,
+    })
+}
+
+/// The design writer: one op per edit, the settings writer's shape. Every
+/// op names the board it edits; `create` is the only one without.
+fn design_write(home: &std::path::Path, body: &str) -> Result<Value, String> {
+    let arguments: Value = serde_json::from_str(body)
+        .map_err(|error| format!("the design write is not a JSON object: {error}"))?;
+    let op = arguments
+        .get("op")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "a design write names its op".to_string())?
+        .to_string();
+    let text = |key: &str| -> Result<String, String> {
+        arguments
+            .get(key)
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .ok_or_else(|| format!("the write names its {key}"))
+    };
+    let slug = || text("project");
+    let frame_id = || text("id");
+    let wrote = match op.as_str() {
+        "create" => {
+            let name = arguments
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("Untitled board");
+            let (slug, project) = crate::canvas::create(home, name)?;
+            json!({ "slug": slug, "name": project.name })
+        }
+        "rename" => {
+            let slug = slug()?;
+            let name = text("name")?;
+            let mut project = crate::canvas::load(home, &slug)?;
+            project.name = name.trim().to_string();
+            project.updated = crate::calib::stamp();
+            crate::canvas::save(home, &slug, &project)?;
+            json!({ "slug": slug, "name": project.name })
+        }
+        "frame-update" => {
+            let slug = slug()?;
+            let id = frame_id()?;
+            let update: crate::canvas::FrameUpdate = serde_json::from_value(
+                arguments
+                    .get("update")
+                    .cloned()
+                    .ok_or_else(|| "the write names its update".to_string())?,
+            )
+            .map_err(|error| format!("the update is not a frame update: {error}"))?;
+            crate::canvas::update_frame(home, &slug, &id, &update)?;
+            json!({ "id": id })
+        }
+        "frame-delete" => {
+            let slug = slug()?;
+            let id = frame_id()?;
+            crate::canvas::delete_frame(home, &slug, &id)?;
+            json!({ "id": id })
+        }
+        "frame-duplicate" => {
+            let slug = slug()?;
+            let id = frame_id()?;
+            let copy = crate::canvas::duplicate_frame(home, &slug, &id)?;
+            json!({ "id": copy })
+        }
+        "version-restore" => {
+            let slug = slug()?;
+            let id = frame_id()?;
+            let version = text("version")?;
+            crate::canvas::restore_version(home, &slug, &id, &version)?;
+            json!({ "id": id, "version": version })
+        }
+        "pin-add" => {
+            let slug = slug()?;
+            let id = frame_id()?;
+            let x = arguments.get("x").and_then(Value::as_f64).unwrap_or(0.5);
+            let y = arguments.get("y").and_then(Value::as_f64).unwrap_or(0.5);
+            let text_value = text("text")?;
+            let pin = crate::canvas::add_pin(home, &slug, &id, x, y, &text_value)?;
+            json!({ "pin": pin })
+        }
+        "pin-reply" => {
+            let slug = slug()?;
+            let id = frame_id()?;
+            let pin = text("pin")?;
+            let body = text("body")?;
+            crate::canvas::reply_pin(home, &slug, &id, &pin, &body)?;
+            json!({ "pin": pin })
+        }
+        "pin-resolve" => {
+            let slug = slug()?;
+            let id = frame_id()?;
+            let pin = text("pin")?;
+            let resolved = arguments
+                .get("resolved")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            crate::canvas::resolve_pin(home, &slug, &id, &pin, resolved.as_deref())?;
+            json!({ "pin": pin })
+        }
+        "review-put" => {
+            let slug = slug()?;
+            let id = frame_id()?;
+            let review = arguments
+                .get("review")
+                .cloned()
+                .ok_or_else(|| "the write names its review".to_string())?;
+            crate::canvas::put_review(home, &slug, &id, review)?;
+            json!({ "id": id })
+        }
+        other => return Err(format!("`{other}` is not a design write")),
+    };
+    Ok(json!({ "type": "design_write", "op": op, "wrote": wrote }))
+}
+
+/// The exports: the frame's HTML, tokens, or the ZIP packet. Files land
+/// under the board's own `exports/` directory; the reply carries the path
+/// and the byte count — the hand-over shape every fleet surface uses.
+fn design_export(home: &std::path::Path, body: &str) -> Result<Value, String> {
+    let arguments: Value = serde_json::from_str(body)
+        .map_err(|error| format!("the export is not a JSON object: {error}"))?;
+    let slug = arguments
+        .get("project")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "the export names its project".to_string())?;
+    let frame_id = arguments
+        .get("id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "the export names its frame".to_string())?;
+    let kind = arguments
+        .get("kind")
+        .and_then(Value::as_str)
+        .unwrap_or("html");
+    let project = crate::canvas::load(home, slug)?;
+    let frame = project
+        .frames
+        .iter()
+        .find(|frame| frame.id == frame_id)
+        .ok_or_else(|| format!("no frame `{frame_id}` on this board"))?;
+    let injected =
+        crate::canvas::inject_tweaks(&frame.html, &frame.tweak_spec, &frame.tweak_values);
+    let dir = crate::canvas::canvas_root(home).join(slug).join("exports");
+    std::fs::create_dir_all(&dir)
+        .map_err(|error| format!("could not make {}: {error}", dir.display()))?;
+    let stem = format!(
+        "{}-{}",
+        crate::canvas::slug_of(&frame.name),
+        crate::calib::stamp().replace([':', '-'], "")
+    );
+    let (name, bytes): (String, Vec<u8>) = match kind {
+        "html" => (format!("{stem}.html"), injected.clone().into_bytes()),
+        "tokens.css" => (
+            format!("{stem}.tokens.css"),
+            crate::canvas::tokens_css(&injected).into_bytes(),
+        ),
+        "tokens.json" => (
+            format!("{stem}.tokens.json"),
+            serde_json::to_string_pretty(&crate::canvas::tokens_json(&injected, &frame.name))
+                .map_err(|error| error.to_string())?
+                .into_bytes(),
+        ),
+        "zip" => {
+            let readme = format!(
+                "# {}\n\nExported from fleet's design canvas, {} — {}.\n\n- {stem}.html — the page, with its token overrides applied\n- {stem}.tokens.css — the declared tokens\n- {stem}.tokens.json — the same tokens, W3C draft shape\n",
+                frame.name,
+                slug,
+                crate::calib::stamp(),
+            );
+            let manifest = serde_json::json!({
+                "name": frame.name,
+                "project": slug,
+                "frame": frame.id,
+                "model": frame.model,
+                "exported": crate::calib::stamp(),
+                "tokens": crate::canvas::extract_root_tokens(&injected).len(),
+            });
+            let parts: Vec<(String, Vec<u8>)> = vec![
+                (format!("{stem}.html"), injected.clone().into_bytes()),
+                (
+                    format!("{stem}.tokens.css"),
+                    crate::canvas::tokens_css(&injected).into_bytes(),
+                ),
+                (
+                    format!("{stem}.tokens.json"),
+                    serde_json::to_string_pretty(&crate::canvas::tokens_json(
+                        &injected,
+                        &frame.name,
+                    ))
+                    .map_err(|error| error.to_string())?
+                    .into_bytes(),
+                ),
+                (
+                    "manifest.json".to_string(),
+                    serde_json::to_string_pretty(&manifest)
+                        .map_err(|error| error.to_string())?
+                        .into_bytes(),
+                ),
+                ("README.md".to_string(), readme.into_bytes()),
+            ];
+            (format!("{stem}.zip"), crate::deck::zip_parts(&parts))
+        }
+        other => return Err(format!("`{other}` is not an export kind")),
+    };
+    let path = dir.join(&name);
+    std::fs::write(&path, &bytes)
+        .map_err(|error| format!("could not write {}: {error}", path.display()))?;
+    Ok(json!({
+        "type": "design_export",
+        "kind": kind,
+        "path": path.display().to_string(),
+        "bytes": bytes.len(),
+    }))
+}
+
 fn router_document(config: &crate::settings::RouterConfig) -> Value {
     json!({
         "spend_guard": config.spend_guard,
@@ -8802,6 +9271,63 @@ pub(crate) fn rank_with(
 
 #[cfg(test)]
 mod tests {
+    // --- the design canvas ---------------------------------------------------
+
+    /// D9: the exports write the frame's own bytes — the page with its
+    /// tweaks, the tokens the page declares, and a packet a reader opens.
+    #[test]
+    fn the_design_exports_write_the_frames_own_bytes() {
+        let home = std::env::temp_dir().join(format!("fleet-design-export-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        let (slug, _) = crate::canvas::create(&home, "Export").unwrap();
+        let page = "<!doctype html><html><head><style>:root{--ink:#111;--page:#fff;--accent:#3b6cf6}</style></head><body><h1>x</h1></body></html>";
+        let id = crate::canvas::put_frame(&home, &slug, "hero", page, None, None, "m").unwrap();
+        let body = serde_json::json!({ "project": slug, "id": id, "kind": "zip" }).to_string();
+        let reply = design_export(&home, &body).expect("the packet");
+        let path = reply["path"].as_str().unwrap();
+        assert!(std::path::Path::new(path).is_file(), "{path}");
+        assert!(reply["bytes"].as_u64().unwrap() > 0);
+        // The ZIP opens as a reader's archive: the STORE header is first.
+        let bytes = std::fs::read(path).unwrap();
+        assert_eq!(&bytes[0..2], b"PK", "a zip archive");
+        // The html export is the injected page.
+        let body = serde_json::json!({ "project": slug, "id": id, "kind": "html" }).to_string();
+        let reply = design_export(&home, &body).expect("the html");
+        let html = std::fs::read_to_string(reply["path"].as_str().unwrap()).unwrap();
+        assert!(html.contains("<!doctype html>"));
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// The preview route's document is the stored page with its tweaks —
+    /// the same transform every exporter runs.
+    #[tokio::test]
+    async fn the_preview_is_the_stored_page_with_its_tweaks() {
+        let home =
+            std::env::temp_dir().join(format!("fleet-design-preview-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        let (slug, _) = crate::canvas::create(&home, "Preview").unwrap();
+        let page = "<!doctype html><html><head><style>:root{--ink:#111;--page:#fff;--accent:#3b6cf6}</style></head><body><h1>x</h1></body></html>";
+        let id = crate::canvas::put_frame(&home, &slug, "hero", page, None, None, "m").unwrap();
+        let spec = serde_json::json!([{ "key": "accent", "label": "accent", "kind": "color",
+            "default": "#3b6cf6", "css_var": "accent" }]);
+        let arguments = serde_json::json!({ "project": slug, "name": "hero", "html": page,
+            "frame_id": id, "tweak_spec": spec });
+        crate::canvas::frame_from_tool(&home, &arguments).unwrap();
+        let mut values = std::collections::BTreeMap::new();
+        values.insert("accent".to_string(), serde_json::json!("#ff0000"));
+        let update = crate::canvas::FrameUpdate {
+            tweak_values: Some(values),
+            ..Default::default()
+        };
+        crate::canvas::update_frame(&home, &slug, &id, &update).unwrap();
+        let (bridge, _sources) = Bridge::detached(home.clone(), "test-model".to_string(), None);
+        let html = bridge.design_frame_html(&slug, &id).unwrap();
+        assert!(html.contains("--accent: #ff0000;"), "{html}");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
     #[test]
     fn the_title_ladder_orders_the_rungs() {
         // All four rungs: the owner's rename is the truth.

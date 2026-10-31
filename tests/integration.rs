@@ -4176,6 +4176,8 @@ async fn a_full_run_calls_the_real_sem1_lane_through_the_mock_api() {
             "convention",
             "plan",
             "deck",
+            "frame",
+            "review_frame",
             "extract",
             "vision",
             "web",
@@ -4189,7 +4191,7 @@ async fn a_full_run_calls_the_real_sem1_lane_through_the_mock_api() {
         ]
     );
     let second = declared_tools(&bodies[1]);
-    assert_eq!(second.len(), 32, "{second:?}");
+    assert_eq!(second.len(), 34, "{second:?}");
     assert_eq!(
         &second[..4],
         &["bash", "read_file", "write_file", "list_dir"]
@@ -4208,7 +4210,7 @@ async fn a_full_run_calls_the_real_sem1_lane_through_the_mock_api() {
     // The native tools ride before the joined lane's, and the lane's
     // tools are the deferred tail of the declaration list.
     assert_eq!(
-        &second[11..28],
+        &second[11..30],
         &[
             "measure",
             "imagine",
@@ -4220,6 +4222,8 @@ async fn a_full_run_calls_the_real_sem1_lane_through_the_mock_api() {
             "convention",
             "plan",
             "deck",
+            "frame",
+            "review_frame",
             "extract",
             "vision",
             "web",
@@ -4403,8 +4407,8 @@ async fn a_dead_lane_child_degrades_the_run_without_killing_it() {
     );
     let bodies = mock.bodies();
     assert_eq!(bodies.len(), 3);
-    assert_eq!(declared_tools(&bodies[1]).len(), 28);
-    assert_eq!(declared_tools(&bodies[2]).len(), 28);
+    assert_eq!(declared_tools(&bodies[1]).len(), 30);
+    assert_eq!(declared_tools(&bodies[2]).len(), 30);
     assert!(
         !declared_tools(&bodies[1]).contains(&"mcp__sem1__probe".to_string()),
         "a dead lane's tools are withdrawn from the declarations"
@@ -4786,7 +4790,7 @@ async fn a_denied_lane_call_never_spawns_the_lane() {
     // No lane joined, so the second request still declares only the
     // built-ins and the delegation tool.
     let bodies = mock.bodies();
-    assert_eq!(declared_tools(&bodies[1]).len(), 28);
+    assert_eq!(declared_tools(&bodies[1]).len(), 30);
 
     std::fs::remove_dir_all(&home).ok();
 }
@@ -4856,7 +4860,7 @@ async fn a_lane_that_cannot_launch_fails_its_call_and_the_run_answers() {
     assert!(records
         .iter()
         .all(|record| !matches!(record, Record::LaneTools { .. })));
-    assert_eq!(declared_tools(&mock.bodies()[1]).len(), 28);
+    assert_eq!(declared_tools(&mock.bodies()[1]).len(), 30);
 
     std::fs::remove_dir_all(&home).ok();
 }
@@ -6641,7 +6645,7 @@ async fn a_selected_skills_body_rides_the_tool_result_path() {
     // The declarations carry `use_skill` beside the four built-ins, the
     // delegation tool beside that, and the convention lookup after it.
     let declared = declared_tools(&bodies[0]);
-    assert_eq!(declared.len(), 29, "{declared:?}");
+    assert_eq!(declared.len(), 31, "{declared:?}");
     assert!(declared.contains(&"use_skill".to_string()), "{declared:?}");
     assert!(declared.contains(&"subagent".to_string()), "{declared:?}");
     assert!(declared.contains(&"convention".to_string()), "{declared:?}");
@@ -7524,6 +7528,8 @@ async fn a_runs_request_carries_the_assembled_memory_block() {
             "convention",
             "plan",
             "deck",
+            "frame",
+            "review_frame",
             "extract",
             "vision",
             "web",
@@ -7681,6 +7687,8 @@ async fn a_memory_less_run_is_byte_for_byte_unchanged() {
             "convention",
             "plan",
             "deck",
+            "frame",
+            "review_frame",
             "extract",
             "vision",
             "web",
@@ -7752,6 +7760,8 @@ async fn a_memory_less_run_is_byte_for_byte_unchanged() {
             "convention",
             "plan",
             "deck",
+            "frame",
+            "review_frame",
             "extract",
             "vision",
             "web",
@@ -8057,6 +8067,8 @@ async fn the_improve_tool_files_a_proposal_inside_a_run_and_never_applies_one() 
             "convention",
             "plan",
             "deck",
+            "frame",
+            "review_frame",
             "extract",
             "vision",
             "web",
@@ -8138,6 +8150,8 @@ async fn a_run_without_a_home_does_not_declare_the_improve_tool() {
             "convention",
             "plan",
             "deck",
+            "frame",
+            "review_frame",
             "extract",
             "vision",
             "web",
@@ -12259,5 +12273,147 @@ async fn the_first_steer_curates_and_the_record_lands_once() {
         1,
         "{records:?}"
     );
+    std::fs::remove_dir_all(&home).ok();
+}
+
+/// The design canvas's frame tool, end to end: a run whose model calls
+/// `frame` puts a complete page on the board, the document gains it, and
+/// the run's log carries the call (hard rule 5 — the tool result is the
+/// ordinary path). The tool's refusal is the model-visible error, never a
+/// failed run.
+#[tokio::test]
+async fn a_design_run_emits_a_frame() {
+    let mock = MockApi::start(vec![
+        tool_call_stream(
+            "c1",
+            "frame",
+            r#"{"project":"board","name":"hero","html":"<!doctype html><html><head><style>:root{--ink:#111;--page:#fff}</style></head><body><h1>Ship it</h1></body></html>"}"#,
+        ),
+        assistant_stream(TOOL_REPORT),
+    ]);
+    let home = temp_home("design-frame");
+    let (slug, _) = fleet::canvas::create(&home, "Board").unwrap();
+    assert_eq!(slug, "board");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let client = Client::new(mock.url(), "test-key");
+    let options = AgentOptions {
+        goal: None,
+        model: "test-model".to_string(),
+        identity: None,
+        max_turns: 4,
+        ui_tx: None,
+        lane_specs: None,
+        calib: None,
+        skills: Vec::new(),
+        role_overlay: None,
+        memory: None,
+        scope: None,
+        improve_home: Some(home.clone()),
+        route_home: None,
+        gui_prompt: None,
+        compact_now: false,
+        checkpoints: None,
+        file_access: FileAccess::Unrestricted,
+        plan_mode: false,
+    };
+    let mut progress = Vec::new();
+    {
+        let mut agent = Agent::new(
+            &client,
+            options,
+            &mut session,
+            Box::new(ApproveAll),
+            &mut progress,
+        )
+        .unwrap();
+        agent.run("design a hero").await.unwrap();
+    }
+
+    // The frame is on the board.
+    let project = fleet::canvas::load(&home, &slug).unwrap();
+    assert_eq!(project.frames.len(), 1);
+    assert_eq!(project.frames[0].name, "hero");
+    assert!(project.frames[0].html.contains("Ship it"));
+    assert_eq!(project.frames[0].versions.len(), 1);
+    // The call and its result are in the log, the ordinary tool path.
+    let records = session::replay(session.path()).unwrap();
+    assert!(
+        records.iter().any(
+            |record| matches!(record, Record::Assistant { tool_calls, .. }
+            if tool_calls.iter().any(|call| call.function.name == "frame"))
+        ),
+        "{records:?}"
+    );
+    let result = records
+        .iter()
+        .filter_map(|record| match record {
+            Record::ToolResult { name, output, .. } if name == "frame" => Some(output.clone()),
+            _ => None,
+        })
+        .next()
+        .expect("the frame tool's result");
+    assert!(result.contains("frame added"), "{result}");
+    assert!(result.contains("frame `f-"), "{result}");
+    std::fs::remove_dir_all(&home).ok();
+}
+
+/// The frame tool's refusal: a board that does not exist is a named error
+/// the model reads, and no frame lands anywhere.
+#[tokio::test]
+async fn the_frame_tool_refuses_a_board_it_cannot_find() {
+    let mock = MockApi::start(vec![
+        tool_call_stream(
+            "c1",
+            "frame",
+            r#"{"project":"nope","name":"x","html":"<!doctype html><html><body>hi</body></html>"}"#,
+        ),
+        assistant_stream(TOOL_REPORT),
+    ]);
+    let home = temp_home("design-refusal");
+    let mut session = Session::create(&home, "test-model").unwrap();
+    let client = Client::new(mock.url(), "test-key");
+    let options = AgentOptions {
+        goal: None,
+        model: "test-model".to_string(),
+        identity: None,
+        max_turns: 4,
+        ui_tx: None,
+        lane_specs: None,
+        calib: None,
+        skills: Vec::new(),
+        role_overlay: None,
+        memory: None,
+        scope: None,
+        improve_home: Some(home.clone()),
+        route_home: None,
+        gui_prompt: None,
+        compact_now: false,
+        checkpoints: None,
+        file_access: FileAccess::Unrestricted,
+        plan_mode: false,
+    };
+    let mut progress = Vec::new();
+    {
+        let mut agent = Agent::new(
+            &client,
+            options,
+            &mut session,
+            Box::new(ApproveAll),
+            &mut progress,
+        )
+        .unwrap();
+        agent.run("design something").await.unwrap();
+    }
+    let records = session::replay(session.path()).unwrap();
+    let output = records
+        .iter()
+        .filter_map(|record| match record {
+            Record::ToolResult { name, output, .. } if name == "frame" => Some(output.clone()),
+            _ => None,
+        })
+        .next()
+        .expect("the refusal");
+    assert!(output.contains("no canvas board"), "{output}");
+    assert!(fleet::canvas::projects(&home).is_empty());
     std::fs::remove_dir_all(&home).ok();
 }

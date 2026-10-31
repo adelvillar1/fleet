@@ -1862,6 +1862,12 @@ fn xml_escape(text: &str) -> String {
 /// stored entry, and the crate contract is no new dependency — so the
 /// container is written here rather than pulled in for one export.
 fn zip(parts: &[(String, Vec<u8>)]) -> Vec<u8> {
+    zip_parts(parts)
+}
+
+/// The STORE zip writer, shared: the design canvas's hand-off packet is
+/// the same archive shape the deck export uses.
+pub(crate) fn zip_parts(parts: &[(String, Vec<u8>)]) -> Vec<u8> {
     let mut out: Vec<u8> = Vec::new();
     let mut central: Vec<u8> = Vec::new();
     let mut offset: u32 = 0;

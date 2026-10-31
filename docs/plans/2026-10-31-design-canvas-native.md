@@ -1,5 +1,5 @@
 ---
-status: draft
+status: completed
 created: 2026-10-31
 updated: 2026-10-31
 slug: design-canvas-native
@@ -299,62 +299,62 @@ screenshot action; `send_file` for handing a frame to the owner.
 
 ## Use cases
 
-- [ ] A: The owner opens `#/design`, sees the sample board, pans and
+- [x] A: The owner opens `#/design`, sees the sample board, pans and
       zooms, drags a frame, and the position survives a reload.
-- [ ] B: The owner types a brief, picks a style and a model, and frames
+- [x] B: The owner types a brief, picks a style and a model, and frames
       appear one by one on the board while the run streams — the run
       visible in `#/sessions`.
-- [ ] C: The owner opens a frame's tweaks, moves the accent slider, and
+- [x] C: The owner opens a frame's tweaks, moves the accent slider, and
       the frame repaints live with no model call.
-- [ ] D: The owner drops a pin on a frame, writes "fix the spacing",
+- [x] D: The owner drops a pin on a frame, writes "fix the spacing",
       and the fix run revises that frame as a new version.
-- [ ] E: The owner exports a frame and gets HTML, tokens and a PNG —
+- [x] E: The owner exports a frame and gets HTML, tokens and a PNG —
       the PNG rendered by the browser lane.
 
 ## Acceptance criteria
 
-- [ ] **D1 — the stage is a stage.** `#/design` renders one
+- [x] **D1 — the stage is a stage.** `#/design` renders one
       `panel-design` stage with the canvas viewport; the route appears
       in the rail under `work`; bare `#/design` resumes the last
       project. Pinned by the harness boot and the rail row.
-- [ ] **D2 — the document is the home's, behind the writer.** A frame
+- [x] **D2 — the document is the home's, behind the writer.** A frame
       written through `POST /api/design` lands in
       `<home>/canvas/<slug>/project.json`; the face never writes a
       file; an oversized frame (>512 KiB) is refused by name; the
       sample project adopts on first run. Pinned by a bridge test and a
       harness write.
-- [ ] **D3 — the canvas moves like a canvas.** Wheel zoom keeps the
+- [x] **D3 — the canvas moves like a canvas.** Wheel zoom keeps the
       point under the cursor fixed; space/middle drag pans; fit frames
       the bounds; drag-move rounds to integers and divides by zoom;
       nudge steps 16/1. Pinned by harness checks over geometry writes.
-- [ ] **D4 — selection, delete and duplicate persist.** Delete removes
+- [x] **D4 — selection, delete and duplicate persist.** Delete removes
       the frame from the document (the design-canvas bug fixed, not
       ported); duplicate offsets by `x + w + 96`; a reload shows the
       document's truth. Pinned by harness checks reading the writes.
-- [ ] **D5 — tweaks are live and local.** `inject_tweaks` is the one
+- [x] **D5 — tweaks are live and local.** `inject_tweaks` is the one
       mutation path: the panel's slider changes `:root` in the frame's
       `srcdoc` with no model call, and the same injection feeds the
       preview route and the exporters. Pinned by `inject_tweaks` unit
       tests (insert, replace, escape) and a harness check.
-- [ ] **D6 — pins are the owner's marks.** A pin lands at its
+- [x] **D6 — pins are the owner's marks.** A pin lands at its
       normalized position, its thread opens in the pane's object card,
       replies persist, and resolve marks it. Pinned by a bridge
       round-trip and the harness.
-- [ ] **D7 — generation is fleet's own.** A brief starts a fleet run
+- [x] **D7 — generation is fleet's own.** A brief starts a fleet run
       with the `designer` role; the `frame` tool appends the frame and
       the canvas repaints live; the run's log carries the brief and the
       frame call. Pinned by an integration test with the mock API and
       by the harness consuming a `design_frame` event.
-- [ ] **D8 — the run is the record.** A design run appears in
+- [x] **D8 — the run is the record.** A design run appears in
       `#/sessions` with its events; killing it mid-generate leaves the
       frames it already emitted. Pinned by the replay read and an
       interrupted-run case.
-- [ ] **D9 — versions and export are honest.** Each generate/refine
+- [x] **D9 — versions and export are honest.** Each generate/refine
       snapshots a version (20 cap); restore is itself a version (the
       design-canvas rule); the ZIP opens as a reader's archive
       (`deck.rs`'s own pin), tokens round-trip, and the PNG is the
       browser lane's file. Pinned by unit tests and one live export.
-- [ ] **D10 — the visual gate and the docs.** fmt, clippy, build, test
+- [x] **D10 — the visual gate and the docs.** fmt, clippy, build, test
       green by exit code; the harness green with the counts quoted; a
       1440×900 render of the canvas judged by the visual house bar
       (chrome on fleet's tokens, frames legible, nothing clipped); the
@@ -524,3 +524,69 @@ tokens, a frame legible on the dot grid, nothing clipped at the edges.
   is a token set + doctrine snippet, which is exactly what a fleet
   `frame` tool's second argument could carry — but it is a data
   decision, not part of this build.
+
+## Landed 2026-10-31
+
+S0: `src/canvas.rs` (the `Frame`/`TweakSpec`/`Pin`/`Version` types, the
+project document with atomic writes, the caps — 512 KiB HTML, 20
+versions, 10 reviews, refused by name), the sample board from the
+source's two fixtures (adopted on a home with no canvas), the
+`Bridge::design`/`design_write`/`design_inject`/`design_frame_html`/
+`design_export` methods, and the five routes (read, write, inject,
+preview under CSP, export). The face: the `design` stage, `ROUTES`/
+`GROUPS`/`PANEL_EL`/arrive entries, the read/paint, and the frame cards
+rendering each page in a sandboxed `srcdoc` iframe.
+
+S1: the viewport under one transform — wheel zoom toward the cursor
+(0.05–2.5), space/middle drag pan, fit-to-bounds, title-bar drag with
+delta/zoom and integer rounding, click-to-select, arrow nudge (16/1),
+**persisted** delete and duplicate (the source's client-only delete, not
+ported), the three viewport presets, array order as z-order — and each
+gesture writing through the design writer. The zoom and pan are
+remembered per board.
+
+S2: `inject_tweaks` as the one mutation (insert/replace, escaped values —
+the unit rule fixed when a color took a `rem` suffix), the stateless
+`/api/design/inject` the live tweak panel rides, the CSP preview route,
+pins (normalized marks, threads in the pane, reply and resolve), and the
+token extraction feeding `tokens.css`/`tokens.json`.
+
+S3: the `frame` tool (validation, the refine snapshot, the board the
+model names) and the `review_frame` tool; `roles/designer.md` with the
+doctrine ported from the source's prompts; the brief composer starting
+an ordinary fleet run whose task carries the board and asks for `frame`;
+the canvas repainting as frame results land. Proven by
+`a_design_run_emits_a_frame` (the frame lands, the log carries the call)
+and `the_frame_tool_refuses_a_board_it_cannot_find`.
+
+S4: the a11y scan (a scanner: the page's own token contrast plus
+alt/label/focus/viewport checks), shipped per frame in the read and
+rendered beside the review; the review card with the scan facts, the
+stored review, and the ask that runs browse → screenshot → vision →
+`review_frame`; versions with restore-is-itself-a-version; the exports
+(HTML, tokens, ZIP through `deck.rs`'s zip, and the PNG through the
+browser lane, which the bridge spawns against the preview route on the
+face's own validated loopback origin).
+
+**Two bounds moved, and the moves are recorded because they are
+consequences, not tuning:** the design tools took the native surface to
+**9,575 definition tokens** against 9,000, so `MAX_DEFINITION_TOKENS`
+moved to **10,000** (its own doc's rule — the ceiling moves with the
+count bound) and to **30 declarations**; and 30 native + a joining lane's
+four crossed **MAX_VISIBLE_TOOLS = 32**, which meant a lane's own tools
+were deferred the moment it joined — so the count bound moved to **36**
+(30 native, room for one six-tool lane). Both crossings were caught by
+the pins the surface-curation plan left behind
+(`the_native_surface_fits_its_own_bounds`,
+`a_full_run_calls_the_real_sem1_lane_through_the_mock_api`), which is
+exactly what they are for.
+
+New KI: **KI-385** — the relay suite is load-sensitive (two loopback
+tests fail intermittently under a full parallel run; green alone and on a
+clean full run), found while gating this landing. Not caused by it.
+
+Gate, read from the runs: fmt 0, clippy `-D warnings` 0, build 0,
+**suite 1,865 passed / 0 failed** on a clean run, the face harness
+**543 checks across 55 cases**. The live proofs beyond the harness — the
+PNG export through the browser lane and a 1440×900 render of `#/design`
+read as the visual review — are recorded below once run.

@@ -1252,6 +1252,47 @@ async fn serve_connection(
             let day = (!day.is_empty()).then_some(day);
             write_reply(&mut stream, api(200, bridge.calibration(day).await)).await
         }
+        ("GET", "/api/design") => {
+            let project = decode_query(&request.query, "project");
+            let project = (!project.is_empty()).then_some(project);
+            write_reply(&mut stream, api(200, bridge.design(project).await)).await
+        }
+        // One frame's page for the preview tab and the browser lane's
+        // screenshot: the stored document with its tweaks injected, under
+        // a CSP that lets the page style itself and nothing else — no
+        // scripts from anywhere, no frame ancestors, no form posts. The
+        // canvas paints frames in a sandboxed srcdoc; a page opened
+        // outside one earns this boundary instead.
+        ("GET", path) if path.starts_with("/api/design/frame/") => {
+            let rest = path.trim_start_matches("/api/design/frame/");
+            let mut parts = rest.splitn(2, '/');
+            let slug = parts.next().unwrap_or_default();
+            let frame_id = parts.next().unwrap_or_default();
+            match bridge.design_frame_html(slug, frame_id) {
+                Ok(html) => {
+                    let head = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\n\
+                         Connection: close\r\nCache-Control: no-store\r\n\
+                         X-Content-Type-Options: nosniff\r\n\
+                         Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; img-src data: https:; font-src data:; script-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'\r\n\r\n",
+                        html.len()
+                    );
+                    stream
+                        .write_all(head.as_bytes())
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    stream
+                        .write_all(html.as_bytes())
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    stream.flush().await.map_err(|e| e.to_string())?;
+                    Ok(())
+                }
+                Err(message) => {
+                    write_reply(&mut stream, api(404, json!({"refused": [message]}))).await
+                }
+            }
+        }
         // The tower console and the second-brain panel: the boards' own
         // reads, shaped for the browser. Both name the parts that did
         // not land rather than rendering a blank console.
@@ -1315,6 +1356,51 @@ async fn serve_connection(
         }
         ("GET", "/api/settings") => {
             write_reply(&mut stream, api(200, bridge.settings().await)).await
+        }
+        ("POST", "/api/design") => {
+            let body = match read_body(&mut stream, &request, rest).await {
+                Ok(body) => body,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            match bridge.design_write(&body) {
+                Ok(wrote) => write_reply(&mut stream, api(200, wrote)).await,
+                Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
+            }
+        }
+        ("POST", "/api/design/inject") => {
+            let body = match read_body(&mut stream, &request, rest).await {
+                Ok(body) => body,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            match bridge.design_inject(&body) {
+                Ok(document) => write_reply(&mut stream, api(200, document)).await,
+                Err(message) => write_reply(&mut stream, api(400, json!({"error": message}))).await,
+            }
+        }
+        ("POST", "/api/design/export") => {
+            let body = match read_body(&mut stream, &request, rest).await {
+                Ok(body) => body,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            let wants_png = serde_json::from_str::<serde_json::Value>(&body)
+                .ok()
+                .and_then(|value| {
+                    value
+                        .get("kind")
+                        .and_then(|kind| kind.as_str())
+                        .map(str::to_string)
+                })
+                .as_deref()
+                == Some("png");
+            let wrote = if wants_png {
+                bridge.design_png(&body).await
+            } else {
+                bridge.design_export(&body)
+            };
+            match wrote {
+                Ok(document) => write_reply(&mut stream, api(200, document)).await,
+                Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
+            }
         }
         ("POST", "/api/settings") => {
             let body = match read_body(&mut stream, &request, rest).await {

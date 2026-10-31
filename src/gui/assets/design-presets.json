@@ -1,0 +1,72 @@
+[
+ {
+  "id": "agency-grid",
+  "label": "Agency grid",
+  "summary": "Minimal editorial agency grid \u2014 oversized type, quiet labels, open space",
+  "source": "web-design/agency-grid-layout-minimal",
+  "spec": "LAYOUT: disciplined multi-column editorial grid with large open spans and generous negative space; hero headline spans most of the grid with supporting copy anchored in a narrow side column.\nPALETTE: light neutral backgrounds, subtle tonal shifts, thin separators; one restrained accent used sparingly.\nTYPE: oversized headlines with tight tracking and strong line breaks as the primary visual anchor; tiny uppercase utility labels and metadata; calm, sparse body copy.\nSIGNATURE MOVES: service/capability rows as clean multi-column listings with tiny metadata; large architectural image blocks framed by whitespace, not chrome; understated CTAs with thin borders and small uppercase labels.\nAVOID: generic repeated card grids, heavy borders or shadows, accent overuse, filling every gap with content."
+ },
+ {
+  "id": "editorial-tech",
+  "label": "Editorial tech",
+  "summary": "Magazine composition meets product-tech precision \u2014 asymmetric grid, mono labels",
+  "source": "web-design/editorial-tech",
+  "spec": "LAYOUT: asymmetrical editorial composition with strong column structure and deliberate negative space; cinematic media bands or inset image strips that cut across the grid; offset alignment instead of centered hero blocks.\nPALETTE: restrained dark or controlled light neutrals with one active accent for states, numeric highlights, and focal separators.\nTYPE: large expressive display headlines paired with quiet sans body and mono utility labels, counters, and metadata.\nSIGNATURE MOVES: chapter markers, step lists, mono counters, thin divider rules and grid traces that make the page feel engineered; premium thin-framed panels rather than soft lifestyle surfaces.\nAVOID: centered generic SaaS heroes with interchangeable cards, sci-fi neon chrome, multi-color palettes, accent everywhere."
+ },
+ {
+  "id": "framed-grid",
+  "label": "Framed grid",
+  "summary": "Visible 1px frames and corner brackets on a strict parent grid \u2014 precise, technical",
+  "source": "web-design/framed-grid-layout",
+  "spec": "LAYOUT: strict parent grid (e.g. 12 columns) where every section snaps to the same columns and rows; each section is a framed box with a 1px border, consistent padding, and consistent gaps; sections use explicit grid spans, not ad-hoc widths.\nPALETTE: neutral background (e.g. #f7f7f4), one border color at low contrast, one stronger line color for accents; very subtle diagonal line texture (\u22640.05 opacity) as surface tension.\nTYPE: clean sans with calm hierarchy; headings, controls, and media edges all aligned to the same grid rhythm.\nSIGNATURE MOVES: L-shaped corner brackets (\u224818px) repeated on all major frames; the visible frame IS the structure \u2014 no shadows.\nAVOID: floating cards, soft blobs, uneven margins, mixed border weights, heavy shadows, decorative texture."
+ },
+ {
+  "id": "split-technical",
+  "label": "Split technical",
+  "summary": "Two-panel split screen \u2014 immersive media one side, specs and metadata the other",
+  "source": "web-design/split-layout-technical",
+  "spec": "LAYOUT: strong two-panel split (\u224850/50 on desktop, stacked on mobile) where each half has a distinct role \u2014 one immersive/visual, one informational with specs, metadata, or navigation; thin frame lines, inset rules, and tiny corner markers give each panel a technical shell.\nPALETTE: restrained neutrals with one selective accent for active details and system cues, never a blanket wash.\nTYPE: quiet editorial headlines with controlled tracking, supported by mono utility text for top rails, metadata strips, and spec labels.\nSIGNATURE MOVES: one premium inset surface (bordered media frame or visualization window); compact two-column spec blocks with thin dividers; asymmetric density \u2014 one panel denser, one more spatial.\nAVOID: generic two-column marketing layouts, equally crowded panels, rounded playful UI, bright multi-color treatments."
+ },
+ {
+  "id": "wireframe-dark",
+  "label": "Wireframe dark",
+  "summary": "Monochrome technical diagram \u2014 outlined geometry, annotations, dark diagnostic frame",
+  "source": "web-design/technical-wireframe-info-layout",
+  "spec": "LAYOUT: wide, sparse composition on a near-black foundation; a large outlined/wireframe central object (SVG linework, no external libs) as the structural anchor, surrounded by open space with floating info labels connected by thin routed or dashed lines.\nPALETTE: almost entirely monochrome \u2014 black, charcoal, zinc, white; emphasis from brightness and line weight, not color.\nTYPE: compact technical type \u2014 small labels, utility copy, metric text, and only one or two larger heading moments.\nSIGNATURE MOVES: exploded/layered outlined geometry suggesting readable components; edge-anchored diagnostic tags with tiny status dots; a low-contrast monochrome widget row (legend, allocation bars); faint halftone or technical pattern overlay.\nAVOID: filled glossy 3D renders, bright accent colors, dense dashboard cards competing with the diagram, label clutter."
+ },
+ {
+  "id": "minimal-beige",
+  "label": "Minimal beige",
+  "summary": "Warm beige light mode \u2014 layered stone surfaces, quiet process grid, sparse accent",
+  "source": "web-design/clean-minimal-beige-light-mode",
+  "spec": "LAYOUT: centered master container or framed shell on layered beige/stone/cream surfaces; simple centered hero above a modular lower grid of evenly divided process blocks with consistent heights.\nPALETTE: warm neutrals (beige, stone, parchment) with very low-contrast borders and subtle tonal separation; one sparse accent reserved for badges, active states, and primary actions.\nTYPE: modern clean sans, modest weight contrast, quiet tracking, balanced spacing.\nSIGNATURE MOVES: gentle radial wash behind the main UI instead of flat white; thin dividers over shadows; small dark inset cards used sparingly as contrast moments; tiny status dots and low-key progress indicators.\nAVOID: stark white SaaS with cold gray borders, ornate paper textures, heavy shadows, high-saturation accents, noisy over-filled modules."
+ },
+ {
+  "id": "dark-glass",
+  "label": "Dark glass",
+  "summary": "Premium dark workspace \u2014 frosted shells, floating cards, atmospheric depth",
+  "source": "web-design/dark-glass-clean-layout",
+  "spec": "LAYOUT: centered max-width workspace shell on a near-black base \u2014 pill top nav, optional side shells, and a calm central stage; thin vertical boundary rails and tiny corner markers keep it architectural; a few floating glass cards around the center, generously spaced.\nPALETTE: monochrome \u2014 white, zinc, smoke, charcoal; accent only for status dots and tiny indicators.\nTYPE: compact operational headings with mono micro-labels, system IDs, and tiny metadata for technical credibility.\nSIGNATURE MOVES: dark frosted glass shells (low-opacity dark fills, strong backdrop blur, crisp top-edge highlight, 1px gradient borders); soft atmospheric glow behind the interface; terminal-like I/O cards with clean inner rows.\nAVOID: bright translucent cards over colorful blobs, flat black boxes with no depth, center overcrowding, neon glows, glass as card-style-only."
+ },
+ {
+  "id": "orange-paper",
+  "label": "Orange paper SaaS",
+  "summary": "Warm paper tones with orange signal color \u2014 rounded, polished, product-led",
+  "source": "web-design/orange-clean-paper-saas",
+  "spec": "LAYOUT: large rounded master container with subtle gradient-border treatment on a warm shell; pair a functional area (form, onboarding, content) with a polished product-visual panel of floating cards or soft white UI chips.\nPALETTE: warm off-white, cream, parchment, pale stone surfaces \u2014 never stark white; orange as the disciplined signal color for CTAs, step markers, focus rings, and micro-badges.\nTYPE: clean sans, light-to-regular body weight, restrained hierarchy \u2014 elegant and approachable.\nSIGNATURE MOVES: paper-toned inputs with delicate borders and orange focus rings; rounded white/cream cards with soft orange-tinted shadows; orange primary button with quiet secondary actions.\nAVOID: cold blue-gray SaaS UI, flat white forms, saturating the page with orange, vintage paper distressing, noisy illustration."
+ },
+ {
+  "id": "paper-technical",
+  "label": "Paper technical",
+  "summary": "Warm paper interior framed by a dark outer shell \u2014 tactile but precise",
+  "source": "web-design/light-mode-paper-technical",
+  "spec": "LAYOUT: dark outer page field holding one large light rounded container with the whole experience inside; inner framing via inset border rectangles, small corner brackets, and quiet technical rules over paper-toned backgrounds.\nPALETTE: warm off-white/parchment primary surfaces layered with slightly darker paper tones and soft borders; one restrained accent for active states, progress marks, and primary CTAs.\nTYPE: clean sans for interface content with optional mono utility text for timestamps, captions, and metadata.\nSIGNATURE MOVES: low-contrast diagonal texture on large paper regions; nested app panels (mockups, sidebars, transcript panes) with bright clean interiors and delicate border hierarchy; accent-driven live states (active bullets, highlighted words).\nAVOID: flat plain white layouts, vintage distressing, cold enterprise blue-gray, over-softened consumer roundness, accent overuse."
+ },
+ {
+  "id": "industrial-skeuo",
+  "label": "Industrial skeuo",
+  "summary": "High-contrast molded dark shell \u2014 tactile depth, crisp light separation",
+  "source": "web-design/high-contrast-skeuomorphic-clean",
+  "spec": "LAYOUT: light outer page framing one dominant dark (black/charcoal) rounded master shell; inside, a disciplined grid of molded cards and instrument-like modules with fine guide lines and corner markers.\nPALETTE: high contrast \u2014 near-white text on deep dark surfaces, muted gray support copy; one restrained signal accent for status lights, active markers, and progress slivers.\nTYPE: clean sans with occasional mono labels; precise, not ornamental.\nSIGNATURE MOVES: tactile depth via 1px gradient borders, top-edge highlights, dark-to-darker fills, and inset shadow stacks \u2014 clean and controlled, never glossy; touchable buttons with subtle bevel and measured hover brightness; selective skeuomorphic objects (windows, search plates, status widgets).\nAVOID: washed-out neumorphism, retro glossy leather/chrome gimmicks, flat monochrome with no depth, multiple accents, depth effects on everything."
+ }
+]

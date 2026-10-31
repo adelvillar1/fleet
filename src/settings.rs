@@ -461,7 +461,7 @@ fn write_env(path: &Path, name: &str, value: &str) -> Result<(), String> {
 /// reader never sees a half-written file and two fleet processes
 /// cannot collide on one temp. Best-effort and silent about the temp's
 /// own cleanup: a failed rename leaves the original intact.
-fn write_atomic(path: &Path, text: &str) -> Result<(), String> {
+pub(crate) fn write_atomic(path: &Path, text: &str) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .map_err(|error| format!("{} cannot be created: {error}", parent.display()))?;

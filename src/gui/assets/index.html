@@ -683,6 +683,28 @@
     <div class="board" id="bots-board"></div>
   </main>
 
+  <!-- The design canvas: boards of frames, each frame an opaque HTML
+       page on a pan/zoom world. The chrome is fleet's own; the frame is
+       the artifact and renders in a sandboxed srcdoc. -->
+  <main class="stage stage-canvas" id="panel-design" hidden>
+    <header class="page-head canvas-head">
+      <div class="canvas-head-text">
+        <p class="eyebrow" id="design-eyebrow">design</p>
+        <h1 id="design-title">the canvas</h1>
+        <p class="page-note" id="design-note"></p>
+      </div>
+      <div class="canvas-head-acts">
+        <select class="knob-box" id="design-project" aria-label="the board"></select>
+        <button class="replay-button replay-resume" id="design-new" type="button">new board</button>
+      </div>
+    </header>
+    <div class="canvas-instrument" id="design-instrument"></div>
+    <div class="canvas-viewport" id="design-viewport">
+      <div class="canvas-world" id="design-world"></div>
+    </div>
+    <div class="canvas-composer" id="design-composer"></div>
+  </main>
+
   <main class="stage stage-board stage-split" id="panel-settings" hidden>
     <!-- The settings rail: the sections, one at a time — the work rail's
          own idiom (icons, a collapse, a remembered choice). -->

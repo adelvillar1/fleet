@@ -150,9 +150,17 @@ pub const DELEGATION_CONCURRENCY: usize = 3;
 
 /// The most tools one request should declare before the rest are held
 /// behind `tool_search`. Past roughly thirty, selection accuracy falls
-/// faster than the extra tools help — the measured all is 30–50, so the
+/// faster than the extra tools help — the measured band is 30–50, so the
 /// line sits at the low edge and the surface above it is deferred.
-pub const MAX_VISIBLE_TOOLS: usize = 32;
+///
+/// The line moves with the surface: 32 carried 28 native declarations and
+/// a lane's four tools; the design canvas's two tools made 30 native,
+/// and a join then deferred the joining lane's own tools — which is the
+/// one thing the tier must not do — so it moves to 36 (30 native, room
+/// for one six-tool lane) and the tests that pin the counts move with
+/// it. Pinned by `a_full_run_calls_the_real_sem1_lane_through_the_mock_api`
+/// (a join declares its four tools) and the tier tests.
+pub const MAX_VISIBLE_TOOLS: usize = 36;
 
 /// The most definition tokens one request should carry.
 ///
@@ -161,9 +169,14 @@ pub const MAX_VISIBLE_TOOLS: usize = 32;
 /// ~1,550 for `remember` and `supersede`, whose descriptions hold rules
 /// a reader cannot infer from their schemas. 8,000 was the bound when the
 /// surface was nineteen declarations and it crossed on the way to
-/// twenty-eight, so it moves with the count bound and for the same
-/// reason: the ceiling is a degradation guard, not a prose budget.
-pub const MAX_DEFINITION_TOKENS: usize = 9_000;
+/// twenty-eight; 9,000 carried the memory pair and the specials to
+/// 7,293 tokens of twenty-eight declarations, and the design canvas's
+/// two tools (`frame`, `review_frame`) crossed it again at 9,575 against
+/// thirty — so it moves to 10,000 with the count bound and for the same
+/// reason: the ceiling is a degradation guard, not a prose budget. The
+/// measurement is pinned by `the_native_surface_fits_its_own_bounds`,
+/// which is the gate that caught both crossings.
+pub const MAX_DEFINITION_TOKENS: usize = 10_000;
 
 /// How many requests a `tool_search` activation stays declared for. An
 /// activation is an answer to ONE question, not a permanent grant: the
@@ -1339,6 +1352,8 @@ pub fn plan_refusal(plan_mode: bool, name: &str) -> Option<String> {
         tools::SUPERSEDE_TOOL,
         tools::IMPROVE_TOOL,
         tools::PLAN_TOOL,
+        tools::FRAME_TOOL,
+        tools::REVIEW_FRAME_TOOL,
     ];
     write_class.contains(&name).then(|| {
         format!(
@@ -1777,6 +1792,8 @@ impl<'a> Agent<'a> {
         specs.push(tools::convention_spec());
         specs.push(tools::plan_spec());
         specs.push(tools::deck_spec());
+        specs.push(tools::frame_spec());
+        specs.push(tools::review_frame_spec());
         // The extraction leg, in the live path's position after the deck:
         // declared unguarded because the named absence lives in the
         // result, not the declaration (E2-C3).
@@ -1888,6 +1905,16 @@ impl<'a> Agent<'a> {
         // face can.
         if admitted(tools::DECK_TOOL) {
             specs.push(tools::deck_spec());
+        }
+        // The design canvas's frame tool: a complete page onto the board.
+        // Declared beside the deck because it is the same family — a
+        // structured deliverable the surface renders while the model
+        // reads the summary.
+        if admitted(tools::FRAME_TOOL) {
+            specs.push(tools::frame_spec());
+        }
+        if admitted(tools::REVIEW_FRAME_TOOL) {
+            specs.push(tools::review_frame_spec());
         }
         // The extraction leg rides every run whose machine carries the
         // credentials: a typed read beside the decision tier, declared
@@ -3672,6 +3699,43 @@ impl<'a> Agent<'a> {
                         }
                     }
                 }
+            });
+        }
+        if name == tools::FRAME_TOOL {
+            // The frame tool is a home write with a validation: the page
+            // is checked before it lands, the frame it refines is
+            // snapshotted, and the id comes back so a refine can name it.
+            // A refusal is a model-visible error naming the rule.
+            let Some(home) = self.options.improve_home.clone() else {
+                return Ok(settled(
+                    "error: this run has no fleet home, so there is no canvas to put a frame on"
+                        .to_string(),
+                ));
+            };
+            let arguments = parse_arguments(&call.function.arguments);
+            return Ok(match crate::canvas::frame_from_tool(&home, &arguments) {
+                Err(error) => settled(format!("error: {error}")),
+                Ok((slug, frame_id, added)) => {
+                    let what = if added { "added" } else { "refined" };
+                    settled(format!(
+                        "frame {what}: project `{slug}`, frame `{frame_id}`. The canvas shows it now; a refine can name frame_id `{frame_id}`."
+                    ))
+                }
+            });
+        }
+        if name == tools::REVIEW_FRAME_TOOL {
+            let Some(home) = self.options.improve_home.clone() else {
+                return Ok(settled(
+                    "error: this run has no fleet home, so there is no canvas to review onto"
+                        .to_string(),
+                ));
+            };
+            let arguments = parse_arguments(&call.function.arguments);
+            return Ok(match crate::canvas::review_from_tool(&home, &arguments) {
+                Err(error) => settled(format!("error: {error}")),
+                Ok((slug, frame_id)) => settled(format!(
+                    "review stored: project `{slug}`, frame `{frame_id}`. The canvas shows it on the frame's card."
+                )),
             });
         }
         if name == tools::EXTRACT_TOOL {
@@ -8495,6 +8559,10 @@ mod tests {
                 // neither, so a child cannot rewrite its parent's plan.
                 "plan",
                 "deck",
+                // The design canvas's page and its review: the structured
+                // deliverables a surface renders, beside the deck.
+                "frame",
+                "review_frame",
                 // The extraction leg rides the deck's slot: a typed read
                 // beside the decision tier, declared when the machine
                 // carries the credentials and named-absent otherwise.
@@ -8560,7 +8628,7 @@ mod tests {
         // computation over a value the model writes, and neither touches
         // anything outside itself. So does `plan`: it drafts a plan
         // document's declaration, which is the repo's own state.
-        assert_eq!(plain.declarations().len(), 28);
+        assert_eq!(plain.declarations().len(), 30);
         assert_eq!(plain.system_prompt(None), default_prompt());
         let _ = std::fs::remove_dir_all(&home);
         let _ = std::fs::remove_dir_all(&root);
@@ -11959,10 +12027,26 @@ mod tier_tests {
         );
         let withheld = withhold_core(&core, Some("standard_code"));
         assert!(!withheld.is_empty(), "the over-budget core withholds");
-        // The unranked, unlisted tail goes first, by name.
-        for name in ["apply_patch", "repo_map", "file_change", "deck", "extract"] {
-            assert!(withheld.iter().any(|w| w == name), "{name} withheld");
-        }
+        // The cut is a prefix of the name-sorted candidate pool: with no
+        // workload naming a preference, every non-keep tool ties on rank
+        // and the alphabetically first are withheld until the budget
+        // clears — so the assertion is the RULE, not a particular cut
+        // tied to today's bound.
+        let mut candidates: Vec<&str> = core
+            .iter()
+            .map(|spec| spec.name())
+            .filter(|name| !CORE_KEEP.contains(name))
+            .collect();
+        candidates.sort_unstable();
+        assert_eq!(
+            withheld,
+            candidates[..withheld.len()]
+                .iter()
+                .map(|name| name.to_string())
+                .collect::<Vec<_>>(),
+            "the withholding is the sorted pool's prefix"
+        );
+        assert_eq!(withheld[0], "apply_patch", "the alphabet wins first");
         // The floor the score cannot cross: every allowlisted tool
         // survives, whatever the budget says.
         for name in CORE_KEEP {

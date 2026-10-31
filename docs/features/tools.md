@@ -43,7 +43,7 @@ loudly instead of corrupting the file.
 ## A large catalog: two tiers
 
 Native tools are always declared. Joined MCP tools are declared too
-while the request fits **32 tools and 9,000 definition tokens**. Past
+while the request fits **36 tools and 10,000 definition tokens**. Past
 either bound the native set stays (byte-stable, so the prompt cache
 survives), the MCP tools are held back, and `tool_search` is declared.
 
@@ -55,7 +55,7 @@ memory pair, `subagent`, `process`, `use_skill`) are never withheld.
 The log's `declarations` record names what was withheld in its
 `withheld` field — the log says what the model did not see, not only
 what it did. On today's surface this never fires (the native surface
-measures 28 declarations and 7,293 definition tokens, inside both
+measures 30 declarations and 9,575 definition tokens, inside both
 bounds); the mechanism is the guard for the day the surface grows past
 the measured degradation band.
 

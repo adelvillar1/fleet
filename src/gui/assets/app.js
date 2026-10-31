@@ -243,6 +243,7 @@
     ['skills', 'skills'],
     ['sessions', 'sessions'],
     ['calibration', 'calibration'],
+    ['design', 'design'],
     ['vault', 'vault'],
     ['settings', 'settings'],
     ['second-brain', 'second brain'],
@@ -262,7 +263,8 @@
   var GROUPS = [
     ['work', 'work', [
       ['chat', 'conversation'],
-      ['sessions', 'sessions']
+      ['sessions', 'sessions'],
+      ['design', 'design']
     ]],
     ['intelligence', 'intelligence', [
       ['router', 'router'],
@@ -631,6 +633,16 @@
     panelBots: document.getElementById('panel-bots'),
     panelVault: document.getElementById('panel-vault'),
     panelSettings: document.getElementById('panel-settings'),
+    panelDesign: document.getElementById('panel-design'),
+    designProject: document.getElementById('design-project'),
+    designWorld: document.getElementById('design-world'),
+    designViewport: document.getElementById('design-viewport'),
+    designInstrument: document.getElementById('design-instrument'),
+    designComposer: document.getElementById('design-composer'),
+    designTitle: document.getElementById('design-title'),
+    designNote: document.getElementById('design-note'),
+    designEyebrow: document.getElementById('design-eyebrow'),
+    designNew: document.getElementById('design-new'),
     panelLater: document.getElementById('panel-later'),
     laterTitle: document.getElementById('later-title'),
     laterNote: document.getElementById('later-note'),
@@ -2530,6 +2542,10 @@
         break;
       case 'tool_result':
         resolveTool(event);
+        // A frame landing on the design canvas repaints it in place: the
+        // run streams while the board fills, which is the point of the
+        // frame tool being a run's tool rather than a separate app.
+        if (event.tool === 'frame' && face.panel === 'design') readDesign(true);
         break;
       case 'routed':
         face.route = event;
@@ -15812,6 +15828,839 @@
     });
   }
 
+  // ------------------------------------------------------ the design canvas
+  //
+  // The board is a world under one transform — translate then scale — and
+  // every frame is an opaque HTML page in a sandboxed iframe, positioned
+  // in world units. The chrome is fleet's; the frame is the artifact.
+  // Sizes and positions are the document's; the transform is this view's
+  // own, remembered per board.
+
+  var DESIGN_FLOOR = 0.05;
+  var DESIGN_CEIL = 2.5;
+
+  function designBoard() { return face.design && face.design.active ? face.design.active : null; }
+
+  function designSlug() {
+    if (face.designSlug) return face.designSlug;
+    face.designSlug = window.localStorage.getItem('fleet-design-project') || '';
+    return face.designSlug;
+  }
+
+  function designSetSlug(slug) {
+    face.designSlug = slug || '';
+    if (slug) window.localStorage.setItem('fleet-design-project', slug);
+    else window.localStorage.removeItem('fleet-design-project');
+  }
+
+  function designView() {
+    if (!face.canvas) {
+      var stored = null;
+      try {
+        stored = JSON.parse(window.localStorage.getItem('fleet-canvas-' + designSlug()) || 'null');
+      } catch (error) { stored = null; }
+      face.canvas = stored || { x: 60, y: 72, z: 0.7 };
+    }
+    return face.canvas;
+  }
+
+  function designSaveView() {
+    window.localStorage.setItem(
+      'fleet-canvas-' + designSlug(), JSON.stringify(designView()));
+  }
+
+  function designByID(id) {
+    var board = designBoard();
+    if (!board) return null;
+    for (var i = 0; i < board.frames.length; i += 1) {
+      if (board.frames[i].id === id) return board.frames[i];
+    }
+    return null;
+  }
+
+  function designSelected() {
+    return face.designSelection ? designByID(face.designSelection) : null;
+  }
+
+  function readDesign(force) {
+    if (!force && face.designReadAt && Date.now() - face.designReadAt < 4000) return Promise.resolve();
+    var slug = designSlug();
+    var path = '/api/design' + (slug ? '?project=' + encodeURIComponent(slug) : '');
+    return fetch(path).then(function (reply) { return reply.json(); }).then(function (document) {
+      if (!document || document.type !== 'design') return;
+      face.design = document;
+      face.designReadAt = Date.now();
+      if (document.active) designSetSlug(document.active.slug);
+      if (face.panel === 'design') paintDesign();
+    }).catch(function () { /* the arrival repaint keeps the last document */ });
+  }
+
+  function designWrite(op, fields, done) {
+    var body = { op: op };
+    var key;
+    for (key in fields) if (Object.prototype.hasOwnProperty.call(fields, key)) body[key] = fields[key];
+    return post('/api/design', body).then(function (reply) {
+      return reply.json().then(function (answer) {
+        if (reply.status !== 200) {
+          notice('the canvas refused', answer && answer.error ? answer.error : 'the write did not land');
+          return null;
+        }
+        face.designReadAt = 0;
+        return readDesign(true).then(function () { if (done) done(answer); return answer; });
+      });
+    }).catch(function () {
+      notice('the canvas is unreachable', 'the write did not leave the page');
+      return null;
+    });
+  }
+
+  function paintDesign() {
+    if (!face.design) { readDesign(true); return; }
+    paintDesignHead();
+    paintDesignInstrument();
+    paintDesignWorld();
+    paintDesignComposer();
+  }
+
+  function paintDesignHead() {
+    var document_ = face.design;
+    var board = designBoard();
+    var projects = document_.projects || [];
+    el.designProject.textContent = '';
+    if (!projects.length) {
+      el.designProject.appendChild(node('option', null, 'no boards yet'));
+      el.designProject.disabled = true;
+    } else {
+      el.designProject.disabled = false;
+      projects.forEach(function (project) {
+        var option = node('option', null, project.name + ' \u00b7 ' + project.frames + ' frame' +
+          (project.frames === 1 ? '' : 's'));
+        option.value = project.slug;
+        if (board && project.slug === board.slug) option.selected = true;
+        el.designProject.appendChild(option);
+      });
+    }
+    el.designTitle.textContent = board ? board.name : 'the canvas';
+    el.designEyebrow.textContent = 'design' + (board ? ' \u00b7 ' + board.slug : '');
+    el.designNote.textContent = board
+      ? (board.frames.length + ' frame' + (board.frames.length === 1 ? '' : 's') +
+        ' \u00b7 drag a title bar to move, wheel to zoom, space-drag to pan')
+      : 'no board yet \u2014 start one and the designer fills it';
+  }
+
+  function paintDesignInstrument() {
+    var board = designBoard();
+    var view = designView();
+    el.designInstrument.textContent = '';
+    var zoomOut = node('button', 'replay-button', '\u2212');
+    zoomOut.type = 'button';
+    zoomOut.setAttribute('aria-label', 'zoom out');
+    zoomOut.dataset.act = 'design-zoom-out';
+    zoomOut.addEventListener('click', function () { designZoomBy(0.8); });
+    var fit = node('button', 'replay-button', 'fit');
+    fit.type = 'button';
+    fit.dataset.act = 'design-fit';
+    fit.addEventListener('click', function () { designFit(); });
+    var zoomIn = node('button', 'replay-button', '+');
+    zoomIn.type = 'button';
+    zoomIn.setAttribute('aria-label', 'zoom in');
+    zoomIn.dataset.act = 'design-zoom-in';
+    zoomIn.addEventListener('click', function () { designZoomBy(1.25); });
+    var grid = node('button', 'replay-button' + (face.designGrid === false ? '' : ' on'),
+      'grid');
+    grid.type = 'button';
+    grid.dataset.act = 'design-grid';
+    grid.addEventListener('click', function () {
+      face.designGrid = face.designGrid === false;
+      designApplyTransform();
+      paintDesignInstrument();
+    });
+    var pin = node('button', 'replay-button' + (face.designPin ? ' on' : ''), 'pin mode');
+    pin.type = 'button';
+    pin.dataset.act = 'design-pin';
+    pin.addEventListener('click', function () {
+      face.designPin = !face.designPin;
+      paintDesignInstrument();
+      paintDesignWorld();
+    });
+    var readout = node('span', 'canvas-zoom', Math.round(view.z * 100) + '%');
+    var strip = node('div', 'canvas-tools');
+    strip.appendChild(zoomOut);
+    strip.appendChild(fit);
+    strip.appendChild(zoomIn);
+    strip.appendChild(grid);
+    strip.appendChild(pin);
+    strip.appendChild(readout);
+    if (board) {
+      strip.appendChild(node('span', 'canvas-count',
+        board.frames.length + ' frame' + (board.frames.length === 1 ? '' : 's')));
+    }
+    var selected = designSelected();
+    if (selected) {
+      strip.appendChild(node('span', 'canvas-count', 'selected \u00b7 ' + selected.name));
+    }
+    el.designInstrument.appendChild(strip);
+  }
+
+  function designApplyTransform() {
+    var view = designView();
+    el.designWorld.style.transform =
+      'translate(' + view.x + 'px,' + view.y + 'px) scale(' + view.z + ')';
+    el.designViewport.dataset.grid = face.designGrid === false ? 'off' : 'on';
+  }
+
+  function designZoomAt(cx, cy, factor) {
+    var view = designView();
+    var next = Math.min(DESIGN_CEIL, Math.max(DESIGN_FLOOR, view.z * factor));
+    if (next === view.z) return;
+    // Keep the world point under the cursor fixed.
+    var wx = (cx - view.x) / view.z;
+    var wy = (cy - view.y) / view.z;
+    view.z = next;
+    view.x = cx - wx * next;
+    view.y = cy - wy * next;
+    designApplyTransform();
+    designSaveView();
+    paintDesignInstrument();
+  }
+
+  function designZoomBy(factor) {
+    var rect = el.designViewport.getBoundingClientRect();
+    designZoomAt(rect.width / 2, rect.height / 2, factor);
+  }
+
+  function designBounds() {
+    var board = designBoard();
+    if (!board || !board.frames.length) return null;
+    var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    board.frames.forEach(function (frame) {
+      minX = Math.min(minX, frame.x);
+      minY = Math.min(minY, frame.y);
+      maxX = Math.max(maxX, frame.x + frame.w);
+      maxY = Math.max(maxY, frame.y + frame.h);
+    });
+    return { x: minX, y: minY, w: Math.max(1, maxX - minX), h: Math.max(1, maxY - minY) };
+  }
+
+  function designFit() {
+    var bounds = designBounds();
+    var rect = el.designViewport.getBoundingClientRect();
+    if (!bounds || !rect.width || !rect.height) return;
+    var pad = 56;
+    var z = Math.min(
+      (rect.width - pad * 2) / bounds.w,
+      (rect.height - pad * 2) / bounds.h,
+      1);
+    z = Math.min(DESIGN_CEIL, Math.max(DESIGN_FLOOR, z));
+    var view = designView();
+    view.z = z;
+    view.x = (rect.width - bounds.w * z) / 2 - bounds.x * z;
+    view.y = (rect.height - bounds.h * z) / 2 - bounds.y * z;
+    designApplyTransform();
+    designSaveView();
+    paintDesignInstrument();
+  }
+
+  function thinkOfDesignPan(event) {
+    // Pan when the drag starts on the viewport itself or with the middle
+    // button anywhere — the source's own two gestures.
+    return event.target === el.designViewport || event.button === 1;
+  }
+
+  function designWireViewport() {
+    el.designViewport.addEventListener('wheel', function (event) {
+      event.preventDefault();
+      var rect = el.designViewport.getBoundingClientRect();
+      var factor = event.deltaY < 0 ? 1.08 : 1 / 1.08;
+      designZoomAt(event.clientX - rect.left, event.clientY - rect.top, factor);
+    }, { passive: false });
+    el.designViewport.addEventListener('pointerdown', function (event) {
+      if (!thinkOfDesignPan(event)) return;
+      event.preventDefault();
+      var start = { x: event.clientX, y: event.clientY, vx: designView().x, vy: designView().y };
+      el.designViewport.setPointerCapture(event.pointerId);
+      face.designPanning = true;
+      function move(moveEvent) {
+        var view = designView();
+        view.x = start.vx + (moveEvent.clientX - start.x);
+        view.y = start.vy + (moveEvent.clientY - start.y);
+        designApplyTransform();
+      }
+      function up() {
+        face.designPanning = false;
+        el.designViewport.removeEventListener('pointermove', move);
+        el.designViewport.removeEventListener('pointerup', up);
+        el.designViewport.removeEventListener('pointercancel', up);
+        designSaveView();
+      }
+      el.designViewport.addEventListener('pointermove', move);
+      el.designViewport.addEventListener('pointerup', up);
+      el.designViewport.addEventListener('pointercancel', up);
+    });
+  }
+
+  function designWireKeys() {
+    window.addEventListener('keydown', function (event) {
+      if (face.panel !== 'design') return;
+      var tag = event.target && event.target.tagName ? event.target.tagName.toLowerCase() : '';
+      if (tag === 'input' || tag === 'textarea' || tag === 'select' || event.metaKey || event.ctrlKey) return;
+      var frame = designSelected();
+      if (!frame) return;
+      var step = event.shiftKey ? 1 : 16;
+      var dx = 0, dy = 0;
+      if (event.key === 'ArrowLeft') dx = -step;
+      else if (event.key === 'ArrowRight') dx = step;
+      else if (event.key === 'ArrowUp') dy = -step;
+      else if (event.key === 'ArrowDown') dy = step;
+      else return;
+      event.preventDefault();
+      designWrite('frame-update', {
+        project: designBoard().slug,
+        id: frame.id,
+        update: { x: frame.x + dx, y: frame.y + dy }
+      });
+    });
+  }
+
+  function designFrameBar(frame) {
+    var bar = node('div', 'canvas-frame-bar');
+    bar.dataset.drag = frame.id;
+    bar.appendChild(node('span', 'canvas-frame-name', frame.name));
+    if (frame.model) bar.appendChild(badge(frame.model));
+    if (frame.pins && frame.pins.length) {
+      bar.appendChild(badge(frame.pins.length + ' pin' + (frame.pins.length === 1 ? '' : 's'),
+        frame.pins.some(function (pin) { return !pin.resolved_frame_id; }) ? 'warn' : 'ok'));
+    }
+    var acts = node('div', 'canvas-frame-acts');
+    function act(label, aria, run) {
+      var button = node('button', 'canvas-act', label);
+      button.type = 'button';
+      button.setAttribute('aria-label', aria);
+      button.dataset.act = aria.replace(/[^a-z0-9]+/g, '-');
+      button.addEventListener('click', function (event) {
+        event.stopPropagation();
+        run();
+      });
+      acts.appendChild(button);
+    }
+    act('tweaks', 'tweaks ' + frame.name, function () { designTweakCard(frame); });
+    act('review', 'review ' + frame.name, function () { designReviewCard(frame); });
+    act('versions', 'versions ' + frame.name, function () { designVersionCard(frame); });
+    act('export', 'export ' + frame.name, function () { designExportCard(frame); });
+    act('copy', 'copy the frame ' + frame.name, function () {
+      var copy = JSON.stringify({ project: designBoard().slug, id: frame.id });
+      window.localStorage.setItem('fleet-design-clip', copy);
+      notice('the frame reference is copied', frame.name + ' \u00b7 paste it where you need it');
+    });
+    act('duplicate', 'duplicate the frame ' + frame.name, function () {
+      designWrite('frame-duplicate', { project: designBoard().slug, id: frame.id });
+    });
+    act('open', 'open the frame ' + frame.name, function () {
+      window.open('/api/design/frame/' + encodeURIComponent(designBoard().slug) + '/' +
+        encodeURIComponent(frame.id), '_blank');
+    });
+    act('delete', 'delete the frame ' + frame.name, function () {
+      designWrite('frame-delete', { project: designBoard().slug, id: frame.id });
+      if (face.designSelection === frame.id) face.designSelection = null;
+    });
+    bar.appendChild(acts);
+    return bar;
+  }
+
+  function designPinMarkup(frame) {
+    var layer = node('div', 'canvas-pins');
+    (frame.pins || []).forEach(function (pin) {
+      var dot = node('button', 'canvas-pin', '');
+      dot.type = 'button';
+      dot.dataset.pin = pin.id;
+      dot.style.left = (pin.x * frame.w) + 'px';
+      dot.style.top = (pin.y * frame.h) + 'px';
+      if (pin.resolved_frame_id) dot.classList.add('resolved');
+      dot.setAttribute('aria-label', 'pin: ' + pin.text);
+      dot.title = pin.text;
+      dot.addEventListener('click', function (event) {
+        event.stopPropagation();
+        designPinCard(frame, pin);
+      });
+      layer.appendChild(dot);
+    });
+    return layer;
+  }
+
+  function designFrameCard(frame) {
+    var card = node('div', 'canvas-frame');
+    card.dataset.frame = frame.id;
+    if (face.designSelection === frame.id) card.classList.add('selected');
+    card.style.left = frame.x + 'px';
+    card.style.top = frame.y + 'px';
+    card.style.width = frame.w + 'px';
+    card.appendChild(designFrameBar(frame));
+    var body = node('div', 'canvas-frame-body');
+    body.style.height = frame.h + 'px';
+    var view = node('iframe', 'canvas-frame-page');
+    view.setAttribute('sandbox', 'allow-scripts');
+    view.setAttribute('title', frame.name);
+    view.setAttribute('tabindex', '-1');
+    view.setAttribute('scrolling', 'no');
+    view.srcdoc = frame.html;
+    body.appendChild(view);
+    body.appendChild(designPinMarkup(frame));
+    card.appendChild(body);
+    // Selection and movement start at the title bar; the body only
+    // selects (or drops a pin, in pin mode).
+    card.addEventListener('pointerdown', function (event) {
+      if (designPinModeOn() && event.target === body) {
+        event.preventDefault();
+        var rect = body.getBoundingClientRect();
+        designPinComposer(frame, (event.clientX - rect.left) / frame.w,
+          (event.clientY - rect.top) / frame.h);
+        return;
+      }
+      designSelect(frame.id);
+    });
+    bar_drag(card, frame);
+    return card;
+  }
+
+  function designPinModeOn() { return !!face.designPin; }
+
+  function bar_drag(card, frame) {
+    var bar = card.querySelector('.canvas-frame-bar');
+    if (!bar) return;
+    bar.addEventListener('pointerdown', function (event) {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      designSelect(frame.id);
+      var view = designView();
+      var start = { x: event.clientX, y: event.clientY, fx: frame.x, fy: frame.y };
+      bar.setPointerCapture(event.pointerId);
+      function move(moveEvent) {
+        var dx = (moveEvent.clientX - start.x) / view.z;
+        var dy = (moveEvent.clientY - start.y) / view.z;
+        frame.x = Math.round(start.fx + dx);
+        frame.y = Math.round(start.fy + dy);
+        card.style.left = frame.x + 'px';
+        card.style.top = frame.y + 'px';
+      }
+      function up() {
+        bar.removeEventListener('pointermove', move);
+        bar.removeEventListener('pointerup', up);
+        bar.removeEventListener('pointercancel', up);
+        designWrite('frame-update', {
+          project: designBoard().slug,
+          id: frame.id,
+          update: { x: frame.x, y: frame.y }
+        });
+      }
+      bar.addEventListener('pointermove', move);
+      bar.addEventListener('pointerup', up);
+      bar.addEventListener('pointercancel', up);
+    });
+  }
+
+  function designSelect(id) {
+    face.designSelection = id;
+    var cards = el.designWorld.querySelectorAll('.canvas-frame');
+    Array.prototype.forEach.call(cards, function (card) {
+      card.classList.toggle('selected', card.dataset.frame === id);
+    });
+    paintDesignInstrument();
+  }
+
+  function paintDesignWorld() {
+    el.designWorld.textContent = '';
+    el.designWorld.className = 'canvas-world';
+    var board = designBoard();
+    designApplyTransform();
+    if (!board || !board.frames.length) {
+      el.designWorld.appendChild(node('p', 'canvas-empty',
+        'No frames yet \u2014 write a brief below and the designer fills the board.'));
+      return;
+    }
+    board.frames.forEach(function (frame) {
+      el.designWorld.appendChild(designFrameCard(frame));
+    });
+  }
+
+  function designInjectLive(frame, values, view) {
+    var body = { html: frame.html_raw, tweak_spec: frame.tweak_spec || [], tweak_values: values };
+    post('/api/design/inject', body).then(function (reply) {
+      if (reply.status !== 200) return;
+      reply.json().then(function (answer) {
+        if (view && answer && answer.html) view.srcdoc = answer.html;
+      });
+    }).catch(function () { /* the stored frame is the fallback */ });
+  }
+
+  function designTweakCard(frame) {
+    var board = designBoard();
+    var values = {};
+    var key;
+    for (key in (frame.tweak_values || {})) values[key] = frame.tweak_values[key];
+    var card = document.querySelector('.canvas-frame[data-frame="' + frame.id + '"]');
+    var view = card ? card.querySelector('.canvas-frame-page') : null;
+    var sections = [];
+    var specs = frame.tweak_spec || [];
+    if (!specs.length) {
+      sections.push(['the tweaks', node('p', 'derivation',
+        'This frame exposes no tweaks. Ask the designer for a frame with a tweak list, or edit the page in a refine run.')]);
+    }
+    specs.forEach(function (spec) {
+      var control;
+      if (spec.kind === 'toggle') {
+        control = cfgSwitch(spec.label, !!values[spec.key], function (on) {
+          values[spec.key] = !!on;
+          designInjectLive(frame, values, view);
+          designWrite('frame-update', { project: board.slug, id: frame.id, update: { tweak_values: values } });
+        }, null);
+      } else if (spec.kind === 'select' && spec.options) {
+        var current = values[spec.key] != null ? String(values[spec.key]) : (spec.options[0] || '');
+        control = cfgSelect(current, spec.options.map(function (option) {
+          return { value: option, label: option };
+        }), spec.label);
+        control.addEventListener('change', function () {
+          values[spec.key] = control.value;
+          designInjectLive(frame, values, view);
+          designWrite('frame-update', { project: board.slug, id: frame.id, update: { tweak_values: values } });
+        });
+      } else if (spec.kind === 'color') {
+        control = node('input', 'canvas-color');
+        control.type = 'color';
+        control.value = values[spec.key] != null ? String(values[spec.key]) : String(spec.default || '#000000');
+        control.setAttribute('aria-label', spec.label);
+        control.addEventListener('input', function () {
+          values[spec.key] = control.value;
+          designInjectLive(frame, values, view);
+        });
+        control.addEventListener('change', function () {
+          designWrite('frame-update', { project: board.slug, id: frame.id, update: { tweak_values: values } });
+        });
+      } else {
+        control = node('input', 'canvas-range');
+        control.type = 'range';
+        control.min = spec.min != null ? spec.min : 0;
+        control.max = spec.max != null ? spec.max : 100;
+        control.step = spec.step != null ? spec.step : 1;
+        control.value = values[spec.key] != null ? values[spec.key] : (spec.default || 0);
+        control.setAttribute('aria-label', spec.label);
+        control.addEventListener('input', function () {
+          values[spec.key] = Number(control.value);
+          designInjectLive(frame, values, view);
+        });
+        control.addEventListener('change', function () {
+          designWrite('frame-update', { project: board.slug, id: frame.id, update: { tweak_values: values } });
+        });
+      }
+      sections.push([spec.label + (spec.unit ? ' (' + spec.unit + ')' : ''), control]);
+    });
+    var sizes = node('div', 'canvas-inline');
+    (face.design.caps && face.design.caps.viewports || []).forEach(function (viewport) {
+      var button = node('button', 'replay-button', viewport.name);
+      button.type = 'button';
+      button.dataset.act = 'design-viewport-' + viewport.name;
+      button.addEventListener('click', function () {
+        designWrite('frame-update', {
+          project: board.slug, id: frame.id, update: { w: viewport.w, h: viewport.h }
+        });
+      });
+      sizes.appendChild(button);
+    });
+    sections.push(['the viewport', sizes]);
+    sections.push(['the frame', node('p', 'derivation',
+      frame.name + ' \u00b7 ' + Math.round(frame.w) + '\u00d7' + Math.round(frame.h) +
+      (frame.model ? ' \u00b7 ' + frame.model : '') + ' \u00b7 ' + (frame.versions || []).length + ' version(s)')]);
+    openDrawer(frame.name + ' \u00b7 tweaks', sections);
+  }
+
+  function designVersionCard(frame) {
+    var board = designBoard();
+    var rows = node('div', 'cfg-list-rows');
+    var versions = frame.versions || [];
+    if (!versions.length) {
+      rows.appendChild(node('p', 'board-empty', 'No versions yet \u2014 a refine or a restore creates one.'));
+    }
+    versions.slice().reverse().forEach(function (version) {
+      var row = node('div', 'cfg-fallback');
+      row.appendChild(node('span', 'cfg-item-value', version.source + ' \u00b7 ' + version.created));
+      row.appendChild(node('span', 'cfg-item-mark', version.name));
+      var restore = node('button', 'replay-button', 'restore');
+      restore.type = 'button';
+      restore.dataset.act = 'design-restore-' + version.id;
+      restore.addEventListener('click', function () {
+        designWrite('version-restore', {
+          project: board.slug, id: frame.id, version: version.id
+        }, function () { closeDrawer(); });
+      });
+      row.appendChild(restore);
+      rows.appendChild(row);
+    });
+    openDrawer(frame.name + ' \u00b7 versions', [
+      ['the history, newest first', rows],
+      ['what it costs', node('p', 'derivation',
+        'A restore snapshots the current page first, so restoring is itself a version.')]
+    ]);
+  }
+
+  function designReviewCard(frame) {
+    var board = designBoard();
+    var scan = frame.a11y || { checks: [], passed: 0, total: 0 };
+    var facts = node('div', 'cfg-list-rows');
+    (scan.checks || []).forEach(function (check) {
+      var row = node('div', 'cfg-fallback');
+      row.appendChild(node('span', 'cfg-item-value', check.kind + ' \u00b7 ' + check.detail));
+      row.appendChild(node('span', 'cfg-item-mark', check.pass ? 'pass' : 'fail'));
+      facts.appendChild(row);
+    });
+    if (!(scan.checks || []).length) {
+      facts.appendChild(node('p', 'board-empty', 'No checks ran on this frame.'));
+    }
+    var review = frame.review || null;
+    var scores = node('div', 'cfg-list-rows');
+    if (review && review.kind === 'vision') {
+      scores.appendChild(node('p', 'derivation', review.summary || ''));
+      var named = Object.keys(review.scores || {});
+      named.forEach(function (key) {
+        var row = node('div', 'cfg-fallback');
+        row.appendChild(node('span', 'cfg-item-value', key));
+        row.appendChild(node('span', 'cfg-item-mark', String(review.scores[key]) + ' / 10'));
+        scores.appendChild(row);
+      });
+      (review.fixes || []).forEach(function (fix) {
+        scores.appendChild(node('p', 'derivation', '\u2192 ' + fix));
+      });
+    } else {
+      scores.appendChild(node('p', 'board-empty',
+        'No designer review yet \u2014 ask for one and the run reads the page, scores it and stores the review here.'));
+    }
+    var ask = node('button', 'replay-button replay-resume', 'ask the designer to review');
+    ask.type = 'button';
+    ask.dataset.act = 'design-review-ask';
+    ask.addEventListener('click', function () {
+      designRun(
+        'Review this design frame: `' + frame.name + '` (project `' + board.slug +
+        '`, frame_id ' + frame.id + '). Open http://' + (window.location.host || '127.0.0.1') +
+        '/api/design/frame/' + encodeURIComponent(board.slug) + '/' + encodeURIComponent(frame.id) +
+        ' with the browse tool (open, then screenshot), read the screenshot with the vision tool, ' +
+        'then store the review with review_frame (project `' + board.slug + '`, frame_id ' +
+        frame.id + ') \u2014 scores for hierarchy, type, color and spacing, a 1\u20132 sentence summary, ' +
+        'what it gets right, and the highest-value fixes.');
+    });
+    openDrawer(frame.name + ' \u00b7 review', [
+      ['the deterministic checks', facts],
+      ['the designer\u2019s review', scores],
+      ['the ask', ask],
+      ['why both', node('p', 'derivation',
+        'the scan measures the page\u2019s own tokens and markup; the review reads the rendered page \u2014 ' +
+        'measured facts win where they disagree.')]
+    ]);
+  }
+
+  function designExportCard(frame) {
+    var board = designBoard();
+    var actions = node('div', 'canvas-inline');
+    [['html', 'the page'], ['tokens.css', 'the tokens'], ['tokens.json', 'the tokens, JSON'],
+      ['zip', 'the packet'], ['png', 'the PNG']].forEach(function (pair) {
+      var button = node('button', 'replay-button', pair[1]);
+      button.type = 'button';
+      button.dataset.act = 'design-export-' + pair[0].replace('.', '-');
+      button.addEventListener('click', function () {
+        post('/api/design/export', {
+          project: board.slug, id: frame.id, kind: pair[0],
+          origin: window.location.origin || 'http://127.0.0.1:3080'
+        }).then(function (reply) {
+          return reply.json().then(function (answer) {
+            if (reply.status === 200) {
+              notice('the export landed', answer.path);
+            } else {
+              notice('the export was refused', answer && answer.error ? answer.error : 'no reason given');
+            }
+          });
+        });
+      });
+      actions.appendChild(button);
+    });
+    openDrawer(frame.name + ' \u00b7 export', [
+      ['the exports', actions],
+      ['where they land', node('p', 'derivation',
+        'beside the board, under canvas/' + board.slug + '/exports/ \u2014 the path comes back in the notice')],
+      ['the PNG', node('p', 'derivation',
+        'the browser lane renders the served page and captures it \u2014 one press; the path comes back in the notice')]
+    ]);
+  }
+
+  function designPinComposer(frame, x, y) {
+    var board = designBoard();
+    var area = node('textarea', 'canvas-note');
+    area.rows = 3;
+    area.placeholder = 'what is wrong or what to change, here';
+    area.setAttribute('aria-label', 'the pin\u2019s comment');
+    var save = node('button', 'replay-button replay-resume', 'drop the pin');
+    save.type = 'button';
+    save.dataset.act = 'design-pin-save';
+    save.addEventListener('click', function () {
+      var text = area.value.trim();
+      if (!text) return;
+      designWrite('pin-add', { project: board.slug, id: frame.id, x: x, y: y, text: text }, function () {
+        face.designPin = false;
+        closeDrawer();
+        designSelect(frame.id);
+      });
+    });
+    openDrawer('pin ' + frame.name, [
+      ['the mark', node('p', 'derivation',
+        'at ' + Math.round(x * 100) + '% \u00d7 ' + Math.round(y * 100) + '% of the frame \u2014 a viewport switch never moves it')],
+      ['the comment', area],
+      ['the write', save]
+    ]);
+  }
+
+  function designPinCard(frame, pin) {
+    var board = designBoard();
+    var thread = node('div', 'cfg-list-rows');
+    thread.appendChild(node('p', 'derivation', pin.text));
+    (pin.replies || []).forEach(function (reply) {
+      thread.appendChild(node('p', 'derivation', reply.author + ' \u00b7 ' + reply.body));
+    });
+    var area = node('textarea', 'canvas-note');
+    area.rows = 2;
+    area.placeholder = 'reply';
+    area.setAttribute('aria-label', 'a reply');
+    var reply = node('button', 'replay-button', 'reply');
+    reply.type = 'button';
+    reply.dataset.act = 'design-pin-reply';
+    reply.addEventListener('click', function () {
+      var text = area.value.trim();
+      if (!text) return;
+      designWrite('pin-reply', { project: board.slug, id: frame.id, pin: pin.id, body: text });
+    });
+    var fix = node('button', 'replay-button replay-resume', 'fix this pin');
+    fix.type = 'button';
+    fix.dataset.act = 'design-pin-fix';
+    fix.addEventListener('click', function () {
+      designRun(
+        'Fix this pin on the design frame `' + frame.name + '` (frame_id ' + frame.id +
+        '): "' + pin.text + '". Refine that frame with the `frame` tool (project `' +
+        board.slug + '`, frame_id `' + frame.id + '`) \u2014 change exactly what the pin names.');
+    });
+    var resolve = node('button', 'replay-button', pin.resolved_frame_id ? 'reopen' : 'mark resolved');
+    resolve.type = 'button';
+    resolve.dataset.act = 'design-pin-resolve';
+    resolve.addEventListener('click', function () {
+      designWrite('pin-resolve', {
+        project: board.slug, id: frame.id, pin: pin.id,
+        resolved: pin.resolved_frame_id ? null : frame.id
+      });
+    });
+    var acts = node('div', 'canvas-inline');
+    acts.appendChild(reply);
+    acts.appendChild(fix);
+    acts.appendChild(resolve);
+    openDrawer('pin \u00b7 ' + frame.name, [
+      ['the thread', thread],
+      ['a reply', area],
+      ['the pin', acts]
+    ]);
+  }
+
+  function paintDesignComposer() {
+    el.designComposer.textContent = '';
+    var board = designBoard();
+    var row = node('div', 'canvas-composer-row');
+    var brief = node('textarea', 'canvas-brief');
+    brief.rows = 2;
+    brief.placeholder = 'the brief \u2014 what to design, for whom, in what spirit';
+    brief.setAttribute('aria-label', 'the design brief');
+    var style = node('select', 'knob-box');
+    style.setAttribute('aria-label', 'the style');
+    style.appendChild(node('option', null, 'no style named'));
+    (face.design.presets || []).forEach(function (preset) {
+      var option = node('option', null, preset.label);
+      option.value = preset.id;
+      style.appendChild(option);
+    });
+    var go = node('button', 'replay-button replay-resume', board ? 'generate' : 'start a board');
+    go.type = 'button';
+    go.dataset.act = 'design-generate';
+    go.addEventListener('click', function () {
+      var text = brief.value.trim();
+      if (!text) { brief.focus(); return; }
+      var preset = null;
+      (face.design.presets || []).forEach(function (candidate) {
+        if (candidate.id === style.value) preset = candidate;
+      });
+      var slug = board ? board.slug : '';
+      var start = slug ? Promise.resolve(slug) : designWrite('create', { name: text.slice(0, 32) },
+        function (answer) { designSetSlug(answer.wrote.slug); }).then(function (answer) {
+        return answer ? answer.wrote.slug : '';
+      });
+      start.then(function (slug) {
+        if (!slug) return;
+        var task = 'Design: ' + text + '\n\n' +
+          (preset ? 'Style: ' + preset.label + ' \u2014 ' + preset.spec + '\n\n' : '') +
+          'Canvas project: `' + slug + '`. Put the page on the canvas with the `frame` tool ' +
+          '(project `' + slug + '`) and expose 3\u20136 live tweaks.';
+        go.disabled = true;
+        go.textContent = 'designing\u2026';
+        var runPath = '/api/run' + (face.session ? '?session=' + encodeURIComponent(face.session) : '');
+        post(runPath, { task: task, mode: face.permissions, pin: face.providerPin || null })
+          .then(function (reply) {
+            if (reply.status === 200) {
+              face.running = true;
+              face.driving = face.session;
+              resetProcess(face.planMode ? 'plan' : 'run');
+              notice('the designer is on it', 'the board fills as the run calls frame');
+              paint();
+            } else {
+              go.disabled = false;
+              go.textContent = 'generate';
+              notice('the design run was refused', 'check the router or the session\u2019s state');
+            }
+          });
+      });
+    });
+    row.appendChild(brief);
+    row.appendChild(style);
+    row.appendChild(go);
+    el.designComposer.appendChild(row);
+  }
+
+  function designRun(task) {
+    var runPath = '/api/run' + (face.session ? '?session=' + encodeURIComponent(face.session) : '');
+    post(runPath, { task: task, mode: face.permissions, pin: face.providerPin || null })
+      .then(function (reply) {
+        if (reply.status === 200) {
+          face.running = true;
+          face.driving = face.session;
+          resetProcess(face.planMode ? 'plan' : 'run');
+          notice('the designer is on it', 'the frame refines when the run calls frame');
+          paint();
+        } else {
+          notice('the run was refused', 'check the router or the session\u2019s state');
+        }
+      });
+  }
+
+  function wireDesign() {
+    designWireViewport();
+    designWireKeys();
+    el.designProject.addEventListener('change', function () {
+      designSetSlug(el.designProject.value);
+      face.designReadAt = 0;
+      face.canvas = null;
+      face.designSelection = null;
+      designApplyTransform();
+      readDesign(true);
+    });
+    el.designNew.addEventListener('click', function () {
+      designWrite('create', { name: 'Board ' + (face.design.projects || []).length }, function (answer) {
+        designSetSlug(answer.wrote.slug);
+        face.canvas = null;
+        readDesign(true);
+      });
+    });
+  }
+
   // ---------------------------------------------------------- the router
 
   function routerCard() {
@@ -17377,6 +18226,7 @@
     skills: el.panelSkills,
 
     calibration: el.panelCalibration,
+    design: el.panelDesign,
     'second-brain': el.panelSecondBrain,
     'workspace-history': el.panelWorkspaceHistory,
     bots: el.panelBots,
@@ -17468,6 +18318,7 @@
         });
       },
       calibration: function () { paintCalibration(); readCalibration(true).then(paintCalibration); },
+      design: function () { paintDesign(); readDesign(true).then(paintDesign); },
       'second-brain': function () { paintBrain(); readBrain(true).then(paintBrain); readPlugin(true); },
       'workspace-history': function () {
         paintWorkspaceHistory();
@@ -19440,6 +20291,11 @@
       if (event.key === 'Escape' && !el.pairCard.hidden) closePair();
     });
   }
+
+  // The canvas's own wiring: the viewport's pan/zoom, the head's board
+  // picker, the keys. Wired once at boot; the panels they touch paint on
+  // arrival.
+  wireDesign();
 
   load()
     .then(function () {

@@ -253,6 +253,97 @@ pub fn vision_spec() -> ToolSpec {
 }
 
 /// The model-visible name of the deck tool.
+/// The design canvas's frame tool: a complete HTML page onto the board.
+///
+/// The frame is the artifact — an opaque, self-contained page — and the
+/// tool is the one way a model puts one on the canvas. The server
+/// validates it (a complete document, under the size cap), snapshots the
+/// frame it refines, and the surface repaints from the document; the
+/// model reads back the frame's id, so a refine can name it.
+/// The design canvas's review tool: a structured review onto a frame.
+///
+/// A review run (browse to screenshot, vision to read the screenshot)
+/// answers with scores and fixes; this stores them on the frame where
+/// the owner reads them, beside the deterministic scan facts the canvas
+/// computes itself.
+pub const REVIEW_FRAME_TOOL: &str = "review_frame";
+
+/// The request declaration for `review_frame`.
+pub fn review_frame_spec() -> ToolSpec {
+    ToolSpec::function(
+        REVIEW_FRAME_TOOL,
+        "Store a design review on a canvas frame: the scores, the summary, what it gets right and what to fix. Call it at the end of a review of a frame you saw — the canvas shows the review beside its own deterministic checks, and a fix run can name what the review called out.",
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "project": { "type": "string", "description": "The canvas board's slug." },
+                "frame_id": { "type": "string", "description": "The frame being reviewed." },
+                "scores": {
+                    "type": "object",
+                    "description": "Named scores, each 0-10 — e.g. hierarchy, type, color, spacing, clarity.",
+                    "additionalProperties": { "type": "number" }
+                },
+                "summary": { "type": "string", "description": "One or two sentences: what this page is and how well it reads." },
+                "strengths": { "type": "array", "items": { "type": "string" }, "description": "What the page gets right, at most a handful." },
+                "fixes": { "type": "array", "items": { "type": "string" }, "description": "The highest-value fixes, each one thing." }
+            },
+            "required": ["project", "frame_id"]
+        }),
+    )
+}
+
+pub const FRAME_TOOL: &str = "frame";
+
+/// The request declaration for `frame`.
+pub fn frame_spec() -> ToolSpec {
+    ToolSpec::function(
+        FRAME_TOOL,
+        "Put a design frame on the canvas: one complete, self-contained HTML page — inline styles or a <style> block, no external scripts, no build step, tokens declared as :root custom properties. Use it when the owner asks for a designed page, screen or component sheet. The page is validated before it lands (a complete document under the size cap) and the frame's id comes back; pass frame_id to replace an existing frame's page with a new version instead of adding a new frame, and pass tweak_spec to expose colors, spacing or sizes as live tweaks the owner can adjust without another generation.",
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "project": {
+                    "type": "string",
+                    "description": "The canvas board's slug (the brief names it)."
+                },
+                "name": {
+                    "type": "string",
+                    "description": "The frame's name, shown on its title bar."
+                },
+                "html": {
+                    "type": "string",
+                    "description": "The complete page: <!doctype html>, a <html> element, and its own styles. Self-contained — no external requests except data: URIs."
+                },
+                "frame_id": {
+                    "type": "string",
+                    "description": "Refine this existing frame instead of adding one: its page becomes this html, and the previous page is kept as a version."
+                },
+                "tweak_spec": {
+                    "type": "array",
+                    "description": "Live tweaks the page exposes: each writes one :root custom property.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "key": { "type": "string" },
+                            "label": { "type": "string" },
+                            "kind": { "type": "string", "enum": ["slider", "select", "toggle", "color"] },
+                            "min": { "type": "number" },
+                            "max": { "type": "number" },
+                            "step": { "type": "number" },
+                            "unit": { "type": "string" },
+                            "default": {},
+                            "options": { "type": "array", "items": { "type": "string" } },
+                            "css_var": { "type": "string" }
+                        },
+                        "required": ["key", "label", "kind", "css_var"]
+                    }
+                }
+            },
+            "required": ["project", "name", "html"]
+        }),
+    )
+}
+
 pub const DECK_TOOL: &str = "deck";
 
 /// The request declaration for `deck`: one structured deck, checked and
@@ -1576,6 +1667,8 @@ pub fn known_tool_names() -> Vec<&'static str> {
         CONVENTION_TOOL,
         PLAN_TOOL,
         DECK_TOOL,
+        FRAME_TOOL,
+        REVIEW_FRAME_TOOL,
         VISION_TOOL,
         WEB_TOOL,
         READ_DOCUMENT_TOOL,
