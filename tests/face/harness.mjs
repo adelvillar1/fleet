@@ -3992,6 +3992,16 @@ async function theDesignCanvasCarriesItsFramesAndWritesGeometry() {
   page.open();
   await flush(80);
 
+  // The rail's glyph: the artboard mark, not the `dot` fallback a
+  // missing icon silently degrades to.
+  const designLink = page.rows('.surfaces-link')
+    .find((one) => one.dataset.address === 'design');
+  const glyph = designLink ? designLink.find((one) => one.name === 'rect').length : 0;
+  check('PM-D the rail carries the design icon, not the dot fallback',
+    !!designLink && glyph === 1 &&
+      designLink.find((one) => one.name === 'circle').length >= 1,
+    glyph + ' rect(s) on the design link');
+
   // S0: the stage, the board picker, and the two frames on the world.
   check('PM-D the design stage renders',
     !!page.IDS['panel-design'] && page.IDS['panel-design'].hidden === false,

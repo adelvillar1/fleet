@@ -459,6 +459,13 @@
 
   var ICONS = {
     chat: [['path', { d: 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z' }]],
+    // The canvas: an artboard with a sun and a horizon — the design-tool
+    // sheet's own motif, at the stroke set's weight so it reads at 18px.
+    design: [
+      ['rect', { x: 3.5, y: 4.5, width: 17, height: 15, rx: 2 }],
+      ['circle', { cx: 8.5, cy: 9.5, r: 1.6 }],
+      ['path', { d: 'M4 17.5l4.5-4.5 3.5 3.5 3-2.5 5 4' }]
+    ],
     sessions: [
       ['circle', { cx: 12, cy: 12, r: 8.5 }],
       ['path', { d: 'M12 7.5V12l3 1.8' }]
