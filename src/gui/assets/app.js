@@ -263,8 +263,11 @@
   var GROUPS = [
     ['work', 'work', [
       ['chat', 'conversation'],
-      ['sessions', 'sessions'],
-      ['design', 'design']
+      // The canvas sits directly under the conversation: a board is work
+      // the owner opens the way they open a chat, not a listing to
+      // browse after one.
+      ['design', 'design'],
+      ['sessions', 'sessions']
     ]],
     ['intelligence', 'intelligence', [
       ['router', 'router'],
