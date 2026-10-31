@@ -153,6 +153,23 @@ pub struct Frame {
     pub updated: String,
 }
 
+/// One turn of the board's conversation: what was asked, what came back,
+/// and the frames it landed. The board's chat is the document's — it
+/// survives a reload, and the runner (the CLI, a cron job) can read it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ChatTurn {
+    /// `owner` | `designer` — the two speakers a board has.
+    pub role: String,
+    pub text: String,
+    /// The frames this turn landed, by id.
+    #[serde(default)]
+    pub frames: Vec<String>,
+    pub at: String,
+}
+
+/// The most turns a board's chat keeps; the oldest fall off.
+pub const MAX_CHAT_TURNS: usize = 200;
+
 /// One project: the board.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Project {
@@ -161,6 +178,9 @@ pub struct Project {
     pub created: String,
     pub updated: String,
     pub frames: Vec<Frame>,
+    /// The board's conversation, oldest first.
+    #[serde(default)]
+    pub chat: Vec<ChatTurn>,
 }
 
 /// A project as the pickers list it.
@@ -274,6 +294,7 @@ pub fn create(home: &Path, name: &str) -> Result<(String, Project), String> {
         created: now.clone(),
         updated: now,
         frames: Vec::new(),
+        chat: Vec::new(),
     };
     save(home, &slug, &project)?;
     Ok((slug, project))
@@ -290,6 +311,242 @@ pub fn ensure_sample(home: &Path) -> Result<(), String> {
         save(home, &slug_of(&project.name.clone()), &project)?;
     }
     Ok(())
+}
+
+// --- the board's conversation ----------------------------------------------
+
+/// Append one turn to a board's chat, capping the list. The frames a
+/// turn landed ride it, so a chip survives the reload without a second
+/// index.
+pub fn append_chat(
+    home: &Path,
+    slug: &str,
+    role: &str,
+    text: &str,
+    frames: &[String],
+) -> Result<ChatTurn, String> {
+    let mut project = load(home, slug)?;
+    let turn = ChatTurn {
+        role: role.trim().to_string(),
+        text: text.trim().to_string(),
+        frames: frames.to_vec(),
+        at: crate::calib::stamp(),
+    };
+    project.chat.push(turn.clone());
+    while project.chat.len() > MAX_CHAT_TURNS {
+        project.chat.remove(0);
+    }
+    project.updated = turn.at.clone();
+    save(home, slug, &project)?;
+    Ok(turn)
+}
+
+/// What one design request is for. The mode is the composer's verb, and
+/// it is what decides which instruction the task carries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DesignMode {
+    /// A question about the board; no frame is expected.
+    Ask,
+    /// One or more new frames from the brief.
+    Generate,
+    /// A new version of an existing frame.
+    Refine,
+    /// A fresh frame in a selected frame's spirit.
+    Regenerate,
+    /// A review's fixes applied to its frame.
+    Fixes,
+    /// A multi-page site from the brief.
+    PageSet,
+    /// A site modelled on a reference URL's facts.
+    Redesign,
+}
+
+impl DesignMode {
+    pub fn parse(word: &str) -> Option<DesignMode> {
+        Some(match word.trim().to_ascii_lowercase().as_str() {
+            "ask" => DesignMode::Ask,
+            "generate" => DesignMode::Generate,
+            "refine" => DesignMode::Refine,
+            "regenerate" => DesignMode::Regenerate,
+            "fixes" => DesignMode::Fixes,
+            "page_set" => DesignMode::PageSet,
+            "redesign" => DesignMode::Redesign,
+            _ => return None,
+        })
+    }
+}
+
+/// The facts one composed task may carry, each optional: the mode decides
+/// which ride.
+#[derive(Debug, Clone, Default)]
+pub struct DesignFacts {
+    /// The frame the request is about (refine, regenerate, fixes).
+    pub frame: Option<Frame>,
+    /// The pins open on that frame.
+    pub pins: Vec<String>,
+    /// The review stored on the frame, when one is.
+    pub review: Option<Value>,
+    /// The chosen style preset's label and spec.
+    pub preset: Option<(String, String)>,
+    /// The chosen brand's name, tokens and doctrine.
+    pub brand: Option<(String, BTreeMap<String, String>, String)>,
+    /// The brief's target frame size, decided by [`frame_size_for`].
+    pub size: Option<(&'static str, f64, f64)>,
+    /// How many directions the brief asked for.
+    pub directions: usize,
+    /// The reference site's style facts, when the request names a URL.
+    pub reference: Option<String>,
+    /// The board's page count target for a page set.
+    pub pages: Option<usize>,
+    /// The board's own inventory — every frame, one line each — so a
+    /// question about the board is answered from the facts, not by
+    /// exploring the console with tools.
+    pub board: Vec<String>,
+}
+
+/// One token of a brief decides the target frame: a brief that says
+/// mobile gets a phone canvas, a tablet one gets a tablet, and everything
+/// else the desktop the board defaults to. Rust's rule, so the CLI and
+/// the composer size a frame the same way.
+pub fn frame_size_for(brief: &str) -> (&'static str, f64, f64) {
+    let lower = brief.to_ascii_lowercase();
+    if lower.contains("mobile") || lower.contains("phone") || lower.contains("app") {
+        ("mobile", 390.0, 844.0)
+    } else if lower.contains("tablet") || lower.contains("ipad") {
+        ("tablet", 768.0, 1024.0)
+    } else {
+        ("desktop", 1280.0, 900.0)
+    }
+}
+
+/// The task one design request composes — the whole instruction, in Rust,
+/// so every surface (the composer, the CLI, a cron job) asks for the same
+/// thing in the same words. The doctrine itself lives in the designer
+/// role; this is the request around it.
+pub fn designer_task(mode: DesignMode, brief: &str, slug: &str, facts: &DesignFacts) -> String {
+    let brief = brief.trim();
+    let mut task = String::new();
+    if !facts.board.is_empty() {
+        task.push_str(&format!(
+            "The board `{slug}` holds {} frame{}:\n",
+            facts.board.len(),
+            if facts.board.len() == 1 { "" } else { "s" }
+        ));
+        for line in &facts.board {
+            task.push_str(&format!("- {line}\n"));
+        }
+        task.push('\n');
+    }
+    match mode {
+        DesignMode::Ask => task.push_str(&format!("About the design board `{slug}`: {brief}")),
+        DesignMode::Generate => task.push_str(&format!(
+            "Design: {brief}\n\nPut the page on the board with the `frame` tool (project `{slug}`)."
+        )),
+        DesignMode::Refine => {
+            let (name, id) = facts
+                .frame
+                .as_ref()
+                .map(|frame| (frame.name.as_str(), frame.id.as_str()))
+                .unwrap_or(("", ""));
+            task.push_str(&format!(
+                "Refine the design frame `{name}` (frame_id `{id}`) on board `{slug}`: {brief}\n\nCall the `frame` tool with project `{slug}` and frame_id `{id}` so the page keeps its identity and the previous page is kept as a version."
+            ));
+        }
+        DesignMode::Regenerate => {
+            let (name, id) = facts
+                .frame
+                .as_ref()
+                .map(|frame| (frame.name.as_str(), frame.id.as_str()))
+                .unwrap_or(("", ""));
+            task.push_str(&format!(
+                "Take a different direction from the design frame `{name}` (frame_id `{id}`) on board `{slug}`: {brief}\n\nPut a NEW frame on the board with the `frame` tool (project `{slug}`) \u{2014} do not refine the existing one; the owner wants an alternative beside it."
+            ));
+        }
+        DesignMode::Fixes => {
+            let (name, id) = facts
+                .frame
+                .as_ref()
+                .map(|frame| (frame.name.as_str(), frame.id.as_str()))
+                .unwrap_or(("", ""));
+            let mut fixes: Vec<String> = Vec::new();
+            if let Some(review) = &facts.review {
+                if let Some(list) = review.get("fixes").and_then(|fixes| fixes.as_array()) {
+                    for fix in list {
+                        if let Some(fix) = fix.as_str() {
+                            fixes.push(fix.to_string());
+                        }
+                    }
+                }
+            }
+            task.push_str(&format!(
+                "Apply the design review's fixes to the frame `{name}` (frame_id `{id}`) on board `{slug}`."
+            ));
+            if fixes.is_empty() {
+                task.push_str(
+                    "\n\nThe review named no fixes; read the page and repair what is weakest.",
+                );
+            } else {
+                task.push_str("\n\nThe fixes the review named:");
+                for fix in &fixes {
+                    task.push_str(&format!("\n- {fix}"));
+                }
+            }
+            task.push_str(&format!(
+                "\n\nCall the `frame` tool with project `{slug}` and frame_id `{id}`, changing exactly what the fixes name."
+            ));
+            if !brief.is_empty() {
+                task.push_str(&format!("\n\nThe owner adds: {brief}"));
+            }
+        }
+        DesignMode::PageSet => {
+            let pages = facts.pages.unwrap_or(3).max(1);
+            task.push_str(&format!(
+                "Design a coherent {pages}-page site for: {brief}\n\nPlan the pages and one shared token system first \u{2014} the same :root variables on every page and one navigation \u{2014} then put each page on the board `{slug}` with the `frame` tool (project `{slug}`), one call per page, named for its page. Internal links point at the other pages' frame names, which the canvas rewrites to their slugs."
+            ));
+        }
+        DesignMode::Redesign => {
+            task.push_str(&format!(
+                "Redesign: {brief}\n\nModel the result on the reference facts above \u{2014} its palette, type and layout discipline, not its copy \u{2014} and put the page on the board `{slug}` with the `frame` tool (project `{slug}`)."
+            ));
+        }
+    }
+    // A question has no frame, so no size line: the size belongs to the
+    // modes that put one on the board.
+    if !matches!(mode, DesignMode::Ask) {
+        if let Some((size, w, h)) = facts.size {
+            task.push_str(&format!(
+                "\n\nTarget frame: {size} ({w:.0}\u{00d7}{h:.0}); the canvas sizes the frame."
+            ));
+        }
+    }
+    if facts.directions > 1 && matches!(mode, DesignMode::Generate) {
+        task.push_str(&format!(
+            "\n\nGive {directions} directions, one `frame` call each, each clearly different in type, palette and layout discipline.",
+            directions = facts.directions
+        ));
+    }
+    if let Some((label, spec)) = &facts.preset {
+        task.push_str(&format!("\n\nStyle: {label} \u{2014} {spec}"));
+    }
+    if let Some((name, tokens, doctrine)) = &facts.brand {
+        task.push_str(&format!("\n\nThe brand `{name}` is binding. Its tokens:"));
+        for (token, value) in tokens {
+            task.push_str(&format!(" --{token}: {value};"));
+        }
+        if !doctrine.trim().is_empty() {
+            task.push_str(&format!("\n{doctrine}"));
+        }
+    }
+    if !facts.pins.is_empty() {
+        task.push_str("\n\nOpen pins on the frame:");
+        for pin in &facts.pins {
+            task.push_str(&format!("\n- {pin}"));
+        }
+    }
+    if let Some(reference) = &facts.reference {
+        task.push_str(&format!("\n\nReference facts:\n{reference}"));
+    }
+    task
 }
 
 // --- frame operations -------------------------------------------------------
@@ -1158,6 +1415,134 @@ mod tests {
     }
 
     const PAGE: &str = "<!doctype html><html><head><style>:root{--page:#0b0e14;--ink:#e6e9ef;--accent:#3b6cf6}body{color:var(--ink);background:var(--page)}img{max-width:100%}:focus{outline:2px solid var(--accent)}</style><meta name=\"viewport\" content=\"width=device-width\"></head><body><h1>hi</h1><img src=\"data:image/png;base64,AA\" alt=\"a mark\"><form><input aria-label=\"email\"></form></body></html>";
+
+    /// The task builders: every surface asks in the same words — the
+    /// board and the frame are named, a review's fixes ride, the size and
+    /// the directions compose, and a brand's tokens are binding.
+    #[test]
+    fn a_task_names_the_board_the_frame_and_what_was_asked() {
+        let home = scratch("task");
+        let (slug, _) = create(&home, "Task").unwrap();
+        let id = put_frame(&home, &slug, "hero", PAGE, None, None, "m").unwrap();
+        let project = load(&home, &slug).unwrap();
+        let frame = project.frames[0].clone();
+        // Generate: the board, and the frame tool.
+        let task = designer_task(
+            DesignMode::Generate,
+            "a pricing page for a developer tool",
+            &slug,
+            &DesignFacts {
+                size: Some(frame_size_for("a pricing page")),
+                directions: 3,
+                ..Default::default()
+            },
+        );
+        assert!(task.contains(&slug), "{task}");
+        assert!(task.contains("`frame` tool"), "{task}");
+        assert!(task.contains("Give 3 directions"), "{task}");
+        assert!(task.contains("desktop (1280"), "{task}");
+        // A mobile brief sizes the frame.
+        let (size, w, h) = frame_size_for("a mobile app screen");
+        assert_eq!((size, w, h), ("mobile", 390.0, 844.0));
+        let (size, _, _) = frame_size_for("a tablet dashboard");
+        assert_eq!(size, "tablet");
+        // Refine: the frame id, so identity holds.
+        let task = designer_task(
+            DesignMode::Refine,
+            "make the hero quieter",
+            &slug,
+            &DesignFacts {
+                frame: Some(frame.clone()),
+                ..Default::default()
+            },
+        );
+        assert!(task.contains(&format!("frame_id `{id}`")), "{task}");
+        assert!(task.contains("keeps its identity"), "{task}");
+        // Fixes: the review's lines ride, and the pins the frame carries.
+        let review = serde_json::json!({
+            "kind": "vision",
+            "fixes": ["tighten the masthead", "raise the contrast of the subhead"],
+            "scores": { "hierarchy": 6.0 }
+        });
+        let task = designer_task(
+            DesignMode::Fixes,
+            "",
+            &slug,
+            &DesignFacts {
+                frame: Some(frame.clone()),
+                review: Some(review),
+                pins: vec!["the spacing is off".to_string()],
+                ..Default::default()
+            },
+        );
+        assert!(task.contains("tighten the masthead"), "{task}");
+        assert!(task.contains("raise the contrast of the subhead"), "{task}");
+        assert!(task.contains("the spacing is off"), "{task}");
+        assert!(task.contains(&format!("frame_id `{id}`")), "{task}");
+        // A brand is binding: its tokens reach the task.
+        let mut tokens = BTreeMap::new();
+        tokens.insert("accent".to_string(), "#1f6feb".to_string());
+        let task = designer_task(
+            DesignMode::Generate,
+            "a landing page",
+            &slug,
+            &DesignFacts {
+                brand: Some((
+                    "Acme".to_string(),
+                    tokens,
+                    "Quiet, typographic.".to_string(),
+                )),
+                ..Default::default()
+            },
+        );
+        assert!(task.contains("--accent: #1f6feb;"), "{task}");
+        assert!(task.contains("Quiet, typographic."), "{task}");
+        // Ask writes nothing and names no tool — but it carries the
+        // board's own inventory, so a question about the board is answered
+        // from the facts rather than by exploring the console.
+        let task = designer_task(
+            DesignMode::Ask,
+            "how many pages?",
+            &slug,
+            &DesignFacts {
+                board: vec!["hero (id f-1, 1280 by 900, m)".to_string()],
+                ..Default::default()
+            },
+        );
+        assert!(task.contains("About the design board"), "{task}");
+        assert!(task.contains("holds 1 frame"), "{task}");
+        assert!(task.contains("hero (id f-1"), "{task}");
+        assert!(!task.contains("`frame` tool"), "{task}");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// The board's chat is the document's: a turn round-trips, the frames
+    /// ride it, and the list is bounded.
+    #[test]
+    fn a_chat_turn_round_trips_and_the_cap_holds() {
+        let home = scratch("chat");
+        let (slug, _) = create(&home, "Chat").unwrap();
+        let id = put_frame(&home, &slug, "hero", PAGE, None, None, "m").unwrap();
+        append_chat(&home, &slug, "owner", "a pricing page", &[]).unwrap();
+        append_chat(
+            &home,
+            &slug,
+            "designer",
+            "here it is",
+            std::slice::from_ref(&id),
+        )
+        .unwrap();
+        let project = load(&home, &slug).unwrap();
+        assert_eq!(project.chat.len(), 2);
+        assert_eq!(project.chat[0].role, "owner");
+        assert_eq!(project.chat[1].frames, vec![id]);
+        for index in 0..(MAX_CHAT_TURNS + 5) {
+            append_chat(&home, &slug, "owner", &format!("turn {index}"), &[]).unwrap();
+        }
+        let project = load(&home, &slug).unwrap();
+        assert_eq!(project.chat.len(), MAX_CHAT_TURNS);
+        let _ = std::fs::remove_dir_all(&home);
+    }
 
     /// The bundled sample board IS a document this reader accepts — the
     /// surface's first-run board, pinned as a parse. (It carries the

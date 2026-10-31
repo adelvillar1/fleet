@@ -1,5 +1,5 @@
 ---
-status: draft
+status: active
 created: 2026-10-31
 updated: 2026-10-31
 slug: design-canvas-complete
@@ -188,15 +188,15 @@ changelog.
 
 ## Acceptance criteria
 
-- [ ] **W1 — the board has a conversation.** The design stage renders a
+- [x] **W1 — the board has a conversation.** The design stage renders a
       chat panel whose run's task names the board; the transcript shows
       the run's cards and frame chips; a frame chip's press selects and
       fits that frame. Pinned by the harness and one integration run.
-- [ ] **W2 — refine is a run on the selection.** With a frame selected,
+- [x] **W2 — refine is a run on the selection.** With a frame selected,
       refine calls `frame` with that `frame_id`; the board reloads
       and the frame keeps one identity with a new version. Pinned by the
       integration test and the harness.
-- [ ] **W3 — apply-fixes is a run.** A stored review's fixes compose a
+- [x] **W3 — apply-fixes is a run.** A stored review's fixes compose a
       run whose instruction names them; the harness asserts the task
       text carries the fix lines.
 - [ ] **W4 — directions.** A brief with N directions lands N frames in
@@ -289,3 +289,59 @@ changelog.
   generation is better as one run calling `frame` N times or N child
   runs (the `subagent` route) — the board shows both; T4 should pick on
   evidence.
+
+## Landed: T0 — the board's conversation
+
+The board has its chat: turns in the document (capped at 200), frame
+chips, and the composer with a **verbs** select that follows the
+selection. Every request's task is composed in Rust
+(`canvas::designer_task`, `mode` ∈ ask / generate / refine / regenerate /
+fixes / page_set / redesign) and the face starts the run with exactly
+what the writer answered — the pin-fix and review-ask paths go through
+the same call, so no surface hand-builds a task. `frame_size_for` is in
+Rust too (a mobile brief sizes the frame 390×844). The task carries the
+**board's inventory** — each frame's name, id, size, model, open pins
+and review state — which the live run proved necessary: before it, an
+"ask" about the board made the model explore the console with the
+browse tool for minutes; after it, the same ask answered
+*"2 pages. — Sample — Landing hero (f-6e0cc6ec, 1280×900) — Sample —
+Pricing…"* and handed back.
+
+The design page also **renders the approval seat**: a run raised from
+the board shows its seat in the board's own panel with the same
+decisions, because an approval behind the conversation stage is the
+KI-380 class. The finish→turn flush (the designer's closing words and
+the frames it landed, diffed off the board) is pinned in the harness.
+
+**A defect the live gate caught, and its fix**: the face's `post()`
+helper resolves `{status, body}`, not a fetch `Response`, so the design
+code's `reply.json()` calls had made every follow-up (the composed task,
+the run start, the export notices) silently dead while the harness —
+which asserted the POST bodies — stayed green. The whole design surface
+now reads `reply.body`, and the provider save's reply-driven notices
+(the same misuse from the providers landing) were fixed with it.
+
+Evidence: `canvas::` unit pins (task builders, the size rule, the chat
+store and its cap, the inventory in an ask), the harness's conversation
+checks (turns render, a chip selects and fits, a send records the turn,
+composes the task through the writer, starts the run with the composed
+text, and the close lands the designer turn) — **552 checks across 55
+cases**; the suite **1,868 / 0**, fmt 0, clippy 0. Live: the send chain
+over HTTP (chat → task → run accepted), the inventory answer above, and
+a real seat on the design page.
+
+**The live flush, seen**: a probe with the tab open sent *"name the
+frames on this board"* from the board's composer and watched the board's
+chat gain the owner turn, then the designer's closing turn
+(*"done — nothing new on the board"*: an ask lands no frames) when
+the run ended — the document's turns written off the re-read board.
+Live runs stream tokens rather than emitting a `message` event, so the
+flush reads the closing words from the rendered assistant row first; the
+fallback text above is what the run without streamed content showed.
+
+Two honest limits, both named in the feature doc: a tab closed mid-run
+keeps the frames (the tool wrote them) but loses the closing turn, and
+the runs on this machine are slow — an ask walked the orchestrator's
+chain for several minutes while the inventory fix removed the *tool*
+detour (before it, the same ask browsed the console). T1–T6 are
+unstarted.

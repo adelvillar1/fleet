@@ -707,7 +707,23 @@
       <div class="canvas-viewport" id="design-viewport">
         <div class="canvas-world" id="design-world"></div>
       </div>
-      <div class="canvas-composer" id="design-composer"></div>
+      <aside class="design-chat" id="design-chat" aria-label="the board's conversation">
+        <div class="design-chat-head">
+          <span class="eyebrow">the conversation</span>
+          <div class="design-chat-acts" id="design-chat-acts"></div>
+        </div>
+        <div class="design-chat-log" id="design-chat-log"></div>
+        <div class="design-seat" id="design-seat" hidden aria-live="assertive"></div>
+        <div class="design-chat-compose">
+          <textarea class="canvas-brief" id="design-brief" rows="2"
+            placeholder="ask about the board, or say what to design"></textarea>
+          <div class="design-chat-row">
+            <select class="knob-box" id="design-mode-select" aria-label="what to do"></select>
+            <select class="knob-box" id="design-style" aria-label="the style"></select>
+            <button class="replay-button replay-resume" id="design-send" type="button">send</button>
+          </div>
+        </div>
+      </aside>
     </div>
   </main>
 

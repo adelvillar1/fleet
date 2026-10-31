@@ -19,8 +19,8 @@ rail** on the left — the same `sectionRail` every split page renders, one
 row per board with its name, its frame count and the open one marked,
 the fold remembered — and the canvas filling the body: a head (the
 board's name and count, **new board**), an instrument strip (zoom out /
-fit / zoom in / grid / pin mode / the zoom readout), the **viewport**,
-and the brief composer at the foot. The rail's column is 216px rather
+fit / zoom in / grid / pin mode / the zoom readout), the **viewport**, and
+**the conversation** — a chat panel beside the board. The rail's column is 216px rather
 than the sections' 188 — the rows are the same rows, but their names are
 the owner's board names, and a clipped board name is a board you cannot
 tell apart. The viewport is a clipping box holding a world under one CSS
@@ -43,6 +43,37 @@ Gestures, all vanilla JS on the face's own pointer idioms:
 
 Every gesture that changes the document **writes through the design
 writer**. The board file is the truth; the view is a projection of it.
+
+## The board's conversation
+
+The panel beside the canvas is the board's chat, and it is part of the
+document: the turns live in `project.json`, so a reload, the CLI and a
+cron job read the same conversation. Each turn carries the frames it
+landed as **chips**; a chip's press selects its page on the board and
+fits the view. The composer's **verbs** follow the selection — *design*
+(one or more new frames), *refine* (a new version of the selected
+frame), *another direction* (a fresh frame beside it), *apply the
+review's fixes* (when the frame has a review), and *ask* (a question
+about the board, which writes nothing).
+
+**Every task is composed in Rust.** The face asks the writer for the
+task (`task` op) and starts the run with exactly what came back, so the
+composer, the CLI and a cron job ask for the same thing in the same
+words. The composed task carries the **board's own inventory** — each
+frame's name, id, size, model, open pins and review state — so a
+question about the board is answered from the facts rather than by
+exploring the console with tools, and a refine knows what it is
+refining. A review's fix lines and a frame's open pins ride the task
+too, and a *refine* names the `frame_id` so the page keeps its identity.
+
+A run started from the board raises its **approval seat on this page**
+as well as on the conversation's: the design panel carries the same seat
+with the same decisions, because an approval the owner cannot see is the
+KI-380 class of defect. When the run ends, the face records the
+designer's turn — its closing words and the frames it landed — off the
+board it re-reads. A tab closed mid-run therefore keeps the frames (the
+`frame` tool wrote them) but loses that closing turn; the conversation
+answers on the next visit.
 
 ## The document
 

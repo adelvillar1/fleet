@@ -6868,6 +6868,7 @@ fn design_read(home: &std::path::Path, project: Option<&str>) -> Value {
                     "created": document.created,
                     "updated": document.updated,
                     "frames": frames,
+                    "chat": document.chat,
                 }));
             }
             Err(error) => refused.push(error),
@@ -6988,6 +6989,126 @@ fn design_write(home: &std::path::Path, body: &str) -> Result<Value, String> {
             crate::canvas::resolve_pin(home, &slug, &id, &pin, resolved.as_deref())?;
             json!({ "pin": pin })
         }
+        "chat" => {
+            let slug = slug()?;
+            let role = text("role")?;
+            let body = arguments
+                .get("text")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            let frames: Vec<String> = arguments
+                .get("frames")
+                .and_then(Value::as_array)
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_string)
+                        .collect()
+                })
+                .unwrap_or_default();
+            let turn = crate::canvas::append_chat(home, &slug, &role, &body, &frames)?;
+            json!({ "turn": turn })
+        }
+        // The task one design request composes — in Rust, so the composer,
+        // the CLI and a cron job ask for the same thing in the same words.
+        // A read: it writes nothing, and the face then starts the run with
+        // the text it answered.
+        "task" => {
+            let slug = slug()?;
+            let mode_word = text("mode")?;
+            let mode = crate::canvas::DesignMode::parse(&mode_word)
+                .ok_or_else(|| format!("`{mode_word}` is not a design mode"))?;
+            let brief = arguments
+                .get("brief")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            let project = crate::canvas::load(home, &slug)?;
+            let board: Vec<String> = project
+                .frames
+                .iter()
+                .map(|frame| {
+                    let pins = frame
+                        .pins
+                        .iter()
+                        .filter(|pin| pin.resolved_frame_id.is_none())
+                        .count();
+                    format!(
+                        "{} (id {}, {}\u{00d7}{}, {}{}{})",
+                        frame.name,
+                        frame.id,
+                        frame.w,
+                        frame.h,
+                        if frame.model.is_empty() {
+                            "imported"
+                        } else {
+                            &frame.model
+                        },
+                        if pins > 0 {
+                            format!(", {pins} open pin{}", if pins == 1 { "" } else { "s" })
+                        } else {
+                            String::new()
+                        },
+                        if frame.review.is_some() {
+                            ", reviewed"
+                        } else {
+                            ""
+                        },
+                    )
+                })
+                .collect();
+            let mut facts = crate::canvas::DesignFacts {
+                board,
+                size: Some(crate::canvas::frame_size_for(&brief)),
+                directions: arguments
+                    .get("directions")
+                    .and_then(Value::as_u64)
+                    .map(|n| n.clamp(1, 6) as usize)
+                    .unwrap_or(1),
+                pages: arguments
+                    .get("pages")
+                    .and_then(Value::as_u64)
+                    .map(|n| n.clamp(1, 8) as usize),
+                ..Default::default()
+            };
+            if let Some(id) = arguments.get("frame_id").and_then(Value::as_str) {
+                let project = crate::canvas::load(home, &slug)?;
+                if let Some(frame) = project.frames.iter().find(|frame| frame.id == id) {
+                    facts.pins = frame
+                        .pins
+                        .iter()
+                        .filter(|pin| pin.resolved_frame_id.is_none())
+                        .map(|pin| pin.text.clone())
+                        .collect();
+                    facts.review = frame.review.clone();
+                    facts.frame = Some(frame.clone());
+                }
+            }
+            if let Some(preset_id) = arguments.get("preset").and_then(Value::as_str) {
+                if let Some(presets) = design_presets().as_array().cloned() {
+                    if let Some(preset) = presets
+                        .iter()
+                        .find(|preset| preset.get("id").and_then(Value::as_str) == Some(preset_id))
+                    {
+                        let label = preset
+                            .get("label")
+                            .and_then(Value::as_str)
+                            .unwrap_or(preset_id)
+                            .to_string();
+                        let spec = preset
+                            .get("spec")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_string();
+                        facts.preset = Some((label, spec));
+                    }
+                }
+            }
+            let task = crate::canvas::designer_task(mode, &brief, &slug, &facts);
+            json!({ "type": "design_task", "mode": mode_word, "task": task })
+        }
         "review-put" => {
             let slug = slug()?;
             let id = frame_id()?;
@@ -7000,6 +7121,12 @@ fn design_write(home: &std::path::Path, body: &str) -> Result<Value, String> {
         }
         other => return Err(format!("`{other}` is not a design write")),
     };
+    // The task composer answers with its own document: it is a read of
+    // what one request WOULD say, and wrapping it as a write would make
+    // every caller unwrap a shape that wrote nothing.
+    if op == "task" {
+        return Ok(wrote);
+    }
     Ok(json!({ "type": "design_write", "op": op, "wrote": wrote }))
 }
 

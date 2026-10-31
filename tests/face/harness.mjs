@@ -374,6 +374,24 @@ function boot(options) {
     }
     if (pathOnly === '/api/design') {
       if (method === 'POST') {
+        let sent = {};
+        try { sent = JSON.parse(init.body || '{}'); } catch (e) {}
+        if (sent.op === 'task') {
+          return Promise.resolve({
+            status: 200,
+            json: () => Promise.resolve({
+              type: 'design_task',
+              mode: sent.mode,
+              task: 'composed for ' + (sent.project || '') + ' with the `frame` tool',
+            }),
+          });
+        }
+        if (sent.op === 'chat') {
+          return Promise.resolve({
+            status: 200,
+            json: () => Promise.resolve({ type: 'design_write', op: 'chat', wrote: { turn: { role: sent.role } } }),
+          });
+        }
         return Promise.resolve({
           status: 200,
           json: () => Promise.resolve({ type: 'design_write', op: 'x', wrote: { slug: 'sample-board' } }),
@@ -3978,6 +3996,12 @@ async function theDesignCanvasCarriesItsFramesAndWritesGeometry() {
       slug: 'sample-board',
       name: 'Sample board',
       frames: [frame('f-hero', 'hero', 0, 'glm'), frame('f-pricing', 'pricing', 1376, 'qwen')],
+      chat: [
+        { role: 'owner', text: 'a pricing page for a developer tool', frames: [],
+          at: '2026-10-31T09:00:00Z' },
+        { role: 'designer', text: 'here it is', frames: ['f-hero'],
+          at: '2026-10-31T09:05:00Z' },
+      ],
     },
     presets: [{ id: 'agency-grid', label: 'Agency grid', summary: 'editorial grid',
       source: 'x', spec: 'LAYOUT: grid' }],
@@ -4136,17 +4160,55 @@ async function theDesignCanvasCarriesItsFramesAndWritesGeometry() {
       String(one.body || '').includes('"tweak_values"')),
     JSON.stringify(page.calls.filter((one) => one.method === 'POST').map((one) => String(one.body).slice(0, 80))));
 
-  // S3: the composer dispatches a run rather than generating in the page.
-  const brief = page.IDS['design-composer'].querySelector('.canvas-brief');
-  brief.value = 'a pricing page for a developer tool';
-  byAct(page.IDS['design-composer'], 'design-generate').click();
+  // T0: the board's conversation — the turns, the chips, and a send that
+  // composes the task through the writer and starts a run with it.
+  const turns = page.rows('.design-turn');
+  check('PM-D the board conversation renders its turns',
+    turns.length === 2 &&
+      turns[0].dataset.role === 'owner' &&
+      String(turns[0].textContent).includes('a pricing page') &&
+      turns[1].dataset.role === 'designer',
+    turns.map((one) => one.dataset.role).join(','));
+  const chips = page.rows('.design-frame-chip');
+  check('PM-D a turn carries its frames as chips',
+    chips.length === 1 && String(chips[0].textContent).includes('hero'),
+    String(chips.length));
+  chips[0].click();
   await flush(40);
+  check('PM-D a chip selects its frame on the board',
+    page.rows('.canvas-frame.selected').length === 1,
+    String(page.rows('.canvas-frame.selected').length));
+  page.IDS['design-brief'].value = 'make the hero quieter';
+  page.IDS['design-mode-select'].value = 'refine';
+  page.fireOn('design-send', 'click');
+  await flush(80);
+  const posts = page.calls.filter((one) => one.method === 'POST' &&
+    String(one.url || '').includes('/api/design'));
+  check('PM-D a send records the turn and composes the task through the writer',
+    posts.some((one) => String(one.body).includes('"op":"chat"')) &&
+      posts.some((one) => String(one.body).includes('"op":"task"') &&
+        String(one.body).includes('"mode":"refine"')),
+    JSON.stringify(page.calls.slice(-5).map((one) => one.method + ' ' +
+      one.url + ' ' + String(one.body || '').slice(0, 70))));
   const run = page.calls.filter((one) => one.method === 'POST' &&
     String(one.url || '').includes('/api/run'));
-  check('PM-D the brief starts a fleet run naming the board and the frame tool',
-    run.length === 1 && String(run[0].body).includes('frame') &&
-      String(run[0].body).includes('sample-board'),
+  check('PM-D the run carries the composed task, not a hand-built one',
+    run.length === 1 && String(run[0].body).includes('composed for sample-board'),
     JSON.stringify(run.map((one) => String(one.body).slice(0, 160))));
+  // The run's close writes the board turn: its words and the frames it
+  // landed (a frame the board did not hold when the request went out).
+  const beforeTurns = page.calls.filter((one) =>
+    String(one.body || '').includes('"op":"chat"')).length;
+  page.push({ type: 'message', role: 'assistant', text: 'the hero is quieter now' });
+  page.push({ type: 'finished', stop_reason: 'completed' });
+  await flush(120);
+  const chatWrites = page.calls.filter((one) => String(one.body || '').includes('"op":"chat"'));
+  const designerTurn = chatWrites.find((one) =>
+    String(one.body).includes('"role":"designer"'));
+  check('PM-D the run\u2019s close lands the designer turn with its frames',
+    chatWrites.length > beforeTurns && !!designerTurn &&
+      String(designerTurn.body).includes('the hero is quieter now'),
+    JSON.stringify(chatWrites.map((one) => String(one.body).slice(0, 90))));
   // The rail is the switcher: a press on another board reads it by slug
   // and remembers the choice.
   railRows[1].click();
