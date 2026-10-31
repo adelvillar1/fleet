@@ -637,7 +637,7 @@
     panelVault: document.getElementById('panel-vault'),
     panelSettings: document.getElementById('panel-settings'),
     panelDesign: document.getElementById('panel-design'),
-    designProject: document.getElementById('design-project'),
+    designRail: document.getElementById('design-rail'),
     designWorld: document.getElementById('design-world'),
     designViewport: document.getElementById('design-viewport'),
     designInstrument: document.getElementById('design-instrument'),
@@ -15876,6 +15876,71 @@
       'fleet-canvas-' + designSlug(), JSON.stringify(designView()));
   }
 
+  /// When a board last moved, the way a work row names it — an age for
+  /// the recent, a date for the old.
+  function designAge(stamp) {
+    if (!stamp) return '';
+    var at = Date.parse(stamp);
+    if (!at || isNaN(at)) return String(stamp).slice(0, 10);
+    var minutes = Math.max(0, Math.round((Date.now() - at) / 60000));
+    if (minutes < 1) return 'just now';
+    if (minutes < 60) return minutes + 'm ago';
+    var hours = Math.round(minutes / 60);
+    if (hours < 24) return hours + 'h ago';
+    var days = Math.round(hours / 24);
+    if (days < 14) return days + 'd ago';
+    return String(stamp).slice(0, 10);
+  }
+
+  /// Open a board: its slug is remembered, its view starts fresh (a board
+  /// seen for the first time fits its frames), and the read repaints.
+  function designOpenBoard(slug) {
+    designSetSlug(slug);
+    face.designReadAt = 0;
+    face.canvas = null;
+    face.canvasFresh = true;
+    face.designSelection = null;
+    designApplyTransform();
+    readDesign(true);
+  }
+
+  /// The boards rail — every board the home holds, newest first, in the
+  /// shared `sectionRail` the other split pages render: the fold it
+  /// remembers, the arrow keys between rows, the open board marked as the
+  /// current section. One row per board: its name, its frame count as the
+  /// badge, and how long ago it last moved as the row's title.
+  function paintDesignRail() {
+    if (!el.designRail) return;
+    var document_ = face.design || {};
+    var boards = document_.projects || [];
+    var board = designBoard();
+    sectionRail(el.designRail, boards.map(function (project) {
+      return {
+        id: project.slug,
+        icon: 'design',
+        name: project.name,
+        badge: project.frames,
+        badgeTitle: project.frames + ' frame' + (project.frames === 1 ? '' : 's') +
+          ' \u00b7 ' + designAge(project.updated)
+      };
+    }), {
+      current: board ? board.slug : '',
+      folded: !!face.designRailFolded,
+      store: 'fleet-design-rail',
+      onPick: function (slug) {
+        if (!slug) return;
+        designOpenBoard(slug);
+      },
+      onFold: function (folded) {
+        face.designRailFolded = folded;
+        try {
+          window.localStorage.setItem('fleet-design-rail', folded ? 'folded' : 'open');
+        } catch (error) { }
+        paintDesignRail();
+      }
+    });
+  }
+
   function designByID(id) {
     var board = designBoard();
     if (!board) return null;
@@ -15924,29 +15989,14 @@
   function paintDesign() {
     if (!face.design) { readDesign(true); return; }
     paintDesignHead();
+    paintDesignRail();
     paintDesignInstrument();
     paintDesignWorld();
     paintDesignComposer();
   }
 
   function paintDesignHead() {
-    var document_ = face.design;
     var board = designBoard();
-    var projects = document_.projects || [];
-    el.designProject.textContent = '';
-    if (!projects.length) {
-      el.designProject.appendChild(node('option', null, 'no boards yet'));
-      el.designProject.disabled = true;
-    } else {
-      el.designProject.disabled = false;
-      projects.forEach(function (project) {
-        var option = node('option', null, project.name + ' \u00b7 ' + project.frames + ' frame' +
-          (project.frames === 1 ? '' : 's'));
-        option.value = project.slug;
-        if (board && project.slug === board.slug) option.selected = true;
-        el.designProject.appendChild(option);
-      });
-    }
     el.designTitle.textContent = board ? board.name : 'the canvas';
     el.designEyebrow.textContent = 'design' + (board ? ' \u00b7 ' + board.slug : '');
     el.designNote.textContent = board
@@ -16655,15 +16705,6 @@
   function wireDesign() {
     designWireViewport();
     designWireKeys();
-    el.designProject.addEventListener('change', function () {
-      designSetSlug(el.designProject.value);
-      face.designReadAt = 0;
-      face.canvas = null;
-      face.canvasFresh = true;
-      face.designSelection = null;
-      designApplyTransform();
-      readDesign(true);
-    });
     el.designNew.addEventListener('click', function () {
       designWrite('create', { name: 'Board ' + (face.design.projects || []).length }, function (answer) {
         designSetSlug(answer.wrote.slug);

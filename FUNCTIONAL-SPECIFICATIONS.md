@@ -57,7 +57,10 @@ document escalated to Perception to Nace.
 **Work — design.** The board. Your pages, side by side on a canvas you
 can pan and zoom: a page is a complete HTML design — a landing screen, a
 pricing table, a component sheet — and the board is where they live. The
-head names the board and offers another; the strip carries zoom out,
+**boards rail** on the left lists every board you have made — the same
+rail the settings and calibration pages use, one row per board with its
+frame count, the open one marked — and **new board** sits in the head;
+the strip carries zoom out,
 **fit**, zoom in, the grid, pin mode and the zoom readout. Drag a page by
 its title bar to move it; wheel zooms toward the pointer; space-drag
 pans; a board seen for the first time opens fitted to its pages. A page

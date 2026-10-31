@@ -107,8 +107,12 @@ why one surface holds a site, a deck-sized poster and a component
 catalogue without a second editor. The chrome is Fleet's; the page is
 the artifact.
 
-**What you do.** Write the brief under the board — what to design, for
-whom, in which style direction — and press generate: an ordinary Fleet
+**What you do.** The rail beside the board lists every board you have
+made, in the one section-rail idiom the settings, calibration, memory,
+skills, bots and workspace-history pages share — one row per board, its
+frame count as the badge, the open one marked, the fold remembered — and
+a row's press switches boards. Write the brief under the board — what to
+design, for whom, in which style direction — and press generate: an ordinary Fleet
 run fills the board as it works, and it reads in the work list like any
 other run. Then move the pages (title-bar drag, arrow nudge), pan and
 zoom, and open a page's own verbs: **tweaks** (the page's declared

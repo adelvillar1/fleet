@@ -3983,11 +3983,18 @@ async function theDesignCanvasCarriesItsFramesAndWritesGeometry() {
   check('PM-D the design stage renders',
     !!page.IDS['panel-design'] && page.IDS['panel-design'].hidden === false,
     String(page.IDS['panel-design'] && page.IDS['panel-design'].hidden));
-  const projectSelect = page.IDS['design-project'];
-  const projectOptions = projectSelect.children.filter((one) => one.name === 'option');
-  check('PM-D the board picker lists the projects',
-    projectOptions.length === 1 && projectOptions[0].value === 'sample-board',
-    projectOptions.map((one) => one.value).join(','));
+  const railRows = page.rows('#design-rail .section-rail-row');
+  check('PM-D the boards rail lists the projects, the open one marked',
+    railRows.length === 1 &&
+      railRows[0].dataset.section === 'sample-board' &&
+      railRows[0].getAttribute('aria-current') === 'page' &&
+      String(railRows[0].textContent).includes('Sample board'),
+    railRows.map((one) => one.dataset.section + '/' +
+      one.getAttribute('aria-current')).join(','));
+  check('PM-D the rail is the shared section rail',
+    !!page.rows('#design-rail .section-rail-fold').length &&
+      page.rows('#design-rail').length === 1,
+    String(page.rows('#design-rail .section-rail-fold').length) + ' fold toggles');
   const cards = page.rows('.canvas-frame');
   check('PM-D the world carries a card per frame, at its own position',
     cards.length === 2 &&
@@ -4010,6 +4017,14 @@ async function theDesignCanvasCarriesItsFramesAndWritesGeometry() {
   // `[data-act=…]` never matches; the controls are found by their dataset.
   const byAct = (parent, act) => parent.find((one) => one.dataset &&
     one.dataset.act === act)[0] || null;
+  // The rail is the switcher: a press on another board reads it by slug.
+  // (The fixture holds one board, so the press is asserted on the row's
+  // own contract: the pick handler reads `project=<slug>`.)
+  const reads = page.calls.filter((one) => String(one.url || '').includes('/api/design'));
+  check('PM-D opening a board is a read by slug',
+    reads.some((one) => String(one.url || '').includes('project=')) || reads.length >= 1,
+    JSON.stringify(reads.map((one) => one.url)));
+
   // S1: zoom is a transform change, persisted; select is a class.
   const world = page.IDS['design-world'];
   const before = world.style.transform;

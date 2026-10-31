@@ -7893,11 +7893,28 @@ body[data-work="collapsed"] .work-list { display: none; }
    a world under one transform. Fleet's tokens govern the chrome; the frame
    inside the iframe is the artifact, and the dot grid is the board's own
    floor so a page's edges read against something. */
+/* The canvas is a split stage like settings and calibration: the shared
+   rail column on the left (188px, 46px folded — the same rule those
+   pages use, extended here rather than cloned), the canvas filling the
+   body. */
 .stage-canvas {
   display: grid;
-  grid-template-rows: auto auto 1fr auto;
+  /* 216px, not the 188 the section pages use: the rows are the same rows
+     (34px, 13px, the same fold), but their names are the owner's board
+     names — data, not one-word section labels — and a clipped board name
+     is a board you cannot tell apart. */
+  grid-template-columns: 216px minmax(0, 1fr);
+  gap: 18px;
   min-height: 0;
   padding: 0 var(--space-4) 0;
+}
+.stage-canvas:has(.section-rail[data-folded="true"]) {
+  grid-template-columns: 46px minmax(0, 1fr);
+}
+.design-body {
+  display: grid;
+  grid-template-rows: auto auto minmax(320px, 1fr) auto;
+  min-height: 0;
   gap: var(--space-2);
 }
 .canvas-head { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--space-4); }

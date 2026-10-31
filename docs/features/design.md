@@ -14,10 +14,16 @@ The canvas sits directly under the conversation in the rail's work
 group — it is work the owner opens the way they open a chat, not a
 listing to browse after one.
 
-`#/design` is a stage of its own: a head with the board picker and the
-frame count, an instrument strip (zoom out / fit / zoom in / grid / pin
-mode / the zoom readout), the **viewport**, and the brief composer at the
-foot. The viewport is a clipping box holding a world under one CSS
+`#/design` is a split stage like settings and calibration: the **boards
+rail** on the left — the same `sectionRail` every split page renders, one
+row per board with its name, its frame count and the open one marked,
+the fold remembered — and the canvas filling the body: a head (the
+board's name and count, **new board**), an instrument strip (zoom out /
+fit / zoom in / grid / pin mode / the zoom readout), the **viewport**,
+and the brief composer at the foot. The rail's column is 216px rather
+than the sections' 188 — the rows are the same rows, but their names are
+the owner's board names, and a clipped board name is a board you cannot
+tell apart. The viewport is a clipping box holding a world under one CSS
 transform — `translate(x,y) scale(z)` — and the world holds the frame
 cards. Fleet's tokens, cards and buttons are the chrome; the frame inside
 its sandboxed iframe is the artifact, which is the same boundary the

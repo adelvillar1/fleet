@@ -687,22 +687,28 @@
        page on a pan/zoom world. The chrome is fleet's own; the frame is
        the artifact and renders in a sandboxed srcdoc. -->
   <main class="stage stage-canvas" id="panel-design" hidden>
-    <header class="page-head canvas-head">
-      <div class="canvas-head-text">
-        <p class="eyebrow" id="design-eyebrow">design</p>
-        <h1 id="design-title">the canvas</h1>
-        <p class="page-note" id="design-note"></p>
+    <!-- The boards, in the one rail idiom every split page uses: one row
+         per board (its name, its frame count), the open one marked, the
+         fold remembered. The same `sectionRail` the settings, calibration,
+         memory, skills, bots and workspace-history pages render. -->
+    <nav class="section-rail" id="design-rail" aria-label="the boards"></nav>
+    <div class="design-body">
+      <header class="page-head canvas-head">
+        <div class="canvas-head-text">
+          <p class="eyebrow" id="design-eyebrow">design</p>
+          <h1 id="design-title">the canvas</h1>
+          <p class="page-note" id="design-note"></p>
+        </div>
+        <div class="canvas-head-acts">
+          <button class="replay-button replay-resume" id="design-new" type="button">new board</button>
+        </div>
+      </header>
+      <div class="canvas-instrument" id="design-instrument"></div>
+      <div class="canvas-viewport" id="design-viewport">
+        <div class="canvas-world" id="design-world"></div>
       </div>
-      <div class="canvas-head-acts">
-        <select class="knob-box" id="design-project" aria-label="the board"></select>
-        <button class="replay-button replay-resume" id="design-new" type="button">new board</button>
-      </div>
-    </header>
-    <div class="canvas-instrument" id="design-instrument"></div>
-    <div class="canvas-viewport" id="design-viewport">
-      <div class="canvas-world" id="design-world"></div>
+      <div class="canvas-composer" id="design-composer"></div>
     </div>
-    <div class="canvas-composer" id="design-composer"></div>
   </main>
 
   <main class="stage stage-board stage-split" id="panel-settings" hidden>
