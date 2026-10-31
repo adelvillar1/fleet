@@ -64,9 +64,34 @@ leg for a leg fleet already owns.**
 | Auth/sessions/ACLs/invites | The home is the boundary: loopback-only, one owner — the same ruling every fleet surface runs on |
 | Stripe/credits/usage/entitlements | Deleted. No gates, no 402s — the commercial surface is out of scope by the owner's word |
 | Publishing/hosting/analytics, client review links | Out of scope. A **local preview route** serves the tweaked frame with a CSP, which is what "share" needs on one machine |
-| `lib/a11yscan.ts`, `lib/tweaks.ts`, `lib/codegen.ts`, `lib/tokens` | **Ported as pure Rust** (string transforms over the frame HTML; the scan is 182 lines of deterministic checks) |
+| `lib/tweaks.ts`, `lib/tokens` | **Rust, one implementation** — the mutation path and the token exports must be byte-identical wherever used (live srcdoc, preview route, ZIP, PNG source) |
+| `lib/a11yscan.ts` | **Rust, as a scanner** — the source is regex/string-based already (color parsers + `match`/`replace` over the HTML; `a11yscan.ts:1-40`), so no HTML parser is needed and none is added. Fidelity is a flag, not a certification |
+| `lib/codegen.ts` | **Only if the TSX export is wanted**; if so, Rust (a pure string transform, server-side) |
 | `lib/stylePresetLibrary` (148 curated + 673 generated) | Embedded as data, read by the composer's style chips |
 | The 2,207-line workspace orchestrator | Rewritten: the bridge owns the document, the face owns the viewport |
+
+**The Rust/JS boundary, as a rule.** Rust owns everything that must be
+the same bytes wherever it is used, and everything that touches the
+home: the document store, the tweak injection and token extraction,
+the a11y scan, the frame validation and caps, the ZIP, the preview
+route's CSP, the preset data, the design events. **JS owns everything
+that needs a DOM, a pointer, or pixels**: the viewport transform and
+pan/zoom/fit, the frame cards and their iframes, selection and
+drag-move, the pins' placement and threads, the tweak panel's controls,
+the composer, and the version list's rendering. A component that both
+sides could compute goes to Rust when it must agree with an export and
+to JS when it must agree with the screen — and the only component that
+genuinely wanted both is the tweak injection, which is why it gets a
+stateless endpoint (below) instead of a second implementation.
+
+**The live-tweak round trip, named.** A slider drag cannot wait for a
+document write, and the face must not reimplement `injectTweaks` (two
+injections drift — the source's own docs warn it). So the transform is
+one Rust function with two entry points: `POST /api/design/inject`
+`{html, tweakSpec, tweakValues}` → the injected HTML, for live drags
+(loopback, ~1 ms, debounced by the face's frame paint); and the stored
+document for the preview route, the ZIP and the PNG source. The
+response is bytes, never a home write.
 
 **What the canvas keeps, because it is the valuable part:** infinite
 pan/zoom with zoom-to-cursor, space/middle-drag pan, fit-to-bounds,
@@ -486,6 +511,15 @@ tokens, a frame legible on the dot grid, nothing clipped at the edges.
   (read `fff86bb`), the single-process in-memory rate limiting (no
   equivalent here — the home is one owner), and the `SiteAnalysis`
   table with no owner (not ported at all).
+- **No HTML parser is added, and that is a decision.** The a11y scan is
+  scanner-shaped in the source (regex color parsing over the extracted
+  `:root` tokens plus `<img alt>`, label and viewport-meta checks) and
+  ports as one — the codebase's own idiom for this class: a flag, not a
+  certification. If a *rendered* scan is ever wanted (real
+  `getComputedStyle` contrast, real focus order), the browser lane
+  already exposes `Runtime.evaluate` internally
+  (`services/browser/src/browser/__init__.py:294,307-314`), so the
+  upgrade path is a lane tool, not a crate.
 - **The one thing worth reconsidering later**: brand kits. A brand kit
   is a token set + doctrine snippet, which is exactly what a fleet
   `frame` tool's second argument could carry — but it is a data
