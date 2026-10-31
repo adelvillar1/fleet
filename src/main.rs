@@ -78,6 +78,12 @@ fn main() -> ExitCode {
             | Ok(Command::Gui(_))
             | Ok(Command::Compact { .. })
             | Ok(Command::Lanes)
+            // Onboard awaits (`--verify` probes the lanes), and its arm
+            // was missing from this list — HH5's find: every `fleet
+            // onboard` fell through to the sync dispatch's internal
+            // error and the whole guided setup was unreachable from the
+            // CLI, a fresh machine's first run included.
+            | Ok(Command::Onboard(_))
             | Ok(Command::Judge(_))
             | Ok(Command::Delegate(_))
             | Ok(Command::Eval(_))

@@ -3728,6 +3728,54 @@ fn the_remember_command_writes_the_fact_end_to_end() {
     let _ = std::fs::remove_dir_all(&home);
 }
 
+/// HH5's find (the beta shakeout, KI-381's row): `fleet onboard` awaits
+/// (`--verify` probes the lanes over MCP) but its arm was missing from
+/// `needs_runtime` in `main`, so every invocation fell through to the
+/// sync dispatch's internal error — "internal: an async command reached
+/// the sync dispatch" — and the guided setup was unreachable from the
+/// CLI. The fix is the arm; the pin drives the real binary twice on a
+/// fresh home: the walk runs, exits success, and a second invocation
+/// resumes at the first incomplete step, because the steps' completion
+/// is the machine's state.
+#[test]
+fn the_onboard_command_walks_and_resumes_end_to_end() {
+    let home = temp_home("onboard-e2e");
+    let run = || {
+        std::process::Command::new(env!("CARGO_BIN_EXE_fleet"))
+            .arg("onboard")
+            .env("FLEET_HOME", &home)
+            .stdin(std::process::Stdio::null())
+            .current_dir(&home)
+            .output()
+            .expect("run the fleet binary")
+    };
+    let first = run();
+    assert!(
+        first.status.success(),
+        "the walk runs: {}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    let said = String::from_utf8_lossy(&first.stdout);
+    assert!(said.contains("fleet \u{00b7} setup"), "{said}");
+    assert!(
+        said.contains("next: fleet onboard --step"),
+        "the walk names its next step: {said}"
+    );
+    // The second walk resumes: the same first-incomplete step, because
+    // nothing was confirmed in between — and never the internal error
+    // the missing runtime arm used to answer.
+    let second = run();
+    assert!(second.status.success(), "{second:?}");
+    let again = String::from_utf8_lossy(&second.stdout);
+    assert!(!again.contains("async command reached the sync dispatch"));
+    assert_eq!(
+        said.matches("next: fleet onboard --step").count(),
+        again.matches("next: fleet onboard --step").count(),
+        "the second walk resumes at the same first-incomplete step"
+    );
+    let _ = std::fs::remove_dir_all(&home);
+}
+
 #[test]
 fn the_lanes_command_reports_every_real_lane() {
     if !python3_available() {
