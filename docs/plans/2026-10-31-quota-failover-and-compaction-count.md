@@ -1,5 +1,5 @@
 ---
-status: active
+status: completed
 created: 2026-10-31
 updated: 2026-10-31
 slug: quota-failover-and-compaction-count
