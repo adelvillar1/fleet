@@ -620,6 +620,7 @@ async fn client_posts_auth_and_tool_declarations() {
         model: "test-model",
         messages: &[Message::text(Role::User, "hello")],
         tools: ALL_TOOLS.iter().map(|tool| tool.spec()).collect(),
+        max_tokens: None,
     };
     let response = client.chat(&request).unwrap();
     assert_eq!(response.choices.len(), 1);
@@ -656,6 +657,7 @@ async fn client_maps_an_api_error_with_its_hint() {
         model: "test-model",
         messages: &[Message::text(Role::User, "hello")],
         tools: Vec::new(),
+        max_tokens: None,
     };
     let error = match client.chat(&request) {
         Err(ClientError::Api(error)) => error,
@@ -678,6 +680,7 @@ async fn client_chat_still_answers_a_whole_document() {
         model: "test-model",
         messages: &[Message::text(Role::User, "hello")],
         tools: Vec::new(),
+        max_tokens: None,
     };
     let response = client.chat(&request).unwrap();
     let calls = &response.choices[0].message.tool_calls;
@@ -707,6 +710,7 @@ async fn client_chat_stream_assembles_the_same_response_chat_returns() {
         model: "test-model",
         messages: &[Message::text(Role::User, "hello")],
         tools: Vec::new(),
+        max_tokens: None,
     };
     let mut events = Vec::new();
     let streamed = client
@@ -771,6 +775,7 @@ async fn client_chat_stream_derives_stop_when_the_stream_closes_with_calls() {
         model: "test-model",
         messages: &[Message::text(Role::User, "hello")],
         tools: Vec::new(),
+        max_tokens: None,
     };
     let streamed = client.chat_stream(&request, |_| {}).await.unwrap();
     assert_eq!(streamed.choices[0].finish_reason.as_deref(), Some("stop"));
@@ -3680,12 +3685,15 @@ fn a_connection_with_no_request_does_not_take_the_mock_down() {
     }
     // The mock still answers a real request.
     let client = Client::new(mock.url(), "test-key");
-    let reply = client.chat(&ChatRequest {
-        model: "test-model",
-        messages: &[Message::text(Role::User, "hello")],
-        tools: Vec::new(),
-    });
-    assert!(reply.is_ok(), "{reply:?}");
+    let reply = client
+        .chat(&ChatRequest {
+            model: "test-model",
+            messages: &[Message::text(Role::User, "hello")],
+            tools: Vec::new(),
+            max_tokens: None,
+        })
+        .unwrap();
+    assert!(!reply.choices.is_empty(), "{reply:?}");
 }
 
 /// KI-069: `fleet remember` end to end — the flags, the arguments
@@ -4912,6 +4920,8 @@ fn resolved(id: &str, base_url: String, key_required: bool, key: Option<&str>) -
             enabled: true,
             key_required,
             disabled_reason: None,
+            disabled_models: Vec::new(),
+            model_settings: std::collections::BTreeMap::new(),
         },
         key: key.map(str::to_string),
     }

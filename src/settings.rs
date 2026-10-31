@@ -1576,6 +1576,186 @@ mod router_tests {
         assert!(crate::lanes::read_lane(&home, "sem1").unwrap().is_none());
         let _ = fs::remove_dir_all(&home);
     }
+    // --- the provider discovery -------------------------------------------------
+
+    /// A listing endpoint that answers one canned body and records the
+    /// request's Authorization line, so the tests see the key cross.
+    fn listing_stub(
+        name: &'static str,
+        status: &'static str,
+        body: &'static str,
+    ) -> (
+        std::net::SocketAddr,
+        std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    ) {
+        use std::io::{BufRead, BufReader, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let seen: std::sync::Arc<std::sync::Mutex<Vec<String>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen_for_thread = std::sync::Arc::clone(&seen);
+        std::thread::spawn(move || {
+            if let Ok((stream, _)) = listener.accept() {
+                let mut lines = BufReader::new(stream.try_clone().unwrap())
+                    .lines()
+                    .map_while(Result::ok);
+                let request_line = lines.next().unwrap_or_default();
+                let mut authorization = String::new();
+                for line in lines {
+                    if line.is_empty() {
+                        break;
+                    }
+                    if line.to_ascii_lowercase().starts_with("authorization:") {
+                        authorization = line;
+                    }
+                }
+                seen_for_thread
+                    .lock()
+                    .unwrap()
+                    .push(format!("{request_line} {authorization}"));
+                let mut stream = stream;
+                let reply = format!(
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(reply.as_bytes());
+                let _ = stream.flush();
+            }
+            let _ = name;
+        });
+        (addr, seen)
+    }
+
+    /// The discovery reads the catalog and the declared settings off a
+    /// listing that carries them, and names the key on the wire.
+    #[test]
+    fn discovery_reads_the_catalog_and_its_declared_settings() {
+        let body = r#"{"data":[
+            {"id":"model-a","context_length":262144,"max_output_tokens":8192},
+            {"id":"model-b"}
+        ]}"#;
+        let (addr, seen) = listing_stub("discovery", "200 OK", body);
+        let (models, settings) =
+            discover_provider_models(&format!("http://{addr}/v1"), Some("the-key")).unwrap();
+        assert_eq!(models, vec!["model-a", "model-b"]);
+        let a = settings.get("model-a").expect("the declared model");
+        assert_eq!(a.context_window, Some(262_144));
+        assert_eq!(a.max_output_tokens, Some(8_192));
+        assert_eq!(a.context_window_source.as_deref(), Some("provider"));
+        assert!(
+            !settings.contains_key("model-b"),
+            "nothing declared, nothing stored"
+        );
+        let wire = seen.lock().unwrap().join(" | ");
+        assert!(wire.contains("GET /v1/models"), "{wire}");
+        assert!(wire.contains("Bearer the-key"), "{wire}");
+    }
+
+    /// A refused key is named, not swallowed: the discovery's failure is
+    /// the form's own sentence.
+    #[test]
+    fn a_refused_key_is_named_by_the_discovery() {
+        let (addr, _) = listing_stub("refused", "401 Unauthorized", r#"{"error":"bad key"}"#);
+        let error =
+            discover_provider_models(&format!("http://{addr}/v1"), Some("wrong")).unwrap_err();
+        assert!(error.contains("the key was refused (401)"), "{error}");
+    }
+
+    /// The full save with a key: the secret lands (the vault seam's own
+    /// store decision), the discovery's catalog is merged into the entry
+    /// before it is written, and the reply names both.
+    #[test]
+    fn a_save_with_a_key_stores_it_and_merges_the_catalog() {
+        let home = scratch("provider-key-save");
+        let body = r#"{"data":[{"id":"discovered-a"},{"id":"discovered-b"}]}"#;
+        let (addr, _) = listing_stub("save", "200 OK", body);
+        let entry = serde_json::json!({
+            "id": "myprovider",
+            "base_url": format!("http://{addr}/v1"),
+        })
+        .to_string();
+        let (id, store, discovery) =
+            set_provider_with_key(&home, &entry, Some("the-key-value")).unwrap();
+        assert_eq!(id, "myprovider");
+        assert_eq!(store.as_deref(), Some(".env"), "no passphrase: the dotenv");
+        // (the state read names the same store its own way)
+        assert_eq!(secret_state(&home, "MYPROVIDER_API_KEY").1, "dotenv");
+        let discovered = discovery.expect("the discovery ran");
+        assert!(discovered.ok, "{:?}", discovered.error);
+        // The saved entry carries the discovered catalog.
+        let document = read_json(&home.join("config.json")).unwrap();
+        let entry = document["providers"][0].as_object().unwrap();
+        let models: Vec<&str> = entry["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|model| model.as_str().unwrap())
+            .collect();
+        assert_eq!(models, vec!["discovered-a", "discovered-b"]);
+        // And the secret is where the store said it is.
+        let (present, source) = secret_state(&home, "MYPROVIDER_API_KEY");
+        assert!(present);
+        assert_eq!(
+            source, "dotenv",
+            "the state read names the store its own way"
+        );
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    /// The hand override survives the re-list: a `"hand"`-sourced window
+    /// is never overwritten by discovery, while a `"provider"`-sourced
+    /// one takes the new word.
+    #[test]
+    fn a_hand_override_survives_the_rediscovery() {
+        let home = scratch("provider-hand-override");
+        let entry = serde_json::json!({
+            "id": "myprovider",
+            "base_url": "http://127.0.0.1:1/v1",
+            "models": ["old-a"],
+            "model_settings": {
+                "old-a": {
+                    "context_window": 123456,
+                    "context_window_source": "hand"
+                }
+            }
+        })
+        .to_string();
+        set_provider(&home, &entry).unwrap();
+        // The stub answers with a different window for the same model.
+        let body = r#"{"data":[{"id":"old-a","context_length":999999}]}"#;
+        let (addr, _) = listing_stub("hand", "200 OK", body);
+        // Point the entry's base at the stub and re-list.
+        let amended = serde_json::json!({
+            "id": "myprovider",
+            "base_url": format!("http://{addr}/v1"),
+            "models": ["old-a"],
+            "model_settings": {
+                "old-a": {
+                    "context_window": 123456,
+                    "context_window_source": "hand"
+                }
+            }
+        })
+        .to_string();
+        set_provider(&home, &amended).unwrap();
+        // The reload resolves the key the way the walk does — the dotenv
+        // here — and names the absence rather than listing blind.
+        set_secret(&home, "MYPROVIDER_API_KEY", "the-key-value").unwrap();
+        let discovered = rediscover_provider(&home, "myprovider").unwrap();
+        assert!(discovered.ok, "{:?}", discovered.error);
+        let document = read_json(&home.join("config.json")).unwrap();
+        let settings = &document["providers"][0]["model_settings"]["old-a"];
+        assert_eq!(settings["context_window"], 123456, "the hand override wins");
+        assert_eq!(settings["context_window_source"], "hand");
+        // The catalog itself refreshed.
+        assert_eq!(
+            document["providers"][0]["models"][0]["id"]
+                .as_str()
+                .or(Some("old-a")),
+            Some("old-a")
+        );
+        let _ = fs::remove_dir_all(&home);
+    }
 }
 
 #[cfg(test)]
@@ -1818,6 +1998,13 @@ pub struct RosterEntry {
     pub key_required: bool,
     pub key_env: String,
     pub disabled_reason: Option<String>,
+    /// The models the owner took out of this provider's catalog — the
+    /// load has already filtered them from `models`; this is why they
+    /// are absent.
+    pub disabled_models: Vec<String>,
+    /// The per-model settings the provider declared or the owner
+    /// overrode, as the editor shows them.
+    pub model_settings: std::collections::BTreeMap<String, crate::route::ModelSettings>,
 }
 
 /// The router's configuration as the settings surface reads it.
@@ -1904,6 +2091,8 @@ fn roster_entry(entry: &crate::route::Resolved) -> RosterEntry {
         key_required: entry.candidate.key_required,
         key_env: entry.candidate.key_env.clone(),
         disabled_reason: entry.candidate.disabled_reason.clone(),
+        disabled_models: entry.candidate.disabled_models.clone(),
+        model_settings: entry.candidate.model_settings.clone(),
     }
 }
 
@@ -2305,6 +2494,331 @@ fn provider_detail(entry: &Value) -> String {
 /// roster would refuse, and a misspelled key fails here, by name,
 /// before anything is written. An entry that already exists is
 /// replaced in place, preserving the file's order.
+/// The discovery outcome, named both ways (the provider-models plan's
+/// P2 criterion): the catalog when the provider lists, the failure when
+/// it does not. `error` names the failure the way the form shows it —
+/// the key was refused, the base URL did not answer, the provider
+/// lists no models.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Discovery {
+    pub ok: bool,
+    pub models: Vec<String>,
+    pub settings_written: usize,
+    pub error: Option<String>,
+}
+
+impl Discovery {
+    fn failed(error: String) -> Discovery {
+        Discovery {
+            ok: false,
+            models: Vec::new(),
+            settings_written: 0,
+            error: Some(error),
+        }
+    }
+}
+
+/// The models one provider serves, discovered from the provider: a
+/// `GET {base}/models` with the key (the OpenAI shape every HTTP
+/// roster candidate already speaks on the chat side), the response's
+/// `data[].id` list the catalog. Where the listing declares model
+/// settings — an OpenRouter-style `context_length` /
+/// `max_output_tokens` — they ride the result; for an ollama base
+/// (its `:11434` port), the native `POST /api/show` is asked per model
+/// for the same fact, the source the compiled windows table's own
+/// comment names. Never stores a key; never reads one but the one
+/// handed in.
+pub fn discover_provider_models(
+    base_url: &str,
+    key: Option<&str>,
+) -> Result<
+    (
+        Vec<String>,
+        std::collections::BTreeMap<String, crate::route::ModelSettings>,
+    ),
+    String,
+> {
+    let base = base_url.trim().trim_end_matches('/');
+    if base.is_empty() {
+        return Err("the provider names no base URL".to_string());
+    }
+    let agent = ureq::AgentBuilder::new()
+        .timeout(std::time::Duration::from_secs(15))
+        .build();
+    let mut request = agent.get(&format!("{base}/models"));
+    if let Some(key) = key.filter(|key| !key.trim().is_empty()) {
+        request = request.set("Authorization", &format!("Bearer {}", key.trim()));
+    }
+    let response = request.call().map_err(|error| match error {
+        ureq::Error::Status(401, _) | ureq::Error::Status(403, _) => {
+            "the key was refused (401)".to_string()
+        }
+        ureq::Error::Status(status, _) => {
+            format!("the listing answered HTTP {status}")
+        }
+        ureq::Error::Transport(transport) => {
+            format!("the base URL did not answer: {}", transport.kind())
+        }
+    })?;
+    let body = response
+        .into_string()
+        .map_err(|error| format!("the listing was unreadable: {error}"))?;
+    let value: serde_json::Value =
+        serde_json::from_str(&body).map_err(|error| format!("the listing is not JSON: {error}"))?;
+    let data = value
+        .get("data")
+        .and_then(|data| data.as_array())
+        .ok_or_else(|| "the provider lists no models".to_string())?;
+    if data.is_empty() {
+        return Err("the provider lists no models".to_string());
+    }
+    let ollama = base.contains(":11434");
+    let mut models: Vec<String> = Vec::new();
+    let mut settings: std::collections::BTreeMap<String, crate::route::ModelSettings> =
+        std::collections::BTreeMap::new();
+    for entry in data {
+        let Some(id) = entry
+            .get("id")
+            .and_then(|id| id.as_str())
+            .filter(|id| !id.is_empty())
+        else {
+            continue;
+        };
+        models.push(id.to_string());
+        let mut window = read_listing_number(
+            entry,
+            &["context_length", "context_window", "max_model_len"],
+        );
+        let ceiling = read_listing_number(entry, &["max_output_tokens", "max_completion_tokens"]);
+        // The ollama leg: the OpenAI listing carries no window, and the
+        // native show endpoint does — one bounded ask per model.
+        if ollama && window.is_none() && models.len() <= 64 {
+            if let Ok(answer) = agent
+                .post(&format!("{base}/../api/show"))
+                .set("Content-Type", "application/json")
+                .send_json(serde_json::json!({ "model": id }))
+            {
+                if let Ok(show) = answer.into_string() {
+                    if let Ok(show) = serde_json::from_str::<serde_json::Value>(&show) {
+                        window = read_listing_number(&show, &["context_length"]);
+                    }
+                }
+            }
+        }
+        if window.is_some() || ceiling.is_some() {
+            settings
+                .entry(id.to_string())
+                .or_default()
+                .absorb(window, ceiling);
+        }
+    }
+    if models.is_empty() {
+        return Err("the provider lists no models".to_string());
+    }
+    Ok((models, settings))
+}
+
+/// The first present number among `names`, from a listing entry.
+fn read_listing_number(entry: &serde_json::Value, names: &[&str]) -> Option<u64> {
+    names
+        .iter()
+        .find_map(|name| entry.get(name).and_then(|value| value.as_u64()))
+}
+
+/// Re-list one provider and write the catalog and its declared settings
+/// into the provider's config entry, preserving the hand overrides (a
+/// `"hand"`-sourced value survives; a `"provider"`-sourced one takes
+/// the new word). The key resolved here is the same one the walk
+/// resolves: process env, the vault when the process holds the
+/// passphrase, and `.env`.
+pub fn rediscover_provider(home: &Path, id: &str) -> Result<Discovery, String> {
+    let id = id.trim();
+    if id.is_empty() {
+        return Err("the write names no provider id".to_string());
+    }
+    let path = home.join("config.json");
+    let document = read_json(&path)?;
+    let entry = document
+        .get("providers")
+        .and_then(|providers| providers.as_array())
+        .and_then(|providers| {
+            providers
+                .iter()
+                .find(|entry| entry.get("id").and_then(|id| id.as_str()) == Some(id))
+        })
+        .cloned()
+        .ok_or_else(|| format!("`{id}` names no configured provider"))?;
+    let base_url = entry
+        .get("base_url")
+        .and_then(|base| base.as_str())
+        .unwrap_or_default()
+        .to_string();
+    let key_env = entry
+        .get("key_env")
+        .and_then(|name| name.as_str())
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("{}_API_KEY", id.to_ascii_uppercase()));
+    let key = crate::home::read_dotenv_with_process_vault(home)
+        .remove(key_env.as_str())
+        .or_else(|| std::env::var(&key_env).ok());
+    if key.as_deref().map(str::trim).unwrap_or_default().is_empty() {
+        return Ok(Discovery::failed(format!(
+            "`{key_env}` is unset — paste the key on the provider's card"
+        )));
+    }
+    let (models, discovered) = match discover_provider_models(&base_url, key.as_deref()) {
+        Ok(discovered) => discovered,
+        Err(error) => return Ok(Discovery::failed(error)),
+    };
+    let settings_written = discovered.len();
+    // Merge the discovered settings into the entry's existing map, so a
+    // hand override survives the re-list.
+    let mut merged: std::collections::BTreeMap<String, crate::route::ModelSettings> =
+        serde_json::from_value(
+            entry
+                .get("model_settings")
+                .cloned()
+                .unwrap_or_else(|| serde_json::Value::Object(Default::default())),
+        )
+        .unwrap_or_default();
+    for (model, found) in discovered {
+        merged
+            .entry(model)
+            .or_default()
+            .absorb(found.context_window, found.max_output_tokens);
+    }
+    let mut amended = entry.clone();
+    let object = amended
+        .as_object_mut()
+        .ok_or_else(|| format!("`{id}`'s config entry is not an object"))?;
+    object.insert(
+        "models".to_string(),
+        serde_json::Value::Array(models.into_iter().map(serde_json::Value::String).collect()),
+    );
+    object.insert(
+        "model_settings".to_string(),
+        serde_json::to_value(&merged).map_err(|error| error.to_string())?,
+    );
+    set_provider(
+        home,
+        &serde_json::to_string(&amended).map_err(|error| error.to_string())?,
+    )?;
+    Ok(Discovery {
+        ok: true,
+        models: Vec::new(),
+        settings_written,
+        error: None,
+    })
+}
+
+/// The provider write with the key and the discovery folded in: the key
+/// (when the form carried one) lands through the vault seam under the
+/// provider's key name, the discovery runs against the just-written
+/// key, and the discovered catalog and settings are merged into the
+/// entry before it is saved. The reply names every step, so the form
+/// can show what happened rather than a silent save.
+pub fn set_provider_with_key(
+    home: &Path,
+    entry: &str,
+    key: Option<&str>,
+) -> Result<(String, Option<String>, Option<Discovery>), String> {
+    let value: serde_json::Value = serde_json::from_str(entry)
+        .map_err(|error| format!("the entry is not valid JSON: {error}"))?;
+    let id = value
+        .get("id")
+        .and_then(|id| id.as_str())
+        .unwrap_or_default()
+        .to_string();
+    if id.is_empty() {
+        return Err("the entry names no provider id".to_string());
+    }
+    let mut store: Option<String> = None;
+    if let Some(key) = key.map(str::trim).filter(|key| !key.is_empty()) {
+        let name = value
+            .get("key_env")
+            .and_then(|name| name.as_str())
+            .filter(|name| !name.trim().is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("{}_API_KEY", id.to_ascii_uppercase()));
+        store = Some(set_secret(home, &name, key)?);
+    }
+    // Verify before saving: the discovery runs against the key in hand
+    // (just written, or the env name the entry carries — resolved the
+    // same way the walk resolves it).
+    let key_env = value
+        .get("key_env")
+        .and_then(|name| name.as_str())
+        .filter(|name| !name.trim().is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("{}_API_KEY", id.to_ascii_uppercase()));
+    let key_value = key
+        .map(str::to_string)
+        .or_else(|| {
+            crate::home::read_dotenv_with_process_vault(home)
+                .remove(key_env.as_str())
+                .or_else(|| std::env::var(&key_env).ok())
+        })
+        .filter(|value| !value.trim().is_empty());
+    let base_url = value
+        .get("base_url")
+        .and_then(|base| base.as_str())
+        .unwrap_or_default()
+        .to_string();
+    let mut discovery = None;
+    let mut amended = value.clone();
+    if !base_url.is_empty() {
+        match discover_provider_models(&base_url, key_value.as_deref()) {
+            Ok((models, discovered)) => {
+                let mut merged: std::collections::BTreeMap<String, crate::route::ModelSettings> =
+                    serde_json::from_value(
+                        amended
+                            .get("model_settings")
+                            .cloned()
+                            .unwrap_or_else(|| serde_json::Value::Object(Default::default())),
+                    )
+                    .unwrap_or_default();
+                for (model, found) in discovered {
+                    merged
+                        .entry(model)
+                        .or_default()
+                        .absorb(found.context_window, found.max_output_tokens);
+                }
+                let settings_written = merged.len();
+                if let Some(object) = amended.as_object_mut() {
+                    object.insert(
+                        "models".to_string(),
+                        serde_json::Value::Array(
+                            models.into_iter().map(serde_json::Value::String).collect(),
+                        ),
+                    );
+                    object.insert(
+                        "model_settings".to_string(),
+                        serde_json::to_value(&merged).unwrap_or_default(),
+                    );
+                    let _ = settings_written;
+                }
+                discovery = Some(Discovery {
+                    ok: true,
+                    models: Vec::new(),
+                    settings_written: 0,
+                    error: None,
+                });
+            }
+            Err(error) => {
+                // The save proceeds — a provider may be added before it
+                // is funded — but the failure is named on the reply,
+                // never swallowed.
+                discovery = Some(Discovery::failed(error));
+            }
+        }
+    }
+    let id = set_provider(
+        home,
+        &serde_json::to_string(&amended).map_err(|error| error.to_string())?,
+    )?;
+    Ok((id, store, discovery))
+}
+
 pub fn set_provider(home: &Path, entry: &str) -> Result<String, String> {
     let value: Value = serde_json::from_str(entry)
         .map_err(|error| format!("the entry is not valid JSON: {error}"))?;

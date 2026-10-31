@@ -3018,6 +3018,7 @@ async fn compact_command(session_id: Option<&str>, force: bool) -> ExitCode {
         model: &prepared.decision.model,
         messages: &request_messages,
         tools: Vec::new(),
+        max_tokens: None,
     };
     let summary_text = match client.chat_stream(&request, |_| {}).await {
         Ok(response) => response

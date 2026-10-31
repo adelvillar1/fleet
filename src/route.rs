@@ -147,6 +147,64 @@ pub fn context_window(provider: &str, model: &str) -> Option<u64> {
         .map(|(_, _, window)| *window)
 }
 
+/// The context window for one model, with the provider's own
+/// declaration ahead of the compiled table: `model_settings` in
+/// `<home>/config.json` is what discovery wrote (or the owner
+/// overrode), and the compiled `CONTEXT_WINDOWS` stays the fallback for
+/// everything undeclared. `None` when neither names the model — the
+/// compaction floor, the behavior every undeclared model has always
+/// had. Best-effort by design: a config too broken to parse is the
+/// table's answer, the same tolerance the roster's own readers run.
+pub fn declared_window(home: Option<&Path>, provider: &str, model: &str) -> Option<u64> {
+    if let Some(home) = home {
+        if let Some(window) =
+            model_setting(home, provider, model, |settings| settings.context_window)
+        {
+            return Some(window);
+        }
+    }
+    context_window(provider, model)
+}
+
+/// The output ceiling for one model, the same config-first resolution
+/// the window runs. `None` when nothing declares one — and the request
+/// then carries no `max_tokens` field at all, the wire every model has
+/// always had.
+pub fn declared_output(home: Option<&Path>, provider: &str, model: &str) -> Option<u64> {
+    if let Some(home) = home {
+        if let Some(ceiling) =
+            model_setting(home, provider, model, |settings| settings.max_output_tokens)
+        {
+            return Some(ceiling);
+        }
+    }
+    None
+}
+
+/// One model's setting off the home's config, through a field selector.
+fn model_setting<T>(
+    home: &Path,
+    provider: &str,
+    model: &str,
+    read: impl Fn(&ModelSettings) -> Option<T>,
+) -> Option<T> {
+    let text = std::fs::read_to_string(home.join("config.json")).ok()?;
+    let document: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let entry = document
+        .get("providers")?
+        .as_array()?
+        .iter()
+        .find(|entry| entry.get("id").and_then(|id| id.as_str()) == Some(provider))?;
+    let settings = entry
+        .get("model_settings")?
+        .as_object()?
+        .iter()
+        .find(|(key, _)| key.eq_ignore_ascii_case(model))?
+        .1;
+    let settings: ModelSettings = serde_json::from_value(settings.clone()).ok()?;
+    read(&settings)
+}
+
 // --- the roster -------------------------------------------------------------
 
 /// One roster entry: a provider — where it lives, the *name* of the env
@@ -187,6 +245,14 @@ pub struct Candidate {
     /// A named reason when the entry is disabled, so the chain still works
     /// and the reason is visible rather than silent.
     pub disabled_reason: Option<String>,
+    /// The models the owner took out of this provider's catalog. The
+    /// roster load has already filtered them from `models`; the set is
+    /// carried so a surface can name why a model the provider lists is
+    /// not here.
+    pub disabled_models: Vec<String>,
+    /// Per-model settings — the provider's declaration or the owner's
+    /// override — that the window and request builders read.
+    pub model_settings: std::collections::BTreeMap<String, ModelSettings>,
 }
 
 impl Candidate {
@@ -251,6 +317,8 @@ pub fn default_roster() -> Vec<Candidate> {
             enabled: true,
             key_required: true,
             disabled_reason: None,
+            disabled_models: Vec::new(),
+            model_settings: std::collections::BTreeMap::new(),
         },
         Candidate {
             id: "xiaomi-mimo".into(),
@@ -267,6 +335,8 @@ pub fn default_roster() -> Vec<Candidate> {
             enabled: true,
             key_required: true,
             disabled_reason: None,
+            disabled_models: Vec::new(),
+            model_settings: std::collections::BTreeMap::new(),
         },
         Candidate {
             id: "stepfun".into(),
@@ -283,6 +353,8 @@ pub fn default_roster() -> Vec<Candidate> {
             enabled: true,
             key_required: true,
             disabled_reason: None,
+            disabled_models: Vec::new(),
+            model_settings: std::collections::BTreeMap::new(),
         },
         Candidate {
             id: "token-plan".into(),
@@ -295,6 +367,8 @@ pub fn default_roster() -> Vec<Candidate> {
             enabled: true,
             key_required: true,
             disabled_reason: None,
+            disabled_models: Vec::new(),
+            model_settings: std::collections::BTreeMap::new(),
         },
         Candidate {
             id: "deepseek".into(),
@@ -306,6 +380,8 @@ pub fn default_roster() -> Vec<Candidate> {
             enabled: true,
             key_required: true,
             disabled_reason: None,
+            disabled_models: Vec::new(),
+            model_settings: std::collections::BTreeMap::new(),
         },
         // Liquid's own API — the blend1 generative lane's endpoint
         // (lfm2.5-24b-a2b), declared here so the owner's config can pin
@@ -327,6 +403,8 @@ pub fn default_roster() -> Vec<Candidate> {
             enabled: true,
             key_required: true,
             disabled_reason: None,
+            disabled_models: Vec::new(),
+            model_settings: std::collections::BTreeMap::new(),
         },
         // blend1 — the grounding provider: the composed ask (Liquid's
         // hosted lfm 24B synthesizer over the specialized legs sys1 /
@@ -345,6 +423,8 @@ pub fn default_roster() -> Vec<Candidate> {
             enabled: true,
             key_required: false,
             disabled_reason: None,
+            disabled_models: Vec::new(),
+            model_settings: std::collections::BTreeMap::new(),
         },
         // Ollama Cloud: a hosted multimodal reserve, declared for the
         // vision workload. Declared only, like Liquid — the chain order
@@ -361,6 +441,8 @@ pub fn default_roster() -> Vec<Candidate> {
             enabled: true,
             key_required: true,
             disabled_reason: None,
+            disabled_models: Vec::new(),
+            model_settings: std::collections::BTreeMap::new(),
         },
     ]
 }
@@ -526,6 +608,19 @@ pub fn preference_for<'a>(table: &'a [Preference], workload: &str) -> Option<&'a
 /// workload's own). A `routing.json` override of that workload's
 /// candidates governs the walk the same way it governs the judgment's own.
 pub const ORCHESTRATOR_WORKLOAD: &str = "hard";
+
+/// The workload names the sys1 `route` judgment can answer — the closed
+/// set the vendored task's label list carries. A routing.json workload
+/// outside this set is reachable only by a pin or the default-workload
+/// gate, never by judgment, and the settings surface says so.
+pub const JUDGED_WORKLOADS: &[&str] = &[
+    "quick",
+    "standard_code",
+    "frontend",
+    "hard",
+    "prose",
+    "deep_context",
+];
 
 /// What a run's own model is when the router has not answered yet: no
 /// provider's name, the router's word for "the judgment decides". Surfaces
@@ -696,12 +791,64 @@ pub struct ProviderEntry {
     pub key_required: Option<bool>,
     #[serde(default)]
     pub disabled_reason: Option<String>,
+    /// The models the owner took out of the provider's discovered
+    /// catalog. `models` stays the provider's own full list — what
+    /// discovery wrote — so a re-listing refreshes it; the off list is
+    /// the deliberate act, and new models are usable by default.
+    #[serde(default)]
+    pub disabled_models: Option<Vec<String>>,
+    /// Per-model settings the provider declared (or the owner overrode),
+    /// keyed by the model id as the listing spells it.
+    #[serde(default)]
+    pub model_settings: Option<std::collections::BTreeMap<String, ModelSettings>>,
 }
 
 impl ProviderEntry {
     /// This entry's id, the key every merge and every surface addresses.
     pub fn id(&self) -> &str {
         &self.id
+    }
+}
+
+/// One model's auto-configured settings, as discovery wrote them and
+/// the owner may override: the provider's own declaration for what it
+/// names, the owner's word where they have set one. `source` is
+/// `"provider"` when discovery wrote the value and `"hand"` when the
+/// owner did — a later discovery overwrites a `"provider"` value and
+/// never a `"hand"` one (the provider-models plan's precedence rule).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModelSettings {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_window: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_output_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_window_source: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_output_tokens_source: Option<String>,
+}
+
+impl ModelSettings {
+    /// Merge one discovered field in, honouring the hand override: a
+    /// `"hand"`-sourced value survives every later discovery, and a
+    /// `"provider"`-sourced one (or an absence) takes the provider's
+    /// new word.
+    pub fn absorb(&mut self, context_window: Option<u64>, max_output_tokens: Option<u64>) {
+        if context_window.is_some() {
+            let hand = self.context_window_source.as_deref() == Some("hand");
+            if !hand {
+                self.context_window = context_window;
+                self.context_window_source = Some("provider".to_string());
+            }
+        }
+        if max_output_tokens.is_some() {
+            let hand = self.max_output_tokens_source.as_deref() == Some("hand");
+            if !hand {
+                self.max_output_tokens = max_output_tokens;
+                self.max_output_tokens_source = Some("provider".to_string());
+            }
+        }
     }
 }
 
@@ -1020,6 +1167,12 @@ fn merge(
             if let Some(value) = &entry.disabled_reason {
                 existing.disabled_reason = Some(value.clone());
             }
+            if let Some(value) = &entry.disabled_models {
+                existing.disabled_models = value.clone();
+            }
+            if let Some(value) = &entry.model_settings {
+                existing.model_settings = value.clone();
+            }
         } else {
             let models = entry
                 .models
@@ -1036,6 +1189,8 @@ fn merge(
                     enabled: entry.enabled.unwrap_or(true),
                     key_required: entry.key_required.unwrap_or(true),
                     disabled_reason: entry.disabled_reason.clone(),
+                    disabled_models: entry.disabled_models.clone().unwrap_or_default(),
+                    model_settings: entry.model_settings.clone().unwrap_or_default(),
                 }),
                 _ => {
                     return Err(ConfigError::BadEntry(format!(
@@ -1047,6 +1202,19 @@ fn merge(
                 }
             }
         }
+    }
+    // The off list is the roster load's last word: a disabled model
+    // leaves every candidate's model list here, so no walk, pin, or
+    // picker names it again (the provider-models plan's P3). The set is
+    // carried on the candidate so a surface can name why a model the
+    // provider lists is absent.
+    for candidate in &mut candidates {
+        if candidate.disabled_models.is_empty() {
+            continue;
+        }
+        let off: std::collections::BTreeSet<String> =
+            candidate.disabled_models.iter().cloned().collect();
+        candidate.models.retain(|model| !off.contains(model));
     }
     // An empty pin is no pin. The settings surface writes an empty value to
     // mean "auto", and a hand-written `"pin": ""` must read the same way —
@@ -2682,12 +2850,13 @@ impl Router {
         let model = self.models[position].clone();
         match &self.endpoints[index] {
             Endpoint::Http(client) => {
+                let streamed = Arc::new(AtomicBool::new(false));
                 let routed = ChatRequest {
                     model: &model,
                     messages: request.messages,
                     tools: request.tools.clone(),
+                    max_tokens: None,
                 };
-                let streamed = Arc::new(AtomicBool::new(false));
                 let flag = Arc::clone(&streamed);
                 let result = client
                     .chat_stream_plain(&routed, |event| {
@@ -3230,6 +3399,76 @@ mod tests {
 
     // --- the context windows ---
 
+    /// A roster home with one config entry, for the merge's own tests.
+    fn roster_config_home(tag: &str, providers: serde_json::Value) -> std::path::PathBuf {
+        let home = std::env::temp_dir().join(format!("fleet-route-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::write(
+            home.join("config.json"),
+            serde_json::to_string(&serde_json::json!({ "providers": [providers] })).unwrap(),
+        )
+        .unwrap();
+        home
+    }
+
+    /// The provider-models plan's P3: the off list is the roster load's
+    /// last word — a disabled model leaves every candidate's list, so no
+    /// walk, pin, or picker names it again.
+    #[test]
+    fn a_disabled_model_leaves_the_roster_at_the_load() {
+        let home = roster_config_home(
+            "disabled-models",
+            serde_json::json!({
+                "id": "stepfun",
+                "models": ["step-3.7-flash", "step-3.5-flash"],
+                "disabled_models": ["step-3.5-flash"]
+            }),
+        );
+        let roster = load_roster(&home).unwrap();
+        let stepfun = roster
+            .candidates
+            .iter()
+            .find(|candidate| candidate.id == "stepfun")
+            .unwrap();
+        assert_eq!(stepfun.models, vec!["step-3.7-flash"]);
+        assert_eq!(stepfun.disabled_models, vec!["step-3.5-flash"]);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// The plan's P6: the provider's own declaration outranks the
+    /// compiled table, and the compiled table stays the fallback for
+    /// everything undeclared.
+    #[test]
+    fn the_declared_window_resolves_config_first() {
+        let home = roster_config_home(
+            "declared-window",
+            serde_json::json!({
+                "id": "stepfun",
+                "model_settings": {
+                    "step-3.7-flash": { "context_window": 777_777 }
+                }
+            }),
+        );
+        // Config over the table: step-3.7-flash is declared in both.
+        assert_eq!(
+            declared_window(Some(&home), "stepfun", "step-3.7-flash"),
+            Some(777_777)
+        );
+        // The table is the fallback: step-5-preview is declared only
+        // there.
+        assert_eq!(
+            declared_window(Some(&home), "stepfun", "step-5-preview"),
+            Some(1_024_000)
+        );
+        // And neither names it: None, the compaction floor's input.
+        assert_eq!(
+            declared_window(Some(&home), "stepfun", "no-such-model"),
+            None
+        );
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
     /// KI-045: the pre-flight names every key a keyless machine would
     /// need, and passes when one candidate resolves. The names are the
     /// roster's own, sorted and deduped, so the owner sees the whole
@@ -3733,6 +3972,8 @@ mod tests {
                     enabled: true,
                     key_required: false,
                     disabled_reason: None,
+                    disabled_models: Vec::new(),
+                    model_settings: std::collections::BTreeMap::new(),
                 },
                 key: None,
             },
@@ -3747,6 +3988,8 @@ mod tests {
                     enabled: true,
                     key_required: true,
                     disabled_reason: None,
+                    disabled_models: Vec::new(),
+                    model_settings: std::collections::BTreeMap::new(),
                 },
                 key: None,
             },
@@ -4152,6 +4395,8 @@ mod tests {
                 enabled: true,
                 key_required: false,
                 disabled_reason: None,
+                disabled_models: Vec::new(),
+                model_settings: std::collections::BTreeMap::new(),
             },
             key: None,
         }
@@ -4490,6 +4735,8 @@ mod tests {
                 enabled: true,
                 key_required: false,
                 disabled_reason: None,
+                disabled_models: Vec::new(),
+                model_settings: std::collections::BTreeMap::new(),
             },
             key: None,
         }
@@ -4716,8 +4963,9 @@ mod tests {
             model: "stepfun-model",
             messages: std::slice::from_ref(&message),
             tools: Vec::new(),
+            max_tokens: None,
         };
-        // The endpoint is a closed loopback port: the attempt fails
+        // A closed loopback port: the attempt fails
         // fast, the walk does not advance (committed), and the record
         // is what this test is about.
         let outcome = router.chat_stream(&request, &mut |_| {}).await;

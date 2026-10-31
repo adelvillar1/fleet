@@ -2112,6 +2112,20 @@ impl Bridge {
                 },
             }));
         }
+        // The provider ops answer with a structured document — the
+        // discovery's named outcome rides the reply — and the discovery
+        // itself is blocking HTTP, so they run on the blocking worker
+        // and return before the string-shaped writer below.
+        if op == "provider" || op == "provider-discover" {
+            let op_for_reply = op.clone();
+            let home = home.clone();
+            let wrote = tokio::task::spawn_blocking(move || {
+                settings_provider_write(&home, &op, &arguments)
+            })
+            .await
+            .map_err(|_| "the settings write did not land".to_string())??;
+            return Ok(json!({ "type": "settings_write", "op": op_for_reply, "wrote": wrote }));
+        }
         // The write runs off the async worker: every one of these is a
         // file write, and a page request must not hold the runtime
         // while the disk answers.
@@ -2794,6 +2808,7 @@ impl Bridge {
                     model: &model,
                     messages: &messages,
                     tools: Vec::new(),
+                    max_tokens: None,
                 };
                 let mut sink = |_: crate::api::StreamEvent| {};
                 client
@@ -3091,6 +3106,7 @@ impl Bridge {
                             model: "",
                             messages: &messages,
                             tools: Vec::new(),
+                            max_tokens: None,
                         },
                         |event| {
                             if let crate::api::StreamEvent::Content(chunk) = event {
@@ -6624,6 +6640,7 @@ fn router_document(config: &crate::settings::RouterConfig) -> Value {
         "default_workload": config.default_workload,
         "pin": config.pin,
         "orchestrator": config.orchestrator,
+        "judged": crate::route::JUDGED_WORKLOADS,
         "tiers": config.tiers.iter().map(|tier| json!({
             "workload": tier.workload,
             "candidates": tier.candidates,
@@ -6642,6 +6659,8 @@ fn router_document(config: &crate::settings::RouterConfig) -> Value {
             "key_required": entry.key_required,
             "key_env": entry.key_env,
             "disabled_reason": entry.disabled_reason,
+            "disabled_models": entry.disabled_models,
+            "model_settings": entry.model_settings,
         })).collect::<Vec<_>>(),
         "refused": config.refused,
     })
@@ -6665,6 +6684,11 @@ fn catalog_document(catalog: &crate::settings::Catalog) -> Value {
             "billing": entry.billing,
             "enabled": entry.enabled,
             "key_present": entry.key_present,
+            "key_env": entry.key_env,
+            "disabled_reason": entry.disabled_reason,
+            "models": entry.models,
+            "disabled_models": entry.disabled_models,
+            "model_settings": entry.model_settings,
         })).collect::<Vec<_>>(),
         "workloads": catalog.workloads,
         "env_names": catalog.env_names.iter().map(|name| json!({
@@ -6835,6 +6859,54 @@ fn scan_document(home: &std::path::Path) -> Value {
 /// and it rides `allow_tool` through a synthesized call, so every class
 /// check (the always-ask and destructive classes, the empty-rule
 /// refusal) is the seat's own and not a second implementation of it.
+/// The two provider writes that answer with a document: the save with
+/// its key and discovery folded in, and the reload. The value never
+/// rides a reply — `key_store` names where it landed, `discovery`
+/// names what listing said.
+fn settings_provider_write(
+    home: &std::path::Path,
+    op: &str,
+    arguments: &serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let text = |key: &str| {
+        arguments
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+            .ok_or_else(|| format!("the write names its {key}"))
+    };
+    match op {
+        "provider" => {
+            let entry = text("entry")?;
+            let key = arguments
+                .get("key")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string);
+            let (id, store, discovery) =
+                crate::settings::set_provider_with_key(home, &entry, key.as_deref())?;
+            Ok(json!({
+                "id": id,
+                "key_store": store,
+                "discovery": discovery.map(|discovered| json!({
+                    "ok": discovered.ok,
+                    "error": discovered.error,
+                })),
+            }))
+        }
+        "provider-discover" => {
+            let id = text("id")?;
+            let discovered = crate::settings::rediscover_provider(home, &id)?;
+            Ok(json!({
+                "id": id,
+                "ok": discovered.ok,
+                "error": discovered.error,
+                "settings_written": discovered.settings_written,
+            }))
+        }
+        _ => Err(format!("`{op}` is not a provider write")),
+    }
+}
+
 fn settings_apply(
     home: &std::path::Path,
     op: &str,
@@ -6866,10 +6938,6 @@ fn settings_apply(
             let value = text("value")?;
             crate::settings::set(home, &key, &value)?;
             Ok(key)
-        }
-        "provider" => {
-            let entry = text("entry")?;
-            crate::settings::set_provider(home, &entry)
         }
         "provider-remove" => {
             let id = text("id")?;

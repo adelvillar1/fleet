@@ -2455,10 +2455,23 @@ impl<'a> Agent<'a> {
             // the rest of the run — and because they are dynamic, each
             // join is recorded in the log as `lane_tools`, so the request
             // the model saw stays reconstructable.
+            // The output ceiling rides only when the serving model's
+            // provider declared one (the provider-models plan's P7): the
+            // route is what the request reaches, so the ceiling is read
+            // off the committed decision, the same seam the compaction
+            // window reads.
+            let max_tokens = self.dialer().route_decision().and_then(|decision| {
+                crate::route::declared_output(
+                    self.options.improve_home.as_deref(),
+                    &decision.provider,
+                    &decision.model,
+                )
+            });
             let request = ChatRequest {
                 model: &self.options.model,
                 messages: &request_messages,
                 tools: self.declarations(),
+                max_tokens,
             };
             // A field-level borrow, not a method: the turn holds the
             // client while lending its progress sink mutably, and only
@@ -2780,9 +2793,12 @@ impl<'a> Agent<'a> {
     }
 
     fn serving_window(&self) -> Option<u64> {
-        self.dialer()
-            .route_decision()
-            .and_then(|decision| crate::route::context_window(&decision.provider, &decision.model))
+        let decision = self.dialer().route_decision()?;
+        crate::route::declared_window(
+            self.options.improve_home.as_deref(),
+            &decision.provider,
+            &decision.model,
+        )
     }
 
     /// Summarize-and-continue: one request through this run's own client
@@ -2848,6 +2864,7 @@ impl<'a> Agent<'a> {
             model: &self.options.model,
             messages: &request_messages,
             tools: Vec::new(),
+            max_tokens: None,
         };
         // The deltas are transport, not content: the summary arrives whole
         // in the response, and streaming it to the progress sink would
@@ -4997,6 +5014,7 @@ async fn run_work(work: Work) -> (String, bool) {
                 model: "",
                 messages: &messages,
                 tools: Vec::new(),
+                max_tokens: None,
             });
             (
                 match outcome {

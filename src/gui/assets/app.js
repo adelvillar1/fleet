@@ -14908,43 +14908,114 @@
     ];
   }
 
-  /// One workload tier's card: the target, the fallbacks, and the add.
+  /// One workload tier's card: the primary, the secondaries in walk
+  /// order, and the assignment. `routing.json`'s ordered candidate list
+  /// IS the walk order, so primary is the head and secondary is the
+  /// rest — the surface says so instead of making the owner infer
+  /// the roles from list position.
   function tierSections(read, tier) {
+    var judged = ((read.router && read.router.judged) || read.judged || [])
+      .indexOf(tier.workload) !== -1;
+    var chain = (tier.candidates || []).slice();
     var options = cfgModelOptions ? cfgModelOptions() : [];
-    var target = cfgSelect(tier.resolved || (tier.candidates || [])[0] || '', options,
-      'the tier target');
-    var save = cfgCardActs([{
-      label: 'save the tier', primary: true, run: function () {
-        var rest = (tier.candidates || []).filter(function (one) {
-          return one !== (tier.resolved || tier.candidates[0]);
+    var primary = cfgSelect(chain[0] || '', options, 'the ' + tier.workload + ' primary');
+    var secondaries = node('div', 'cfg-list-rows');
+    function paintSecondary() {
+      secondaries.innerHTML = '';
+      chain.slice(1).forEach(function (candidate, index) {
+        var row = node('div', 'cfg-fallback');
+        row.appendChild(node('span', 'cfg-item-value', candidate));
+        row.appendChild(node('span', 'cfg-item-mark', 'secondary'));
+        var up = node('button', 'replay-button', '\u2191');
+        up.type = 'button';
+        up.setAttribute('aria-label', 'raise ' + candidate);
+        up.addEventListener('click', function () {
+          if (index === 0) {
+            // Raising the first secondary swaps it with the primary.
+            chain = [candidate, chain[0]].concat(chain.slice(2));
+            primary.value = candidate;
+          } else {
+            var held = chain[index + 1];
+            chain[index + 1] = chain[index];
+            chain[index] = held;
+          }
+          paintSecondary();
         });
+        row.appendChild(up);
+        var down = node('button', 'replay-button', '\u2193');
+        down.type = 'button';
+        down.setAttribute('aria-label', 'lower ' + candidate);
+        down.addEventListener('click', function () {
+          if (index + 2 < chain.length) {
+            var held = chain[index + 2];
+            chain[index + 2] = chain[index + 1];
+            chain[index + 1] = held;
+          } else {
+            return;
+          }
+          paintSecondary();
+        });
+        row.appendChild(down);
+        var drop = node('button', 'replay-button', 'remove');
+        drop.type = 'button';
+        drop.setAttribute('aria-label', 'remove ' + candidate);
+        drop.addEventListener('click', function () {
+          chain = chain.filter(function (one) { return one !== candidate; });
+          paintSecondary();
+        });
+        row.appendChild(drop);
+        secondaries.appendChild(row);
+      });
+      if (!secondaries.children.length) {
+        secondaries.appendChild(node('p', 'board-empty',
+          'No secondary: this workload walks its primary alone, then the declared last resort.'));
+      }
+    }
+    paintSecondary();
+    var addPicker = cfgSelect('', options, 'add a secondary to ' + tier.workload);
+    var add = node('button', 'replay-button', 'add secondary');
+    add.type = 'button';
+    add.dataset.act = 'add-secondary';
+    add.addEventListener('click', function () {
+      if (!addPicker.value || chain.indexOf(addPicker.value) !== -1) return;
+      chain.push(addPicker.value);
+      paintSecondary();
+    });
+    var save = cfgCardActs([{
+      label: 'save the workload', primary: true, run: function () {
+        var ordered = [primary.value].concat(chain.slice(1).filter(function (one) {
+          return one !== primary.value;
+        }));
         writeSettings('workload', {
           workload: tier.workload,
-          candidates: [target.value].concat(rest)
-        }, function () { notice('the tier is saved', tier.workload); });
+          candidates: ordered
+        }, function () { notice('the workload is saved', tier.workload); });
       }
     }]);
-    var fallbacks = node('div', 'cfg-list-rows');
-    (tier.candidates || []).slice(1).forEach(function (candidate) {
-      var row = node('div', 'cfg-fallback');
-      row.appendChild(node('span', 'cfg-item-value', candidate));
-      row.appendChild(node('span', 'cfg-item-mark', 'fallback'));
-      fallbacks.appendChild(row);
-    });
-    if (!fallbacks.children.length) {
-      fallbacks.appendChild(node('p', 'board-empty', 'No fallback: this tier walks one candidate.'));
-    }
     return [
-      ['the target', target],
-      ['the fallbacks, in order', fallbacks],
+      [judged ? 'the primary \u2014 the walk tries it first' :
+        'the primary (this name is outside the judged set \u2014 it serves by pin or the default gate only)',
+        primary],
+      ['the secondaries, in walk order', secondaries],
+      ['add a secondary', (function () {
+        var holder = node('div', 'cfg-inline');
+        holder.appendChild(addPicker);
+        holder.appendChild(add);
+        return holder;
+      })()],
       ['the write', save],
       ['what it costs', node('p', 'derivation',
-        'the tier names the first candidate a walk tries; the fallbacks follow in order and ' +
-        'the declared last resort closes the walk.')]
+        judged
+          ? 'the primary is what a judged ' + tier.workload + ' walk tries; the secondaries follow in order and the declared last resort closes the walk.'
+          : 'this name is not one the router\u2019s judgment answers; it serves a run only when the owner pins it or it is the default workload.')]
     ];
   }
 
-  /// One provider's card: the endpoint, the models, the key state.
+  /// One provider's card: the key, the discovered catalog with its
+  /// toggles and declared settings, the reload, and the endpoint. The
+  /// read's own shapes carry everything: `models` is the enabled list,
+  /// `disabled_models` the off list, `model_settings` the provider's
+  /// declaration beside the owner's overrides.
   function providerSections(read, provider, override) {
     var detail = (override && override.detail) || '';
     var base = node('input', 'knob-box');
@@ -14952,17 +15023,43 @@
     base.value = detail;
     base.placeholder = 'the provider\u2019s own endpoint, when it overrides the compiled one';
     base.setAttribute('aria-label', 'the endpoint');
+    var key = node('input', 'knob-box');
+    key.type = 'password';
+    key.placeholder = 'paste the key \u2014 it is stored, never shown';
+    key.setAttribute('aria-label', 'the ' + provider.id + ' key');
+    var disabled = (provider.disabled_models || []).slice();
+    var catalog = (provider.models || []).filter(function (model) {
+      // The read's `models` is the enabled list and `disabled_models`
+      // the off list; a model named in both arrives once.
+      return disabled.indexOf(model) === -1;
+    }).concat(disabled);
+    var declared = provider.model_settings || {};
+    var catalogRows = node('div', 'cfg-list-rows');
     var save = cfgCardActs([{
-      label: 'save the endpoint', primary: true, run: function () {
-        writeSettings('provider', {
+      label: 'save the provider', primary: true, run: function () {
+        var body = {
           entry: JSON.stringify({
             id: provider.id,
             base_url: base.value.trim(),
-            key_env: '',
-            models: [],
-            enabled: provider.enabled
+            key_env: provider.key_env || '',
+            models: provider.models || [],
+            disabled_models: disabled,
+            model_settings: declared,
+            enabled: provider.enabled,
+            key_required: provider.key_required !== false
           })
-        }, function () { notice('the provider is saved', provider.id); });
+        };
+        if (key.value.trim()) body.key = key.value.trim();
+        writeSettings('provider', body, function (reply) {
+          var wrote = reply && reply.wrote;
+          if (wrote && wrote.discovery && !wrote.discovery.ok && wrote.discovery.error) {
+            notice(wrote.discovery.error, provider.id);
+          } else if (wrote && wrote.key_store) {
+            notice('the key landed in ' + wrote.key_store, provider.id);
+          } else {
+            notice('the provider is saved', provider.id);
+          }
+        });
       }
     }, {
       label: provider.enabled ? 'disable it' : 'enable it', run: function () {
@@ -14970,8 +15067,8 @@
           entry: JSON.stringify({
             id: provider.id,
             base_url: detail,
-            key_env: '',
-            models: [],
+            key_env: provider.key_env || '',
+            models: provider.models || [],
             enabled: !provider.enabled
           })
         }, function () { notice('the provider is ' +
@@ -14985,15 +15082,66 @@
         });
       }
     }]);
+    var acts = node('div', 'cfg-card-acts');
+    var reload = node('button', 'replay-button', 'reload models');
+    reload.type = 'button';
+    reload.dataset.act = 'provider-discover';
+    reload.addEventListener('click', function () {
+      writeSettings('provider-discover', { id: provider.id }, function (reply) {
+        var wrote = reply && reply.wrote;
+        if (wrote && wrote.ok) {
+          notice('the catalog is reloaded' +
+            (wrote.settings_written ? ' \u00b7 ' + wrote.settings_written + ' models with declared settings' : ''),
+            provider.id);
+        } else {
+          notice(wrote && wrote.error ? wrote.error : 'the reload did not answer', provider.id);
+        }
+      });
+    });
+    acts.appendChild(reload);
+    if (catalog.length) {
+      catalog.forEach(function (model) {
+        var isOff = disabled.indexOf(model) !== -1;
+        var row = node('div', 'cfg-fallback');
+        var toggle = cfgSwitch(model, !isOff, function () { }, null);
+        toggle.querySelector('input').addEventListener('change', function () {
+          if (toggle.querySelector('input').checked) {
+            disabled = disabled.filter(function (one) { return one !== model; });
+          } else if (disabled.indexOf(model) === -1) {
+            disabled.push(model);
+          }
+        });
+        row.appendChild(toggle);
+        var meta = declared[model];
+        if (meta && (meta.context_window || meta.max_output_tokens)) {
+          var bits = [];
+          if (meta.context_window) {
+            bits.push('window ' + meta.context_window +
+              (meta.context_window_source === 'hand' ? ' (hand-set)' : ' (from the provider)'));
+          }
+          if (meta.max_output_tokens) {
+            bits.push('output ' + meta.max_output_tokens +
+              (meta.max_output_tokens_source === 'hand' ? ' (hand-set)' : ' (from the provider)'));
+          }
+          row.appendChild(node('span', 'cfg-item-mark', bits.join(' \u00b7 ')));
+        } else {
+          row.appendChild(node('span', 'cfg-item-mark', isOff ? 'off' : ''));
+        }
+        catalogRows.appendChild(row);
+      });
+    } else {
+      catalogRows.appendChild(node('p', 'board-empty',
+        'No models yet \u2014 paste the key and reload to discover the provider\u2019s own list.'));
+    }
     return [
       ['the account', node('p', 'derivation',
         provider.id + ' \u00b7 ' + provider.billing + ' \u00b7 ' + provider.kind +
         (provider.key_present ? ' \u00b7 a key resolves' : ' \u00b7 no key resolves'))],
+      ['the key', key],
       ['the endpoint', base],
-      ['the write', save],
-      ['the models', node('p', 'derivation',
-        'the roster\u2019s own models for this provider are ordered in the router\u2019s ' +
-        'table; a pin here is the router card\u2019s business.')]
+      ['the models this provider serves', catalogRows],
+      ['the reload', acts],
+      ['the write', save]
     ];
   }
 
@@ -15825,100 +15973,6 @@
   }
 
   // --------------------------------------------------------- the providers
-
-  function providersCard() {
-    var card = boardCard(12, 'the providers', null,
-      'The roster the router walks. Each field is seeded from the roster; the key env is a ' +
-      'name, never a value, and a provider with no override is the compiled-in entry.');
-    card.id = 'settings-providers';
-    var roster = (face.settings.router && face.settings.router.roster) || [];
-    var overrides = {};
-    (face.settings.lists || []).forEach(function (entry) {
-      if (entry.kind === 'provider') overrides[entry.key] = entry;
-    });
-    roster.forEach(function (entry) {
-      card.appendChild(providerEditor(entry, overrides[entry.id]));
-    });
-    card.appendChild(providerAddForm());
-    return card;
-  }
-
-  function providerEditor(entry, override) {
-    var form = node('div', 'cfg-form');
-    var head = node('div', 'cfg-form-head');
-    head.appendChild(node('span', 'list-row-key', entry.id));
-    head.appendChild(badge(entry.kind, null));
-    head.appendChild(badge(entry.billing, entry.billing === 'payg' ? 'warn' : null));
-    head.appendChild(badge(entry.enabled ? 'enabled' : 'disabled', entry.enabled ? 'ok' : 'warn'));
-    head.appendChild(badge(entry.key_present ? 'key present' : (entry.key_required ? 'no key' : 'no key needed'),
-      entry.key_present || !entry.key_required ? 'ok' : 'warn'));
-    form.appendChild(head);
-
-    var grid = node('div', 'cfg-grid');
-    var base = cfgCombo(entry.base_url, [], entry.id + ' base url');
-    grid.appendChild(cfgField('base url', base));
-    var keyEnv = cfgCombo(entry.key_env, cfgEnvNames().map(function (name) {
-      return { value: name.name, label: name.name + (name.present ? ' \u00b7 ' + name.source : ' \u00b7 unset') };
-    }), entry.id + ' key env');
-    grid.appendChild(cfgField('key env', keyEnv, 'a name; the value never rides this page.'));
-    var models = cfgChips(entry.models || [], [], false, null, entry.id + ' models');
-    grid.appendChild(cfgField('models', models, 'the model ids this provider serves.'));
-    var billing = cfgSelect(entry.billing, ['plan', 'payg'], entry.id + ' billing');
-    grid.appendChild(cfgField('billing', billing));
-    var kind = cfgSelect(entry.kind, ['http', 'lane'], entry.id + ' kind');
-    grid.appendChild(cfgField('kind', kind));
-    form.appendChild(grid);
-
-    var switches = node('div', 'cfg-inline');
-    var enabled = cfgSwitch('enabled', entry.enabled, function () { }, null);
-    var keyRequired = cfgSwitch('key required', entry.key_required, function () { }, null);
-    switches.appendChild(enabled);
-    switches.appendChild(keyRequired);
-    form.appendChild(switches);
-    var reason = cfgCombo(entry.disabled_reason || '', [], entry.id + ' disabled reason');
-    form.appendChild(cfgField('disabled reason', reason, 'shown when the provider is off.'));
-
-    var actions = node('div', 'replay-actions');
-    var save = node('button', 'replay-button replay-resume', 'save');
-    save.type = 'button';
-    save.dataset.act = 'save-provider';
-    save.addEventListener('click', function () {
-      var payload = {
-        id: entry.id,
-        base_url: base.input.value.trim(),
-        key_env: keyEnv.input.value.trim(),
-        models: models.values(),
-        billing: billing.value,
-        kind: kind.value,
-        enabled: enabled.querySelector('input').checked,
-        key_required: keyRequired.querySelector('input').checked
-      };
-      var said = reason.input.value.trim();
-      if (said) payload.disabled_reason = said;
-      writeSettings('provider', { entry: JSON.stringify(payload) });
-    });
-    actions.appendChild(save);
-    var pin = node('button', 'replay-button', 'pin this provider');
-    pin.type = 'button';
-    pin.addEventListener('click', function () {
-      writeSettings('set', { key: 'pin', value: entry.id });
-    });
-    actions.appendChild(pin);
-    if (override) {
-      var remove = node('button', 'replay-button',
-        override.reverts ? 'remove the override' : 'remove \u2014 takes it out of every walk');
-      remove.type = 'button';
-      remove.addEventListener('click', function () {
-        if (!override.reverts && !window.confirm(
-          '`' + entry.id + '` was added by this home. Removing it takes the provider out of ' +
-          'every walk that names it. Do it anyway?')) return;
-        writeSettings('provider-remove', { id: entry.id, force: !override.reverts });
-      });
-      actions.appendChild(remove);
-    }
-    form.appendChild(actions);
-    return form;
-  }
 
   function providerAddForm() {
     var form = node('div', 'cfg-form');

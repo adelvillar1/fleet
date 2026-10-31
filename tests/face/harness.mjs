@@ -699,6 +699,9 @@ function boot(options) {
     },
     fireOn(id, kind, event) { IDS[id].fire(kind, event || {}); },
     text: (id) => (IDS[id] ? IDS[id].textContent : ''),
+    // The registered element itself: the pane's contents live in it, and
+    // a card-level query needs the element, not its text.
+    el: (id) => IDS[id] || null,
     rows: (sel) => documentElement.querySelectorAll(sel),
     clipboardWrites,
     // The timers the page armed (KI-380's beat watch) and the harness's
@@ -3910,11 +3913,24 @@ async function theSettingsRailCarriesOneSectionAtATime() {
       { name: 'FLEET_JUDGE_BUDGET_USD_DAY', present: true, source: 'env' }],
     cron: [{ name: 'nightly', schedule: '0 3 * * *', task: 'sweep', enabled: true }],
     soul: { present: false, text: '' },
-    router: { pin: '', tiers: [{ workload: 'quick', candidates: ['a/one', 'b/two'],
-      resolved: 'a/one', reverts: false }], min_confidence: 0.5, default_workload: 'quick',
-      allow_api_models: false },
+    router: { pin: '', judged: ['quick', 'standard_code', 'frontend', 'hard', 'prose',
+      'deep_context'],
+      tiers: [{ workload: 'quick', candidates: ['a/one', 'b/two'],
+      resolved: 'a/one', reverts: false },
+      { workload: 'unjudged-shape', candidates: ['a/one'], resolved: 'a/one', reverts: false }],
+      min_confidence: 0.5, default_workload: 'quick',
+      allow_api_models: false,
+      roster: [{ id: 'alpha', base_url: 'http://127.0.0.1:9/v1', models: ['m-one', 'm-two'],
+        kind: 'http', billing: 'plan', enabled: true, key_present: true,
+        key_required: true, key_env: 'ALPHA_API_KEY', disabled_reason: null,
+        disabled_models: ['m-two'],
+        model_settings: { 'm-one': { context_window: 262144,
+          context_window_source: 'provider' } } }] },
     catalog: { providers: [{ id: 'alpha', kind: 'http', billing: 'plan', enabled: true,
-      key_present: true }] },
+      key_present: true, key_env: 'ALPHA_API_KEY', disabled_reason: null,
+      models: ['m-one', 'm-two'], disabled_models: ['m-two'],
+      model_settings: { 'm-one': { context_window: 262144,
+        context_window_source: 'provider' } } }] },
     roles: { dir: '/tmp', entries: [{ name: 'tower', description: 'runs it', tools: ['bash'],
       skills: ['s1'], shapes: [], path: '/tmp/tower.md', broken: false, overlay: false }] },
     vault: { names: [] },
@@ -4000,6 +4016,89 @@ async function theSettingsRailCarriesOneSectionAtATime() {
   check('SET the write keeps one section on the board',
     page.rows('.section-body').length === 1 && page.rows('.cfg-item').length === before,
     page.rows('.section-body').length + ' / ' + page.rows('.cfg-item').length);
+
+  // PM (the provider-models plan): the provider card carries the key
+  // field, the catalog rows with their toggles and declared settings,
+  // and the reload; the tier card names primary and secondary.
+  const providers = bootSettings('#/settings/models');
+  await flush();
+  providers.open();
+  await flush(80);
+  const providerRow = providers.rows('.cfg-item').find((row) =>
+    row.dataset.kind === 'provider' && row.textContent.includes('alpha'));
+  check('PM the provider row renders in the models section', !!providerRow,
+    String(!!providerRow));
+  let openError = null;
+  try {
+    providerRow.click();
+  } catch (error) {
+    openError = error && error.stack ? error.stack : String(error);
+  }
+  await flush(60);
+  const pane = providers.el('dock-object-body');
+  check('PM the provider card opens in the pane', !!pane && !openError,
+    openError || (pane ? pane.textContent.slice(0, 80) : 'no pane'));
+  const keyField = pane.find((one) => one.name === 'input' && one.type === 'password')[0] || null;
+  check('PM the key field is a write-only password input',
+    !!keyField && keyField.placeholder.includes('never shown'),
+    keyField ? keyField.placeholder : 'no field');
+  const catalogRows = pane.find((one) => one.className === 'cfg-fallback');
+  check('PM the catalog lists the enabled model and the off one',
+    catalogRows.length === 2 &&
+      catalogRows[0].textContent.includes('m-one') &&
+      catalogRows[1].textContent.includes('m-two') &&
+      catalogRows[0].textContent.includes('window 262144') &&
+      catalogRows[0].textContent.includes('from the provider') &&
+      catalogRows[1].textContent.includes('off'),
+    catalogRows.map((r) => r.textContent).join(' | '));
+  const toggles = pane.find((one) => one.className === 'cfg-switch')
+    .map((one) => one.children.find((child) => child.name === 'input'))
+    .filter(Boolean);
+  check('PM each catalog row carries its enable toggle',
+    toggles.length >= 2 && toggles[0].checked && !toggles[1].checked,
+    String(toggles.length));
+  const reload = pane.find((one) => one.name === 'button' &&
+    String(one.textContent || '').includes('reload models'))[0];
+  check('PM the reload action is on the card', !!reload, String(!!reload));
+  if (reload) reload.click();
+  await flush(60);
+  const discoverWrites = providers.calls.filter((c) => c.method === 'POST' &&
+    c.url === '/api/settings' && String(c.body).includes('"op":"provider-discover"'));
+  check('PM the reload writes through the one writer',
+    discoverWrites.length === 1, JSON.stringify(discoverWrites.map((c) => c.body)));
+
+  const tierCard = bootSettings('#/settings');
+  await flush();
+  tierCard.open();
+  await flush(80);
+  const quickRow = tierCard.rows('.cfg-item').find((row) => row.dataset.kind === 'tier' &&
+    row.dataset.item === 'tier:quick');
+  check('PM the tier row renders', !!quickRow, String(!!quickRow));
+  quickRow.click();
+  await flush(60);
+  const tierPane = tierCard.el('dock-object-body');
+  const tierText = tierPane ? tierPane.textContent : '';
+  check('PM the tier card names the primary and the secondary',
+    tierText.includes('the primary \u2014 the walk tries it first') &&
+      tierText.includes('secondary'),
+    tierText.slice(0, 200));
+  const secondaryRows = tierPane ? tierPane.find((one) => one.className === 'cfg-fallback') : [];
+  check('PM the secondaries carry reorder and remove controls',
+    secondaryRows.length >= 1 &&
+      secondaryRows[0].querySelectorAll('.replay-button').length >= 3,
+    String(secondaryRows.length));
+  tierCard.fireOn('dock-object-close', 'click');
+  await flush(40);
+  const unjudgedRow = tierCard.rows('.cfg-item').find((row) =>
+    row.dataset.item === 'tier:unjudged-shape');
+  check('PM the unjudged tier row exists', !!unjudgedRow, String(!!unjudgedRow));
+  if (unjudgedRow) unjudgedRow.click();
+  await flush(60);
+  const unjudgedPane = tierCard.el('dock-object-body');
+  const unjudgedText = unjudgedPane ? unjudgedPane.textContent : '';
+  check('PM a workload outside the judged set is marked unjudged, with the reason',
+    unjudgedText.includes('outside the judged set'),
+    unjudgedText.slice(0, 160));
 
   // S4: the filter finds across sections and names the owner.
   const found = bootSettings('#/settings');

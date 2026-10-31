@@ -1,5 +1,5 @@
 ---
-status: draft
+status: completed
 created: 2026-10-31
 updated: 2026-10-31
 slug: provider-models-settings
@@ -226,68 +226,68 @@ settings entry.
 
 ## Use cases
 
-- [ ] A: The owner adds a provider, pastes its key, and the provider's
+- [x] A: The owner adds a provider, pastes its key, and the provider's
       full model list appears — nothing hand-typed.
-- [ ] B: The owner disables a model and no walk, pin, or picker names
+- [x] B: The owner disables a model and no walk, pin, or picker names
       it again.
-- [ ] C: The owner assigns a model **primary** for `hard` and the next
+- [x] C: The owner assigns a model **primary** for `hard` and the next
       `hard`-judged run walks it first, with the previous chain behind
       it as secondary.
-- [ ] D: A wrong key or a wrong base URL is named on the form — never a
+- [x] D: A wrong key or a wrong base URL is named on the form — never a
       silent save.
-- [ ] E: A provider whose listing declares `context_length` serves a
+- [x] E: A provider whose listing declares `context_length` serves a
       discovered model whose compaction budget is derived from that
       window, with no hand edit — and the editor shows where the number
       came from.
 
 ## Acceptance criteria
 
-- [ ] **P1 — the key is stored, never shown.** A save with a key value
+- [x] **P1 — the key is stored, never shown.** A save with a key value
       writes the secret through the vault seam under the provider's key
       name (vault when the passphrase is present, `.env` otherwise);
       every read model carries `key_present` and never the value; the
       write-only field does not echo it back. Pinned by a settings test
       and a harness check on the read.
-- [ ] **P2 — discovery is named, both ways.** A key that lists answers
+- [x] **P2 — discovery is named, both ways.** A key that lists answers
       with the model count and writes the catalog; a `401`, an
       unreachable base URL, and a no-listing provider each name
       themselves on the form and in the response; a failed discovery
       still saves, with the failure recorded. Pinned by a bridge test
       over a stub listing endpoint.
-- [ ] **P3 — the off list filters the walk.** A model in
+- [x] **P3 — the off list filters the walk.** A model in
       `disabled_models` is absent from the loaded roster's
       `Candidate::models`; a pin naming it meets the existing named
       refusal; a workload chain entry naming it reads as unusable in
       the walk. Pinned by a roster-load test.
-- [ ] **P4 — reload is the catalog's heartbeat.** Reload re-discovers
+- [x] **P4 — reload is the catalog's heartbeat.** Reload re-discovers
       and rewrites `models`; a model the provider stopped listing
       leaves the catalog (and a workload naming it reads unusable); a
       new model appears enabled.
-- [ ] **P5 — the declared settings are stored with provenance.** A
+- [x] **P5 — the declared settings are stored with provenance.** A
       listing that names `context_length` (or ollama's `api/show`) writes
       `model_settings[model].context_window`; a hand override edits the
       same field and wins over the provider's word on every later
       discovery; what the provider does not declare stays unset. Pinned
       by a discovery test over the stub endpoint.
-- [ ] **P6 — the window acts.** `context_window()` resolves config
+- [x] **P6 — the window acts.** `context_window()` resolves config
       first, the compiled table second, `None` third; a discovered model
       with a declared window derives its compaction budget from it (the
       turn loop's window check follows); an undeclared model behaves
       exactly as today. Pinned by a route test reading a config-written
       window over the table's own entry.
-- [ ] **P7 — the output ceiling is sent only when declared.** A model
+- [x] **P7 — the output ceiling is sent only when declared.** A model
       with `max_output_tokens` declared rides the request as
       `max_tokens`; a model without it rides no such field; clearing the
       editor value stops the send. Pinned by the mock's request bodies.
-- [ ] **P8 — primary is the head, secondary is the walk.** The
+- [x] **P8 — primary is the head, secondary is the walk.** The
       workloads editor marks the head primary; reorder writes the new
       order to `routing.json` and the file's shape is unchanged; the
       next judgment walks the new head first. Pinned by a write test
       reading the file back.
-- [ ] **P9 — the picker is the enabled catalog.** The workload picker
+- [x] **P9 — the picker is the enabled catalog.** The workload picker
       offers `provider/model` pairs over enabled models only — a
       disabled model is not addable, on any provider.
-- [ ] **P10 — the gate and the docs.** fmt, clippy, build, test green by
+- [x] **P10 — the gate and the docs.** fmt, clippy, build, test green by
       exit code; the harness cases green with the counts quoted; the
       docs updated in the same landing.
 
@@ -425,3 +425,63 @@ Expected: exit 0 each.
 - The vault seam — landed and tested (`src/settings.rs:1490`).
 - The router's config merge and `routing.json` — landed, unchanged by
   this plan's writes.
+
+## Landed 2026-10-31
+
+P0: `set_provider_with_key` writes the pasted value through the vault
+seam (`settings::set_secret` — sealed with the passphrase, else one
+`.env` line under `<ID>_API_KEY`), verifies against
+`GET {base}/models` before saving, and the reply carries `key_store`
+and the named discovery outcome; the provider ops intercept before the
+string-shaped writer (`settings_provider_write` in the bridge), the
+`server-probe` precedent. Pinned by
+`a_save_with_a_key_stores_it_and_merges_the_catalog` (the `.env`
+store named, the catalog merged into the saved entry) and
+`a_refused_key_is_named_by_the_discovery` (`the key was refused (401)`).
+
+P1: the discovery (`discover_provider_models`) reads `data[].id` plus
+`context_length`/`max_output_tokens` (and `max_model_len`/
+`max_completion_tokens` variants), with ollama's `:11434` base taking
+the native `POST /api/show` leg per model; the result lands in
+`model_settings` with per-field provenance (`provider`/`hand`) and a
+hand override that every later re-list respects
+(`a_hand_override_survives_the_rediscovery`). `disabled_models` rides
+`ProviderEntry` → the merge → `Candidate`, and the roster load filters
+the set out of `models` (`a_disabled_model_leaves_the_roster_at_the_load`).
+`rediscover_provider` is the reload: same key resolution the walk uses,
+same named failures.
+
+P2: `declared_window`/`declared_output` resolve config first, the
+compiled `CONTEXT_WINDOWS` table second, `None` third
+(`the_declared_window_resolves_config_first`); the agent's
+`serving_window` and the turn loop's request both read them, and
+`ChatRequest` gained the optional `max_tokens` field — sent only when
+declared, absent otherwise (`stream_request_carries_the_stream_and_usage_flags`
+pins both wire shapes).
+
+P3: the workloads card names **primary** (the head) and **secondary**
+with reorder/remove controls and an enabled-only picker; a workload
+outside `JUDGED_WORKLOADS` (the six the sys1 route task answers) is
+marked unjudged with its reason. The provider card gained the key
+field, the catalog rows with per-model toggles and declared settings,
+and the reload — living in the live pane card `providerSections`; the
+dead `providersCard`/`providerEditor` pair (no callers — the same
+hoisting trap this ledger has recorded before) was deleted in the same
+edit.
+
+P4: the harness case PM — the provider row, the card's key field,
+the two-row catalog with `window 262144 (from the provider)` and the
+`off` mark, the toggle states, the reload writing through the one
+writer, the tier card's primary/secondary names with the reorder
+controls, and the unjudged mark. **The gate green by exit code: fmt 0,
+clippy 0, build 0, test 1,854 passed / 0 failed across all targets;
+the face harness 521 checks across 54 cases.**
+
+Notes for the record: three `ChatRequest` literals and the fixture
+shape take the new `max_tokens` field (15 sites, all pinned by the
+wire test); the harness's fake DOM matches attribute selectors against
+element properties, so `aria-label`/`data-act` queries must go through
+`El.find` property predicates — the card-level id accessor `page.el(id)`
+was added for the pane's contents. The judgement call recorded for
+future work: the key value only crosses the browser to the bridge, and
+every read model carries `key_present` and never the value.

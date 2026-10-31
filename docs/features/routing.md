@@ -213,3 +213,47 @@ through the same `settings.rs` writer the CLI uses.
 
 An empty `"pin": ""` reads as no pin: the loader trims it away, so the GUI's
 "auto" and a hand-written empty value mean the same thing.
+
+## The settings surface: a provider, a key, its models
+
+The provider's card in Settings runs the owner's own loop: paste a key,
+save, and the card comes back with what the provider serves. The key is
+written through the vault seam — sealed when the process holds the
+passphrase, one atomic `.env` line otherwise — under the provider's key
+name, and the value is never read back (the read model carries
+`key_present` only).
+
+**Discovery is the catalog.** The save verifies the key the only way a
+model provider can be verified: `GET {base}/models`, the OpenAI shape
+every HTTP candidate already speaks on the chat side. The response's
+ids become the provider's `models`; a **reload models** action
+re-lists on demand, so a provider that ships new models tomorrow gets
+them with one press. A refused key (`401`), an unreachable base URL,
+and a listing that names no models are each named on the card — the
+save proceeds with the failure recorded rather than swallowed.
+
+**The declared settings ride the listing.** Where the provider names a
+model's settings — a listing's `context_length` / `max_output_tokens`
+fields, ollama's native `POST /api/show` — they are stored per model
+in `model_settings`, shown on the card with their provenance
+(`from the provider` / `hand-set`), and a hand edit wins on every later
+discovery. `context_window()` resolves config first, the compiled
+`CONTEXT_WINDOWS` table second, and `None` third — so a discovered
+model's compaction budget follows its declared window the moment it
+serves, while an undeclared model keeps the floor behavior it has
+always had. The output ceiling is sent as `max_tokens` only when the
+model declares one: a field fleet never sent before, absent for every
+model that does not.
+
+**Enable/disable is per model, and the default is on.** The card's
+toggles write `disabled_models`; the roster load filters the set out of
+`Candidate::models`, so a disabled model never enters a walk, a pin, or
+a picker, while a model discovered later is usable without a visit.
+
+**Workloads say primary and secondary.** `routing.json`'s ordered
+candidate list is the walk, unchanged — the Settings card names the
+head **primary** and the rest **secondary**, reorders them, and adds
+secondaries from the enabled models only. A workload whose name is
+outside the router's judged set (`JUDGED_WORKLOADS` — the six the
+sys1 `route` judgment answers) is marked **unjudged** on its card: it
+serves by a pin or as the default workload, never by judgment.

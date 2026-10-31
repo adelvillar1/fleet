@@ -368,6 +368,12 @@ pub struct ChatRequest<'a> {
     pub messages: &'a [Message],
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<ToolSpec>,
+    /// The model's output ceiling, sent only when the provider declared
+    /// one (the provider-models plan's P7): a field fleet never sent
+    /// before the settings carried it, and absent for every model whose
+    /// listing named no ceiling.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u64>,
 }
 
 /// The streaming knobs carried beside a request. Absent on the
@@ -1085,6 +1091,7 @@ mod tests {
             model: "test-model",
             messages: &[Message::text(Role::User, "hi")],
             tools: Vec::new(),
+            max_tokens: None,
         };
         let line = serde_json::to_string(&StreamRequest {
             request: &request,
@@ -1099,6 +1106,26 @@ mod tests {
         assert_eq!(body["stream_options"]["include_usage"], true);
         assert_eq!(body["model"], "test-model");
         assert_eq!(body["messages"][0]["role"], "user");
+        // The provider-models plan's P7: the ceiling rides only when it
+        // is declared — the field is absent from an undeclared model's
+        // wire, the shape every provider has always received.
+        assert!(body.get("max_tokens").is_none(), "{body}");
+        let declared = ChatRequest {
+            model: "test-model",
+            messages: &[Message::text(Role::User, "hi")],
+            tools: Vec::new(),
+            max_tokens: Some(8_192),
+        };
+        let declared_wire = serde_json::to_string(&StreamRequest {
+            request: &declared,
+            stream: false,
+            stream_options: StreamOptions {
+                include_usage: false,
+            },
+        })
+        .unwrap();
+        let declared_body: serde_json::Value = serde_json::from_str(&declared_wire).unwrap();
+        assert_eq!(declared_body["max_tokens"], 8_192, "{declared_wire}");
     }
 
     /// Drive the parser over a body, collecting the events it emitted.

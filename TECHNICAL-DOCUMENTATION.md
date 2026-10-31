@@ -536,7 +536,15 @@ draws from: roster models plus the current table's values, provider states,
 env names with presence/source and never a value, paths, tools, skills, and
 shapes. `set_lane` validates a lane object against the lane registry and
 writes it atomically; `set_secret` seals into the vault when the process
-holds the passphrase, else writes one atomic `.env` line. The process's
+holds the passphrase, else writes one atomic `.env` line.
+`set_provider_with_key` is the provider save: the key lands through the
+same seam, then `discover_provider_models` verifies it against the
+provider's `/models` listing and returns the catalog with the settings
+the provider declares (ollama's `/api/show` leg included), written
+per model into `model_settings` with a hand override that survives
+every later `rediscover_provider`; the named failures — a refused key,
+an unreachable base, an empty listing — ride the reply rather than a
+silent save. The process's
 vault passphrase is a `home`-owned unlock state (launch-time
 `FLEET_VAULT_PASSPHRASE`, overridable in place by the GUI and lockable
 again); `vault_verify` refuses a passphrase that does not open the
