@@ -317,6 +317,15 @@ head, the rail and the panels keep the measure they have.
   the fold is logged; consolidation runs on its hourly timer in chat and
   the TUI; cron jobs fire on schedule, catch up exactly one missed
   window, and run through the same loop with their own session log.
+- A conversation's freshness is its **fold count** — how many times it
+  outgrew its window and was folded — not its turn count. The surfaces
+  that measured size by turns (the delegation tree, the replay line, the
+  live branch note) read the fold count; a conversation that never
+  folded says so. A turn count remains only where it is a remaining
+  budget, never a size claim.
+- A provider that runs out of quota mid-run hands the walk to the next
+  candidate in the chain rather than failing the run: quota is a
+  persistent state, and the order's tail exists for it.
 - A run's end is the loop stopping, not the session ending: when the
   model hands the conversation back (or the turn cap hits), the session
   reads as open — `handed back`, `capped` — and stays in the work list.

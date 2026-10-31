@@ -412,6 +412,14 @@ function boot(options) {
         json: () => Promise.resolve(documents.memory || { type: 'memory', facts: [], hits: [] }),
       });
     }
+    if (pathOnly === '/api/delegation') {
+      return Promise.resolve({
+        status: 200,
+        json: () => Promise.resolve(documents.delegation || {
+          type: 'delegation', depth_cap: 2, history: [], live: null, graph: null,
+        }),
+      });
+    }
     if (pathOnly === '/api/calibration') {
       const askedDay = new URL('http://x' + url).searchParams.get('day') || '';
       const doc = askedDay
@@ -4919,6 +4927,77 @@ async function theZombieTabCannotHideASeatOrLoseTheReads() {
   }
 }
 
+
+/// The owner's 2026-10-31 ruling, pinned: the surfaces that measured a
+/// conversation's freshness by its turn count now read the compaction
+/// count — a folded conversation is deep, a ten-turn conversation that
+/// never compacted is shallow. The tree cards read the fold count from
+/// the node (a real zero says "never folded"); the live branch line
+/// drops the turn count rather than inventing a number its event never
+/// carried.
+async function theFreshnessSurfacesReadTheFoldCount() {
+  const delegationDoc = {
+    type: 'delegation',
+    depth_cap: 2,
+    live: null,
+    graph: null,
+    history: [
+      { id: 'root-folded', model: 'm', kind: 'subagent', depth: 0, goal: 'the folded run',
+        status: 'stopped', stop_reason: 'completed', turns: 4, compactions: 3, children: [] },
+      { id: 'root-fresh', model: 'm', kind: 'subagent', depth: 0, goal: 'the fresh run',
+        status: 'stopped', stop_reason: 'max-turns', turns: 12, compactions: 0, children: [] },
+    ],
+  };
+  const page = boot({
+    width: 1440, hash: '#/delegation',
+    documents: {
+      delegation: delegationDoc,
+      state: (asked) => emptyState(asked),
+      onboard: onboardDoc({ door: false }),
+    },
+  });
+  await flush();
+  page.open();
+  await flush(120);
+
+  // The tree cards read the fold count, not the turn count: the folded
+  // run names its three folds, the fresh one says never folded, and no
+  // card says "turns".
+  const text0 = page.text('delegation-board');
+  check('FOLD the tree cards read the fold count',
+    text0.includes('3 folds') && text0.includes('never folded'),
+    text0.slice(0, 260));
+  check('FOLD the tree cards dropped the turn count',
+    !/\b\d+ turns\b/.test(text0), text0.slice(0, 200));
+
+  // The live branch line: a done event carrying a turn count names its
+  // outcome and stops — the count is not a freshness claim.
+  const sessionsDoc = {
+    type: 'sessions', read_at: 'now', current: 'chat-1',
+    counts: { needs: 0, working: 1, background: 0, earlier: 0, total: 1 },
+    sessions: [
+      row('chat-1', 'working', { title: 'a conversation' }),
+    ],
+  };
+  const chat = boot({
+    width: 1440, hash: '#/sessions/chat-1',
+    documents: {
+      sessions: sessionsDoc,
+      state: (asked) => ({ ...emptyState(asked), session: asked }),
+      onboard: onboardDoc({ door: false }),
+    },
+  });
+  chat.open();
+  await flush(80);
+  chat.push({ type: 'delegation', session: 'chat-branch', parent: 'chat-1',
+    goal: 'the branch', stage: 'done', detail: { outcome: 'completed', turns: 4 } });
+  await flush(60);
+  const branch = chat.rows('.process-branch');
+  const note = branch.length ? branch[0].textContent : '';
+  check('FOLD the live branch line names its outcome without the turn count',
+    note.includes('completed') && !note.includes('turns'), note);
+}
+
 const cases = [
   ['KI-380 the zombie tab cannot hide a seat or lose the reads', theZombieTabCannotHideASeatOrLoseTheReads],
   ['C1/C8 the list groups by attention and counts what the server counted', theListGroupsByAttentionAndCountsWhatTheServerCounted],
@@ -4972,6 +5051,7 @@ const cases = [
   ['CAL the calibration rail carries the gate and the day', theCalibrationRailCarriesTheGateAndTheDay],
   ['LAND the landing greets the owner\u2019s work', theLandingGreetsTheOwnersWork],
   ['NAME the conversation names themselves by their work', theConversationNamesThemselvesByTheirWork],
+  ['FOLD the freshness surfaces read the fold count', theFreshnessSurfacesReadTheFoldCount],
 ];
 
 for (const [name, run] of cases) {

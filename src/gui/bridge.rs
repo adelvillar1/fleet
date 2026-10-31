@@ -5280,6 +5280,10 @@ fn replay_read(home: &std::path::Path, asked: &str) -> Value {
     let mut stop_reason = String::new();
     let mut turns = 0u64;
     let mut compacted = false;
+    // The owner's indicator (2026-10-31): how many times this
+    // conversation outgrew its window. The turn count left the
+    // conversation's surfaces; compactions are what the face now says.
+    let mut compactions = 0u64;
     for record in &records {
         match record {
             session::Record::Start {
@@ -5314,7 +5318,10 @@ fn replay_read(home: &std::path::Path, asked: &str) -> Value {
                 turns = 0;
                 served_model = None;
             }
-            session::Record::Compaction { .. } => compacted = true,
+            session::Record::Compaction { .. } => {
+                compacted = true;
+                compactions += 1;
+            }
             _ => {}
         }
     }
@@ -5336,6 +5343,11 @@ fn replay_read(home: &std::path::Path, asked: &str) -> Value {
         "resumed": resumed,
         "stop_reason": stop_reason,
         "turns": turns,
+        // The count the owner reads (2026-10-31): how many times this
+        // conversation was folded to fit its window. The turn count
+        // stays in the log and the record for anything that keys on it;
+        // the surfaces say compactions.
+        "compactions": compactions,
         "compacted": compacted,
         "omitted": omitted,
         "cards": cards,
@@ -6050,6 +6062,7 @@ fn sessions_read(home: &std::path::Path, current: &str, live: &LiveFace, query: 
                 // leaving the owner to open it and guess.
                 "stop_reason": entry.stop_reason,
                 "turns": entry.turns,
+                "compactions": entry.compactions,
                 // The log's write time: the archive's liveness signal,
                 // bounded by the live window rather than a heartbeat the
                 // log does not carry.
@@ -7737,6 +7750,9 @@ fn delegation_node(
         "status": node.status,
         "stop_reason": node.stop_reason,
         "turns": node.turns,
+        // The freshness measure the cards read in place of the turn
+        // count (the owner's 2026-10-31 ruling).
+        "compactions": node.compactions,
         // The branch this child's work stands on, when it worked one:
         // the row's link into the workspace-history section.
         "workspace_branch": branches.get(&node.id),
@@ -10597,6 +10613,7 @@ mod tests {
             workspace_inferred: false,
             channel: channel.map(|(a, b, c)| (a.to_string(), b.to_string(), c.to_string())),
             compacted: false,
+            compactions: None,
             served_model: None,
             stop_reason: stop_reason.map(str::to_string),
             turns: ended.then_some(3),

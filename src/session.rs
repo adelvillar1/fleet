@@ -689,12 +689,21 @@ pub fn summarize(path: &Path) -> Option<SessionSummary> {
                 .to_string()
         })
         .filter(|text| !text.is_empty());
-    let compacted = text.lines().any(|line| {
-        matches!(
+    // How many times the conversation was folded: the freshness measure
+    // the surfaces read, where the turn count only counts the loop's
+    // iterations (the owner's 2026-10-31 review). A conversation folded
+    // five times is deep; a ten-turn conversation that never compacted
+    // is shallow.
+    let mut compactions = 0u64;
+    for line in text.lines() {
+        if matches!(
             serde_json::from_str::<Record>(line.trim()),
             Ok(Record::Compaction { .. })
-        )
-    });
+        ) {
+            compactions += 1;
+        }
+    }
+    let compacted = compactions > 0;
     // The last plan-mode record's first meaningful line: the dynamic
     // title ladder's plan rung — what the run was building when the
     // plan was written. The LAST one, not the first: a conversation
@@ -773,6 +782,7 @@ pub fn summarize(path: &Path) -> Option<SessionSummary> {
         channel,
         personas: persona_set,
         compacted,
+        compactions: Some(compactions),
         served_model,
         stop_reason,
         turns,
@@ -907,6 +917,12 @@ pub struct SessionSummary {
     /// `fleet sessions` mark it, because a compacted session's replay is
     /// a compacted shape and a reader deserves to know before opening it.
     pub compacted: bool,
+    /// How many times the conversation was folded. The freshness
+    /// measure the surfaces read in place of the turn count: a count of
+    /// the `Compaction` records the log carries. `None` only on the
+    /// unreadable-log fallback; a readable log with no folds answers
+    /// zero, because "never folded" is a fact worth stating.
+    pub compactions: Option<u64>,
     /// The model that actually served, from the log's `end` record
     /// (KI-073). `None` while the run is in flight, on an unrouted run,
     /// and on an unreadable log.
@@ -995,6 +1011,7 @@ pub fn list(home: &Path) -> io::Result<Vec<SessionSummary>> {
                     model: "unreadable".to_string(),
                     first_text: None,
                     last_plan: None,
+                    compactions: None,
                     personas: Vec::new(),
                     created: String::new(),
                     ended: false,
@@ -1404,6 +1421,47 @@ mod tests {
             .unwrap();
         let summary = summarize(plain.path()).unwrap();
         assert_eq!(summary.last_plan, None);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn the_summary_counts_the_compactions() {
+        // The freshness measure the surfaces read: the count of the
+        // log's Compaction records. A three-fold log answers three; a
+        // fresh log answers ZERO — "never folded" is a fact worth
+        // stating, not a dash.
+        let home = temp_home("summarize-compactions");
+        let mut session = Session::create(&home, "m").unwrap();
+        session
+            .record(&Record::User {
+                content: "the task".into(),
+            })
+            .unwrap();
+        for range in 0..3u64 {
+            session
+                .record(&Record::Compaction {
+                    summary: format!("folded {range}"),
+                    first_turn: range,
+                    last_turn: range,
+                    tokens_before: 100,
+                    tokens_after: 10,
+                })
+                .unwrap();
+        }
+        let summary = summarize(session.path()).expect("the summary reads");
+        assert_eq!(summary.compactions, Some(3), "{summary:?}");
+        assert!(summary.compacted, "the bool still reads the count");
+
+        // A fresh log: zero folds, and the zero is a real answer.
+        let mut fresh = Session::create(&home, "m").unwrap();
+        fresh
+            .record(&Record::User {
+                content: "no fold here".into(),
+            })
+            .unwrap();
+        let summary = summarize(fresh.path()).unwrap();
+        assert_eq!(summary.compactions, Some(0), "{summary:?}");
+        assert!(!summary.compacted);
         let _ = std::fs::remove_dir_all(&home);
     }
 

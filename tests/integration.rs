@@ -5032,6 +5032,113 @@ async fn a_failed_head_fails_over_to_the_next_candidate() {
     std::fs::remove_dir_all(&home).ok();
 }
 
+/// The committed half of the failover headline: a candidate that ALREADY
+/// served this run reports 402, and the walk unlocks and advances to the
+/// next candidate instead of failing the run typed (the owner's
+/// 2026-10-31 review). Quota is the one class whose recovery is a
+/// different provider, so it is the one class allowed to unlock; the
+/// exhausted candidate is not retried in the same walk.
+#[tokio::test]
+async fn a_committed_quota_failure_unlocks_the_walk() {
+    let head = MockApi::start(vec![ScriptedResponse {
+        status: "402 Payment Required".to_string(),
+        body: r#"{"error":{"message":"quota exhausted"}}"#.to_string(),
+        sse: Vec::new(),
+        delay_ms: 0,
+    }]);
+    let second = MockApi::start(vec![assistant_stream("Answered by candidate two.")]);
+    let home = temp_home("quota-unlock");
+    let mut session = Session::create(&home, "test-model").unwrap();
+
+    let resolved = vec![
+        resolved("cand-head", head.url(), false, None),
+        resolved("cand-two", second.url(), false, None),
+    ];
+    let decision = RouteDecision {
+        provider: "cand-head".to_string(),
+        model: "cand-head-model".to_string(),
+        how: How::Fallback,
+        workload: None,
+        verdict: None,
+        execution: None,
+        reason: "test committed quota".to_string(),
+        judged_from: fleet::route::JudgedFrom::Fresh,
+        start_index: 0,
+        order: vec![
+            ("cand-head".to_string(), "cand-head-model".to_string()),
+            ("cand-two".to_string(), "cand-two-model".to_string()),
+        ],
+    };
+    let router = Arc::new(Router::new(resolved, decision));
+    // A previous turn was served by the head; the run is committed to
+    // it. This turn's quota failure must unlock rather than fail.
+    router.commit_for_tests(0);
+    let client = Client::routed(router.clone());
+    let options = AgentOptions {
+        goal: None,
+        model: "test-model".to_string(),
+        identity: None,
+        max_turns: 5,
+        ui_tx: None,
+        lane_specs: None,
+        calib: None,
+        skills: Vec::new(),
+        role_overlay: None,
+        memory: None,
+        scope: None,
+        improve_home: None,
+        route_home: None,
+        gui_prompt: None,
+        compact_now: false,
+        checkpoints: None,
+        file_access: FileAccess::Unrestricted,
+        plan_mode: false,
+    };
+    let mut progress = Vec::new();
+    let report = {
+        let mut agent = Agent::new(
+            &client,
+            options,
+            &mut session,
+            Box::new(ApproveAll),
+            &mut progress,
+        )
+        .unwrap();
+        agent.run("do the thing").await.unwrap()
+    };
+
+    // The answer came from the second candidate: the run advanced past
+    // the exhausted head instead of failing typed.
+    assert_eq!(report.stop_reason, StopReason::Completed);
+    assert_eq!(
+        report.final_message.as_deref(),
+        Some("Answered by candidate two.")
+    );
+    // The exhausted head was tried exactly once and never retried; the
+    // second served.
+    assert_eq!(head.bodies().len(), 1, "the exhausted head is not retried");
+    assert_eq!(second.bodies().len(), 1, "the second served the run");
+
+    // The decision row reads as two attempts: the exhausted one, and the
+    // one that followed it — never a doubled entry for one provider.
+    let row = router.row("do the thing", 0);
+    assert_eq!(row.provider, "cand-two");
+    let attempts: Vec<(&str, &str, Option<&str>)> = row
+        .attempts
+        .iter()
+        .map(|attempt| (attempt.provider.as_str(), attempt.outcome, attempt.class))
+        .collect();
+    assert_eq!(
+        attempts,
+        vec![
+            ("cand-head", "failed", Some("quota")),
+            ("cand-two", "served", None)
+        ]
+    );
+
+    std::fs::remove_dir_all(&home).ok();
+}
+
 /// sys1 judges the route through the injected-spec seam: the fake lane
 /// answers `sys1_classify` with a `hard` workload, which routes to the
 /// table's first `hard` candidate — a judged route, not the head. The

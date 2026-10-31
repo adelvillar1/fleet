@@ -1663,6 +1663,7 @@ mod tests {
             workspace_inferred: false,
             channel: None,
             compacted: false,
+            compactions: None,
             served_model: None,
             stop_reason: None,
             turns: None,

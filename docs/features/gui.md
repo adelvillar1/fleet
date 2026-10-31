@@ -212,7 +212,12 @@ every visible `.tile`, `.badge`, `.rrow`, `.rank-row`, `.cal-cell`,
   conversation · <when>", never a bare id fragment), and the one place
   every surface's Escape returns to; arriving there detaches
   from the conversation being read (nothing server-side changes, and
-  the recent list's live row is the way back). The rail renders the
+  the recent list's live row is the way back). A conversation's
+  freshness is its **fold count** — how many times it outgrew its
+  window and was folded — not its turn count: the surfaces that measured
+  size by turns read the fold count from the log, a conversation that
+  never folded says so, and a turn count survives only as a remaining
+  budget, never a size claim. The rail renders the
   owner's work only: system-initiated sessions — scheduled jobs,
   delegated children, peer channels — live in the log (`fleet cron`,
   `fleet sessions`), never on the user screen, and a log with no words

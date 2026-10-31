@@ -886,6 +886,11 @@ pub struct DelegationNode {
     pub stop_reason: Option<String>,
     /// The turns the stop recorded.
     pub turns: Option<u64>,
+    /// How many times the child's conversation was folded — the
+    /// freshness measure the surfaces read in place of the turn count
+    /// (the owner's 2026-10-31 ruling). A real zero for a readable log
+    /// that never folded; `None` when the log would not read.
+    pub compactions: Option<u64>,
     pub children: Vec<DelegationNode>,
 }
 
@@ -991,6 +996,7 @@ struct StartShape {
 /// One log's shape, once its head and tail have been read.
 #[derive(Debug, Clone)]
 struct SessionShape {
+    compactions: Option<u64>,
     id: String,
     model: String,
     kind: Option<String>,
@@ -1169,6 +1175,7 @@ fn tree_of(
         },
         stop_reason: shape.stop_reason,
         turns: shape.turns,
+        compactions: shape.compactions,
         children: Vec::new(),
     };
     if depth < crate::subagents::SUBAGENT_MAX_DEPTH {
@@ -1234,6 +1241,7 @@ fn session_shape(sessions: &Path, id: &str, start: &StartShape) -> SessionShape 
     let path = sessions.join(format!("{id}.jsonl"));
     let (stop_reason, turns) = read_stop(&path);
     SessionShape {
+        compactions: read_compactions(&path),
         id: id.to_string(),
         model: start.model.clone(),
         kind: start.kind.clone(),
@@ -1262,6 +1270,24 @@ fn read_goal(path: &Path) -> Option<String> {
         }
     }
     None
+}
+
+/// How many times a log was folded: the count of its `Compaction`
+/// records, read over the whole file — the freshness measure the
+/// delegation tree's cards read in place of the turn count. A readable
+/// log with no folds answers Some(0); an unreadable one answers None.
+fn read_compactions(path: &Path) -> Option<u64> {
+    let text = std::fs::read_to_string(path).ok()?;
+    Some(
+        text.lines()
+            .filter(|line| {
+                matches!(
+                    serde_json::from_str::<crate::session::Record>(line.trim()),
+                    Ok(crate::session::Record::Compaction { .. })
+                )
+            })
+            .count() as u64,
+    )
 }
 
 /// The stop a log recorded: the `end` record, which is the last line of

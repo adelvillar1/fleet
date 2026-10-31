@@ -2498,6 +2498,19 @@ impl Router {
     /// the candidates skipped for want of keys with the env var each
     /// wanted. The route row already carries the same facts for the
     /// stream; this is the owner-facing half.
+    /// The integration test's seam for the committed path: mark the walk
+    /// position as the one a previous turn committed to, the state the
+    /// quota unlock reads. A test drives the real lifecycle where it can
+    /// (a first turn served by the head); this seam exists for the case
+    /// it cannot cheaply — a two-turn run whose second turn goes
+    /// exhausted needs a tool call to force the turn, which needs a lane.
+    #[doc(hidden)]
+    pub fn commit_for_tests(&self, position: usize) {
+        let mut state = lock(&self.state);
+        state.index = position;
+        state.committed = true;
+    }
+
     pub fn walk_report(&self) -> WalkReport {
         let state = lock(&self.state);
         let served = state.served.and_then(|position| {
@@ -2540,11 +2553,21 @@ impl Router {
             (state.index, state.committed)
         };
         // Locked in: one attempt, and any failure is fatal — no silent
-        // restart once a candidate has served this run.
+        // restart once a candidate has served this run. The one
+        // exception is quota: an exhausted provider is a persistent
+        // state whose recovery is a DIFFERENT provider, which is the
+        // whole reason the order has a tail (the owner's 2026-10-31
+        // review: "the router is not switching providers automatically
+        // from the fallback chain if there is one reporting that quota
+        // is exhausted"). A quota failure that has not streamed unlocks
+        // the walk at the position AFTER the exhausted candidate — it
+        // is not retried in the same walk — and the decision row's
+        // attempts record both the unlock and what served next.
+        let mut walk_start = start;
         if committed {
-            return match self.one_attempt(start, request, on_event).await {
-                Ok(response) => Ok(response),
-                Err((error, _streamed)) => {
+            match self.one_attempt(start, request, on_event).await {
+                Ok(response) => return Ok(response),
+                Err((error, streamed)) => {
                     let class = failure_class(&error);
                     // `start` is a walk position: the provider it names
                     // is read through the order, the same mapping every
@@ -2554,13 +2577,30 @@ impl Router {
                         outcome: "failed",
                         class: Some(class),
                     });
-                    Err(error)
+                    // A mid-stream failure is fatal whatever the class:
+                    // a partial answer cannot be resumed. A quota
+                    // failure before the first token unlocks.
+                    if streamed || class != "quota" {
+                        return Err(error);
+                    }
+                    lock(&self.state).committed = false;
+                    walk_start = start + 1;
+                    // The exhausted provider is not the last in the
+                    // order: the unlock's whole purpose is the tail.
+                    if walk_start >= self.order.len() {
+                        return Err(error);
+                    }
+                    // The failed-quota record above already names what
+                    // happened; the walk's own records name what served
+                    // next. The decision row reads as two attempts —
+                    // the exhausted one and the one that followed it —
+                    // never a doubled entry for one provider.
                 }
-            };
+            }
         }
 
         let mut last_error: Option<ClientError> = None;
-        for position in start..self.order.len() {
+        for position in walk_start..self.order.len() {
             let index = self.order[position];
             if !self.resolved[index].candidate.enabled {
                 self.record(Attempt {

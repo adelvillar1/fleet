@@ -3452,12 +3452,27 @@
     return hash ? hash[1].slice(0, 8) : text.slice(0, 8);
   }
 
+  // The freshness measure, in the surface's own words: how many times a
+  // conversation was folded. A turn count answered how many model calls
+  // it made — the loop's iteration, not the conversation's depth (the
+  // owner's 2026-10-31 ruling). A zero is a fact worth stating, so it
+  // reads as "never folded" rather than a dash; an absent count is a
+  // surface that never read one, and it says nothing.
+  function foldsWording(count) {
+    if (count == null) return '';
+    return count === 0 ? ' \u00b7 never folded' : ' \u00b7 ' + count + (count === 1 ? ' fold' : ' folds');
+  }
+
   function branchNote(info) {
     if (info.stage === 'working') {
       return (info.calls || 0) + ' calls' + (info.tool ? ' \u00b7 ' + info.tool : '');
     }
     if (info.stage === 'done') {
-      return (info.outcome || 'done') + (info.turns ? ' \u00b7 ' + info.turns + ' turns' : '');
+      // The live branch line names its outcome and stops there: the
+      // child's fold count rides the delegation tree's cards, where it
+      // is read from the log rather than from a live event that never
+      // carried it.
+      return info.outcome || 'done';
     }
     return clip(info.goal || 'spawned', 42);
   }
@@ -5155,7 +5170,7 @@
       + ' \u00b7 ' + one.status
       + (one.kind ? ' \u00b7 ' + one.kind : '')
       + (one.stop_reason ? ' \u00b7 stopped: ' + one.stop_reason : '')
-      + (one.turns != null ? ' \u00b7 ' + one.turns + ' turns' : '');
+      + foldsWording(one.compactions);
     if (cap && one.depth >= cap) {
       said += '\nthe depth cap: the code refuses to delegate from here';
     }
@@ -5503,7 +5518,7 @@
       left.appendChild(treeCard(root,
         'run ' + clip(root.id, 22),
         (root.stop_reason ? 'stopped: ' + root.stop_reason : 'no end record')
-        + (root.turns != null ? ' \u00b7 ' + root.turns + ' turns' : '')
+        + foldsWording(root.compactions)
         + (root.goal ? ' \u00b7 ' + root.goal : ''),
         read.depth_cap, wide));
     });
@@ -9505,7 +9520,7 @@
         : replay.ended
           ? 'ended: ' + replay.stop_reason +
             (ex ? ' \u00b7 ' + ex + (ex === 1 ? ' exchange' : ' exchanges')
-              : replay.turns ? ' \u00b7 ' + replay.turns + ' turns' : '')
+              : foldsWording(replay.compactions))
           : 'no end record \u2014 the run was interrupted');
     var actions = node('div', 'replay-actions');
     var copy = node('button', 'replay-button');

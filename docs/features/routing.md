@@ -135,6 +135,18 @@ fail them). A candidate that starts streaming is committed: a mid-stream
 failure fails the run typed, with no silent restart. Each attempt and the
 final choice are recorded.
 
+**The committed candidate unlocks on quota.** Once a candidate has served a
+turn it is locked in and any failure is fatal — the design that keeps a
+mid-run failure from silently restarting elsewhere. Quota is the one
+exception, because an exhausted provider is a persistent state whose
+recovery is a different provider, which is the whole reason the order has a
+tail (the owner's 2026-10-31 review): a `quota` failure that has not
+streamed clears the commit, the walk advances to the position after the
+exhausted candidate, and the decision row reads as two attempts — the
+exhausted one and the one that followed it. A quota failure that arrives
+after the first token is a mid-stream failure like any other and stays
+fatal.
+
 There is no per-candidate budget — each attempt inherits the client's single
 overall timeout (600 s). The worst case is therefore bounded but large:
 every candidate hanging to timeout costs (chain length − start) × 600 s,
