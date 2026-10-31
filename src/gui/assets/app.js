@@ -15860,6 +15860,10 @@
         stored = JSON.parse(window.localStorage.getItem('fleet-canvas-' + designSlug()) || 'null');
       } catch (error) { stored = null; }
       face.canvas = stored || { x: 60, y: 72, z: 0.7 };
+      // A board seen for the first time is fitted to its frames — the
+      // owner should see the work, not a default corner of it. Only a
+      // board with no remembered transform does this, and only once.
+      face.canvasFresh = !stored;
     }
     return face.canvas;
   }
@@ -16281,6 +16285,10 @@
     board.frames.forEach(function (frame) {
       el.designWorld.appendChild(designFrameCard(frame));
     });
+    if (face.canvasFresh && board.frames.length) {
+      face.canvasFresh = false;
+      designFit();
+    }
   }
 
   function designInjectLive(frame, values, view) {
@@ -16648,6 +16656,7 @@
       designSetSlug(el.designProject.value);
       face.designReadAt = 0;
       face.canvas = null;
+      face.canvasFresh = true;
       face.designSelection = null;
       designApplyTransform();
       readDesign(true);

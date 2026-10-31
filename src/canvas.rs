@@ -58,7 +58,10 @@ pub struct TweakSpec {
     pub key: String,
     pub label: String,
     /// `slider` | `select` | `toggle` | `color` — the control the panel
-    /// renders. An unknown kind renders as a slider.
+    /// renders. An unknown kind renders as a slider. The source's own
+    /// spelling (`type`) is accepted beside this one, and so is the
+    /// camelCase `cssVar` below: a frame written by either dialect lands.
+    #[serde(alias = "type")]
     pub kind: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min: Option<f64>,
@@ -73,6 +76,7 @@ pub struct TweakSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub options: Option<Vec<String>>,
     /// The CSS variable without its `--`, e.g. `accent`.
+    #[serde(alias = "cssVar")]
     pub css_var: String,
 }
 
@@ -128,15 +132,15 @@ pub struct Frame {
     pub y: f64,
     pub w: f64,
     pub h: f64,
-    #[serde(default)]
+    #[serde(default, alias = "tweakSpec")]
     pub tweak_spec: Vec<TweakSpec>,
-    #[serde(default)]
+    #[serde(default, alias = "tweakValues")]
     pub tweak_values: BTreeMap<String, Value>,
     /// The model that generated it, when one did. `import` for a frame
     /// brought in from outside.
     #[serde(default)]
     pub model: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none", alias = "genMeta")]
     pub gen_meta: Option<Value>,
     #[serde(default)]
     pub versions: Vec<Version>,
@@ -1154,6 +1158,30 @@ mod tests {
     }
 
     const PAGE: &str = "<!doctype html><html><head><style>:root{--page:#0b0e14;--ink:#e6e9ef;--accent:#3b6cf6}body{color:var(--ink);background:var(--page)}img{max-width:100%}:focus{outline:2px solid var(--accent)}</style><meta name=\"viewport\" content=\"width=device-width\"></head><body><h1>hi</h1><img src=\"data:image/png;base64,AA\" alt=\"a mark\"><form><input aria-label=\"email\"></form></body></html>";
+
+    /// The bundled sample board IS a document this reader accepts — the
+    /// surface's first-run board, pinned as a parse. (It carries the
+    /// source's camelCase spellings: the aliases are what make it land.)
+    #[test]
+    fn the_bundled_sample_board_parses() {
+        let text = include_str!("gui/assets/design-sample.json");
+        let project: Project = serde_json::from_str(text)
+            .unwrap_or_else(|error| panic!("the bundled sample must parse: {error}"));
+        assert_eq!(project.frames.len(), 2, "the two fixture frames");
+        let with_tweaks = project
+            .frames
+            .iter()
+            .filter(|frame| !frame.tweak_spec.is_empty())
+            .count();
+        assert!(with_tweaks >= 1, "a fixture frame exposes tweaks");
+        // And the adoption writes it on a home with no canvas.
+        let home = scratch("sample");
+        ensure_sample(&home).unwrap();
+        let projects = projects(&home);
+        assert_eq!(projects.len(), 1);
+        assert_eq!(projects[0].frames, 2);
+        let _ = std::fs::remove_dir_all(&home);
+    }
 
     /// D2: the document is the home's, and a frame written through the
     /// store round-trips: geometry, spec, pins.

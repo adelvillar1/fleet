@@ -586,7 +586,35 @@ tests fail intermittently under a full parallel run; green alone and on a
 clean full run), found while gating this landing. Not caused by it.
 
 Gate, read from the runs: fmt 0, clippy `-D warnings` 0, build 0,
-**suite 1,865 passed / 0 failed** on a clean run, the face harness
-**543 checks across 55 cases**. The live proofs beyond the harness — the
-PNG export through the browser lane and a 1440×900 render of `#/design`
-read as the visual review — are recorded below once run.
+**suite 1,866 passed / 0 failed**, the face harness **543 checks across
+55 cases**.
+
+**The live proofs (against the reloaded face, new binary):**
+
+- **The sample board adopted** — `GET /api/design` answered
+  `sample-board`, two frames, each with four tweaks and its scan facts
+  (a11y 3/4 on both, the honest failure being **no `:focus` style** in
+  the fixtures' pages — a real finding about the sample content, not the
+  scanner).
+- **The PNG export through the browser lane** —
+  `POST /api/design/export {kind: "png"}` answered
+  **64,379 bytes** at
+  `~/.fleet/canvas/sample-board/exports/sample-landing-hero-png-20261031T171436Z.png`:
+  the lane opened the preview route under its CSP and captured it.
+- **The visual gate** — Chromium at 1440×900 on `#/design`: the stage
+  renders in fleet's chrome (the rail with `design` under `work`, the
+  head with the board picker and `new board`, the instrument strip, the
+  dotted world, the composer), both fixture pages framed and legible,
+  **zero page errors**. The render exposed one first-run roughness —
+  the board opened at a default transform with the second frame half
+  off-viewport — so a board seen for the first time now **fits its
+  frames** (`designFit` on the first paint of an unremembered view);
+  the re-render shows both frames fitted at 40%.
+
+**A defect the live read caught that the tests had not**: the sample
+fixtures carry the source's camelCase spellings (`type`, `cssVar`,
+`tweakSpec`), which the first reader refused — the surface would have
+shown an empty board on first run while every unit test passed. Fixed
+with serde aliases (both dialects land) and pinned by
+`the_bundled_sample_board_parses`, which parses the bundled file and
+adopts it on a scratch home.
