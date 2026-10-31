@@ -654,6 +654,7 @@
     designBrief: document.getElementById('design-brief'),
     designMode: document.getElementById('design-mode-select'),
     designStyle: document.getElementById('design-style'),
+    designDirections: document.getElementById('design-directions'),
     designSend: document.getElementById('design-send'),
     designTitle: document.getElementById('design-title'),
     designNote: document.getElementById('design-note'),
@@ -16813,7 +16814,8 @@
         mode: mode,
         brief: brief,
         frame_id: selected ? selected.id : '',
-        preset: el.designStyle.value || ''
+        preset: el.designStyle.value || '',
+        directions: Number(el.designDirections.value || 1)
       }, function (answer) {
         var task = answer && answer.task;
         if (!task) {

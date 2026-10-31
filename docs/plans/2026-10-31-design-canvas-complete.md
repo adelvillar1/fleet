@@ -199,10 +199,10 @@ changelog.
 - [x] **W3 — apply-fixes is a run.** A stored review's fixes compose a
       run whose instruction names them; the harness asserts the task
       text carries the fix lines.
-- [ ] **W4 — directions.** A brief with N directions lands N frames in
+- [x] **W4 — directions.** A brief with N directions lands N frames in
       one run, each with its own progress line; the harness asserts the
       task asks for N.
-- [ ] **W5 — the size follows the brief.** A mobile brief's frame lands
+- [x] **W5 — the size follows the brief.** A mobile brief's frame lands
       390×844, a tablet brief 768×1024 — Rust's rule, pinned by unit
       test, and the harness reads the frame's w/h.
 - [ ] **W6 — assets inline.** A frame with `assets` carries each as a
@@ -345,3 +345,25 @@ the runs on this machine are slow — an ask walked the orchestrator's
 chain for several minutes while the inventory fix removed the *tool*
 detour (before it, the same ask browsed the console). T1–T6 are
 unstarted.
+
+## Landed: T1 — directions and sizes
+
+The composer's **directions** control (1–4) rides the task request
+(the harness pins `"directions":3` on the wire) and the task tells the
+model to give that many clearly different directions, one `frame` each.
+The **size** is Rust's: `canvas::sizing_for` and `frame_size_for` decide
+desktop / tablet / mobile from the brief, the task names the viewport
+word to pass, and the `frame` tool sizes the page it lands
+(`the_frame_tool_sizes_the_page_it_lands`: a mobile call lands 390×844,
+the default keeps 1280×900).
+
+**The model multi-select is deferred, and the reason is structural.**
+design-canvas generates one frame per selected model; in fleet **one run
+is one model** — the router picks. Fanning a brief across models means N
+runs (or N child runs), which is exactly the orchestration question T4's
+notes already defer to a measurement. The faces keep the router's choice
+for now; a pin in the composer covers "use this model", and the
+measurement T4 names will decide whether N runs or a subagent fan-out is
+the right shape for both directions and models.
+
+T2–T6 remain unstarted.

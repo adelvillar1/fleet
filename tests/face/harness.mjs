@@ -4224,6 +4224,19 @@ async function theDesignCanvasCarriesItsFramesAndWritesGeometry() {
       : '') || '');
   check('PM-D the board choice is remembered',
     remembered === 'another-board', remembered);
+
+  // T1: the directions control reaches the task request.
+  page.IDS['design-directions'].value = '3';
+  page.IDS['design-brief'].value = 'three hero directions';
+  page.IDS['design-mode-select'].value = 'generate';
+  page.fireOn('design-send', 'click');
+  await flush(80);
+  const withDirections = page.calls.filter((one) => one.method === 'POST' &&
+    String(one.url || '').includes('/api/design') &&
+    String(one.body || '').includes('"directions":3'));
+  check('PM-D the directions control rides the task request',
+    withDirections.length === 1,
+    JSON.stringify(withDirections.map((one) => String(one.body).slice(0, 120))));
 }
 
 async function theSettingsRailCarriesOneSectionAtATime() {

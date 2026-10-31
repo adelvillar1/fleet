@@ -56,6 +56,13 @@ frame), *another direction* (a fresh frame beside it), *apply the
 review's fixes* (when the frame has a review), and *ask* (a question
 about the board, which writes nothing).
 
+The composer carries a **directions** count: a brief can ask for up to
+four clearly different pages, one `frame` per direction, in one run.
+The frame's **size** follows the brief — `canvas::frame_size_for` reads
+a "mobile" brief as 390×844, a tablet one as 768×1024, and everything
+else as the desktop 1280×900 — and the task tells the model which
+viewport word to pass, so the page lands at the size the request meant.
+
 **Every task is composed in Rust.** The face asks the writer for the
 task (`task` op) and starts the run with exactly what came back, so the
 composer, the CLI and a cron job ask for the same thing in the same

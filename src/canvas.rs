@@ -419,6 +419,16 @@ pub fn frame_size_for(brief: &str) -> (&'static str, f64, f64) {
     }
 }
 
+/// The size one viewport word means: the closed set the board's presets
+/// and the brief's rule both speak. An unknown word is desktop.
+pub fn sizing_for(viewport: &str) -> (&'static str, f64, f64) {
+    match viewport.trim().to_ascii_lowercase().as_str() {
+        "mobile" | "phone" => ("mobile", 390.0, 844.0),
+        "tablet" => ("tablet", 768.0, 1024.0),
+        _ => ("desktop", 1280.0, 900.0),
+    }
+}
+
 /// The task one design request composes — the whole instruction, in Rust,
 /// so every surface (the composer, the CLI, a cron job) asks for the same
 /// thing in the same words. The doctrine itself lives in the designer
@@ -515,7 +525,7 @@ pub fn designer_task(mode: DesignMode, brief: &str, slug: &str, facts: &DesignFa
     if !matches!(mode, DesignMode::Ask) {
         if let Some((size, w, h)) = facts.size {
             task.push_str(&format!(
-                "\n\nTarget frame: {size} ({w:.0}\u{00d7}{h:.0}); the canvas sizes the frame."
+                "\n\nTarget frame: {size} ({w:.0}\u{00d7}{h:.0}) \u{2014} pass `viewport: \"{size}\"` to the `frame` tool."
             ));
         }
     }
@@ -593,6 +603,23 @@ pub fn put_frame(
     frame_id: Option<&str>,
     model: &str,
 ) -> Result<String, String> {
+    put_frame_sized(home, slug, name, html, tweak_spec, frame_id, model, None)
+}
+
+/// The same write with the frame's size decided by the caller: a brief
+/// that asked for a phone gets a phone canvas. `None` keeps the board's
+/// desktop default.
+#[allow(clippy::too_many_arguments)]
+pub fn put_frame_sized(
+    home: &Path,
+    slug: &str,
+    name: &str,
+    html: &str,
+    tweak_spec: Option<&[TweakSpec]>,
+    frame_id: Option<&str>,
+    model: &str,
+    size: Option<(f64, f64)>,
+) -> Result<String, String> {
     let html = validate_frame_html(html)?;
     let mut project = load(home, slug)?;
     let now = crate::calib::stamp();
@@ -647,8 +674,8 @@ pub fn put_frame(
         html,
         x,
         y,
-        w: VIEWPORT_PRESETS[0].1,
-        h: VIEWPORT_PRESETS[0].2,
+        w: size.map(|(w, _)| w).unwrap_or(VIEWPORT_PRESETS[0].1),
+        h: size.map(|(_, h)| h).unwrap_or(VIEWPORT_PRESETS[0].2),
         tweak_spec: tweak_spec.map(<[TweakSpec]>::to_vec).unwrap_or_default(),
         tweak_values: BTreeMap::new(),
         model: model.to_string(),
@@ -871,7 +898,15 @@ pub fn frame_from_tool(home: &Path, arguments: &Value) -> Result<(String, String
         ));
     }
     let added = frame_id.is_none();
-    let id = put_frame(
+    // The page's viewport: the brief's own rule decides the default, and
+    // an explicit word from the call wins.
+    let (_, w, h) = sizing_for(
+        arguments
+            .get("viewport")
+            .and_then(Value::as_str)
+            .unwrap_or("desktop"),
+    );
+    let id = put_frame_sized(
         home,
         &slug,
         name,
@@ -879,6 +914,7 @@ pub fn frame_from_tool(home: &Path, arguments: &Value) -> Result<(String, String
         spec.as_deref(),
         frame_id,
         "designer",
+        Some((w, h)),
     )?;
     Ok((slug, id, added))
 }
@@ -1712,6 +1748,41 @@ mod tests {
             .checks
             .iter()
             .any(|check| !check.pass && check.kind == "viewport"));
+    }
+
+    /// W5: the frame tool sizes the page it lands — a phone brief's frame
+    /// is a phone canvas, and the default stays the board's desktop.
+    #[test]
+    fn the_frame_tool_sizes_the_page_it_lands() {
+        let home = scratch("sizing");
+        let (slug, _) = create(&home, "Sizing").unwrap();
+        let (_, mobile, _) = frame_from_tool(
+            &home,
+            &serde_json::json!({ "project": slug, "name": "phone", "html": PAGE,
+                "viewport": "mobile" }),
+        )
+        .unwrap();
+        let (_, plain, _) = frame_from_tool(
+            &home,
+            &serde_json::json!({ "project": slug, "name": "desk", "html": PAGE }),
+        )
+        .unwrap();
+        let project = load(&home, &slug).unwrap();
+        let by_id = |id: &str| {
+            project
+                .frames
+                .iter()
+                .find(|frame| frame.id == id)
+                .unwrap()
+                .clone()
+        };
+        assert_eq!((by_id(&mobile).w, by_id(&mobile).h), (390.0, 844.0));
+        assert_eq!((by_id(&plain).w, by_id(&plain).h), (1280.0, 900.0));
+        assert_eq!(sizing_for("tablet"), ("tablet", 768.0, 1024.0));
+        assert_eq!(sizing_for("nonsense"), ("desktop", 1280.0, 900.0));
+        // The brief's own rule picks the word the task asks for.
+        assert_eq!(frame_size_for("a mobile checkout").0, "mobile");
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     /// The tools' handlers: the frame tool refuses a board it cannot
