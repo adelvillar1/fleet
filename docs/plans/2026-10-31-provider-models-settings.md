@@ -58,6 +58,12 @@ invalidation (the surface-curation deep dive's finding).
 2. **2026-10-31 — the steer.** *"it should add all the models from the
    provider"* — the model list is **discovered from the provider**, not
    hand-typed; the catalog is the provider's own, complete.
+3. **2026-10-31 — the settings come with the model.** *"we also need to
+   auto configure the model's settings like context window, output
+   size, etc. if that information is available from the provider"* —
+   discovery stores what the provider declares (the context window, the
+   output ceiling), the stored value configures the run, and a hand
+   override wins over the provider's word.
 
 ## Approach
 
@@ -84,6 +90,29 @@ re-discovers on demand — a provider that ships new models tomorrow gets
 them on the next reload, which is the steer's own promise. Lane
 candidates (`blend1`) have no HTTP listing surface and are excluded
 from discovery; their model entry stays as declared.
+
+**The settings the provider declares ride the discovery.** Fleet
+already derives the compaction budget from a per-model context window —
+but the source is a hand-maintained compiled-in table
+(`CONTEXT_WINDOWS`, `src/route.rs:88`), whose own doc comment names the
+carve-out this decision closes: the OpenAI-compatible `/v1/models`
+carries no such fact, *where fleet reads it today*. Discovery reads
+what the provider actually declares, per provider, best-effort: an
+OpenRouter-style listing's `context_length` and `max_output_tokens`
+fields, and ollama's native `POST /api/show` (`context_length`) for the
+roster's ollama candidates — the exact source that table's comment
+already names. What is found is written per model into a new
+`model_settings` map in the provider's config entry
+(`{context_window, max_output_tokens}`), shown in the provider editor
+with its provenance (`from the provider` / `hand-set`), and a hand
+override wins over the provider's word. What the provider does not
+declare stays unset, and the compiled-in behavior is unchanged — the
+table remains the fallback, so the own-home declaration and the
+provider's word never fight: config first, table second, `None` third.
+The output ceiling is sent as `max_tokens` on requests **only when it
+is declared** — a value fleet never sends today — so the wire changes
+only for models whose provider named the number, and the editor can
+clear it.
 
 **Enable/disable per model, with the steer's default.** `models` stays
 the provider's full discovered catalog; the owner's off list is a new
@@ -137,19 +166,40 @@ save with an env name and no value skips the write and the discovery.
 
 *Checks:* P1, P2.
 
-### P1 — discovery is the catalog, and the walk honors the off list
+### P1 — discovery is the catalog and its settings, and the walk honors the off list
 
 The discovered `data[].id` list writes `providers[id].models`; the
-per-provider **reload models** action re-discovers and rewrites. The
-provider form's models chips become the catalog read (with a
-disable/enable toggle per model) over the new `disabled_models` write.
-The roster load filters `disabled_models` out of `Candidate::models`
-(`src/route.rs`'s config merge), so the walk, the pin resolution, and
-`fleet providers` all see only enabled models.
+per-provider **reload models** action re-discovers and rewrites. Where
+the provider declares model settings, discovery reads them too: the
+listing's `context_length` / `max_output_tokens` fields when present,
+and ollama's `POST /api/show` for the ollama candidates — written to
+the provider's `model_settings` map with the values the provider
+named, nothing guessed. The provider form's models chips become the
+catalog read (with a disable/enable toggle per model) over the new
+`disabled_models` write, and each model's row shows its declared
+settings with a hand override beside them. The roster load filters
+`disabled_models` out of `Candidate::models` (`src/route.rs`'s config
+merge), so the walk, the pin resolution, and `fleet providers` all see
+only enabled models.
 
-*Checks:* P3, P4.
+*Checks:* P3, P4, P5.
 
-### P2 — the workloads surface: primary and secondary, per workload
+### P2 — the declared settings act
+
+`context_window()` reads the provider's `model_settings` first, the
+compiled table second, and returns `None` third — the compaction
+budget and the turn loop's window check follow it with no change of
+their own, which is the whole point: a model discovered with a
+declared window gets a real fold fraction the moment it serves, where
+today it would fall back to the floor. The output ceiling is sent as
+`max_tokens` on the chat request only when the serving model declares
+one — a field fleet never sends today — and clearing the value in the
+editor stops sending it. Both are pinned over the stub listing
+endpoint and the request bodies the mock sees.
+
+*Checks:* P6, P7.
+
+### P3 — the workloads surface: primary and secondary, per workload
 
 Each workload's editor reads its `routing.json` chain as **primary**
 (the head, marked as such) then **secondary** entries; a picker adds
@@ -160,9 +210,9 @@ marked **unjudged** with the reason (reachable by pin or the default
 gate only). The `workload` write action is unchanged — the file's
 ordered-candidates shape already carries everything this surface needs.
 
-*Checks:* P5, P6.
+*Checks:* P8, P9.
 
-### P3 — the harness, the measurement, the docs
+### P4 — the harness, the measurement, the docs
 
 A harness case per new control: paste-key save (the vault write named),
 discovery success and each named failure, the model disable toggle, the
@@ -172,7 +222,7 @@ enabled-only list. The before/after control counts quoted. The docs:
 providers card is documented) and `TECHNICAL-DOCUMENTATION.md`'s
 settings entry.
 
-*Checks:* P7.
+*Checks:* P10.
 
 ## Use cases
 
@@ -185,6 +235,10 @@ settings entry.
       it as secondary.
 - [ ] D: A wrong key or a wrong base URL is named on the form — never a
       silent save.
+- [ ] E: A provider whose listing declares `context_length` serves a
+      discovered model whose compaction budget is derived from that
+      window, with no hand edit — and the editor shows where the number
+      came from.
 
 ## Acceptance criteria
 
@@ -209,15 +263,31 @@ settings entry.
       and rewrites `models`; a model the provider stopped listing
       leaves the catalog (and a workload naming it reads unusable); a
       new model appears enabled.
-- [ ] **P5 — primary is the head, secondary is the walk.** The
+- [ ] **P5 — the declared settings are stored with provenance.** A
+      listing that names `context_length` (or ollama's `api/show`) writes
+      `model_settings[model].context_window`; a hand override edits the
+      same field and wins over the provider's word on every later
+      discovery; what the provider does not declare stays unset. Pinned
+      by a discovery test over the stub endpoint.
+- [ ] **P6 — the window acts.** `context_window()` resolves config
+      first, the compiled table second, `None` third; a discovered model
+      with a declared window derives its compaction budget from it (the
+      turn loop's window check follows); an undeclared model behaves
+      exactly as today. Pinned by a route test reading a config-written
+      window over the table's own entry.
+- [ ] **P7 — the output ceiling is sent only when declared.** A model
+      with `max_output_tokens` declared rides the request as
+      `max_tokens`; a model without it rides no such field; clearing the
+      editor value stops the send. Pinned by the mock's request bodies.
+- [ ] **P8 — primary is the head, secondary is the walk.** The
       workloads editor marks the head primary; reorder writes the new
       order to `routing.json` and the file's shape is unchanged; the
       next judgment walks the new head first. Pinned by a write test
       reading the file back.
-- [ ] **P6 — the picker is the enabled catalog.** The workload picker
+- [ ] **P9 — the picker is the enabled catalog.** The workload picker
       offers `provider/model` pairs over enabled models only — a
       disabled model is not addable, on any provider.
-- [ ] **P7 — the gate and the docs.** fmt, clippy, build, test green by
+- [ ] **P10 — the gate and the docs.** fmt, clippy, build, test green by
       exit code; the harness cases green with the counts quoted; the
       docs updated in the same landing.
 
@@ -225,13 +295,18 @@ settings entry.
 
 **Backend:**
 - `src/settings.rs` — `set_provider` gains the key-value write (the
-  vault seam) and `disabled_models`; the discovery helper (the
-  `/v1/models` fetch, named failures)
+  vault seam), `disabled_models`, and `model_settings`; the discovery
+  helper (the `/v1/models` fetch, the optional metadata read, ollama's
+  `/api/show` leg, named failures)
 - `src/gui/bridge.rs` — the `provider` write action carries the key and
   the discovery result; `router_document`'s read model (the catalog,
   the off list, `key_present`); the workloads read carries primary/
   secondary as the ordered chain already is
-- `src/route.rs` — the config merge filters `disabled_models`
+- `src/route.rs` — the config merge filters `disabled_models`;
+  `context_window()` resolves `model_settings` first, the compiled
+  table second
+- `src/api.rs` — `ChatRequest` gains the optional `max_tokens` field,
+  set only when the serving model declares one
 
 **Frontend:**
 - `src/gui/assets/app.js` — the provider form's key field, the model
@@ -283,6 +358,14 @@ cargo test --lib disabled_models
 ```
 Expected: the filter, the pin refusal, the unusable chain entry.
 
+**P5/P6/P7** — the declared settings:
+```bash
+cargo test --lib model_settings
+```
+Expected: the write with provenance, the override winning, the window
+resolved config-first, the compaction budget following it, and the
+request body carrying `max_tokens` only for a declared model.
+
 **P5/P6** — the surface:
 ```bash
 node tests/face/harness.mjs
@@ -306,6 +389,16 @@ Expected: exit 0 each.
 
 ## Risks
 
+- **A discovered window is wrong and shrinks the compaction budget.**
+  Mitigation: the editor shows the value's provenance (`from the
+  provider` / `hand-set`) beside it, the hand override wins on every
+  later discovery, and the compiled table stays the fallback for
+  anything undeclared — no provider word can erase a fleet declaration
+  the owner has not overridden.
+- **`max_tokens` truncates a long answer.** Mitigation: the field is
+  sent only when the provider declared it, the editor shows and clears
+  it, and the compiled-in behavior (no such field) is every undeclared
+  model's.
 - **A key value transits the browser.** Mitigation: the field is
   write-only and never echoed; the secret lands in the vault or `.env`
   under the provider's name; the read model carries `key_present`
