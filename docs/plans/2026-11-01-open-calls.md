@@ -32,16 +32,23 @@ not re-ruled.
 origin can open a session slot.
 
 **Options**:
-- **(a) Gate the join** — require the pairing secret (or a short
-  minted token) at the join, refusing an unauthenticated join by
-  name. The paired-device flow already carries a secret; the join
-  is the one hole.
+- **(a) Validate the join against what the relay minted** — the
+  relay already persists its sessions (`relay-sessions.json`, the
+  KI-370 fix); the join refuses any `sid`/`hash` pair that does not
+  match a session the relay itself minted, by name. The check is
+  against the relay's own store — not a length rule, not a rate
+  limit: those look like gating and validate nothing.
 - **(b) Accept it** — the relay sits behind the origin's TLS and
-  loopback boundary; an open join costs a slot, not data.
+  loopback boundary, and payloads are sealed end-to-end (KI-371), so
+  an open join can neither read nor forge frames it does not hold
+  the key for; its cost is a slot.
 
-**Recommendation**: (a). The relay is a door with a lock everywhere
-except this one hinge; the pairing secret already exists to be
-checked here.
+**Recommendation**: (a). The store already exists — the check is
+wiring it into the one endpoint that never consults it. (b) is the
+easy answer and it is wrong for a reason the row's own probe
+demonstrated: `sid:"probe"` is not a slot-exhaustion curiosity, it
+is proof that session identity at the join is currently
+self-asserted.
 
 ### O2 — KI-378 (the open half): the task's send bound
 
@@ -52,16 +59,24 @@ transport fact, not a product one. The row's own note calls the send
 bound "triage for the owner (a one-shot spend, not a standing tax)".
 
 **Options**:
-- **(a) Bound the send** — a named ceiling on the task at the send
-  path (the composer's own scale, like the goal's 2,000), the refusal
-  naming the bound and why.
-- **(b) Leave it** — the wire cap already refuses the absurd; a
-  one-shot giant task is the owner's to spend.
+- **(a) Make the honest cap speak the product's words** — the send
+  path refuses at the cap the request actually has (the body limit
+  the provider accepts), in product words naming the bound and why,
+  instead of the wire's raw `a body of 156751 bytes; the cap is
+  65536`. No new invented number: the composer already holds a
+  131 KB draft (pass one's S1), so a smaller product ceiling would
+  contradict the surface that composes the task.
+- **(b) Invent a product ceiling** — copy the goal's pattern with
+  some larger number. Coherent-looking, arbitrary, and it fights the
+  composer's own capacity: the easy fix.
+- **(c) Leave it** — the wire refuses; transport words stay.
 
-**Recommendation**: (a), with a generous ceiling. The goal's bound
-already set the pattern (a named refusal beats a transport error),
-and the composer's own draft scale is the honest measure of what a
-task should carry.
+**Recommendation**: (a). The goal's 2,000 is right FOR THE GOAL
+because the goal is a standing prompt tax riding every run; the task
+is one-shot input and its honest boundary is the transport's. The
+fix is that boundary learning to speak, not a new number to obey —
+and (b), my earlier framing of "a generous ceiling," was the easy
+fix wearing the goal's pattern as a costume.
 
 ### O3 — KI-391: the severity vocabulary
 
@@ -71,18 +86,26 @@ task should carry.
 `**fixed**` in the severity cell beside a `closed` status.
 
 **Options**:
-- **(a) The preamble gains the words in use** — document `note`,
-  `warning`, `flake`, `decision`, `constraint`, `hang` (and the
-  `environment`→`environmental` spelling), move the four `**fixed**`
-  markers out of the severity cell (their status already says
-  `closed`), and have the checker police severity beside status.
-- **(b) The rows normalize** — rewrite ~30 rows to the six documented
-  words.
+- **(a) The rows normalize to the six** — the preamble's list is a
+  taxonomy with meanings (blocker stops the build; defect is wrong
+  behavior; gap is something expected missing; …), and every drift
+  word is expressible in it: `flake`→`defect` (the issue text keeps
+  "intermittent"), `hang`→`defect`, `decision`→`gap` (the status
+  already says open, the next cell IS the ruling), `note`→per-row
+  `risk`/`improvement`/`gap`, `environment`→`environmental`,
+  `constraint`→per-row; the four `**fixed**` markers move to the
+  status cell that already says `closed`. Then the checker polices
+  severity beside status — the KI-322 pattern completed, and
+  severity becomes machine-checkable again.
+- **(b) The preamble gains the words in use** — one edit, but
+  severity becomes a free tag and the six-word contract dissolves.
 
-**Recommendation**: (a). The words in use carry distinctions the six
-do not (`flake` vs `defect`, `note` vs `gap`); documenting reality
-costs one preamble edit and one checker rule, where normalizing costs
-thirty row rewrites and flattens real signal.
+**Recommendation**: (a) — a flip from my first pass. "Gain the
+words" was the easy fix: thirty row edits look expensive until you
+notice they are one mechanical pass over one cell each, and what
+they restore is a taxonomy that means something. A `flake` and a
+`defect` are the same severity with different prose — the prose
+already lives in the issue cell, where it can be read.
 
 ### O4 — KI-328: the live-endpoint test's flake class
 
@@ -97,10 +120,14 @@ instance is recorded, the class undecided.
   on-demand set; nothing hermetic is built.
 - **(c) Delete** — the assertion no longer earns its flake.
 
-**Recommendation**: (a). The repo already has the stub-server pattern
-(the extract leg, the mock API); a flaky test that asserts a contract
-we own should own a deterministic double, and true liveness checks
-belong to the on-demand lane.
+**Recommendation**: (a) — and the class rule that falls out of it is
+the real fix: **no test in the gate asserts machine liveness**. A
+contract we own gets a deterministic double (the repo already has
+the stub-server pattern — the extract leg, the mock API); a true
+liveness probe joins the on-demand lane like the live e2e. The easy
+version of this call — blanket `#[ignore]` — buys green by deleting
+signal, which is why (b) is not the recommendation even though it is
+one flag shorter.
 
 ### O5 — KI-386: the corpus snapshot ignore rule
 
@@ -111,17 +138,27 @@ so what gets committed is decided by name shape rather than by the
 owner's ruling ("dated corpus state is runtime state").
 
 **Options**:
-- **(a) Widen the rule** — one glob over dated corpus state however
-  spelled, and untrack the already-tracked escapes (the owner's
-  agreement required — the ruling's substance, not its spelling, is
-  what the rule encodes).
-- **(b) Normalize the names** — the runs write snapshots under the
-  rule's spelling; the tracked escapes are re-spelled and stay
-  tracked history.
+- **(a) Widen to the substance AND stamp the shape where snapshots
+  are born** — one glob over dated corpus state however spelled, and
+  `seed_task`'s task strings name the state-fact's canonical
+  spelling, so a run cannot invent a third shape (the escapes were
+  born because nothing told the writer what to write). Untrack the
+  already-tracked escapes — the owner's agreement required, the
+  ruling's substance being what the rule encodes.
+- **(b) Widen alone** — the easy fix: the glob stops splitting the
+  class today, but spelling-policing is what produced two escape
+  shapes in the first place; a third arrives whenever a run gets
+  creative.
+- **(c) Give state its own home** — snapshots move to a dedicated
+  directory outside the fact corpus: no spelling to police at all,
+  the structurally right answer, and the escalation if (a) ever
+  recurs.
 
-**Recommendation**: (a). The ruling is about substance — dated state
-is state — and a rule that splits the class by spelling is deciding
-by accident. Untracking is reversible (the files stay in git history).
+**Recommendation**: (a), with (c) named as the standing escalation.
+Widening alone (my first pass's whole recommendation) was the easy
+fix — it treats the symptom's spelling while the writer stays free
+to mint new ones. Untracking is reversible (the files stay in git
+history).
 
 ### O6 — KI-332: what `remember`'s promise means
 
@@ -138,10 +175,17 @@ never gets.
 - **(b) Wording** — the promise says "later session", and the
   mid-task gap is documented rather than closed.
 
-**Recommendation**: (a). The tool's own words are the contract the
-caller reads; making them true is cheaper than retraining every
-caller on a subtler promise, and the precedent (KI-232) already paid
-this exact seam.
+**Recommendation**: (a), with one build-time honesty check: the fork
+presupposes the task-start snapshot is an accident of load-once
+rather than a design for stable mid-task recall. The build reads
+that seam first — if the snapshot is deliberate (recall stability
+within a run is the point), the ruling flips to (b) and the wording
+becomes the fix; if it is load-once convenience, (a) is right: the
+tool's own words are the contract the caller reads, making them true
+beats retraining every caller on a subtler promise, and KI-232
+already paid this exact seam. The write-through must also evict the
+superseded fact's vector — the row's other half — or the fix is
+half-done.
 
 ### O7 — KI-369: a durable spawn route for lane jobs
 
