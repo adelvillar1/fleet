@@ -1685,6 +1685,26 @@ async fn mcp_command(options: &cli::McpOptions) -> ExitCode {
             }
         }
         McpAction::Health => mcp_health_command(&home).await,
+        McpAction::Call {
+            server,
+            tool,
+            arguments,
+        } => {
+            // The reply is the tool's own text — the same bytes the
+            // hand drivers printed — on stdout raw, so a task can read
+            // it as the JSON it is; every failure is the fleet: prefix
+            // on stderr with a non-zero exit.
+            match fleet::mcp_registry::call_named(&home, server, tool, arguments).await {
+                Ok(reply) => {
+                    println!("{reply}");
+                    ExitCode::SUCCESS
+                }
+                Err(error) => {
+                    eprintln!("fleet: {error}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
         McpAction::Enable { name, enabled } => {
             let word = if *enabled { "enabled" } else { "disabled" };
             match fleet::settings::set_server_enabled(&home, name, *enabled) {

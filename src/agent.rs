@@ -2189,7 +2189,7 @@ impl<'a> Agent<'a> {
             if let Some((home, key)) = TEST_DESIGN_CONTEXT.lock().unwrap().clone() {
                 return crate::canvas::design_context_section(&home, &key);
             }
-            return None;
+            None
         }
         #[cfg(not(test))]
         {

@@ -159,6 +159,73 @@ pub fn read_server(home: &Path, name: &str) -> Result<Option<ServerEntry>, Strin
     }
 }
 
+/// One named `tools/call` through the house's own spawn chain — the
+/// job-facing route (KI-369, O7): a server name resolves to an
+/// ENABLED registry entry first and a vendored lane second, the child
+/// spawns through the same spec the probe and the runs use, the
+/// handshake gets the cold window a first-of-the-evening import needs
+/// (KI-387's 300 s), and the call budget covers a whole-corpus rebuild
+/// (the embed budget those jobs carry, KI-222's 600 s plus margin).
+/// The answer is the tool's text — the same bytes the hand drivers
+/// printed — so a scheduled task becomes one command instead of a
+/// driver the run re-derives every night.
+pub async fn call_named(
+    home: &Path,
+    name: &str,
+    tool: &str,
+    arguments: &str,
+) -> Result<String, String> {
+    let args: Value = serde_json::from_str(arguments)
+        .map_err(|error| format!("the arguments are not valid JSON: {error}"))?;
+    let dotenv: std::collections::BTreeMap<String, String> =
+        crate::home::read_dotenv_with_process_vault(home)
+            .into_iter()
+            .collect();
+    let spec = match read_server(home, name)? {
+        Some(entry) if entry.enabled => spec_from_entry(&entry, &dotenv)?,
+        Some(_) => {
+            return Err(format!(
+                "`{name}` is configured but disabled in the registry (fleet mcp enable {name})"
+            ));
+        }
+        None => {
+            let lane = crate::lanes::LANES
+                .iter()
+                .find(|lane| lane.name == name)
+                .ok_or_else(|| {
+                    format!(
+                        "`{name}` is not an enabled server in the registry (fleet mcp list) \
+                         and not a vendored lane (fleet lanes)"
+                    )
+                })?;
+            crate::lanes::configured_spec(lane, home)?
+        }
+    };
+    let timeouts = crate::mcp::Timeouts {
+        initialize: std::time::Duration::from_secs(300),
+        list: crate::mcp::LIST_TIMEOUT,
+        call: std::time::Duration::from_secs(700),
+    };
+    let server = crate::mcp::McpServer::spawn_with(&spec, timeouts)
+        .map_err(|error| format!("`{name}` did not start: {error}"))?;
+    server
+        .initialize()
+        .await
+        .map_err(|error| format!("`{name}` did not initialize within its cold window: {error}"))?;
+    let result = server
+        .call_tool(tool, args)
+        .await
+        .map_err(|error| format!("`{name}` tools/call `{tool}` failed: {error}"))?;
+    let _ = server.close().await;
+    if result.is_error {
+        return Err(format!(
+            "`{name}`'s tool `{tool}` refused: {}",
+            result.text()
+        ));
+    }
+    Ok(result.text())
+}
+
 /// The enabled servers' launch specs, keyed by name, beside the named
 /// absences: what a run seeds into `AgentOptions.lane_specs` so the
 /// roster pre-joins them before the first request. Each env name
