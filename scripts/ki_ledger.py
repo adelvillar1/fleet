@@ -5,9 +5,11 @@ The ledger is a markdown table whose rows carry six pipe-separated cells:
 ID | severity | description | evidence | status | next action. A row is
 flagged when any of ID, severity, status, or next action is empty, when the
 row's cell count disagrees with the header's — the signature of an unescaped
-pipe inside a code span shifting the cells (KI-084) — or when the status
-cell leads with a word outside the ledger's vocabulary of open, closed,
-noted, none (KI-322).
+pipe inside a code span shifting the cells (KI-084) — when the status cell
+leads with a word outside the ledger's vocabulary of open, closed, noted,
+none (KI-322), or when the severity cell leads with a word outside the
+preamble's six — blocker, defect, gap, improvement, environmental, risk
+(KI-391).
 """
 import re
 import sys
@@ -84,9 +86,22 @@ def status_word(status: str) -> str:
     stripped and the first word is everything before the gloss (a dash, a
     parenthesis, a colon, or a space).
     """
-    word = status.strip().strip("*_`").strip().lower()
-    # The gloss separators are a dash (joined `closed-fixed` or spaced
-    # `closed — fixed`), a parenthesis, a colon, or a space.
+    return lead_word(status)
+
+
+def severity_word(severity: str) -> str:
+    """The leading word of a severity cell, same gloss rule as the status."""
+    return lead_word(severity)
+
+
+def lead_word(cell: str) -> str:
+    """A cell's leading word: markdown emphasis stripped, gloss skipped.
+
+    The gloss separators are a dash (joined `closed-fixed` or spaced
+    `closed — fixed`), a parenthesis, a colon, or a space — the shapes the
+    table itself writes.
+    """
+    word = cell.strip().strip("*_`").strip().lower()
     return re.split(r"[\s—–\-(:]", word, maxsplit=1)[0]
 
 
@@ -94,6 +109,11 @@ def status_word(status: str) -> str:
 # names): a cell leading with anything else is malformed the same way a
 # short cell count is — it dies at the checker, not days later at a reader.
 STATUS_WORDS = {"open", "closed", "noted", "none"}
+
+# The severity vocabulary the preamble defines (KI-391): a taxonomy with
+# meanings, not a free tag — a cell leading with anything else is the same
+# class of malformed row.
+SEVERITY_WORDS = {"blocker", "defect", "gap", "improvement", "environmental", "risk"}
 
 
 def is_open(status: str) -> bool:
@@ -127,6 +147,12 @@ def main() -> int:
             problems.append(f"{path}:{lineno}: bad or missing ID {ki_id!r}")
         if not severity:
             problems.append(f"{path}:{lineno} ({ki_id}): missing severity")
+        elif severity_word(severity) not in SEVERITY_WORDS:
+            problems.append(
+                f"{path}:{lineno} ({ki_id}): severity cell reads "
+                f"{severity_word(severity)!r} — expected blocker, defect, gap, "
+                "improvement, environmental, or risk"
+            )
         if not status:
             problems.append(f"{path}:{lineno} ({ki_id}): missing status")
         elif status_word(status) not in STATUS_WORDS:

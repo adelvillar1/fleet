@@ -255,7 +255,14 @@ recommendations. The rulings:
       named in the row. **O2** — the send path's refusal speaks the
       product's words at the operative cap (no invented ceiling),
       pinned by `an_oversized_body_is_refused_in_the_products_words`;
-      KI-378 closed with both halves standing.*
+      KI-378 closed with both halves standing. **O3** — all 30 drifted
+      severity cells normalized to the six (parenthetical provenance
+      kept, the four `**fixed**` markers moved out), the checker
+      polices severity beside status (`SEVERITY_WORDS`), the preamble
+      names the six as the whole vocabulary; KI-391 closed, pinned by
+      the red/green fixture runs. Carried in the same commit:
+      **KI-392**, filed by the parallel design-parity session mid-work
+      (their row, unedited — severity already in vocabulary).*
 - [ ] **KI-249 / KI-252 stay with their plan** — the embed-bounds
       plan's window criterion is their gate; nothing here re-opens
       them.
