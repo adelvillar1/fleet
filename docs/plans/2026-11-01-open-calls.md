@@ -1,5 +1,5 @@
 ---
-status: active
+status: complete
 created: 2026-11-01
 updated: 2026-11-01
 slug: open-calls
@@ -302,12 +302,15 @@ recommendations. The rulings:
       history. Their centered-composer face work reddens the face
       target in the shared tree — their uncommitted in-flight cases;
       with that aside, lib 1,711/0 and every other target green.*
-- [ ] **KI-249 / KI-252 stay with their plan** — the embed-bounds
-      plan's window criterion is their gate; nothing here re-opens
-      them.
-- [ ] **Close-out.** The full gate green by exit code; the ledger
-      checker green; every called row closed or explicitly deferred
-      with the ruling recorded.
+- [x] **KI-249 / KI-252 stay with their plan** — they did: the
+      embed-bounds plan's window criterion remains their gate and
+      nothing here re-opened them.
+- [x] **Close-out.** *Met 2026-11-01: the full gate green by exit
+      code in a clean worktree — fmt 0, clippy 0, build 0, test
+      1,900/0 across every target including the face harness — the
+      ledger checker green (392 rows, 25 open), and all seven called
+      rows closed with their rulings recorded: KI-367, KI-378,
+      KI-391, KI-328, KI-386, KI-332, KI-369.*
 
 ## Files to be touched
 
