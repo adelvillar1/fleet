@@ -15,38 +15,82 @@ group — it is work the owner opens the way they open a chat, not a
 listing to browse after one.
 
 `#/design` is a split stage like settings and calibration: the **boards
-rail** on the left — the same `sectionRail` every split page renders, one
-row per board with its name, its frame count and the open one marked,
-the fold remembered — and the canvas filling the body: a head (the
-board's name and count, **new board**), an instrument strip (zoom out /
-fit / zoom in / grid / pin mode / the zoom readout), the **viewport**, and
-**the conversation** — a chat panel beside the board. The rail's column is 216px rather
-than the sections' 188 — the rows are the same rows, but their names are
-the owner's board names, and a clipped board name is a board you cannot
-tell apart. The viewport is a clipping box holding a world under one CSS
-transform — `translate(x,y) scale(z)` — and the world holds the frame
-cards. Fleet's tokens, cards and buttons are the chrome; the frame inside
-its sandboxed iframe is the artifact, which is the same boundary the
+rail** on the left — the same `sectionRail` every split page renders,
+now **grouped by the project each board belongs to** (one header per
+bound family, then an `unbound` section; the rows are the owner's board
+names, and a clipped board name is a board you cannot tell apart) — and
+the canvas filling the body: a head (the board's name — **double-click
+it to rename in place** — the frame count, the **save chip**, **delete**
+and **new board**), an instrument strip (zoom out / fit / zoom in / grid
+/ pin mode / the zoom readout), the **viewport**, and the
+**conversation as one floating stack at the bottom-center of the
+canvas** — the log (collapsed to the composer by default, the toggle
+counting the turns), the approval seat, and the composer itself, in the
+conversation stage's own idiom (the owner's 2026-11-01 ruling: the
+composer lives in the center frame like sessions and conversations).
+The viewport is a clipping box holding a world under one CSS transform
+— `translate(x,y) scale(z)` — and the world holds the frame cards.
+Fleet's tokens, cards and buttons are the chrome; the frame inside its
+sandboxed iframe is the artifact, which is the same boundary the
 preview pane already draws for documents and web pages.
 
 Gestures, all vanilla JS on the face's own pointer idioms:
 
-- **Wheel** zooms toward the cursor (0.05–2.5).
-- **Drag the empty board, or space/middle-drag anywhere**, pans.
+- **Wheel** zooms toward the cursor (0.05–2.5) — from the canvas, not
+  from inside the floating composer, which owns its own events.
+- **Drag the empty board, or space/middle-drag anywhere**, pans; a
+  press on the background **clears the focus** back to the board.
 - **Fit** frames the board's bounds into the viewport.
 - **Drag a title bar** moves its frame: the delta divides by zoom and
   rounds to whole world units, then the position is written.
 - **Click a title bar** selects; arrows nudge 16 (1 with Shift).
+- **Double-click a title bar's name** renames the page in place — the
+  write rides `frame-update {name}`, the same plumbing the model's
+  own renames use.
 - **Pin mode**, then click a frame body, and the pin lands at that
   normalized point.
 - The zoom and pan are remembered per board in `localStorage`.
 
 Every gesture that changes the document **writes through the design
-writer**. The board file is the truth; the view is a projection of it.
+writer**. The board file is the truth; the view is a projection of it —
+and the head's **save chip** says so: `saving…` while a write is in
+flight, `saved` on its ack, `save failed: <reason>` when the writer
+refuses. One chip, one wrapped function; no gesture leaves the page
+guessing.
+
+## Boards and pages
+
+Boards and pages have full CRUD through the writer. The head renames
+the board (double-click the title) and deletes it — a confirm names
+what it takes (the frame count, the conversation, the files), and the
+store directory, the board's digest and its fact go with it. Pages
+rename in place (double-click the title bar's name), duplicate, and
+delete; they carry a **set picker** on the bar — the membership the
+model's `set` argument writes, assignable by hand (an empty pick
+clears it, and the badge follows the re-read). The bar also carries
+the **viewport presets** (the source's own placement): one button per
+size, the current one marked, the press resizing the page through the
+writer.
+
+## Boards are project knowledge
+
+A board carries its **project binding** — the folder it belongs to,
+set from the head's picker (the binding is a field; the store stays
+home-flat). The binding feeds three channels (the owner's 2026-11-01
+ruling): every save regenerates the board's **digest** at
+`canvas/digests/<project-key>/<slug>.md` — a deterministic markdown
+account of pages, tokens, reviews and brand — the corpus-refresh jobs
+embed those digests beside the project's docs (the KI-277 reconcile
+carries the wording to existing jobs), and a run born in that
+workspace assembles a bounded **design section** from them in its
+context. Board create, rename, bind and delete each move one
+`design-board-<slug>` fact through the substrate's own writer, so
+recall ranks the board for a design instruction about its project.
+Unbound boards stay visible in the rail's `unbound` section.
 
 ## The board's conversation
 
-The panel beside the canvas is the board's chat, and it is part of the
+The floating stack holds the board's chat, and it is part of the
 document: the turns live in `project.json`, so a reload, the CLI and a
 cron job read the same conversation. Each turn carries the frames it
 landed as **chips**; a chip's press selects its page on the board and
@@ -56,31 +100,17 @@ frame), *another direction* (a fresh frame beside it), *apply the
 review's fixes* (when the frame has a review), and *ask* (a question
 about the board, which writes nothing).
 
+**The focus is first-class** (the owner's rule): with **no page
+selected the request is global** — the focus chip reads `board ·
+<name>`, the placeholder and verbs are the board's; **a page selected
+makes the request about that page** — the chip reads `page · <name>`,
+the mode defaults to refine, and the wire carries that `frame_id`.
+Clicking the canvas background clears the selection and the focus
+returns to the board; a send with no page composes a board-global
+task, one with a page carries that `frame_id`.
+
 The composer carries a **directions** count: a brief can ask for up to
-four clearly different pages, one `frame` per direction, in one run.
-The frame's **size** follows the brief — `canvas::frame_size_for` reads
-a "mobile" brief as 390×844, a tablet one as 768×1024, and everything
-else as the desktop 1280×900 — and the task tells the model which
-viewport word to pass, so the page lands at the size the request meant.
-
-**Every task is composed in Rust.** The face asks the writer for the
-task (`task` op) and starts the run with exactly what came back, so the
-composer, the CLI and a cron job ask for the same thing in the same
-words. The composed task carries the **board's own inventory** — each
-frame's name, id, size, model, open pins and review state — so a
-question about the board is answered from the facts rather than by
-exploring the console with tools, and a refine knows what it is
-refining. A review's fix lines and a frame's open pins ride the task
-too, and a *refine* names the `frame_id` so the page keeps its identity.
-
-A run started from the board raises its **approval seat on this page**
-as well as on the conversation's: the design panel carries the same seat
-with the same decisions, because an approval the owner cannot see is the
-KI-380 class of defect. When the run ends, the face records the
-designer's turn — its closing words and the frames it landed — off the
-board it re-reads. A tab closed mid-run therefore keeps the frames (the
-`frame` tool wrote them) but loses that closing turn; the conversation
-answers on the next visit.
+four clearly different pages, one `frame` per direction, on one run.
 
 ## The document
 
@@ -321,11 +351,14 @@ redesign models that site's DNA rather than guessing it.
   its frames (each frame's `html` already injected, `html_raw` before
   overrides, plus `a11y`), the presets, the caps.
 - `POST /api/design` — the one writer: `create`, `rename`,
-  `frame-update` (geometry, name, description, tweak values, z),
-  `frame-delete`, `frame-duplicate`, `version-restore`, `pin-add`,
-  `pin-reply`, `pin-resolve`, `review-put`, `asset-put`, `asset-delete`,
-  `asset-frame`, `brand-put`, `brand-delete`, `brand-use`. (`task` is the
-  one read: the composed instruction, answered flat.)
+  `board-project` (set or clear the binding, moving the digest),
+  `board-delete` (store, digest and fact, one write), `frame-update`
+  (geometry, name, description, tweak values, z), `frame-set` (the
+  page's set membership; empty clears), `frame-delete`,
+  `frame-duplicate`, `version-restore`, `pin-add`, `pin-reply`,
+  `pin-resolve`, `review-put`, `asset-put`, `asset-delete`,
+  `asset-frame`, `brand-put`, `brand-delete`, `brand-use`. (`task` is
+  the one read: the composed instruction, answered flat.)
 - `POST /api/design/inject` — stateless injection: `{html, tweak_spec,
   tweak_values}` → `{html}`.
 - `POST /api/design/reference` — `{project, url}`: fetch, scan, cache the
@@ -337,21 +370,38 @@ redesign models that site's DNA rather than guessing it.
   its tweaks, served under a CSP (`default-src 'none'`, inline styles
   only, no scripts, no frame ancestors, no form posts) and `nosniff`.
 - `POST /api/design/export` — `{project, id, kind}` where kind is `html`,
-  `tokens.css`, `tokens.json`, `zip`, or `png`. Files land in
-  `canvas/<slug>/exports/` and the reply carries the path and byte count.
-  The **PNG is the browser lane's**: the bridge spawns the browser lane,
-  opens the preview route, captures it at the frame's size, and closes
-  the lane.
+  `tokens.css`, `tokens.json`, `zip`, `png`, or `site` (board-level: the
+  whole board as one site ZIP — index, pages, tokens, manifest — no id
+  needed; the reply also carries the URL the local host serves it at).
+  Files land in `canvas/<slug>/exports/` and the reply carries the path
+  and byte count. The **PNG is the browser lane's**: the bridge spawns
+  the browser lane, opens the preview route, captures it at the frame's
+  size, and closes the lane.
+- `GET /api/design/download/<slug>/<name>` — one export's file as a
+  download (`Content-Disposition: attachment`). The name is one path
+  segment — the writer refuses separators, so the route cannot walk out
+  of the board's own directories.
+- `GET /site/<slug>/<page>` — **the local host**: the board's pages as
+  live documents (tweaks injected, links rewritten to the site's
+  slugs, an index page listing them all) under a CSP that lets the
+  page run (`script-src 'unsafe-inline'`) and refuses every network
+  hop (`connect-src 'none'`) — a generated page on this origin can
+  never reach the face's API. The host is live, not frozen: the board
+  file is the truth, and the same build zips the `site` export, so a
+  served page and a downloaded site are the same bytes.
 
 ## The composer
 
-The brief box at the foot of the stage starts an ordinary **fleet run**
-against the current session: the task carries the brief, the chosen style
-preset's spec, and the board's slug, and it asks for the page through
-`frame`. The run streams like any other — the canvas repaints as each
-`frame` result lands — and the conversation appears in `#/sessions` with
-its full log. The style presets are the source project's curated set,
-embedded once.
+The brief box sits in the floating stack at the bottom-center of the
+canvas (the conversation stage's idiom) and starts an ordinary **fleet
+run** against the current session: the task carries the brief, the
+chosen style preset's spec, the board's slug, and — when a page is
+selected — its `frame_id`. The run streams like any other — the canvas
+repaints as each `frame` result lands — and the conversation appears in
+`#/sessions` with its full log. The style presets are the source
+project's curated set, embedded once. A **send shows its turn**: the
+log opens so the owner sees what they said land in the board's own
+conversation.
 
 ## The page's models
 
@@ -364,15 +414,22 @@ picker names one per run:
 deepseek-flash · zai GLM-5.3-Flash · ollama-cloud glm-5.3-flash
 ```
 
-The picker opens on the first candidate that can serve *now* — the read
-resolves each against the roster, so a model with no key reads
-*unavailable* and is refused up front instead of failing mid-run — and
-the owner's choice persists across repaints. The run then goes out pinned
-to `<provider>/<model>`: a pair pin skips the router's judgment entirely,
-because the fact that the request started here *is* what makes it design
-work. No router chain selects among the designated three, and the
-router's own workloads never name them as a design route. A board whose
-models can none of them serve says so and leaves the route to the router.
+The control is a **multi-select of toggle chips** (the owner's
+2026-11-01 amendment: multi-model fan-out is in scope, user selectable —
+different models have different strengths, which is why design-canvas
+carries the control). The chips open on the first candidate that can
+serve *now* — the read resolves each against the roster, so a model with
+no key reads *unavailable* and refuses the press instead of failing
+mid-run — and one model must stay on (a design run is always
+somebody's). **One pressed is one pinned run**, exactly as before; **several
+pressed is a fan-out**: the task composes once and K runs leave, each
+out `pin: <provider>/<model>` — a pair pin skips the router's judgment
+entirely, because the fact that the request started here *is* what makes
+it design work — each landing its own frames, one progress line per
+model in the float until the board fills. No router chain selects among
+the designated three, and the router's own workloads never name them as
+a design route. A board whose models can none of them serve says so and
+leaves the route to the router.
 
 ## Design work started elsewhere
 
@@ -392,12 +449,19 @@ belongs on the page, never in prose.
 The gate pins the document and its caps, the injection (including a
 hostile value and the unit rule), the scan's facts, the tools'
 validation, delete/duplicate/restore, the exports (a real ZIP), the
-preview's injected page, the composer's run and its model picker (the
-pinned `provider/model`, the unavailable option refused, the default
-being the first that can serve), the steer a frame landing off the board
-raises, and the canvas's gestures and writes; a live Chromium render at
-1440×900 is the visual review, and the PNG export ran against the
-browser lane. **Not yet exercised end to
+preview's injected page, the composer's run and its model chips (the
+default pressed once, the unavailable refused, the fan-out's K pins and
+K progress lines), the focus contract on the wire (`frame_id` iff a page
+is selected), the head's CRUD (rename writes, the confirm's delete
+removes store/digest/fact, the frame rename rides `frame-update`), the
+viewport presets and the set picker, the save chip's three states, the
+downloads' walk-out refusal, the site build (index, rewritten links,
+the network-dead CSP), the digest's determinism and the corpus glob's
+reconcile, the lifecycle facts' supersession chain, the assembled
+design section both ways, the rail's project grouping, the steer a
+frame landing off the board raises, and the canvas's gestures and
+writes; a live Chromium render at 1440×900 is the visual review, and
+the PNG export ran against the browser lane. **Not yet exercised end to
 end:** the review ask — browse → screenshot → vision → `review_frame` —
 whose pieces are each pinned but which no model run has walked. A design
 run also cannot see its own output: the review is a second run.
@@ -406,7 +470,9 @@ run also cannot see its own output: the review is a second run.
 
 No vector editing (no shapes, layers, resize handles, grouping or
 alignment guides — the source had none either), no undo beyond version
-restore, no realtime collaboration, no publishing or hosting, no
-billing. The frame's own page is the artifact: what it does inside its
+restore, no realtime collaboration, no SaaS publishing (share tokens, client
+review links, moderation, expiry, analytics, billing) — the **local
+host** at `/site/<slug>/` and the site ZIP are the hand-off; the frame's
+own page is the artifact. The frame's own page is the artifact: what it does inside its
 iframe is the page's business, and the canvas never injects model HTML
 into the face's own document — only into an iframe's `srcdoc`.

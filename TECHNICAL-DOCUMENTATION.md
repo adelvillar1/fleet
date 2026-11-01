@@ -71,9 +71,14 @@ non-loopback host is refused by name. The routes: `/api/run`,
 `abs=1` for the folder picker's whole-hierarchy listing),
 `/api/file`, `/api/attach`, `/api/settings`, `/api/state`,
 `/api/rank`, `/api/related`, `/api/pair/*`, `/api/design` (read and
-write), `/api/design/inject` (the stateless tweak transform),
-`/api/design/frame/<slug>/<id>` (a page under a strict CSP) and
-`/api/design/export`, and `/events` — the ordered event stream the
+write — the ops now include `board-project`, `board-delete` and
+`frame-set`), `/api/design/inject` (the stateless tweak transform),
+`/api/design/frame/<slug>/<id>` (a page under a strict CSP),
+`/api/design/download/<slug>/<name>` (an export as a download; the
+name is one segment), `/site/<slug>/<page>` (the local host: the
+board's pages as live documents under a network-dead CSP), and
+`/api/design/export` (kinds: html, tokens.css, tokens.json, zip, png,
+site), and `/events` — the ordered event stream the
 transcript is built from. A paired device reaches the
 allowlisted routes with its cookie; the device token is stored as a
 digest; `Host`/`Origin` are checked. Every write rides `settings.rs`.
