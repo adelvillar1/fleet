@@ -3,9 +3,11 @@
 
 The ledger is a markdown table whose rows carry six pipe-separated cells:
 ID | severity | description | evidence | status | next action. A row is
-flagged when any of ID, severity, status, or next action is empty, or when
-the row's cell count disagrees with the header's — the signature of an
-unescaped pipe inside a code span shifting the cells (KI-084).
+flagged when any of ID, severity, status, or next action is empty, when the
+row's cell count disagrees with the header's — the signature of an unescaped
+pipe inside a code span shifting the cells (KI-084) — or when the status
+cell leads with a word outside the ledger's vocabulary of open, closed,
+noted, none (KI-322).
 """
 import re
 import sys
@@ -74,15 +76,33 @@ def split_cells(line: str):
     return out
 
 
+def status_word(status: str) -> str:
+    """The leading word of a status cell, markdown emphasis and gloss aside.
+
+    The ledger writes statuses as `open`, `**open — reason**`, `open (deferred)`,
+    `closed — fixed …` and `noted (recovered)`, so the leading emphasis is
+    stripped and the first word is everything before the gloss (a dash, a
+    parenthesis, a colon, or a space).
+    """
+    word = status.strip().strip("*_`").strip().lower()
+    # The gloss separators are a dash (joined `closed-fixed` or spaced
+    # `closed — fixed`), a parenthesis, a colon, or a space.
+    return re.split(r"[\s—–\-(:]", word, maxsplit=1)[0]
+
+
+# The status vocabulary the table carries (and the `none` variant KI-322
+# names): a cell leading with anything else is malformed the same way a
+# short cell count is — it dies at the checker, not days later at a reader.
+STATUS_WORDS = {"open", "closed", "noted", "none"}
+
+
 def is_open(status: str) -> bool:
     """A row is open when its status cell says open, markdown emphasis aside.
 
-    The ledger writes statuses as `open`, `**open — reason**`, `open (deferred)`,
-    and the closed variants, so the leading emphasis and any trailing gloss are
-    stripped before the word is read.
+    The leading emphasis and any trailing gloss are stripped before the word
+    is read; the vocabulary itself is policed by the status check in main.
     """
-    word = status.strip().strip("*_`").strip().lower()
-    return word.startswith("open")
+    return status_word(status) == "open"
 
 
 def main() -> int:
@@ -109,6 +129,11 @@ def main() -> int:
             problems.append(f"{path}:{lineno} ({ki_id}): missing severity")
         if not status:
             problems.append(f"{path}:{lineno} ({ki_id}): missing status")
+        elif status_word(status) not in STATUS_WORDS:
+            problems.append(
+                f"{path}:{lineno} ({ki_id}): status cell reads "
+                f"{status_word(status)!r} — expected open, closed, noted, or none"
+            )
         if not nxt:
             problems.append(f"{path}:{lineno} ({ki_id}): missing next action")
         if ki_id in seen:
