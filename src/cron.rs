@@ -833,20 +833,19 @@ pub fn seed_task(project: &str) -> String {
     }
     format!(
         "Refresh the {project} project's fact corpus from its docs. The lane tool is not in \
-         your toolset; use the spawn route: run the vendored blend1 lane child \
-         (python3 -u <fleet repo>/services/blend1/service/mcp_server.py, cwd <fleet repo>/services/blend1, \
-         env BLEND1_PYTHONPATH plus the four sibling *_PYTHONPATH vars — the launch spec \
-         src/lanes.rs produces) and drive its stdio JSON-RPC by hand: initialize \
-         (protocolVersion 2024-11-05), notifications/initialized, then tools/call with \
-         name \"refresh\" with the arguments {{\"project\": \"{project}\", \"sources\": \
-         [\"<repo home>/{project}/docs/**/*.md\", \"<repo home>/{project}/*.md\"]}} — \
-         <repo home> is the parent directory of <fleet repo>, and every project's \
-         corpus is its docs tree plus root .md files. It replies with project, \
-         source_files, items, dropped_duplicates, changed, action, store, and \
-         missing_sources. Then record the run's state fact with remember, named \
-         canonically: corpus-{project}-<YYYY-MM-DD>.md — corpus at the head, a \
-         dashed date at the tail (that spelling is what the tree's ignore rule \
-         finds, so a snapshot can never be committed by accident; KI-386)."
+         your toolset; use the spawn route: fleet mcp call blend1 refresh \
+         '{{\"project\": \"{project}\", \"sources\": \
+         [\"<repo home>/{project}/docs/**/*.md\", \"<repo home>/{project}/*.md\"]}}' — \
+         the verb spawns the vendored lane through its own launch spec, initializes with \
+         the cold window a first run needs, calls, prints the reply, and tears down \
+         (KI-369: one command instead of a hand-driven stdio session). <repo home> is the \
+         parent directory of <fleet repo>, and every project's corpus is its docs tree \
+         plus root .md files. It replies with project, source_files, items, \
+         dropped_duplicates, changed, action, store, and missing_sources. Then record the \
+         run's state fact with remember, named canonically: \
+         corpus-{project}-<YYYY-MM-DD>.md — corpus at the head, a dashed date at the tail \
+         (that spelling is what the tree's ignore rule finds, so a snapshot can never be \
+         committed by accident; KI-386)."
     )
 }
 
@@ -2806,7 +2805,11 @@ mod tests {
     fn the_manifest_task_names_the_route_the_driver_has() {
         let task = seed_task("fleet");
         assert!(!task.contains("mcp__blend1__refresh"), "{task}");
-        assert!(task.contains("mcp_server.py"), "{task}");
+        // The hand-driven stdio session is retired: the task names the
+        // one-command route (O7/KI-369), so no run re-derives framing
+        // the client already speaks.
+        assert!(!task.contains("mcp_server.py"), "{task}");
+        assert!(task.contains("fleet mcp call blend1 refresh"), "{task}");
         assert!(task.contains("refresh"), "{task}");
         assert!(task.contains("fleet"), "{task}");
         // The writer stamp (O5/KI-386): the task names the canonical
