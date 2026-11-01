@@ -142,9 +142,20 @@ the test that names it, and every row closes with that pin.**
 
 ## Acceptance criteria
 
-- [ ] **W1 — the wedge degrades.** C1–C4 each land with their pin;
-      a refresh under a saturated embedder retries with a named
-      message instead of hanging or reporting an absent endpoint.
+- [x] **W1 — the wedge degrades.** *Landed 2026-11-01: C1 — sem1's
+      embed arm splits by cause (refused→`unreachable … Start it`,
+      timeout→the new `ProviderBusyError` saying "up but busy") with a
+      bounded busy-retry (twice, 1 s/3 s), pinned by
+      `services/sem1/tests/test_http_llama.py`'s three cases; C2 —
+      `corpus.search` carries `EMBED_QUERY_TIMEOUT_SECONDS = 120.0`,
+      pinned as a captured value by
+      `services/blend1/tests/test_search_budget.py`; C3 — the OR
+      chose timeout+backoff (C1) with the queue-depth health tool
+      recorded as the named follow-on; C4 — the dispatcher's `fire()`
+      partitions the embed-class jobs and runs them sequentially
+      within a pass, pinned by
+      `an_embed_class_batch_serializes_within_one_pass` (high-water
+      mark 1, both outcomes landing). KI-346/354/347/325/344 closed.*
 - [ ] **W2 — one source-set contract.** C5–C8 land; a definition
       change and a content change are distinguishable from the report
       alone, and the two declarations agree.

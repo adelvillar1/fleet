@@ -2367,8 +2367,27 @@ impl Scheduler {
         let local = tokio::task::LocalSet::new();
         local
             .run_until(async {
-                let mut handles = Vec::with_capacity(due.len());
-                for one in due {
+                // The embed-class fires — a pass's jobs that carry the
+                // lane refresh tool — share the machine's ONE-slot
+                // embedder, and the LocalSet below would run them all
+                // at once: a catch-up batch spent one project's
+                // rebuild budget queueing behind five others' (KI-344).
+                // They now run one at a time within the pass; every
+                // other job stays as concurrent as the set makes it.
+                // The row's recorded choice: serialize the batch here
+                // rather than give the embedder more slots — the queue
+                // is the machine's, and the contention is this pass's
+                // own to decide.
+                let total = due.len();
+                let (embed_class, others): (Vec<Due>, Vec<Due>) =
+                    due.into_iter().partition(|one| {
+                        one.job
+                            .tools
+                            .iter()
+                            .any(|tool| tool == "mcp__blend1__refresh")
+                    });
+                let mut handles = Vec::with_capacity(total);
+                for one in others {
                     // The runner is called here, synchronously, to build
                     // the fire's future: the `Runner` type's own bound
                     // makes that future `'static`, so the task that runs
@@ -2385,6 +2404,19 @@ impl Scheduler {
                     ));
                 }
                 let mut lines = Vec::new();
+                // The embed-class, sequentially: each fire completes
+                // before the next begins. Awaiting here also drives the
+                // spawned tasks above — the LocalSet runs them at every
+                // await point, so the ordinary jobs are not delayed by
+                // the serialization.
+                for one in embed_class {
+                    let run = (self.runner)(one.job.clone(), one.minute, one.catch_up);
+                    let home = self.home.clone();
+                    let ui_tx = self.ui_tx.clone();
+                    if let Some(line) = fire_one(home, ui_tx, one, run).await {
+                        lines.push(line);
+                    }
+                }
                 for (job, handle) in handles {
                     match handle.await {
                         Ok(Some(line)) => lines.push(line),
@@ -3550,6 +3582,71 @@ mod tests {
             skipped_tool: None,
             detail: "completed in 2 turns".to_string(),
         }
+    }
+
+    #[tokio::test]
+    async fn an_embed_class_batch_serializes_within_one_pass() {
+        // KI-344's serialization, pinned: two refresh-class jobs due
+        // in the SAME pass run one at a time — a catch-up batch's
+        // rebuild budgets never queue behind each other on the
+        // machine's one-slot embedder. The runner sleeps so an
+        // unserialized fire would overlap, and a high-water counter
+        // over the embed-class jobs catches it. Both jobs must still
+        // land their outcomes: serialization, not starvation.
+        let home = temp_home("embed-batch-serial");
+        seed_job(&home, "refresh-a", "* * * * *");
+        seed_job(&home, "refresh-b", "* * * * *");
+        let active = std::sync::Arc::new(AtomicUsize::new(0));
+        let peak = std::sync::Arc::new(AtomicUsize::new(0));
+        let runner_active = std::sync::Arc::clone(&active);
+        let runner_peak = std::sync::Arc::clone(&peak);
+        let runner: Runner = Box::new(move |job, _minute, _catch_up| {
+            let active = std::sync::Arc::clone(&runner_active);
+            let peak = std::sync::Arc::clone(&runner_peak);
+            let embed_class = job.tools.iter().any(|tool| tool == "mcp__blend1__refresh");
+            Box::pin(async move {
+                if embed_class {
+                    let now = active.fetch_add(1, Ordering::SeqCst) + 1;
+                    peak.fetch_max(now, Ordering::SeqCst);
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+                if embed_class {
+                    active.fetch_sub(1, Ordering::SeqCst);
+                }
+                Ok(completed(&job))
+            })
+        });
+        let mut scheduler = Scheduler::new(home.clone(), runner);
+        let mut first = job("refresh-a", "* * * * *", None);
+        first.tools = vec!["mcp__blend1__refresh".to_string()];
+        let mut second = job("refresh-b", "* * * * *", None);
+        second.tools = vec!["mcp__blend1__refresh".to_string()];
+        let due = vec![
+            Due {
+                job: first,
+                minute: minute(2026, 10, 14, 12, 0),
+                catch_up: false,
+            },
+            Due {
+                job: second,
+                minute: minute(2026, 10, 14, 12, 0),
+                catch_up: false,
+            },
+        ];
+        scheduler.fire(due).await;
+        assert_eq!(
+            peak.load(Ordering::SeqCst),
+            1,
+            "the embed class ran its batch one at a time"
+        );
+        let store = Store::open(&home).unwrap();
+        for name in ["refresh-a", "refresh-b"] {
+            let fired = store
+                .job(name)
+                .unwrap_or_else(|| panic!("`{name}` is in the store"));
+            assert!(fired.last_run.is_some(), "`{name}` still landed");
+        }
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     /// A runner that panics for the job named `panics` and completes

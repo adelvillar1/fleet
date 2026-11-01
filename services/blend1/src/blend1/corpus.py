@@ -43,7 +43,13 @@ SECTION_MAX_CHARS = 2000
 # embedded in a single call, and a corpus past http_llama's inherited 60-second
 # default times out mid-embed (KI-222). Ten minutes is the measured headroom
 # for a corpus several times fleet's own 638 entries.
-EMBED_TIMEOUT_SECONDS = 600.0  # v1 chunking cap — tunable; keys are visible in search output
+EMBED_TIMEOUT_SECONDS = 600.0
+# The QUERY path's own budget (KI-347): `search` used to ride the same
+# inherited 60 seconds, so one queued-behind-a-rebuild query read as an
+# unreachable server — a timeout reported as an absence. Two minutes
+# absorbs a queue behind a normal corpus embed without stranding an
+# interactive read behind the rebuild ceiling.
+EMBED_QUERY_TIMEOUT_SECONDS = 120.0
 # CLAUDE.local.md carries key values — it is NEVER in a corpus, even when a
 # caller's glob would otherwise match it: other processes read these stores.
 EXCLUDED_FILENAMES = frozenset({"CLAUDE.local.md"})
@@ -339,7 +345,11 @@ def search(query: str, *, project: str | None = None, k: int = 3) -> list[dict]:
     and the CLI/service reports it; an unseeded store returns [] cleanly."""
     import sem1
 
-    res = sem1.embed([query])
+    # The query carries its own budget (KI-347) — the rebuild's, scaled
+    # for a read: a busy one-slot embedder queues the query behind a
+    # corpus embed, and the old inherited 60 s turned that queue wait
+    # into "endpoint unreachable".
+    res = sem1.embed([query], timeout=EMBED_QUERY_TIMEOUT_SECONDS)
     return retrieve(res.vectors[0], k=k, project=project)
 
 
