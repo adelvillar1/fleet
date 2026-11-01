@@ -843,7 +843,10 @@ pub fn seed_task(project: &str) -> String {
          <repo home> is the parent directory of <fleet repo>, and every project's \
          corpus is its docs tree plus root .md files. It replies with project, \
          source_files, items, dropped_duplicates, changed, action, store, and \
-         missing_sources."
+         missing_sources. Then record the run's state fact with remember, named \
+         canonically: corpus-{project}-<YYYY-MM-DD>.md — corpus at the head, a \
+         dashed date at the tail (that spelling is what the tree's ignore rule \
+         finds, so a snapshot can never be committed by accident; KI-386)."
     )
 }
 
@@ -2806,6 +2809,11 @@ mod tests {
         assert!(task.contains("mcp_server.py"), "{task}");
         assert!(task.contains("refresh"), "{task}");
         assert!(task.contains("fleet"), "{task}");
+        // The writer stamp (O5/KI-386): the task names the canonical
+        // snapshot spelling, so a new state fact lands under the tree's
+        // ignore rule by construction — a spelling can never decide
+        // what gets committed again.
+        assert!(task.contains("corpus-fleet-<YYYY-MM-DD>.md"), "{task}");
     }
 
     #[test]
