@@ -3977,6 +3977,7 @@ async function theDesignCanvasCarriesItsFramesAndWritesGeometry() {
     ],
     tweak_values: { accent: '#3b6cf6', scale: 1 },
     model,
+    set: name === 'hero' ? 'site' : null,
     versions: [{ id: 'v-one', name, source: 'generate', created: '2026-10-31T09:00:00Z' }],
     pins: name === 'hero'
       ? [{ id: 'p-one', x: 0.5, y: 0.25, text: 'the spacing is off', source: 'owner',
@@ -4001,6 +4002,13 @@ async function theDesignCanvasCarriesItsFramesAndWritesGeometry() {
         created: '2026-10-31T09:00:00Z' }],
       reference: { url: 'https://bellows.example/', block: 'palette: #1c1a17',
         pages: ['/menu', '/about'], fetched_at: '2026-10-31T09:00:00Z' },
+      // The board's page set: two pages, one coherence gap.
+      sets: [{
+        name: 'site',
+        pages: [{ id: 'f-hero', name: 'hero' }, { id: 'f-pricing', name: 'pricing' }],
+        coherence: { pages: 2, shared: ['ink'], missing: ['pricing: page'],
+          broken: [], duplicates: [] },
+      }],
       chat: [
         { role: 'owner', text: 'a pricing page for a developer tool', frames: [],
           at: '2026-10-31T09:00:00Z' },
@@ -4209,6 +4217,28 @@ async function theDesignCanvasCarriesItsFramesAndWritesGeometry() {
     modelOptions.map((one) => one.value + '/' + one.disabled).join(','));
   check('PM-D the picker opens on the first model that can serve',
     models.value === 'zai-coding-plan/GLM-5.3-Flash', models.value);
+
+  // A page set: the title bars say which set a page belongs to, the verb
+  // is offered, and one press hands the whole set over.
+  const setBadge = cards[0].find((one) => one.className === 'canvas-badge' &&
+    String(one.textContent) === 'site');
+  check('PM-D a page of a set says which set on its bar',
+    !!setBadge, String(cards[0].find((one) => one.className === 'canvas-badge')
+      .map((one) => one.textContent).join(',')));
+  check('PM-D the composer offers the page set',
+    Array.from(page.IDS['design-mode-select'].children || [])
+      .some((one) => one.value === 'page_set'),
+    Array.from(page.IDS['design-mode-select'].children || [])
+      .map((one) => one.value).join(','));
+  byAct(page.IDS['design-instrument'], 'design-packet').click();
+  await flush(60);
+  check('PM-D the packet press hands the whole set over',
+    page.calls.some((one) => one.method === 'POST' &&
+      String(one.url || '').includes('/api/design/export') &&
+      String(one.body || '').includes('"kind":"set-png"') &&
+      String(one.body || '').includes('"set":"site"')),
+    JSON.stringify(page.calls.filter((one) => String(one.body || '').includes('set-png'))
+      .map((one) => one.body)));
 
   // The reference site is on the board: its facts ride the task, its pages
   // are the ones a redesign can model, and a scan asks Rust for them.

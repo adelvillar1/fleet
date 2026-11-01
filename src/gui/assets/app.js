@@ -16129,6 +16129,38 @@
     strip.appendChild(grid);
     strip.appendChild(pin);
     strip.appendChild(readout);
+    if (board && (board.sets || []).length) {
+      // A page set hands over whole: every page captured, the tokens, the
+      // manifest with its coherence, the changelog — one packet.
+      var first = (board.sets || [])[0];
+      var selectedFrame = designSelected();
+      var set = (selectedFrame && selectedFrame.set) || first.name;
+      var report = (first.coherence || {});
+      var packet = node('button', 'replay-button' +
+        (report.ok === false ? ' warn' : ''), 'packet \u00b7 ' + set);
+      packet.type = 'button';
+      packet.dataset.act = 'design-packet';
+      packet.title = report.ok === false
+        ? 'the set names what is not coherent: ' +
+          [].concat(report.missing || [], report.broken || [], report.duplicates || []).join('; ')
+        : 'the set is coherent';
+      packet.addEventListener('click', function () {
+        packet.disabled = true;
+        notice('packing the set', set + ' \u2014 pages, tokens, PNGs and the changelog');
+        post('/api/design/export', {
+          project: board.slug, kind: 'set-png', set: set,
+          origin: window.location.origin || 'http://127.0.0.1:3080'
+        }).then(function (reply) {
+          packet.disabled = false;
+          if (reply.status !== 200) {
+            notice('the packet was refused', (reply.body && reply.body.error) || '');
+            return;
+          }
+          notice('the packet is on disk', (reply.body && reply.body.path) || '');
+        }).catch(function () { packet.disabled = false; });
+      });
+      strip.appendChild(packet);
+    }
     if (board) {
       // The board's assets: the files its pages inline, one press away.
       var assets = node('button', 'replay-button', 'assets' +
@@ -16273,6 +16305,7 @@
     var bar = node('div', 'canvas-frame-bar');
     bar.dataset.drag = frame.id;
     bar.appendChild(node('span', 'canvas-frame-name', frame.name));
+    if (frame.set) bar.appendChild(badge(frame.set, 'ok'));
     if (frame.model) bar.appendChild(badge(frame.model));
     if (frame.pins && frame.pins.length) {
       bar.appendChild(badge(frame.pins.length + ' pin' + (frame.pins.length === 1 ? '' : 's'),
@@ -16844,6 +16877,8 @@
     if (board && board.reference) {
       modes.push({ value: 'redesign', label: 'redesign on the reference' });
     }
+    // A site, coherent: pages that share a token system and a navigation.
+    modes.push({ value: 'page_set', label: 'a page set' });
     modes.push({ value: 'ask', label: 'ask about the board' });
     return modes;
   }
@@ -17022,6 +17057,7 @@
     el.designBrief.value = '';
     el.designSend.disabled = true;
     designWrite('chat', { project: board.slug, role: 'owner', text: brief, frames: [] }, function () {
+      var pageCount = Number(el.designDirections.value || 1);
       var picked = [];
       var pageOptions = (el.designReferencePages && el.designReferencePages.children) || [];
       pageOptions.forEach(function (option) {
@@ -17034,6 +17070,7 @@
         frame_id: selected ? selected.id : '',
         preset: el.designStyle.value || '',
         directions: Number(el.designDirections.value || 1),
+        pages: mode === 'page_set' ? Math.max(2, pageCount) : undefined,
         reference_pages: picked
       }, function (answer) {
         var task = answer && answer.task;

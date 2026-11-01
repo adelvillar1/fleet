@@ -318,6 +318,10 @@ pub fn frame_spec() -> ToolSpec {
                     "type": "string",
                     "description": "Refine this existing frame instead of adding one: its page becomes this html, and the previous page is kept as a version."
                 },
+                "set": {
+                    "type": "string",
+                    "description": "The page set this frame belongs to (a site's pages share one): the board groups the pages, checks that they share tokens and that their links resolve, and hands the set over as one packet."
+                },
                 "assets": {
                     "type": "array",
                     "description": "Files the page inlines by name: each entry's bytes are read, MIME-checked and stored on the board, and the page's `{{img:NAME}}` placeholders become data: URIs. Pass `path` to hand a file in (it must be inside the fleet home or the working directory) or only `name` for one the board already keeps.",

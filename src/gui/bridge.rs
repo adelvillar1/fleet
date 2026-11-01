@@ -2208,6 +2208,105 @@ impl Bridge {
         }))
     }
 
+    /// A page set's packet with its captures: the browser lane is spawned
+    /// once, every page is captured at its own size and again at a phone's,
+    /// and the packet carries the PNGs beside the pages.
+    pub async fn design_set_png(&self, body: &str) -> Result<Value, String> {
+        let arguments: Value = serde_json::from_str(body)
+            .map_err(|error| format!("the export is not a JSON object: {error}"))?;
+        let slug = arguments
+            .get("project")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "the export names its project".to_string())?
+            .to_string();
+        let set = arguments
+            .get("set")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "the export names its set".to_string())?
+            .to_string();
+        let origin = arguments
+            .get("origin")
+            .and_then(Value::as_str)
+            .unwrap_or("http://127.0.0.1:3080")
+            .trim_end_matches('/')
+            .to_string();
+        let loopback = origin.starts_with("http://127.0.0.1:")
+            || origin.starts_with("http://localhost:")
+            || origin.starts_with("http://[::1]:");
+        if !loopback {
+            return Err(format!(
+                "`{origin}` is not this machine's loopback address; the capture stays local"
+            ));
+        }
+        let project = crate::canvas::load(&self.home, &slug)?;
+        let frames: Vec<(String, String, f64, f64)> = crate::canvas::page_set(&project, &set)
+            .iter()
+            .map(|frame| (frame.id.clone(), frame.name.clone(), frame.w, frame.h))
+            .collect();
+        if frames.is_empty() {
+            return Err(format!("no page set `{set}` on board `{slug}`"));
+        }
+        let spec = crate::lanes::spec_for("browser")?;
+        let dir = crate::canvas::canvas_root(&self.home)
+            .join(&slug)
+            .join("exports");
+        std::fs::create_dir_all(&dir)
+            .map_err(|error| format!("could not make {}: {error}", dir.display()))?;
+        let server = crate::mcp::McpServer::spawn(&spec)
+            .map_err(|error| format!("the browser lane could not start: {error}"))?;
+        server
+            .initialize()
+            .await
+            .map_err(|error| format!("the browser lane did not answer: {error}"))?;
+        let mut pngs: std::collections::BTreeMap<String, Vec<u8>> =
+            std::collections::BTreeMap::new();
+        for (id, name, w, h) in &frames {
+            let stem = crate::canvas::slug_of(name);
+            for (variant, width, height, suffix) in
+                [("desktop", *w, *h, ""), ("mobile", 390.0, 844.0, ":mobile")]
+            {
+                let path = dir.join(format!(
+                    "{stem}-{variant}-{}.png",
+                    crate::calib::stamp().replace([':', '-'], "")
+                ));
+                let url = format!("{origin}/api/design/frame/{slug}/{id}");
+                server
+                    .call_tool("browser_navigate", json!({ "url": url }))
+                    .await
+                    .map_err(|error| format!("the frame page did not open: {error}"))?;
+                server
+                    .call_tool(
+                        "browser_screenshot",
+                        json!({ "path": path.display().to_string(),
+                                "width": width as i64, "height": height as i64 }),
+                    )
+                    .await
+                    .map_err(|error| format!("the page did not capture: {error}"))?;
+                if let Ok(bytes) = std::fs::read(&path) {
+                    pngs.insert(format!("{id}{suffix}"), bytes);
+                }
+            }
+        }
+        let _ = server.close().await;
+        let bytes = crate::canvas::set_packet(&self.home, &slug, &set, &pngs)?;
+        let stem = format!(
+            "{}-set-{}",
+            crate::canvas::slug_of(&set),
+            crate::calib::stamp().replace([':', '-'], "")
+        );
+        let path = dir.join(format!("{stem}.zip"));
+        std::fs::write(&path, &bytes)
+            .map_err(|error| format!("could not write {}: {error}", path.display()))?;
+        Ok(json!({
+            "type": "design_export",
+            "kind": "set",
+            "path": path.display().to_string(),
+            "bytes": bytes.len(),
+            "pages": frames.len(),
+            "captures": pngs.len(),
+        }))
+    }
+
     /// The hand-off export: the frame's HTML, its token stylesheet and
     /// token JSON, or the ZIP packet — written beside the board and
     /// answered with the path (the terminal handed a file, fleet's own
@@ -6911,6 +7010,23 @@ fn design_read(home: &std::path::Path, project: Option<&str>) -> Value {
                     "brand": document.brand,
                     "reference": document.reference,
                     "assets": crate::canvas::assets(home, slug),
+                    // The page sets: each one's pages and its coherence
+                    // facts, computed where every surface can read them.
+                    "sets": crate::canvas::sets(&document)
+                        .into_iter()
+                        .map(|set| {
+                            let frames = crate::canvas::page_set(&document, &set);
+                            let report = crate::canvas::coherence(&frames);
+                            json!({
+                                "name": set,
+                                "pages": frames
+                                    .iter()
+                                    .map(|frame| json!({"id": frame.id, "name": frame.name}))
+                                    .collect::<Vec<_>>(),
+                                "coherence": report,
+                            })
+                        })
+                        .collect::<Vec<_>>(),
                 }));
             }
             Err(error) => refused.push(error),
@@ -7313,6 +7429,33 @@ fn design_export(home: &std::path::Path, body: &str) -> Result<Value, String> {
         .get("kind")
         .and_then(Value::as_str)
         .unwrap_or("html");
+    // A page set is one packet: every page, its tokens, the manifest with
+    // the coherence report, and the changelog.
+    if kind == "set" {
+        let set = arguments
+            .get("set")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "the set export names its set".to_string())?;
+        let pngs = std::collections::BTreeMap::new();
+        let bytes = crate::canvas::set_packet(home, slug, set, &pngs)?;
+        let dir = crate::canvas::canvas_root(home).join(slug).join("exports");
+        std::fs::create_dir_all(&dir)
+            .map_err(|error| format!("could not make {}: {error}", dir.display()))?;
+        let stem = format!(
+            "{}-set-{}",
+            crate::canvas::slug_of(set),
+            crate::calib::stamp().replace([':', '-'], "")
+        );
+        let path = dir.join(format!("{stem}.zip"));
+        std::fs::write(&path, &bytes)
+            .map_err(|error| format!("could not write {}: {error}", path.display()))?;
+        return Ok(json!({
+            "type": "design_export",
+            "kind": "set",
+            "path": path.display().to_string(),
+            "bytes": bytes.len(),
+        }));
+    }
     let project = crate::canvas::load(home, slug)?;
     let frame = project
         .frames

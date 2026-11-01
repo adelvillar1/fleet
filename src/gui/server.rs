@@ -1428,7 +1428,7 @@ async fn serve_connection(
                 Ok(body) => body,
                 Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
             };
-            let wants_png = serde_json::from_str::<serde_json::Value>(&body)
+            let kind = serde_json::from_str::<serde_json::Value>(&body)
                 .ok()
                 .and_then(|value| {
                     value
@@ -1436,12 +1436,13 @@ async fn serve_connection(
                         .and_then(|kind| kind.as_str())
                         .map(str::to_string)
                 })
-                .as_deref()
-                == Some("png");
-            let wrote = if wants_png {
-                bridge.design_png(&body).await
-            } else {
-                bridge.design_export(&body)
+                .unwrap_or_default();
+            // `png` captures one frame, `set-png` captures every page of a
+            // set (desktop and phone) and hands the packet over whole.
+            let wrote = match kind.as_str() {
+                "png" => bridge.design_png(&body).await,
+                "set-png" => bridge.design_set_png(&body).await,
+                _ => bridge.design_export(&body),
             };
             match wrote {
                 Ok(document) => write_reply(&mut stream, api(200, document)).await,

@@ -222,10 +222,10 @@ changelog.
 - [x] **W10 — DNA reaches the frame.** Style facts extracted from a
       fixture page (palette, type, scale) ride the run's task; a scan of
       a page with no style block says so.
-- [ ] **W11 — page sets are coherent.** A set's pages share tokens, its
+- [x] **W11 — page sets are coherent.** A set's pages share tokens, its
       nav targets resolve, its slugs are unique — `coherence` returns
       facts either way, pinned.
-- [ ] **W12 — a set exports whole.** One packet carries each page, its
+- [x] **W12 — a set exports whole.** One packet carries each page, its
       PNGs, the tokens, the manifest and the changelog; the zip opens.
 - [ ] **W13 — the review loop closed.** Two captures (desktop, mobile)
       reach the vision read; the stored review names the 8 scores; the
@@ -369,7 +369,35 @@ the picker landed as one run per model — see the landed section below —
 because the owner ruled that a design run's route is the page's, not a
 chain's.)**
 
-T4–T6 remain unstarted.
+T5–T6 remain unstarted.
+
+## Landed: T4 — page sets, coherent and handed over whole
+
+**A set is a group the canvas checks.** Frames carry a `set` (the `frame`
+tool's argument; the page-set task tells the model to pass the board's
+slug), `page_set_slugs` folds each page's name into its file slug,
+`rewrite_page_links` points internal links at `<slug>.html`, and
+`coherence` reports the shared tokens, **the tokens a page is missing**
+(computed over the union — the first cut computed it over the
+intersection and could only ever report nothing, caught by the pin), links
+that resolve to no page, and duplicate slugs. `ok()` is the reading; an
+incoherent set is shown, never smoothed.
+
+**The packet is the hand-over.** `set_packet` writes the ZIP: each page's
+HTML with its tweaks injected and links rewritten, `tokens.css`,
+`tokens.json`, a `manifest.json` carrying the page list, the shared tokens
+and the coherence report, and a `changelog.md`. The `set-png` export spawns
+the browser lane once and captures **every page twice** (its own size and
+390×844), and the PNGs ride in the packet. Pinned by
+`a_page_set_is_coherent_or_names_what_is_not` — five pages of a fixture
+site whose facts include a missing token, a broken link and a duplicate
+slug, then the rewritten links and the packet's own entries.
+
+**The surface**: the title bar of every page shows its set, the composer
+offers *a page set*, and the instrument's **packet** press names the set
+and warns when it is not coherent. Harness: three checks.
+
+Suite **1,885/0**, harness **570 checks across 56 cases**.
 
 ## Landed: T3 — the reference site, scanned
 

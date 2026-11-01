@@ -154,6 +154,10 @@ pub struct Frame {
     /// brought in from outside.
     #[serde(default)]
     pub model: String,
+    /// The page set this frame belongs to, when it is one page of a site:
+    /// the set's pages share a token system, a navigation and a packet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub set: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none", alias = "genMeta")]
     pub gen_meta: Option<Value>,
     #[serde(default)]
@@ -1170,7 +1174,7 @@ pub fn designer_task(mode: DesignMode, brief: &str, slug: &str, facts: &DesignFa
         DesignMode::PageSet => {
             let pages = facts.pages.unwrap_or(3).max(1);
             task.push_str(&format!(
-                "Design a coherent {pages}-page site for: {brief}\n\nPlan the pages and one shared token system first \u{2014} the same :root variables on every page and one navigation \u{2014} then put each page on the board `{slug}` with the `frame` tool (project `{slug}`), one call per page, named for its page. Internal links point at the other pages' frame names, which the canvas rewrites to their slugs."
+                "Design a coherent {pages}-page site for: {brief}\n\nPlan the pages and one shared token system first \u{2014} the same `:root` variables on every page and one navigation \u{2014} then put each page on the board `{slug}` with the `frame` tool (project `{slug}`, set `{slug}`), one call per page, each named for its page. Internal links point at the other pages' frame names; the canvas rewrites them to the set's slugs and reports any link that resolves to no page."
             ));
         }
         DesignMode::Redesign => {
@@ -1834,6 +1838,343 @@ fn ranked(list: Vec<(String, usize)>, cap: usize) -> Vec<String> {
     list.into_iter().take(cap).map(|(value, _)| value).collect()
 }
 
+// --- page sets ---------------------------------------------------------------
+
+/// One page of a set: the frame, its name, and the slug its file takes.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct PageSlug {
+    pub id: String,
+    pub name: String,
+    pub slug: String,
+}
+
+/// The pages of one set, in board order.
+pub fn page_set<'a>(project: &'a Project, set: &str) -> Vec<&'a Frame> {
+    project
+        .frames
+        .iter()
+        .filter(|frame| frame.set.as_deref() == Some(set))
+        .collect()
+}
+
+/// Every set the board carries, by name, in the order its first page
+/// landed.
+pub fn sets(project: &Project) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for frame in &project.frames {
+        if let Some(set) = &frame.set {
+            if !out.contains(set) {
+                out.push(set.clone());
+            }
+        }
+    }
+    out
+}
+
+/// The file slug each page of a set takes. A duplicate slug is the
+/// coherence failure the packet names — the slug itself stays honest
+/// (the name, folded), never silently suffixed.
+pub fn page_set_slugs(frames: &[&Frame]) -> Vec<PageSlug> {
+    frames
+        .iter()
+        .map(|frame| PageSlug {
+            id: frame.id.clone(),
+            name: frame.name.clone(),
+            slug: slug_of(&frame.name),
+        })
+        .collect()
+}
+
+/// One set's coherence, as facts: the tokens every page declares, the
+/// tokens a page is missing, links that point at no page in the set, and
+/// duplicate slugs. The report is a read of what the pages say.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct Coherence {
+    pub pages: usize,
+    /// The `:root` tokens every page of the set declares.
+    pub shared: Vec<String>,
+    /// `page: token` for a token the rest of the set declares and one
+    /// page does not.
+    pub missing: Vec<String>,
+    /// `page → target` for an internal link that names no page in the set.
+    pub broken: Vec<String>,
+    /// The slugs two pages share.
+    pub duplicates: Vec<String>,
+}
+
+impl Coherence {
+    pub fn ok(&self) -> bool {
+        self.missing.is_empty() && self.broken.is_empty() && self.duplicates.is_empty()
+    }
+}
+
+/// The fact report of one set.
+pub fn coherence(frames: &[&Frame]) -> Coherence {
+    let slugs = page_set_slugs(frames);
+    let token_sets: Vec<BTreeMap<String, String>> = frames
+        .iter()
+        .map(|frame| {
+            extract_root_tokens(&frame.html)
+                .into_iter()
+                .collect::<BTreeMap<_, _>>()
+        })
+        .collect();
+    let mut shared: Vec<String> = Vec::new();
+    if let Some(first) = token_sets.first() {
+        for token in first.keys() {
+            if token_sets.iter().all(|set| set.contains_key(token)) {
+                shared.push(token.clone());
+            }
+        }
+    }
+    // The missing report is over the UNION: a token the rest of the set
+    // declares and one page does not is exactly what the intersection
+    // cannot see.
+    let mut union: Vec<String> = Vec::new();
+    for set in &token_sets {
+        for token in set.keys() {
+            if !union.contains(token) {
+                union.push(token.clone());
+            }
+        }
+    }
+    let mut missing: Vec<String> = Vec::new();
+    for (index, frame) in frames.iter().enumerate() {
+        for token in &union {
+            if !token_sets[index].contains_key(token) {
+                missing.push(format!("{}: {token}", frame.name));
+            }
+        }
+    }
+    // A set that agrees on no token at all is the failure the
+    // intersection cannot see: name every page rather than report
+    // silence.
+    if shared.is_empty() && frames.len() > 1 {
+        for frame in frames {
+            missing.push(format!("{}: no shared token", frame.name));
+        }
+    }
+    let mut duplicates: Vec<String> = Vec::new();
+    for (index, page) in slugs.iter().enumerate() {
+        if slugs
+            .iter()
+            .enumerate()
+            .any(|(other, one)| other != index && one.slug == page.slug)
+            && !duplicates.contains(&page.slug)
+        {
+            duplicates.push(page.slug.clone());
+        }
+    }
+    let known: Vec<String> = slugs
+        .iter()
+        .flat_map(|page| [page.name.to_lowercase(), page.slug.clone()])
+        .collect();
+    let mut broken: Vec<String> = Vec::new();
+    for frame in frames {
+        for (attribute, value) in attributes(&frame.html) {
+            if attribute != "href" {
+                continue;
+            }
+            let target = value.trim();
+            if target.is_empty()
+                || target.starts_with('#')
+                || target.starts_with("http://")
+                || target.starts_with("https://")
+                || target.starts_with("//")
+                || target.starts_with("mailto:")
+                || target.starts_with("tel:")
+                || target.starts_with("data:")
+                || target.starts_with("javascript:")
+            {
+                continue;
+            }
+            let clean = target
+                .trim_start_matches("./")
+                .trim_start_matches('/')
+                .trim_end_matches(".html")
+                .trim_end_matches('/')
+                .to_lowercase();
+            if !known.contains(&clean) {
+                broken.push(format!("{} → {target}", frame.name));
+            }
+        }
+    }
+    Coherence {
+        pages: frames.len(),
+        shared,
+        missing,
+        broken,
+        duplicates,
+    }
+}
+
+/// Rewrite a page's internal links to the set's slugs: a link naming
+/// another page (by frame name or by `/name`) becomes `<slug>.html`, the
+/// file the packet writes. External links, anchors and the page's own
+/// name are left alone; one implementation serves the preview and the
+/// packet.
+pub fn rewrite_page_links(html: &str, slugs: &[PageSlug], own: &str) -> String {
+    let mut out = html.to_string();
+    for page in slugs {
+        if page.name.eq_ignore_ascii_case(own) {
+            continue;
+        }
+        for form in [
+            format!("href=\"{}\"", page.name),
+            format!("href='/{}'", page.name),
+            format!("href=\"/{}\"", page.slug),
+            format!("href=\"{}\"", page.slug),
+            format!("href=\"/{}\"", page.name),
+        ] {
+            let replacement = format!("href=\"{}.html\"", page.slug);
+            out = out.replace(&form, &replacement);
+        }
+    }
+    out
+}
+
+/// The packet one set hands over: each page's file (its tweaks injected
+/// and its internal links rewritten), the tokens, the manifest, the
+/// changelog, and the captured PNGs when the caller brought them.
+pub fn set_packet(
+    home: &Path,
+    slug: &str,
+    set: &str,
+    pngs: &BTreeMap<String, Vec<u8>>,
+) -> Result<Vec<u8>, String> {
+    let project = load(home, slug)?;
+    let frames = page_set(&project, set);
+    if frames.is_empty() {
+        return Err(format!("no page set `{set}` on board `{slug}`"));
+    }
+    let slugs = page_set_slugs(&frames);
+    let report = coherence(&frames);
+    let mut parts: Vec<(String, Vec<u8>)> = Vec::new();
+    let mut manifest_pages: Vec<Value> = Vec::new();
+    let mut tokens_css = String::from("/* the set's tokens, as the pages declare them */\n");
+    let mut tokens_json: BTreeMap<String, Value> = BTreeMap::new();
+    for (frame, page) in frames.iter().zip(slugs.iter()) {
+        let html = inject_tweaks(&frame.html, &frame.tweak_spec, &frame.tweak_values);
+        let html = rewrite_page_links(&html, &slugs, &frame.name);
+        parts.push((format!("{}.html", page.slug), html.into_bytes()));
+        let tokens = extract_root_tokens(&frame.html);
+        tokens_css.push_str(&format!(
+            "/* {}.html */\n:root {{\n{}\n}}\n",
+            page.slug,
+            tokens
+                .iter()
+                .map(|(token, value)| format!("  --{token}: {value};"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ));
+        tokens_json.insert(
+            page.slug.clone(),
+            Value::Object(
+                tokens
+                    .iter()
+                    .map(|(token, value)| (token.clone(), Value::String(value.clone())))
+                    .collect(),
+            ),
+        );
+        let desktop = pngs.get(&frame.id);
+        let mobile = pngs.get(&format!("{}:mobile", frame.id));
+        manifest_pages.push(serde_json::json!({
+            "file": format!("{}.html", page.slug),
+            "name": frame.name,
+            "id": frame.id,
+            "size": format!("{}×{}", frame.w, frame.h),
+            "tokens": tokens.len(),
+            "png": desktop.map(|_| format!("png/{}.png", page.slug)),
+            "png_mobile": mobile.map(|_| format!("png/{}-mobile.png", page.slug)),
+        }));
+        if let Some(bytes) = desktop {
+            parts.push((format!("png/{}.png", page.slug), bytes.clone()));
+        }
+        if let Some(bytes) = mobile {
+            parts.push((format!("png/{}-mobile.png", page.slug), bytes.clone()));
+        }
+    }
+    parts.push(("tokens.css".to_string(), tokens_css.into_bytes()));
+    parts.push((
+        "tokens.json".to_string(),
+        serde_json::to_vec_pretty(&tokens_json)
+            .map_err(|error| format!("the tokens do not serialize: {error}"))?,
+    ));
+    let manifest = serde_json::json!({
+        "board": slug,
+        "set": set,
+        "pages": manifest_pages,
+        "shared_tokens": report.shared,
+        "coherence": {
+            "ok": report.ok(),
+            "missing": report.missing,
+            "broken": report.broken,
+            "duplicates": report.duplicates,
+        },
+        "created": crate::calib::stamp(),
+    });
+    parts.push((
+        "manifest.json".to_string(),
+        serde_json::to_vec_pretty(&manifest)
+            .map_err(|error| format!("the manifest does not serialize: {error}"))?,
+    ));
+    let mut changelog = format!(
+        "# {set}\n\n{} page{} on board `{slug}`, handed over {}.\n\n",
+        frames.len(),
+        if frames.len() == 1 { "" } else { "s" },
+        crate::calib::stamp()
+    );
+    for (frame, page) in frames.iter().zip(slugs.iter()) {
+        changelog.push_str(&format!(
+            "- `{}.html` — {}, {}×{}, {} token{}, {} version{}\n",
+            page.slug,
+            frame.name,
+            frame.w,
+            frame.h,
+            extract_root_tokens(&frame.html).len(),
+            if extract_root_tokens(&frame.html).len() == 1 {
+                ""
+            } else {
+                "s"
+            },
+            frame.versions.len(),
+            if frame.versions.len() == 1 { "" } else { "s" },
+        ));
+    }
+    if !report.ok() {
+        changelog.push_str("\n## coherence\n\n");
+        for line in &report.missing {
+            changelog.push_str(&format!("- missing token — {line}\n"));
+        }
+        for line in &report.broken {
+            changelog.push_str(&format!("- broken link — {line}\n"));
+        }
+        for line in &report.duplicates {
+            changelog.push_str(&format!("- duplicate slug — {line}\n"));
+        }
+    }
+    parts.push(("changelog.md".to_string(), changelog.into_bytes()));
+    Ok(crate::deck::zip_parts(&parts))
+}
+
+/// Put one landed frame into a set.
+pub fn set_frame_set(home: &Path, slug: &str, frame_id: &str, set: &str) -> Result<(), String> {
+    let mut project = load(home, slug)?;
+    let frame = project
+        .frames
+        .iter_mut()
+        .find(|frame| frame.id == frame_id)
+        .ok_or_else(|| format!("no frame `{frame_id}` on this board"))?;
+    let set = set.trim();
+    frame.set = if set.is_empty() {
+        None
+    } else {
+        Some(set.to_string())
+    };
+    project.updated = crate::calib::stamp();
+    save(home, slug, &project)
+}
+
 // --- frame operations -------------------------------------------------------
 
 /// A fresh id: a prefix and eight hex characters of randomness, unique
@@ -1954,6 +2295,7 @@ pub fn put_frame_sized(
         tweak_spec: tweak_spec.map(<[TweakSpec]>::to_vec).unwrap_or_default(),
         tweak_values: BTreeMap::new(),
         model: model.to_string(),
+        set: None,
         gen_meta: None,
         versions: Vec::new(),
         pins: Vec::new(),
@@ -2219,6 +2561,17 @@ pub fn frame_from_tool(home: &Path, arguments: &Value) -> Result<(String, String
         "designer",
         Some((w, h)),
     )?;
+    // A page set: the frame joins the set the brief named, so the board
+    // groups it, checks its tokens and links, and hands the set over as
+    // one packet.
+    if let Some(set) = arguments
+        .get("set")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|set| !set.is_empty())
+    {
+        set_frame_set(home, &slug, &id, set)?;
+    }
     // The board's brand seeds the page's color defaults: a spec key that
     // names one of the brand's tokens starts at the brand's value, so a
     // branded board lands pages in its own palette without a second pass.
@@ -2861,6 +3214,130 @@ mod tests {
         // Text that is not an SVG is refused by name.
         let error = svg_sanitize("<html><body>not a mark</body></html>").unwrap_err();
         assert!(error.contains("not an SVG"), "{error}");
+    }
+
+    /// W11: a set's pages share tokens, its links resolve, its slugs are
+    /// unique — and the report names what is not.
+    #[test]
+    fn a_page_set_is_coherent_or_names_what_is_not() {
+        let home = scratch("page-set");
+        let (slug, _) = create(&home, "Site").unwrap();
+        let page = |title: &str, tokens: &str, links: &str| {
+            format!(
+                "<!doctype html><html><head><style>:root{{{tokens}}}</style></head>\
+                 <body><h1>{title}</h1>{links}</body></html>"
+            )
+        };
+        let home_id = put_frame(
+            &home,
+            &slug,
+            "home",
+            &page(
+                "Home",
+                "--ink:#111111;--page:#ffffff;--accent:#b4552d",
+                "<a href=\"pricing\">Pricing</a><a href=\"about\">About</a>",
+            ),
+            None,
+            None,
+            "m",
+        )
+        .unwrap();
+        // The pricing page lost `--page`, points at a ghost and shares a slug
+        // with nothing — the other two do collide on `about`.
+        let pricing_id = put_frame(
+            &home,
+            &slug,
+            "pricing",
+            &page(
+                "Pricing",
+                "--ink:#111111;--accent:#b4552d",
+                "<a href=\"/about\">About</a><a href=\"ghost\">Ghost</a>",
+            ),
+            None,
+            None,
+            "m",
+        )
+        .unwrap();
+        let about_id = put_frame(
+            &home,
+            &slug,
+            "about",
+            &page(
+                "About",
+                "--ink:#111111;--page:#ffffff;--accent:#b4552d",
+                "<a href=\"home\">Home</a>",
+            ),
+            None,
+            None,
+            "m",
+        )
+        .unwrap();
+        let about_dup = put_frame(
+            &home,
+            &slug,
+            "About",
+            &page("About again", "--ink:#111111;--page:#ffffff", ""),
+            None,
+            None,
+            "m",
+        )
+        .unwrap();
+        for id in [&home_id, &pricing_id, &about_id, &about_dup] {
+            set_frame_set(&home, &slug, id, "site").unwrap();
+        }
+        let project = load(&home, &slug).unwrap();
+        let frames = page_set(&project, "site");
+        assert_eq!(frames.len(), 4);
+        let report = coherence(&frames);
+        // `--ink` is the one token every page declares.
+        assert_eq!(report.shared, vec!["ink".to_string()], "{report:?}");
+        assert!(
+            report.missing.contains(&"pricing: page".to_string()),
+            "{report:?}"
+        );
+        assert!(
+            report.missing.contains(&"About: accent".to_string()),
+            "{report:?}"
+        );
+        assert!(
+            report.broken.iter().any(|line| line.contains("ghost")),
+            "{report:?}"
+        );
+        // The `/about` link resolves, so it is not reported.
+        assert!(
+            !report.broken.iter().any(|line| line.contains("/about")),
+            "{report:?}"
+        );
+        assert_eq!(report.duplicates, vec!["about".to_string()], "{report:?}");
+        assert!(!report.ok());
+        // A coherent set says so.
+        let ids = page_set_slugs(&frames);
+        let rewritten = rewrite_page_links(
+            "<a href=\"pricing\">P</a><a href=\"/about\">A</a><a href=\"https://x.test/\">X</a>",
+            &ids,
+            "home",
+        );
+        assert!(rewritten.contains("href=\"pricing.html\""), "{rewritten}");
+        assert!(rewritten.contains("href=\"about.html\""), "{rewritten}");
+        assert!(rewritten.contains("https://x.test/"), "{rewritten}");
+        // The packet carries every page, the tokens, the manifest and the
+        // changelog — and it opens as a zip.
+        let bytes = set_packet(&home, &slug, "site", &std::collections::BTreeMap::new()).unwrap();
+        assert_eq!(&bytes[0..2], b"PK", "a zip archive");
+        let text = String::from_utf8_lossy(&bytes);
+        for name in [
+            "home.html",
+            "pricing.html",
+            "about.html",
+            "tokens.css",
+            "manifest.json",
+            "changelog.md",
+        ] {
+            assert!(text.contains(name), "{name} missing from the packet");
+        }
+        let error =
+            set_packet(&home, &slug, "nope", &std::collections::BTreeMap::new()).unwrap_err();
+        assert!(error.contains("nope"), "{error}");
     }
 
     /// W9: the reference fetch refuses what it must, by name, before any

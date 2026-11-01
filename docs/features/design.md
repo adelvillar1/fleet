@@ -200,6 +200,36 @@ the positive prompt, and its **`avoid` list is the negative one**, riding
 the task as `Avoid: …` after the style line. Nothing about a preset is
 invented by fleet; the file is re-derived from the source's two tables.
 
+## Page sets
+
+A **page set** is a site on the board: frames that share a `set` name (the
+`frame` tool's `set`), one per page. The set is where the canvas stops
+treating pages as separate artifacts:
+
+- **`page_set_slugs`** gives every page the slug its file takes (the name,
+  folded).
+- **`rewrite_page_links`** rewrites a page's internal links — a link
+  naming another page by frame name or by `/name` — to `<slug>.html`, the
+  file the packet writes. External links, anchors and the page's own name
+  are left exactly as written; one implementation serves the packet.
+- **`coherence`** is a fact report over the set: the `:root` tokens every
+  page declares, the **tokens a page is missing** (over the union, so the
+  intersection's blind spot is named), links that resolve to **no page in
+  the set**, and **duplicate slugs**. It returns the facts either way —
+  `ok()` is the reading, and a false reading is shown, not smoothed.
+- **The packet** (`set_packet`, or the `set-png` export) hands the whole
+  set over as one ZIP: each page's HTML (tweaks injected, links
+  rewritten), `tokens.css` and `tokens.json`, `manifest.json` (the pages,
+  the shared tokens, the coherence report) and `changelog.md`. With
+  `set-png` the browser lane is spawned once and **every page is captured
+  twice — at its own size and at a phone's** — and the PNGs ride beside
+  the pages.
+
+The composer's *a page set* verb sends the brief with the page count, the
+task names the set for the model, and the title bar of every page shows
+which set it belongs to. The instrument's **packet** press names the set
+and says when it is not coherent.
+
 ## The reference site
 
 A board can be **scanned against a site** the owner points at, and a
