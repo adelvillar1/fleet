@@ -35,8 +35,10 @@ STORE_ROOT = (
 MODEL_SLUG = "embeddinggemma-2"  # store slug; the real model id rides in the manifest
 
 # Docs-derived refresh — the default source set (relative to CWD): every
-# docs/**/*.md plus the root contract docs when they exist.
-DEFAULT_ROOT_DOCS = ("CLAUDE.md", "TECHNICAL-DOCUMENTATION.md", "FUNCTIONAL-SPECIFICATIONS.md")
+# docs/**/*.md plus every root .md. The root half is the job
+# convention's own declaration (`<repo home>/{project}/*.md`), so the
+# default and the job say one thing (KI-345): no three-name list, no
+# README-shaped divergence that costs a full re-embed to reconcile.
 SECTION_MAX_CHARS = 2000
 
 # The one-shot embed's budget, in seconds: the corpus a refresh derives is
@@ -178,28 +180,39 @@ def retrieve(
     return scored[:k]
 
 
-def _source_files(sources: list[str] | None) -> tuple[list[Path], list[str]]:
+def _source_files(
+    sources: list[str] | None,
+) -> tuple[list[Path], list[str], list[str]]:
     """The files to derive from: `sources` (file paths or globs) REPLACES the
-    default set (docs/**/*.md + the root contract docs). .md-only by
-    construction and CLAUDE.local.md never — it carries key values and these
-    stores are read by other processes. Deduped, sorted, deterministic.
+    default set (docs/**/*.md + every root .md — the job convention's own
+    declaration, KI-345: one set, so a default-built and a job-built store
+    agree and README stops being the file that forces a full re-embed).
+    .md-only by construction and CLAUDE.local.md never — it carries key
+    values and these stores are read by other processes. Deduped, sorted,
+    deterministic.
 
-    Returns (files, missing): the second is every declared source that
-    resolved to nothing. KI-225 — a job whose task string lists sources
-    that do not exist used to derive silently from whatever remained,
-    so a stale job looked like a successful refresh of fewer files. A
-    missing source is named in the report instead."""
+    Returns (files, missing, empty): `missing` is every declared LITERAL
+    path that resolved to nothing — dark, KI-225's named refusal;
+    `empty` is every declared WILDCARD that matched nothing —
+    satisfiable (a project whose root holds no .md is the pattern
+    working as declared), named apart so one list stops making both
+    classes unavoidable (KI-343)."""
     if sources is not None:
         matched: list[Path] = []
         missing: list[str] = []
+        empty: list[str] = []
         for pattern in sources:
             hits = glob.glob(pattern, recursive=True)
             if not hits and not Path(pattern).is_file():
-                missing.append(pattern)
+                if any(marker in pattern for marker in "*?["):
+                    empty.append(pattern)
+                else:
+                    missing.append(pattern)
             matched.extend(Path(p) for p in hits)
     else:
         matched = list(Path("docs").rglob("*.md"))
-        matched.extend(Path(name) for name in DEFAULT_ROOT_DOCS if Path(name).is_file())
+        matched.extend(p for p in Path(".").glob("*.md"))
+        empty = []
     seen: set[Path] = set()
     out: list[Path] = []
     for p in sorted(matched):
@@ -218,7 +231,7 @@ def _source_files(sources: list[str] | None) -> tuple[list[Path], list[str]]:
             continue
         seen.add(resolved)
         out.append(p)
-    return out, (missing if sources is not None else [])
+    return out, (missing if sources is not None else []), empty
 
 
 def _chunks(path: Path) -> list[tuple[str, str, str]]:
@@ -260,10 +273,13 @@ def _chunks(path: Path) -> list[tuple[str, str, str]]:
     return [(r, h, t[:SECTION_MAX_CHARS]) for r, h, t in out]
 
 
-def _derive(sources: list[str] | None) -> tuple[list[dict], int, list[str], int]:
-    """(items, source_file_count, missing_sources, dropped_duplicates) —
-    items deduplicated by key, first occurrence kept, sorted by
-    (relpath, heading) so a rebuild over unchanged docs is byte-stable.
+def _derive(
+    sources: list[str] | None,
+) -> tuple[list[dict], int, list[str], list[str], int]:
+    """(items, source_file_count, missing_sources, empty_wildcards,
+    dropped_duplicates) — items deduplicated by key, first occurrence
+    kept, sorted by (relpath, heading) so a rebuild over unchanged docs
+    is byte-stable.
 
     A doc that repeats a `## heading` with different bodies used to
     leave the derived (key, sha) set permanently larger than the store,
@@ -271,7 +287,7 @@ def _derive(sources: list[str] | None) -> tuple[list[dict], int, list[str], int]
     re-embedded a byte-identical corpus, four projects recorded
     (KI-297). The dropped count keeps the truncation visible instead of
     silent: a repeated heading is a doc shape worth knowing about."""
-    files, missing = _source_files(sources)
+    files, missing, empty = _source_files(sources)
     triples: list[tuple[str, str, str]] = []
     for path in files:
         triples.extend(_chunks(path))
@@ -286,7 +302,7 @@ def _derive(sources: list[str] | None) -> tuple[list[dict], int, list[str], int]
             continue
         seen.add(key)
         items.append({"key": key, "text": text})
-    return items, len(files), missing, dropped
+    return items, len(files), missing, empty, dropped
 
 
 def derive_items(sources: list[str] | None = None) -> list[dict]:
@@ -301,7 +317,11 @@ def refresh(*, project: str | None = None, sources: list[str] | None = None) -> 
     (key, sha256) set differs from the store manifest — steady state is file
     reads + hashes, no embedding. Never raises on a missing/empty source
     set: action "no-source", no store created. Report:
-    {project, source_files, items, changed, action, store}.
+    {project, source_files, items, changed, action, store,
+    missing_sources, empty_wildcards} — plus, when a store exists,
+    sources_added / sources_removed (the source-set delta since the
+    stored manifest, KI-348) — and, when the DEFAULT set resolved to
+    nothing, `reason` naming the cwd it resolved against (KI-339).
 
     Known limitation (documented, not fixed): the check compares text
     hashes only. If the embedding server's model/dims change behind the
@@ -311,7 +331,7 @@ def refresh(*, project: str | None = None, sources: list[str] | None = None) -> 
     """
     resolved = resolve_project(project)
     root = store_root(resolved)
-    items, n_files, missing, dropped = _derive(sources)
+    items, n_files, missing, empty, dropped = _derive(sources)
     report: dict = {
         "project": resolved,
         "source_files": n_files,
@@ -321,14 +341,33 @@ def refresh(*, project: str | None = None, sources: list[str] | None = None) -> 
         "action": "no-source",
         "store": str(root),
         "missing_sources": missing,
+        "empty_wildcards": empty,
     }
     if not items:
+        if sources is None:
+            # KI-339: the default set resolved to NOTHING here — the
+            # cwd is the fact a scheduled job needs (over MCP the child
+            # derives against the LANE home, which has no docs/), and
+            # the quiet no-source hid it. Named, with the cwd.
+            report["reason"] = (
+                "the default set (docs/**/*.md plus the root .md files) "
+                f"resolved to nothing under {Path.cwd()} — a scheduled "
+                "job declares its sources explicitly"
+            )
         return report
     from sem1.store import VectorStore
 
     manifest, _vectors = VectorStore(root).load(MODEL_SLUG)
     current = {(e["key"], e["sha256"]) for e in manifest["entries"]} if manifest else set()
     derived = {(it["key"], _hash_text(it["text"])) for it in items}
+    # KI-348: the source-set delta the action acted on — a definition
+    # change (files added or removed) reads as ITSELF instead of as a
+    # larger `rebuilt`. The manifest's keys are `abs_path#heading`, so
+    # the stored source set is every key's file half.
+    stored_files = {key.split("#", 1)[0] for key, _sha in current}
+    fresh_files = {it["key"].split("#", 1)[0] for it in items}
+    report["sources_added"] = sorted(fresh_files - stored_files)
+    report["sources_removed"] = sorted(stored_files - fresh_files)
     if current == derived:
         report["action"] = "unchanged"
         return report

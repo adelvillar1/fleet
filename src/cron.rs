@@ -841,8 +841,11 @@ pub fn seed_task(project: &str) -> String {
          (KI-369: one command instead of a hand-driven stdio session). <repo home> is the \
          parent directory of <fleet repo>, and every project's corpus is its docs tree \
          plus root .md files. It replies with project, source_files, items, \
-         dropped_duplicates, changed, action, store, and missing_sources. Then record the \
-         run's state fact with remember, named canonically: \
+         dropped_duplicates, changed, action, store, missing_sources, empty_wildcards \
+         (a wildcard that matched nothing — satisfiable, not dark), sources_added and \
+         sources_removed (the source-set delta since the stored manifest), and — when \
+         the default set resolves to nothing — reason, the cwd it failed against. Then \
+         record the run's state fact with remember, named canonically: \
          corpus-{project}-<YYYY-MM-DD>.md — corpus at the head, a dashed date at the tail \
          (that spelling is what the tree's ignore rule finds, so a snapshot can never be \
          committed by accident; KI-386)."

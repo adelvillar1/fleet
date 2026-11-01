@@ -156,9 +156,19 @@ the test that names it, and every row closes with that pin.**
       within a pass, pinned by
       `an_embed_class_batch_serializes_within_one_pass` (high-water
       mark 1, both outcomes landing). KI-346/354/347/325/344 closed.*
-- [ ] **W2 — one source-set contract.** C5–C8 land; a definition
-      change and a content change are distinguishable from the report
-      alone, and the two declarations agree.
+- [x] **W2 — one source-set contract.** *Landed 2026-11-01: C5 — a
+      default-set zero carries a `reason` naming the cwd it resolved
+      against (KI-339); C6 — literals that miss stay dark in
+      `missing_sources` while wildcards that matched nothing land in
+      the new `empty_wildcards` (KI-343); C7 — the default set IS the
+      job convention now (every root .md beside docs; the three-name
+      `DEFAULT_ROOT_DOCS` retired, README no longer forces a
+      re-embed — KI-345); C8 — `sources_added`/`sources_removed`
+      diff against the stored manifest so a definition change reads as
+      itself (KI-348). Pinned by the four cases in
+      `services/blend1/tests/test_source_set.py`, the embedder stubbed;
+      seed_task's reply sentence carries the new fields. KI-339/343/
+      345/348 closed.*
 - [ ] **W3 — the runtime is named.** C9–C12 land; the transport
       contract is written where a driver reads it, the store never
       claims an unproduced outcome, and the process surface reads
