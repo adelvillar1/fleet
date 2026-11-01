@@ -4617,6 +4617,99 @@ impl Memory {
                         reason: request.justification.clone(),
                     }));
                 }
+                // C13/KI-355: the fold walks the chain. A fold
+                // replaced a whole supersession chain with one
+                // replacement, and retiring only the NAMED fact left
+                // its ancestors live-looking — frontmatter untouched,
+                // no retirement note (the row's symptom). Walk every
+                // fact joined to the named one by `superseded-by`
+                // edges: a fact whose mark names the frontier is the
+                // frontier's predecessor, and its own predecessor
+                // follows. Each walked fact retires INTO the
+                // replacement — mark rewritten, a retirement note
+                // appended, one audit row — so the disk shows the fold
+                // whole. The approval that covers the named fact
+                // covers the walk: a fold is one act. The seen-set
+                // bounds the walk at the chain's own length, cycle or
+                // not.
+                let mut retired: Vec<String> = Vec::new();
+                let mut frontier: Vec<String> = vec![fact.name.clone()];
+                let mut seen: std::collections::HashSet<String> =
+                    std::collections::HashSet::from([fact.name.clone()]);
+                while let Some(name) = frontier.pop() {
+                    for candidate in &facts {
+                        if seen.contains(&candidate.name) || candidate.superseded_by != name {
+                            continue;
+                        }
+                        seen.insert(candidate.name.clone());
+                        frontier.push(candidate.name.clone());
+                        retired.push(candidate.name.clone());
+                    }
+                }
+                for name in &retired {
+                    let candidate = facts
+                        .iter()
+                        .find(|other| &other.name == name)
+                        .expect("the walk stays inside the loaded facts");
+                    if let Err(error) = rewrite_field(&candidate.path, "superseded-by", replacement)
+                    {
+                        return Err(WriteError::Stamp(format!(
+                            "the replacement `{replacement}` was written and `{}` retired, but folding `{name}` into it did not land ({error}) — part of the chain is still live",
+                            fact.name
+                        )));
+                    }
+                    if let Err(error) = append_note(
+                        &candidate.path,
+                        &format!(
+                            "Retired {today}: folded into `{replacement}` \u{2014} {}\n",
+                            request.justification
+                        ),
+                    ) {
+                        return Err(WriteError::Stamp(format!(
+                            "the replacement `{replacement}` was written and `{name}` stamped, but its retirement note did not land ({error}) — the fold is half-recorded"
+                        )));
+                    }
+                    if let Some(stream) = stream {
+                        stream.record(calib::Row::Consolidate(calib::ConsolidateRow {
+                            ts: calib::stamp(),
+                            action: calib::ACTION_SUPERSEDE.to_string(),
+                            fact: name.clone(),
+                            reason: request.justification.clone(),
+                        }));
+                    }
+                }
+                // C14/KI-356: the retirement and the replacement are
+                // ONE disk fact — verified by a read-back before the
+                // run reports done. A write that landed and a stamp
+                // that did not are indistinguishable from here without
+                // looking: look, through the same loader every other
+                // consumer reads. Nothing reports success over a disk
+                // that disagrees.
+                let reread = load_facts(&self.root);
+                let replacement_present = reread.iter().any(|other| other.name == *replacement);
+                let chain_retired = std::iter::once(fact.name.as_str())
+                    .chain(retired.iter().map(String::as_str))
+                    .all(|name| {
+                        reread
+                            .iter()
+                            .any(|other| other.name == name && other.superseded_by == *replacement)
+                    });
+                if !replacement_present || !chain_retired {
+                    return Err(WriteError::Stamp(format!(
+                        "the fold of `{}` into `{replacement}` did not read back \u{2014} the replacement is {}and the retired set {}the replacement; nothing reports done until the disk agrees",
+                        fact.name,
+                        if replacement_present {
+                            "present"
+                        } else {
+                            "MISSING"
+                        },
+                        if chain_retired {
+                            "all names"
+                        } else {
+                            "does not all name"
+                        },
+                    )));
+                }
                 // The live index follows the disk (KI-332): the retired
                 // fact leaves and the replacement enters at write time,
                 // so this task's next recall reads the supersession the
@@ -4639,6 +4732,9 @@ impl Memory {
                     path,
                 };
                 self.forget_live(&fact.name);
+                for name in &retired {
+                    self.forget_live(name);
+                }
                 self.index_live(&replacement_fact);
                 Ok(Superseded::By {
                     from: fact.name,
@@ -6766,6 +6862,105 @@ mod tests {
                 .all(|hit| hit.fact.name != "junk"),
             "a forgotten fact stops surfacing in this instance"
         );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// A fact whose frontmatter already names its successor — the
+    /// chain link a fold walks.
+    fn chained_fact(name: &str, superseded_by: &str) -> String {
+        format!(
+            "---\nname: {name}\ndescription: \"{name} fact\"\ntype: project\ndate: {today}\nbasis: inferred\nshape: []\nrecall-count: 0\nsuperseded-by: {superseded_by}\nvalid-until:\n---\n\nThe {name} fact.\n",
+            today = calib::today()
+        )
+    }
+
+    #[test]
+    fn a_fold_retires_the_whole_chain_into_the_replacement() {
+        // C13/KI-355's pin: the fold replaced a chain — old → middle →
+        // newest by their superseded-by marks — with ONE replacement.
+        // Retiring only the newest left the ancestors live-looking
+        // (the row's symptom): marks pointing into a retired chain,
+        // no retirement note. Every link now retires into the
+        // replacement, with the note, on disk.
+        let root = scratch("fold-chain");
+        write_fact(&root, "old", &chained_fact("old", "middle"));
+        write_fact(&root, "middle", &chained_fact("middle", "newest"));
+        write_fact(
+            &root,
+            "newest",
+            &good_fact("newest", "the newest state", "project", ""),
+        );
+        let (_calls, embedder) = ScriptedEmbedder::new();
+        let memory = Memory::load_with(&root, embedder);
+        let request = Supersede::parse(&serde_json::json!({
+            "name": "newest",
+            "justification": "the whole chain folded into one state fact",
+            "replacement": "the-fold",
+            "description": "the folded state of the chain",
+            "body": "The chain folded here."
+        }))
+        .expect("the fold parses");
+        memory
+            .supersede(&request, true, None)
+            .expect("the fold lands");
+        let after = load_facts(&root);
+        for name in ["old", "middle", "newest"] {
+            let fact = after
+                .iter()
+                .find(|other| other.name == name)
+                .unwrap_or_else(|| panic!("`{name}` is still on disk"));
+            assert_eq!(
+                fact.superseded_by, "the-fold",
+                "`{name}` retires into the replacement: {fact:?}"
+            );
+        }
+        for name in ["old", "middle"] {
+            let body = fs::read_to_string(root.join(format!("{name}.md"))).unwrap();
+            assert!(
+                body.contains("folded into `the-fold`"),
+                "`{name}` carries the retirement note: {body}"
+            );
+        }
+        assert!(
+            after.iter().any(|other| other.name == "the-fold"),
+            "the replacement reads back"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_chain_stamp_that_does_not_land_is_named_not_silent() {
+        // C14's other half: a walked fact whose stamp cannot land
+        // (its file is immutable — the deterministic seam) fails the
+        // fold with the fact's name and the partial state, never a
+        // success over a disk that disagrees.
+        let root = scratch("fold-partial");
+        write_fact(&root, "old", &chained_fact("old", "middle"));
+        write_fact(&root, "middle", &chained_fact("middle", "newest"));
+        write_fact(
+            &root,
+            "newest",
+            &good_fact("newest", "the newest state", "project", ""),
+        );
+        set_immutable(&root.join("middle.md"), true);
+        let (_calls, embedder) = ScriptedEmbedder::new();
+        let memory = Memory::load_with(&root, embedder);
+        let request = Supersede::parse(&serde_json::json!({
+            "name": "newest",
+            "justification": "the fold",
+            "replacement": "the-fold",
+            "description": "the folded state",
+            "body": "The chain folded here."
+        }))
+        .expect("the fold parses");
+        let error = memory.supersede(&request, true, None).unwrap_err();
+        let message = match error {
+            WriteError::Stamp(message) => message,
+            other => panic!("a stamp that cannot land is a Stamp error: {other:?}"),
+        };
+        assert!(message.contains("`middle`"), "{message}");
+        assert!(message.contains("still live"), "{message}");
+        set_immutable(&root.join("middle.md"), false);
         let _ = fs::remove_dir_all(&root);
     }
 

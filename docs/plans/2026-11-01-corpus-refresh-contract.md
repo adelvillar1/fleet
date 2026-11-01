@@ -181,9 +181,15 @@ the test that names it, and every row closes with that pin.**
       blend1's server refuses a <3.10 interpreter naming version_info
       and the zip(strict=) sites — pinned by the faked-3.9 execution
       of the real file. KI-387/363/358/324 closed.*
-- [ ] **W4 — promises are one fact.** C13–C14 land; a chain fold
-      leaves no live ancestor, and a run cannot report a write it did
-      not read back.
+- [x] **W4 — promises are one fact.** *Landed 2026-11-01: C13 — the
+      supersede fold walks the chain over `superseded-by` edges and
+      retires every link INTO the replacement (mark, note, audit row,
+      live index), pinned by `a_fold_retires_the_whole_chain_into_the_
+      replacement`; C14 — every stamp is read back through the loader
+      before anything reports done, and a stamp that cannot land names
+      the fact and the partial state, pinned by `a_chain_stamp_that_
+      does_not_land_is_named_not_silent` (the immutable seam). KI-355/
+      356 closed.*
 - [ ] **W5 — the edges stop biting.** C15–C17 land with their pins.
 - [ ] **Close-out.** Every row this plan names closes with its pin as
       evidence; the full gate green by exit code; the ledger checker
