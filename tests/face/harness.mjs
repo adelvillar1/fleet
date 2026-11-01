@@ -4011,7 +4011,7 @@ async function theDesignCanvasCarriesItsFramesAndWritesGeometry() {
     read_at: 'now',
     projects: [
       { slug: 'sample-board', name: 'Sample board', frames: 2,
-        updated: '2026-10-31T09:00:00Z' },
+        updated: '2026-10-31T09:00:00Z', project: '/Users/owner/Projects/harbor' },
       { slug: 'another-board', name: 'Another board', frames: 3,
         updated: '2026-10-30T09:00:00Z' },
     ],
@@ -4086,6 +4086,16 @@ async function theDesignCanvasCarriesItsFramesAndWritesGeometry() {
       !railRows[1].getAttribute('aria-current'),
     railRows.map((one) => one.dataset.section + '/' +
       one.getAttribute('aria-current')).join(','));
+  // K2 (designs-are-project-knowledge): the rail groups the boards by
+  // the project they belong to — one header per bound family, unbound
+  // last — with the rows themselves unchanged.
+  const railGroups = page.rows('#design-rail .section-rail-group');
+  check('K2 the boards rail groups by project, unbound last',
+    railGroups.length === 2 &&
+      String(railGroups[0].textContent) === 'harbor' &&
+      String(railGroups[1].textContent) === 'unbound' &&
+      railRows.length === 2,
+    railGroups.map((one) => one.textContent).join(' | '));
   check('PM-D the rail is the shared section rail',
     !!page.rows('#design-rail .section-rail-fold').length &&
       page.rows('#design-rail').length === 1,

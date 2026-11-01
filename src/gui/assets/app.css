@@ -1386,6 +1386,20 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
   cursor: pointer;
   transition: background var(--fast) var(--ease), color var(--fast) var(--ease);
 }
+/* The group a section of rows stands under — the design rail's project
+   families. A label, not a control: it never takes the click or the
+   focus the rows do. */
+.section-rail-group {
+  padding: var(--space-2) 10px 2px;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--dsw-alias-ink-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .section-rail-row:hover {
   background: var(--dsw-alias-surface-raised);
   color: var(--dsw-alias-ink);

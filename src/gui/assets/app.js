@@ -15628,6 +15628,13 @@
     container.appendChild(head);
 
     declaration.forEach(function (row) {
+      // A header row: the group a section of rows stands under (the
+      // design rail's project families). A label, not a control — the
+      // keyboard walk skips it because only rows are buttons.
+      if (row.header != null) {
+        container.appendChild(node('div', 'section-rail-group', row.header));
+        return;
+      }
       var button = node('button', 'section-rail-row');
       button.type = 'button';
       button.dataset.section = row.id;
@@ -15983,24 +15990,53 @@
 
   /// The boards rail — every board the home holds, newest first, in the
   /// shared `sectionRail` the other split pages render: the fold it
-  /// remembers, the arrow keys between rows, the open board marked as the
-  /// current section. One row per board: its name, its frame count as the
-  /// badge, and how long ago it last moved as the row's title.
+  /// remembers, the arrow keys between rows, the open board marked as
+  /// the current section. One row per board: its name, its frame count as
+  /// the badge, and how long ago it last moved as the row's title. The
+  /// boards group by the project they belong to (K2 — a board is
+  /// project knowledge): one header per bound project, then unbound.
   function paintDesignRail() {
     if (!el.designRail) return;
     var document_ = face.design || {};
     var boards = document_.projects || [];
     var board = designBoard();
-    sectionRail(el.designRail, boards.map(function (project) {
-      return {
-        id: project.slug,
-        icon: 'design',
-        name: project.name,
-        badge: project.frames,
-        badgeTitle: project.frames + ' frame' + (project.frames === 1 ? '' : 's') +
-          ' \u00b7 ' + designAge(project.updated)
-      };
-    }), {
+    var groups = {};
+    var order = [];
+    boards.forEach(function (project) {
+      var key = '';
+      if (project.project) {
+        var trimmed = String(project.project).trim().replace(/\/+$/, '');
+        key = trimmed.split('/').pop() || '';
+      }
+      if (!groups[key]) {
+        groups[key] = [];
+        order.push(key);
+      }
+      groups[key].push(project);
+    });
+    // Bound families by first appearance, unbound last — the rail reads
+    // as the projects the owner works in, with the homeless boards
+    // still visible at the end.
+    if (order.length > 1 && groups[''].length) {
+      order = order.filter(function (key) { return key !== ''; }).concat(['']);
+    }
+    var declaration = [];
+    order.forEach(function (key) {
+      if (order.length > 1) {
+        declaration.push({ header: key || 'unbound' });
+      }
+      groups[key].forEach(function (project) {
+        declaration.push({
+          id: project.slug,
+          icon: 'design',
+          name: project.name,
+          badge: project.frames,
+          badgeTitle: project.frames + ' frame' + (project.frames === 1 ? '' : 's') +
+            ' \u00b7 ' + designAge(project.updated)
+        });
+      });
+    });
+    sectionRail(el.designRail, declaration, {
       current: board ? board.slug : '',
       folded: !!face.designRailFolded,
       store: 'fleet-design-rail',
