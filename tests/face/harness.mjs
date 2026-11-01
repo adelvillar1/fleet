@@ -3978,6 +3978,16 @@ async function theDesignCanvasCarriesItsFramesAndWritesGeometry() {
     tweak_values: { accent: '#3b6cf6', scale: 1 },
     model,
     set: name === 'hero' ? 'site' : null,
+    review: name === 'hero' ? {
+      kind: 'vision',
+      scores: { hierarchy: 7, spacing: 6 },
+      summary: 'reads cleanly',
+      strengths: ['the type scale holds'],
+      fixes: ['tighten the hero spacing'],
+      reviewed: '2026-10-31T09:30:00Z',
+      history: [{ scores: { hierarchy: 6 }, summary: 'the first look',
+        reviewed: '2026-10-30T09:00:00Z' }],
+    } : null,
     versions: [{ id: 'v-one', name, source: 'generate', created: '2026-10-31T09:00:00Z' }],
     pins: name === 'hero'
       ? [{ id: 'p-one', x: 0.5, y: 0.25, text: 'the spacing is off', source: 'owner',
@@ -4217,6 +4227,35 @@ async function theDesignCanvasCarriesItsFramesAndWritesGeometry() {
     modelOptions.map((one) => one.value + '/' + one.disabled).join(','));
   check('PM-D the picker opens on the first model that can serve',
     models.value === 'zai-coding-plan/GLM-5.3-Flash', models.value);
+
+  // The review: eight scores always render (a gap reads as a dash), the
+  // history shows, and the ask drives both captures through the server.
+  byAct(cards[0], 'review-hero').click();
+  await flush(40);
+  const reviewPane = page.el('dock-object-body');
+  const scoreRows = reviewPane
+    ? reviewPane.find((one) => one.dataset && one.dataset.score).map((one) => one.dataset.score)
+    : [];
+  check('PM-D the review names the eight scores, a missing one as a gap',
+    scoreRows.length === 8 &&
+      scoreRows[0] === 'hierarchy' &&
+      scoreRows[7] === 'responsive' &&
+      String(reviewPane.textContent).includes('7 / 10') &&
+      String(reviewPane.textContent).includes('\u2014'),
+    scoreRows.join(','));
+  check('PM-D the review\u2019s history shows',
+    !!reviewPane && String(reviewPane.textContent).includes('the first look'),
+    reviewPane ? String(reviewPane.textContent).slice(-90) : 'no pane');
+  byAct(reviewPane, 'design-review-ask').click();
+  await flush(60);
+  check('PM-D the review ask captures desktop and phone through the server',
+    page.calls.some((one) => one.method === 'POST' &&
+      String(one.url || '').includes('/api/design/review') &&
+      String(one.body || '').includes('"id":"f-hero"')),
+    JSON.stringify(page.calls.filter((one) => String(one.url || '').includes('/review'))
+      .map((one) => one.body)));
+  page.fireOn('dock-object-close', 'click');
+  await flush(20);
 
   // A page set: the title bars say which set a page belongs to, the verb
   // is offered, and one press hands the whole set over.

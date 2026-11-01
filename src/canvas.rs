@@ -2767,6 +2767,51 @@ pub fn put_review(home: &Path, slug: &str, frame_id: &str, review: Value) -> Res
     save(home, slug, &project)
 }
 
+/// The eight scores a review names — design-canvas's own set, kept closed
+/// so a card can render every one (a missing score reads as `—`, never as
+/// a row that vanishes).
+pub const REVIEW_SCORES: &[&str] = &[
+    "hierarchy",
+    "spacing",
+    "contrast",
+    "accessibility",
+    "polish",
+    "motion",
+    "aiux",
+    "responsive",
+];
+
+/// The review ask one frame composes: two captures (desktop and phone),
+/// the vision read over both, the eight scores, and the tool that stores
+/// the result. Rust composes it so the composer, the CLI and a cron job
+/// ask for the same review.
+pub fn review_task(
+    slug: &str,
+    frame_name: &str,
+    frame_id: &str,
+    captures: &[(String, String)],
+) -> String {
+    let mut task = format!(
+        "Review the design frame `{frame_name}` (project `{slug}`, frame_id `{frame_id}`).\n\n"
+    );
+    if captures.is_empty() {
+        task.push_str(
+            "Open the frame's preview with the browse tool and screenshot it at the frame's own size and again at a phone's (390×844), read both screenshots with the vision tool, then ",
+        );
+    } else {
+        task.push_str("Two captures of the page are on disk:\n");
+        for (label, path) in captures {
+            task.push_str(&format!("- {label}: {path}\n"));
+        }
+        task.push_str("\nRead both with the vision tool — the desktop capture judges layout and type, the phone one judges the small-screen reading — then ");
+    }
+    task.push_str(&format!(
+        "store the review with `review_frame` (project `{slug}`, frame_id `{frame_id}`): one score 0–10 for each of {}, a one or two sentence summary, what the page gets right, and the highest-value fixes — one thing each.",
+        REVIEW_SCORES.join(", ")
+    ));
+    task
+}
+
 /// The `review_frame` tool's handler: read a structured review and store
 /// it on the frame. The review is what a review run produced — the vision
 /// model's scores and fixes, beside the deterministic scan's facts the
@@ -3214,6 +3259,68 @@ mod tests {
         // Text that is not an SVG is refused by name.
         let error = svg_sanitize("<html><body>not a mark</body></html>").unwrap_err();
         assert!(error.contains("not an SVG"), "{error}");
+    }
+
+    /// W13: the review names eight scores, the ask drives two captures,
+    /// and the history the store keeps is bounded.
+    #[test]
+    fn a_review_names_eight_scores_and_its_ask_drives_two_captures() {
+        assert_eq!(
+            REVIEW_SCORES,
+            &[
+                "hierarchy",
+                "spacing",
+                "contrast",
+                "accessibility",
+                "polish",
+                "motion",
+                "aiux",
+                "responsive",
+            ]
+        );
+        let captures = vec![
+            ("desktop".to_string(), "/tmp/hero-desktop.png".to_string()),
+            ("phone".to_string(), "/tmp/hero-phone.png".to_string()),
+        ];
+        let task = review_task("board", "hero", "f-one", &captures);
+        assert!(task.contains("/tmp/hero-desktop.png"), "{task}");
+        assert!(task.contains("/tmp/hero-phone.png"), "{task}");
+        assert!(
+            task.contains(
+                "hierarchy, spacing, contrast, accessibility, polish, motion, aiux, responsive"
+            ),
+            "{task}"
+        );
+        assert!(task.contains("review_frame"), "{task}");
+        // A review run with no captures yet still asks for both sizes.
+        let bare = review_task("board", "hero", "f-one", &[]);
+        assert!(bare.contains("390×844"), "{bare}");
+        // The history is bounded: the newest review plus the ten before it.
+        let home = scratch("review-history");
+        let (slug, _) = create(&home, "Reviewed").unwrap();
+        let id = put_frame(&home, &slug, "hero", PAGE, None, None, "m").unwrap();
+        for at in 0..12 {
+            put_review(
+                &home,
+                &slug,
+                &id,
+                serde_json::json!({
+                    "kind": "vision",
+                    "scores": {"hierarchy": at},
+                    "summary": format!("review {at}"),
+                }),
+            )
+            .unwrap();
+        }
+        let project = load(&home, &slug).unwrap();
+        let frame = project.frames.iter().find(|frame| frame.id == id).unwrap();
+        let review = frame.review.as_ref().expect("a review");
+        assert_eq!(review["summary"], "review 11");
+        let history = review["history"].as_array().expect("history");
+        assert_eq!(history.len(), MAX_REVIEWS);
+        // The oldest fell off: eleven reviews land, ten are kept.
+        assert_eq!(history[0]["summary"], "review 1");
+        assert_eq!(history[MAX_REVIEWS - 1]["summary"], "review 10");
     }
 
     /// W11: a set's pages share tokens, its links resolve, its slugs are

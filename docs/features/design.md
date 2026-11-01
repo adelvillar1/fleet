@@ -200,6 +200,27 @@ the positive prompt, and its **`avoid` list is the negative one**, riding
 the task as `Avoid: …` after the style line. Nothing about a preset is
 invented by fleet; the file is re-derived from the source's two tables.
 
+## The review
+
+A frame is reviewed by a run, and the review has a shape:
+
+- **Eight scores, closed**: `canvas::REVIEW_SCORES` — hierarchy, spacing,
+  contrast, accessibility, polish, motion, aiux, responsive. The card
+  renders every one; a score the review did not give reads as a gap, never
+  as a row that vanished.
+- **Two captures, driven by Rust**: the review ask (`POST
+  /api/design/review`) spawns the browser lane once, captures the page at
+  its own size and again at **390×844**, writes both beside the board
+  (`canvas/<slug>/reviews/`), and composes the task (`canvas::review_task`)
+  that reads both with the `vision` tool and stores the result with
+  `review_frame`. Desktop judges layout and type; the phone capture judges
+  the small-screen reading.
+- **The store keeps a bounded history**: the newest review plus the ten
+  before it (`MAX_REVIEWS`), each earlier review one line with its date
+  and summary.
+- **The fixes become a run**: a stored review's fixes compose the *apply
+  the fixes* verb from the board's conversation.
+
 ## Page sets
 
 A **page set** is a site on the board: frames that share a `set` name (the

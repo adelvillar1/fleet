@@ -16619,16 +16619,41 @@
     var scores = node('div', 'cfg-list-rows');
     if (review && review.kind === 'vision') {
       scores.appendChild(node('p', 'derivation', review.summary || ''));
-      var named = Object.keys(review.scores || {});
+      // The eight scores are closed: every one renders, and a score the
+      // review did not give reads as a gap rather than a vanished row.
+      var named = (face.design && face.design.review_scores) ||
+        ['hierarchy', 'spacing', 'contrast', 'accessibility', 'polish', 'motion', 'aiux', 'responsive'];
+      var given = review.scores || {};
       named.forEach(function (key) {
         var row = node('div', 'cfg-fallback');
+        var value = given[key];
+        row.dataset.score = key;
         row.appendChild(node('span', 'cfg-item-value', key));
-        row.appendChild(node('span', 'cfg-item-mark', String(review.scores[key]) + ' / 10'));
+        row.appendChild(node('span', 'cfg-item-mark',
+          value == null ? '\u2014' : String(value) + ' / 10'));
+        scores.appendChild(row);
+      });
+      Object.keys(given).forEach(function (key) {
+        if (named.indexOf(key) >= 0) return;
+        var row = node('div', 'cfg-fallback');
+        row.appendChild(node('span', 'cfg-item-value', key));
+        row.appendChild(node('span', 'cfg-item-mark', String(given[key]) + ' / 10'));
         scores.appendChild(row);
       });
       (review.fixes || []).forEach(function (fix) {
         scores.appendChild(node('p', 'derivation', '\u2192 ' + fix));
       });
+      // The history the store keeps, oldest first: each earlier review is
+      // one line with its own date and summary.
+      if ((review.history || []).length) {
+        var history = node('div', 'design-review-history');
+        review.history.forEach(function (older) {
+          var line = node('p', 'derivation',
+            (older.reviewed || '') + ' \u2014 ' + (older.summary || ''));
+          history.appendChild(line);
+        });
+        scores.appendChild(history);
+      }
     } else {
       scores.appendChild(node('p', 'board-empty',
         'No designer review yet \u2014 ask for one and the run reads the page, scores it and stores the review here.'));
@@ -16636,14 +16661,26 @@
     var ask = node('button', 'replay-button replay-resume', 'ask the designer to review');
     ask.type = 'button';
     ask.dataset.act = 'design-review-ask';
+    // The ask drives both captures in Rust and starts the run with the
+    // task it composes: desktop and phone reach the vision read together.
     ask.addEventListener('click', function () {
       designSelect(frame.id);
-      designAsk('ask',
-        'Review the frame `' + frame.name + '` (project `' + board.slug + '`, frame_id ' +
-        frame.id + '): open its preview with the browse tool and screenshot it, read the ' +
-        'screenshot with the vision tool, then store the review with review_frame \u2014 scores ' +
-        'for hierarchy, spacing, contrast, accessibility, polish, motion, aiUx and responsive, ' +
-        'a 1\u20132 sentence summary, what it gets right, and the highest-value fixes.', frame.id);
+      ask.disabled = true;
+      notice('capturing the frame', 'desktop and phone \u2014 the review reads both');
+      post('/api/design/review', {
+        project: board.slug, id: frame.id,
+        origin: window.location.origin || 'http://127.0.0.1:3080'
+      }).then(function (reply) {
+        ask.disabled = false;
+        var answer = reply.body || {};
+        if (reply.status !== 200 || !answer.task) {
+          notice('the capture was refused',
+            (answer.refused || []).join(' ') || 'the browser lane did not answer');
+          return;
+        }
+        closeDrawer();
+        designStartRun(answer.task, board.slug);
+      }).catch(function () { ask.disabled = false; });
     });
     var applyFixes = node('button', 'replay-button', 'apply the fixes');
     applyFixes.type = 'button';

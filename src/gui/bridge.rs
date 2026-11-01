@@ -2208,6 +2208,89 @@ impl Bridge {
         }))
     }
 
+    /// The review of one frame: Rust drives both captures — the page at its
+    /// own size and again at a phone's — writes them beside the board, and
+    /// composes the ask that reads both with the vision tool and stores the
+    /// review. The run is started by the face with the task this answers.
+    pub async fn design_review(&self, body: &str) -> Result<Value, String> {
+        let arguments: Value = serde_json::from_str(body)
+            .map_err(|error| format!("the review is not a JSON object: {error}"))?;
+        let slug = arguments
+            .get("project")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "the review names its project".to_string())?
+            .to_string();
+        let frame_id = arguments
+            .get("id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "the review names its frame".to_string())?
+            .to_string();
+        let origin = arguments
+            .get("origin")
+            .and_then(Value::as_str)
+            .unwrap_or("http://127.0.0.1:3080")
+            .trim_end_matches('/')
+            .to_string();
+        let loopback = origin.starts_with("http://127.0.0.1:")
+            || origin.starts_with("http://localhost:")
+            || origin.starts_with("http://[::1]:");
+        if !loopback {
+            return Err(format!(
+                "`{origin}` is not this machine's loopback address; the capture stays local"
+            ));
+        }
+        let project = crate::canvas::load(&self.home, &slug)?;
+        let frame = project
+            .frames
+            .iter()
+            .find(|frame| frame.id == frame_id)
+            .ok_or_else(|| format!("no frame `{frame_id}` on this board"))?
+            .clone();
+        let dir = crate::canvas::canvas_root(&self.home)
+            .join(&slug)
+            .join("reviews");
+        std::fs::create_dir_all(&dir)
+            .map_err(|error| format!("could not make {}: {error}", dir.display()))?;
+        let stem = format!(
+            "{}-{}",
+            crate::canvas::slug_of(&frame.name),
+            crate::calib::stamp().replace([':', '-'], "")
+        );
+        let spec = crate::lanes::spec_for("browser")?;
+        let server = crate::mcp::McpServer::spawn(&spec)
+            .map_err(|error| format!("the browser lane could not start: {error}"))?;
+        server
+            .initialize()
+            .await
+            .map_err(|error| format!("the browser lane did not answer: {error}"))?;
+        let url = format!("{origin}/api/design/frame/{slug}/{frame_id}");
+        let mut captures: Vec<(String, String)> = Vec::new();
+        for (label, width, height) in [("desktop", frame.w, frame.h), ("phone", 390.0, 844.0)] {
+            let path = dir.join(format!("{stem}-{label}.png"));
+            server
+                .call_tool("browser_navigate", json!({ "url": url }))
+                .await
+                .map_err(|error| format!("the frame page did not open: {error}"))?;
+            server
+                .call_tool(
+                    "browser_screenshot",
+                    json!({ "path": path.display().to_string(),
+                            "width": width as i64, "height": height as i64 }),
+                )
+                .await
+                .map_err(|error| format!("the {label} capture did not land: {error}"))?;
+            captures.push((label.to_string(), path.display().to_string()));
+        }
+        let _ = server.close().await;
+        let task = crate::canvas::review_task(&slug, &frame.name, &frame_id, &captures);
+        Ok(json!({
+            "type": "design_review",
+            "captures": captures,
+            "task": task,
+            "scores": crate::canvas::REVIEW_SCORES,
+        }))
+    }
+
     /// A page set's packet with its captures: the browser lane is spawned
     /// once, every page is captured at its own size and again at a phone's,
     /// and the packet carries the PNGs beside the pages.
@@ -7048,6 +7131,9 @@ fn design_read(home: &std::path::Path, project: Option<&str>) -> Value {
         // the composer's picker writes the choice onto the board, and
         // every page landed there starts from its tokens.
         "brands": crate::canvas::brands(home),
+        // The eight scores a review names: the card renders every one,
+        // and a missing score reads as a gap, not a vanished row.
+        "review_scores": crate::canvas::REVIEW_SCORES,
         "caps": {
             "max_frame_bytes": crate::canvas::MAX_FRAME_BYTES,
             "max_versions": crate::canvas::MAX_VERSIONS,

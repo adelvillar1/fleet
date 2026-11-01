@@ -1270,6 +1270,18 @@ async fn serve_connection(
         // A reference scan: the fetch and the fact scan are blocking, so
         // the bridge runs them off the worker and caches the result on the
         // board for every surface to read.
+        ("POST", "/api/design/review") => {
+            let body = match read_body(&mut stream, &request, rest).await {
+                Ok(body) => body,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            match bridge.design_review(&body).await {
+                Ok(reply) => write_reply(&mut stream, api(200, reply)).await,
+                Err(message) => {
+                    write_reply(&mut stream, api(422, json!({"refused": [message]}))).await
+                }
+            }
+        }
         ("POST", "/api/design/reference") => {
             let body = match read_body(&mut stream, &request, rest).await {
                 Ok(body) => body,

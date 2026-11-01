@@ -227,7 +227,7 @@ changelog.
       facts either way, pinned.
 - [x] **W12 — a set exports whole.** One packet carries each page, its
       PNGs, the tokens, the manifest and the changelog; the zip opens.
-- [ ] **W13 — the review loop closed.** Two captures (desktop, mobile)
+- [x] **W13 — the review loop closed.** Two captures (desktop, mobile)
       reach the vision read; the stored review names the 8 scores; the
       history holds bounded entries; the fix run starts from it.
 - [ ] **W14 — versions and exports completed.** The token diff names the
@@ -369,7 +369,29 @@ the picker landed as one run per model — see the landed section below —
 because the owner ruled that a design run's route is the page's, not a
 chain's.)**
 
-T5–T6 remain unstarted.
+T6 remains unstarted.
+
+## Landed: T5 — the review loop, closed
+
+**The eight scores are a closed list** (`canvas::REVIEW_SCORES`, pinned) and
+the card renders every one: a score the review did not give reads as `—`,
+so a gap is visible rather than absent.
+
+**Rust drives both captures.** `POST /api/design/review` spawns the browser
+lane once, captures the page at its own size and at 390×844 into
+`canvas/<slug>/reviews/`, and composes the ask (`canvas::review_task`)
+that reads both captures with the `vision` tool and stores the result with
+`review_frame`. The composer no longer writes that ask in JS: the face
+posts, and starts the run with the task the server hands back.
+
+**The history is the store's own**: the newest review plus the ten before
+it, each earlier entry one line with its date and summary, rendered in the
+card. Pinned by `a_review_names_eight_scores_and_its_ask_drives_two_captures`
+(the list, both paths in the ask, the no-capture fallback naming 390×844,
+and twelve reviews leaving eleven kept minus the oldest). Harness: three
+checks over the card and the capture press.
+
+Suite **1,886/0**, harness **573 checks across 56 cases**.
 
 ## Landed: T4 — page sets, coherent and handed over whole
 
