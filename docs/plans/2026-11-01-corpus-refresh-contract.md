@@ -1,5 +1,5 @@
 ---
-status: active
+status: complete
 created: 2026-11-01
 updated: 2026-11-01
 slug: corpus-refresh-contract
@@ -203,10 +203,20 @@ the test that names it, and every row closes with that pin.**
       surfaces naming kept/raw — pinned by
       `an_overlong_phrase_list_is_truncated_and_the_counts_are_named`.
       KI-330/333/357 closed.*
-- [ ] **Close-out.** Every row this plan names closes with its pin as
-      evidence; the full gate green by exit code; the ledger checker
-      green; the nightly jobs' next runs read clean against the
-      contracts (named in the close).
+- [x] **Close-out.** *Met 2026-11-01: every row this plan named —
+      KI-324/325/330/333/339/343/344/345/346/347/348/354/355/356/357/
+      358/363/387 — closed with its pin as evidence (18 rows); the
+      full gate green by exit code in the master worktree (fmt 0,
+      clippy 0, build 0, test 1,907/0, plus the four vendored-service
+      pin files each run directly under python3); the ledger checker
+      green (392 rows, 7 open — the remainder are the embed-bounds
+      plan's window rows and the class-record rows, correctly
+      elsewhere). The nightly read: a REAL `pmocockpit` refresh
+      through `fleet mcp call blend1 refresh` — the verb, the lane,
+      the cold window, and every W2 field live in the reply
+      (`empty_wildcards` naming the project's satisfiable root glob,
+      both deltas empty, `action: unchanged`) — the same read the
+      14 reconciled jobs will make at their next fire.*
 
 ## Files to be touched
 
