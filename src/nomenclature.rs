@@ -117,10 +117,17 @@ const CODE_EXTENSIONS: [&str; 4] = ["rs", "py", "toml", "sh"];
 /// and the Python caches the vendored lane cores carry.
 const SKIP_DIRS: [&str; 5] = ["target", ".git", "node_modules", "__pycache__", ".venv"];
 
-/// English function words plus Rust's own keywords and prelude names.
-/// A term the language defines is not a term the project established —
-/// which is why `match` (used) is vocabulary and `impl` (syntax) is not.
-const STOPWORDS: [&str; 109] = [
+/// English function words, the languages' own keywords, and the
+/// booleans every language forces an author to write. A term the
+/// language defines is not a term the project established — which is
+/// why `match` (used) is vocabulary and `impl` (syntax) is not, and
+/// why Python's `True`/`False`/`None` and Rust's `true`/`false` can
+/// never establish the lowercase terms that then refuse the keywords
+/// themselves as case variants (KI-333). The skip is shared: the
+/// derivation drops them at the sink and the guard's candidate
+/// channel drops them before the vocabulary is consulted, through the
+/// same [`is_token`].
+const STOPWORDS: [&str; 112] = [
     "the", "and", "for", "with", "that", "this", "from", "into", "onto", "over", "under", "than",
     "then", "when", "what", "which", "while", "will", "would", "should", "could", "also", "each",
     "every", "some", "such", "very", "only", "just", "like", "same", "other", "another", "both",
@@ -130,7 +137,8 @@ const STOPWORDS: [&str; 109] = [
     "they", "our", "your", "his", "her", "was", "were", "are", "can", "may", "must", "let", "impl",
     "trait", "enum", "struct", "const", "static", "mut", "ref", "dyn", "pub", "use", "mod", "fn",
     "self", "super", "crate", "async", "await", "loop", "move", "else", "break", "string",
-    "option", "result", "vec", "box", "println", "eprintln", "format", "assert",
+    "option", "result", "vec", "box", "println", "eprintln", "format", "assert", "true", "false",
+    "none",
 ];
 
 // --- the shapes ------------------------------------------------------------

@@ -3603,8 +3603,6 @@ pub enum WriteError {
     Type(String),
     /// A shape tag is outside the taxonomy, or there are too many.
     Shape(String),
-    /// Too many phrases, or a phrase list that is not strings.
-    Phrases(String),
     /// Too many missing companions, or a missing list that is not
     /// strings.
     Missing(String),
@@ -3648,7 +3646,6 @@ impl std::fmt::Display for WriteError {
             WriteError::Description(reason) => write!(f, "{reason}"),
             WriteError::Type(reason) => write!(f, "{reason}"),
             WriteError::Shape(reason) => write!(f, "{reason}"),
-            WriteError::Phrases(reason) => write!(f, "{reason}"),
             WriteError::Missing(reason) => write!(f, "{reason}"),
             WriteError::Basis(reason) => write!(f, "{reason}"),
             WriteError::Tier(reason) => write!(f, "{reason}"),
@@ -4188,12 +4185,14 @@ fn parse_phrases(value: &Option<Vec<String>>) -> Result<Vec<String>, WriteError>
         }
         phrases.push(phrase);
     }
-    if phrases.len() > MAX_PHRASES {
-        return Err(WriteError::Phrases(format!(
-            "{} phrases is past the {MAX_PHRASES}-phrase bound",
-            phrases.len()
-        )));
-    }
+    // ONE policy for both paths (KI-357): the bound is the same
+    // `MAX_PHRASES` the harness's own trajectory derivation truncates
+    // to, applied the same way — keep the leading list the caller
+    // ordered and let the write's confirmation name the kept/raw
+    // counts (the tool path) or the render show the kept list (the
+    // CLI). Never a refusal turn for a size rule the description
+    // already declared.
+    phrases.truncate(MAX_PHRASES);
     Ok(phrases)
 }
 
@@ -9888,15 +9887,20 @@ mod tests {
             .expect("the replacement was written");
         assert_eq!(replacement.phrases, request.phrases);
 
-        // The phrase list is bounded, sanitized, and typed.
-        let too_many = Remember::parse(&serde_json::json!({
+        // The phrase list is bounded by ONE policy (KI-357): an
+        // over-list keeps its leading entries — the same truncate the
+        // harness's own trajectory derivation applies — never a
+        // refusal turn for a size the description already declared.
+        let over = Remember::parse(&serde_json::json!({
             "name": "too-many-phrases",
             "description": "a fact with too many phrases",
             "basis": "inferred",
             "phrases": (0..MAX_PHRASES + 1).map(|index| format!("phrase {index}")).collect::<Vec<_>>(),
         }))
-        .unwrap_err();
-        assert!(matches!(too_many, WriteError::Phrases(_)), "{too_many}");
+        .expect("an over-list truncates, it does not refuse")
+        .phrases;
+        assert_eq!(over.len(), MAX_PHRASES, "{over:?}");
+        assert_eq!(over[0], "phrase 0", "the leading list is the kept list");
         let not_strings = Remember::parse(&serde_json::json!({
             "name": "bad-phrases",
             "description": "a fact with a non-string phrase",

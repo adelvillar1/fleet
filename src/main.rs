@@ -1530,6 +1530,23 @@ fn remember_command(options: &cli::RememberOptions) -> ExitCode {
     match fleet::memory::Remember::parse(&arguments).and_then(|request| memory.remember(&request)) {
         Ok(fact) => {
             print!("{}", fleet::memory::render_one(&fact));
+            // KI-357: one policy, both surfaces — the CLI names the
+            // bound the same way the tool's confirmation does, when
+            // the raw list ran past it.
+            let raw = options
+                .phrases
+                .split(',')
+                .map(str::trim)
+                .filter(|item| !item.is_empty())
+                .count();
+            if raw > fleet::memory::MAX_PHRASES {
+                println!(
+                    "phrases: kept {} of {} \u{2014} the {}-phrase bound",
+                    fact.phrases.len(),
+                    raw,
+                    fleet::memory::MAX_PHRASES
+                );
+            }
             ExitCode::SUCCESS
         }
         Err(error) => {

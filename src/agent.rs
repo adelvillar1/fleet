@@ -5429,6 +5429,15 @@ fn land_remember(memory: &Memory, arguments: &serde_json::Value, derived: &[Stri
             if filled {
                 request.phrases = derived.to_vec();
             }
+            // KI-357: the raw count beside the kept one. The bound is
+            // one policy — truncate, like the harness's own derivation
+            // — and the confirmation names both counts so the size
+            // rule is visible where the model reads its own write.
+            let raw_count = arguments
+                .get("phrases")
+                .and_then(|value| value.as_array())
+                .map(|items| items.len())
+                .unwrap_or(0);
             match memory.remember(&request) {
                 Err(error) => format!("error: {error}"),
                 Ok(fact) => {
@@ -5443,6 +5452,14 @@ fn land_remember(memory: &Memory, arguments: &serde_json::Value, derived: &[Stri
                         text.push_str(&format!(
                             "\ndirection derived from this task's trajectory: {}",
                             fact.phrases.join(", ")
+                        ));
+                    }
+                    if raw_count > crate::memory::MAX_PHRASES {
+                        text.push_str(&format!(
+                            "\nphrases: kept {} of {} \u{2014} the {}-phrase bound",
+                            fact.phrases.len(),
+                            raw_count,
+                            crate::memory::MAX_PHRASES
                         ));
                     }
                     text
@@ -5505,6 +5522,9 @@ fn trajectory_phrases(messages: &[Message]) -> Vec<String> {
             }
         }
     }
+    // ONE policy for both paths (KI-357): the derivation truncates at
+    // the same MAX_PHRASES the model-facing write now applies — the
+    // bound is a size rule, and every path keeps the leading list.
     phrases.truncate(crate::memory::MAX_PHRASES);
     phrases
 }
@@ -6691,7 +6711,7 @@ enum WriteGuard {
 /// threading and queue primitives, the pathlib's `Path` (KI-284's
 /// recorded refusal), and `subprocess.Popen` (KI-226's own example).
 /// Lowercase, because the check lowercases the token first.
-const PYTHON_BUILTINS: [&str; 14] = [
+const PYTHON_BUILTINS: [&str; 17] = [
     "exception",
     "systemexit",
     "timeouterror",
@@ -6708,6 +6728,14 @@ const PYTHON_BUILTINS: [&str; 14] = [
     // The subprocess spawn a stdio driver cannot avoid writing
     // (KI-226's own first example): `subprocess.Popen`.
     "popen",
+    // The keywords and booleans a language forces an author to write
+    // (KI-333, the candidate side): Python's `True`/`False`/`None`
+    // and Rust's `true`/`false` — lowercase here because the check
+    // reads the lowered token. Syntax is not nomenclature, however
+    // the vocabulary was derived.
+    "true",
+    "false",
+    "none",
 ];
 
 /// A name the guard does not police: a live roster model — the string
@@ -6761,12 +6789,15 @@ fn next_docstring(text: &str) -> Option<(usize, &'static str)> {
 }
 
 /// Content the caller cannot rename is mandated, not chosen: the row's
-/// own shapes (KI-284). A protocol token's double underscores are the
-/// wire's naming convention; a file's own name is established by
-/// existing; an occurrence that only ever sits inside an absolute path
-/// is a mandated source glob carried verbatim. A `Projects` the file
-/// also uses as a class name still polices — not every occurrence is
-/// path-bound.
+/// own shapes (KI-284, KI-330). A protocol token's double underscores
+/// are the wire's naming convention; a file's own name is established
+/// by existing; an occurrence that only ever sits in a path or inside
+/// quotes is a mandated path segment carried verbatim — however it is
+/// spelled. The composed form (`os.path.join(home, "Projects", …)`)
+/// is the same path as the absolute literal; policing the spelling
+/// policed formatting, not nomenclature (KI-330). A `Projects` the
+/// file also uses as a class name still polices — not every
+/// occurrence is path-bound.
 fn is_unrenamable(token: &str, content: &str) -> bool {
     if token.contains("__") {
         return true;
@@ -6774,7 +6805,7 @@ fn is_unrenamable(token: &str, content: &str) -> bool {
     if is_file_name(token) {
         return true;
     }
-    every_occurrence_in_absolute_path(token, content)
+    every_occurrence_is_a_literal_or_path(token, content)
 }
 
 /// A token with an extension (`CLAUDE.md`, `tool_coverage.rs`): a
@@ -6787,14 +6818,31 @@ fn is_file_name(token: &str) -> bool {
     !stem.is_empty() && !ext.is_empty() && ext.chars().all(|c| c.is_ascii_alphanumeric())
 }
 
-/// Whether the token occurs at all and every occurrence sits inside an
-/// absolute path — the character before each is `/`.
-fn every_occurrence_in_absolute_path(token: &str, content: &str) -> bool {
+/// Whether the token occurs at all and every occurrence is a LITERAL
+/// the author wrote rather than a coined identifier: inside an
+/// absolute path (the character before is `/`), or — in a
+/// path-composition context — wrapped in quotes. The composition
+/// context is what keeps this rule narrower than "any string": a
+/// file that builds paths (`os.path`, `Path(`, `pathlib`,
+/// `PathBuf`) composes a segment piecewise and the same spelled
+/// path is mandated however it is written (KI-330), while a bare
+/// string carrying an identifier the code uses stays the identifier
+/// channel the derivation keeps — `let _ = "judgeRoute"` still
+/// refuses, which is the pin that caught the first, broader rule. A
+/// bare occurrence — a class name, a variable — fails the check, so
+/// a token that is BOTH a path segment and a name still polices.
+fn every_occurrence_is_a_literal_or_path(token: &str, content: &str) -> bool {
+    let composing = ["os.path", "Path(", "pathlib", "PathBuf"]
+        .iter()
+        .any(|marker| content.contains(marker));
     let mut from = 0;
     let mut occurrences = 0;
     while let Some(at) = content[from..].find(token) {
         let start = from + at;
-        if !content[..start].ends_with('/') {
+        let before = content[..start].chars().last();
+        let in_path = content[..start].ends_with('/');
+        let quoted = matches!(before, Some('"' | '\''));
+        if !(in_path || quoted && composing) {
             return false;
         }
         occurrences += 1;
@@ -10064,6 +10112,32 @@ You are auditing a change. Read the diff before you judge it.
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    #[test]
+    fn an_overlong_phrase_list_is_truncated_and_the_counts_are_named() {
+        // KI-357's confirmation: ONE policy — the truncate the
+        // derivation already applied — and the report names kept/raw
+        // where the model reads its own write, instead of a refusal
+        // turn for a size the description now declares.
+        let root = scratch("remember-phrases-report");
+        let memory = crate::memory::Memory::load_with(&root, Box::new(crate::memory::KeywordOnly));
+        let arguments = serde_json::json!({
+            "name": "bounded-phrases",
+            "description": "a fact whose phrase list ran past the bound",
+            "basis": "inferred",
+            "phrases": (0..8).map(|index| format!("phrase {index}")).collect::<Vec<_>>(),
+        });
+        let output = land_remember(&memory, &arguments, &[]);
+        assert!(output.contains("remembered `bounded-phrases`"), "{output}");
+        assert!(output.contains("phrases: kept 6 of 8"), "{output}");
+        assert!(output.contains("the 6-phrase bound"), "{output}");
+        let written = crate::memory::load_facts(&root)
+            .into_iter()
+            .find(|fact| fact.name == "bounded-phrases")
+            .expect("the fact lands");
+        assert_eq!(written.phrases.len(), 6, "{written:?}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     /// The derived window is the current task: a call from an earlier
     /// task in the same session is not this fact's direction. Carrying
     /// it would be proximity pollution — the failure the ranking's
@@ -11537,6 +11611,71 @@ You are auditing a change. Read the diff before you judge it.
             }
             other => panic!("expected a refusal, got {other:?}"),
         }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_guard_exempts_composed_paths_and_language_keywords() {
+        // KI-330 + KI-333 together: a path segment composed piecewise
+        // is the same mandated path as the absolute literal — policing
+        // the spelling policed formatting — and a language's own
+        // keywords never establish (or trip) a term: syntax is not
+        // nomenclature.
+        let root = vocabulary_root("guard-ki330-333");
+        // The vendored use that used to establish `true`: a Python
+        // boolean keyword, one file over.
+        std::fs::create_dir_all(root.join("services/blend1")).unwrap();
+        std::fs::write(
+            root.join("services/blend1/main.py"),
+            "def retrieve(ok: bool = True):\n    return ok\n",
+        )
+        .unwrap();
+
+        // The derivation half: the keyword never becomes a term.
+        let vocabulary = crate::nomenclature::vocabulary(&root);
+        assert!(
+            vocabulary.get("true").is_none(),
+            "a language keyword does not establish vocabulary"
+        );
+
+        // The composed path: the same `Projects` segment spelled
+        // piecewise through os.path.join — KI-330's repro — is the
+        // mandated path, not a coinage.
+        let guard = write_guard(
+            &root,
+            &serde_json::json!({
+                "path":"tmp/driver.py",
+                "content":"sources = [os.path.join(user_home, \"Projects\", \"blend1\", \"docs\", \"**\", \"*.md\")]\n"
+            }),
+        );
+        assert_eq!(guard, WriteGuard::Clean, "{guard:?}");
+
+        // The boolean literal itself: `x = True` writes.
+        let guard = write_guard(
+            &root,
+            &serde_json::json!({
+                "path":"tmp/driver.py",
+                "content":"x = True\n"
+            }),
+        );
+        assert_eq!(guard, WriteGuard::Clean, "{guard:?}");
+
+        // And a token that is BOTH a path segment and a bare name
+        // still polices: `Projects` quoted in the join, bare as a
+        // class — the bare occurrence fails the literal rule and the
+        // established `projects` (the fixture's own static) refuses
+        // the variant.
+        let guard = write_guard(
+            &root,
+            &serde_json::json!({
+                "path":"tmp/driver.py",
+                "content":"sources = [\"Projects\"]\nclass Projects:\n    pass\n"
+            }),
+        );
+        assert!(
+            matches!(guard, WriteGuard::Refused { .. }),
+            "a bare use is still a chosen identifier: {guard:?}"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 

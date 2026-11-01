@@ -190,7 +190,19 @@ the test that names it, and every row closes with that pin.**
       the fact and the partial state, pinned by `a_chain_stamp_that_
       does_not_land_is_named_not_silent` (the immutable seam). KI-355/
       356 closed.*
-- [ ] **W5 — the edges stop biting.** C15–C17 land with their pins.
+- [x] **W5 — the edges stop biting.** *Landed 2026-11-01: C15 — the
+      unrenamable rule keys on the token's contexts (path or quoted)
+      instead of the absolute-literal shape alone, pinned by the
+      composed `os.path.join` writing clean while a bare use beside it
+      still refuses; C16 — `true`/`false`/`none` joined STOPWORDS so
+      language keywords never establish (or trip) a term, the
+      candidate belt in PYTHON_BUILTINS for stale vocabularies, the
+      `x = True` repro pinned; C17 — one phrases policy (truncate at
+      the bound, the derivation's own), the refusal variant removed,
+      the bound declared in the tool description, and both write
+      surfaces naming kept/raw — pinned by
+      `an_overlong_phrase_list_is_truncated_and_the_counts_are_named`.
+      KI-330/333/357 closed.*
 - [ ] **Close-out.** Every row this plan names closes with its pin as
       evidence; the full gate green by exit code; the ledger checker
       green; the nightly jobs' next runs read clean against the

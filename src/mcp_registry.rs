@@ -189,16 +189,16 @@ pub async fn call_named(
             ));
         }
         None => {
-            let lane = crate::lanes::LANES
-                .iter()
-                .find(|lane| lane.name == name)
-                .ok_or_else(|| {
-                    format!(
-                        "`{name}` is not an enabled server in the registry (fleet mcp list) \
-                         and not a vendored lane (fleet lanes)"
-                    )
-                })?;
-            crate::lanes::configured_spec(lane, home)?
+            // The lane seam resolves the LANE home itself (the
+            // services directory, not the fleet home the config read
+            // needs) — `spec_for` is the agent's own path, so a lane
+            // resolves identically here and in a run.
+            crate::lanes::spec_for(name).map_err(|error| {
+                format!(
+                    "`{name}` is not an enabled server in the registry (fleet mcp list) \
+                     and not a launchable lane: {error}"
+                )
+            })?
         }
     };
     let timeouts = crate::mcp::Timeouts {
