@@ -26,6 +26,16 @@ do I change it". And **the money section goes**: the owner runs on
 coding and token plans, so a spend dashboard answers a question
 they do not ask. Seven sections, not eight.
 
+And the reason behind both: **the surface must not feel like a wall**.
+The owner built this harness and knows every setting, and the settings
+still read as an inventory; a newcomer meets fourteen model rows, a
+dozen scalars and four vocabularies before the first useful press.
+Hermes is what they left for exactly this. The tests this plan holds
+itself to: a fresh home opens on three presses, every row is named in
+the owner's words with the config key on its card, a chained setting
+completes on one surface, and the machinery (the walk, the paths) sits
+behind a door that names itself.
+
 Every gap below is evidence in the code as shipped, measured against
 the research this plan was commissioned on.
 
@@ -217,6 +227,35 @@ section opens on the answer, not the engine.
 - **The topbar names the model** (`zai-coding-plan/GLM-5.3-Flash`),
   not the day's spend.
 
+### U9 — a chained setting completes on one surface
+
+Wherever a setting is a chain — a provider to its models to their
+settings to the walks it serves; a lane to its tools to its walk; a
+job to its task to its cadence; a scan to the servers it finds — the
+chain is **one card**, opened where the press was, with the pane
+standing down while it is open.
+
+- **The account card**: the account and its key, the models it serves
+  with their windows and on/off switches, the walks it serves with
+  their order (up, down, stop) and the add-to-a-walk picker, and the
+  removal with its blast radius. **Adding is the same card, empty**:
+  endpoint, key, discover, the models it found, assign, add.
+- **The lane card** swaps the key for the lane: its program, its
+  state, the tools it brings, its probe, its walk (or the sentence
+  that it has none), and what removing it breaks.
+- **The job card** holds the task, the cadence, the next fire and the
+  run.
+- **The scan** lists the servers it found and adds one in a press.
+
+### U10 — a fresh home opens on the ladder
+
+A home with no account keyed opens on three presses — connect an
+account, choose the model, decide what runs while you are away — each
+carrying its benefit sentence and an escape ("every step can be redone
+from the sections"). The counts, the model chip and the pane stand
+down until there is something to count. The wall is what you meet
+after the home works, never before.
+
 ## Acceptance criteria
 
 - [ ] **U1 — the confirmation is on-surface.** A save shows
@@ -254,7 +293,17 @@ section opens on the answer, not the engine.
       chip, the accounts carry no billing class, and the walk's
       door is closed by default and opens on a filter hit. Harness
       on each.
-- [ ] **U9 — the gate.** fmt, clippy, build, test by exit code; the
+- [ ] **U9 — a chained setting completes on one surface.** A
+      provider opens one card carrying its key, its models and their
+      settings, its walks with order and add, and its removal; adding
+      is the same card empty; a lane's card carries the lane; a job's
+      card carries task, cadence and next fire; a scan adds a server.
+      Harness: each flow's round trip, and the pane standing down.
+- [ ] **U10 — a fresh home opens on the ladder.** With no key the
+      board shows the three steps; adding an account unlocks the
+      model step; no counts, chip or pane before the home works.
+      Harness: the fresh fixture and the step's unlock.
+- [ ] **U11 — the gate.** fmt, clippy, build, test by exit code; the
       face harness green; a Chromium probe quoting: a save's
       confirmation visible on `#/settings`, the no-results card
       present, and the filter reaching a known knob in three
