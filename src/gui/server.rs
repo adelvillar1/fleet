@@ -1398,6 +1398,69 @@ async fn serve_connection(
                 }
             }
         }
+        // P4 (design-parity C13): the local host — the board's pages as
+        // live documents, links rewritten, under a CSP that lets the
+        // page run and refuses every network hop, so a generated page
+        // on this origin can never reach the face's API.
+        ("GET", path) if path.starts_with("/site/") => {
+            let rest = path.trim_start_matches("/site/");
+            let mut parts = rest.splitn(2, '/');
+            let slug = parts.next().unwrap_or_default();
+            let page = parts.next().unwrap_or_default();
+            match bridge.design_site_page(slug, page) {
+                Ok(bytes) => {
+                    let head = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\n\
+                         Connection: close\r\nCache-Control: no-store\r\n\
+                         X-Content-Type-Options: nosniff\r\n\
+                         Content-Security-Policy: {}; frame-ancestors 'none'; base-uri 'none'\r\n\r\n",
+                        bytes.len(),
+                        crate::canvas::SITE_CSP
+                    );
+                    stream
+                        .write_all(head.as_bytes())
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    stream.write_all(&bytes).await.map_err(|e| e.to_string())?;
+                    stream.flush().await.map_err(|e| e.to_string())?;
+                    Ok(())
+                }
+                Err(message) => {
+                    write_reply(&mut stream, api(404, json!({"refused": [message]}))).await
+                }
+            }
+        }
+        // P4 (design-parity C12): an export's file, as a download. The
+        // name is one segment (the writer refuses the rest), so this
+        // route cannot walk out of the board's own directories.
+        ("GET", path) if path.starts_with("/api/design/download/") => {
+            let rest = path.trim_start_matches("/api/design/download/");
+            let mut parts = rest.splitn(2, '/');
+            let slug = parts.next().unwrap_or_default();
+            let name = parts.next().unwrap_or_default();
+            match bridge.design_download(slug, name) {
+                Ok(bytes) => {
+                    let head = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\n\
+                         Connection: close\r\nCache-Control: no-store\r\n\
+                         X-Content-Type-Options: nosniff\r\n\
+                         Content-Disposition: attachment; filename=\"{}\"\r\n\r\n",
+                        bytes.len(),
+                        name.replace('"', "")
+                    );
+                    stream
+                        .write_all(head.as_bytes())
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    stream.write_all(&bytes).await.map_err(|e| e.to_string())?;
+                    stream.flush().await.map_err(|e| e.to_string())?;
+                    Ok(())
+                }
+                Err(message) => {
+                    write_reply(&mut stream, api(404, json!({"refused": [message]}))).await
+                }
+            }
+        }
         // The tower console and the second-brain panel: the boards' own
         // reads, shaped for the browser. Both name the parts that did
         // not land rather than rendering a blank console.

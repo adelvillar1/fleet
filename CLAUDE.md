@@ -28,7 +28,7 @@ Verified inventory and per-repo state: [docs/architecture/ecosystem.md](docs/arc
 
 1. **Plan before non-trivial work.** Draft `docs/plans/YYYY-MM-DD-<slug>.md` with acceptance criteria before any feature ≥15 min or >2 files; update its `status` in the same turn the work lands. Trivial work may go direct.
 2. **The gate is local and permanent:** `cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings`, `cargo build --release`, `cargo test`. Run it before every push **that carries code changes** (Rust, JS, CSS, HTML, scripts, tests) — a docs-only push (markdown, images) skips it: there is no compile surface (the owner's 2026-11-01 ruling). **Read the exit code — never through a status-losing pipe** (KI-014). CI is disarmed by owner decision (no Actions funds); the workflow is manual-dispatch only until the owner re-arms it.
-3. **Commit each verified increment as it goes green.** Explicit paths only — never `git add -A`. `master` is the only branch (solo tool, no hosted surface).
+3. **Commit each verified increment as it goes green.** Explicit paths only — never `git add -A`. Work lands on `master`, directly or through the plan's working branch (see the topology section).
 4. **Never commit secrets.** Credentials resolve at runtime, from Fleet's own home and nothing else: `DEEPSEEK_API_KEY` env → `<FLEET_HOME>/.env`. No other harness's config file is ever read (the owner's 2026-10-16 ruling). This repo stores no keys; env var names live in `CLAUDE.local.md`.
 5. **Model-visible ⟺ logged** (inherited from the harness): anything the model sees must be reconstructable from the session log. The system prompt and tool declarations are compiled-in constants, reconstructed per request, never logged.
 6. **Native port, not a fork.** New work is Rust against the DeepSeek API; never reintroduce Node, a checkout dependency, or a dsh launch path (plan criterion C5).
@@ -139,7 +139,7 @@ scripts/cache-sweep.sh [--all] [--dry-run]   # the recap step's sweep: stale deb
 
 ## Branch and environment topology
 
-Single branch `master` → `origin/master`. No staging/production split: solo tool, no hosted surface. If a deploy surface ever appears, add `develop` and a topology table here.
+Trunk is `master` → `origin/master`, the branch that ships. A working branch (named for the plan it carries, e.g. `design-parity`) forks master when a body of work needs a lane of its own — a parallel session holding master, or a plan whose landing should be reviewable whole — and merges back when its plan lands. No staging/production split: solo tool, no hosted surface. If a deploy surface ever appears, add a topology table here.
 
 ## Housekeeping protocol
 

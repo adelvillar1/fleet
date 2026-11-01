@@ -271,6 +271,12 @@ pub enum Record {
         /// Every fact name the block carried, in block order: the
         /// protected tier, then ranked recall, then working memory.
         facts: Vec<String>,
+        /// The bounded design section when the run's workspace project
+        /// has boards (designs-are-project-knowledge K6): the digest
+        /// account that rode the block, so the prompt stays
+        /// reconstructable. None on logs that predate the section.
+        #[serde(default)]
+        design: Option<String>,
     },
     /// A mid-run memory curation (the surface-curation plan's C2): the
     /// run's topic moved past the floor and the block was re-ranked
@@ -2076,6 +2082,7 @@ mod tests {
                 "fleet-the-gate-is-local".to_string(),
                 "working-note".to_string(),
             ],
+            design: None,
         }
     }
 
@@ -2133,7 +2140,11 @@ mod tests {
 
         let records = replay(session.path()).unwrap();
         match &records[1] {
-            Record::Memory { shape, facts } => {
+            Record::Memory {
+                shape,
+                facts,
+                design,
+            } => {
                 assert_eq!(shape, "deploy");
                 assert_eq!(
                     facts,
@@ -2143,6 +2154,7 @@ mod tests {
                         "working-note".to_string(),
                     ]
                 );
+                assert_eq!(*design, None);
             }
             other => panic!("expected a memory record, got {other:?}"),
         }

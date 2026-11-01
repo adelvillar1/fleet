@@ -127,6 +127,15 @@ wrong; the thread carries replies and *fix this pin*, which refines that
 page as a new version. Any run can put a page here through the `frame`
 tool — the board is where design artifacts land, not a separate app.
 
+**What is new (2026-11-01, the parity plan).** The composer floats in
+the center frame with a first-class focus (board vs page); boards and
+pages carry full CRUD (head rename/delete, in-place page rename, the
+set picker); the head's save chip names every write's outcome; the
+model chips fan a brief out across the designated models; and the
+board **hosts locally** at `/site/<slug>/` — live pages, rewritten
+links, a network-dead CSP — with every export downloadable and the
+whole site zipped beside the board.
+
 **Why.** Designers were the one craft Fleet could show but not *make*:
 the deck renders, the document previews, the vision tool reads an image
 — and a whole page was the missing unit. A page is the unit that carries

@@ -648,7 +648,11 @@
     designWorld: document.getElementById('design-world'),
     designViewport: document.getElementById('design-viewport'),
     designInstrument: document.getElementById('design-instrument'),
+    designChat: document.getElementById('design-chat'),
     designChatLog: document.getElementById('design-chat-log'),
+    designChatToggle: document.getElementById('design-chat-toggle'),
+    designFocus: document.getElementById('design-focus'),
+    designFocusLabel: document.getElementById('design-focus-label'),
     designSeat: document.getElementById('design-seat'),
     designChatActs: document.getElementById('design-chat-acts'),
     designBrief: document.getElementById('design-brief'),
@@ -665,6 +669,8 @@
     designNote: document.getElementById('design-note'),
     designEyebrow: document.getElementById('design-eyebrow'),
     designNew: document.getElementById('design-new'),
+    designDelete: document.getElementById('design-delete'),
+    designSave: document.getElementById('design-save'),
     panelLater: document.getElementById('panel-later'),
     laterTitle: document.getElementById('later-title'),
     laterNote: document.getElementById('later-note'),
@@ -15628,6 +15634,13 @@
     container.appendChild(head);
 
     declaration.forEach(function (row) {
+      // A header row: the group a section of rows stands under (the
+      // design rail's project families). A label, not a control — the
+      // keyboard walk skips it because only rows are buttons.
+      if (row.header != null) {
+        container.appendChild(node('div', 'section-rail-group', row.header));
+        return;
+      }
       var button = node('button', 'section-rail-row');
       button.type = 'button';
       button.dataset.section = row.id;
@@ -15983,24 +15996,53 @@
 
   /// The boards rail — every board the home holds, newest first, in the
   /// shared `sectionRail` the other split pages render: the fold it
-  /// remembers, the arrow keys between rows, the open board marked as the
-  /// current section. One row per board: its name, its frame count as the
-  /// badge, and how long ago it last moved as the row's title.
+  /// remembers, the arrow keys between rows, the open board marked as
+  /// the current section. One row per board: its name, its frame count as
+  /// the badge, and how long ago it last moved as the row's title. The
+  /// boards group by the project they belong to (K2 — a board is
+  /// project knowledge): one header per bound project, then unbound.
   function paintDesignRail() {
     if (!el.designRail) return;
     var document_ = face.design || {};
     var boards = document_.projects || [];
     var board = designBoard();
-    sectionRail(el.designRail, boards.map(function (project) {
-      return {
-        id: project.slug,
-        icon: 'design',
-        name: project.name,
-        badge: project.frames,
-        badgeTitle: project.frames + ' frame' + (project.frames === 1 ? '' : 's') +
-          ' \u00b7 ' + designAge(project.updated)
-      };
-    }), {
+    var groups = {};
+    var order = [];
+    boards.forEach(function (project) {
+      var key = '';
+      if (project.project) {
+        var trimmed = String(project.project).trim().replace(/\/+$/, '');
+        key = trimmed.split('/').pop() || '';
+      }
+      if (!groups[key]) {
+        groups[key] = [];
+        order.push(key);
+      }
+      groups[key].push(project);
+    });
+    // Bound families by first appearance, unbound last — the rail reads
+    // as the projects the owner works in, with the homeless boards
+    // still visible at the end.
+    if (order.length > 1 && groups[''].length) {
+      order = order.filter(function (key) { return key !== ''; }).concat(['']);
+    }
+    var declaration = [];
+    order.forEach(function (key) {
+      if (order.length > 1) {
+        declaration.push({ header: key || 'unbound' });
+      }
+      groups[key].forEach(function (project) {
+        declaration.push({
+          id: project.slug,
+          icon: 'design',
+          name: project.name,
+          badge: project.frames,
+          badgeTitle: project.frames + ' frame' + (project.frames === 1 ? '' : 's') +
+            ' \u00b7 ' + designAge(project.updated)
+        });
+      });
+    });
+    sectionRail(el.designRail, declaration, {
       current: board ? board.slug : '',
       folded: !!face.designRailFolded,
       store: 'fleet-design-rail',
@@ -16044,24 +16086,38 @@
     }).catch(function () { /* the arrival repaint keeps the last document */ });
   }
 
+  /// P4 (design-parity C11): the save chip — the one writer's
+  /// lifecycle in the head: saving… while a write is in flight, saved
+  /// on its ack, and the refusal by name.
+  function designSaveState(text, state) {
+    if (!el.designSave) return;
+    el.designSave.textContent = text;
+    el.designSave.dataset.state = state || 'idle';
+  }
+
   function designWrite(op, fields, done) {
     var body = { op: op };
     var key;
     for (key in fields) if (Object.prototype.hasOwnProperty.call(fields, key)) body[key] = fields[key];
+    designSaveState('saving\u2026', 'saving');
     // `post` resolves the parsed exchange — {status, body} — not a fetch
     // Response: the body IS the answer, and there is no second read.
     return post('/api/design', body).then(function (reply) {
       var answer = reply.body || {};
       if (reply.status !== 200) {
-        notice('the canvas refused', answer.error || 'the write did not land');
+        var reason = answer.error || 'the write did not land';
+        designSaveState('save failed: ' + reason, 'failed');
+        notice('the canvas refused', reason);
         return null;
       }
       face.designReadAt = 0;
       return readDesign(true).then(function () {
+        designSaveState('saved', 'saved');
         if (done) done(answer);
         return answer;
       });
     }).catch(function () {
+      designSaveState('save failed: the canvas is unreachable', 'failed');
       notice('the canvas is unreachable', 'the write did not leave the page');
       return null;
     });
@@ -16253,12 +16309,27 @@
 
   function designWireViewport() {
     el.designViewport.addEventListener('wheel', function (event) {
+      // The floating composer owns its own wheel: no zoom from a
+      // scroll inside it.
+      if (event.target && event.target.closest &&
+        event.target.closest('.design-float')) return;
       event.preventDefault();
       var rect = el.designViewport.getBoundingClientRect();
       var factor = event.deltaY < 0 ? 1.08 : 1 / 1.08;
       designZoomAt(event.clientX - rect.left, event.clientY - rect.top, factor);
     }, { passive: false });
     el.designViewport.addEventListener('pointerdown', function (event) {
+      // The floating composer owns its own pointer events: no pan, no
+      // deselect from a press inside it.
+      if (event.target && event.target.closest &&
+        event.target.closest('.design-float')) return;
+      // The canvas background clears the focus (the owner's rule: no
+      // page selected, the request is global). A press on a frame
+      // card keeps it — the card's own handler selected it first.
+      if (!(event.target && event.target.closest &&
+        event.target.closest('.canvas-frame'))) {
+        designSelect(null);
+      }
       if (!thinkOfDesignPan(event)) return;
       event.preventDefault();
       var start = { x: event.clientX, y: event.clientY, vx: designView().x, vy: designView().y };
@@ -16309,12 +16380,94 @@
   function designFrameBar(frame) {
     var bar = node('div', 'canvas-frame-bar');
     bar.dataset.drag = frame.id;
-    bar.appendChild(node('span', 'canvas-frame-name', frame.name));
+    var name = node('span', 'canvas-frame-name', frame.name);
+    // P2 (design-parity C6): the page renames in place — double-click
+    // the title bar's name, type, and the write lands through the
+    // writer the model's own renames ride.
+    name.addEventListener('dblclick', function (event) {
+      event.stopPropagation();
+      if (name.querySelector('input')) return;
+      var input = node('input', 'canvas-rename');
+      input.type = 'text';
+      input.value = frame.name;
+      input.setAttribute('aria-label', 'the page\u2019s name');
+      name.textContent = '';
+      name.appendChild(input);
+      input.focus();
+      input.select();
+      var finish = function (save) {
+        var next = input.value.trim();
+        name.textContent = '';
+        if (save && next && next !== frame.name) {
+          designWrite('frame-update', {
+            project: designBoard().slug,
+            id: frame.id,
+            update: { name: next }
+          });
+        } else {
+          name.textContent = frame.name;
+        }
+      };
+      input.addEventListener('blur', function () { finish(true); });
+      input.addEventListener('keydown', function (keyEvent) {
+        if (keyEvent.key === 'Enter') { keyEvent.preventDefault(); finish(true); }
+        else if (keyEvent.key === 'Escape') { keyEvent.preventDefault(); finish(false); }
+      });
+    });
+    bar.appendChild(name);
     if (frame.set) bar.appendChild(badge(frame.set, 'ok'));
     if (frame.model) bar.appendChild(badge(frame.model));
     if (frame.pins && frame.pins.length) {
       bar.appendChild(badge(frame.pins.length + ' pin' + (frame.pins.length === 1 ? '' : 's'),
         frame.pins.some(function (pin) { return !pin.resolved_frame_id; }) ? 'warn' : 'ok'));
+    }
+    // P3 (design-parity C7): the viewport presets sit on the frame —
+    // the source's own placement — and resize the page through the
+    // writer. The tweak card keeps its own copy.
+    (face.design.caps && face.design.caps.viewports || []).forEach(function (viewport) {
+      var preset = node('button', 'canvas-act', viewport.name.slice(0, 1));
+      preset.type = 'button';
+      preset.setAttribute('aria-label', 'resize ' + frame.name + ' to ' + viewport.name);
+      preset.title = viewport.name + ' \u00b7 ' + viewport.w + '\u00d7' + viewport.h;
+      preset.dataset.act = 'design-viewport-' + viewport.name;
+      if (Math.round(frame.w) === viewport.w && Math.round(frame.h) === viewport.h) {
+        preset.classList.add('on');
+      }
+      preset.addEventListener('click', function (event) {
+        event.stopPropagation();
+        designWrite('frame-update', {
+          project: designBoard().slug, id: frame.id,
+          update: { w: viewport.w, h: viewport.h }
+        });
+      });
+      bar.appendChild(preset);
+    });
+    // P3 (design-parity C10): the page's set is assignable — the
+    // membership the model's `set` argument writes, surfaced as a
+    // picker over the board's sets; the badge follows the re-read.
+    var setNames = ((face.design && face.design.active && face.design.active.sets) || [])
+      .map(function (one) { return one.name; });
+    if (setNames.length || frame.set) {
+      var setPick = node('select', 'canvas-act canvas-set');
+      setPick.setAttribute('aria-label', 'the page\u2019s set');
+      setPick.dataset.act = 'design-set-' + frame.id;
+      var noSet = node('option', null, 'no set');
+      noSet.value = '';
+      setPick.appendChild(noSet);
+      setNames.forEach(function (setName) {
+        var option = node('option', null, setName);
+        option.value = setName;
+        setPick.appendChild(option);
+      });
+      setPick.value = frame.set || '';
+      setPick.addEventListener('click', function (event) { event.stopPropagation(); });
+      setPick.addEventListener('change', function (event) {
+        event.stopPropagation();
+        designWrite('frame-set', {
+          project: designBoard().slug, id: frame.id, set: setPick.value
+        });
+      });
+      bar.appendChild(setPick);
     }
     // The packet's selection: a check on the bar, gathered into the
     // export. It is separate from the board's own selection, which drives
@@ -16476,6 +16629,56 @@
       card.classList.toggle('selected', card.dataset.frame === id);
     });
     paintDesignInstrument();
+    paintDesignFocus();
+    // The mode follows the focus (the owner's rule): a page means
+    // refine, no page returns to the board's default — and a choice
+    // the focus does not allow falls back rather than silently
+    // sending the wrong verb.
+    var want = id ? 'refine' : 'generate';
+    var modes = designModes(designBoard() || {});
+    if (modes.some(function (mode) { return mode.value === want; })) {
+      face.designModeChoice = want;
+    }
+    designApplyModeChoice();
+  }
+
+  /// The focus chip: what this request is about — the board, or the
+  /// page selected on the canvas. The placeholder follows it, so the
+  /// composer's own words say the scope before a word is typed.
+  function paintDesignFocus() {
+    if (!el.designFocus) return;
+    var board = designBoard();
+    var selected = designSelected();
+    var on = !!selected;
+    el.designFocus.dataset.focus = on ? 'page' : 'board';
+    el.designFocusLabel.textContent = on
+      ? 'page \u00b7 ' + selected.name
+      : 'board \u00b7 ' + (board ? board.name : 'the canvas');
+    el.designFocus.title = on
+      ? 'this request is about the selected page'
+      : 'this request is about the whole board';
+    if (el.designBrief && document.activeElement !== el.designBrief) {
+      el.designBrief.placeholder = on
+        ? 'refine this page, or ask about it'
+        : 'ask about the board, or say what to design';
+    }
+  }
+
+  /// The mode select holds the choice the focus allows: the list is
+  /// rebuilt per paint, so this lands the value after the options do.
+  function designApplyModeChoice() {
+    var board = designBoard();
+    if (!board || !el.designMode.children.length) return;
+    var modes = designModes(board);
+    var want = face.designModeChoice;
+    if (!modes.some(function (mode) { return mode.value === want; })) {
+      want = face.designSelection ? 'refine' : 'generate';
+      if (!modes.some(function (mode) { return mode.value === want; })) {
+        want = modes[0].value;
+      }
+      face.designModeChoice = want;
+    }
+    el.designMode.value = want;
   }
 
   /// The task composer's answer: the writer's own words for one request.
@@ -16597,9 +16800,26 @@
       sizes.appendChild(button);
     });
     sections.push(['the viewport', sizes]);
-    sections.push(['the frame', node('p', 'derivation',
-      frame.name + ' \u00b7 ' + Math.round(frame.w) + '\u00d7' + Math.round(frame.h) +
-      (frame.model ? ' \u00b7 ' + frame.model : '') + ' \u00b7 ' + (frame.versions || []).length + ' version(s)')]);
+    // P3 (design-parity C8): the frame line carries the page's whole
+    // account — name, dimensions, model, versions, the generation's
+    // provenance when the frame carries it, and the description the
+    // model wrote (the source's inspector shows the same).
+    var provenance = '';
+    var meta = frame.gen_meta || null;
+    if (meta) {
+      var bits = [];
+      var duration = meta.duration_ms != null ? meta.duration_ms
+        : (meta.duration != null ? meta.duration : meta.ms);
+      if (duration != null) bits.push((Math.round(duration / 100) / 10) + 's');
+      var tokens = meta.tokens != null ? meta.tokens : meta.total_tokens;
+      if (tokens != null) bits.push(tokens + ' tokens');
+      if (bits.length) provenance = ' \u00b7 ' + bits.join(' \u00b7 ');
+    }
+    var frameLine = frame.name + ' \u00b7 ' + Math.round(frame.w) + '\u00d7' + Math.round(frame.h) +
+      (frame.model ? ' \u00b7 ' + frame.model : '') + provenance +
+      ' \u00b7 ' + (frame.versions || []).length + ' version(s)' +
+      (frame.description ? '\n' + frame.description : '');
+    sections.push(['the frame', node('p', 'derivation', frameLine)]);
     openDrawer(frame.name + ' \u00b7 tweaks', sections);
   }
 
@@ -16733,13 +16953,18 @@
       (review.fixes || []).forEach(function (fix) {
         scores.appendChild(node('p', 'derivation', '\u2192 ' + fix));
       });
-      // The history the store keeps, oldest first: each earlier review is
-      // one line with its own date and summary.
+      // The history the store keeps, oldest first: each earlier review
+      // is one line with its date, its summary, and the delta it
+      // introduced — the change from the review before it (P3, C9).
       if ((review.history || []).length) {
         var history = node('div', 'design-review-history');
-        review.history.forEach(function (older) {
+        review.history.forEach(function (older, index) {
           var line = node('p', 'derivation',
             (older.reviewed || '') + ' \u2014 ' + (older.summary || ''));
+          if (index > 0) {
+            var deltas = designScoreDeltas(review.history[index - 1].scores, older.scores);
+            if (deltas) line.textContent += ' \u00b7 ' + deltas;
+          }
           history.appendChild(line);
         });
         scores.appendChild(history);
@@ -16751,6 +16976,23 @@
     var ask = node('button', 'replay-button replay-resume', 'ask the designer to review');
     ask.type = 'button';
     ask.dataset.act = 'design-review-ask';
+    // P3 (design-parity C9): the critic is the review's own choice —
+    // the designated models, availability named, the pick riding the
+    // run as its pin (a review reads through a different model than
+    // the one that drew the page).
+    var critic = node('select', 'knob-box');
+    critic.dataset.act = 'design-critic';
+    critic.setAttribute('aria-label', 'the critic model');
+    ((face.design && face.design.models) || []).forEach(function (model) {
+      var value = model.provider + '/' + model.model;
+      var option = node('option', null,
+        model.model + (model.available ? '' : ' \u00b7 unavailable'));
+      option.value = value;
+      option.disabled = !model.available;
+      critic.appendChild(option);
+    });
+    var firstPick = designPickedModels()[0];
+    if (firstPick) critic.value = firstPick;
     // The ask drives both captures in Rust and starts the run with the
     // task it composes: desktop and phone reach the vision read together.
     ask.addEventListener('click', function () {
@@ -16769,7 +17011,7 @@
           return;
         }
         closeDrawer();
-        designStartRun(answer.task, board.slug);
+        designStartRun(answer.task, board.slug, critic.value);
       }).catch(function () { ask.disabled = false; });
     });
     var applyFixes = node('button', 'replay-button', 'apply the fixes');
@@ -16779,13 +17021,51 @@
       designSelect(frame.id);
       designAsk('fixes', '', frame.id);
     });
+    // P3 (design-parity C9): fix drift — the coherence report's own
+    // findings, as the run's instruction. The first incoherent set on
+    // the board names the target page and every finding the drift
+    // carries; the run repairs what the drift names.
+    var drift = null;
+    ((board && board.sets) || []).forEach(function (set) {
+      var coherence = set.coherence || {};
+      var broken = (coherence.missing || []).length +
+        (coherence.broken || []).length + (coherence.duplicates || []).length;
+      if (!drift && broken) drift = { set: set, coherence: coherence };
+    });
+    var fixDrift = null;
+    if (drift) {
+      fixDrift = node('button', 'replay-button', 'fix the drift');
+      fixDrift.type = 'button';
+      fixDrift.dataset.act = 'design-fix-drift';
+      fixDrift.addEventListener('click', function () {
+        var findings = [];
+        (drift.coherence.missing || []).forEach(function (one) {
+          findings.push('a page misses the shared token `' + one + '`');
+        });
+        (drift.coherence.broken || []).forEach(function (one) {
+          findings.push('a nav link resolves to no page: `' + one + '`');
+        });
+        (drift.coherence.duplicates || []).forEach(function (one) {
+          findings.push('a duplicate slug: `' + one + '`');
+        });
+        var target = ((drift.set.pages || [])[0] || {}).id || '';
+        if (target) designSelect(target);
+        designAsk('fixes',
+          'Fix the page set `' + drift.set.name + '`\u2019s coherence drift: ' +
+          findings.join('; ') + '. Repair exactly what the drift names \u2014 the ' +
+          'same tokens on every page, every nav target a real page, one slug each.',
+          target);
+      });
+    }
     openDrawer(frame.name + ' \u00b7 review', [
       ['the deterministic checks', facts],
       ['the designer\u2019s review', scores],
       ['the ask', (function () {
         var holder = node('div', 'canvas-inline');
+        holder.appendChild(critic);
         holder.appendChild(ask);
         if (review && (review.fixes || []).length) holder.appendChild(applyFixes);
+        if (fixDrift) holder.appendChild(fixDrift);
         return holder;
       })()],
       ['why both', node('p', 'derivation',
@@ -16794,22 +17074,64 @@
     ]);
   }
 
+  /// The score deltas between two reviews: the names that moved, with
+  /// the sign — `spacing +2 \u00b7 contrast -1` — or nothing when every
+  /// score held. Unscored names are skipped, not guessed.
+  function designScoreDeltas(before, after) {
+    if (!before || !after) return '';
+    var parts = [];
+    Object.keys(after).forEach(function (key) {
+      var was = before[key];
+      var now = after[key];
+      if (typeof was !== 'number' || typeof now !== 'number' || was === now) return;
+      var change = now - was;
+      parts.push(key + ' ' + (change > 0 ? '+' : '') + change);
+    });
+    return parts.join(' \u00b7 ');
+  }
+
   function designExportCard(frame) {
     var board = designBoard();
     var actions = node('div', 'canvas-inline');
+    // P4 (design-parity C12): every export offers its file as a
+    // download — the link rides the row the moment the write lands.
+    var downloads = node('div', 'canvas-inline');
+    downloads.dataset.act = 'design-downloads';
     [['html', 'the page'], ['tokens.css', 'the tokens'], ['tokens.json', 'the tokens, JSON'],
-      ['zip', 'the packet'], ['png', 'the PNG']].forEach(function (pair) {
+      ['zip', 'the packet'], ['png', 'the PNG'],
+      // P4 (design-parity C13): the whole board as a site — the ZIP,
+      // and the URL the local host serves it at.
+      ['site', 'the site (zip)']].forEach(function (pair) {
       var button = node('button', 'replay-button', pair[1]);
       button.type = 'button';
       button.dataset.act = 'design-export-' + pair[0].replace('.', '-');
       button.addEventListener('click', function () {
-        post('/api/design/export', {
-          project: board.slug, id: frame.id, kind: pair[0],
-          origin: window.location.origin || 'http://127.0.0.1:3080'
-        }).then(function (reply) {
+        var body = { project: board.slug, kind: pair[0],
+          origin: window.location.origin || 'http://127.0.0.1:3080' };
+        if (pair[0] !== 'site') body.id = frame.id;
+        post('/api/design/export', body).then(function (reply) {
           var answer = reply.body || {};
           if (reply.status === 200) {
             notice('the export landed', answer.path);
+            var name = answer.name ||
+              String(answer.path || '').split('/').pop();
+            if (name) {
+              var link = node('a', 'replay-button',
+                'download ' + name);
+              link.href = '/api/design/download/' +
+                encodeURIComponent(board.slug) + '/' +
+                encodeURIComponent(name);
+              link.setAttribute('download', name);
+              link.dataset.act = 'design-download-' + name;
+              downloads.appendChild(link);
+            }
+            if (answer.url) {
+              var host = node('a', 'replay-button', 'open the site');
+              host.href = answer.url;
+              host.target = '_blank';
+              host.dataset.act = 'design-open-site';
+              downloads.appendChild(host);
+            }
           } else {
             notice('the export was refused', answer.error || 'no reason given');
           }
@@ -16819,8 +17141,9 @@
     });
     openDrawer(frame.name + ' \u00b7 export', [
       ['the exports', actions],
+      ['the downloads', downloads],
       ['where they land', node('p', 'derivation',
-        'beside the board, under canvas/' + board.slug + '/exports/ \u2014 the path comes back in the notice')],
+        'beside the board, under canvas/' + board.slug + '/exports/ \u2014 the download link carries the file, and the site is served live at /site/' + board.slug + '/')],
       ['the PNG', node('p', 'derivation',
         'the browser lane renders the served page and captures it \u2014 one press; the path comes back in the notice')]
     ]);
@@ -17012,38 +17335,80 @@
 
   /// The models designated for design work. A design run's route comes
   /// from this page — the fact that the request started here is what makes
-  /// it design work — so the owner names the model (defaulting to the
-  /// first that can serve now) and the run goes out pinned to it. The
+  /// it design work — so the owner picks the model(s): one pressed is one
+  /// pinned run (today's shape), several pressed is a fan-out — one run
+  /// per model, each landing its own frames, because different models
+  /// have different strengths (the owner's 2026-11-01 amendment). The
   /// router neither picks among these nor walks them as a workload.
   function paintDesignModels() {
     var models = (face.design && face.design.models) || [];
-    var chosen = el.designModel.value || face.designModelChoice || '';
+    var available = models
+      .filter(function (model) { return model.available; })
+      .map(function (model) { return model.provider + '/' + model.model; });
+    if (!face.designModelPicks) face.designModelPicks = [];
+    // The picks follow the catalog: one that can no longer serve drops,
+    // and one model must stay on — a design run is always somebody's.
+    // This runs BEFORE the chips exist, so every handler closes over
+    // the very array the clicks mutate (in place — never reassign it
+    // under them).
+    face.designModelPicks = face.designModelPicks.filter(function (value) {
+      return available.indexOf(value) >= 0;
+    });
+    if (!face.designModelPicks.length && available.length) {
+      face.designModelPicks = [available[0]];
+    }
+    var picks = face.designModelPicks;
     el.designModel.textContent = '';
-    var offered = 0;
     models.forEach(function (model) {
       var value = model.provider + '/' + model.model;
-      var option = node('option', null,
-        model.model + (model.available ? '' : ' \u00b7 unavailable'));
-      option.value = value;
-      option.disabled = !model.available;
-      el.designModel.appendChild(option);
-      if (model.available) offered += 1;
+      var chip = node('button', 'replay-button', model.model +
+        (model.available ? '' : ' \u00b7 unavailable'));
+      chip.type = 'button';
+      chip.dataset.model = value;
+      chip.setAttribute('aria-pressed', picks.indexOf(value) >= 0 ? 'true' : 'false');
+      if (picks.indexOf(value) >= 0) chip.classList.add('on');
+      chip.disabled = !model.available;
+      chip.title = model.available
+        ? 'design with ' + model.model
+        : model.model + ' cannot serve right now';
+      chip.addEventListener('click', function () {
+        var at = picks.indexOf(value);
+        if (at >= 0) {
+          if (picks.length > 1) picks.splice(at, 1);
+        } else {
+          picks.push(value);
+        }
+        paintDesignModels();
+      });
+      el.designModel.appendChild(chip);
     });
-    if (!offered) {
-      var none = node('option', null, 'no design model can serve');
-      none.value = '';
-      el.designModel.appendChild(none);
-      el.designModel.value = '';
-      el.designModel.title = 'none of the design models has a key';
-      return;
-    }
-    el.designModel.title = '';
-    var wanted = models.filter(function (model) {
-      return model.available && model.provider + '/' + model.model === chosen;
-    })[0];
-    if (!wanted) wanted = models.filter(function (model) { return model.available; })[0];
-    el.designModel.value = wanted.provider + '/' + wanted.model;
-    face.designModelChoice = el.designModel.value;
+    el.designModel.title = available.length
+      ? '' : 'none of the design models has a key';
+    face.designModelChoice = picks[0] || '';
+  }
+
+  /// The pressed models, in catalog order — the pins a send fans out
+  /// across (always at least one; the picker keeps one on).
+  function designPickedModels() {
+    var models = (face.design && face.design.models) || [];
+    var picks = face.designModelPicks || [];
+    return models
+      .map(function (model) { return model.provider + '/' + model.model; })
+      .filter(function (value) { return picks.indexOf(value) >= 0; });
+  }
+
+  /// The fan-out's own progress: one line per model while its run is
+  /// in flight. The variant cards are the frames the runs land; this
+  /// is the progress that shows before they do.
+  function paintDesignFanout() {
+    if (!el.designChatActs) return;
+    el.designChatActs.textContent = '';
+    (face.designFanout || []).forEach(function (one) {
+      var line = node('span', 'design-fanout-line',
+        one.model + (one.done ? ' \u00b7 landed' : ' \u00b7 designing\u2026'));
+      line.dataset.model = one.model;
+      el.designChatActs.appendChild(line);
+    });
   }
 
   /// The board's brand. A brand is a design system (tokens + doctrine)
@@ -17075,6 +17440,16 @@
 
   function paintDesignChat() {
     var board = designBoard();
+    paintDesignFocus();
+    // The conversation's own toggle: the log is a bounded panel over
+    // the canvas, collapsed to the composer until the owner opens it —
+    // or a send opens it, so the turn that was just spoken is seen.
+    var open = !!face.designChatOpen;
+    if (el.designChat) el.designChat.dataset.open = open ? 'true' : 'false';
+    if (el.designChatLog) el.designChatLog.hidden = !open;
+    if (el.designChatToggle) {
+      el.designChatToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+    }
     el.designChatLog.textContent = '';
     if (!board) {
       el.designChatLog.appendChild(node('p', 'board-empty',
@@ -17086,6 +17461,10 @@
     el.designBrief.disabled = false;
     el.designSend.disabled = false;
     var turns = board.chat || [];
+    if (el.designChatToggle) {
+      el.designChatToggle.textContent = 'conversation' +
+        (turns.length ? ' \u00b7 ' + turns.length : '');
+    }
     if (!turns.length) {
       el.designChatLog.appendChild(node('p', 'board-empty',
         'nothing yet — say what to design, and the designer fills the board'));
@@ -17109,14 +17488,15 @@
       el.designChatLog.appendChild(bubble);
     });
     el.designChatLog.scrollTop = el.designChatLog.scrollHeight;
-    // The verbs, by what the selection allows.
+    // The verbs, by what the selection allows — and the choice the
+    // focus permits lands after the list does.
     el.designMode.textContent = '';
     designModes(board).forEach(function (mode) {
       var option = node('option', null, mode.label);
       option.value = mode.value;
-      if (face.designModeChoice && mode.value === face.designModeChoice) option.selected = true;
       el.designMode.appendChild(option);
     });
+    designApplyModeChoice();
     // The reference: the site the board models, and the pages it points
     // at — the owner picks the ones a redesign should read.
     var reference = board.reference || null;
@@ -17132,6 +17512,7 @@
     });
     // The model first: it is the run's route, not a decoration.
     paintDesignModels();
+    paintDesignFanout();
     paintDesignBrand();
     // The styles: the source library's sixty-two directions, grouped by
     // the category the library names (the curated ten first). Each
@@ -17181,6 +17562,9 @@
       mode: mode,
       brief: brief
     };
+    // A send shows its turn: the log opens so the owner sees what they
+    // just said land in the board's conversation.
+    face.designChatOpen = true;
     el.designBrief.value = '';
     el.designSend.disabled = true;
     designWrite('chat', { project: board.slug, role: 'owner', text: brief, frames: [] }, function () {
@@ -17206,22 +17590,40 @@
           el.designSend.disabled = false;
           return;
         }
-        designStartRun(task, board.slug);
+        // P5 (design-parity C15/C16): one picked model is one pinned
+        // run — today's shape; several picked is a fan-out — one run
+        // per model, each landing its own frames, one progress line
+        // each until the board fills.
+        var pins = designPickedModels();
+        if (pins.length > 1) {
+          face.designFanout = pins.map(function (pin) {
+            return { model: pin.split('/').pop(), done: false };
+          });
+          paintDesignFanout();
+          pins.forEach(function (pin) {
+            designStartRun(task, board.slug, pin);
+          });
+          return;
+        }
+        designStartRun(task, board.slug, pins[0]);
       });
     });
   }
 
   /// Start the run and watch for its landing: the pending record carries
   /// the frames the board had, so the diff is the run's contribution.
-  function designStartRun(task, slug) {
+  /// An explicit pin (the review's critic, or a fan-out's model)
+  /// outruns the composer's pick; without one, the first pressed model
+  /// — the default — pins the run exactly as before.
+  function designStartRun(task, slug, pin) {
     var runPath = '/api/run' + (face.session ? '?session=' + encodeURIComponent(face.session) : '');
     // The page names the model: `provider/model` pins both halves, so the
     // router skips the judgment entirely — routing for a design run is
-    // this page's decision, and an empty picker leaves the router's own.
+    // this page's decision, and an empty pick leaves the router's own.
     post(runPath, {
       task: task,
       mode: face.permissions,
-      pin: el.designModel.value || face.providerPin || null
+      pin: pin || designPickedModels()[0] || face.providerPin || null
     })
       .then(function (reply) {
         if (reply.status === 200) {
@@ -17275,6 +17677,8 @@
     var pending = face.designPending;
     if (!pending) return;
     face.designPending = null;
+    face.designFanout = null;
+    paintDesignFanout();
     el.designSend.disabled = false;
     var board = designBoard();
     if (!board || board.slug !== pending.slug) { readDesign(true); return; }
@@ -17348,6 +17752,12 @@
     designWireViewport();
     designWireKeys();
     el.designSend.addEventListener('click', sendDesign);
+    if (el.designChatToggle) {
+      el.designChatToggle.addEventListener('click', function () {
+        face.designChatOpen = !face.designChatOpen;
+        paintDesignChat();
+      });
+    }
     el.designMode.addEventListener('change', function () {
       face.designModeChoice = el.designMode.value;
     });
@@ -17392,6 +17802,49 @@
         face.canvas = null;
         readDesign(true);
       });
+    });
+    // P2 (design-parity C4): the head's title renames the board in
+    // place — the rename op the writer already held, surfaced: double-
+    // click, type, and the write lands; Escape puts the name back.
+    el.designTitle.addEventListener('dblclick', function () {
+      var board = designBoard();
+      if (!board || el.designTitle.querySelector('input')) return;
+      var input = node('input', 'canvas-rename');
+      input.type = 'text';
+      input.value = board.name;
+      input.setAttribute('aria-label', 'the board\u2019s name');
+      el.designTitle.textContent = '';
+      el.designTitle.appendChild(input);
+      input.focus();
+      input.select();
+      var finish = function (save) {
+        var next = input.value.trim();
+        el.designTitle.textContent = '';
+        paintDesignHead();
+        if (save && next && next !== board.name) {
+          designWrite('rename', { project: board.slug, name: next });
+        }
+      };
+      input.addEventListener('blur', function () { finish(true); });
+      input.addEventListener('keydown', function (keyEvent) {
+        if (keyEvent.key === 'Enter') { keyEvent.preventDefault(); finish(true); }
+        else if (keyEvent.key === 'Escape') { keyEvent.preventDefault(); finish(false); }
+      });
+    });
+    // P2 (design-parity C5): the head's delete removes the board after
+    // a confirm that names what it takes — the source's own shape.
+    el.designDelete.addEventListener('click', function () {
+      var board = designBoard();
+      if (!board) return;
+      var count = (board.frames || []).length;
+      var takes = count + ' frame' + (count === 1 ? '' : 's') +
+        ', its conversation and its files';
+      if (!window.confirm('Delete `' + board.name + '`? It holds ' + takes +
+        ' \u2014 the board file is gone.')) return;
+      designSetSlug('');
+      face.designSelection = null;
+      face.canvas = null;
+      designWrite('board-delete', { project: board.slug });
     });
   }
 
