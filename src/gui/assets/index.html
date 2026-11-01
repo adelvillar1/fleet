@@ -715,6 +715,16 @@
         <div class="design-chat-log" id="design-chat-log"></div>
         <div class="design-seat" id="design-seat" hidden aria-live="assertive"></div>
         <div class="design-chat-compose">
+          <!-- The reference site: Rust fetches it, scans the DNA, and the
+               board keeps the facts. The pages it discovers are the ones
+               a redesign can model. -->
+          <div class="design-chat-row design-chat-ref">
+            <input class="knob-box" id="design-reference" type="text"
+              placeholder="a reference site — https://…" aria-label="the reference site">
+            <button class="replay-button" id="design-scan" type="button">scan</button>
+          </div>
+          <select class="knob-box" id="design-reference-pages" multiple hidden
+            aria-label="the reference's pages"></select>
           <textarea class="canvas-brief" id="design-brief" rows="2"
             placeholder="ask about the board, or say what to design"></textarea>
           <div class="design-chat-row">

@@ -216,10 +216,10 @@ changelog.
 - [x] **W8 — brands and presets.** A brand's tokens reach the task and
       the frame's defaults; all 62 presets ride the read; a preset's
       avoid list composes into the task.
-- [ ] **W9 — the reference fetch is hardened.** `fetch_site` refuses a
+- [x] **W9 — the reference fetch is hardened.** `fetch_site` refuses a
       loopback/private target, a non-http scheme, a redirect past the
       cap, and an oversized body — each by name, pinned.
-- [ ] **W10 — DNA reaches the frame.** Style facts extracted from a
+- [x] **W10 — DNA reaches the frame.** Style facts extracted from a
       fixture page (palette, type, scale) ride the run's task; a scan of
       a page with no style block says so.
 - [ ] **W11 — page sets are coherent.** A set's pages share tokens, its
@@ -369,7 +369,43 @@ the picker landed as one run per model — see the landed section below —
 because the owner ruled that a design run's route is the page's, not a
 chain's.)**
 
-T3–T6 remain unstarted.
+T4–T6 remain unstarted.
+
+## Landed: T3 — the reference site, scanned
+
+**The fetch refuses by name, and the refusals are pinned.** `fetch_site`
+takes http(s) only, refuses credentials, refuses loopback/private/
+link-local hosts (literal *and* every resolved address), refuses a
+redirect past **3**, a body past **2 MiB**, and a non-page content type.
+The resolution is pinned to the addresses that were checked, so a second
+DNS answer cannot move the request. Because the network cannot produce a
+redirect loop or a huge body on demand, the exchange sits behind a
+`SiteTransport` seam and the tests script one —
+`the_reference_fetch_caps_redirects_and_size` pins the redirect cap, the
+byte cap and the content type, and
+`the_reference_fetch_refuses_the_private_and_the_malformed` pins the
+scheme, credentials, the ten private host shapes, and a loopback fetch
+that never opens a socket.
+
+**The facts are the page's own declarations.** `style_facts` reads the
+palette (frequency-ranked hex, inline `fill`/`stroke` included), the type
+families and sizes, the radii, the layout signals (`grid×n`, `flex×n`,
+`max-width`), the title, the meta description (case preserved) and the
+site's own pages. `style_facts_are_what_the_page_declares` pins every
+field over a fixture page and the honest "found none" lines;
+`discovered_pages_are_the_sites_own_and_capped` pins same-host filtering,
+dedupe and the 24-page cap.
+
+**One cached block, three callers.** `POST /api/design/reference` runs the
+blocking fetch off the async worker and caches a `BoardReference` on the
+project, so the composer, the CLI and a cron job read the same facts
+(`the_task_carries_the_boards_reference_and_the_pages_picked`). The
+composer gained the reference field with a **scan** press, the discovered
+pages as a picker, and a *redesign* verb once a reference is on the board
+(harness: two checks).
+
+Suite **1,884/0** (the relay suite's known load-flake, KI-385, cleared on
+its own re-run), harness **567 checks across 56 cases**.
 
 ## Landed: T2 — assets, brands, and the whole style library
 

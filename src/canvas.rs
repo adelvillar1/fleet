@@ -199,6 +199,23 @@ pub struct Project {
     /// default tweak values of every frame a run lands here.
     #[serde(default)]
     pub brand: Option<String>,
+    /// The reference site this board was scanned against, cached: the
+    /// facts are Rust's, and every surface (the composer, the CLI, a cron
+    /// job) reads the same ones.
+    #[serde(default)]
+    pub reference: Option<BoardReference>,
+}
+
+/// A scanned reference site, as the board keeps it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BoardReference {
+    pub url: String,
+    /// The fact block one run reads.
+    pub block: String,
+    /// The site's own pages, as the scan found them.
+    #[serde(default)]
+    pub pages: Vec<String>,
+    pub fetched_at: String,
 }
 
 /// A project as the pickers list it.
@@ -318,6 +335,7 @@ pub fn create(home: &Path, name: &str) -> Result<(String, Project), String> {
         frames: Vec::new(),
         chat: Vec::new(),
         brand: None,
+        reference: None,
     };
     save(home, &slug, &project)?;
     Ok((slug, project))
@@ -452,6 +470,18 @@ pub fn delete_brand(home: &Path, slug: &str) -> Result<(), String> {
     }
     std::fs::remove_file(&path)
         .map_err(|error| format!("could not drop {}: {error}", path.display()))
+}
+
+/// Record the board's reference scan — or clear it with `None`.
+pub fn set_reference(
+    home: &Path,
+    slug: &str,
+    reference: Option<BoardReference>,
+) -> Result<(), String> {
+    let mut project = load(home, slug)?;
+    project.reference = reference;
+    project.updated = crate::calib::stamp();
+    save(home, slug, &project)
 }
 
 /// The board's assets: files (images, an inlined SVG) that a page refers
@@ -1194,6 +1224,614 @@ pub fn designer_task(mode: DesignMode, brief: &str, slug: &str, facts: &DesignFa
         task.push_str(&format!("\n\nReference facts:\n{reference}"));
     }
     task
+}
+
+// --- the reference site -----------------------------------------------------
+
+/// The most bytes one reference page may carry.
+pub const MAX_SITE_BYTES: usize = 2 * 1024 * 1024;
+
+/// How many redirects a reference fetch follows.
+pub const MAX_REDIRECTS: usize = 3;
+
+/// The most pages a scan lists for the owner to pick from.
+pub const MAX_DISCOVERED_PAGES: usize = 24;
+
+/// One fetched page.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FetchedSite {
+    pub url: String,
+    pub html: String,
+}
+
+/// The design DNA a page carries: its palette, type, scale, radii, layout
+/// signals and the pages of its own site. Every field is a scan of what
+/// the page declares — a flag, not a rendering.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct StyleFacts {
+    pub url: String,
+    pub title: String,
+    pub description: String,
+    pub palette: Vec<String>,
+    pub fonts: Vec<String>,
+    pub sizes: Vec<String>,
+    pub radii: Vec<String>,
+    pub layout: Vec<String>,
+    pub pages: Vec<String>,
+}
+
+impl StyleFacts {
+    /// The block one run reads. Lines that found nothing say so.
+    pub fn block(&self) -> String {
+        fn or_none(list: &[String], none: &str) -> String {
+            if list.is_empty() {
+                none.to_string()
+            } else {
+                list.join(" ")
+            }
+        }
+        format!(
+            "reference: {url}\ntitle: {title}\npalette: {palette}\ntype: {fonts} at {sizes}\nradius: {radii}\nlayout: {layout}\npages: {pages}",
+            url = self.url,
+            title = if self.title.is_empty() { "(none)" } else { &self.title },
+            palette = or_none(&self.palette, "(no colors declared)"),
+            fonts = or_none(&self.fonts, "(no families declared)"),
+            sizes = or_none(&self.sizes, "(no sizes declared)"),
+            radii = or_none(&self.radii, "(no radii declared)"),
+            layout = or_none(&self.layout, "(no layout signals)"),
+            pages = or_none(&self.pages, "(no same-site links)"),
+        )
+    }
+}
+
+/// Normalize a reference URL: http(s) only, no credentials, a lowercase
+/// host. Everything else is refused by name — a reference fetch is a read
+/// of a page the owner pointed at, not a request builder.
+pub fn normalize_url(input: &str) -> Result<String, String> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return Err("the reference names no URL".to_string());
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    let (scheme, rest) = if lower.starts_with("https://") {
+        ("https", &trimmed[8..])
+    } else if lower.starts_with("http://") {
+        ("http", &trimmed[7..])
+    } else {
+        return Err(format!(
+            "`{trimmed}` is not an http(s) URL — a reference must be one"
+        ));
+    };
+    if rest.contains('@')
+        && rest
+            .split(['/', '?', '#'])
+            .next()
+            .unwrap_or("")
+            .contains('@')
+    {
+        return Err("the reference carries credentials; a fetch never sends them".to_string());
+    }
+    let host_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let authority = &rest[..host_end];
+    if authority.is_empty() {
+        return Err(format!("`{trimmed}` names no host"));
+    }
+    let mut path = &rest[host_end..];
+    if !path.starts_with('/') {
+        path = if path.is_empty() { "/" } else { path };
+    }
+    let (host, port) = split_host_port(authority)?;
+    let lower_host = host.to_ascii_lowercase();
+    let port = match (scheme, port) {
+        ("https", None) | ("https", Some(443)) => String::new(),
+        ("http", None) | ("http", Some(80)) => String::new(),
+        (_, Some(port)) => format!(":{port}"),
+        (_, None) => String::new(),
+    };
+    Ok(format!("{scheme}://{lower_host}{port}{path}"))
+}
+
+/// A URL's host and optional port, IPv6 literals included.
+fn split_host_port(authority: &str) -> Result<(&str, Option<u16>), String> {
+    if let Some(rest) = authority.strip_prefix('[') {
+        let Some(close) = rest.find(']') else {
+            return Err(format!("`{authority}` has an unclosed IPv6 literal"));
+        };
+        let host = &authority[..close + 2];
+        let after = &rest[close + 1..];
+        let port = match after.strip_prefix(':') {
+            Some(port) => Some(
+                port.parse::<u16>()
+                    .map_err(|_| format!("`{authority}` names no port"))?,
+            ),
+            None => None,
+        };
+        return Ok((host, port));
+    }
+    match authority.rsplit_once(':') {
+        Some((host, port)) => Ok((
+            host,
+            Some(
+                port.parse::<u16>()
+                    .map_err(|_| format!("`{authority}` names no port"))?,
+            ),
+        )),
+        None => Ok((authority, None)),
+    }
+}
+
+/// Whether a host is one a reference fetch must not reach: loopback,
+/// private ranges, link-local, or a name that resolves on the local
+/// machine by convention.
+pub fn is_private_host(host: &str) -> bool {
+    let host = host.trim_matches(['[', ']']).to_ascii_lowercase();
+    if host == "localhost"
+        || host.ends_with(".localhost")
+        || host.ends_with(".local")
+        || host.ends_with(".internal")
+        || host == "0.0.0.0"
+    {
+        return true;
+    }
+    match host.parse::<std::net::IpAddr>() {
+        Ok(ip) => is_private_ip(ip),
+        Err(_) => false,
+    }
+}
+
+fn is_private_ip(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => {
+            v4.is_loopback()
+                || v4.is_private()
+                || v4.is_link_local()
+                || v4.is_broadcast()
+                || v4.is_unspecified()
+                || v4.octets()[0] == 0
+                || (v4.octets()[0] == 100 && (64..128).contains(&v4.octets()[1]))
+        }
+        std::net::IpAddr::V6(v6) => {
+            v6.is_loopback()
+                || v6.is_unspecified()
+                || (v6.segments()[0] & 0xfe00) == 0xfc00
+                || (v6.segments()[0] & 0xffc0) == 0xfe80
+                || v6
+                    .to_ipv4_mapped()
+                    .is_some_and(|mapped| is_private_ip(std::net::IpAddr::V4(mapped)))
+        }
+    }
+}
+
+/// One exchange a reference fetch makes. The seam exists so the refusals
+/// the network cannot produce on demand — a redirect past the cap, a body
+/// past the byte cap — are pinned without a public host.
+pub trait SiteTransport {
+    fn get(&self, url: &str, pinned: Vec<std::net::SocketAddr>) -> Result<SiteResponse, String>;
+}
+
+/// One transport answer: the status, the headers a fetch decides by, and
+/// the body as text (read up to the cap plus one byte).
+#[derive(Debug, Clone, Default)]
+pub struct SiteResponse {
+    pub status: u16,
+    pub location: Option<String>,
+    pub content_type: Option<String>,
+    pub body: String,
+}
+
+/// The real transport: ureq, with the resolution pinned to the addresses
+/// that were checked, so a second DNS answer cannot move the request.
+struct UreqTransport;
+
+impl SiteTransport for UreqTransport {
+    fn get(&self, url: &str, pinned: Vec<std::net::SocketAddr>) -> Result<SiteResponse, String> {
+        let agent = ureq::AgentBuilder::new()
+            .redirects(0)
+            .timeout(std::time::Duration::from_secs(20))
+            .resolver(
+                move |_: &str| -> std::io::Result<Vec<std::net::SocketAddr>> { Ok(pinned.clone()) },
+            )
+            .build();
+        let response = match agent.get(url).call() {
+            Ok(response) => response,
+            Err(ureq::Error::Status(code, response)) => {
+                return Ok(SiteResponse {
+                    status: code,
+                    location: response.header("location").map(str::to_string),
+                    content_type: response.header("content-type").map(str::to_string),
+                    body: String::new(),
+                });
+            }
+            Err(error) => return Err(format!("the site could not be read: {error}")),
+        };
+        let status = response.status();
+        let location = response.header("location").map(str::to_string);
+        let content_type = response.header("content-type").map(str::to_string);
+        use std::io::Read;
+        let mut body = String::new();
+        response
+            .into_reader()
+            .take(MAX_SITE_BYTES as u64 + 1)
+            .read_to_string(&mut body)
+            .map_err(|error| format!("the page could not be read: {error}"))?;
+        Ok(SiteResponse {
+            status,
+            location,
+            content_type,
+            body,
+        })
+    }
+}
+
+/// Fetch one reference page: http(s) only, a public host only, the
+/// resolution pinned to the addresses that were checked, at most three
+/// redirects — each re-validated — and a byte cap. Every refusal names
+/// what it refused.
+pub fn fetch_site(url: &str) -> Result<FetchedSite, String> {
+    fetch_with(url, &UreqTransport)
+}
+
+fn fetch_with(url: &str, transport: &dyn SiteTransport) -> Result<FetchedSite, String> {
+    let mut current = normalize_url(url)?;
+    for hop in 0..=MAX_REDIRECTS {
+        let Some((scheme, rest)) = current.split_once("://") else {
+            return Err(format!("`{current}` is not a URL"));
+        };
+        let host_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+        let authority = &rest[..host_end];
+        let (host, port) = split_host_port(authority)?;
+        if is_private_host(host) {
+            return Err(format!(
+                "`{host}` is a private or loopback host; a reference must be a public site"
+            ));
+        }
+        let port = port.unwrap_or(if scheme == "https" { 443 } else { 80 });
+        let addrs: Vec<std::net::SocketAddr> = std::net::ToSocketAddrs::to_socket_addrs(&(
+            host.trim_matches(['[', ']']).to_string(),
+            port,
+        ))
+        .map_err(|error| format!("`{host}` did not resolve: {error}"))?
+        .collect();
+        if addrs.is_empty() {
+            return Err(format!("`{host}` did not resolve"));
+        }
+        if let Some(bad) = addrs.iter().find(|addr| is_private_ip(addr.ip())) {
+            return Err(format!(
+                "`{host}` resolves to a private address ({}) — a reference must be public",
+                bad.ip()
+            ));
+        }
+        let response = transport.get(&current, addrs)?;
+        if (300..400).contains(&response.status) {
+            if hop == MAX_REDIRECTS {
+                return Err(format!(
+                    "the site redirects more than {MAX_REDIRECTS} times; a reference must land"
+                ));
+            }
+            let location = response
+                .location
+                .ok_or_else(|| format!("the site answered {} with no location", response.status))?;
+            let next = if location.starts_with("http://") || location.starts_with("https://") {
+                location.to_string()
+            } else if let Some(path) = location.strip_prefix('/') {
+                format!("{scheme}://{authority}/{path}")
+            } else {
+                format!(
+                    "{scheme}://{authority}/{}",
+                    location.trim_start_matches("./")
+                )
+            };
+            current = normalize_url(&next)?;
+            continue;
+        }
+        if !(200..300).contains(&response.status) {
+            return Err(format!(
+                "the site answered {}; nothing to scan",
+                response.status
+            ));
+        }
+        let content_type = response
+            .content_type
+            .unwrap_or_else(|| "text/html".to_string());
+        if !content_type.to_ascii_lowercase().contains("html") {
+            return Err(format!(
+                "the site served `{content_type}`; a reference must be a page"
+            ));
+        }
+        if response.body.len() > MAX_SITE_BYTES {
+            return Err(format!(
+                "the page is larger than {MAX_SITE_BYTES} bytes; a reference must be a page, not an asset"
+            ));
+        }
+        return Ok(FetchedSite {
+            url: current,
+            html: response.body,
+        });
+    }
+    Err(format!(
+        "the site redirects more than {MAX_REDIRECTS} times; a reference must land"
+    ))
+}
+
+/// Scan a page for the facts a design run can model: the declared palette,
+/// type families and sizes, radii, layout signals, and the site's own
+/// pages. A scanner over declarations, never a parser — the same rule the
+/// a11y scan follows.
+pub fn style_facts(url: &str, html: &str) -> StyleFacts {
+    let mut facts = StyleFacts {
+        url: url.to_string(),
+        ..Default::default()
+    };
+    facts.title = between(html, "<title", "</title>")
+        .map(|text| {
+            text.split_once('>')
+                .map(|(_, rest)| rest)
+                .unwrap_or("")
+                .trim()
+                .to_string()
+        })
+        .unwrap_or_default();
+    if let Some(meta) = find_meta_description(html) {
+        facts.description = meta;
+    }
+    let mut palette: Vec<(String, usize)> = Vec::new();
+    let mut fonts: Vec<(String, usize)> = Vec::new();
+    let mut sizes: Vec<(String, usize)> = Vec::new();
+    let mut radii: Vec<(String, usize)> = Vec::new();
+    let mut grids = 0usize;
+    let mut flexes = 0usize;
+    let mut widths: Vec<(String, usize)> = Vec::new();
+    for (property, value) in declarations(html) {
+        match property.as_str() {
+            "color" | "background" | "background-color" | "border-color" | "fill" | "stroke" => {
+                for color in hex_colors(&value) {
+                    bump(&mut palette, color);
+                }
+            }
+            "font-family" => bump(&mut fonts, clean_value(&value)),
+            "font-size" => bump(&mut sizes, clean_value(&value)),
+            "border-radius" => bump(&mut radii, clean_value(&value)),
+            "max-width" => bump(&mut widths, clean_value(&value)),
+            "display" => {
+                let value = value.trim().to_ascii_lowercase();
+                if value == "grid" {
+                    grids += 1;
+                } else if value == "flex" {
+                    flexes += 1;
+                }
+            }
+            _ => {}
+        }
+    }
+    // Colours also ride inline attributes (`fill="#fff"`), which the
+    // declaration scan does not see.
+    for (attribute, value) in attributes(html) {
+        if matches!(attribute.as_str(), "fill" | "stroke" | "color") {
+            for color in hex_colors(&value) {
+                bump(&mut palette, color);
+            }
+        }
+    }
+    facts.palette = ranked(palette, 8);
+    facts.fonts = ranked(fonts, 4);
+    facts.sizes = ranked(sizes, 6);
+    facts.radii = ranked(radii, 4);
+    if grids > 0 {
+        facts.layout.push(format!("grid×{grids}"));
+    }
+    if flexes > 0 {
+        facts.layout.push(format!("flex×{flexes}"));
+    }
+    for width in ranked(widths, 2) {
+        facts.layout.push(format!("max-width {width}"));
+    }
+    facts.pages = discover_pages(html, url);
+    facts
+}
+
+/// The pages a site's own markup points at, as paths or absolute URLs on
+/// the same host, deduped and capped.
+pub fn discover_pages(html: &str, base: &str) -> Vec<String> {
+    let base_host = base
+        .split_once("://")
+        .map(|(_, rest)| rest.split(['/', '?', '#']).next().unwrap_or("").to_string())
+        .unwrap_or_default();
+    let mut out: Vec<String> = Vec::new();
+    for (attribute, value) in attributes(html) {
+        if attribute != "href" {
+            continue;
+        }
+        let href = value.trim();
+        if href.is_empty()
+            || href.starts_with('#')
+            || href.starts_with("mailto:")
+            || href.starts_with("tel:")
+            || href.starts_with("javascript:")
+        {
+            continue;
+        }
+        let page = if let Some(rest) = href.strip_prefix("//") {
+            // Protocol-relative: same scheme, host must match.
+            if !rest.starts_with(&base_host) {
+                continue;
+            }
+            format!("{}://{}", base.split("://").next().unwrap_or("https"), rest)
+        } else if href.starts_with("http://") || href.starts_with("https://") {
+            let host = href
+                .split_once("://")
+                .map(|(_, rest)| rest.split(['/', '?', '#']).next().unwrap_or(""))
+                .unwrap_or("");
+            if host != base_host {
+                continue;
+            }
+            href.to_string()
+        } else if href.starts_with('/') {
+            href.to_string()
+        } else if href.starts_with("..") || href.contains(':') {
+            continue;
+        } else {
+            format!("/{}", href.trim_start_matches("./"))
+        };
+        let page = page.split('#').next().unwrap_or(&page).to_string();
+        if !out.contains(&page) {
+            out.push(page);
+        }
+        if out.len() >= MAX_DISCOVERED_PAGES {
+            break;
+        }
+    }
+    out
+}
+
+/// The text between two markers, with the opening tag's own tail.
+fn between<'a>(html: &'a str, open: &str, close: &str) -> Option<&'a str> {
+    let lower = html.to_ascii_lowercase();
+    let start = lower.find(open)?;
+    let rest = &html[start..];
+    let end = lower[start..].find(close)?;
+    Some(&rest[..end])
+}
+
+fn find_meta_description(html: &str) -> Option<String> {
+    let lower = html.to_ascii_lowercase();
+    let mut at = 0;
+    while let Some(found) = lower[at..].find("<meta") {
+        let start = at + found;
+        let end = lower[start..].find('>').map(|offset| start + offset)?;
+        let tag = &html[start..end];
+        let tag_lower = tag.to_ascii_lowercase();
+        if tag_lower.contains("name=\"description\"") || tag_lower.contains("name='description'") {
+            // The value is read from the page's own text, so its case and
+            // wording survive: the scan finds, it does not rewrite.
+            let value = tag_lower
+                .find("content=")
+                .map(|at| tag[at + "content=".len()..].trim())
+                .unwrap_or("");
+            let cleaned = value.trim_matches(['"', '\'']).trim().to_string();
+            if !cleaned.is_empty() {
+                return Some(cleaned);
+            }
+        }
+        at = end;
+    }
+    None
+}
+
+/// Every `property: value` declaration the page carries, in order.
+fn declarations(html: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let mut rest = html;
+    while let Some(colon) = rest.find(':') {
+        let before = &rest[..colon];
+        let name_start = before
+            .rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '-'))
+            .map(|at| at + 1)
+            .unwrap_or(0);
+        let name = before[name_start..].trim().to_ascii_lowercase();
+        let after = &rest[colon + 1..];
+        let end = after.find([';', '}', '"']).unwrap_or(after.len());
+        let value = &after[..end];
+        if !name.is_empty() && !value.trim().is_empty() {
+            out.push((name, value.trim().to_string()));
+        }
+        rest = &after[end..];
+        if rest.is_empty() {
+            break;
+        }
+        rest = &rest[1..];
+    }
+    out
+}
+
+/// Every `attribute="value"` pair in the page's tags (single or double
+/// quoted), in order.
+fn attributes(html: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let bytes = html.as_bytes();
+    let mut at = 0;
+    while at < bytes.len() {
+        // An attribute name ends where whitespace or `=` stops it.
+        let name_start = at;
+        while at < bytes.len()
+            && (bytes[at].is_ascii_alphanumeric() || bytes[at] == b'-' || bytes[at] == b'_')
+        {
+            at += 1;
+        }
+        if at == name_start {
+            at += 1;
+            continue;
+        }
+        let name = html[name_start..at].to_ascii_lowercase();
+        let mut cursor = at;
+        while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
+            cursor += 1;
+        }
+        if cursor < bytes.len() && bytes[cursor] == b'=' {
+            cursor += 1;
+            while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
+                cursor += 1;
+            }
+            if cursor < bytes.len() && (bytes[cursor] == b'"' || bytes[cursor] == b'\'') {
+                let mark = bytes[cursor];
+                let start = cursor + 1;
+                let mut close = start;
+                while close < bytes.len() && bytes[close] != mark {
+                    close += 1;
+                }
+                out.push((name, html[start..close.min(html.len())].to_string()));
+                at = (close + 1).min(bytes.len());
+                continue;
+            }
+        }
+        at = at.max(name_start + 1);
+    }
+    out
+}
+
+/// The hex colours in one value, normalized lowercase.
+fn hex_colors(value: &str) -> Vec<String> {
+    let lower = value.to_ascii_lowercase();
+    let bytes = lower.as_bytes();
+    let mut out = Vec::new();
+    let mut at = 0;
+    while let Some(found) = lower[at..].find('#') {
+        let start = at + found;
+        let mut end = start + 1;
+        while end < bytes.len() && bytes[end].is_ascii_hexdigit() {
+            end += 1;
+        }
+        let digits = end - start - 1;
+        if digits == 3 || digits == 6 || digits == 8 {
+            out.push(lower[start..end].to_string());
+        }
+        at = end.max(start + 1);
+        if at >= lower.len() {
+            break;
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+fn clean_value(value: &str) -> String {
+    value.trim().trim_matches(['\'', '"']).trim().to_string()
+}
+
+fn bump(list: &mut Vec<(String, usize)>, value: String) {
+    if value.is_empty() {
+        return;
+    }
+    match list.iter_mut().find(|(known, _)| *known == value) {
+        Some((_, count)) => *count += 1,
+        None => list.push((value, 1)),
+    }
+}
+
+fn ranked(list: Vec<(String, usize)>, cap: usize) -> Vec<String> {
+    let mut list = list;
+    list.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    list.into_iter().take(cap).map(|(value, _)| value).collect()
 }
 
 // --- frame operations -------------------------------------------------------
@@ -2223,6 +2861,211 @@ mod tests {
         // Text that is not an SVG is refused by name.
         let error = svg_sanitize("<html><body>not a mark</body></html>").unwrap_err();
         assert!(error.contains("not an SVG"), "{error}");
+    }
+
+    /// W9: the reference fetch refuses what it must, by name, before any
+    /// socket is opened — and a URL normalizes to one shape.
+    #[test]
+    fn the_reference_fetch_refuses_the_private_and_the_malformed() {
+        // Only http(s); credentials are never sent.
+        assert!(normalize_url("ftp://example.com")
+            .unwrap_err()
+            .contains("http(s)"));
+        assert!(normalize_url("https://user:pw@example.com")
+            .unwrap_err()
+            .contains("credentials"));
+        assert!(normalize_url("https://").unwrap_err().contains("host"));
+        assert!(normalize_url("   ").unwrap_err().contains("no URL"));
+        // A URL normalizes: host lowercased, the default port dropped.
+        assert_eq!(
+            normalize_url(" HTTPS://Example.COM:443/Path?q=1 ").unwrap(),
+            "https://example.com/Path?q=1"
+        );
+        assert_eq!(
+            normalize_url("http://example.com:8080/x").unwrap(),
+            "http://example.com:8080/x"
+        );
+        // Loopback, private, link-local and local names are all private.
+        for host in [
+            "localhost",
+            "api.localhost",
+            "printer.local",
+            "127.0.0.1",
+            "10.0.0.7",
+            "192.168.1.5",
+            "172.16.4.4",
+            "169.254.1.1",
+            "[::1]",
+            "::1",
+        ] {
+            assert!(is_private_host(host), "{host} must count as private");
+        }
+        assert!(!is_private_host("example.com"));
+        assert!(!is_private_host("8.8.8.8"));
+        // The fetch itself refuses a loopback target without a socket.
+        let error = fetch_site("http://127.0.0.1:3080/").unwrap_err();
+        assert!(error.contains("private or loopback"), "{error}");
+        let error = fetch_site("http://localhost/admin").unwrap_err();
+        assert!(error.contains("private or loopback"), "{error}");
+    }
+
+    /// W9: the redirect cap and the byte cap refuse by name.
+    #[test]
+    fn the_reference_fetch_caps_redirects_and_size() {
+        // A redirect that always answers with itself runs out at the cap.
+        struct Loop;
+        impl SiteTransport for Loop {
+            fn get(
+                &self,
+                url: &str,
+                _pinned: Vec<std::net::SocketAddr>,
+            ) -> Result<SiteResponse, String> {
+                let _ = url;
+                Ok(SiteResponse {
+                    status: 302,
+                    location: Some("https://example.com/loop".to_string()),
+                    content_type: None,
+                    body: String::new(),
+                })
+            }
+        }
+        let error = fetch_with("https://example.com/loop", &Loop).unwrap_err();
+        assert!(error.contains("redirects more than"), "{error}");
+        // A body past the cap is refused, not read.
+        struct Huge;
+        impl SiteTransport for Huge {
+            fn get(
+                &self,
+                _url: &str,
+                _pinned: Vec<std::net::SocketAddr>,
+            ) -> Result<SiteResponse, String> {
+                Ok(SiteResponse {
+                    status: 200,
+                    location: None,
+                    content_type: Some("text/html".to_string()),
+                    body: "x".repeat(MAX_SITE_BYTES + 1),
+                })
+            }
+        }
+        let error = fetch_with("https://example.com/big", &Huge).unwrap_err();
+        assert!(error.contains("larger than"), "{error}");
+        // A non-page content type is refused by name too.
+        struct Pdf;
+        impl SiteTransport for Pdf {
+            fn get(
+                &self,
+                _url: &str,
+                _pinned: Vec<std::net::SocketAddr>,
+            ) -> Result<SiteResponse, String> {
+                Ok(SiteResponse {
+                    status: 200,
+                    location: None,
+                    content_type: Some("application/pdf".to_string()),
+                    body: String::new(),
+                })
+            }
+        }
+        let error = fetch_with("https://example.com/doc.pdf", &Pdf).unwrap_err();
+        assert!(error.contains("application/pdf"), "{error}");
+    }
+
+    /// W10: the fact scan reads a page's own declarations — palette, type,
+    /// scale, radii, layout signals — and its same-site pages.
+    #[test]
+    fn style_facts_are_what_the_page_declares() {
+        let html = r##"<!doctype html><html><head><title>Bellows Coffee</title>
+<meta name="description" content="Slow coffee, roasted by hand">
+<style>
+:root{--ink:#1c1a17;--page:#f7f2ea;--accent:#b4552d}
+body{font-family:Inter, sans-serif;color:#1c1a17;background:#f7f2ea;max-width:1200px}
+h1{font-size:64px;border-radius:2px}
+.card{display:grid;font-family:Georgia, serif;font-size:18px;border-radius:12px}
+.row{display:flex;font-size:18px}
+</style></head><body>
+<a href="/menu">Menu</a><a href="https://other.example/x">Other</a>
+<a href="#top">Top</a><a href="about">About</a>
+<svg><path fill="#b4552d"/></svg></body></html>"##;
+        let facts = style_facts("https://bellows.example/", html);
+        assert_eq!(facts.title, "Bellows Coffee");
+        assert_eq!(facts.description, "Slow coffee, roasted by hand");
+        assert!(
+            facts.palette.contains(&"#1c1a17".to_string()),
+            "{:?}",
+            facts.palette
+        );
+        assert!(
+            facts.palette.contains(&"#f7f2ea".to_string()),
+            "{:?}",
+            facts.palette
+        );
+        assert!(
+            facts.palette.contains(&"#b4552d".to_string()),
+            "{:?}",
+            facts.palette
+        );
+        assert!(
+            facts.fonts.iter().any(|font| font.contains("Inter")),
+            "{:?}",
+            facts.fonts
+        );
+        assert!(
+            facts.fonts.iter().any(|font| font.contains("Georgia")),
+            "{:?}",
+            facts.fonts
+        );
+        assert!(
+            facts.sizes.contains(&"64px".to_string()),
+            "{:?}",
+            facts.sizes
+        );
+        assert!(
+            facts.radii.contains(&"12px".to_string()),
+            "{:?}",
+            facts.radii
+        );
+        assert!(
+            facts.layout.contains(&"grid×1".to_string()),
+            "{:?}",
+            facts.layout
+        );
+        assert!(
+            facts.layout.contains(&"flex×1".to_string()),
+            "{:?}",
+            facts.layout
+        );
+        // Only the site's own links: the foreign host and the anchor drop.
+        assert_eq!(facts.pages, vec!["/menu", "/about"]);
+        // The block names what it found, and says so where it found none.
+        let block = facts.block();
+        assert!(block.contains("palette: "), "{block}");
+        assert!(block.contains("pages: /menu /about"), "{block}");
+        let empty = style_facts("https://blank.example/", "<html><body>x</body></html>");
+        assert!(
+            empty.block().contains("(no colors declared)"),
+            "{}",
+            empty.block()
+        );
+        assert!(
+            empty.block().contains("(no same-site links)"),
+            "{}",
+            empty.block()
+        );
+    }
+
+    /// The discovered pages are the site's own, deduped and capped.
+    #[test]
+    fn discovered_pages_are_the_sites_own_and_capped() {
+        let html = "<a href=\"/a\">a</a><a href=\"/a\">a again</a><a href=\"/b#top\">b</a><a href=\"https://example.com/c\">c</a><a href=\"https://other.example/d\">d</a><a href=\"mailto:x@example.com\">mail</a><a href=\"tel:1\">tel</a>";
+        let pages = discover_pages(html, "https://example.com/start");
+        assert_eq!(pages, vec!["/a", "/b", "https://example.com/c"]);
+        let mut many = String::new();
+        for at in 0..40 {
+            many.push_str(&format!("<a href=\"/p{at}\">p</a>"));
+        }
+        assert_eq!(
+            discover_pages(&many, "https://example.com/").len(),
+            MAX_DISCOVERED_PAGES
+        );
     }
 
     /// An asset is stored, sniffed and inlined; a placeholder that names

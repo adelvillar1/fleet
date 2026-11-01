@@ -2073,6 +2073,39 @@ impl Bridge {
         }))
     }
 
+    /// Scan a reference site for a board: the fetch and the fact scan are
+    /// blocking and run off the async worker, then the board caches what
+    /// came back so every surface reads the same facts.
+    pub async fn design_reference(&self, body: &str) -> Result<Value, String> {
+        let arguments: Value = serde_json::from_str(body)
+            .map_err(|error| format!("the scan is not a JSON object: {error}"))?;
+        let slug = arguments
+            .get("project")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "the scan names its project".to_string())?
+            .to_string();
+        let url = arguments
+            .get("url")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "the scan names its reference url".to_string())?
+            .to_string();
+        let _home = self.home.clone();
+        let site = tokio::task::spawn_blocking(move || {
+            let site = crate::canvas::fetch_site(&url)?;
+            let facts = crate::canvas::style_facts(&site.url, &site.html);
+            Ok::<crate::canvas::BoardReference, String>(crate::canvas::BoardReference {
+                url: site.url,
+                block: facts.block(),
+                pages: facts.pages,
+                fetched_at: crate::calib::stamp(),
+            })
+        })
+        .await
+        .map_err(|error| format!("the scan did not finish: {error}"))??;
+        crate::canvas::set_reference(&self.home, &slug, Some(site.clone()))?;
+        Ok(json!({ "type": "design_reference", "reference": site }))
+    }
+
     /// One asset's bytes and its sniffed MIME, for the preview route.
     pub fn design_asset(&self, slug: &str, name: &str) -> Result<(String, Vec<u8>), String> {
         let (asset, bytes) = crate::canvas::asset_bytes(&self.home, slug, name)?;
@@ -6876,6 +6909,7 @@ fn design_read(home: &std::path::Path, project: Option<&str>) -> Value {
                     "frames": frames,
                     "chat": document.chat,
                     "brand": document.brand,
+                    "reference": document.reference,
                     "assets": crate::canvas::assets(home, slug),
                 }));
             }
@@ -7153,6 +7187,27 @@ fn design_write(home: &std::path::Path, body: &str) -> Result<Value, String> {
                         facts.preset = Some(crate::canvas::Preset { label, spec, avoid });
                     }
                 }
+            }
+            // The board's reference scan, when it has one: the facts are
+            // the DNA the run models, and the pages the owner picked ride
+            // by name.
+            if let Some(reference) = &project.reference {
+                let mut block = reference.block.clone();
+                let pages: Vec<String> = arguments
+                    .get("reference_pages")
+                    .and_then(Value::as_array)
+                    .map(|pages| {
+                        pages
+                            .iter()
+                            .filter_map(Value::as_str)
+                            .map(str::to_string)
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                if !pages.is_empty() {
+                    block.push_str(&format!("\npages the owner picked: {}", pages.join(", ")));
+                }
+                facts.reference = Some(block);
             }
             // The board's brand is binding on the task: its tokens and its
             // doctrine ride, and the frame's own defaults were seeded from
@@ -9509,6 +9564,48 @@ pub(crate) fn rank_with(
 #[cfg(test)]
 mod tests {
     // --- the design canvas ---------------------------------------------------
+
+    /// The reference scan and its cached facts: the task carries them, and
+    /// the pages the owner picked ride by name.
+    #[test]
+    fn the_task_carries_the_boards_reference_and_the_pages_picked() {
+        let home = std::env::temp_dir().join(format!("fleet-design-ref-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        let (slug, _) = crate::canvas::create(&home, "Reference").unwrap();
+        crate::canvas::set_reference(
+            &home,
+            &slug,
+            Some(crate::canvas::BoardReference {
+                url: "https://bellows.example/".to_string(),
+                block: "reference: https://bellows.example/\npalette: #1c1a17 #f7f2ea".to_string(),
+                pages: vec!["/menu".to_string(), "/about".to_string()],
+                fetched_at: "2026-10-31T00:00:00Z".to_string(),
+            }),
+        )
+        .unwrap();
+        let read = design_read(&home, Some(&slug));
+        assert_eq!(
+            read["active"]["reference"]["url"],
+            "https://bellows.example/"
+        );
+        assert_eq!(read["active"]["reference"]["pages"][0], "/menu");
+        let composed = design_write(
+            &home,
+            &serde_json::json!({
+                "op": "task", "project": slug, "mode": "redesign",
+                "brief": "a site in this language",
+                "reference_pages": ["/menu"],
+            })
+            .to_string(),
+        )
+        .expect("the task");
+        let task = composed["task"].as_str().expect("the composed task");
+        assert!(task.contains("palette: #1c1a17 #f7f2ea"), "{task}");
+        assert!(task.contains("pages the owner picked: /menu"), "{task}");
+        assert!(task.contains("Redesign:"), "{task}");
+        let _ = std::fs::remove_dir_all(&home);
+    }
 
     /// The asset ops: an upload is stored and sniffed, the read carries
     /// it, the bytes come back with their own MIME, an SVG lands as a

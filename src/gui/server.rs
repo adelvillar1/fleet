@@ -1267,6 +1267,21 @@ async fn serve_connection(
         // imported mark read through here, with the MIME the manifest
         // sniffed. `nosniff` and a fixed type keep an upload from being
         // re-interpreted as something executable.
+        // A reference scan: the fetch and the fact scan are blocking, so
+        // the bridge runs them off the worker and caches the result on the
+        // board for every surface to read.
+        ("POST", "/api/design/reference") => {
+            let body = match read_body(&mut stream, &request, rest).await {
+                Ok(body) => body,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            match bridge.design_reference(&body).await {
+                Ok(reply) => write_reply(&mut stream, api(200, reply)).await,
+                Err(message) => {
+                    write_reply(&mut stream, api(422, json!({"refused": [message]}))).await
+                }
+            }
+        }
         ("GET", path) if path.starts_with("/api/design/asset/") => {
             let rest = path.trim_start_matches("/api/design/asset/");
             let mut parts = rest.splitn(2, '/');

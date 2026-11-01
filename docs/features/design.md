@@ -200,6 +200,31 @@ the positive prompt, and its **`avoid` list is the negative one**, riding
 the task as `Avoid: …` after the style line. Nothing about a preset is
 invented by fleet; the file is re-derived from the source's two tables.
 
+## The reference site
+
+A board can be **scanned against a site** the owner points at, and a
+redesign models that site's DNA rather than guessing it.
+
+- **The fetch is hardened** (`canvas::fetch_site`): http(s) only, no
+  credentials in the URL, loopback and private hosts refused (literal
+  and resolved — every address a host resolves to is checked), the
+  resolution **pinned** to the checked addresses so a second DNS answer
+  cannot move the request, at most **3** redirects (each re-validated),
+  a **2 MiB** byte cap, and a page content type. Every refusal names what
+  it refused; none falls back silently.
+- **The scan** (`canvas::style_facts`) reads what the page *declares*:
+  the palette (hex values, by frequency, inline attributes included), the
+  type families and sizes, the radii, layout signals (`grid×n`, `flex×n`,
+  `max-width`), the title and description, and the site's **own pages**
+  (`discover_pages`: same-host links only, deduped, capped at 24). It is a
+  scanner, not a parser — the same rule as the a11y scan.
+- **The board keeps the facts** (`POST /api/design/reference` fetches off
+  the async worker and caches a `BoardReference` on the project), so the
+  composer, the CLI and a cron job read one block — and the **pages the
+  owner picks** ride the task by name. The composer grows a reference
+  field, a **scan** press, a page picker, and a *redesign* verb once a
+  reference is on the board.
+
 ## Transforms, one implementation each
 
 - **Tweak injection** (`canvas::inject_tweaks`) is the single sanctioned
@@ -231,6 +256,8 @@ invented by fleet; the file is re-derived from the source's two tables.
   one read: the composed instruction, answered flat.)
 - `POST /api/design/inject` — stateless injection: `{html, tweak_spec,
   tweak_values}` → `{html}`.
+- `POST /api/design/reference` — `{project, url}`: fetch, scan, cache the
+  facts on the board. Blocking work runs off the async worker.
 - `GET /api/design/asset/<slug>/<name>` — one stored file's bytes with
   the MIME the manifest sniffed (`nosniff`, no scripting), for the
   panel's thumbnails and an imported mark.

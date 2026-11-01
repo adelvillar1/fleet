@@ -3999,6 +3999,8 @@ async function theDesignCanvasCarriesItsFramesAndWritesGeometry() {
       brand: null,
       assets: [{ name: 'mark', file: 'mark.png', mime: 'image/png', bytes: 2048,
         created: '2026-10-31T09:00:00Z' }],
+      reference: { url: 'https://bellows.example/', block: 'palette: #1c1a17',
+        pages: ['/menu', '/about'], fetched_at: '2026-10-31T09:00:00Z' },
       chat: [
         { role: 'owner', text: 'a pricing page for a developer tool', frames: [],
           at: '2026-10-31T09:00:00Z' },
@@ -4207,6 +4209,31 @@ async function theDesignCanvasCarriesItsFramesAndWritesGeometry() {
     modelOptions.map((one) => one.value + '/' + one.disabled).join(','));
   check('PM-D the picker opens on the first model that can serve',
     models.value === 'zai-coding-plan/GLM-5.3-Flash', models.value);
+
+  // The reference site is on the board: its facts ride the task, its pages
+  // are the ones a redesign can model, and a scan asks Rust for them.
+  const refField = page.IDS['design-reference'];
+  const refPages = page.IDS['design-reference-pages'];
+  const refPageOptions = (refPages && refPages.children) || [];
+  const modeOptions = Array.from(page.IDS['design-mode-select'].children || [])
+    .map((one) => one.value);
+  check('PM-D the board\u2019s reference rides the composer',
+    !!refField && refField.value === 'https://bellows.example/' &&
+      refPages.hidden === false &&
+      refPageOptions.length === 2 &&
+      refPageOptions[0].value === '/menu' &&
+      modeOptions.indexOf('redesign') >= 0,
+    (refField ? refField.value : 'no field') + ' / ' + refPageOptions.length +
+      ' page(s) / modes ' + modeOptions.join(','));
+  refField.value = 'https://probe.example/';
+  page.fireOn('design-scan', 'click');
+  await flush(60);
+  check('PM-D a scan asks the server for the facts',
+    page.calls.some((one) => one.method === 'POST' &&
+      String(one.url || '').includes('/api/design/reference') &&
+      String(one.body || '').includes('"url":"https://probe.example/"')),
+    JSON.stringify(page.calls.filter((one) => String(one.url || '').includes('reference'))
+      .map((one) => one.body)));
 
   // The board's brand is a choice the page writes: its tokens default the
   // colours of every page landed here.

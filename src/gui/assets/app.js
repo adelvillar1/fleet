@@ -656,6 +656,9 @@
     designStyle: document.getElementById('design-style'),
     designModel: document.getElementById('design-model'),
     designBrand: document.getElementById('design-brand'),
+    designReference: document.getElementById('design-reference'),
+    designScan: document.getElementById('design-scan'),
+    designReferencePages: document.getElementById('design-reference-pages'),
     designDirections: document.getElementById('design-directions'),
     designSend: document.getElementById('design-send'),
     designTitle: document.getElementById('design-title'),
@@ -16838,6 +16841,9 @@
         modes.push({ value: 'fixes', label: 'apply the review\u2019s fixes' });
       }
     }
+    if (board && board.reference) {
+      modes.push({ value: 'redesign', label: 'redesign on the reference' });
+    }
     modes.push({ value: 'ask', label: 'ask about the board' });
     return modes;
   }
@@ -16949,6 +16955,19 @@
       if (face.designModeChoice && mode.value === face.designModeChoice) option.selected = true;
       el.designMode.appendChild(option);
     });
+    // The reference: the site the board models, and the pages it points
+    // at — the owner picks the ones a redesign should read.
+    var reference = board.reference || null;
+    if (document.activeElement !== el.designReference) {
+      el.designReference.value = reference ? reference.url : '';
+    }
+    el.designReferencePages.hidden = !reference || !(reference.pages || []).length;
+    el.designReferencePages.textContent = '';
+    ((reference && reference.pages) || []).forEach(function (page) {
+      var option = node('option', null, page);
+      option.value = page;
+      el.designReferencePages.appendChild(option);
+    });
     // The model first: it is the run's route, not a decoration.
     paintDesignModels();
     paintDesignBrand();
@@ -17003,13 +17022,19 @@
     el.designBrief.value = '';
     el.designSend.disabled = true;
     designWrite('chat', { project: board.slug, role: 'owner', text: brief, frames: [] }, function () {
+      var picked = [];
+      var pageOptions = (el.designReferencePages && el.designReferencePages.children) || [];
+      pageOptions.forEach(function (option) {
+        if (option.selected) picked.push(option.value);
+      });
       designTask({
         project: board.slug,
         mode: mode,
         brief: brief,
         frame_id: selected ? selected.id : '',
         preset: el.designStyle.value || '',
-        directions: Number(el.designDirections.value || 1)
+        directions: Number(el.designDirections.value || 1),
+        reference_pages: picked
       }, function (answer) {
         var task = answer && answer.task;
         if (!task) {
@@ -17161,6 +17186,30 @@
     el.designSend.addEventListener('click', sendDesign);
     el.designMode.addEventListener('change', function () {
       face.designModeChoice = el.designMode.value;
+    });
+    el.designScan.addEventListener('click', function () {
+      var board = designBoard();
+      var url = el.designReference.value.trim();
+      if (!board || !url) {
+        el.designReference.focus();
+        return;
+      }
+      el.designScan.disabled = true;
+      notice('scanning the reference', url + ' \u2014 the facts land on the board');
+      post('/api/design/reference', { project: board.slug, url: url })
+        .then(function (reply) {
+          el.designScan.disabled = false;
+          if (reply.status !== 200) {
+            var refused = (reply.body && reply.body.refused) || [];
+            notice('the reference was refused', refused.join(' '));
+            return;
+          }
+          face.designReadAt = 0;
+          readDesign(true);
+          notice('the reference is on the board',
+            'a redesign models its palette, type and layout \u2014 pick its pages first');
+        })
+        .catch(function () { el.designScan.disabled = false; });
     });
     el.designBrand.addEventListener('change', function () {
       var board = designBoard();
