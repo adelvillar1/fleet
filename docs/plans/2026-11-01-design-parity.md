@@ -19,7 +19,10 @@ that page, 4) we are missing a lot of page settings and changes that could
 be made for a page that are present on design-canvas were not ported over,
 5) save, export, host on local environment should be available as well."*
 The instruction: a deep dive on the source, then a plan for as much
-functionality parity as we can.
+functionality parity as we can. A sixth direction the same day widened
+the scope: multi-model fan-out joins the plan, user-selectable —
+*"different models have different strengths and that's why it's part of
+design-canvas."*
 
 The deep dive compared the source (`~/Projects/design-canvas`, a Next.js
 app: projects/frames, a four-column workspace) against the native canvas
@@ -61,6 +64,14 @@ ruling stands).
    task already carries `frame_id` when a frame is selected; this plan
    makes the focus *visible* (chip, placeholder, verb filter) and
    complete (background click clears it).
+4. **2026-11-01 — the model fan-out is the user's, and it is in
+   scope.** *"multi-model fan-out should be in-scope, but user
+   selectable. different models have different strengths and that's why
+   it's part of design-canvas."* The composer's model control becomes a
+   multi-select over the design catalog: one selected (the default) is
+   today's single pinned run; K selected start K pinned runs, one frame
+   set per model — the source's "Compare N models" affordance, ported
+   with the owner's reason attached.
 
 ## Approach
 
@@ -91,6 +102,7 @@ through it.
 | Frame delete / fork | already landed (frame bar) | ported (kernel) |
 | Composer placement | source: bottom of left chat panel → **center, the conversation's idiom** (owner ruling) | native replacement |
 | Focus semantics | source: implicit `selectedFrameIds` note to the model → **first-class focus chip + verb filter + task scope** | native replacement (beyond source) |
+| Multi-model generation ("Compare N models", one frame per model) | the composer's model control becomes a multi-select over the design catalog; K selected → K pinned runs, one variant card each | ported (user-selectable) |
 | Viewport presets on the frame | three buttons on the frame's title bar (`frame-update {w,h}`) | ported (moved) |
 | Inspector provenance (model, duration/tokens) + description | the frame line in the tweak card: name · size · model · description · versions, `gen_meta` when present | ported |
 | Review: critic-model choice, score deltas, "fix drift" | review card gains the critic picker, history deltas, and a fix-drift press composing a run over the coherence report | ported |
@@ -153,6 +165,20 @@ through it.
   `tokens.css`, `manifest.json`. The host is live, not frozen: no
   snapshot, no republish, no expiry — the board file is the truth, as
   everywhere else.
+- **P5 — the model fan-out, user-selected** (the owner's sixth
+  direction). The composer's model control becomes a **multi-select over
+  `canvas::DESIGN_MODELS`** — the designated catalog the read already
+  carries with availability. One selected (the default) behaves exactly
+  as today: one run, one pin. K selected compose the task **once** (the
+  `task` op's own composition — brief, focus, directions, preset, brand,
+  reference — unchanged) and the face starts **K runs, one per model**,
+  each out `pin: provider/model` (the page's route, the owner's standing
+  ruling), each landing its own frame(s) with a variant card and its own
+  progress line — T1's machinery, one card per model. Directions
+  compound honestly: N directions × K models is N×K frames, and each
+  run's task names its own N. An unavailable model is offered, disabled
+  and named, as today. Face-only — no new Rust: the task composes once,
+  the pin rides each run.
 
 ## Acceptance criteria
 
@@ -215,6 +241,14 @@ through it.
       checker green over the real file, and the contract docs carrying
       the new surface (design.md, the verbs table, the interface
       contracts).
+- [ ] **C15 — the model control is a multi-select.** The composer's
+      model control offers the design catalog as a multi-select with
+      availability per option; with the default single selection the run
+      body carries exactly one pin, as today (harness).
+- [ ] **C16 — K models, K runs, K cards.** With K models selected, one
+      composed task goes out as K runs carrying K distinct pins, and each
+      run's frames land under its own variant card with its own progress
+      line (harness asserts the K pins and the K cards).
 
 ## Files to be touched
 
@@ -228,9 +262,10 @@ route),
 head's rename/trash/save chip, the frame bar's presets and set picker),
 `src/gui/assets/app.css` (the floating stack, the focus chip, the save
 chip, the frame bar additions),
-`src/gui/assets/app.js` (focus state and verb filtering, background
-deselect, the head's rename/delete wiring, the frame rename, the
-downloads, the save chip over `designWrite`),
+  `src/gui/assets/app.js` (focus state and verb filtering, background
+  deselect, the head's rename/delete wiring, the frame rename, the
+  downloads, the save chip over `designWrite`, the model multi-select
+  and its fan-out loop),
 `docs/features/design.md` (placement, focus, CRUD, settings, save/
 export/host),
 `docs/known-issues.md` (anything the gate finds, per hard rule 10).
@@ -247,8 +282,9 @@ export/host),
   frame then re-reviews; fleet's refine keeps the page's identity with a
   version (the landed design). Recorded as a deliberate difference, not
   a gap.
-- **Multi-model fan-out, realtime collaboration, CRDTs, vector editing**
-  — the whole-shebang out-of-scope stands.
+- **Realtime collaboration, CRDTs, vector editing** — the
+  whole-shebang out-of-scope stands (multi-model fan-out left this list
+  for P5 on the owner's 2026-11-01 amendment).
 
 ## Verification
 
@@ -256,7 +292,8 @@ The gate's four commands by exit code at each phase's close; each
 criterion's own pin — unit pins in `src/canvas.rs` (delete_project over a
 fixture board, the site build's rewritten links and CSP headers), harness
 checks for C1–C3 and C11–C12 (the composer's geometry by measurement,
-the focus contract on the wire, one save cycle, one download), and the
+the focus contract on the wire, one save cycle, one download, the
+  fan-out's K pins and K cards for C15–C16), and the
 live leg for C13 (`curl` the site route, then fetch `/api/design` from
 the served page and read the refusal); a 1440×900 render of the design
 stage read after every layout change (the screenshot-is-the-visual-review
@@ -298,6 +335,11 @@ commit.
   the task is composed — `canvas::designer_task` stays the one
   composer; the pin asserts the wire carries `frame_id` iff a page is
   selected.
+- **K runs are K seats and K× spend.** Each pinned fan-out run can raise
+  its own approval seat (the KI-380 class) and spends its own tokens;
+  the fan-out is bounded by the catalog (three models), the seat panel
+  stacks every seat without losing one, and the composer shows the run
+  count before send.
 
 ## Dependencies
 
