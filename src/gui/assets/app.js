@@ -14474,6 +14474,23 @@
     return row;
   }
 
+  /// The id a pasted endpoint earns: the host, minus a leading `api`,
+  /// every other run of punctuation folded to a dash. `api.z.ai` is
+  /// `z-ai`; `api.acme.dev` is `acme-dev`.
+  function providerIdFromUrl(base) {
+    var host = base;
+    try {
+      host = new URL(base).hostname || base;
+    } catch (error) {
+      host = base;
+    }
+    var id = String(host).toLowerCase()
+      .replace(/^api[.-]/, '')
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '');
+    return id || 'the-provider';
+  }
+
   function sourceMark(knob) {
     if (!knob || knob.source == null) return [];
     if (knob.source === 'file') return [['set', 'own', 'set in this home\u2019s config']];
@@ -14581,6 +14598,153 @@
       });
     });
 
+    // The model is the section's head: every roster model as one
+    // `provider/model` row, the pin marked, a press to change it. The
+    // walk (the workloads' own orders) is the card below it.
+    var pinNow = (scalars.filter(function (one) {
+      return one.key === 'pin';
+    })[0] || {}).value || '';
+    var modelRows = [cfgItem({
+      id: 'model:auto', kind: 'model', name: 'auto',
+      value: pinNow ? '' : 'the walk decides',
+      marks: pinNow ? [] : [['current', 'own', 'the walk decides']],
+      card: function () { return modelSections(null); }
+    })];
+    ((read.catalog && read.catalog.models) || []).forEach(function (entry) {
+      var pair = entry.value;
+      var current = pinNow === pair;
+      modelRows.push(cfgItem({
+        id: 'model:' + pair, kind: 'model', name: pair,
+        value: entry.key_present === false ? 'no key' : '',
+        marks: [
+          current ? ['current', 'own', 'the model every run talks to'] : [],
+          entry.billing === 'payg' ? ['reserve', 'warn'] : [],
+          entry.kind === 'lane' ? ['lane', ''] : [],
+          entry.enabled === false ? ['off', 'warn'] : []
+        ].filter(function (one) { return one.length; }),
+        card: function () { return modelSections(entry); }
+      }));
+    });
+
+    /// One model's card: what it is, where it comes from, and the one
+    /// press that makes it the model. The pin is the whole write — a
+    /// `provider/model` pin skips the judgment and serves every run.
+    function modelSections(entry) {
+      var pair = entry ? entry.value : '';
+      var write = pair
+        ? cfgCardActs([{
+            label: 'make this the model', primary: true, run: function () {
+              writeSettings('set', { key: 'pin', value: pair }, function () {
+                notice('the model is set', pair);
+              });
+            }
+          }])
+        : cfgCardActs([{
+            label: 'clear the pin — the walk decides', primary: true, run: function () {
+              writeSettings('set', { key: 'pin', value: '' }, function () {
+                notice('the pin is cleared', 'the walk decides');
+              });
+            }
+          }]);
+      var sections = [['the model', node('p', 'derivation',
+        pair || 'auto — the walk decides which model answers')]];
+      if (pair) {
+        sections.push(['where it comes from', node('p', 'derivation',
+          entry.provider + (entry.key_present === false
+            ? ' · no key resolves'
+            : ' · a key resolves'))]);
+        sections.push(['what changes', node('p', 'derivation',
+          'every run talks to this model; the declared reserve closes the walk if it fails.')]);
+      }
+      sections.push(['the write', write]);
+      return sections;
+    }
+
+    /// The account's whole flow: paste an endpoint and a key, and the
+    /// provider's own catalog lands on the surface with its windows.
+    function connectSections() {
+      var endpoint = node('input', 'knob-box');
+      endpoint.type = 'text';
+      endpoint.placeholder = 'https://the-provider/v1';
+      endpoint.setAttribute('aria-label', 'the endpoint');
+      var key = node('input', 'knob-box');
+      key.type = 'password';
+      key.placeholder = 'paste the key — it is stored, never shown';
+      key.setAttribute('aria-label', 'the key');
+      // The name the roster will use, filled from the endpoint and
+      // editable: `provider/model` is what the model list shows, so the
+      // owner sees the id before it is written.
+      var name = node('input', 'knob-box');
+      name.type = 'text';
+      name.setAttribute('aria-label', 'the name');
+      var derived = '';
+      endpoint.addEventListener('input', function () {
+        var next = endpoint.value.trim() ? providerIdFromUrl(endpoint.value) : '';
+        if (name.value === derived) name.value = next;
+        derived = next;
+      });
+      var act = node('button', 'replay-button replay-resume', 'connect it');
+      act.type = 'button';
+      act.dataset.act = 'provider-connect';
+      act.addEventListener('click', function () {
+        var base = endpoint.value.trim();
+        if (!base) {
+          notice('the provider was refused',
+            'an endpoint is needed — https://the-provider/v1');
+          return;
+        }
+        var entry = {
+          id: name.value.trim() || providerIdFromUrl(base),
+          base_url: base,
+          models: [],
+          enabled: true,
+          key_required: true
+        };
+        post('/api/settings', {
+          op: 'provider',
+          entry: JSON.stringify(entry),
+          key: key.value.trim()
+        }).then(function (reply) {
+          if (reply.status !== 200) {
+            notice('the provider was refused',
+              (reply.body && reply.body.error) || 'the surface said no without a reason');
+            return;
+          }
+          var wrote = (reply.body && reply.body.wrote) || {};
+          if (wrote.discovery && wrote.discovery.ok === false && wrote.discovery.error) {
+            notice('the provider is saved, the catalog did not answer', wrote.discovery.error);
+          } else if (wrote.key_store) {
+            notice('the provider is connected',
+              entry.id + ' · the key landed in ' + wrote.key_store);
+          } else {
+            notice('the provider is connected', entry.id);
+          }
+          readSettings(true);
+        }).catch(function () {
+          notice('the provider was refused', 'the face lost the server');
+        });
+      });
+      return [
+        ['the endpoint', cfgField('the endpoint', endpoint,
+          'the provider’s OpenAI-compatible base URL')],
+        ['the key', cfgField('the key', key,
+          'it is stored in the vault, never shown again')],
+        ['the name', cfgField('the name', name,
+          'the id this home uses for it — the model list says provider/model')],
+        ['what happens', node('p', 'derivation',
+          'the models are discovered from the provider and land on this surface with their windows.')],
+        ['the write', act]
+      ];
+    }
+
+    function connectRow() {
+      return cfgItem({
+        id: 'provider-add', kind: 'action', name: 'connect a provider',
+        value: 'paste an endpoint and a key',
+        card: function () { return connectSections(); }
+      });
+    }
+
     return [
       {
         id: 'models', icon: 'router', name: 'models',
@@ -14588,10 +14752,12 @@
         changed: lists.some(function (one) { return one.reverts; }) || ownerSet('pin'),
         paint: function () {
           return [
-            cfgList('the tiers', 'which candidate a workload walks first, and its fallbacks',
-              tierRows.concat(gateRows)),
-            cfgList('the providers', 'the accounts fleet can reach, and whether each answers',
-              providerRows)
+            cfgList('the model', 'the one every run talks to — a press changes it',
+              modelRows),
+            cfgList('the accounts', 'where the models live, and whether each answers',
+              providerRows.concat([connectRow()])),
+            cfgList('the walk', 'when no model is chosen: each workload walks its own order',
+              tierRows.concat(gateRows))
           ];
         }
       },

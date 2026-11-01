@@ -4721,6 +4721,60 @@ async function theSettingsRailCarriesOneSectionAtATime() {
   check('PM the reload writes through the one writer',
     discoverWrites.length === 1, JSON.stringify(discoverWrites.map((c) => c.body)));
 
+  // The flow the owner asked for: the model list is the section's head,
+  // one press is the pin, and the accounts list ends in connect.
+  providers.fireOn('dock-object-close', 'click');
+  await flush(40);
+  const modelItems = providers.rows('.cfg-item').filter((row) => row.dataset.kind === 'model');
+  check('MODEL every roster model is one pickable row',
+    modelItems.length === 2 &&
+      modelItems[0].textContent.includes('auto') &&
+      modelItems.some((row) => row.textContent.includes('alpha/m-one')),
+    modelItems.map((row) => row.textContent).join(' | '));
+  const alphaModel = providers.rows('.cfg-item').find((row) =>
+    row.dataset.kind === 'model' && row.textContent.includes('alpha/m-one'));
+  alphaModel.click();
+  await flush(60);
+  const modelCard = providers.el('dock-object-body');
+  const modelAct = modelCard.find((one) => one.name === 'button' &&
+    String(one.textContent || '').includes('make this the model'))[0];
+  check('MODEL the model\u2019s card carries the one press', !!modelAct,
+    modelAct ? modelAct.textContent : 'no act');
+  if (modelAct) modelAct.click();
+  await flush(80);
+  const pinWrites = providers.calls.filter((c) => c.method === 'POST' &&
+    c.url === '/api/settings' && String(c.body).includes('"key":"pin"') &&
+    String(c.body).includes('alpha/m-one'));
+  check('MODEL the press writes the pin through the one writer', pinWrites.length === 1,
+    JSON.stringify(providers.calls.map((c) => c.body)));
+  providers.fireOn('dock-object-close', 'click');
+  await flush(40);
+
+  const connectItem = providers.rows('.cfg-item').find((row) =>
+    row.dataset.item === 'provider-add');
+  check('MODEL the accounts list ends in connect a provider', !!connectItem,
+    String(!!connectItem));
+  connectItem.click();
+  await flush(60);
+  const connectCard = providers.el('dock-object-body');
+  const endpointInput = connectCard.find((one) => one.name === 'input' &&
+    String(one.placeholder || '').includes('https://'))[0];
+  check('MODEL the connect card asks for the endpoint first', !!endpointInput,
+    endpointInput ? endpointInput.placeholder : 'no field');
+  endpointInput.value = 'https://api.acme.dev/v1';
+  const connectAct = connectCard.find((one) => one.name === 'button' &&
+    String(one.textContent || '').includes('connect it'))[0];
+  check('MODEL the connect card carries the press', !!connectAct, String(!!connectAct));
+  if (connectAct) connectAct.click();
+  await flush(80);
+  const providerWrites = providers.calls.filter((c) => c.method === 'POST' &&
+    c.url === '/api/settings' && String(c.body).includes('"op":"provider"'));
+  check('MODEL the connect press writes a provider entry',
+    providerWrites.length === 1 && String(providerWrites[0].body).includes('api.acme.dev'),
+    JSON.stringify(providerWrites.map((c) => c.body)));
+  providers.fireOn('dock-object-close', 'click');
+  await flush(40);
+
   const tierCard = bootSettings('#/settings');
   await flush();
   tierCard.open();

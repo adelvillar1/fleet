@@ -2821,9 +2821,26 @@ pub fn set_provider_with_key_with(
                 });
             }
             Err(error) => {
-                // The save proceeds — a provider may be added before it
-                // is funded — but the failure is named on the reply,
-                // never swallowed.
+                // An entry with no models yet cannot be saved: the
+                // provider write refuses an empty list, and the reason
+                // the owner needs is the discovery's own. An entry that
+                // already carries models saves anyway — a provider may
+                // be added before it is funded — and the failure rides
+                // the reply, never swallowed.
+                let empty = amended
+                    .get("models")
+                    .and_then(|models| models.as_array())
+                    .map(|models| {
+                        models.iter().all(|model| {
+                            model.as_str().map(str::trim).unwrap_or_default().is_empty()
+                        })
+                    })
+                    .unwrap_or(true);
+                if empty {
+                    return Err(format!(
+                        "the provider's models could not be discovered: {error}"
+                    ));
+                }
                 discovery = Some(Discovery::failed(error));
             }
         }
