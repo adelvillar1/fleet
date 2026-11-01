@@ -7966,7 +7966,7 @@ body[data-work="collapsed"] .work-list { display: none; }
 /* Natural widths first (a knob's own label is the width it needs), and
    only then a shrink — a select that cannot show its value is a knob
    nobody can read. */
-.design-chat-row select { min-width: 0; flex: 1 1 auto; max-width: 100%; }
+.design-chat-row select { min-width: 0; flex: 1 1 120px; max-width: 100%; }
 .design-chat-row .replay-button { flex: 0 0 auto; }
 .design-chat-model { flex-wrap: nowrap; }
 .design-chat-model .knob-box { flex: 1 1 auto; min-width: 0; }
