@@ -189,6 +189,7 @@ class El {
   // pointer for a gesture; the stub has no capture, only the calls.
   setPointerCapture() {}
   releasePointerCapture() {}
+  select() {}
   click() { this.fire('click', {}); }
   fire(kind, event) {
     const ev = event || {};
@@ -392,6 +393,14 @@ function boot(options) {
             json: () => Promise.resolve({ type: 'design_write', op: 'chat', wrote: { turn: { role: sent.role } } }),
           });
         }
+        // A write the writer refuses: the save chip shows the failure
+        // by name (P4, C11).
+        if (sent.op === 'frame-set' && sent.set === '__refuse__') {
+          return Promise.resolve({
+            status: 409,
+            json: () => Promise.resolve({ error: 'that set does not exist' }),
+          });
+        }
         return Promise.resolve({
           status: 200,
           json: () => Promise.resolve({ type: 'design_write', op: 'x', wrote: { slug: 'sample-board' } }),
@@ -430,9 +439,30 @@ function boot(options) {
       });
     }
     if (pathOnly === '/api/design/export') {
+      let sent = {};
+      try { sent = JSON.parse(init.body || '{}'); } catch (e) {}
+      if (sent.kind === 'site') {
+        return Promise.resolve({
+          status: 200,
+          json: () => Promise.resolve({
+            type: 'design_export', kind: 'site',
+            path: '/tmp/sample-board-site.zip', name: 'sample-board-site.zip',
+            bytes: 42, url: '/site/sample-board/',
+          }),
+        });
+      }
       return Promise.resolve({
         status: 200,
         json: () => Promise.resolve({ type: 'design_export', kind: 'html', path: '/tmp/frame.html', bytes: 12 }),
+      });
+    }
+    if (pathOnly === '/api/design/review') {
+      return Promise.resolve({
+        status: 200,
+        json: () => Promise.resolve({
+          type: 'design_review',
+          task: 'the composed review task for the vision read',
+        }),
       });
     }
     if (pathOnly === '/api/resume') {
@@ -3975,7 +4005,8 @@ async function theDesignCanvasCarriesItsFramesAndWritesGeometry() {
   const frame = (id, name, x, model) => ({
     id,
     name,
-    description: '',
+    description: name === 'hero' ? 'The landing page for the developer tool' : '',
+    gen_meta: name === 'hero' ? { duration_ms: 4200, tokens: 1800 } : null,
     html: '<!doctype html><html><body><h1>' + name + '</h1></body></html>',
     html_raw: '<!doctype html><html><body><h1>' + name + '</h1></body></html>',
     x,
@@ -3997,8 +4028,12 @@ async function theDesignCanvasCarriesItsFramesAndWritesGeometry() {
       strengths: ['the type scale holds'],
       fixes: ['tighten the hero spacing'],
       reviewed: '2026-10-31T09:30:00Z',
-      history: [{ scores: { hierarchy: 6 }, summary: 'the first look',
-        reviewed: '2026-10-30T09:00:00Z' }],
+      history: [
+        { scores: { hierarchy: 6, spacing: 4 }, summary: 'the first look',
+          reviewed: '2026-10-29T09:00:00Z' },
+        { scores: { hierarchy: 5, spacing: 4 }, summary: 'before the tighten',
+          reviewed: '2026-10-30T09:00:00Z' },
+      ],
     } : null,
     versions: [{ id: 'v-one', name, source: 'generate', created: '2026-10-31T09:00:00Z' }],
     pins: name === 'hero'
@@ -4011,7 +4046,7 @@ async function theDesignCanvasCarriesItsFramesAndWritesGeometry() {
     read_at: 'now',
     projects: [
       { slug: 'sample-board', name: 'Sample board', frames: 2,
-        updated: '2026-10-31T09:00:00Z' },
+        updated: '2026-10-31T09:00:00Z', project: '/Users/owner/Projects/harbor' },
       { slug: 'another-board', name: 'Another board', frames: 3,
         updated: '2026-10-30T09:00:00Z' },
     ],
@@ -4076,6 +4111,21 @@ async function theDesignCanvasCarriesItsFramesAndWritesGeometry() {
   check('PM-D the design stage renders',
     !!page.IDS['panel-design'] && page.IDS['panel-design'].hidden === false,
     String(page.IDS['panel-design'] && page.IDS['panel-design'].hidden));
+  // P1 (design-parity C1): the composer sits in the center frame — the
+  // floating stack's pieces all exist (the log collapsed to the
+  // composer on arrival, the seat, the toggle, the focus row), and the
+  // stack's parentage and geometry are the render leg's — the
+  // harness's ids are a flat map, with no tree to measure.
+  const float = page.IDS['design-chat'];
+  check('C1 the composer is the bottom-center stack over the canvas',
+    !!float && float.dataset.open === 'false' &&
+      page.IDS['design-chat-log'].hidden === true &&
+      page.IDS['design-chat-toggle'].getAttribute('aria-expanded') === 'false' &&
+      !!page.IDS['design-seat'] && !!page.IDS['design-focus'] &&
+      !!page.IDS['design-focus-label'] && !!page.IDS['design-brief'] &&
+      !!page.IDS['design-send'],
+    'open=' + float.dataset.open + ' logHidden=' +
+      page.IDS['design-chat-log'].hidden);
   const railRows = page.rows('#design-rail .section-rail-row');
   check('PM-D the boards rail lists every board, the open one marked',
     railRows.length === 2 &&
@@ -4086,6 +4136,16 @@ async function theDesignCanvasCarriesItsFramesAndWritesGeometry() {
       !railRows[1].getAttribute('aria-current'),
     railRows.map((one) => one.dataset.section + '/' +
       one.getAttribute('aria-current')).join(','));
+  // K2 (designs-are-project-knowledge): the rail groups the boards by
+  // the project they belong to — one header per bound family, unbound
+  // last — with the rows themselves unchanged.
+  const railGroups = page.rows('#design-rail .section-rail-group');
+  check('K2 the boards rail groups by project, unbound last',
+    railGroups.length === 2 &&
+      String(railGroups[0].textContent) === 'harbor' &&
+      String(railGroups[1].textContent) === 'unbound' &&
+      railRows.length === 2,
+    railGroups.map((one) => one.textContent).join(' | '));
   check('PM-D the rail is the shared section rail',
     !!page.rows('#design-rail .section-rail-fold').length &&
       page.rows('#design-rail').length === 1,
@@ -4228,17 +4288,51 @@ async function theDesignCanvasCarriesItsFramesAndWritesGeometry() {
   // an unavailable one refuses instead of failing later, and the open
   // choice is the first that can serve.
   const models = page.IDS['design-model'];
-  const modelOptions = (models && models.children) || [];
+  const modelChips = (models && models.children) || [];
   check('PM-D the composer carries the models designated for design',
-    modelOptions.length === 3 &&
-      modelOptions[0].value === 'deepseek/deepseek-flash' &&
-      modelOptions[0].disabled === true &&
-      String(modelOptions[0].textContent).includes('unavailable') &&
-      modelOptions[1].value === 'zai-coding-plan/GLM-5.3-Flash' &&
-      modelOptions[1].disabled === false,
-    modelOptions.map((one) => one.value + '/' + one.disabled).join(','));
-  check('PM-D the picker opens on the first model that can serve',
-    models.value === 'zai-coding-plan/GLM-5.3-Flash', models.value);
+    modelChips.length === 3 &&
+      modelChips[0].dataset.model === 'deepseek/deepseek-flash' &&
+      modelChips[0].disabled === true &&
+      String(modelChips[0].textContent).includes('unavailable') &&
+      modelChips[1].dataset.model === 'zai-coding-plan/GLM-5.3-Flash' &&
+      modelChips[1].disabled === false,
+    modelChips.map((one) => one.dataset.model + '/' + one.disabled).join(','));
+  // P5 (design-parity C15): the control is a multi-select, and the
+  // default is exactly one pressed — the first that can serve.
+  const pressedByDefault = Array.prototype.filter.call(modelChips,
+    (one) => one.getAttribute('aria-pressed') === 'true');
+  check('C15 the picker opens with exactly one model pressed',
+    pressedByDefault.length === 1 &&
+      pressedByDefault[0].dataset.model === 'zai-coding-plan/GLM-5.3-Flash',
+    pressedByDefault.map((one) => one.dataset.model).join(','));
+
+  // P1 (design-parity C2): the focus is visible and complete — the
+  // chip-selected page is the focus (the chip's click landed it, with
+  // the mode defaulting to refine), and the canvas background clears
+  // it back to the board.
+  const focusChip = page.IDS['design-focus'];
+  const focusLabel = page.IDS['design-focus-label'];
+  check('C2 a selected page is the focus, the mode follows to refine',
+    focusChip.dataset.focus === 'page' &&
+      String(focusLabel.textContent).includes('hero') &&
+      page.IDS['design-mode-select'].value === 'refine' &&
+      String(page.IDS['design-brief'].placeholder).includes('this page'),
+    focusLabel.textContent + ' / ' + page.IDS['design-mode-select'].value);
+  // The harness's ids are a flat map — no tree to bubble through — so
+  // the viewport's own listener is driven with the background as the
+  // target, exactly what a real press on the canvas does.
+  page.IDS['design-viewport'].fire('pointerdown',
+    { target: page.IDS['design-world'] });
+  await flush(20);
+  check('C2 the canvas background clears the focus back to the board',
+    focusChip.dataset.focus === 'board' &&
+      String(focusLabel.textContent).includes('Sample board') &&
+      page.IDS['design-mode-select'].value === 'generate' &&
+      String(page.IDS['design-brief'].placeholder).includes('the board'),
+    focusLabel.textContent + ' / ' + page.IDS['design-mode-select'].value);
+  // The frame the review and the sends below work on is selected again.
+  cards[0].fire('pointerdown');
+  await flush(20);
 
   // The review: eight scores always render (a gap reads as a dash), the
   // history shows, and the ask drives both captures through the server.
@@ -4258,8 +4352,53 @@ async function theDesignCanvasCarriesItsFramesAndWritesGeometry() {
   check('PM-D the review\u2019s history shows',
     !!reviewPane && String(reviewPane.textContent).includes('the first look'),
     reviewPane ? String(reviewPane.textContent).slice(-90) : 'no pane');
+  // P3 (design-parity C9): the history carries the delta each review
+  // introduced — the change from the one before it.
+  check('C9 the history shows each review\u2019s score delta',
+    !!reviewPane &&
+      String(reviewPane.textContent).includes('before the tighten') &&
+      String(reviewPane.textContent).includes('hierarchy -1'),
+    reviewPane ? String(reviewPane.textContent).slice(-120) : 'no pane');
+  // P3 (design-parity C9): the critic is the review's own choice —
+  // set here to a different model than the composer's pick, so the run
+  // that leaves proves the select rode the pin.
+  const critic = reviewPane ?
+    reviewPane.find((one) => one.dataset && one.dataset.act === 'design-critic')[0] : null;
+  check('C9 the review card carries the critic choice',
+    !!critic && critic.children.length === 3 &&
+      String(critic.children[0].textContent).includes('unavailable'),
+    critic ? critic.children.map((one) => one.value + '/' + one.disabled).join(',') : 'no critic');
+  if (critic) critic.value = 'ollama-cloud/glm-5.3-flash';
   byAct(reviewPane, 'design-review-ask').click();
   await flush(60);
+  const reviewRun = page.calls.filter((one) => one.method === 'POST' &&
+    String(one.url || '').includes('/api/run') &&
+    String(one.body || '').includes('the composed review task')).slice(-1)[0];
+  check('C9 the review run pins the critic the card chose',
+    !!reviewRun && String(reviewRun.body).includes('"pin":"ollama-cloud/glm-5.3-flash"'),
+    reviewRun ? String(reviewRun.body).slice(-110) : 'no review run');
+  // P3 (design-parity C9): fix drift — the coherence report's findings
+  // ride the run's instruction (the owner's line of the task, recorded
+  // in the board's chat). The board's set is incoherent, so the press
+  // is offered on a reopened review card.
+  const heroCardDrift = page.rows('.canvas-frame')[0];
+  byAct(heroCardDrift, 'review-hero').click();
+  await flush(30);
+  const driftPane = page.el('dock-object-body');
+  const driftPress = driftPane ?
+    driftPane.find((one) => one.dataset && one.dataset.act === 'design-fix-drift')[0] : null;
+  check('C9 the review card offers fix drift for an incoherent set',
+    !!driftPress, driftPress ? 'offered' : 'no press');
+  if (driftPress) {
+    driftPress.click();
+    await flush(60);
+    const driftChat = page.calls.filter((one) => one.method === 'POST' &&
+      String(one.body || '').includes('"op":"chat"') &&
+      String(one.body || '').includes('coherence drift')).slice(-1)[0];
+    check('C9 the fix-drift run names the coherence findings',
+      !!driftChat && String(driftChat.body).includes('pricing: page'),
+      driftChat ? String(driftChat.body).slice(0, 200) : 'no chat write');
+  }
   check('PM-D the review ask captures desktop and phone through the server',
     page.calls.some((one) => one.method === 'POST' &&
       String(one.url || '').includes('/api/design/review') &&
@@ -4409,8 +4548,18 @@ async function theDesignCanvasCarriesItsFramesAndWritesGeometry() {
 
   page.IDS['design-brief'].value = 'make the hero quieter';
   page.IDS['design-mode-select'].value = 'refine';
-  // The owner's own choice wins over the default.
-  models.value = 'ollama-cloud/glm-5.3-flash';
+  // The owner's own choice wins over the default: release the default
+  // chip, press the one they want — one pressed, one pinned run.
+  const chipsNow = page.IDS['design-model'].children;
+  Array.prototype.forEach.call(chipsNow, function (chip) {
+    if (chip.getAttribute('aria-pressed') === 'true' &&
+      chip.dataset.model !== 'ollama-cloud/glm-5.3-flash') {
+      chip.click();
+    }
+  });
+  Array.prototype.forEach.call(page.IDS['design-model'].children, function (chip) {
+    if (chip.dataset.model === 'ollama-cloud/glm-5.3-flash') chip.click();
+  });
   page.fireOn('design-send', 'click');
   await flush(80);
   const posts = page.calls.filter((one) => one.method === 'POST' &&
@@ -4421,18 +4570,23 @@ async function theDesignCanvasCarriesItsFramesAndWritesGeometry() {
         String(one.body).includes('"mode":"refine"')),
     JSON.stringify(page.calls.slice(-5).map((one) => one.method + ' ' +
       one.url + ' ' + String(one.body || '').slice(0, 70))));
-  const run = page.calls.filter((one) => one.method === 'POST' &&
-    String(one.url || '').includes('/api/run'));
+  // The composer's sends, not the review ask's run: each run carries
+  // the task its own call composed.
+  const composerRuns = page.calls.filter((one) => one.method === 'POST' &&
+    String(one.url || '').includes('/api/run') &&
+    String(one.body || '').includes('composed for sample-board'));
   check('PM-D the run carries the composed task, not a hand-built one',
-    run.length === 1 && String(run[0].body).includes('composed for sample-board'),
-    JSON.stringify(run.map((one) => String(one.body).slice(0, 160))));
+    composerRuns.length >= 1 &&
+      String(composerRuns[0].body).includes('composed for sample-board'),
+    JSON.stringify(composerRuns.map((one) => String(one.body).slice(0, 160))));
   // Routing for a design run is the page's: the picked `provider/model`
   // rides the request as the pin, so the router never selects among the
-  // designated three.
+  // designated three. The send just above is the LAST composer run.
+  const sendRun = composerRuns[composerRuns.length - 1];
   check('PM-D the run pins the model the page names',
-    run.length === 1 &&
-      String(run[0].body).includes('"pin":"ollama-cloud/glm-5.3-flash"'),
-    JSON.stringify(run.map((one) => String(one.body).slice(-90))));
+    !!sendRun &&
+      String(sendRun.body).includes('"pin":"ollama-cloud/glm-5.3-flash"'),
+    sendRun ? String(sendRun.body).slice(-90) : 'no send run');
   // The run's close writes the board turn: its words and the frames it
   // landed (a frame the board did not hold when the request went out).
   const beforeTurns = page.calls.filter((one) =>
@@ -4475,6 +4629,254 @@ async function theDesignCanvasCarriesItsFramesAndWritesGeometry() {
   check('PM-D the directions control rides the task request',
     withDirections.length === 1,
     JSON.stringify(withDirections.map((one) => String(one.body).slice(0, 120))));
+
+  // P1 (design-parity C3): the focused request is the page's — back on
+  // a board that holds the page, the wire carries frame_id iff a page
+  // is selected.
+  railRows[0].click();
+  await flush(60);
+  page.IDS['design-brief'].value = 'ask with no page in focus';
+  page.IDS['design-mode-select'].value = 'ask';
+  page.fireOn('design-send', 'click');
+  await flush(60);
+  const globalTask = page.calls.filter((one) => one.method === 'POST' &&
+    String(one.body || '').includes('"op":"task"')).slice(-1)[0];
+  check('C3 a send with no page composes a board-global task',
+    !!globalTask && String(globalTask.body).includes('"frame_id":""'),
+    globalTask ? String(globalTask.body).slice(0, 160) : 'no task');
+  const liveCards = page.rows('.canvas-frame');
+  liveCards[0].fire('pointerdown');
+  await flush(20);
+  page.IDS['design-brief'].value = 'refine the hero';
+  page.IDS['design-mode-select'].value = 'refine';
+  page.fireOn('design-send', 'click');
+  await flush(60);
+  const pageTask = page.calls.filter((one) => one.method === 'POST' &&
+    String(one.body || '').includes('"op":"task"')).slice(-1)[0];
+  check('C3 a send with a page carries that frame_id',
+    !!pageTask && String(pageTask.body).includes('"frame_id":"f-hero"'),
+    pageTask ? String(pageTask.body).slice(0, 160) : 'no task');
+
+  // P2 (design-parity C4): the head's title renames the board in
+  // place — double-click, type, and the write rides the writer.
+  page.IDS['design-title'].fire('dblclick');
+  await flush(10);
+  const titleInput = page.IDS['design-title'].querySelector('input');
+  check('C4 double-clicking the head title opens the rename input',
+    !!titleInput, String(!!titleInput));
+  if (titleInput) {
+    titleInput.value = 'Renamed board';
+    titleInput.fire('blur');
+    await flush(60);
+    const rename = page.calls.filter((one) => one.method === 'POST' &&
+      String(one.body || '').includes('"op":"rename"')).slice(-1)[0];
+    check('C4 the rename writes through the writer',
+      !!rename && String(rename.body).includes('"name":"Renamed board"'),
+      rename ? String(rename.body).slice(0, 120) : 'no rename');
+  }
+  // P2 (design-parity C5): the head's delete removes the board after a
+  // confirm that names what it takes.
+  page.fireOn('design-delete', 'click');
+  await flush(60);
+  const removal = page.calls.filter((one) => one.method === 'POST' &&
+    String(one.body || '').includes('"op":"board-delete"')).slice(-1)[0];
+  check('C5 the head delete confirms and removes the board',
+    !!removal, removal ? String(removal.body).slice(0, 120) : 'no delete');
+  // P2 (design-parity C6): a frame renames in place — the title bar's
+  // name edits and rides frame-update.
+  const heroCard = page.rows('.canvas-frame')[0];
+  const heroName = heroCard ? heroCard.querySelector('.canvas-frame-name') : null;
+  if (heroName) {
+    heroName.fire('dblclick');
+    await flush(10);
+    const nameInput = heroName.querySelector('input');
+    check('C6 double-clicking a frame name opens its rename input',
+      !!nameInput, String(!!nameInput));
+    if (nameInput) {
+      nameInput.value = 'landing';
+      nameInput.fire('blur');
+      await flush(60);
+      const frameRename = page.calls.filter((one) => one.method === 'POST' &&
+        String(one.body || '').includes('"op":"frame-update"') &&
+        String(one.body || '').includes('"name":"landing"')).slice(-1)[0];
+      check('C6 the frame rename writes through frame-update',
+        !!frameRename, frameRename ? String(frameRename.body).slice(0, 140) : 'no update');
+    }
+  } else {
+    check('C6 double-clicking a frame name opens its rename input', false,
+      'no frame name on the card');
+    check('C6 the frame rename writes through frame-update', false, 'no input');
+  }
+
+  // P3 (design-parity C8): the frame line carries the page's whole
+  // account — dimensions, model, versions, provenance, description —
+  // read before any resize below changes the dimensions.
+  let heroCard2 = page.rows('.canvas-frame')[0];
+  const tweaksAct = heroCard2 ?
+    heroCard2.find((one) => one.dataset && one.dataset.act === 'tweaks-hero')[0] : null;
+  if (tweaksAct) {
+    tweaksAct.click();
+    await flush(30);
+    const tweaksPane = page.el('dock-object-body');
+    const frameLine = tweaksPane ?
+      String(tweaksPane.textContent) : '';
+    check('C8 the frame line carries the page settings and provenance',
+      frameLine.includes('hero') && frameLine.includes('1280') &&
+        frameLine.includes('glm') && frameLine.includes('version(s)') &&
+        frameLine.includes('4.2s') && frameLine.includes('1800 tokens') &&
+        frameLine.includes('The landing page for the developer tool'),
+      frameLine.slice(-160));
+  } else {
+    check('C8 the frame line carries the page settings and provenance',
+      false, 'no tweaks act');
+  }
+  // P3 (design-parity C7): the viewport presets sit on the frame —
+  // press one and the resize rides the writer. (The write re-reads and
+  // repaints, so every card reference below is re-queried.)
+  heroCard2 = page.rows('.canvas-frame')[0];
+  const phonePreset = heroCard2 ?
+    heroCard2.find((one) => one.dataset && one.dataset.act === 'design-viewport-phone')[0] : null;
+  check('C7 the frame bar carries the viewport presets',
+    !!heroCard2 &&
+      !!heroCard2.find((one) => one.dataset && one.dataset.act === 'design-viewport-desktop')[0] &&
+      !!phonePreset,
+    heroCard2 ? 'presets present' : 'no card');
+  if (phonePreset) {
+    phonePreset.click();
+    await flush(60);
+    const resize = page.calls.filter((one) => one.method === 'POST' &&
+      String(one.body || '').includes('"op":"frame-update"') &&
+      String(one.body || '').includes('"w":390')).slice(-1)[0];
+    check('C7 the preset resize writes through the writer',
+      !!resize, resize ? String(resize.body).slice(0, 130) : 'no resize');
+  }
+  // P3 (design-parity C10): the set picker on the bar assigns the
+  // membership through the writer; an empty pick clears it.
+  const heroCard3 = page.rows('.canvas-frame')[0];
+  const setPick = heroCard3 ?
+    heroCard3.find((one) => one.dataset &&
+      one.dataset.act === 'design-set-f-hero')[0] : null;
+  check('C10 the frame bar carries the set picker',
+    !!setPick && setPick.value === 'site',
+    setPick ? setPick.value : 'no picker');
+  if (setPick) {
+    setPick.value = '';
+    setPick.fire('change');
+    await flush(60);
+    const membership = page.calls.filter((one) => one.method === 'POST' &&
+      String(one.body || '').includes('"op":"frame-set"')).slice(-1)[0];
+    check('C10 the set change writes through frame-set',
+      !!membership && String(membership.body).includes('"set":""'),
+      membership ? String(membership.body).slice(0, 130) : 'no write');
+  }
+
+  // P4 (design-parity C11): every gesture shows its save — the chip
+  // reads saving… while the write is in flight (observed
+  // synchronously, before the flush resolves it), saved on its ack,
+  // and the refusal by name when the writer says no.
+  page.fireOn('design-delete', 'click');
+  const savingNow = String(page.text('design-save') || '');
+  check('C11 the chip reads saving while the write is in flight',
+    savingNow.includes('saving'), savingNow);
+  await flush(80);
+  const savedNow = String(page.text('design-save') || '');
+  check('C11 the chip reads saved on the ack',
+    savedNow === 'saved' && page.IDS['design-save'].dataset.state === 'saved',
+    savedNow);
+  const refuseSet = page.rows('.canvas-frame')[0];
+  const refusePick = refuseSet ?
+    refuseSet.find((one) => one.dataset &&
+      one.dataset.act === 'design-set-f-hero')[0] : null;
+  if (refusePick) {
+    refusePick.value = '__refuse__';
+    refusePick.fire('change');
+    await flush(60);
+    const failedNow = String(page.text('design-save') || '');
+    check('C11 a refused write reads save failed with the reason',
+      failedNow.includes('save failed') && failedNow.includes('that set does not exist') &&
+        page.IDS['design-save'].dataset.state === 'failed',
+      failedNow);
+  } else {
+    check('C11 a refused write reads save failed with the reason',
+      false, 'no picker to refuse with');
+  }
+
+  // P4 (design-parity C12 + C13): every export offers its file as a
+  // download, and the export card carries the site — the ZIP and the
+  // URL the local host serves at.
+  const exportAct = page.rows('.canvas-frame')[0];
+  byAct(exportAct, 'export-hero').click();
+  await flush(30);
+  const exportPane = page.el('dock-object-body');
+  const siteButton = exportPane ?
+    exportPane.find((one) => one.dataset && one.dataset.act === 'design-export-site')[0] : null;
+  check('C13 the export card carries the site kind',
+    !!siteButton, siteButton ? 'site offered' : 'no site button');
+  const htmlButton = exportPane ?
+    exportPane.find((one) => one.dataset && one.dataset.act === 'design-export-html')[0] : null;
+  if (htmlButton) {
+    htmlButton.click();
+    await flush(60);
+    const downloads = exportPane.find((one) => one.dataset &&
+      String(one.dataset.act || '').startsWith('design-download-'));
+    check('C12 every export offers its file as a download',
+      downloads.length >= 1 &&
+        String(downloads[0].href || '').includes('/api/design/download/'),
+      downloads.map((one) => String(one.href)).join(' | '));
+  }
+  if (siteButton) {
+    siteButton.click();
+    await flush(60);
+    const sitePost = page.calls.filter((one) => one.method === 'POST' &&
+      String(one.url || '').includes('/api/design/export') &&
+      String(one.body || '').includes('"kind":"site"')).slice(-1)[0];
+    const openSite = exportPane.find((one) => one.dataset &&
+      one.dataset.act === 'design-open-site')[0];
+    const siteZip = exportPane.find((one) => one.dataset &&
+      String(one.dataset.act || '').includes('site.zip'))[0];
+    check('C13 the site export zips the board and names its URL',
+      !!sitePost && !String(sitePost.body).includes('"id":') &&
+        !!openSite && String(openSite.href) === '/site/sample-board/' &&
+        !!siteZip,
+      sitePost ? String(sitePost.body).slice(0, 130) : 'no site post');
+  }
+
+  // P5 (design-parity C15/C16): pressed together, the send fans out —
+  // one run per model, each with its own pin, one progress line each
+  // until the board fills. (deepseek cannot serve; the two that can
+  // are pressed.)
+  const fanChips = page.IDS['design-model'].children;
+  Array.prototype.forEach.call(fanChips, function (chip) {
+    if (!chip.disabled && chip.getAttribute('aria-pressed') !== 'true') chip.click();
+  });
+  await flush(10);
+  const pressed = Array.prototype.filter.call(page.IDS['design-model'].children,
+    (one) => one.getAttribute('aria-pressed') === 'true');
+  check('C15 several models press together',
+    pressed.length === 2, pressed.map((one) => one.dataset.model).join(','));
+  page.IDS['design-brief'].value = 'two minds, one brief';
+  page.IDS['design-mode-select'].value = 'generate';
+  page.fireOn('design-send', 'click');
+  await flush(80);
+  const runs = page.calls.filter((one) => one.method === 'POST' &&
+    String(one.url || '').includes('/api/run'));
+  const fanRuns = runs.slice(-2);
+  const fanPins = fanRuns.map((one) => {
+    const match = /"pin":"([^"]+)"/.exec(String(one.body || ''));
+    return match ? match[1] : '';
+  });
+  check('C16 the fan-out starts one run per model with distinct pins',
+    fanRuns.length === 2 &&
+      fanPins[0] !== '' && fanPins[1] !== '' && fanPins[0] !== fanPins[1] &&
+      fanPins.indexOf('zai-coding-plan/GLM-5.3-Flash') >= 0 &&
+      fanPins.indexOf('ollama-cloud/glm-5.3-flash') >= 0,
+    JSON.stringify(fanPins));
+  const fanLines = page.rows('.design-fanout-line');
+  check('C16 each fan-out run shows its own progress line',
+    fanLines.length === 2 &&
+      String(fanLines[0].textContent).includes('designing') &&
+      String(fanLines[1].textContent).includes('designing'),
+    fanLines.map((one) => one.textContent).join(' | '));
 }
 
 // Design work started outside the design page — a conversation, a cron

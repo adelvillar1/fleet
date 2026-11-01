@@ -835,13 +835,16 @@ pub fn seed_task(project: &str) -> String {
         "Refresh the {project} project's fact corpus from its docs. The lane tool is not in \
          your toolset; use the spawn route: fleet mcp call blend1 refresh \
          '{{\"project\": \"{project}\", \"sources\": \
-         [\"<repo home>/{project}/docs/**/*.md\", \"<repo home>/{project}/*.md\"]}}' — \
+         [\"<repo home>/{project}/docs/**/*.md\", \"<repo home>/{project}/*.md\", \
+         \"<fleet home>/canvas/digests/{project}/*.md\"]}}' — \
          the verb spawns the vendored lane through its own launch spec, initializes with \
          the cold window a first run needs, calls, prints the reply, and tears down \
          (KI-369: one command instead of a hand-driven stdio session). <repo home> is the \
-         parent directory of <fleet repo>, and every project's corpus is its docs tree \
-         plus root .md files. It replies with project, source_files, items, \
-         dropped_duplicates, changed, action, store, missing_sources, empty_wildcards \
+         parent directory of <fleet repo>, <fleet home> is FLEET_HOME (default ~/.fleet), \
+         and every project's corpus is its docs tree plus root .md files plus the \
+         digests of the design boards bound to it (a board is project knowledge; each \
+         save writes its digest). It replies with project, source_files, items, \
+         dropped_duplicates, changed, action, store, and missing_sources, empty_wildcards \
          (a wildcard that matched nothing — satisfiable, not dark), sources_added and \
          sources_removed (the source-set delta since the stored manifest), and — when \
          the default set resolves to nothing — reason, the cwd it failed against. Then \
@@ -2910,6 +2913,55 @@ mod tests {
         );
         assert_eq!(job.schedule, "9 5 * * *", "the owner's schedule wins");
         assert!(!job.enabled, "the owner's enabled flag wins");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// K4 (designs-are-project-knowledge): the refresh task embeds the
+    /// design digests — the project-keyed glob each board's save
+    /// writes — and a job seeded before the glob existed reconciles to
+    /// the wording that carries it (the KI-277 path).
+    #[test]
+    fn the_refresh_task_embeds_the_design_digests() {
+        let task = seed_task("fleet");
+        assert!(
+            task.contains("<fleet home>/canvas/digests/fleet/*.md"),
+            "the digest glob rides the task: {task}"
+        );
+        assert!(
+            task.contains("digests of the design boards bound to it"),
+            "the task says what the glob is: {task}"
+        );
+        let home = temp_home("seed-digest");
+        let mut store = Store::open(&home).unwrap();
+        store
+            .add(
+                "corpus-refresh-fleet",
+                "10 0 * * *",
+                "Refresh the fleet project's fact corpus from its docs — the two \
+                 globs, before the digests joined",
+                true,
+            )
+            .unwrap();
+        let report = seed_missing(&home).expect("the seed lands");
+        assert!(
+            report
+                .reconciled
+                .iter()
+                .any(|name| name == "corpus-refresh-fleet"),
+            "the stale task is named: {report:?}"
+        );
+        let job = Store::open(&home)
+            .unwrap()
+            .jobs()
+            .iter()
+            .find(|job| job.name == "corpus-refresh-fleet")
+            .expect("the job")
+            .clone();
+        assert!(
+            job.task.contains("canvas/digests/fleet/*.md"),
+            "the reconciled task embeds the digests"
+        );
+        assert_eq!(job.schedule, "10 0 * * *", "the owner's schedule wins");
         let _ = std::fs::remove_dir_all(&home);
     }
 

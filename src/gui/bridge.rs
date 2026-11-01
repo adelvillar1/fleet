@@ -2129,6 +2129,43 @@ impl Bridge {
         ))
     }
 
+    /// P4 (design-parity C13): one file of the board's live site — the
+    /// same build the site ZIP carries, looked up by the parts list's
+    /// own vocabulary (a name outside it 404s by construction).
+    pub fn design_site_page(&self, slug: &str, name: &str) -> Result<Vec<u8>, String> {
+        let parts = crate::canvas::site_parts(&self.home, slug)?;
+        let name = if name.is_empty() { "index.html" } else { name };
+        crate::canvas::site_file(&parts, name)
+            .map(<[u8]>::to_vec)
+            .ok_or_else(|| format!("the site holds no page `{name}`"))
+    }
+
+    /// P4 (design-parity C13): the whole site as one ZIP — the export
+    /// card's `site` kind.
+    pub fn design_site_packet(&self, slug: &str) -> Result<Vec<u8>, String> {
+        crate::canvas::site_packet(&self.home, slug)
+    }
+
+    /// P4 (design-parity C12): an export's file, for the download
+    /// link. The name is one path segment — the board's own exports
+    /// directory or the board directory itself (the TSX lands beside
+    /// the board); anything with a separator is refused by
+    /// construction, so the route can never walk out.
+    pub fn design_download(&self, slug: &str, name: &str) -> Result<Vec<u8>, String> {
+        if name.is_empty() || name.contains('/') || name.contains('\\') || name.contains("..") {
+            return Err("a download names one file".to_string());
+        }
+        let board = crate::canvas::canvas_root(&self.home).join(slug);
+        for dir in [board.join("exports"), board.clone()] {
+            let path = dir.join(name);
+            if path.is_file() {
+                return std::fs::read(&path)
+                    .map_err(|error| format!("the file could not be read: {error}"));
+            }
+        }
+        Err(format!("no export `{name}` on board `{slug}`"))
+    }
+
     /// One version's page, for the older-page preview: the stored snapshot
     /// with the tweaks it carried, through the same injection path.
     pub fn design_version_html(
@@ -5691,8 +5728,9 @@ fn cards_from_records(records: &[session::Record]) -> (Vec<Value>, usize) {
                 // and is silent about what it does not hold.
                 cards.push(json!({"type": "skills", "loaded": skills.len()}));
             }
-            session::Record::Memory { shape, facts } => {
-                cards.push(json!({"type": "memory", "shape": shape, "facts": facts.len()}));
+            session::Record::Memory { shape, facts, design } => {
+                cards.push(json!({"type": "memory", "shape": shape, "facts": facts.len(),
+                    "design": design.is_some()}));
             }
             session::Record::Compaction {
                 first_turn,
@@ -7261,6 +7299,185 @@ fn design_models(home: &std::path::Path) -> Vec<Value> {
 
 /// The design writer: one op per edit, the settings writer's shape. Every
 /// op names the board it edits; `create` is the only one without.
+/// K5 (designs-are-project-knowledge): one board's fact, through the
+/// substrate's own writer — the onboarding precedent. The root is the
+/// corpus the process's runs already recall from (home-first, then the
+/// cwd walk — never a fresh home corpus that would shadow the real one,
+/// KI-087's rule in reverse). Best-effort by design: the document write
+/// it rides has already landed, and a corpus that cannot take the fact
+/// must not fail the design write.
+fn remember_board(
+    home: &std::path::Path,
+    slug: &str,
+    project: &crate::canvas::Project,
+    event: &str,
+) {
+    let root = board_fact_root(home);
+    if let Err(error) = remember_board_at(&root, slug, project, event) {
+        eprintln!("fleet: design: the board fact was not written: {error}");
+    }
+}
+
+/// The corpus the board facts resolve to: the one the process's runs
+/// recall from (home-first, then the cwd walk — KI-087's rule). The
+/// pin points it at a fixture instead: any other resolution under test
+/// adopts the repository's real corpus, and a lifecycle write must
+/// never touch the owner's facts.
+fn board_fact_root(home: &std::path::Path) -> std::path::PathBuf {
+    #[cfg(test)]
+    {
+        if let Some(root) = TEST_BOARD_FACT_ROOT.lock().unwrap().clone() {
+            return root;
+        }
+    }
+    let cwd = std::env::current_dir().unwrap_or_else(|_| home.to_path_buf());
+    crate::memory::resolve_root_from(&cwd, Some(home))
+}
+
+#[cfg(test)]
+static TEST_BOARD_FACT_ROOT: std::sync::Mutex<Option<std::path::PathBuf>> =
+    std::sync::Mutex::new(None);
+
+/// The fact writer itself, root first — the pin's seam, so a fixture
+/// corpus is written without touching the owner's. The substrate has no
+/// silent overwrite: a rename or a rebind rides the modify path (the
+/// supersession, which records why), and a delete retires the fact.
+/// The phrases are slug- and project-keyed — never the display name —
+/// so an inherited direction cannot go stale when the board renames.
+fn remember_board_at(
+    root: &std::path::Path,
+    slug: &str,
+    project: &crate::canvas::Project,
+    event: &str,
+) -> Result<String, String> {
+    std::fs::create_dir_all(root)
+        .map_err(|error| format!("could not make {}: {error}", root.display()))?;
+    let memory = crate::memory::Memory::load(root);
+    let facts = crate::memory::load_facts(root);
+    let today = crate::calib::today();
+    let base = format!("design-board-{slug}");
+    let live = facts
+        .iter()
+        .find(|fact| {
+            (fact.name == base
+                || fact
+                    .name
+                    .strip_prefix(&format!("{base}-"))
+                    .is_some_and(|tail| tail.chars().all(|ch| ch.is_ascii_digit())))
+                && fact.superseded_by.trim().is_empty()
+                && !fact.forgotten(&today)
+        })
+        .cloned();
+    let pages = project.frames.len();
+    let binding = project.project.as_deref().unwrap_or("no project folder");
+    let key = project
+        .project
+        .as_deref()
+        .and_then(crate::canvas::project_key);
+    let body = match event {
+        "delete" => format!(
+            "The design board `{}` ({}) was deleted on {}. It held {} page(s), bound to {}.",
+            project.name,
+            slug,
+            crate::calib::stamp(),
+            pages,
+            binding
+        ),
+        "rename" => format!(
+            "The design board `{}` ({}) holds {} page(s) in fleet's canvas, bound to {}. \
+             Renamed on {}.",
+            project.name,
+            slug,
+            pages,
+            binding,
+            crate::calib::stamp()
+        ),
+        _ => format!(
+            "The design board `{}` ({}) holds {} page(s) in fleet's canvas, bound to {}.",
+            project.name, slug, pages, binding
+        ),
+    };
+    let mut phrases = vec![
+        format!("design board {slug}"),
+        "board page design canvas".to_string(),
+    ];
+    if let Some(key) = key {
+        phrases.push(format!("{key} design"));
+        phrases.push(format!("design for {key}"));
+    }
+    let description = format!(
+        "fleet's design board `{}` — its project binding and page count",
+        project.name
+    );
+    let Some(fact) = live else {
+        let request = crate::memory::Remember {
+            name: base,
+            description,
+            fact_type: "project".to_string(),
+            shape: vec!["design".to_string(), "board".to_string()],
+            phrases,
+            missing: Vec::new(),
+            basis: crate::memory::Basis::ConfirmedBy,
+            tier: crate::memory::Tier::Durable,
+            valid_until: String::new(),
+            body,
+        };
+        return memory
+            .remember(&request)
+            .map(|fact| fact.name)
+            .map_err(|error| format!("the board fact could not be written: {error}"));
+    };
+    if event == "delete" {
+        let request = crate::memory::Supersede {
+            name: fact.name.clone(),
+            justification: format!("the board `{slug}` was deleted"),
+            replacement: None,
+            description: fact.description.clone(),
+            body: String::new(),
+            fact_type: None,
+            shape: None,
+            missing: None,
+            valid_until: None,
+        };
+        return memory
+            .supersede(&request, true, None)
+            .map(|_| fact.name)
+            .map_err(|error| format!("the board fact could not be retired: {error}"));
+    }
+    // The modify path: the live fact supersedes into the next versioned
+    // name — the substrate's own chain, one live account per board.
+    let next = {
+        let mut highest = 0usize;
+        for fact in &facts {
+            if let Some(tail) = fact.name.strip_prefix(&format!("{base}-")) {
+                if let Ok(n) = tail.parse::<usize>() {
+                    highest = highest.max(n);
+                } else if fact.name == base {
+                    highest = highest.max(1);
+                }
+            } else if fact.name == base {
+                highest = highest.max(1);
+            }
+        }
+        format!("{base}-{}", highest + 1)
+    };
+    let request = crate::memory::Supersede {
+        name: fact.name.clone(),
+        justification: format!("the board `{slug}`: {event} on {}", crate::calib::stamp()),
+        replacement: Some(next.clone()),
+        description,
+        body,
+        fact_type: None,
+        shape: None,
+        missing: None,
+        valid_until: None,
+    };
+    memory
+        .supersede(&request, true, None)
+        .map(|_| next)
+        .map_err(|error| format!("the board fact could not be modified: {error}"))
+}
+
 fn design_write(home: &std::path::Path, body: &str) -> Result<Value, String> {
     let arguments: Value = serde_json::from_str(body)
         .map_err(|error| format!("the design write is not a JSON object: {error}"))?;
@@ -7285,6 +7502,7 @@ fn design_write(home: &std::path::Path, body: &str) -> Result<Value, String> {
                 .and_then(Value::as_str)
                 .unwrap_or("Untitled board");
             let (slug, project) = crate::canvas::create(home, name)?;
+            remember_board(home, &slug, &project, "create");
             json!({ "slug": slug, "name": project.name })
         }
         "rename" => {
@@ -7294,7 +7512,53 @@ fn design_write(home: &std::path::Path, body: &str) -> Result<Value, String> {
             project.name = name.trim().to_string();
             project.updated = crate::calib::stamp();
             crate::canvas::save(home, &slug, &project)?;
+            remember_board(home, &slug, &project, "rename");
             json!({ "slug": slug, "name": project.name })
+        }
+        // P3 (design-parity C10): the page's set — the membership the
+        // model's `set` argument writes, assignable from the frame bar;
+        // an empty set clears it.
+        "frame-set" => {
+            let slug = slug()?;
+            let id = frame_id()?;
+            let set = text("set")?;
+            crate::canvas::set_frame_set(home, &slug, &id, &set)?;
+            json!({ "id": id, "set": set })
+        }
+        // P2 (design-parity C5): the board deletes whole — the store,
+        // its digest and its fact — after the face's confirm.
+        "board-delete" => {
+            let slug = slug()?;
+            let project = crate::canvas::load(home, &slug)?;
+            crate::canvas::delete_project(home, &slug)?;
+            remember_board(home, &slug, &project, "delete");
+            json!({ "slug": slug })
+        }
+        // K1 + K5: the binding — a board belongs to a project folder.
+        // Setting or clearing it moves the digest (the old key's file is
+        // removed by the op that knows it) and the board's fact.
+        "board-project" => {
+            let slug = slug()?;
+            let path = text("path")?.trim().trim_end_matches('/').to_string();
+            let mut project = crate::canvas::load(home, &slug)?;
+            let old_key = project
+                .project
+                .as_deref()
+                .and_then(crate::canvas::project_key);
+            project.project = if path.is_empty() { None } else { Some(path) };
+            project.updated = crate::calib::stamp();
+            crate::canvas::save(home, &slug, &project)?;
+            let new_key = project
+                .project
+                .as_deref()
+                .and_then(crate::canvas::project_key);
+            if let Some(old) = old_key {
+                if new_key.as_deref() != Some(old.as_str()) {
+                    crate::canvas::remove_digest(home, &old, &slug)?;
+                }
+            }
+            remember_board(home, &slug, &project, "bind");
+            json!({ "slug": slug, "project": project.project })
         }
         "frame-update" => {
             let slug = slug()?;
@@ -7596,14 +7860,34 @@ fn design_export(home: &std::path::Path, body: &str) -> Result<Value, String> {
         .get("project")
         .and_then(Value::as_str)
         .ok_or_else(|| "the export names its project".to_string())?;
-    let frame_id = arguments
-        .get("id")
-        .and_then(Value::as_str)
-        .ok_or_else(|| "the export names its frame".to_string())?;
     let kind = arguments
         .get("kind")
         .and_then(Value::as_str)
         .unwrap_or("html");
+    // P4 (design-parity C13): the site is board-level — no frame — the
+    // whole board as one ZIP beside it, and the URL it serves at.
+    if kind == "site" {
+        let zip = crate::canvas::site_packet(home, slug)?;
+        let dir = crate::canvas::canvas_root(home).join(slug).join("exports");
+        std::fs::create_dir_all(&dir)
+            .map_err(|error| format!("could not make {}: {error}", dir.display()))?;
+        let name = format!("{slug}-site.zip");
+        let path = dir.join(&name);
+        std::fs::write(&path, &zip)
+            .map_err(|error| format!("could not write {}: {error}", path.display()))?;
+        return Ok(json!({
+            "type": "design_export",
+            "kind": "site",
+            "path": path.display().to_string(),
+            "name": name,
+            "bytes": zip.len(),
+            "url": format!("/site/{slug}/"),
+        }));
+    }
+    let frame_id = arguments
+        .get("id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "the export names its frame".to_string())?;
     // The React component: the source's own transform, ported — the page
     // as JSX with its tokens as `:root` and its tweaks as props.
     if kind == "tsx" {
@@ -9967,6 +10251,152 @@ mod tests {
         assert!(task.contains("palette: #1c1a17 #f7f2ea"), "{task}");
         assert!(task.contains("pages the owner picked: /menu"), "{task}");
         assert!(task.contains("Redesign:"), "{task}");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// P4 (design-parity C12): an export downloads through the route's
+    /// writer — the file lands in the reply, and a name with a
+    /// separator (the walk-out attempt) is refused by construction.
+    #[tokio::test]
+    async fn a_download_serves_the_export_and_refuses_a_walk_out() {
+        let home = scratch("download");
+        let (slug, _) = crate::canvas::create(&home, "Down").unwrap();
+        let dir = crate::canvas::canvas_root(&home)
+            .join(&slug)
+            .join("exports");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a-page.html"), b"<!doctype html><html>hi</html>").unwrap();
+        let bridge = Bridge::detached(home.clone(), "m".to_string(), None).0;
+        let bytes = bridge
+            .design_download(&slug, "a-page.html")
+            .expect("the export downloads");
+        assert_eq!(bytes, b"<!doctype html><html>hi</html>");
+        for hostile in ["../project.json", "a/b.html", "..\\x", ""] {
+            let refused = bridge.design_download(&slug, hostile);
+            assert!(refused.is_err(), "{hostile} must be refused");
+        }
+        let missing = bridge.design_download(&slug, "nope.html");
+        assert!(missing.is_err(), "a missing file names itself");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// K1 + K5 (designs-are-project-knowledge): the `board-project` op
+    /// sets the binding, moves the digest to the project-keyed path and
+    /// drops the old key's file; and the lifecycle writes one fact per
+    /// board through the substrate's writer — create, rename and bind
+    /// each move it, carrying the project key in its phrases so recall
+    /// ranks it for a design instruction about that project. The corpus
+    /// is the fixture's own: the pin never touches the owner's.
+    #[test]
+    fn the_board_binding_moves_the_digest_and_the_fact() {
+        let home = scratch("board-fact");
+        let corpus = home.join("corpus");
+        *TEST_BOARD_FACT_ROOT.lock().unwrap() = Some(corpus.clone());
+        // Create through the op: the first fact lands, unbound.
+        let created = design_write(
+            &home,
+            &serde_json::json!({ "op": "create", "name": "Harbor" }).to_string(),
+        )
+        .expect("the create");
+        let slug = created["wrote"]["slug"]
+            .as_str()
+            .expect("the slug")
+            .to_string();
+        // Rename through the op: the fact supersedes forward.
+        design_write(
+            &home,
+            &serde_json::json!({ "op": "rename", "project": slug, "name": "Harbor Site" })
+                .to_string(),
+        )
+        .expect("the rename");
+        // Bind through the op: the digest lands at the project-keyed
+        // path and the fact carries the binding.
+        let answer = design_write(
+            &home,
+            &serde_json::json!({
+                "op": "board-project", "project": slug, "path": "/x/Projects/harbor"
+            })
+            .to_string(),
+        )
+        .expect("the bind");
+        assert_eq!(answer["wrote"]["project"], "/x/Projects/harbor");
+        let digest = crate::canvas::digest_path(&home, "harbor", &slug);
+        assert!(digest.is_file(), "the bind writes the digest");
+        assert!(
+            std::fs::read_to_string(&digest)
+                .unwrap()
+                .contains("# Harbor Site"),
+            "the digest carries the renamed board"
+        );
+        // A rebind to another key moves the digest and drops the old.
+        design_write(
+            &home,
+            &serde_json::json!({
+                "op": "board-project", "project": slug, "path": "/x/Projects/fleet"
+            })
+            .to_string(),
+        )
+        .expect("the rebind");
+        assert!(!digest.exists(), "the old key's digest is removed");
+        assert!(crate::canvas::digest_path(&home, "fleet", &slug).is_file());
+        // The fact chain: create wrote the first, each event superseded
+        // it forward, and exactly one live account remains — carrying
+        // the current body (name and binding). Phrases are slug-keyed,
+        // so the direction cannot go stale when the board renames.
+        let facts = crate::memory::load_facts(&corpus);
+        let base = format!("design-board-{slug}");
+        let first = facts
+            .iter()
+            .find(|fact| fact.name == base)
+            .expect("the created fact");
+        assert_eq!(first.fact_type, "project");
+        assert!(first.phrases.contains(&format!("design board {slug}")));
+        assert!(
+            !first.superseded_by.trim().is_empty(),
+            "the rename stamped the first fact"
+        );
+        let live: Vec<_> = facts
+            .iter()
+            .filter(|fact| {
+                fact.name.starts_with(&base)
+                    && fact.superseded_by.trim().is_empty()
+                    && !fact.forgotten(&crate::calib::today())
+            })
+            .collect();
+        assert_eq!(live.len(), 1, "exactly one live account per board");
+        assert!(live[0].body.contains("Harbor Site"), "{}", live[0].body);
+        assert!(
+            live[0].body.contains("bound to /x/Projects/fleet"),
+            "{}",
+            live[0].body
+        );
+        // P2: the board-delete op removes the store and the digest and
+        // retires the fact — the whole account, in one write.
+        design_write(
+            &home,
+            &serde_json::json!({ "op": "board-delete", "project": slug }).to_string(),
+        )
+        .expect("the delete");
+        assert!(!crate::canvas::exists(&home, &slug), "the board is gone");
+        assert!(
+            !crate::canvas::digest_path(&home, "fleet", &slug).exists(),
+            "the digest is gone with it"
+        );
+        let facts = crate::memory::load_facts(&corpus);
+        let live: Vec<_> = facts
+            .iter()
+            .filter(|fact| {
+                fact.name.starts_with(&base)
+                    && fact.superseded_by.trim().is_empty()
+                    && !fact.forgotten(&crate::calib::today())
+            })
+            .collect();
+        assert!(
+            live.is_empty(),
+            "delete retires the board's fact: {:?}",
+            live.iter().map(|fact| &fact.name).collect::<Vec<_>>()
+        );
+        *TEST_BOARD_FACT_ROOT.lock().unwrap() = None;
         let _ = std::fs::remove_dir_all(&home);
     }
 

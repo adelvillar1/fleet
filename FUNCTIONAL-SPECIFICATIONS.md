@@ -71,11 +71,26 @@ sliders that change the page as you drag — no model call), **review**
 with restore, **export** (the page, its design tokens, a hand-off
 packet, a PNG), copy, duplicate, open, delete. Drop a **pin** anywhere on
 a page to say what is wrong; a pin's thread carries replies and **fix
-this pin**, which refines exactly that page as a new version. Below the
-board, the **brief**: write what to design, pick a style direction, press
-generate, and pages land on the board as the run works — the run is an
-ordinary Fleet run, visible in the work list, and any run can put a page
-here with the `frame` tool.
+this pin**, which refines exactly that page as a new version. The composer sits in the
+**center frame** — a floating stack over the canvas with the board's
+log (collapsed by default) and the approval seat — and its **focus**
+says what a request is about before a word is typed: no page selected,
+the request is global to the board; a page selected, the focus is that
+page (the mode defaults to refine and the wire carries its frame).
+The head renames the board (double-click) and deletes it behind a
+confirm; the **save chip** beside them reads `saving…`, `saved` or the
+refusal by name. Boards group in the rail by the project they belong
+to, and every save writes the board's digest for that project's
+corpus. In the composer, the model chips are a **multi-select**: one
+pressed is one pinned run; several pressed fan the brief out — one run
+per model, each landing its own pages. Below the board, the **brief**:
+write what to design, pick a style direction, press generate, and
+pages land on the board as the run works — the run is an ordinary
+Fleet run, visible in the work list, and any run can put a page here
+with the `frame` tool. Exports **download** from the card, and the
+board **hosts locally** at `/site/<slug>/` — the pages served live
+with their links rewritten, network-dead — with the whole site as one
+ZIP beside it.
 
 **Work — the work list.** Every conversation and background run under
 this home, grouped by what needs the owner rather than by project:

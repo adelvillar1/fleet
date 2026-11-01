@@ -249,6 +249,17 @@ ported: the model must be able to tell a scheduled turn from a user
 sitting at the keyboard, and the log must reconstruct the turn exactly
 (hard rule 5), so the framing rides the task itself.
 
+**The corpus-refresh jobs.** Each project's scheduled refresh carries
+its sources in the task itself (the manifest is the declaration, and
+`seed_missing` reconciles an existing job's wording to the manifest's
+— the KI-277 path): the project's docs tree, its root `.md` files,
+and — since the 2026-11-01 designs-are-project-knowledge plan — the
+**digests of the design boards bound to that project**
+(`<FLEET_HOME>/canvas/digests/<project>/*.md`), the deterministic
+account every board save writes. The embedding and the document
+therefore move together, and a board joins its project's corpus
+without a second pipeline.
+
 **The auto-approve policy.** Nobody is there to approve a tool call in
 an unattended run, and an unattended run must not silently auto-approve a
 dangerous tool. The job's `auto_approve` decides:
