@@ -442,8 +442,10 @@ pub struct CronOptions {
 /// Options for `fleet mcp`: the MCP server registry's surface. The bare
 /// command lists the configured servers as cards; the subcommands mutate
 /// the registry by name, `scan` reads the machine's foreign harness
-/// configs, `import` writes one discovered entry into the registry, and
-/// `health` probes every configured server live.
+/// configs, `import` writes one discovered entry into the registry,
+/// `health` probes every configured server live, and `call` drives one
+/// named `tools/call` through the house's spawn chain — the job-facing
+/// route (KI-369).
 #[derive(Debug, PartialEq, Eq)]
 pub struct McpOptions {
     pub action: McpAction,
@@ -470,6 +472,16 @@ pub enum McpAction {
     /// report, tear down. The outcome rides `last_probe` in the
     /// registry, so the cards carry it.
     Health,
+    /// One named `tools/call` through the house's spawn chain: an
+    /// enabled registry entry first, a vendored lane second, the cold
+    /// handshake window and a rebuild-sized call budget. The reply
+    /// prints to stdout — a scheduled task's whole driver, one
+    /// command (KI-369).
+    Call {
+        server: String,
+        tool: String,
+        arguments: String,
+    },
 }
 
 /// Options for `fleet tools`: the tool surface's own card, the usage
@@ -663,6 +675,15 @@ usage:
                                 fires on its own; --force folds one that
                                 is still under it
   fleet lanes                    probe the four vendored lanes' health
+  fleet mcp call <server> <tool> '<args-json>'
+                                one named tools/call through the house's
+                                spawn chain: an enabled registry entry
+                                first, a vendored lane second — the cold
+                                handshake window (300s) and a
+                                rebuild-sized call budget, the reply on
+                                stdout. The scheduled jobs' driver: one
+                                command instead of a hand-written stdio
+                                session (KI-369)
   fleet tools [scan|advise|audit] [--sessions N] [<session>]
                                 the eight built-in tools; scan counts the
                                 last N sessions' calls, errors, unknown
@@ -1771,8 +1792,25 @@ fn parse_mcp(args: &[String]) -> Result<Command, String> {
                 name: name("remove")?,
             },
         })),
+        "call" => {
+            let [server, tool, arguments] = rest else {
+                return Err(
+                    "mcp call takes <server> <tool> '<args-json>' (see `fleet help`)".to_string(),
+                );
+            };
+            if server.starts_with('-') {
+                return Err(format!("`{server}` takes no value here; see `fleet help`"));
+            }
+            Ok(Command::Mcp(McpOptions {
+                action: McpAction::Call {
+                    server: server.clone(),
+                    tool: tool.clone(),
+                    arguments: arguments.clone(),
+                },
+            }))
+        }
         other => Err(format!(
-            "unknown mcp subcommand `{other}`; the verbs are list (bare), scan, import, enable, disable, remove, health"
+            "unknown mcp subcommand `{other}`; the verbs are list (bare), scan, import, enable, disable, remove, health, call"
         )),
     }
 }
@@ -3385,6 +3423,35 @@ mod tests {
         assert!(parse(&args(&["ki"])).is_err());
         assert!(parse(&args(&["ki", "append", "--json"])).is_err());
         assert_eq!(parse(&args(&["ki", "--help"])).unwrap(), Command::Help);
+    }
+
+    #[test]
+    fn mcp_parses_the_call_verb_and_needs_its_three_words() {
+        // The job-facing route (O7/KI-369): one server, one tool, the
+        // arguments as JSON — the whole driver in three words.
+        assert_eq!(
+            parse(&args(&[
+                "mcp",
+                "call",
+                "blend1",
+                "refresh",
+                r#"{"project":"x"}"#
+            ]))
+            .unwrap(),
+            Command::Mcp(McpOptions {
+                action: McpAction::Call {
+                    server: "blend1".to_string(),
+                    tool: "refresh".to_string(),
+                    arguments: r#"{"project":"x"}"#.to_string(),
+                },
+            })
+        );
+        // Two words is not a call — the args-json is the third.
+        assert!(parse(&args(&["mcp", "call", "blend1", "refresh"])).is_err());
+        // A flag where the server belongs is a usage error, not a
+        // server named `--json`.
+        assert!(parse(&args(&["mcp", "call", "--json", "x", "{}"])).is_err());
+        assert_eq!(parse(&args(&["mcp", "--help"])).unwrap(), Command::Help);
     }
 
     #[test]

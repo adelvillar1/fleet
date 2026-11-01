@@ -3516,6 +3516,71 @@ async fn the_client_round_trips_a_fake_server_and_ignores_strays() {
     server.close().await.expect("clean teardown");
 }
 
+/// KI-369/O7's pin: the job-facing spawn route end to end. A registry
+/// entry resolves (enabled; disabled refuses by name; an unknown name
+/// says both places it looked), the child spawns through the same spec
+/// the probe uses, the handshake gets its cold window, and the tool's
+/// text comes back — the whole driver a scheduled task used to
+/// re-derive by hand, one command. The scripted fake is the
+/// deterministic double the class rule allows: the suite spawns and
+/// owns it.
+#[tokio::test]
+async fn call_named_drives_a_registry_server_end_to_end() {
+    let home = temp_home("mcp-call");
+    let fake = FakeMcp::start(vec![
+        serde_json::json!({ "reply": initialize_reply() }),
+        // The notification between initialize and the call is never
+        // answered AND never consumes an entry (the mock skips id-less
+        // lines) — so the script is exactly two entries: the handshake
+        // and the call. The call's id is the client's second: 2.
+        serde_json::json!({
+            "reply": {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "result": {
+                    "content": [{ "type": "text", "text": "{\"action\":\"unchanged\",\"items\":12}" }],
+                    "isError": false,
+                },
+            },
+        }),
+    ]);
+    let script = fake.scratch.join("script.jsonl");
+    let registry = serde_json::json!({
+        "servers": {
+            "fake": {
+                "program": env!("CARGO_BIN_EXE_mock-mcp"),
+                "args": [script.to_string_lossy()],
+            },
+            "off": {
+                "program": env!("CARGO_BIN_EXE_mock-mcp"),
+                "args": [script.to_string_lossy()],
+                "enabled": false,
+            },
+        }
+    });
+    std::fs::write(home.join("mcp.json"), registry.to_string()).unwrap();
+
+    let reply = fleet::mcp_registry::call_named(&home, "fake", "refresh", "{}")
+        .await
+        .expect("the call lands");
+    assert!(reply.contains("\"action\":\"unchanged\""), "{reply}");
+
+    let unknown = fleet::mcp_registry::call_named(&home, "nowhere", "x", "{}")
+        .await
+        .unwrap_err();
+    assert!(unknown.contains("not an enabled server"), "{unknown}");
+
+    let disabled = fleet::mcp_registry::call_named(&home, "off", "x", "{}")
+        .await
+        .unwrap_err();
+    assert!(disabled.contains("configured but disabled"), "{disabled}");
+
+    let bad_json = fleet::mcp_registry::call_named(&home, "fake", "x", "{not json")
+        .await
+        .unwrap_err();
+    assert!(bad_json.contains("not valid JSON"), "{bad_json}");
+}
+
 /// A child that dies mid-session fails the pending wait — an error, never
 /// a hang.
 #[tokio::test]
@@ -7566,7 +7631,7 @@ async fn a_runs_request_carries_the_assembled_memory_block() {
         .iter()
         .find(|record| matches!(record, Record::Memory { .. }))
     {
-        Some(Record::Memory { shape, facts }) => {
+        Some(Record::Memory { shape, facts, .. }) => {
             assert_eq!(shape, "deploy");
             assert_eq!(facts, &vec!["identity".to_string(), "top".to_string()]);
         }
