@@ -14616,7 +14616,22 @@
       marks: pinNow ? [] : [['current', 'own', 'the walk decides']],
       card: function () { return modelSections(null); }
     })];
-    ((read.catalog && read.catalog.models) || []).forEach(function (entry) {
+    var catalogModels = (read.catalog && read.catalog.models) || [];
+    // The picker's order is the answer's order: the model in use first,
+    // then every model a key already reaches, then the rest in the
+    // roster's own order. A fresh home's twenty `no key` rows must not
+    // bury the one the owner can actually pick.
+    var ranked = catalogModels.map(function (entry, index) {
+      return { entry: entry, index: index };
+    }).sort(function (a, b) {
+      var mine = (pinNow === b.entry.value) - (pinNow === a.entry.value);
+      if (mine !== 0) return mine;
+      var reach = (b.entry.key_present === true) - (a.entry.key_present === true);
+      if (reach !== 0) return reach;
+      return a.index - b.index;
+    });
+    ranked.forEach(function (rankedOne) {
+      var entry = rankedOne.entry;
       var pair = entry.value;
       var current = pinNow === pair;
       modelRows.push(cfgItem({
@@ -14699,9 +14714,11 @@
             'an endpoint is needed — https://the-provider/v1');
           return;
         }
+        var id = name.value.trim() || providerIdFromUrl(base);
         var entry = {
-          id: name.value.trim() || providerIdFromUrl(base),
+          id: id,
           base_url: base,
+          key_env: id.toUpperCase().replace(/[^A-Z0-9]+/g, '_') + '_API_KEY',
           models: [],
           enabled: true,
           key_required: true

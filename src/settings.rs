@@ -1694,6 +1694,13 @@ mod router_tests {
             .map(|model| model.as_str().unwrap())
             .collect();
         assert_eq!(models, vec!["discovered-a", "discovered-b"]);
+        // The entry names the variable its key lives in: a provider with
+        // no key_env is refused by the roster load, which empties every
+        // list that reads it.
+        assert_eq!(
+            entry["key_env"], "MYPROVIDER_API_KEY",
+            "the entry names where the key lives"
+        );
         // And the secret is where the store said it is.
         let (present, source) = secret_state(&home, "MYPROVIDER_API_KEY");
         assert!(present);
@@ -2782,6 +2789,23 @@ pub fn set_provider_with_key_with(
         .to_string();
     let mut discovery = None;
     let mut amended = value.clone();
+    // A new entry that names no key variable is unfundable AND
+    // unloadable: the roster refuses an unknown provider with no
+    // key_env, which would empty every list that reads it. The same
+    // name the store used is written into the entry.
+    if amended
+        .get("key_env")
+        .and_then(|name| name.as_str())
+        .map(|name| name.trim().is_empty())
+        .unwrap_or(true)
+    {
+        if let Some(object) = amended.as_object_mut() {
+            object.insert(
+                "key_env".to_string(),
+                serde_json::Value::String(key_env.clone()),
+            );
+        }
+    }
     if !base_url.is_empty() {
         match discover_provider_models(&base_url, key_value.as_deref()) {
             Ok((models, discovered)) => {
