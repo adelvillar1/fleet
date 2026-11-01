@@ -2129,6 +2129,43 @@ impl Bridge {
         ))
     }
 
+    /// P4 (design-parity C13): one file of the board's live site — the
+    /// same build the site ZIP carries, looked up by the parts list's
+    /// own vocabulary (a name outside it 404s by construction).
+    pub fn design_site_page(&self, slug: &str, name: &str) -> Result<Vec<u8>, String> {
+        let parts = crate::canvas::site_parts(&self.home, slug)?;
+        let name = if name.is_empty() { "index.html" } else { name };
+        crate::canvas::site_file(&parts, name)
+            .map(<[u8]>::to_vec)
+            .ok_or_else(|| format!("the site holds no page `{name}`"))
+    }
+
+    /// P4 (design-parity C13): the whole site as one ZIP — the export
+    /// card's `site` kind.
+    pub fn design_site_packet(&self, slug: &str) -> Result<Vec<u8>, String> {
+        crate::canvas::site_packet(&self.home, slug)
+    }
+
+    /// P4 (design-parity C12): an export's file, for the download
+    /// link. The name is one path segment — the board's own exports
+    /// directory or the board directory itself (the TSX lands beside
+    /// the board); anything with a separator is refused by
+    /// construction, so the route can never walk out.
+    pub fn design_download(&self, slug: &str, name: &str) -> Result<Vec<u8>, String> {
+        if name.is_empty() || name.contains('/') || name.contains('\\') || name.contains("..") {
+            return Err("a download names one file".to_string());
+        }
+        let board = crate::canvas::canvas_root(&self.home).join(slug);
+        for dir in [board.join("exports"), board.clone()] {
+            let path = dir.join(name);
+            if path.is_file() {
+                return std::fs::read(&path)
+                    .map_err(|error| format!("the file could not be read: {error}"));
+            }
+        }
+        Err(format!("no export `{name}` on board `{slug}`"))
+    }
+
     /// One version's page, for the older-page preview: the stored snapshot
     /// with the tweaks it carried, through the same injection path.
     pub fn design_version_html(
@@ -7823,14 +7860,34 @@ fn design_export(home: &std::path::Path, body: &str) -> Result<Value, String> {
         .get("project")
         .and_then(Value::as_str)
         .ok_or_else(|| "the export names its project".to_string())?;
-    let frame_id = arguments
-        .get("id")
-        .and_then(Value::as_str)
-        .ok_or_else(|| "the export names its frame".to_string())?;
     let kind = arguments
         .get("kind")
         .and_then(Value::as_str)
         .unwrap_or("html");
+    // P4 (design-parity C13): the site is board-level — no frame — the
+    // whole board as one ZIP beside it, and the URL it serves at.
+    if kind == "site" {
+        let zip = crate::canvas::site_packet(home, slug)?;
+        let dir = crate::canvas::canvas_root(home).join(slug).join("exports");
+        std::fs::create_dir_all(&dir)
+            .map_err(|error| format!("could not make {}: {error}", dir.display()))?;
+        let name = format!("{slug}-site.zip");
+        let path = dir.join(&name);
+        std::fs::write(&path, &zip)
+            .map_err(|error| format!("could not write {}: {error}", path.display()))?;
+        return Ok(json!({
+            "type": "design_export",
+            "kind": "site",
+            "path": path.display().to_string(),
+            "name": name,
+            "bytes": zip.len(),
+            "url": format!("/site/{slug}/"),
+        }));
+    }
+    let frame_id = arguments
+        .get("id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "the export names its frame".to_string())?;
     // The React component: the source's own transform, ported — the page
     // as JSX with its tokens as `:root` and its tweaks as props.
     if kind == "tsx" {
@@ -10194,6 +10251,32 @@ mod tests {
         assert!(task.contains("palette: #1c1a17 #f7f2ea"), "{task}");
         assert!(task.contains("pages the owner picked: /menu"), "{task}");
         assert!(task.contains("Redesign:"), "{task}");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// P4 (design-parity C12): an export downloads through the route's
+    /// writer — the file lands in the reply, and a name with a
+    /// separator (the walk-out attempt) is refused by construction.
+    #[tokio::test]
+    async fn a_download_serves_the_export_and_refuses_a_walk_out() {
+        let home = scratch("download");
+        let (slug, _) = crate::canvas::create(&home, "Down").unwrap();
+        let dir = crate::canvas::canvas_root(&home)
+            .join(&slug)
+            .join("exports");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a-page.html"), b"<!doctype html><html>hi</html>").unwrap();
+        let bridge = Bridge::detached(home.clone(), "m".to_string(), None).0;
+        let bytes = bridge
+            .design_download(&slug, "a-page.html")
+            .expect("the export downloads");
+        assert_eq!(bytes, b"<!doctype html><html>hi</html>");
+        for hostile in ["../project.json", "a/b.html", "..\\x", ""] {
+            let refused = bridge.design_download(&slug, hostile);
+            assert!(refused.is_err(), "{hostile} must be refused");
+        }
+        let missing = bridge.design_download(&slug, "nope.html");
+        assert!(missing.is_err(), "a missing file names itself");
         let _ = std::fs::remove_dir_all(&home);
     }
 

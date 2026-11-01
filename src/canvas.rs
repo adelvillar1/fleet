@@ -2797,6 +2797,129 @@ pub fn selection_packet(
     frames_packet(slug, "selection", &frames, pngs)
 }
 
+// --- the local host ---------------------------------------------------------
+//
+// P4 (design-parity C13): the board hosts on this machine — the same
+// build serves the route and zips the export, so a served page and a
+// downloaded site are the same bytes. The host is live, not frozen:
+// the board file is the truth, as everywhere else.
+
+/// The site route's isolation: the page runs — its own inline script
+/// and style — but every network hop is refused, so a generated page
+/// on the face's origin can never reach the face's API.
+pub const SITE_CSP: &str = "default-src 'none'; style-src 'unsafe-inline'; \
+     script-src 'unsafe-inline'; img-src data: blob:; connect-src 'none'; \
+     frame-src 'none'; form-action 'none'";
+
+/// The board as a small site: an index page listing every page, each
+/// page with its tweaks injected and its internal links rewritten to
+/// the site's slugs, the token sheet, and the manifest.
+pub fn site_parts(home: &Path, slug: &str) -> Result<Vec<(String, Vec<u8>)>, String> {
+    let project = load(home, slug)?;
+    if project.frames.is_empty() {
+        return Err(format!("the board `{slug}` holds no pages to host"));
+    }
+    let frames: Vec<&Frame> = project.frames.iter().collect();
+    let slugs = page_set_slugs(&frames);
+    let report = coherence(&frames);
+    let mut parts: Vec<(String, Vec<u8>)> = Vec::new();
+    let mut manifest_pages: Vec<Value> = Vec::new();
+    let mut tokens_css = String::from("/* the site's tokens, as the pages declare them */\n");
+    let mut tokens_json: BTreeMap<String, Value> = BTreeMap::new();
+    for (frame, page) in frames.iter().zip(slugs.iter()) {
+        let html = inject_tweaks(&frame.html, &frame.tweak_spec, &frame.tweak_values);
+        let html = rewrite_page_links(&html, &slugs, &frame.name);
+        parts.push((format!("{}.html", page.slug), html.into_bytes()));
+        let tokens = extract_root_tokens(&frame.html);
+        tokens_css.push_str(&format!(
+            "/* {}.html */\n:root {{\n{}\n}}\n",
+            page.slug,
+            tokens
+                .iter()
+                .map(|(token, value)| format!("  --{token}: {value};"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ));
+        tokens_json.insert(
+            page.slug.clone(),
+            Value::Object(
+                tokens
+                    .iter()
+                    .map(|(token, value)| (token.clone(), Value::String(value.clone())))
+                    .collect(),
+            ),
+        );
+        manifest_pages.push(serde_json::json!({
+            "file": format!("{}.html", page.slug),
+            "name": frame.name,
+            "id": frame.id,
+            "size": format!("{}\u{00d7}{}", frame.w, frame.h),
+            "tokens": tokens.len(),
+        }));
+    }
+    let mut index = format!(
+        "<!doctype html><html><head><meta charset=\"utf-8\"><title>{name}</title>\
+         <style>body{{font-family:system-ui,sans-serif;background:#0b0e14;color:#e6e9ef;\
+         margin:3rem auto;max-width:42rem;line-height:1.6;padding:0 1rem}}\
+         a{{color:#8ab4ff}}h1{{font-weight:600}}</style></head>\
+         <body><h1>{name}</h1><ul>\n",
+        name = project.name
+    );
+    for page in &slugs {
+        index.push_str(&format!(
+            "<li><a href=\"{0}.html\">{1}</a></li>\n",
+            page.slug, page.name
+        ));
+    }
+    index.push_str(
+        "</ul><p>hosted from fleet \u{2014} the board file is the truth.</p></body></html>\n",
+    );
+    parts.insert(0, ("index.html".to_string(), index.into_bytes()));
+    parts.push(("tokens.css".to_string(), tokens_css.into_bytes()));
+    parts.push((
+        "tokens.json".to_string(),
+        serde_json::to_vec_pretty(&tokens_json)
+            .map_err(|error| format!("the tokens do not serialize: {error}"))?,
+    ));
+    let manifest = serde_json::json!({
+        "board": slug,
+        "site": true,
+        "pages": manifest_pages,
+        "shared_tokens": report.shared,
+        "coherence": {
+            "ok": report.ok(),
+            "missing": report.missing,
+            "broken": report.broken,
+            "duplicates": report.duplicates,
+        },
+        "created": crate::calib::stamp(),
+    });
+    parts.push((
+        "manifest.json".to_string(),
+        serde_json::to_vec_pretty(&manifest)
+            .map_err(|error| format!("the manifest does not serialize: {error}"))?,
+    ));
+    Ok(parts)
+}
+
+/// The site as one ZIP — the export card's `site` kind: index, pages,
+/// tokens and manifest, FILE-mode relative so `index.html` opens from
+/// a disk download the same as from the route.
+pub fn site_packet(home: &Path, slug: &str) -> Result<Vec<u8>, String> {
+    let parts = site_parts(home, slug)?;
+    Ok(crate::deck::zip_parts(&parts))
+}
+
+/// One site file by its name — the route's lookup. A name that is not
+/// a single path segment is refused by construction: the parts list is
+/// the only vocabulary the lookup accepts.
+pub fn site_file<'a>(parts: &'a [(String, Vec<u8>)], name: &str) -> Option<&'a [u8]> {
+    parts
+        .iter()
+        .find(|(file, _)| file == name)
+        .map(|(_, bytes)| bytes.as_slice())
+}
+
 fn frames_packet(
     slug: &str,
     set: &str,
@@ -5279,6 +5402,58 @@ h1{font-size:64px;border-radius:2px}
         assert!(!digest.exists(), "the board's digest is gone");
         let refused = delete_project(&home, &slug).expect_err("a missing board refuses");
         assert!(refused.contains(&slug), "{refused}");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// P4 (design-parity C13): the local host's build — an index page
+    /// listing every page, the pages with tweaks injected and their
+    /// links rewritten to the site's slugs, the token sheet and the
+    /// manifest — and the CSP that lets the page run while every
+    /// network hop is refused. The route and the ZIP read the same
+    /// parts, so a served page and a downloaded site are the same
+    /// bytes.
+    #[test]
+    fn the_site_builds_from_the_board_and_stays_network_dead() {
+        let home = scratch("site");
+        let (slug, _) = create(&home, "Harbor site").unwrap();
+        let page_one = "<!doctype html><html><head><style>:root{--ink:#111}</style></head>\
+             <body><h1>home</h1><a href=\"pricing\">pricing</a></body></html>";
+        let page_two =
+            "<!doctype html><html><head><style>:root{--ink:#111;--accent:#3b6cf6}</style>\
+             </head><body><h1>pricing</h1></body></html>";
+        put_frame(&home, &slug, "Home", page_one, None, None, "m").unwrap();
+        put_frame(&home, &slug, "Pricing", page_two, None, None, "m").unwrap();
+        let parts = site_parts(&home, &slug).expect("the site");
+        let names: Vec<&str> = parts.iter().map(|(name, _)| name.as_str()).collect();
+        assert!(
+            names.contains(&"index.html")
+                && names.contains(&"tokens.css")
+                && names.contains(&"manifest.json")
+                && names.len() >= 5,
+            "{names:?}"
+        );
+        let index = String::from_utf8(site_file(&parts, "index.html").unwrap().to_vec()).unwrap();
+        assert!(
+            index.contains("Home") && index.contains("Pricing"),
+            "{index}"
+        );
+        let home_page =
+            String::from_utf8(site_file(&parts, "home.html").unwrap().to_vec()).unwrap();
+        // The internal link points at the site's own slug, not the
+        // frame's raw name.
+        assert!(home_page.contains("href=\"pricing.html\""), "{home_page}");
+        // The route's isolation: the page runs, the network does not.
+        assert!(SITE_CSP.contains("connect-src 'none'"), "{SITE_CSP}");
+        assert!(
+            SITE_CSP.contains("script-src 'unsafe-inline'"),
+            "{SITE_CSP}"
+        );
+        assert!(
+            site_file(&parts, "../project.json").is_none(),
+            "no walk out"
+        );
+        let zip = site_packet(&home, &slug).expect("the packet");
+        assert!(zip.len() > 100, "the zip carries the site");
         let _ = std::fs::remove_dir_all(&home);
     }
 

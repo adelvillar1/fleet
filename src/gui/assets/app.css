@@ -8011,6 +8011,15 @@ body[data-work="collapsed"] .work-list { display: none; }
   min-width: 80px;
 }
 .canvas-rename:focus { outline: none; }
+/* P4 (design-parity C11): the save chip — the one writer's lifecycle
+   in the head, in the words the write itself answers in. */
+.design-save {
+  font-size: var(--text-xs);
+  color: var(--dsw-alias-ink-tertiary);
+}
+.design-save[data-state="saving"] { color: var(--dsw-alias-ink-secondary); }
+.design-save[data-state="saved"] { color: var(--dsw-alias-ok); }
+.design-save[data-state="failed"] { color: var(--dsw-alias-warn); }
 .design-chat-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
 .design-chat-log { display: flex; flex-direction: column; gap: var(--space-2); overflow-y: auto; min-height: 0; }
 .design-turn {

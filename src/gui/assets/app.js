@@ -670,6 +670,7 @@
     designEyebrow: document.getElementById('design-eyebrow'),
     designNew: document.getElementById('design-new'),
     designDelete: document.getElementById('design-delete'),
+    designSave: document.getElementById('design-save'),
     panelLater: document.getElementById('panel-later'),
     laterTitle: document.getElementById('later-title'),
     laterNote: document.getElementById('later-note'),
@@ -16085,24 +16086,38 @@
     }).catch(function () { /* the arrival repaint keeps the last document */ });
   }
 
+  /// P4 (design-parity C11): the save chip — the one writer's
+  /// lifecycle in the head: saving… while a write is in flight, saved
+  /// on its ack, and the refusal by name.
+  function designSaveState(text, state) {
+    if (!el.designSave) return;
+    el.designSave.textContent = text;
+    el.designSave.dataset.state = state || 'idle';
+  }
+
   function designWrite(op, fields, done) {
     var body = { op: op };
     var key;
     for (key in fields) if (Object.prototype.hasOwnProperty.call(fields, key)) body[key] = fields[key];
+    designSaveState('saving\u2026', 'saving');
     // `post` resolves the parsed exchange — {status, body} — not a fetch
     // Response: the body IS the answer, and there is no second read.
     return post('/api/design', body).then(function (reply) {
       var answer = reply.body || {};
       if (reply.status !== 200) {
-        notice('the canvas refused', answer.error || 'the write did not land');
+        var reason = answer.error || 'the write did not land';
+        designSaveState('save failed: ' + reason, 'failed');
+        notice('the canvas refused', reason);
         return null;
       }
       face.designReadAt = 0;
       return readDesign(true).then(function () {
+        designSaveState('saved', 'saved');
         if (done) done(answer);
         return answer;
       });
     }).catch(function () {
+      designSaveState('save failed: the canvas is unreachable', 'failed');
       notice('the canvas is unreachable', 'the write did not leave the page');
       return null;
     });
@@ -17077,19 +17092,45 @@
   function designExportCard(frame) {
     var board = designBoard();
     var actions = node('div', 'canvas-inline');
+    // P4 (design-parity C12): every export offers its file as a
+    // download — the link rides the row the moment the write lands.
+    var downloads = node('div', 'canvas-inline');
+    downloads.dataset.act = 'design-downloads';
     [['html', 'the page'], ['tokens.css', 'the tokens'], ['tokens.json', 'the tokens, JSON'],
-      ['zip', 'the packet'], ['png', 'the PNG']].forEach(function (pair) {
+      ['zip', 'the packet'], ['png', 'the PNG'],
+      // P4 (design-parity C13): the whole board as a site — the ZIP,
+      // and the URL the local host serves it at.
+      ['site', 'the site (zip)']].forEach(function (pair) {
       var button = node('button', 'replay-button', pair[1]);
       button.type = 'button';
       button.dataset.act = 'design-export-' + pair[0].replace('.', '-');
       button.addEventListener('click', function () {
-        post('/api/design/export', {
-          project: board.slug, id: frame.id, kind: pair[0],
-          origin: window.location.origin || 'http://127.0.0.1:3080'
-        }).then(function (reply) {
+        var body = { project: board.slug, kind: pair[0],
+          origin: window.location.origin || 'http://127.0.0.1:3080' };
+        if (pair[0] !== 'site') body.id = frame.id;
+        post('/api/design/export', body).then(function (reply) {
           var answer = reply.body || {};
           if (reply.status === 200) {
             notice('the export landed', answer.path);
+            var name = answer.name ||
+              String(answer.path || '').split('/').pop();
+            if (name) {
+              var link = node('a', 'replay-button',
+                'download ' + name);
+              link.href = '/api/design/download/' +
+                encodeURIComponent(board.slug) + '/' +
+                encodeURIComponent(name);
+              link.setAttribute('download', name);
+              link.dataset.act = 'design-download-' + name;
+              downloads.appendChild(link);
+            }
+            if (answer.url) {
+              var host = node('a', 'replay-button', 'open the site');
+              host.href = answer.url;
+              host.target = '_blank';
+              host.dataset.act = 'design-open-site';
+              downloads.appendChild(host);
+            }
           } else {
             notice('the export was refused', answer.error || 'no reason given');
           }
@@ -17099,8 +17140,9 @@
     });
     openDrawer(frame.name + ' \u00b7 export', [
       ['the exports', actions],
+      ['the downloads', downloads],
       ['where they land', node('p', 'derivation',
-        'beside the board, under canvas/' + board.slug + '/exports/ \u2014 the path comes back in the notice')],
+        'beside the board, under canvas/' + board.slug + '/exports/ \u2014 the download link carries the file, and the site is served live at /site/' + board.slug + '/')],
       ['the PNG', node('p', 'derivation',
         'the browser lane renders the served page and captures it \u2014 one press; the path comes back in the notice')]
     ]);

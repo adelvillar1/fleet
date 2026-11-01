@@ -393,6 +393,14 @@ function boot(options) {
             json: () => Promise.resolve({ type: 'design_write', op: 'chat', wrote: { turn: { role: sent.role } } }),
           });
         }
+        // A write the writer refuses: the save chip shows the failure
+        // by name (P4, C11).
+        if (sent.op === 'frame-set' && sent.set === '__refuse__') {
+          return Promise.resolve({
+            status: 409,
+            json: () => Promise.resolve({ error: 'that set does not exist' }),
+          });
+        }
         return Promise.resolve({
           status: 200,
           json: () => Promise.resolve({ type: 'design_write', op: 'x', wrote: { slug: 'sample-board' } }),
@@ -431,6 +439,18 @@ function boot(options) {
       });
     }
     if (pathOnly === '/api/design/export') {
+      let sent = {};
+      try { sent = JSON.parse(init.body || '{}'); } catch (e) {}
+      if (sent.kind === 'site') {
+        return Promise.resolve({
+          status: 200,
+          json: () => Promise.resolve({
+            type: 'design_export', kind: 'site',
+            path: '/tmp/sample-board-site.zip', name: 'sample-board-site.zip',
+            bytes: 42, url: '/site/sample-board/',
+          }),
+        });
+      }
       return Promise.resolve({
         status: 200,
         json: () => Promise.resolve({ type: 'design_export', kind: 'html', path: '/tmp/frame.html', bytes: 12 }),
@@ -4732,6 +4752,77 @@ async function theDesignCanvasCarriesItsFramesAndWritesGeometry() {
     check('C10 the set change writes through frame-set',
       !!membership && String(membership.body).includes('"set":""'),
       membership ? String(membership.body).slice(0, 130) : 'no write');
+  }
+
+  // P4 (design-parity C11): every gesture shows its save — the chip
+  // reads saving… while the write is in flight (observed
+  // synchronously, before the flush resolves it), saved on its ack,
+  // and the refusal by name when the writer says no.
+  page.fireOn('design-delete', 'click');
+  const savingNow = String(page.text('design-save') || '');
+  check('C11 the chip reads saving while the write is in flight',
+    savingNow.includes('saving'), savingNow);
+  await flush(80);
+  const savedNow = String(page.text('design-save') || '');
+  check('C11 the chip reads saved on the ack',
+    savedNow === 'saved' && page.IDS['design-save'].dataset.state === 'saved',
+    savedNow);
+  const refuseSet = page.rows('.canvas-frame')[0];
+  const refusePick = refuseSet ?
+    refuseSet.find((one) => one.dataset &&
+      one.dataset.act === 'design-set-f-hero')[0] : null;
+  if (refusePick) {
+    refusePick.value = '__refuse__';
+    refusePick.fire('change');
+    await flush(60);
+    const failedNow = String(page.text('design-save') || '');
+    check('C11 a refused write reads save failed with the reason',
+      failedNow.includes('save failed') && failedNow.includes('that set does not exist') &&
+        page.IDS['design-save'].dataset.state === 'failed',
+      failedNow);
+  } else {
+    check('C11 a refused write reads save failed with the reason',
+      false, 'no picker to refuse with');
+  }
+
+  // P4 (design-parity C12 + C13): every export offers its file as a
+  // download, and the export card carries the site — the ZIP and the
+  // URL the local host serves at.
+  const exportAct = page.rows('.canvas-frame')[0];
+  byAct(exportAct, 'export-hero').click();
+  await flush(30);
+  const exportPane = page.el('dock-object-body');
+  const siteButton = exportPane ?
+    exportPane.find((one) => one.dataset && one.dataset.act === 'design-export-site')[0] : null;
+  check('C13 the export card carries the site kind',
+    !!siteButton, siteButton ? 'site offered' : 'no site button');
+  const htmlButton = exportPane ?
+    exportPane.find((one) => one.dataset && one.dataset.act === 'design-export-html')[0] : null;
+  if (htmlButton) {
+    htmlButton.click();
+    await flush(60);
+    const downloads = exportPane.find((one) => one.dataset &&
+      String(one.dataset.act || '').startsWith('design-download-'));
+    check('C12 every export offers its file as a download',
+      downloads.length >= 1 &&
+        String(downloads[0].href || '').includes('/api/design/download/'),
+      downloads.map((one) => String(one.href)).join(' | '));
+  }
+  if (siteButton) {
+    siteButton.click();
+    await flush(60);
+    const sitePost = page.calls.filter((one) => one.method === 'POST' &&
+      String(one.url || '').includes('/api/design/export') &&
+      String(one.body || '').includes('"kind":"site"')).slice(-1)[0];
+    const openSite = exportPane.find((one) => one.dataset &&
+      one.dataset.act === 'design-open-site')[0];
+    const siteZip = exportPane.find((one) => one.dataset &&
+      String(one.dataset.act || '').includes('site.zip'))[0];
+    check('C13 the site export zips the board and names its URL',
+      !!sitePost && !String(sitePost.body).includes('"id":') &&
+        !!openSite && String(openSite.href) === '/site/sample-board/' &&
+        !!siteZip,
+      sitePost ? String(sitePost.body).slice(0, 130) : 'no site post');
   }
 }
 
