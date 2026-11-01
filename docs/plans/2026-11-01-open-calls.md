@@ -216,15 +216,43 @@ existing client, not a new subsystem. W3's contract work stays
 valuable (the docstring and broken-pipe fixes) but stops being the
 load-bearing answer.
 
+## Rulings — 2026-11-01, the owner
+
+The owner ruled the revised slate as recommended, with the O7 flip
+(their push: the bite count was already paid) and the O2/O3/O5
+revisions from the right-vs-easy re-audit standing as the
+recommendations. The rulings:
+
+- **O1 (a)** — the relay's join validates `sid`/`hash` against the
+  relay's own minted-session store.
+- **O2 (a)** — the send path's refusal speaks the product's words at
+  the cap the request actually has; no invented ceiling.
+- **O3 (a)** — the rows normalize to the six documented severities;
+  the checker polices severity beside status.
+- **O4 (a)** — hermetic doubles for contracts; no gate test asserts
+  machine liveness.
+- **O5 (a)** — widen the glob to the substance, stamp the canonical
+  shape at the writer (`seed_task`), untrack the escapes (agreement
+  granted by this ruling).
+- **O6 (a)** — write-through index with eviction, after the build
+  reads the snapshot seam; if the snapshot is deliberate, the ruling
+  flips to the wording fix and this plan records it.
+- **O7 (a)** — build the lane-call verb.
+
 ## Acceptance criteria
 
-- [ ] **O1–O7 each carry the owner's ruling**, recorded in the
-      call's own row (the status or next-action cell names the
-      choice and its date) — one line per call is enough.
+- [x] **O1–O7 each carry the owner's ruling**, recorded in the
+      Rulings section above (2026-11-01) and in each call's row as
+      its follow-through lands.
 - [ ] **Each ruling's follow-through lands** as its own increment
       with its pin, in the order the rows' own severity puts them
       (crashers and data-loss first — none here are; O1 and O2
-      before the cosmetic calls).
+      before the cosmetic calls). *Landed so far: **O1** — the join
+      gate (relay `RELAY_JOIN_SECRET` / face `FLEET_RELAY_JOIN_SECRET`
+      and `FLEET_BOT_RELAY_JOIN_SECRET`), fail-closed both sides,
+      proofless-join pinned against the real relay, KI-367 closed;
+      the OpenShip env + redeploy is the owner's deployment step,
+      named in the row.*
 - [ ] **KI-249 / KI-252 stay with their plan** — the embed-bounds
       plan's window criterion is their gate; nothing here re-opens
       them.

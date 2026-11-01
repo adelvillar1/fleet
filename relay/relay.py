@@ -9,7 +9,11 @@ this is a hundred lines of anything.
 
 Three verbs the device speaks:
 
-    POST /join   {sid, hash}            register a device session
+    POST /join   {sid, hash}            register a device session; the
+                                        deployment's join secret rides the
+                                        `x-fleet-relay-join` header, so
+                                        session identity is not
+                                        self-asserted (KI-367)
     GET  /poll?sid=<sid>                long-held; returns the phone's frames
     POST /frame?sid=<sid>  {id, ...}    one answer, against a frame's id
 
@@ -33,7 +37,12 @@ without the secret. Everything else carries `x-fleet-relay: <secret>`;
 a request without it is refused before it becomes a frame.
 
 The device session's secret gates the phone's side too: a phone that
-cannot name it gets a 403 and learns nothing else.
+cannot name it gets a 403 and learns nothing else. The join itself is
+gated by the deployment's join secret (env `RELAY_JOIN_SECRET` or
+`--join-secret`): a caller that cannot present it never registers a
+session, so a squatter cannot claim a sid or capture the origin root's
+open paths — the residual KI-367 named. The relay fails closed: with
+no join secret configured, every join is refused by name.
 
 Threat model, stated plainly: the relay sees metadata — paths, frame
 ids, sizes — and ciphertext for everything content-bearing. Frames the
@@ -54,6 +63,8 @@ import base64
 import json
 import os
 import queue
+import secrets
+import sys
 import threading
 import time
 import uuid
@@ -84,7 +95,17 @@ DEVICE_TTL_SECONDS = 90
 # transport, and the device has no use for either.
 RELAY_HEADER = "x-fleet-relay"
 ENC_HEADER = "x-fleet-enc"
-STRIPPED_HEADERS = ("host", "content-length", RELAY_HEADER, ENC_HEADER)
+# The device's proof at join: the deployment secret both the relay and
+# the face hold. Consumed here like the others — the device reads it
+# back nowhere.
+JOIN_HEADER = "x-fleet-relay-join"
+STRIPPED_HEADERS = ("host", "content-length", RELAY_HEADER, ENC_HEADER, JOIN_HEADER)
+
+# The deployment's join secret: what makes a join provable rather than
+# self-asserted (KI-367). Set in main() from --join-secret or
+# RELAY_JOIN_SECRET. Empty means every join is refused — the relay
+# fails closed rather than running an open door.
+JOIN_SECRET = ""
 
 # The root paths a browser fetches on its own — no headers, no seal.
 # Everything here is public code or the one-time pairing form.
@@ -221,6 +242,18 @@ class Handler(BaseHTTPRequestHandler):
 
     def _join(self) -> None:
         prune_stale_devices()
+        # The join is the one door a stranger can knock on, so it is the
+        # one door that asks for proof (KI-367): the deployment's join
+        # secret, compared in constant time. Fail closed — a relay
+        # configured with no secret refuses every join by name rather
+        # than running an open switchboard.
+        if not JOIN_SECRET:
+            self._reply(503, {"error": "this relay has no join secret configured — set RELAY_JOIN_SECRET (or --join-secret) so only the face can register a session"})
+            return
+        presented = self.headers.get(JOIN_HEADER) or ""
+        if not secrets.compare_digest(presented, JOIN_SECRET):
+            self._reply(403, {"error": "that join carries no session proof"})
+            return
         body = self._json()
         sid = (body.get("sid") or "").strip()
         secret = (body.get("hash") or "").strip()
@@ -439,7 +472,23 @@ def main() -> None:
         # is where a platform says so.
         default=int(os.environ.get("PORT") or 8421),
     )
+    parser.add_argument(
+        "--join-secret",
+        default=os.environ.get("RELAY_JOIN_SECRET") or "",
+        help="the deployment secret a device must present at /join "
+        "(env RELAY_JOIN_SECRET); empty fails closed",
+    )
     args = parser.parse_args()
+    global JOIN_SECRET
+    JOIN_SECRET = (args.join_secret or "").strip()
+    if not JOIN_SECRET:
+        # stderr, never stdout: the first stdout line is the address
+        # banner every launcher reads, and a warning must not steal it.
+        print(
+            "relay: no join secret configured — every join will be refused "
+            "(set RELAY_JOIN_SECRET or --join-secret)",
+            file=sys.stderr,
+        )
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     # What actually bound: port 0 means the operating system picked, and
     # the caller (a test, a launcher) reads the banner for the truth.

@@ -11901,11 +11901,14 @@ async fn the_reference_relay_carries_sealed_frames() {
         return;
     }
     let script = format!("{}/relay/relay.py", env!("CARGO_MANIFEST_DIR"));
+    let join_secret = "itest-join-secret-77aa";
     let mut child = std::process::Command::new("python3")
         .arg("-u")
         .arg(&script)
         .arg("--port")
         .arg("0")
+        .arg("--join-secret")
+        .arg(join_secret)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
@@ -11954,10 +11957,30 @@ async fn the_reference_relay_carries_sealed_frames() {
         Arc::clone(&keys),
         secret.to_string(),
     ));
+    // KI-367's pin, against the real relay: a join with no session
+    // proof is refused by name — session identity is not
+    // self-asserted — and only the proof-carrying client lands.
+    let squat = ureq::post(&format!("{base}/join"))
+        .send_json(serde_json::json!({"sid": "squat-0000", "hash": "x"}));
+    match squat {
+        Err(ureq::Error::Status(code, response)) => {
+            let body: serde_json::Value = response.into_json().expect("the refusal body is json");
+            assert_eq!(code, 403, "{body}");
+            assert!(
+                body["error"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("session proof"),
+                "{body}"
+            );
+        }
+        other => panic!("a proofless join must be refused, got {other:?}"),
+    }
     let client = Arc::new(fleet::remote::relay::Client::new(
         &base,
         session.to_string(),
         secret.to_string(),
+        join_secret.to_string(),
     ));
     client.join().expect("the join lands");
     let (shutdown, shutdown_rx) = tokio::sync::watch::channel(false);

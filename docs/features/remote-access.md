@@ -260,8 +260,13 @@ everything content-bearing. Neither holds a scalar, so neither can
 derive the frame key; a relay that records every byte it sees still
 cannot open a frame. What a relay can do is refuse to carry frames,
 which is availability, not confidentiality. The relay's join endpoint
-is itself ungated (KI-367 names the residual and the fix), and the
-browser-forced install frames are public code by necessity.
+is gated by the deployment's join secret — the face presents
+`x-fleet-relay-join` at join and the relay refuses a join that
+carries no proof, so session identity is never self-asserted and a
+squatter cannot claim a sid or capture the origin root's open paths
+(KI-367, fixed 2026-11-01). The relay fails closed: configured with
+no join secret, every join is refused by name. The browser-forced
+install frames are public code by necessity.
 
 ## The deployment
 
@@ -280,7 +285,15 @@ openship deployment get <deployment>      # status: ready; the url is the origin
 ```
 
 The origin is `https://fleet.opsh.io`; `remote.public_url` names it, and
-`fleet gui --remote --relay https://fleet.opsh.io` dials it. The bot's
+`fleet gui --remote --relay https://fleet.opsh.io` dials it. Each relay
+service carries its own join secret in the platform's environment
+(`RELAY_JOIN_SECRET`), and the face carries the matching proof in
+`<FLEET_HOME>/.env` — `FLEET_RELAY_JOIN_SECRET` for the console's
+relay, `FLEET_BOT_RELAY_JOIN_SECRET` for the bot's — because the two
+relays are two deployments (KI-367). The dial refuses by name when its
+proof is absent, and the relay refuses every join when its secret is
+unset: both sides fail closed rather than running an open door. The
+bot's
 relay is the same two files as a second service on the same project
 (`fleetbot`, `https://fleetbot.opsh.io`), dialed by `--bot-relay` — a
 stack deploy passes both service ids, because the platform deploys a

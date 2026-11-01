@@ -298,10 +298,29 @@ pub async fn serve(options: GuiOptions) -> Result<(), String> {
         // answers the handshake.
         let sid = listener.device_session();
         let hash = listener.device_secret();
+        // The join proof: the deployment's secret, resolved through the
+        // own-home chain (process env, or <FLEET_HOME>/.env loaded
+        // before this runs). Absent is a named refusal at launch — the
+        // relay would refuse the join anyway (KI-367), and a dial that
+        // cannot authenticate says so before it tries.
+        let join_secret = std::env::var("FLEET_RELAY_JOIN_SECRET")
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                "fleet gui --relay needs FLEET_RELAY_JOIN_SECRET (env, or <FLEET_HOME>/.env): \
+ the relay refuses a join that carries no session proof"
+                    .to_string()
+            })?;
         let keys = Arc::new(std::sync::Mutex::new(
             crate::remote::relay::RelayKeys::mint(&sid),
         ));
-        let client = Arc::new(crate::remote::relay::Client::new(relay_url, sid, hash));
+        let client = Arc::new(crate::remote::relay::Client::new(
+            relay_url,
+            sid,
+            hash,
+            join_secret,
+        ));
         let handler = Arc::new(listener::RelayHandler::new(
             Arc::clone(&bridge),
             "a relayed phone".to_string(),
@@ -351,6 +370,17 @@ pub async fn serve(options: GuiOptions) -> Result<(), String> {
                     .to_string(),
             );
         };
+        // The bot relay is its own deployment, so it carries its own
+        // join proof — same rule, its own name (KI-367).
+        let join_secret = std::env::var("FLEET_BOT_RELAY_JOIN_SECRET")
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                "fleet gui --bot-relay needs FLEET_BOT_RELAY_JOIN_SECRET (env, or <FLEET_HOME>/.env): \
+ the relay refuses a join that carries no session proof"
+                    .to_string()
+            })?;
         let keys = Arc::new(std::sync::Mutex::new(
             crate::remote::relay::RelayKeys::mint(bot_sid),
         ));
@@ -358,6 +388,7 @@ pub async fn serve(options: GuiOptions) -> Result<(), String> {
             bot_relay_url,
             bot_sid.clone(),
             bot_hash.clone(),
+            join_secret,
         ));
         let handler = Arc::new(listener::RelayHandler::new(
             Arc::clone(&bridge),

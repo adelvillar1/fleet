@@ -66,13 +66,19 @@ const POLL_SECS: u64 = 25;
 const CALL_TIMEOUT: Duration = Duration::from_secs(POLL_SECS + 15);
 
 /// What the relay is told at `join`: the device session and the secret
-/// that proves it. Both come from the pairing window, so a relay can
-/// only ever be joined by a device that paired.
+/// that proves it to a phone. The proof that this caller IS the face —
+/// not a squatter claiming a sid — rides beside the body, in the
+/// `x-fleet-relay-join` header: the deployment's join secret, which the
+/// relay compares before it believes a session exists (KI-367).
 #[derive(Debug, Serialize)]
 pub struct Join {
     pub sid: String,
     pub hash: String,
 }
+
+/// The header the device's join proof rides: the deployment's join
+/// secret, held by the face and the relay and by nothing else.
+const JOIN_HEADER: &str = "x-fleet-relay-join";
 
 /// One phone request, forwarded by the relay as a frame. Whole and
 /// unparsed: the relay does not know what a route means, and neither
@@ -287,16 +293,23 @@ pub struct Client {
     base_url: String,
     sid: String,
     hash: String,
+    /// The deployment's join secret: the proof at `join` that this
+    /// caller is the face. The relay refuses a join that carries no
+    /// proof, so a squatter cannot claim a sid or capture the origin
+    /// root's open paths (KI-367).
+    join_secret: String,
     agent: ureq::Agent,
 }
 
 impl Client {
-    /// A client for one relay and one device session.
-    pub fn new(base_url: &str, sid: String, hash: String) -> Client {
+    /// A client for one relay and one device session, carrying the
+    /// deployment's join proof.
+    pub fn new(base_url: &str, sid: String, hash: String, join_secret: String) -> Client {
         Client {
             base_url: base_url.trim_end_matches('/').to_string(),
             sid,
             hash,
+            join_secret,
             agent: ureq::AgentBuilder::new()
                 .max_idle_connections(0)
                 .max_idle_connections_per_host(0)
@@ -307,33 +320,63 @@ impl Client {
     }
 }
 
+/// A join failure in the relay's own words: the refusal body's error
+/// field when the relay answered, the status otherwise, and the
+/// transport error's own text when nothing answered at all.
+fn join_refusal(error: ureq::Error) -> String {
+    match error {
+        ureq::Error::Status(code, response) => {
+            let detail = response
+                .into_json::<serde_json::Value>()
+                .ok()
+                .and_then(|body| {
+                    body.get("error")
+                        .and_then(|error| error.as_str())
+                        .map(str::to_string)
+                })
+                .unwrap_or_else(|| format!("HTTP {code}"));
+            format!("the relay refused the join: {detail}")
+        }
+        other => format!("the relay refused the join: {other}"),
+    }
+}
+
 impl Client {
     /// The relay's base URL.
     pub fn base_url(&self) -> &str {
         &self.base_url
     }
 
-    /// Register this device session with the relay. Idempotent: joining
-    /// twice is the same session, which is what a reconnect wants.
+    /// Register this device session with the relay, presenting the
+    /// deployment's join proof. Idempotent: joining twice is the same
+    /// session, which is what a reconnect wants.
     pub fn join(&self) -> Result<(), String> {
         let url = format!("{}/join", self.base_url);
-        // One retry: a join is idempotent by its own contract (joining
-        // twice is the same session), and a connection reset on a first
-        // exchange with a freshly started relay is a transport fact, not
-        // an answer.
-        let join = || {
-            self.agent.post(&url).send_json(Join {
-                sid: self.sid.clone(),
-                hash: self.hash.clone(),
-            })
+        let once = || -> Result<(), ureq::Error> {
+            self.agent
+                .post(&url)
+                .set(JOIN_HEADER, &self.join_secret)
+                .send_json(Join {
+                    sid: self.sid.clone(),
+                    hash: self.hash.clone(),
+                })
+                .map(|_| ())
         };
-        match join() {
-            Ok(_) => Ok(()),
-            Err(first) => {
+        match once() {
+            Ok(()) => Ok(()),
+            // The relay's own refusal is an answer, not a transport
+            // wobble: named once, never retried — retrying a refusal
+            // cannot change it.
+            Err(error @ ureq::Error::Status(_, _)) => Err(join_refusal(error)),
+            Err(_) => {
+                // One retry: a join is idempotent by its own contract,
+                // and a connection reset on a first exchange with a
+                // freshly started relay is a transport fact, not an
+                // answer (KI-385's discipline).
                 std::thread::sleep(Duration::from_millis(150));
-                match join() {
-                    Ok(_) => Ok(()),
-                    Err(_) => Err(format!("the relay refused the join: {first}")),
+                match once() {
+                    Ok(()) => Ok(()),
+                    Err(second) => Err(join_refusal(second)),
                 }
             }
         }
@@ -807,6 +850,7 @@ mod tests {
             &base,
             "sid-rate".to_string(),
             "hash".to_string(),
+            "itest-join-secret".to_string(),
         ));
         let (shutdown, shutdown_rx) = tokio::sync::watch::channel(false);
         let _serving = tokio::spawn(serve(
@@ -862,6 +906,7 @@ mod tests {
             &base,
             "sid-1".to_string(),
             "hash-1".to_string(),
+            "itest-join-secret".to_string(),
         ));
         client.join().expect("the join lands");
 
@@ -904,6 +949,7 @@ mod tests {
             &base,
             "sid-2".to_string(),
             "hash-2".to_string(),
+            "itest-join-secret".to_string(),
         ));
         // A shell path, not an API one: the loop's unsealed refusal is
         // its own test below, and this test pins the passthrough.
@@ -1041,6 +1087,7 @@ mod tests {
             &base,
             "sid-refuse".to_string(),
             "hash".to_string(),
+            "itest-join-secret".to_string(),
         ));
         let mut carried = frame("r1", "/api/state");
         carried.method = "POST".to_string();
@@ -1098,6 +1145,7 @@ mod tests {
             &base,
             "sid-e2e".to_string(),
             "hash".to_string(),
+            "itest-join-secret".to_string(),
         ));
 
         // The two halves of the exchange: the device's keys, and the
