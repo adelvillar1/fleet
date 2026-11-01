@@ -169,10 +169,18 @@ the test that names it, and every row closes with that pin.**
       `services/blend1/tests/test_source_set.py`, the embedder stubbed;
       seed_task's reply sentence carries the new fields. KI-339/343/
       345/348 closed.*
-- [ ] **W3 — the runtime is named.** C9–C12 land; the transport
-      contract is written where a driver reads it, the store never
-      claims an unproduced outcome, and the process surface reads
-      exit-vs-reap.
+- [x] **W3 — the runtime is named.** *Landed 2026-11-01: C9 — the
+      transport contract written beside `launch_spec` AND in
+      blend1's `mcp_server.py` docstring (newline-delimited, no LSP
+      headers; ping {}; the cold-import window), with `respond()`/
+      `error()` downgrading a broken pipe to a named exit — pinned by
+      the hung-up-client case; C10 — `mark_dispatched` clears
+      `last_outcome`, pinned by `a_dispatch_clears_the_previous_
+      outcome`; C11 — `alive()` reads `ps stat`, a zombie reads
+      finished — pinned by the real `sh -c true` held unreaped; C12 —
+      blend1's server refuses a <3.10 interpreter naming version_info
+      and the zip(strict=) sites — pinned by the faked-3.9 execution
+      of the real file. KI-387/363/358/324 closed.*
 - [ ] **W4 — promises are one fact.** C13–C14 land; a chain fold
       leaves no live ancestor, and a run cannot report a write it did
       not read back.

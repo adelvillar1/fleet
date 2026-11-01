@@ -144,14 +144,28 @@ impl Registry {
 /// Whether a pid still answers. `kill -0` on Unix; on Windows the
 /// answer is conservative (treat as finished), because a probe there
 /// needs a handle the registry does not hold.
+///
+/// A zombie answers `kill -0` — its pid exists until the parent reaps
+/// it — so pid liveness alone read an exited driver as running
+/// forever, and `process`'s "still running" was the KI-358 lie: the
+/// work had finished, the shell was merely unreaped. `ps stat` names
+/// the state: `Z` is dead-not-yet-reaped (finished), and an empty
+/// state means the pid is gone (finished).
 fn alive(pid: u32) -> bool {
     #[cfg(unix)]
     {
-        std::process::Command::new("kill")
-            .args(["-0", &pid.to_string()])
+        let output = std::process::Command::new("ps")
+            .args(["-o", "stat=", "-p", &pid.to_string()])
             .output()
-            .map(|output| output.status.success())
-            .unwrap_or(false)
+            .ok();
+        match output {
+            Some(output) if output.status.success() => {
+                let state = String::from_utf8_lossy(&output.stdout);
+                let state = state.trim();
+                !(state.is_empty() || state.starts_with('Z'))
+            }
+            _ => false,
+        }
     }
     #[cfg(windows)]
     {
@@ -227,6 +241,59 @@ mod tests {
         );
         let running = registry.still_running();
         assert!(running.iter().any(|(held, _)| held == &id), "{running:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_exited_driver_whose_shell_is_unreaped_reads_finished() {
+        // KI-358's pin: `sh -c true` exits immediately; fleet spawned
+        // it and never waits, so its pid lingers as a zombie — which
+        // `kill -0` calls alive. The surface must read the STATE:
+        // Z is finished, and a driver that finished its work is not
+        // "still running" because its shell is unreaped.
+        let mut finished = std::process::Command::new("sh")
+            .arg("-c")
+            .arg("true")
+            .spawn()
+            .expect("spawn the driver that exits at once");
+        let pid = finished.id();
+        // Poll for the zombie state — the shell exits in milliseconds,
+        // but a loaded machine gets a bounded wait rather than a flaky
+        // assertion. The Child handle is held (not waited) so the pid
+        // stays a zombie for the check.
+        #[cfg(unix)]
+        {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+            loop {
+                let probe = std::process::Command::new("ps")
+                    .args(["-o", "stat=", "-p", &pid.to_string()])
+                    .output()
+                    .unwrap();
+                let state = String::from_utf8_lossy(&probe.stdout);
+                if state.trim().starts_with('Z') {
+                    break;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "the fixture must become a zombie, not stay live: {state:?}"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+        }
+        assert!(!alive(pid), "a zombie is not a live driver (KI-358)");
+        let dir = std::env::temp_dir().join(format!("fleet-proc-z-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let registry = Registry::new();
+        let id = registry.register("sh -c true", dir.join("o.log"), dir.join("e.log"), pid);
+        let running = registry.still_running();
+        assert!(
+            running.iter().all(|(held, _)| held != &id),
+            "the exited driver left the still-running report: {running:?}"
+        );
+        let (text, is_finished) = registry.output(&id).unwrap();
+        assert!(is_finished, "the output read agrees: finished ({text})");
+        let _ = finished.wait();
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

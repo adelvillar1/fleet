@@ -5,7 +5,14 @@ blend1 MCP server: exposes the blended lane's six surfaces as MCP tools —
 (blend1.doctor), `search` (corpus recall), `refresh` (docs-derived corpus
 refresh), and `seed` (the corpus's write path).
 
-Transport: stdio JSON-RPC (MCP 2024-11-05).
+Transport: NEWLINE-DELIMITED JSON-RPC — one JSON object per stdin line,
+one object + "\n" back on stdout. NOT the LSP Content-Length framing
+the MCP spec's stdio transport normatively names (KI-387): a driver
+that waits for header bytes dead-reads until its timeout while this
+child waits for the newline it will never send. `ping` is answered
+with an empty result; `initialize` is answered only AFTER the cold
+import finishes, which on a first-of-the-evening child measures
+minutes — allow a 300 s window. Shapes are MCP 2024-11-05.
 
 blend1 is the blended lane of the sys1 house pattern: one ask() runs the
 d1 router (sys1) solo first as the front door, the semantic (sem1) and
@@ -53,6 +60,23 @@ from __future__ import annotations
 import json
 import os
 import sys
+
+# The interpreter pin, structural (KI-324): the corpus engine uses
+# zip(strict=True) — services/blend1/src/blend1/corpus.py:133, 171 —
+# which is Python 3.10+. An older interpreter dies on a TypeError
+# mid-refresh, or worse, a SyntaxError in a future file: refuse at
+# startup with the version and the sites named, so a house PATH that
+# resolves an old python3 says WHY the lane will not serve.
+if sys.version_info < (3, 10):
+    # From version_info — the very thing under test — so the message
+    # names the version the guard read, not the banner's.
+    version = ".".join(str(part) for part in sys.version_info[:3])
+    sys.stderr.write(
+        "blend1 mcp: python 3.10+ is required (zip(strict=) at "
+        "services/blend1/src/blend1/corpus.py:133 and :171); this "
+        f"interpreter is {version}\n"
+    )
+    raise SystemExit(1)
 
 # The house path mechanism, in resolution order: blend1's own core first,
 # then the sibling cores its lanes compose. Each is inserted only when the
@@ -391,14 +415,25 @@ def main() -> None:
     blend1, import_error = _import_blend1()
 
     def respond(req_id, result):
-        sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": req_id, "result": result}) + "\n")
-        sys.stdout.flush()
+        try:
+            sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": req_id, "result": result}) + "\n")
+            sys.stdout.flush()
+        except BrokenPipeError:
+            # The client hung up — it timed out and left (KI-387):
+            # one named line on stderr and a clean exit, never a
+            # traceback written into a closed pipe.
+            print("blend1 mcp: the client closed the pipe — exiting", file=sys.stderr)
+            raise SystemExit(0)
 
     def error(req_id, code, msg):
-        sys.stdout.write(
-            json.dumps({"jsonrpc": "2.0", "id": req_id, "error": {"code": code, "message": msg}}) + "\n"
-        )
-        sys.stdout.flush()
+        try:
+            sys.stdout.write(
+                json.dumps({"jsonrpc": "2.0", "id": req_id, "error": {"code": code, "message": msg}}) + "\n"
+            )
+            sys.stdout.flush()
+        except BrokenPipeError:
+            print("blend1 mcp: the client closed the pipe — exiting", file=sys.stderr)
+            raise SystemExit(0)
 
     for line in sys.stdin:
         line = line.strip()

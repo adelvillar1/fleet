@@ -996,7 +996,25 @@ pub fn services_root() -> Result<PathBuf, RootError> {
     }
 }
 
-/// The launch spec for one lane, or the reason it cannot launch.
+/// The launch spec for one lane: the program, its arguments, the
+/// house `<SVC>_PYTHONPATH` env, and the lane home as the cwd. What
+/// the spec does NOT carry is the TRANSPORT a hand-driver has to
+/// re-derive every time (KI-387) — so it is named here, beside the
+/// spec, once:
+///
+/// - **Newline-delimited JSON-RPC**, one object per stdin line, one
+///   object + newline back on stdout. NOT the LSP Content-Length
+///   framing the MCP spec's stdio transport normatively names — a
+///   driver that waits for header bytes dead-reads until its timeout.
+/// - `ping` is answered with an empty result.
+/// - `initialize` is answered only after the child's cold import
+///   finishes, which on a first-of-the-evening child measures
+///   minutes: allow a 300 s window. The client's own handshake
+///   budget (`mcp::INITIALIZE_TIMEOUT`'s override in
+///   `mcp_registry::call_named`) is that window.
+///
+/// A driver should not re-derive any of this: `fleet mcp call` drives
+/// the whole sequence through the client that already implements it.
 pub fn launch_spec(lane: &Lane, home: &Path) -> ServerSpec {
     let mut env = vec![(
         lane.python_path_env.to_string(),

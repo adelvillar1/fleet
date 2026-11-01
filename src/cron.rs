@@ -1228,12 +1228,20 @@ impl Store {
             .find(|job| job.name == name)
             .ok_or_else(|| CronError::Missing(name.to_string()))?;
         job.last_run = Some(minute.stamp());
+        // KI-363: the PREVIOUS run's outcome must not stand beside the
+        // newest window's stamp. A dispatch killed mid-flight left
+        // `last_outcome` reading `completed` for a window whose run
+        // never ended — the store claiming an outcome the newest
+        // window has not produced. Cleared here; `record_run` is what
+        // fills it in when the window actually ends.
+        job.last_outcome = None;
         self.save()
     }
 
     /// Record one fire: the minute it ran for and how it ended. This is
-    /// the only writer of `last_run`/`last_outcome`, and it is what
-    /// keeps a restart from catching up on a window already served.
+    /// the writer that fills `last_outcome` (dispatch clears it —
+    /// KI-363), and it is what keeps a restart from catching up on a
+    /// window already served.
     pub fn record_run(
         &mut self,
         name: &str,
@@ -3577,6 +3585,35 @@ mod tests {
 
     /// One finished fire's outcome, the shape a runner reports when the
     /// run itself went through.
+    #[test]
+    fn a_dispatch_clears_the_previous_outcome() {
+        // KI-363's pin: the newest window's stamp never stands beside a
+        // PREVIOUS run's outcome — a dispatch killed mid-flight used to
+        // report `completed` for a window whose run never ended, and
+        // the store claimed an outcome the window had not produced.
+        let home = temp_home("dispatch-clears-outcome");
+        seed_job(&home, "hourly", "0 * * * *");
+        let mut store = Store::open(&home).unwrap();
+        store
+            .record_run("hourly", minute(2026, 10, 14, 11, 0), Outcome::Completed)
+            .unwrap();
+        assert_eq!(
+            store.job("hourly").unwrap().last_outcome,
+            Some(Outcome::Completed)
+        );
+        store
+            .mark_dispatched("hourly", minute(2026, 10, 14, 12, 0))
+            .unwrap();
+        let job = Store::open(&home).unwrap();
+        let job = job.job("hourly").unwrap();
+        assert_eq!(job.last_run.as_deref(), Some("2026-10-14T12:00Z"));
+        assert_eq!(
+            job.last_outcome, None,
+            "the previous outcome does not stand beside the new stamp"
+        );
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
     fn completed(job: &Job) -> RunOutcome {
         RunOutcome {
             outcome: Outcome::Completed,
