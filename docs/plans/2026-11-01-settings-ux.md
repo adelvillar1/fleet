@@ -184,11 +184,12 @@ flow. No line states a problem without the action.
 
 The owner's 2026-11-01 ruling: budget is not a concern on coding and
 token plans, so a spend dashboard answers a question they do not
-ask. **The `money` section is removed**; its three caps fall into
-environment's catch-all list like every other scalar, unlabeled by a
-dashboard. The translation idea survives only where a number would
-otherwise be meaningless — a cap's own card names the compiled
-ceiling and the door, and nothing else claims to be a spend view.
+ask. **The `money` section is removed, and its three caps leave the
+face with it** — they are not relocated to the catch-all. The config
+writer and the document keep them, so `fleet settings` still writes
+them; a surface is the kind of thing anyone who wants one can add
+back, which the owner's ruling names as a fork rather than a
+default. Nothing on the face claims a spend view.
 
 ### U7 — one vocabulary
 
@@ -242,9 +243,9 @@ section opens on the answer, not the engine.
       vault derivations each carry their next step; harness
       assertions on the three lines.
 - [ ] **U6 — the money section is gone.** Seven sections on the
-      rail; the three caps are reachable in environment's catch-all;
-      no spend dashboard and no topbar meter. Harness: the rail's
-      section list and the caps' rows.
+      rail and no cap row anywhere on the face; `fleet settings`
+      still writes the three. Harness: the rail's section list, the
+      absence of the cap rows, and a sweep for spend text.
 - [ ] **U7 — one vocabulary.** The mapping passage exists and both
       surfaces' doc sections cite it.
 - [ ] **U8 — the model is the section.** Every roster model is
