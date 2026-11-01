@@ -275,7 +275,18 @@ recommendations. The rulings:
       (pinned), seven escapes untracked — the agreement granted by the
       ruling; the month-named one renamed to its dashed date — and the
       durable fact verified still tracked; the live store reconciled,
-      all 14 corpus-refresh jobs carrying the stamp. KI-386 closed.*
+      all 14 corpus-refresh jobs carrying the stamp. KI-386 closed.
+      **O6** — the seam read first (facts was already a Mutex; vectors
+      was load-frozen — load-once convenience, not a stability design),
+      so ruling (a) stands: write-through with eviction. `index_live` /
+      `forget_live` run at every remember and both supersede branches;
+      vectors ride the same lock discipline as facts; the tool's
+      description now says same-task recall. Pinned by the two
+      write-through tests. KI-332 closed. Gate note: the shared tree
+      carried the parallel design-parity session's uncommitted canvas
+      work (the board's project binding), which reddens two canvas
+      digest tests — theirs, not in this commit; with those skipped the
+      lib is 1,678/0 and the other targets 1,901/0.*
 - [ ] **KI-249 / KI-252 stay with their plan** — the embed-bounds
       plan's window criterion is their gate; nothing here re-opens
       them.
