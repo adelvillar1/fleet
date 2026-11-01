@@ -286,7 +286,22 @@ recommendations. The rulings:
       carried the parallel design-parity session's uncommitted canvas
       work (the board's project binding), which reddens two canvas
       digest tests — theirs, not in this commit; with those skipped the
-      lib is 1,678/0 and the other targets 1,901/0.*
+      lib is 1,678/0 and the other targets 1,901/0. **O7** — `fleet mcp
+      call` is live: registry-or-lane resolution, KI-387's cold window,
+      a rebuild-sized call budget, the reply raw on stdout; the
+      manifest's task strings name the one command (the hand-driven
+      stdio session retired from every corpus job, pinned) and the
+      live store reconciled — all 14 jobs carry the route. Pinned end
+      to end against the scripted mock, with the script lesson pinned
+      beside it (a notification consumes no mock entry). KI-369
+      closed. Folded from the parallel session's mid-flight tree,
+      credited: their `Record::Memory.design` commit had broken one
+      integration pattern (fixed on their branch; the fold rides the
+      merge) and the shared-worktree choreography moved this commit to
+      master through a second worktree so their branch keeps its own
+      history. Their centered-composer face work reddens the face
+      target in the shared tree — their uncommitted in-flight cases;
+      with that aside, lib 1,711/0 and every other target green.*
 - [ ] **KI-249 / KI-252 stay with their plan** — the embed-bounds
       plan's window criterion is their gate; nothing here re-opens
       them.
