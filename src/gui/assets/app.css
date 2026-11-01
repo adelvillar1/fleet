@@ -7927,7 +7927,7 @@ body[data-work="collapsed"] .work-list { display: none; }
 }
 .design-body {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 320px;
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto auto minmax(320px, 1fr);
   min-height: 0;
   gap: var(--space-2) var(--space-3);
@@ -7935,19 +7935,69 @@ body[data-work="collapsed"] .work-list { display: none; }
 .design-body > .canvas-head,
 .design-body > .canvas-instrument,
 .design-body > .canvas-viewport { grid-column: 1; }
-/* The board's conversation: the turns the document keeps, each frame a
-   chip that finds its page on the board, and the composer that starts
-   runs. Owner turns sit in the accent wash; the designer's in the card. */
-.design-chat {
-  grid-column: 2;
-  grid-row: 1 / span 3;
+/* The board's conversation, in the center frame: the turns the
+   document keeps, each frame a chip that finds its page on the board,
+   and the composer that starts runs — one bottom-center stack over the
+   canvas (the owner's 2026-11-01 ruling), the conversation stage's own
+   idiom. Owner turns sit in the accent wash; the designer's in the
+   card. The log collapses to the composer; the seat stands above it. */
+.design-float {
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  transform: translateX(-50%);
+  width: min(760px, calc(100% - 32px));
+  max-height: calc(100% - 24px);
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
   gap: var(--space-2);
+  padding: var(--space-3);
+  background: var(--dsw-alias-surface);
+  border: 1px solid var(--dsw-alias-hairline);
+  border-radius: var(--radius-md);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.28);
+  z-index: 5;
   min-height: 0;
-  border-left: 1px solid var(--dsw-alias-hairline);
-  padding-left: var(--space-3);
 }
+/* The collapsed float is the composer: the hidden log leaves the grid
+   track at zero, and the stack shrinks to head, seat, compose. */
+.design-float[data-open="false"] .design-chat-log { display: none; }
+.design-float .design-chat-log { max-height: 32vh; overflow-y: auto; min-height: 0; }
+.design-chat-toggle {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--dsw-alias-ink-secondary);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 0;
+  cursor: pointer;
+}
+.design-chat-toggle:hover { color: var(--dsw-alias-ink); }
+/* The focus chip: what this request is about — the board, or the page
+   selected on the canvas. */
+.design-focus {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  padding: 2px 10px;
+  border-radius: var(--radius-pill);
+  background: var(--dsw-alias-surface-raised);
+  color: var(--dsw-alias-ink-secondary);
+  font-size: var(--text-xs);
+}
+.design-focus-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--dsw-alias-ink-tertiary);
+  flex: 0 0 auto;
+}
+.design-focus[data-focus="page"] { color: var(--dsw-alias-accent); }
+.design-focus[data-focus="page"] .design-focus-dot { background: var(--dsw-alias-accent); }
 .design-chat-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
 .design-chat-log { display: flex; flex-direction: column; gap: var(--space-2); overflow-y: auto; min-height: 0; }
 .design-turn {

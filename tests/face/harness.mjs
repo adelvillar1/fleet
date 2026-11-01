@@ -4076,6 +4076,21 @@ async function theDesignCanvasCarriesItsFramesAndWritesGeometry() {
   check('PM-D the design stage renders',
     !!page.IDS['panel-design'] && page.IDS['panel-design'].hidden === false,
     String(page.IDS['panel-design'] && page.IDS['panel-design'].hidden));
+  // P1 (design-parity C1): the composer sits in the center frame — the
+  // floating stack's pieces all exist (the log collapsed to the
+  // composer on arrival, the seat, the toggle, the focus row), and the
+  // stack's parentage and geometry are the render leg's — the
+  // harness's ids are a flat map, with no tree to measure.
+  const float = page.IDS['design-chat'];
+  check('C1 the composer is the bottom-center stack over the canvas',
+    !!float && float.dataset.open === 'false' &&
+      page.IDS['design-chat-log'].hidden === true &&
+      page.IDS['design-chat-toggle'].getAttribute('aria-expanded') === 'false' &&
+      !!page.IDS['design-seat'] && !!page.IDS['design-focus'] &&
+      !!page.IDS['design-focus-label'] && !!page.IDS['design-brief'] &&
+      !!page.IDS['design-send'],
+    'open=' + float.dataset.open + ' logHidden=' +
+      page.IDS['design-chat-log'].hidden);
   const railRows = page.rows('#design-rail .section-rail-row');
   check('PM-D the boards rail lists every board, the open one marked',
     railRows.length === 2 &&
@@ -4249,6 +4264,34 @@ async function theDesignCanvasCarriesItsFramesAndWritesGeometry() {
     modelOptions.map((one) => one.value + '/' + one.disabled).join(','));
   check('PM-D the picker opens on the first model that can serve',
     models.value === 'zai-coding-plan/GLM-5.3-Flash', models.value);
+
+  // P1 (design-parity C2): the focus is visible and complete — the
+  // chip-selected page is the focus (the chip's click landed it, with
+  // the mode defaulting to refine), and the canvas background clears
+  // it back to the board.
+  const focusChip = page.IDS['design-focus'];
+  const focusLabel = page.IDS['design-focus-label'];
+  check('C2 a selected page is the focus, the mode follows to refine',
+    focusChip.dataset.focus === 'page' &&
+      String(focusLabel.textContent).includes('hero') &&
+      page.IDS['design-mode-select'].value === 'refine' &&
+      String(page.IDS['design-brief'].placeholder).includes('this page'),
+    focusLabel.textContent + ' / ' + page.IDS['design-mode-select'].value);
+  // The harness's ids are a flat map — no tree to bubble through — so
+  // the viewport's own listener is driven with the background as the
+  // target, exactly what a real press on the canvas does.
+  page.IDS['design-viewport'].fire('pointerdown',
+    { target: page.IDS['design-world'] });
+  await flush(20);
+  check('C2 the canvas background clears the focus back to the board',
+    focusChip.dataset.focus === 'board' &&
+      String(focusLabel.textContent).includes('Sample board') &&
+      page.IDS['design-mode-select'].value === 'generate' &&
+      String(page.IDS['design-brief'].placeholder).includes('the board'),
+    focusLabel.textContent + ' / ' + page.IDS['design-mode-select'].value);
+  // The frame the review and the sends below work on is selected again.
+  cards[0].fire('pointerdown');
+  await flush(20);
 
   // The review: eight scores always render (a gap reads as a dash), the
   // history shows, and the ask drives both captures through the server.
@@ -4485,6 +4528,33 @@ async function theDesignCanvasCarriesItsFramesAndWritesGeometry() {
   check('PM-D the directions control rides the task request',
     withDirections.length === 1,
     JSON.stringify(withDirections.map((one) => String(one.body).slice(0, 120))));
+
+  // P1 (design-parity C3): the focused request is the page's — back on
+  // a board that holds the page, the wire carries frame_id iff a page
+  // is selected.
+  railRows[0].click();
+  await flush(60);
+  page.IDS['design-brief'].value = 'ask with no page in focus';
+  page.IDS['design-mode-select'].value = 'ask';
+  page.fireOn('design-send', 'click');
+  await flush(60);
+  const globalTask = page.calls.filter((one) => one.method === 'POST' &&
+    String(one.body || '').includes('"op":"task"')).slice(-1)[0];
+  check('C3 a send with no page composes a board-global task',
+    !!globalTask && String(globalTask.body).includes('"frame_id":""'),
+    globalTask ? String(globalTask.body).slice(0, 160) : 'no task');
+  const liveCards = page.rows('.canvas-frame');
+  liveCards[0].fire('pointerdown');
+  await flush(20);
+  page.IDS['design-brief'].value = 'refine the hero';
+  page.IDS['design-mode-select'].value = 'refine';
+  page.fireOn('design-send', 'click');
+  await flush(60);
+  const pageTask = page.calls.filter((one) => one.method === 'POST' &&
+    String(one.body || '').includes('"op":"task"')).slice(-1)[0];
+  check('C3 a send with a page carries that frame_id',
+    !!pageTask && String(pageTask.body).includes('"frame_id":"f-hero"'),
+    pageTask ? String(pageTask.body).slice(0, 160) : 'no task');
 }
 
 // Design work started outside the design page — a conversation, a cron

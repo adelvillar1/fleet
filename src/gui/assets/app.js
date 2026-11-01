@@ -648,7 +648,11 @@
     designWorld: document.getElementById('design-world'),
     designViewport: document.getElementById('design-viewport'),
     designInstrument: document.getElementById('design-instrument'),
+    designChat: document.getElementById('design-chat'),
     designChatLog: document.getElementById('design-chat-log'),
+    designChatToggle: document.getElementById('design-chat-toggle'),
+    designFocus: document.getElementById('design-focus'),
+    designFocusLabel: document.getElementById('design-focus-label'),
     designSeat: document.getElementById('design-seat'),
     designChatActs: document.getElementById('design-chat-acts'),
     designBrief: document.getElementById('design-brief'),
@@ -16289,12 +16293,27 @@
 
   function designWireViewport() {
     el.designViewport.addEventListener('wheel', function (event) {
+      // The floating composer owns its own wheel: no zoom from a
+      // scroll inside it.
+      if (event.target && event.target.closest &&
+        event.target.closest('.design-float')) return;
       event.preventDefault();
       var rect = el.designViewport.getBoundingClientRect();
       var factor = event.deltaY < 0 ? 1.08 : 1 / 1.08;
       designZoomAt(event.clientX - rect.left, event.clientY - rect.top, factor);
     }, { passive: false });
     el.designViewport.addEventListener('pointerdown', function (event) {
+      // The floating composer owns its own pointer events: no pan, no
+      // deselect from a press inside it.
+      if (event.target && event.target.closest &&
+        event.target.closest('.design-float')) return;
+      // The canvas background clears the focus (the owner's rule: no
+      // page selected, the request is global). A press on a frame
+      // card keeps it — the card's own handler selected it first.
+      if (!(event.target && event.target.closest &&
+        event.target.closest('.canvas-frame'))) {
+        designSelect(null);
+      }
       if (!thinkOfDesignPan(event)) return;
       event.preventDefault();
       var start = { x: event.clientX, y: event.clientY, vx: designView().x, vy: designView().y };
@@ -16512,6 +16531,56 @@
       card.classList.toggle('selected', card.dataset.frame === id);
     });
     paintDesignInstrument();
+    paintDesignFocus();
+    // The mode follows the focus (the owner's rule): a page means
+    // refine, no page returns to the board's default — and a choice
+    // the focus does not allow falls back rather than silently
+    // sending the wrong verb.
+    var want = id ? 'refine' : 'generate';
+    var modes = designModes(designBoard() || {});
+    if (modes.some(function (mode) { return mode.value === want; })) {
+      face.designModeChoice = want;
+    }
+    designApplyModeChoice();
+  }
+
+  /// The focus chip: what this request is about — the board, or the
+  /// page selected on the canvas. The placeholder follows it, so the
+  /// composer's own words say the scope before a word is typed.
+  function paintDesignFocus() {
+    if (!el.designFocus) return;
+    var board = designBoard();
+    var selected = designSelected();
+    var on = !!selected;
+    el.designFocus.dataset.focus = on ? 'page' : 'board';
+    el.designFocusLabel.textContent = on
+      ? 'page \u00b7 ' + selected.name
+      : 'board \u00b7 ' + (board ? board.name : 'the canvas');
+    el.designFocus.title = on
+      ? 'this request is about the selected page'
+      : 'this request is about the whole board';
+    if (el.designBrief && document.activeElement !== el.designBrief) {
+      el.designBrief.placeholder = on
+        ? 'refine this page, or ask about it'
+        : 'ask about the board, or say what to design';
+    }
+  }
+
+  /// The mode select holds the choice the focus allows: the list is
+  /// rebuilt per paint, so this lands the value after the options do.
+  function designApplyModeChoice() {
+    var board = designBoard();
+    if (!board || !el.designMode.children.length) return;
+    var modes = designModes(board);
+    var want = face.designModeChoice;
+    if (!modes.some(function (mode) { return mode.value === want; })) {
+      want = face.designSelection ? 'refine' : 'generate';
+      if (!modes.some(function (mode) { return mode.value === want; })) {
+        want = modes[0].value;
+      }
+      face.designModeChoice = want;
+    }
+    el.designMode.value = want;
   }
 
   /// The task composer's answer: the writer's own words for one request.
@@ -17111,6 +17180,16 @@
 
   function paintDesignChat() {
     var board = designBoard();
+    paintDesignFocus();
+    // The conversation's own toggle: the log is a bounded panel over
+    // the canvas, collapsed to the composer until the owner opens it —
+    // or a send opens it, so the turn that was just spoken is seen.
+    var open = !!face.designChatOpen;
+    if (el.designChat) el.designChat.dataset.open = open ? 'true' : 'false';
+    if (el.designChatLog) el.designChatLog.hidden = !open;
+    if (el.designChatToggle) {
+      el.designChatToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+    }
     el.designChatLog.textContent = '';
     if (!board) {
       el.designChatLog.appendChild(node('p', 'board-empty',
@@ -17122,6 +17201,10 @@
     el.designBrief.disabled = false;
     el.designSend.disabled = false;
     var turns = board.chat || [];
+    if (el.designChatToggle) {
+      el.designChatToggle.textContent = 'conversation' +
+        (turns.length ? ' \u00b7 ' + turns.length : '');
+    }
     if (!turns.length) {
       el.designChatLog.appendChild(node('p', 'board-empty',
         'nothing yet — say what to design, and the designer fills the board'));
@@ -17145,14 +17228,15 @@
       el.designChatLog.appendChild(bubble);
     });
     el.designChatLog.scrollTop = el.designChatLog.scrollHeight;
-    // The verbs, by what the selection allows.
+    // The verbs, by what the selection allows — and the choice the
+    // focus permits lands after the list does.
     el.designMode.textContent = '';
     designModes(board).forEach(function (mode) {
       var option = node('option', null, mode.label);
       option.value = mode.value;
-      if (face.designModeChoice && mode.value === face.designModeChoice) option.selected = true;
       el.designMode.appendChild(option);
     });
+    designApplyModeChoice();
     // The reference: the site the board models, and the pages it points
     // at — the owner picks the ones a redesign should read.
     var reference = board.reference || null;
@@ -17217,6 +17301,9 @@
       mode: mode,
       brief: brief
     };
+    // A send shows its turn: the log opens so the owner sees what they
+    // just said land in the board's conversation.
+    face.designChatOpen = true;
     el.designBrief.value = '';
     el.designSend.disabled = true;
     designWrite('chat', { project: board.slug, role: 'owner', text: brief, frames: [] }, function () {
@@ -17384,6 +17471,12 @@
     designWireViewport();
     designWireKeys();
     el.designSend.addEventListener('click', sendDesign);
+    if (el.designChatToggle) {
+      el.designChatToggle.addEventListener('click', function () {
+        face.designChatOpen = !face.designChatOpen;
+        paintDesignChat();
+      });
+    }
     el.designMode.addEventListener('change', function () {
       face.designModeChoice = el.designMode.value;
     });
