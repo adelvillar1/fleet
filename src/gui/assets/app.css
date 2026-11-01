@@ -8020,6 +8020,21 @@ body[data-work="collapsed"] .work-list { display: none; }
 .design-save[data-state="saving"] { color: var(--dsw-alias-ink-secondary); }
 .design-save[data-state="saved"] { color: var(--dsw-alias-ok); }
 .design-save[data-state="failed"] { color: var(--dsw-alias-warn); }
+/* P5 (design-parity C15): the model chips are the multi-select — one
+   pressed is one pinned run, several is a fan-out. */
+.design-model-picks { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; flex: 1 1 auto; }
+.design-model-picks .replay-button[aria-pressed="true"] {
+  border-color: var(--dsw-alias-accent);
+  color: var(--dsw-alias-accent);
+}
+.design-model-picks .replay-button:disabled { opacity: 0.5; cursor: not-allowed; }
+/* The fan-out's progress: one line per model while its run is in
+   flight, in the float's own acts row. */
+.design-fanout-line {
+  font-size: var(--text-xs);
+  color: var(--dsw-alias-ink-secondary);
+  white-space: nowrap;
+}
 .design-chat-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
 .design-chat-log { display: flex; flex-direction: column; gap: var(--space-2); overflow-y: auto; min-height: 0; }
 .design-turn {

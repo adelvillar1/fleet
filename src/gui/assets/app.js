@@ -16991,7 +16991,8 @@
       option.disabled = !model.available;
       critic.appendChild(option);
     });
-    if (el.designModel.value) critic.value = el.designModel.value;
+    var firstPick = designPickedModels()[0];
+    if (firstPick) critic.value = firstPick;
     // The ask drives both captures in Rust and starts the run with the
     // task it composes: desktop and phone reach the vision read together.
     ask.addEventListener('click', function () {
@@ -17334,38 +17335,80 @@
 
   /// The models designated for design work. A design run's route comes
   /// from this page — the fact that the request started here is what makes
-  /// it design work — so the owner names the model (defaulting to the
-  /// first that can serve now) and the run goes out pinned to it. The
+  /// it design work — so the owner picks the model(s): one pressed is one
+  /// pinned run (today's shape), several pressed is a fan-out — one run
+  /// per model, each landing its own frames, because different models
+  /// have different strengths (the owner's 2026-11-01 amendment). The
   /// router neither picks among these nor walks them as a workload.
   function paintDesignModels() {
     var models = (face.design && face.design.models) || [];
-    var chosen = el.designModel.value || face.designModelChoice || '';
+    var available = models
+      .filter(function (model) { return model.available; })
+      .map(function (model) { return model.provider + '/' + model.model; });
+    if (!face.designModelPicks) face.designModelPicks = [];
+    // The picks follow the catalog: one that can no longer serve drops,
+    // and one model must stay on — a design run is always somebody's.
+    // This runs BEFORE the chips exist, so every handler closes over
+    // the very array the clicks mutate (in place — never reassign it
+    // under them).
+    face.designModelPicks = face.designModelPicks.filter(function (value) {
+      return available.indexOf(value) >= 0;
+    });
+    if (!face.designModelPicks.length && available.length) {
+      face.designModelPicks = [available[0]];
+    }
+    var picks = face.designModelPicks;
     el.designModel.textContent = '';
-    var offered = 0;
     models.forEach(function (model) {
       var value = model.provider + '/' + model.model;
-      var option = node('option', null,
-        model.model + (model.available ? '' : ' \u00b7 unavailable'));
-      option.value = value;
-      option.disabled = !model.available;
-      el.designModel.appendChild(option);
-      if (model.available) offered += 1;
+      var chip = node('button', 'replay-button', model.model +
+        (model.available ? '' : ' \u00b7 unavailable'));
+      chip.type = 'button';
+      chip.dataset.model = value;
+      chip.setAttribute('aria-pressed', picks.indexOf(value) >= 0 ? 'true' : 'false');
+      if (picks.indexOf(value) >= 0) chip.classList.add('on');
+      chip.disabled = !model.available;
+      chip.title = model.available
+        ? 'design with ' + model.model
+        : model.model + ' cannot serve right now';
+      chip.addEventListener('click', function () {
+        var at = picks.indexOf(value);
+        if (at >= 0) {
+          if (picks.length > 1) picks.splice(at, 1);
+        } else {
+          picks.push(value);
+        }
+        paintDesignModels();
+      });
+      el.designModel.appendChild(chip);
     });
-    if (!offered) {
-      var none = node('option', null, 'no design model can serve');
-      none.value = '';
-      el.designModel.appendChild(none);
-      el.designModel.value = '';
-      el.designModel.title = 'none of the design models has a key';
-      return;
-    }
-    el.designModel.title = '';
-    var wanted = models.filter(function (model) {
-      return model.available && model.provider + '/' + model.model === chosen;
-    })[0];
-    if (!wanted) wanted = models.filter(function (model) { return model.available; })[0];
-    el.designModel.value = wanted.provider + '/' + wanted.model;
-    face.designModelChoice = el.designModel.value;
+    el.designModel.title = available.length
+      ? '' : 'none of the design models has a key';
+    face.designModelChoice = picks[0] || '';
+  }
+
+  /// The pressed models, in catalog order — the pins a send fans out
+  /// across (always at least one; the picker keeps one on).
+  function designPickedModels() {
+    var models = (face.design && face.design.models) || [];
+    var picks = face.designModelPicks || [];
+    return models
+      .map(function (model) { return model.provider + '/' + model.model; })
+      .filter(function (value) { return picks.indexOf(value) >= 0; });
+  }
+
+  /// The fan-out's own progress: one line per model while its run is
+  /// in flight. The variant cards are the frames the runs land; this
+  /// is the progress that shows before they do.
+  function paintDesignFanout() {
+    if (!el.designChatActs) return;
+    el.designChatActs.textContent = '';
+    (face.designFanout || []).forEach(function (one) {
+      var line = node('span', 'design-fanout-line',
+        one.model + (one.done ? ' \u00b7 landed' : ' \u00b7 designing\u2026'));
+      line.dataset.model = one.model;
+      el.designChatActs.appendChild(line);
+    });
   }
 
   /// The board's brand. A brand is a design system (tokens + doctrine)
@@ -17469,6 +17512,7 @@
     });
     // The model first: it is the run's route, not a decoration.
     paintDesignModels();
+    paintDesignFanout();
     paintDesignBrand();
     // The styles: the source library's sixty-two directions, grouped by
     // the category the library names (the curated ten first). Each
@@ -17546,23 +17590,40 @@
           el.designSend.disabled = false;
           return;
         }
-        designStartRun(task, board.slug);
+        // P5 (design-parity C15/C16): one picked model is one pinned
+        // run — today's shape; several picked is a fan-out — one run
+        // per model, each landing its own frames, one progress line
+        // each until the board fills.
+        var pins = designPickedModels();
+        if (pins.length > 1) {
+          face.designFanout = pins.map(function (pin) {
+            return { model: pin.split('/').pop(), done: false };
+          });
+          paintDesignFanout();
+          pins.forEach(function (pin) {
+            designStartRun(task, board.slug, pin);
+          });
+          return;
+        }
+        designStartRun(task, board.slug, pins[0]);
       });
     });
   }
 
   /// Start the run and watch for its landing: the pending record carries
   /// the frames the board had, so the diff is the run's contribution.
-  /// An explicit pin (the review's critic) outruns the composer's pick.
+  /// An explicit pin (the review's critic, or a fan-out's model)
+  /// outruns the composer's pick; without one, the first pressed model
+  /// — the default — pins the run exactly as before.
   function designStartRun(task, slug, pin) {
     var runPath = '/api/run' + (face.session ? '?session=' + encodeURIComponent(face.session) : '');
     // The page names the model: `provider/model` pins both halves, so the
     // router skips the judgment entirely — routing for a design run is
-    // this page's decision, and an empty picker leaves the router's own.
+    // this page's decision, and an empty pick leaves the router's own.
     post(runPath, {
       task: task,
       mode: face.permissions,
-      pin: pin || el.designModel.value || face.providerPin || null
+      pin: pin || designPickedModels()[0] || face.providerPin || null
     })
       .then(function (reply) {
         if (reply.status === 200) {
@@ -17616,6 +17677,8 @@
     var pending = face.designPending;
     if (!pending) return;
     face.designPending = null;
+    face.designFanout = null;
+    paintDesignFanout();
     el.designSend.disabled = false;
     var board = designBoard();
     if (!board || board.slug !== pending.slug) { readDesign(true); return; }

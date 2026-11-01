@@ -4288,17 +4288,23 @@ async function theDesignCanvasCarriesItsFramesAndWritesGeometry() {
   // an unavailable one refuses instead of failing later, and the open
   // choice is the first that can serve.
   const models = page.IDS['design-model'];
-  const modelOptions = (models && models.children) || [];
+  const modelChips = (models && models.children) || [];
   check('PM-D the composer carries the models designated for design',
-    modelOptions.length === 3 &&
-      modelOptions[0].value === 'deepseek/deepseek-flash' &&
-      modelOptions[0].disabled === true &&
-      String(modelOptions[0].textContent).includes('unavailable') &&
-      modelOptions[1].value === 'zai-coding-plan/GLM-5.3-Flash' &&
-      modelOptions[1].disabled === false,
-    modelOptions.map((one) => one.value + '/' + one.disabled).join(','));
-  check('PM-D the picker opens on the first model that can serve',
-    models.value === 'zai-coding-plan/GLM-5.3-Flash', models.value);
+    modelChips.length === 3 &&
+      modelChips[0].dataset.model === 'deepseek/deepseek-flash' &&
+      modelChips[0].disabled === true &&
+      String(modelChips[0].textContent).includes('unavailable') &&
+      modelChips[1].dataset.model === 'zai-coding-plan/GLM-5.3-Flash' &&
+      modelChips[1].disabled === false,
+    modelChips.map((one) => one.dataset.model + '/' + one.disabled).join(','));
+  // P5 (design-parity C15): the control is a multi-select, and the
+  // default is exactly one pressed — the first that can serve.
+  const pressedByDefault = Array.prototype.filter.call(modelChips,
+    (one) => one.getAttribute('aria-pressed') === 'true');
+  check('C15 the picker opens with exactly one model pressed',
+    pressedByDefault.length === 1 &&
+      pressedByDefault[0].dataset.model === 'zai-coding-plan/GLM-5.3-Flash',
+    pressedByDefault.map((one) => one.dataset.model).join(','));
 
   // P1 (design-parity C2): the focus is visible and complete — the
   // chip-selected page is the focus (the chip's click landed it, with
@@ -4542,8 +4548,18 @@ async function theDesignCanvasCarriesItsFramesAndWritesGeometry() {
 
   page.IDS['design-brief'].value = 'make the hero quieter';
   page.IDS['design-mode-select'].value = 'refine';
-  // The owner's own choice wins over the default.
-  models.value = 'ollama-cloud/glm-5.3-flash';
+  // The owner's own choice wins over the default: release the default
+  // chip, press the one they want — one pressed, one pinned run.
+  const chipsNow = page.IDS['design-model'].children;
+  Array.prototype.forEach.call(chipsNow, function (chip) {
+    if (chip.getAttribute('aria-pressed') === 'true' &&
+      chip.dataset.model !== 'ollama-cloud/glm-5.3-flash') {
+      chip.click();
+    }
+  });
+  Array.prototype.forEach.call(page.IDS['design-model'].children, function (chip) {
+    if (chip.dataset.model === 'ollama-cloud/glm-5.3-flash') chip.click();
+  });
   page.fireOn('design-send', 'click');
   await flush(80);
   const posts = page.calls.filter((one) => one.method === 'POST' &&
@@ -4824,6 +4840,43 @@ async function theDesignCanvasCarriesItsFramesAndWritesGeometry() {
         !!siteZip,
       sitePost ? String(sitePost.body).slice(0, 130) : 'no site post');
   }
+
+  // P5 (design-parity C15/C16): pressed together, the send fans out —
+  // one run per model, each with its own pin, one progress line each
+  // until the board fills. (deepseek cannot serve; the two that can
+  // are pressed.)
+  const fanChips = page.IDS['design-model'].children;
+  Array.prototype.forEach.call(fanChips, function (chip) {
+    if (!chip.disabled && chip.getAttribute('aria-pressed') !== 'true') chip.click();
+  });
+  await flush(10);
+  const pressed = Array.prototype.filter.call(page.IDS['design-model'].children,
+    (one) => one.getAttribute('aria-pressed') === 'true');
+  check('C15 several models press together',
+    pressed.length === 2, pressed.map((one) => one.dataset.model).join(','));
+  page.IDS['design-brief'].value = 'two minds, one brief';
+  page.IDS['design-mode-select'].value = 'generate';
+  page.fireOn('design-send', 'click');
+  await flush(80);
+  const runs = page.calls.filter((one) => one.method === 'POST' &&
+    String(one.url || '').includes('/api/run'));
+  const fanRuns = runs.slice(-2);
+  const fanPins = fanRuns.map((one) => {
+    const match = /"pin":"([^"]+)"/.exec(String(one.body || ''));
+    return match ? match[1] : '';
+  });
+  check('C16 the fan-out starts one run per model with distinct pins',
+    fanRuns.length === 2 &&
+      fanPins[0] !== '' && fanPins[1] !== '' && fanPins[0] !== fanPins[1] &&
+      fanPins.indexOf('zai-coding-plan/GLM-5.3-Flash') >= 0 &&
+      fanPins.indexOf('ollama-cloud/glm-5.3-flash') >= 0,
+    JSON.stringify(fanPins));
+  const fanLines = page.rows('.design-fanout-line');
+  check('C16 each fan-out run shows its own progress line',
+    fanLines.length === 2 &&
+      String(fanLines[0].textContent).includes('designing') &&
+      String(fanLines[1].textContent).includes('designing'),
+    fanLines.map((one) => one.textContent).join(' | '));
 }
 
 // Design work started outside the design page — a conversation, a cron

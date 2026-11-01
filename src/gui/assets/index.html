@@ -760,10 +760,13 @@
                 <option value="4">4 directions</option>
               </select>
             </div>
-            <!-- The page's own models: a design run's route is this choice,
-                 pinned on the request — the router never picks among them.
-                 It keeps a line of its own, because it is the run's model
-                 and a clipped model name is a model you cannot read. -->
+            <!-- The page's own models: a design run's route is this
+                 choice, pinned on the request — the router never picks
+                 among them. The chips are a multi-select (P5): one
+                 pressed, one run; several, a fan-out — different models
+                 have different strengths, so the owner picks which
+                 designs. It keeps a line of its own, because the
+                 model's name is the run's route. -->
             <!-- The board's brand: its tokens are the default colours of
                  every page landed here, and its doctrine rides the task. -->
             <div class="design-chat-row design-chat-model">
@@ -772,7 +775,8 @@
             </div>
             <div class="design-chat-row design-chat-model">
               <span class="design-model-label">model</span>
-              <select class="knob-box" id="design-model" aria-label="the model that designs"></select>
+              <div class="design-model-picks" id="design-model" role="group"
+                aria-label="the models that design"></div>
               <button class="replay-button replay-resume" id="design-send" type="button">send</button>
             </div>
           </div>
