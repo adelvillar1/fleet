@@ -145,21 +145,32 @@ this exact seam.
 
 ### O7 — KI-369: a durable spawn route for lane jobs
 
-**Evidence**: the hand-driven stdio JSON-RPC path works and is
-verified (every catch-up since 2026-10-28 rode it); the row asks
-whether the surface deserves its own increment — a subagent-family
-declaration admitting one lane call, or a bridge surface that fires a
-named cron job on demand.
+**Evidence**: the hand-driven stdio JSON-RPC path works — and keeps
+paying: KI-221/KI-224 (the job could not execute as written, "fixed"
+by pointing the task string at a hand-built driver), every 10-28
+catch-up hand-driving the same session, and KI-387 itself — the first
+run through the spawn route took a Content-Length-framed driver that
+dead-read 90s, a relaunched child killed as a leftover, a bytes/str
+TypeError, and a fourth attempt before it ran clean. The route has
+bitten more than twice; the hand path re-derives a contract the repo
+already implements in `src/mcp.rs` on every nightly run.
 
 **Options**:
-- **(a) Build it** — the spawn route becomes a declared surface.
-- **(b) Keep the hand-driven path** — C-plan W3's contract (the
-  transport written where drivers read it) is the durable half; the
-  driver itself stays a documented runbook step.
+- **(a) Build it** — a one-shot lane-call verb on the existing
+  surface: `fleet mcp call <server> <tool> '<args-json>'` spawns the
+  lane through the registry's launch spec, drives initialize (the
+  300s cold window) and the `tools/call` over the client that already
+  speaks the framing, prints the reply, tears down, and exits with
+  the outcome. Job task strings then name one command; KI-387's
+  contract lives in the code that runs it instead of a docstring.
+- **(b) Keep the hand-driven path** — C-plan W3 writes the transport
+  where drivers read it; the driver stays a runbook step.
 
-**Recommendation**: (b) for now, with the runbook naming the path.
-The hand route has run nightly for five days without a new defect;
-the increment earns itself when it bites twice.
+**Recommendation**: (a). The bite count is the ledger's own — three
+rows plus today's KI-387 — and the increment is wiring around an
+existing client, not a new subsystem. W3's contract work stays
+valuable (the docstring and broken-pipe fixes) but stops being the
+load-bearing answer.
 
 ## Acceptance criteria
 
@@ -182,7 +193,9 @@ the increment earns itself when it bites twice.
 Each follow-through lands where its row lives (O1: the relay's join
 handler; O2: the send path's bound; O3: the preamble + the checker;
 O4: the flake's test + its stub; O5: `.gitignore` + the tracked
-escapes; O6: `remember`'s index write; O7: the runbook passage).
+escapes; O6: `remember`'s index write; O7: the lane-call verb in
+`src/cli.rs`/`src/main.rs` over the existing MCP client, and the job
+task strings naming it).
 This plan file records the rulings.
 
 ## Out of scope
