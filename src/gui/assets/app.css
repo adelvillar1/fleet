@@ -7971,6 +7971,30 @@ body[data-work="collapsed"] .work-list { display: none; }
 .design-chat-model { flex-wrap: nowrap; }
 .design-chat-model .knob-box { flex: 1 1 auto; min-width: 0; }
 .design-model-label { flex: 0 0 auto; font-size: var(--text-xs); color: var(--dsw-alias-ink-tertiary); }
+/* The board's assets, in the pane: a thumbnail at the file's own aspect, the
+   sniffed type and size, and the acts beside it. The panel never holds a
+   copy of the bytes — the thumbnail is the face's own asset route. */
+.canvas-assets { display: grid; gap: var(--space-2); }
+.canvas-asset {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border: 1px solid var(--dsw-alias-hairline);
+  border-radius: var(--card-radius);
+}
+.canvas-asset-thumb {
+  width: 48px;
+  height: 48px;
+  object-fit: contain;
+  background: var(--dsw-alias-page);
+  border-radius: 4px;
+  flex: 0 0 auto;
+}
+.canvas-asset-body { display: grid; gap: 2px; min-width: 0; flex: 1 1 auto; }
+.canvas-asset-name { font-size: var(--text-sm); }
+.canvas-asset-facts { font-size: var(--text-xs); color: var(--dsw-alias-ink-tertiary); }
+.canvas-asset-file { font-size: var(--text-xs); color: var(--dsw-alias-ink-secondary); }
 .canvas-head { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--space-4); }
 .canvas-head-acts { display: flex; align-items: center; gap: var(--space-2); padding-bottom: 4px; }
 .canvas-head-acts .knob-box { min-width: 220px; }

@@ -1,72 +1,560 @@
 [
- {
-  "id": "agency-grid",
-  "label": "Agency grid",
-  "summary": "Minimal editorial agency grid \u2014 oversized type, quiet labels, open space",
-  "source": "web-design/agency-grid-layout-minimal",
-  "spec": "LAYOUT: disciplined multi-column editorial grid with large open spans and generous negative space; hero headline spans most of the grid with supporting copy anchored in a narrow side column.\nPALETTE: light neutral backgrounds, subtle tonal shifts, thin separators; one restrained accent used sparingly.\nTYPE: oversized headlines with tight tracking and strong line breaks as the primary visual anchor; tiny uppercase utility labels and metadata; calm, sparse body copy.\nSIGNATURE MOVES: service/capability rows as clean multi-column listings with tiny metadata; large architectural image blocks framed by whitespace, not chrome; understated CTAs with thin borders and small uppercase labels.\nAVOID: generic repeated card grids, heavy borders or shadows, accent overuse, filling every gap with content."
- },
- {
-  "id": "editorial-tech",
-  "label": "Editorial tech",
-  "summary": "Magazine composition meets product-tech precision \u2014 asymmetric grid, mono labels",
-  "source": "web-design/editorial-tech",
-  "spec": "LAYOUT: asymmetrical editorial composition with strong column structure and deliberate negative space; cinematic media bands or inset image strips that cut across the grid; offset alignment instead of centered hero blocks.\nPALETTE: restrained dark or controlled light neutrals with one active accent for states, numeric highlights, and focal separators.\nTYPE: large expressive display headlines paired with quiet sans body and mono utility labels, counters, and metadata.\nSIGNATURE MOVES: chapter markers, step lists, mono counters, thin divider rules and grid traces that make the page feel engineered; premium thin-framed panels rather than soft lifestyle surfaces.\nAVOID: centered generic SaaS heroes with interchangeable cards, sci-fi neon chrome, multi-color palettes, accent everywhere."
- },
- {
-  "id": "framed-grid",
-  "label": "Framed grid",
-  "summary": "Visible 1px frames and corner brackets on a strict parent grid \u2014 precise, technical",
-  "source": "web-design/framed-grid-layout",
-  "spec": "LAYOUT: strict parent grid (e.g. 12 columns) where every section snaps to the same columns and rows; each section is a framed box with a 1px border, consistent padding, and consistent gaps; sections use explicit grid spans, not ad-hoc widths.\nPALETTE: neutral background (e.g. #f7f7f4), one border color at low contrast, one stronger line color for accents; very subtle diagonal line texture (\u22640.05 opacity) as surface tension.\nTYPE: clean sans with calm hierarchy; headings, controls, and media edges all aligned to the same grid rhythm.\nSIGNATURE MOVES: L-shaped corner brackets (\u224818px) repeated on all major frames; the visible frame IS the structure \u2014 no shadows.\nAVOID: floating cards, soft blobs, uneven margins, mixed border weights, heavy shadows, decorative texture."
- },
- {
-  "id": "split-technical",
-  "label": "Split technical",
-  "summary": "Two-panel split screen \u2014 immersive media one side, specs and metadata the other",
-  "source": "web-design/split-layout-technical",
-  "spec": "LAYOUT: strong two-panel split (\u224850/50 on desktop, stacked on mobile) where each half has a distinct role \u2014 one immersive/visual, one informational with specs, metadata, or navigation; thin frame lines, inset rules, and tiny corner markers give each panel a technical shell.\nPALETTE: restrained neutrals with one selective accent for active details and system cues, never a blanket wash.\nTYPE: quiet editorial headlines with controlled tracking, supported by mono utility text for top rails, metadata strips, and spec labels.\nSIGNATURE MOVES: one premium inset surface (bordered media frame or visualization window); compact two-column spec blocks with thin dividers; asymmetric density \u2014 one panel denser, one more spatial.\nAVOID: generic two-column marketing layouts, equally crowded panels, rounded playful UI, bright multi-color treatments."
- },
- {
-  "id": "wireframe-dark",
-  "label": "Wireframe dark",
-  "summary": "Monochrome technical diagram \u2014 outlined geometry, annotations, dark diagnostic frame",
-  "source": "web-design/technical-wireframe-info-layout",
-  "spec": "LAYOUT: wide, sparse composition on a near-black foundation; a large outlined/wireframe central object (SVG linework, no external libs) as the structural anchor, surrounded by open space with floating info labels connected by thin routed or dashed lines.\nPALETTE: almost entirely monochrome \u2014 black, charcoal, zinc, white; emphasis from brightness and line weight, not color.\nTYPE: compact technical type \u2014 small labels, utility copy, metric text, and only one or two larger heading moments.\nSIGNATURE MOVES: exploded/layered outlined geometry suggesting readable components; edge-anchored diagnostic tags with tiny status dots; a low-contrast monochrome widget row (legend, allocation bars); faint halftone or technical pattern overlay.\nAVOID: filled glossy 3D renders, bright accent colors, dense dashboard cards competing with the diagram, label clutter."
- },
- {
-  "id": "minimal-beige",
-  "label": "Minimal beige",
-  "summary": "Warm beige light mode \u2014 layered stone surfaces, quiet process grid, sparse accent",
-  "source": "web-design/clean-minimal-beige-light-mode",
-  "spec": "LAYOUT: centered master container or framed shell on layered beige/stone/cream surfaces; simple centered hero above a modular lower grid of evenly divided process blocks with consistent heights.\nPALETTE: warm neutrals (beige, stone, parchment) with very low-contrast borders and subtle tonal separation; one sparse accent reserved for badges, active states, and primary actions.\nTYPE: modern clean sans, modest weight contrast, quiet tracking, balanced spacing.\nSIGNATURE MOVES: gentle radial wash behind the main UI instead of flat white; thin dividers over shadows; small dark inset cards used sparingly as contrast moments; tiny status dots and low-key progress indicators.\nAVOID: stark white SaaS with cold gray borders, ornate paper textures, heavy shadows, high-saturation accents, noisy over-filled modules."
- },
- {
-  "id": "dark-glass",
-  "label": "Dark glass",
-  "summary": "Premium dark workspace \u2014 frosted shells, floating cards, atmospheric depth",
-  "source": "web-design/dark-glass-clean-layout",
-  "spec": "LAYOUT: centered max-width workspace shell on a near-black base \u2014 pill top nav, optional side shells, and a calm central stage; thin vertical boundary rails and tiny corner markers keep it architectural; a few floating glass cards around the center, generously spaced.\nPALETTE: monochrome \u2014 white, zinc, smoke, charcoal; accent only for status dots and tiny indicators.\nTYPE: compact operational headings with mono micro-labels, system IDs, and tiny metadata for technical credibility.\nSIGNATURE MOVES: dark frosted glass shells (low-opacity dark fills, strong backdrop blur, crisp top-edge highlight, 1px gradient borders); soft atmospheric glow behind the interface; terminal-like I/O cards with clean inner rows.\nAVOID: bright translucent cards over colorful blobs, flat black boxes with no depth, center overcrowding, neon glows, glass as card-style-only."
- },
- {
-  "id": "orange-paper",
-  "label": "Orange paper SaaS",
-  "summary": "Warm paper tones with orange signal color \u2014 rounded, polished, product-led",
-  "source": "web-design/orange-clean-paper-saas",
-  "spec": "LAYOUT: large rounded master container with subtle gradient-border treatment on a warm shell; pair a functional area (form, onboarding, content) with a polished product-visual panel of floating cards or soft white UI chips.\nPALETTE: warm off-white, cream, parchment, pale stone surfaces \u2014 never stark white; orange as the disciplined signal color for CTAs, step markers, focus rings, and micro-badges.\nTYPE: clean sans, light-to-regular body weight, restrained hierarchy \u2014 elegant and approachable.\nSIGNATURE MOVES: paper-toned inputs with delicate borders and orange focus rings; rounded white/cream cards with soft orange-tinted shadows; orange primary button with quiet secondary actions.\nAVOID: cold blue-gray SaaS UI, flat white forms, saturating the page with orange, vintage paper distressing, noisy illustration."
- },
- {
-  "id": "paper-technical",
-  "label": "Paper technical",
-  "summary": "Warm paper interior framed by a dark outer shell \u2014 tactile but precise",
-  "source": "web-design/light-mode-paper-technical",
-  "spec": "LAYOUT: dark outer page field holding one large light rounded container with the whole experience inside; inner framing via inset border rectangles, small corner brackets, and quiet technical rules over paper-toned backgrounds.\nPALETTE: warm off-white/parchment primary surfaces layered with slightly darker paper tones and soft borders; one restrained accent for active states, progress marks, and primary CTAs.\nTYPE: clean sans for interface content with optional mono utility text for timestamps, captions, and metadata.\nSIGNATURE MOVES: low-contrast diagonal texture on large paper regions; nested app panels (mockups, sidebars, transcript panes) with bright clean interiors and delicate border hierarchy; accent-driven live states (active bullets, highlighted words).\nAVOID: flat plain white layouts, vintage distressing, cold enterprise blue-gray, over-softened consumer roundness, accent overuse."
- },
- {
-  "id": "industrial-skeuo",
-  "label": "Industrial skeuo",
-  "summary": "High-contrast molded dark shell \u2014 tactile depth, crisp light separation",
-  "source": "web-design/high-contrast-skeuomorphic-clean",
-  "spec": "LAYOUT: light outer page framing one dominant dark (black/charcoal) rounded master shell; inside, a disciplined grid of molded cards and instrument-like modules with fine guide lines and corner markers.\nPALETTE: high contrast \u2014 near-white text on deep dark surfaces, muted gray support copy; one restrained signal accent for status lights, active markers, and progress slivers.\nTYPE: clean sans with occasional mono labels; precise, not ornamental.\nSIGNATURE MOVES: tactile depth via 1px gradient borders, top-edge highlights, dark-to-darker fills, and inset shadow stacks \u2014 clean and controlled, never glossy; touchable buttons with subtle bevel and measured hover brightness; selective skeuomorphic objects (windows, search plates, status widgets).\nAVOID: washed-out neumorphism, retro glossy leather/chrome gimmicks, flat monochrome with no depth, multiple accents, depth effects on everything."
- }
+  {
+    "id": "agency-grid",
+    "label": "Agency grid",
+    "summary": "Minimal editorial agency grid — oversized type, quiet labels, open space",
+    "source": "web-design/agency-grid-layout-minimal",
+    "category": "Editorial & curated",
+    "spec": "LAYOUT: disciplined multi-column editorial grid with large open spans and generous negative space; hero headline spans most of the grid with supporting copy anchored in a narrow side column.\nPALETTE: light neutral backgrounds, subtle tonal shifts, thin separators; one restrained accent used sparingly.\nTYPE: oversized headlines with tight tracking and strong line breaks as the primary visual anchor; tiny uppercase utility labels and metadata; calm, sparse body copy.\nSIGNATURE MOVES: service/capability rows as clean multi-column listings with tiny metadata; large architectural image blocks framed by whitespace, not chrome; understated CTAs with thin borders and small uppercase labels.",
+    "avoid": "generic repeated card grids, heavy borders or shadows, accent overuse, filling every gap with content."
+  },
+  {
+    "id": "editorial-tech",
+    "label": "Editorial tech",
+    "summary": "Magazine composition meets product-tech precision — asymmetric grid, mono labels",
+    "source": "web-design/editorial-tech",
+    "category": "Editorial & curated",
+    "spec": "LAYOUT: asymmetrical editorial composition with strong column structure and deliberate negative space; cinematic media bands or inset image strips that cut across the grid; offset alignment instead of centered hero blocks.\nPALETTE: restrained dark or controlled light neutrals with one active accent for states, numeric highlights, and focal separators.\nTYPE: large expressive display headlines paired with quiet sans body and mono utility labels, counters, and metadata.\nSIGNATURE MOVES: chapter markers, step lists, mono counters, thin divider rules and grid traces that make the page feel engineered; premium thin-framed panels rather than soft lifestyle surfaces.",
+    "avoid": "centered generic SaaS heroes with interchangeable cards, sci-fi neon chrome, multi-color palettes, accent everywhere."
+  },
+  {
+    "id": "framed-grid",
+    "label": "Framed grid",
+    "summary": "Visible 1px frames and corner brackets on a strict parent grid — precise, technical",
+    "source": "web-design/framed-grid-layout",
+    "category": "Editorial & curated",
+    "spec": "LAYOUT: strict parent grid (e.g. 12 columns) where every section snaps to the same columns and rows; each section is a framed box with a 1px border, consistent padding, and consistent gaps; sections use explicit grid spans, not ad-hoc widths.\nPALETTE: neutral background (e.g. #f7f7f4), one border color at low contrast, one stronger line color for accents; very subtle diagonal line texture (≤0.05 opacity) as surface tension.\nTYPE: clean sans with calm hierarchy; headings, controls, and media edges all aligned to the same grid rhythm.\nSIGNATURE MOVES: L-shaped corner brackets (≈18px) repeated on all major frames; the visible frame IS the structure — no shadows.",
+    "avoid": "floating cards, soft blobs, uneven margins, mixed border weights, heavy shadows, decorative texture."
+  },
+  {
+    "id": "split-technical",
+    "label": "Split technical",
+    "summary": "Two-panel split screen — immersive media one side, specs and metadata the other",
+    "source": "web-design/split-layout-technical",
+    "category": "Editorial & curated",
+    "spec": "LAYOUT: strong two-panel split (≈50/50 on desktop, stacked on mobile) where each half has a distinct role — one immersive/visual, one informational with specs, metadata, or navigation; thin frame lines, inset rules, and tiny corner markers give each panel a technical shell.\nPALETTE: restrained neutrals with one selective accent for active details and system cues, never a blanket wash.\nTYPE: quiet editorial headlines with controlled tracking, supported by mono utility text for top rails, metadata strips, and spec labels.\nSIGNATURE MOVES: one premium inset surface (bordered media frame or visualization window); compact two-column spec blocks with thin dividers; asymmetric density — one panel denser, one more spatial.",
+    "avoid": "generic two-column marketing layouts, equally crowded panels, rounded playful UI, bright multi-color treatments."
+  },
+  {
+    "id": "wireframe-dark",
+    "label": "Wireframe dark",
+    "summary": "Monochrome technical diagram — outlined geometry, annotations, dark diagnostic frame",
+    "source": "web-design/technical-wireframe-info-layout",
+    "category": "Editorial & curated",
+    "spec": "LAYOUT: wide, sparse composition on a near-black foundation; a large outlined/wireframe central object (SVG linework, no external libs) as the structural anchor, surrounded by open space with floating info labels connected by thin routed or dashed lines.\nPALETTE: almost entirely monochrome — black, charcoal, zinc, white; emphasis from brightness and line weight, not color.\nTYPE: compact technical type — small labels, utility copy, metric text, and only one or two larger heading moments.\nSIGNATURE MOVES: exploded/layered outlined geometry suggesting readable components; edge-anchored diagnostic tags with tiny status dots; a low-contrast monochrome widget row (legend, allocation bars); faint halftone or technical pattern overlay.",
+    "avoid": "filled glossy 3D renders, bright accent colors, dense dashboard cards competing with the diagram, label clutter."
+  },
+  {
+    "id": "minimal-beige",
+    "label": "Minimal beige",
+    "summary": "Warm beige light mode — layered stone surfaces, quiet process grid, sparse accent",
+    "source": "web-design/clean-minimal-beige-light-mode",
+    "category": "Editorial & curated",
+    "spec": "LAYOUT: centered master container or framed shell on layered beige/stone/cream surfaces; simple centered hero above a modular lower grid of evenly divided process blocks with consistent heights.\nPALETTE: warm neutrals (beige, stone, parchment) with very low-contrast borders and subtle tonal separation; one sparse accent reserved for badges, active states, and primary actions.\nTYPE: modern clean sans, modest weight contrast, quiet tracking, balanced spacing.\nSIGNATURE MOVES: gentle radial wash behind the main UI instead of flat white; thin dividers over shadows; small dark inset cards used sparingly as contrast moments; tiny status dots and low-key progress indicators.",
+    "avoid": "stark white SaaS with cold gray borders, ornate paper textures, heavy shadows, high-saturation accents, noisy over-filled modules."
+  },
+  {
+    "id": "dark-glass",
+    "label": "Dark glass",
+    "summary": "Premium dark workspace — frosted shells, floating cards, atmospheric depth",
+    "source": "web-design/dark-glass-clean-layout",
+    "category": "Editorial & curated",
+    "spec": "LAYOUT: centered max-width workspace shell on a near-black base — pill top nav, optional side shells, and a calm central stage; thin vertical boundary rails and tiny corner markers keep it architectural; a few floating glass cards around the center, generously spaced.\nPALETTE: monochrome — white, zinc, smoke, charcoal; accent only for status dots and tiny indicators.\nTYPE: compact operational headings with mono micro-labels, system IDs, and tiny metadata for technical credibility.\nSIGNATURE MOVES: dark frosted glass shells (low-opacity dark fills, strong backdrop blur, crisp top-edge highlight, 1px gradient borders); soft atmospheric glow behind the interface; terminal-like I/O cards with clean inner rows.",
+    "avoid": "bright translucent cards over colorful blobs, flat black boxes with no depth, center overcrowding, neon glows, glass as card-style-only."
+  },
+  {
+    "id": "orange-paper",
+    "label": "Orange paper SaaS",
+    "summary": "Warm paper tones with orange signal color — rounded, polished, product-led",
+    "source": "web-design/orange-clean-paper-saas",
+    "category": "Editorial & curated",
+    "spec": "LAYOUT: large rounded master container with subtle gradient-border treatment on a warm shell; pair a functional area (form, onboarding, content) with a polished product-visual panel of floating cards or soft white UI chips.\nPALETTE: warm off-white, cream, parchment, pale stone surfaces — never stark white; orange as the disciplined signal color for CTAs, step markers, focus rings, and micro-badges.\nTYPE: clean sans, light-to-regular body weight, restrained hierarchy — elegant and approachable.\nSIGNATURE MOVES: paper-toned inputs with delicate borders and orange focus rings; rounded white/cream cards with soft orange-tinted shadows; orange primary button with quiet secondary actions.",
+    "avoid": "cold blue-gray SaaS UI, flat white forms, saturating the page with orange, vintage paper distressing, noisy illustration."
+  },
+  {
+    "id": "paper-technical",
+    "label": "Paper technical",
+    "summary": "Warm paper interior framed by a dark outer shell — tactile but precise",
+    "source": "web-design/light-mode-paper-technical",
+    "category": "Editorial & curated",
+    "spec": "LAYOUT: dark outer page field holding one large light rounded container with the whole experience inside; inner framing via inset border rectangles, small corner brackets, and quiet technical rules over paper-toned backgrounds.\nPALETTE: warm off-white/parchment primary surfaces layered with slightly darker paper tones and soft borders; one restrained accent for active states, progress marks, and primary CTAs.\nTYPE: clean sans for interface content with optional mono utility text for timestamps, captions, and metadata.\nSIGNATURE MOVES: low-contrast diagonal texture on large paper regions; nested app panels (mockups, sidebars, transcript panes) with bright clean interiors and delicate border hierarchy; accent-driven live states (active bullets, highlighted words).",
+    "avoid": "flat plain white layouts, vintage distressing, cold enterprise blue-gray, over-softened consumer roundness, accent overuse."
+  },
+  {
+    "id": "industrial-skeuo",
+    "label": "Industrial skeuo",
+    "summary": "High-contrast molded dark shell — tactile depth, crisp light separation",
+    "source": "web-design/high-contrast-skeuomorphic-clean",
+    "category": "Editorial & curated",
+    "spec": "LAYOUT: light outer page framing one dominant dark (black/charcoal) rounded master shell; inside, a disciplined grid of molded cards and instrument-like modules with fine guide lines and corner markers.\nPALETTE: high contrast — near-white text on deep dark surfaces, muted gray support copy; one restrained signal accent for status lights, active markers, and progress slivers.\nTYPE: clean sans with occasional mono labels; precise, not ornamental.\nSIGNATURE MOVES: tactile depth via 1px gradient borders, top-edge highlights, dark-to-darker fills, and inset shadow stacks — clean and controlled, never glossy; touchable buttons with subtle bevel and measured hover brightness; selective skeuomorphic objects (windows, search plates, status widgets).",
+    "avoid": "washed-out neumorphism, retro glossy leather/chrome gimmicks, flat monochrome with no depth, multiple accents, depth effects on everything."
+  },
+  {
+    "id": "airbnb",
+    "label": "Airbnb Travel Marketplace",
+    "summary": "Photography-driven travel marketplace with Rausch coral accent, rounded UI, and dense typographic system.",
+    "source": "ux-ui-agent-skills/airbnb",
+    "category": "E-Commerce & Retail",
+    "spec": "LAYOUT: Max width 1760px; 6-col grid scaling down. Detail page 58% main / 36% sticky booking panel. Section padding 48-64px, mobile 24-32px. Radius: 4px chips, 8px buttons, 14px cards, 20px pills, 32px search, 50% circles.\nPALETTE: Canvas #ffffff, Ink #222222. Rausch #ff385c primary CTA, #e00b41 pressed. Soft Cloud #f7f7f7, Hairline #dddddd borders, Ash #6a6a6a secondary.\nTYPE: Airbnb Cereal VF only (fallback Circular); 500/600/700, no 400. Heading 28px/700, card title 21px/700, body 16px/500, badge 11px/600 uppercase.\nSIGNATURE MOVES: Full-bleed 4:3/16:9 photography with 14-20px rounding; 3D category icons with typographic tabs; circular 50% icon buttons; sticky booking panel; Guest Favorite laurel-wreath rating.",
+    "avoid": "multi-color palettes, flat illustration, sharp corners, serif/display fonts, cluttered grids, muted CTAs, unrounded photography."
+  },
+  {
+    "id": "apple",
+    "label": "Apple Precision Editorial",
+    "summary": "Cinematic black/light chapters, thin chrome, SF Pro typography, single blue accent, pill CTAs.",
+    "source": "ux-ui-agent-skills/apple",
+    "category": "Media & Consumer",
+    "spec": "LAYOUT: 8px grid; black #000000 hero chapters alternate pale #f5f5f7 fields; tight commerce grids; radius tiers 8-18px cards, 980px pill CTAs.\nPALETTE: #000000, #f5f5f7, #1d1d1f text, #0071e3 action blue, #6e6e73 secondary, #d2d2d7 borders.\nTYPE: SF Pro Display (hero, semibold, tight leading) + SF Pro Text (body/UI); 80px hero to 12px micro labels.\nSIGNATURE MOVES: Thin chrome, imagery carries weight; pill/capsule CTAs; surface contrast over shadows; dual showcase/transaction modes.",
+    "avoid": "Secondary accent palettes, decorative gradients/glows, loose tracking, single corner radius, thick borders, loud effects, splitting marketing vs commerce systems."
+  },
+  {
+    "id": "bento",
+    "label": "Bento",
+    "summary": "Modular card grid with peach-and-cream palette, soft spacing, and scannable hierarchy.",
+    "source": "ux-ui-agent-skills/bento",
+    "category": "Layout & Structure",
+    "spec": "LAYOUT: Compose a modular grid of card-like blocks with consistent internal padding; headline → support text → primary action per card; use whitespace before borders or shadows.\nPALETTE: Peach primary #FAD4C0 for CTAs; cream surface #FFF5E6 for cards and backgrounds; text #111827; secondary #80A1C1; success #16A34A, warning #D97706, danger #DC2626.\nTYPE: Inter for headings and body; JetBrains Mono for code; scale 12/14/16/20/24/32; weights 100–900; headings carry personality, body maximizes scanability.\nSIGNATURE MOVES: Peach CTA buttons pop against cream cards; consistent radii and elevation across all blocks; strong focus-visible inputs with clear labels.",
+    "avoid": "Off-palette colors when tokens exist; flat hierarchy via uniform type size/weight; decorative effects that hurt readability; mixing unrelated visual metaphors."
+  },
+  {
+    "id": "bmw",
+    "label": "BMW — German Precision",
+    "summary": "Dark cinematic hero photography + white content sections, ultra-light uppercase display type, sharp corners, BMW Blue accent only for interaction.",
+    "source": "ux-ui-agent-skills/bmw",
+    "category": "Automotive",
+    "spec": "LAYOUT: Full-bleed dark hero photos alternating with white sections; 8px grid; sharp 0px radius; generous hero padding, compressed body spacing.\nPALETTE: #fff surfaces; #262626 text; #757575 meta; #1c69d4 accent only; #0653b6 focus; #bbbbbb muted.\nTYPE: BMWTypeNextLatin Light 300 uppercase 60px hero; 900 nav; 400 body 16px; line-heights 1.15–1.30.\nSIGNATURE MOVES: 300-vs-900 weight contrast; single font family; blue only on interactive elements; showroom lighting rhythm.",
+    "avoid": "Rounded corners; blue backgrounds; weights 500–600; decorative elements; loose line-heights; lightening dark heroes."
+  },
+  {
+    "id": "brutalism",
+    "label": "Brutalism",
+    "summary": "Raw concrete anti-design: heavy type, hard edges, jarring layouts, functional minimalism.",
+    "source": "ux-ui-agent-skills/brutalism",
+    "category": "Bold & Expressive",
+    "spec": "LAYOUT: Stack bold, unadorned blocks edge-to-edge; hard 0px radii; asymmetric grids with visible misalignment; oversized headers crashing into content; no soft shadows or gradients.\nPALETTE: Primary #DD614C for CTAs; Surface #FFFFFF for large blocks; Text #111827 for body; Secondary #DAA144, Success #16A34A, Warning #D97706, Danger #DC2626 only as tokens.\nTYPE: Darker Grotesque for all headings, heavy weights 800-900, tight leading; JetBrains Mono for labels and meta; body at readable weight 400-500, high contrast.\nSIGNATURE MOVES: Raw exposed structure—visible borders, stark dividers, brutalist typographic scale; functional elements look bolted-on, not polished; use mono for technical annotations.",
+    "avoid": "Off-palette colors, rounded corners, soft shadows, gradients, decorative flourishes, flattened hierarchy, mixing unrelated metaphors, anything that softens the concrete edge."
+  },
+  {
+    "id": "claymorphism",
+    "label": "Claymorphism",
+    "summary": "Soft, puffy 3D clay-like shapes with playful rounded surfaces, high-contrast colors, and expressive typography.",
+    "source": "ux-ui-agent-skills/claymorphism",
+    "category": "Morphism & Effects",
+    "spec": "LAYOUT: Clear content blocks, consistent padding, obvious hierarchy (headline→support→action), whitespace before borders/shadows.\nPALETTE: Primary #3B82F6, Surface #FFFFFF, Text #1C398E, Success #16A34A, Warning #D97706, Danger #DC2626.\nTYPE: Montserrat (primary), Poppins (display), JetBrains Mono (mono); weights 100-900; expressive headings, scannable body.\nSIGNATURE MOVES: Puffy rounded 3D clay shapes, soft inner/outer shadows, playful high-contrast color pops, bold CTA in Primary.",
+    "avoid": "Off-palette colors, flat hierarchy (same size/weight), decorative effects hurting readability, mixed visual metaphors."
+  },
+  {
+    "id": "coinbase",
+    "label": "Coinbase",
+    "summary": "Clean, trustworthy crypto platform: Coinbase Blue on white/near-black, ultra-tight display type, pill CTAs, alternating light/dark sections.",
+    "source": "ux-ui-agent-skills/coinbase",
+    "category": "Fintech & Crypto",
+    "spec": "LAYOUT: 8px base spacing; alternating white (#ffffff) and near-black (#0a0b0d) sections; pill CTAs 56px radius; cards 12-16px radius.\nPALETTE: Coinbase Blue #0052ff (functional only); hover #578bfa; cool gray surface #eef0f3; dark card #282b31; text #0a0b0d.\nTYPE: CoinbaseDisplay hero (80px, weight 400, line-height 1.00); CoinbaseSans UI/buttons (16px, 600); CoinbaseText body (18px, 400, 1.56).\nSIGNATURE MOVES: 56px pill buttons with blue hover; ultra-tight display headings; lowercase button labels; blue used only for function, never decoration.",
+    "avoid": "decorative blue, sharp CTA corners, playful/rounded display fonts, multi-color accents, loose heading line-heights, skeuomorphic crypto imagery."
+  },
+  {
+    "id": "cosmic",
+    "label": "Cosmic",
+    "summary": "Dark sci-fi with neon blue/violet accents, Audiowide display type, and playful-premium spatial energy.",
+    "source": "ux-ui-agent-skills/cosmic",
+    "category": "Creative & Artistic",
+    "spec": "LAYOUT: Clear content blocks, consistent padding, obvious hierarchy: headline → support → primary action. Whitespace before borders/shadows.\nPALETTE: Primary #3B82F6, Secondary #8B5CF6, Surface #FFFFFF, Text #111827. Success #16A34A, Warning #D97706, Danger #DC2626.\nTYPE: Audiowide for headings/display, JetBrains Mono for mono. Scale 12/14/16/20/24/32. Weight 400.\nSIGNATURE MOVES: Neon blue CTA emphasis, dark-space contrast with white cards, futuristic Audiowide headlines, mono accents for data.",
+    "avoid": "Off-palette colors, flat hierarchy (same size/weight), decorative effects hurting readability, mixed visual metaphors."
+  },
+  {
+    "id": "discord-dark-ui",
+    "label": "Discord Dark UI",
+    "summary": "Dark-first chat surface with 3-step depth, Blurple accent, gg sans, rounded-square avatars, tight rows.",
+    "source": "ux-ui-agent-skills/discord",
+    "category": "Productivity & SaaS",
+    "spec": "LAYOUT: Dark-first 3-step depth (#1e1f22 rail, #2b2d31 sidebar, #313338 chat). Rounded-square server avatars (16px) snap to circles on hover. Tight chat rows (4-8px), generous side-panel padding.\nPALETTE: Blurple #5865f2 (only saturated accent), hover #4752c4. Text #dbdee1, muted #949ba4, link #00a8fc. Status: online #23a55a, idle #f0b232, dnd #f23f43. Dividers rgba(255,255,255,0.06).\nTYPE: gg sans (fallback Helvetica/Arial). 16px body, 1.375 line-height. Weight contrast (400-800) over color. Mono: gg mono.\nSIGNATURE MOVES: Blurple on dark neutrals only. 8px card radius, 4px inputs, full pills on badges. 1px subtle dividers. Hover overlays rgba(78,80,88,0.3).",
+    "avoid": "Light backgrounds, saturated colors beyond blurple, balloon-soft radii, tiny fonts, high color contrast, decorative gradients."
+  },
+  {
+    "id": "dithered",
+    "label": "Dithered Retro",
+    "summary": "Modern minimal dot-pattern retro with high-contrast limited palette.",
+    "source": "ux-ui-agent-skills/dithered",
+    "category": "Retro & Nostalgic",
+    "spec": "LAYOUT: Clear content blocks, consistent padding. Hierarchy: headline → support → primary action. Whitespace before borders/shadows.\nPALETTE: Primary #3B82F6, Secondary #8B5CF6, Success #16A34A, Warning #D97706, Danger #DC2626. Surface #FFFFFF, Text #111827.\nTYPE: Open Sans body, Space Grotesk display, IBM Plex Mono. Scale 14/16/18/24/32/40.\nSIGNATURE MOVES: Dot-pattern rendering for shades. Primary for CTA. High-contrast, limited palette.",
+    "avoid": "Off-palette colors, flat hierarchy, decorative effects hurting readability, mixed metaphors."
+  },
+  {
+    "id": "doodle",
+    "label": "Doodle",
+    "summary": "Hand-drawn sketch style with Delius Swash Caps, imperfect lines, and playful doodle accents.",
+    "source": "ux-ui-agent-skills/doodle",
+    "category": "Creative & Artistic",
+    "spec": "LAYOUT: Sketch-like composition with tilted cards, wobbly borders, and hand-drawn dividers. Keep blocks airy; let doodles fill negative space.\nPALETTE: Primary #49B6E5 for CTAs and accents. Surface #FFFFFF for cards. Text #111827 for body. Secondary #263D5B for depth. Success #16A34A, Warning #D97706, Danger #DC2626 only for status.\nTYPE: Delius Swash Caps for all headings and display. JetBrains Mono for code or labels. Scale 14/16/18/24/32/40. Headings playful, body crisp and legible.\nSIGNATURE MOVES: Hand-drawn underline strokes under headings. Slightly rotated doodle arrows or stars near key actions. Rough, uneven border radii on cards. Scribble-style focus rings on inputs.",
+    "avoid": "Perfect straight lines, geometric precision, corporate flatness, off-palette colors, uniform type weights, decorative clutter that hurts readability."
+  },
+  {
+    "id": "duolingo",
+    "label": "Duolingo",
+    "summary": "Gamified, friendly, tactile SaaS with owl-green primary, chunky 3D buttons, and big rounded type.",
+    "source": "ux-ui-agent-skills/duolingo",
+    "category": "Productivity & SaaS",
+    "spec": "LAYOUT: White bg, 2-3px solid borders (#e5e5e5), 16-20px card radii, 12px buttons, 9999px chips. Mascot as character.\nPALETTE: Owl Green #58cc02 (primary, 30%+ surface), #58a700 pressed, #89e219 hover, #dbf8c5 pale. Accents: #ff9600 streak, #ce82ff gems, #1cb0f6 hints, #ff4b4b wrong, #ffc800 badge. Text #3c3c3c, #777777 secondary.\nTYPE: Feather Bold (display/headings/buttons, 800 weight, 56px display, 32px H1, 24px H2, 18px H3). Body: Mona Sans 15-17px. Caption 13px.\nSIGNATURE MOVES: 4px bottom-shadow on every button (tactile press). Big confident type. Green underline-stroke or pill on headings. Color-coded skill icons.",
+    "avoid": "Hairlines, sharp corners, thin fonts, muted palette, static logo-only mascot, subtle shadows, small type."
+  },
+  {
+    "id": "editorial",
+    "label": "Editorial",
+    "summary": "Magazine-inspired refined serif layout with structured grids and elegant reading experience.",
+    "source": "ux-ui-agent-skills/editorial",
+    "category": "Creative & Artistic",
+    "spec": "LAYOUT: Clear content blocks, consistent padding, obvious hierarchy (headline→support→action), whitespace before borders/shadows.\nPALETTE: Primary #111111, Surface #FFFFFF, Text #111827, Success #16A34A, Warning #D97706, Danger #DC2626.\nTYPE: Gelasio display+body, Ubuntu Mono mono; scale 14/16/18/24/32/40; headings carry personality, body optimizes scanability.\nSIGNATURE MOVES: Near-black #111111 CTA emphasis on white cards; serif headlines with mono accents; generous whitespace separating content blocks.",
+    "avoid": "Off-palette colors, flattened hierarchy (same size/weight), decorative effects hurting readability, mixed visual metaphors."
+  },
+  {
+    "id": "fantasy",
+    "label": "Fantasy",
+    "summary": "Bold, premium game-inspired fantasy with rich token colors and New Rocker display type.",
+    "source": "ux-ui-agent-skills/fantasy",
+    "category": "Creative & Artistic",
+    "spec": "LAYOUT: Clear content blocks, consistent padding, obvious hierarchy (headline → support → CTA), whitespace before borders/shadows.\nPALETTE: Primary #0250CC, Secondary #FDC800, Success #16A34A, Warning #D97706, Danger #DC2626, Surface #FFFFFF, Text #111827.\nTYPE: New Rocker for headings/display, IBM Plex Mono for mono; scale 12/14/16/20/24/32; body optimized for scanability.\nSIGNATURE MOVES: Primary blue CTAs, white cards on large backgrounds, dark text for legibility, bold display headings.",
+    "avoid": "Off-palette colors, flat hierarchy (same size/weight), decorative effects hurting readability, mixed visual metaphors."
+  },
+  {
+    "id": "ferrari",
+    "label": "Ferrari Editorial",
+    "summary": "A chiaroscuro digital editorial: absolute black cinematic voids alternating with crisp white panels, Ferrari Red reserved as a surgical CTA accent, and FerrariSans typography with uppercase Body-Font labels for print-magazine hierarchy.",
+    "source": "ux-ui-agent-skills/ferrari",
+    "category": "Automotive",
+    "spec": "LAYOUT: Full-bleed black hero; alternating black/white sections as gallery rooms; 2-col editorial grids; 4-col footer; 2px border-radius; no box-shadows.\nPALETTE: Absolute Black #000000; Pure White #FFFFFF; Ferrari Red #DA291C (CTA only); Dark Surface #303030; Near Black #181818; Dark Gray #666666; Border Gray #CCCCCC.\nTYPE: FerrariSans (fallback Arial/Helvetica) for headings/UI at 500-700 weight; Body-Font uppercase with 1px letter-spacing for labels/captions; section titles 26px, nav 13px.\nSIGNATURE MOVES: Red appears only on Subscribe CTA and key actions; uppercase wide-tracked labels; 2px radius buttons; depth via surface contrast, not shadows.",
+    "avoid": "Scattering red as decoration; pill buttons or large radii; box-shadows; mixing fonts in one block; colorful backgrounds; uppercase FerrariSans headings; low-quality imagery; busy multi-focal layouts."
+  },
+  {
+    "id": "figma",
+    "label": "Figma",
+    "summary": "A design-tool aesthetic: monochrome interface chrome (pure black/white) with vibrant multi-color gradient hero content, custom variable font with unusual weight stops, pill/circle button geometry, and dashed focus outlines.",
+    "source": "ux-ui-agent-skills/figma",
+    "category": "Design & Creative",
+    "spec": "LAYOUT: 8px base grid; max 1920px; gallery-like whitespace; pill (50px) & circle (50%) buttons; dashed 2px focus outlines.\nPALETTE: Interface strictly #000000 + #ffffff; glass rgba(0,0,0,0.08) & rgba(255,255,255,0.16); vibrant hero gradient (green, yellow, purple, pink).\nTYPE: figmaSans variable (weights 320/330/340/450/480/540/700); figmaMono uppercase labels; negative letter-spacing everywhere; kern on.\nSIGNATURE MOVES: Monochrome chrome vs colorful product content; light-weight body (320-340); hero 86px tight -1.72px; dashed focus echoes editor handles.",
+    "avoid": "No interface colors beyond black/white; no standard weights (400/500/600); no sharp corners; no solid focus outlines; no positive letter-spacing on body."
+  },
+  {
+    "id": "flat",
+    "label": "Flat",
+    "summary": "Two-dimensional minimalist style with vibrant colors and no 3D effects.",
+    "source": "ux-ui-agent-skills/flat",
+    "category": "Modern & Minimal",
+    "spec": "LAYOUT: Flat planes only; stack clear content blocks with consistent padding. Hierarchy: headline → support text → primary action. Separate sections with whitespace, not shadows.\nPALETTE: Primary #F2673C for CTAs. Surface #FFFFFF for backgrounds and cards. Text #111827 for body. Secondary #8B5CF6, Success #16A34A, Warning #D97706, Danger #DC2626. Never introduce off-palette colors.\nTYPE: Inter for all text; JetBrains Mono for code. Scale 12/14/16/20/24/32. Weights 100–900. Headings carry personality; body optimizes scanability. Vary size/weight to keep hierarchy.\nSIGNATURE MOVES: Vibrant orange CTA buttons on white cards. Flat, borderless sections with generous whitespace. Strong focus-visible states on inputs. Consistent radii and spacing across all components.",
+    "avoid": "Gradients, shadows, 3D effects, decorative flourishes, off-palette colors, uniform type sizes, and mixed visual metaphors."
+  },
+  {
+    "id": "framer",
+    "label": "Framer Dark Void",
+    "summary": "Cinematic pure-black canvas with compressed GT Walsheim headlines and electric Framer Blue accents — a nightclub for web designers where product screenshots are the hero art.",
+    "source": "ux-ui-agent-skills/framer",
+    "category": "Design & Creative",
+    "spec": "LAYOUT: Pure black void canvas; generous 80-120px section spacing; 40% text / 60% screenshot asymmetry; product UI as hero imagery; pill CTAs (100px radius), cards 10-15px.\nPALETTE: #000000 bg; #ffffff text; #0099ff sole accent; #a6a6a6 secondary; rgba(255,255,255,0.1) frosted buttons; rgba(0,153,255,0.15) blue glow rings.\nTYPE: GT Walsheim Medium 500 for display, extreme negative tracking (-5.5px at 110px); Inter for body with OpenType features; Mona Sans ultra-light (100) accents; no serifs.\nSIGNATURE MOVES: Compressed spring-loaded headlines; frosted glass buttons; blue glow focus rings; flat black surfaces with subtle radial blue halos behind screenshots.",
+    "avoid": "Warm darks (#1a1a1a); bold 700+ display; extra accent colors; heavy drop shadows; decorative illustrations; positive letter-spacing; light backgrounds; serif fonts."
+  },
+  {
+    "id": "github",
+    "label": "GitHub",
+    "summary": "Dense, engineered developer-tool UI on white or dark navy, hairline borders, system-ui + mono, Primer blue/green accents.",
+    "source": "ux-ui-agent-skills/github",
+    "category": "Developer Tools",
+    "spec": "LAYOUT: Dense rectangular panes, hairline borders (#d0d7de), minimal whitespace, packed list rows, 16px octicons.\nPALETTE: Canvas #ffffff / #0d1117, Primer blue #0969da, green #1a7f37, red #cf222e, muted text #656d76.\nTYPE: system-ui stack, 14px body, 600 weight for headings, mono (SFMono/Menlo/Consolas) for code.\nSIGNATURE MOVES: Pill badges with semantic colors, subtle blue/green/red surfaces (#ddf4ff, #dafbe1, #ffebe9), hairline dividers.",
+    "avoid": "Decorative fonts, large whitespace, rounded cards, gradients, shadows, warm tints, oversized text."
+  },
+  {
+    "id": "glassmorphism",
+    "label": "Glassmorphism",
+    "summary": "Frosted glass with translucent layers, subtle blur, and luminous borders for modern depth.",
+    "source": "ux-ui-agent-skills/glassmorphism",
+    "category": "Morphism & Effects",
+    "spec": "LAYOUT: Stack frosted panels with generous internal padding; lead with headline, support text, primary action. Use whitespace before borders or shadows.\nPALETTE: Primary #1856FF for CTAs; Surface #FFFFFF for large backgrounds and cards; Text #141414 for body. Success #07CA6B, Warning #E89558, Danger #EA2143, Secondary #3A344E. Stay on-token.\nTYPE: Plus Jakarta Sans for headings and body; JetBrains Mono for code. Mobile-first compact scale; headings carry personality, body maximizes scanability. Weights 100–900.\nSIGNATURE MOVES: Frosted glass cards with backdrop blur and translucent fills; luminous 1px borders catching light; layered depth via overlapping translucent surfaces; high-contrast bold accents on glass.",
+    "avoid": "Off-palette colors, flat single-layer surfaces, decorative effects that hurt readability, mixing unrelated visual metaphors."
+  },
+  {
+    "id": "gradient",
+    "label": "Gradient",
+    "summary": "Modern, playful interfaces with smooth color transitions and gradient-rich surfaces for visual depth.",
+    "source": "ux-ui-agent-skills/gradient",
+    "category": "Morphism & Effects",
+    "spec": "LAYOUT: Clear content blocks, consistent padding; hierarchy headline → support text → primary action; whitespace before borders/shadows.\nPALETTE: Primary #990FFA, Secondary #E60076, Success #16A34A, Warning #D97706, Danger #DC2626, Surface #FFFFFF, Text #111827; favor Primary for CTAs, Surface for cards.\nTYPE: Montserrat (primary), Space Grotesk (display), JetBrains Mono (mono); scale 12/14/16/18/24/30/36; headings carry personality, body optimizes scanability.\nSIGNATURE MOVES: Gradient-rich surfaces (Primary→Secondary blends) for depth; bold display headings in Space Grotesk; high-contrast CTA in #990FFA on white.",
+    "avoid": "Off-palette colors; flat hierarchy (same size/weight everywhere); decorative effects hurting readability; mixing unrelated visual metaphors."
+  },
+  {
+    "id": "linear-app",
+    "label": "Linear — Dark Precision SaaS",
+    "summary": "Near-black canvas with luminous text hierarchy, Inter Variable at signature weight 510, and a single indigo-violet accent for CTAs. Ultra-thin translucent borders, compressed display headlines, and darkness-as-whitespace define this engineered, precise aesthetic.",
+    "source": "ux-ui-agent-skills/linear-app",
+    "category": "Productivity & SaaS",
+    "spec": "LAYOUT: 8px grid; max-width 1200px; hero centered single-column; 2-3 col feature grids; 80px+ section padding; radius 4-12px; darkness as whitespace.\nPALETTE: bg #08090a; panel #0f1011; surface #191a1b; text #f7f8f8; body #d0d6e0; muted #8a8f98; accent #5e6ad2/#7170ff; borders rgba(255,255,255,0.05-0.08).\nTYPE: Inter Variable with \"cv01\",\"ss03\"; display 72px/510/-1.584px; body 16px/400; mono Berkeley Mono; max weight 590.\nSIGNATURE MOVES: Luminance-stepped surfaces instead of shadows; indigo only on CTAs/active; compressed headlines in vast dark space; translucent borders.",
+    "avoid": "Pure #ffffff text; bold 700; positive letter-spacing on display; opaque borders; decorative indigo; warm colors; drop shadows for elevation."
+  },
+  {
+    "id": "luxury",
+    "label": "Luxury Dark",
+    "summary": "High-end dark aesthetic with bold Oswald headings, monochromatic black/white palette, and premium minimalism.",
+    "source": "ux-ui-agent-skills/luxury",
+    "category": "Professional & Corporate",
+    "spec": "LAYOUT: Clear content blocks, consistent padding, obvious hierarchy (headline → support → action), whitespace before borders/shadows.\nPALETTE: Surface #000000, Text #FFFFFF, Primary #FAFAFA for CTA emphasis; no off-palette colors.\nTYPE: Oswald for headings/display, JetBrains Mono for mono; desktop-first expressive scale, bold weights; body text high contrast.\nSIGNATURE MOVES: Black backgrounds with white text, oversized Oswald headlines, monochrome minimalism, CTA in #FAFAFA.",
+    "avoid": "Off-palette colors, flat hierarchy (same size/weight), decorative effects hurting readability, mixed visual metaphors."
+  },
+  {
+    "id": "mono",
+    "label": "Mono Matrix",
+    "summary": "Monospace-driven hacker-chic design with neon green accents and compact density.",
+    "source": "ux-ui-agent-skills/mono",
+    "category": "Modern & Minimal",
+    "spec": "LAYOUT: Compact, dense blocks with tight internal padding; hierarchy via size/weight contrast, not whitespace alone.\nPALETTE: Primary #37F712 for CTAs and emphasis; Surface #E7E5E4 for backgrounds/cards; Text #78716B for body; Secondary #00A6F4, Success #00A63D, Warning #FE9900, Danger #FF2157 as accents.\nTYPE: Space Mono for headings and display; JetBrains Mono for body and UI; use extreme weight contrast (100 vs 900) to drive hierarchy.\nSIGNATURE MOVES: Neon-green #37F712 glowing buttons; monospace everywhere for terminal feel; high-contrast text on light gray surfaces; sharp, angular card corners.",
+    "avoid": "Off-palette colors; decorative effects that hurt readability; mixing metaphors (no gradients, shadows, or rounded organic shapes); uniform type sizes that flatten hierarchy."
+  },
+  {
+    "id": "neobrutalism",
+    "label": "Neobrutalism",
+    "summary": "Modern brutalism: bold borders, vivid accents, raw high-contrast layouts on warm surfaces.",
+    "source": "ux-ui-agent-skills/neobrutalism",
+    "category": "Bold & Expressive",
+    "spec": "LAYOUT: Stack hard-edged blocks with thick 3-4px black borders and offset 4-6px solid shadows. Punchy asymmetry; CTA blocks dominate. Generous padding inside each block.\nPALETTE: Surface #FBFBF9 base. Primary #FDC800 for CTAs. Secondary #432DD7 for links/accents. Text #1C293C. Success #16A34A, Warning #D97706, Danger #DC2626. No gradients, no soft pastels.\nTYPE: Inter for headings and body, JetBrains Mono for labels/eyebrows. Scale 13/15/17/21/27/35. Headings heavy (800-900), uppercase eyebrows in mono, body 400.\nSIGNATURE MOVES: Hard offset shadows (no blur) on cards/buttons. 2-3px solid black borders everywhere. High-contrast color blocking — yellow button on white card, purple accents. Mono-font micro-labels.",
+    "avoid": "Rounded corners over 4px, soft shadows, gradients, off-palette colors, decorative effects that hurt readability, mixing metaphors, flat hierarchy."
+  },
+  {
+    "id": "neon",
+    "label": "Neon",
+    "summary": "Electric high-contrast neon glow with acid-lime and cyan on white, bold Roboto headings, clear blocks.",
+    "source": "ux-ui-agent-skills/neon",
+    "category": "Morphism & Effects",
+    "spec": "LAYOUT: Clear content blocks, consistent padding; hierarchy headline→support→primary action; whitespace before borders/shadows.\nPALETTE: Primary #BBF351, Secondary #00BCFF, Surface #FFFFFF, Text #111827; favor lime for CTAs.\nTYPE: Roboto headings, STIX Two Text display, Source Code Pro mono; scale 14/16/18/24/32/40.\nSIGNATURE MOVES: Acid-lime CTA on white; cyan accent glows; high-contrast pairings; bold weight contrast.",
+    "avoid": "Off-palette colors, flat hierarchy, decorative effects hurting readability, mixed visual metaphors."
+  },
+  {
+    "id": "neumorphism",
+    "label": "Neumorphism",
+    "summary": "Soft extruded UI with inner/outer shadows on monochromatic surfaces for a tactile embedded look.",
+    "source": "ux-ui-agent-skills/neumorphism",
+    "category": "Morphism & Effects",
+    "spec": "LAYOUT: Stack soft-extruded cards on Surface #E7E5E4 with consistent radii and elevation; lead with headline, support text, primary action.\nPALETTE: Monochromatic Surface #E7E5E4 base; Primary #006666 for CTA; Text #1E2938 for body; Success #00A63D, Warning #FE9900, Danger #FF2157, Info #006666 as accents.\nTYPE: Space Mono for headings and display; JetBrains Mono for mono; use full weight range 100-900 to keep hierarchy sharp.\nSIGNATURE MOVES: Dual shadows on every raised element—light from top-left, dark from bottom-right—to extrude UI; inset shadows for pressed states; soft 12-16px radii; tactile embedded buttons.",
+    "avoid": "Flat shadows, off-palette colors, decorative effects that blur readability, mixing neumorphism with glassmorphism or skeuomorphic metaphors."
+  },
+  {
+    "id": "nike",
+    "label": "Nike",
+    "summary": "Kinetic retail cathedral: monochromatic UI, massive uppercase display type, full-bleed product photography, pill buttons, flat elevation.",
+    "source": "ux-ui-agent-skills/nike",
+    "category": "E-Commerce & Retail",
+    "spec": "LAYOUT: Full-bleed imagery, 0px radius on photos; 8px grid, tight 4-12px product gaps, 48-80px section breaks; max 1920px container; pill buttons 30px radius.\nPALETTE: #111111 black, #FFFFFF white, #F5F5F5 light gray, #707072 secondary text, #CACACB borders; red #D30005 errors, blue #1151FF links; color only from product.\nTYPE: Nike Futura ND uppercase 96px/0.90 line-height for hero; Helvetica Now Text Medium 500 for body/buttons; 16px body, 14px captions.\nSIGNATURE MOVES: Flat design, no shadows; sharp-edged product images; black-on-white max contrast; product grid abundance.",
+    "avoid": "No shadows, no border radius on photos, no brand colors in UI, no Futura below 24px, no hover lift, no regular weight buttons, no colored backgrounds, no decorative dividers."
+  },
+  {
+    "id": "nvidia",
+    "label": "NVIDIA",
+    "summary": "High-contrast black/white tech design with signature electric green (#76b900) used only as accent borders/underlines/CTAs. Industrial NVIDIA-EMEA font, tight line-heights, sharp 1-2px corners, dense purposeful spacing.",
+    "source": "ux-ui-agent-skills/nvidia",
+    "category": "Media & Consumer",
+    "spec": "LAYOUT: 8px base; max 1200px; 2-3 col cards, 16-20px gaps; 48-80px section padding; dark/white alternating sections.\nPALETTE: #000000 bg; #ffffff text; #76b900 accent (borders/underlines only); #1a1a1a cards; #a7a7a7 muted; #3860be link hover; shadow rgba(0,0,0,0.3) 0 0 5px.\nTYPE: NVIDIA-EMEA/Arial/Helvetica; 36px/700/1.25 hero; 16px/400/1.5 body; 14px/700 uppercase links; 10px/700 uppercase micro labels.\nSIGNATURE MOVES: 2px solid #76b900 button outlines; green link underlines; 1-2px radius; dense authoritative text blocks; green as signal not surface.",
+    "avoid": "green backgrounds/fills; rounded corners >2px; playful sans-serifs; luxury whitespace; gradient surfaces; blue as primary accent."
+  },
+  {
+    "id": "openai",
+    "label": "OpenAI",
+    "summary": "Clinical, restrained, quiet — true white canvas, teal-black ink, Söhne/Inter sans with Signifier serif display, soft radii, hairline borders, whitespace as divider.",
+    "source": "ux-ui-agent-skills/openai",
+    "category": "AI & LLM",
+    "spec": "LAYOUT: True white #ffffff canvas; whitespace as primary divider; hairline #e5e5e5 borders sparingly; soft 8-12px radii, 9999px pills.\nPALETTE: Ink #0d0d0d text; OpenAI Teal #10a37f lone accent; Mist #fafafa sections; Graphite #3c3c3c body; Slate #6e6e6e secondary.\nTYPE: Söhne/Inter 400/500/600 (no 700+); Signifier serif for editorial display; generous line-height 1.55-1.65; negative tracking on display.\nSIGNATURE MOVES: Serif headline over sans UI; single-color teal illustrations, no gradients; restrained weights, hierarchy via size/color.",
+    "avoid": "Gradients, harsh corners, heavy weights, dark mode, futuristic chrome, decorative borders, multiple accent colors."
+  },
+  {
+    "id": "pacman",
+    "label": "Pac-Man Arcade",
+    "summary": "Retro 8-bit arcade style: pixel fonts, dotted borders, high-contrast colors, black surfaces.",
+    "source": "ux-ui-agent-skills/pacman",
+    "category": "Themed & Unique",
+    "spec": "LAYOUT: Black #000000 surfaces frame content blocks; dotted borders separate sections; keep hierarchy obvious: pixel headline, support text, primary action.\nPALETTE: Primary #2A3FE5 for CTAs; Secondary #F4B9B0 for accents; Success #16A34A, Warning #D97706, Danger #DC2626; Surface #000000 for large backgrounds and cards; Text #111827 for body copy.\nTYPE: Press Start 2P for headings and display; Space Mono for body and mono; desktop-first expressive scale; weights 400-900; headings carry arcade personality, body stays legible.\nSIGNATURE MOVES: Dotted borders everywhere; high-contrast playful color pops on black; pixel-perfect spacing; strong focus-visible states on inputs; consistent radii and elevation on cards.",
+    "avoid": "Off-palette colors; flattened hierarchy with uniform type sizes; decorative effects that hurt readability; mixing unrelated visual metaphors."
+  },
+  {
+    "id": "paper",
+    "label": "Paper",
+    "summary": "Minimal, print-inspired design on white paper with near-black ink, one violet accent, and crisp Roboto/Montserrat type.",
+    "source": "ux-ui-agent-skills/paper",
+    "category": "Retro & Nostalgic",
+    "spec": "LAYOUT: Clear content blocks, consistent padding, obvious hierarchy: headline → support text → primary action. Whitespace before borders/shadows.\nPALETTE: Primary #111111, Secondary #8B5CF6, Surface #FFFFFF, Text #111827. Success #16A34A, Warning #D97706, Danger #DC2626.\nTYPE: Roboto body, Montserrat display, PT Mono accents. Scale 14/16/18/24/32/40. Weights 100-900.\nSIGNATURE MOVES: Near-black CTA on white paper, violet as sole accent, tactile flat surfaces, mono for data/labels.",
+    "avoid": "Off-palette colors, flat hierarchy (same size/weight everywhere), decorative effects hurting readability, mixed visual metaphors."
+  },
+  {
+    "id": "raycast",
+    "label": "Raycast Dark",
+    "summary": "Precision dark macOS-native developer tool aesthetic: near-black blue void, layered glass shadows, red accent stripes, airy Inter typography.",
+    "source": "ux-ui-agent-skills/raycast",
+    "category": "Developer Tools",
+    "spec": "LAYOUT: 8px base; 80-120px section padding; max 1200px container; dramatic negative space; 6px buttons, 12px cards, 20px hero cards, pill CTAs.\nPALETTE: bg #07080a; surface #101111; card #1b1c1e; text #f9f9f9; secondary #9c9c9d; border hsl(195,5%,15%); accent #FF6363; interactive #55b3ff.\nTYPE: Inter everywhere (calt,kern,liga,ss03); body 16px/500/+0.2px; hero 64px/600/1.10; code GeistMono 14px; positive letter-spacing 0.2-0.4px.\nSIGNATURE MOVES: Multi-layer shadows with inset highlights (macOS window depth); red diagonal hero stripes; keyboard key caps with #121212→#0d0d0d gradient; rgba white borders 0.06-0.1 opacity.",
+    "avoid": "Pure black bg; negative letter-spacing; blue as primary accent; flat single-layer shadows; 400-weight body; warm borders; decorative gradients; heavy shadows without inset companions."
+  },
+  {
+    "id": "retro",
+    "label": "Retro",
+    "summary": "High-contrast throwback design with vintage Macondo type and bold primary-blue accents.",
+    "source": "ux-ui-agent-skills/retro",
+    "category": "Retro & Nostalgic",
+    "spec": "LAYOUT: Stack clear content blocks with consistent padding; headline, support text, primary action in that order. Use whitespace before borders or shadows.\nPALETTE: Primary #3B82F6 for CTAs, Surface #FFFFFF for cards/backgrounds, Text #111827 for body. Success #16A34A, Warning #D97706, Danger #DC2626, Secondary #8B5CF6. No off-palette colors.\nTYPE: Headings in Macondo (display font) carry the retro personality; body in Macondo for scanability, JetBrains Mono for data/labels. Full weight range 100-900, desktop-first expressive scale.\nSIGNATURE MOVES: Vintage Macondo display type on high-contrast blue/white; mono accents for retro-tech flavor; consistent radii and elevation across cards; strong focus-visible inputs.",
+    "avoid": "Flat hierarchy from uniform type sizes; decorative effects that hurt readability; mixing unrelated visual metaphors; substituting off-palette colors for existing tokens."
+  },
+  {
+    "id": "revolut",
+    "label": "Revolut Fintech",
+    "summary": "Stadium-scale fintech confidence: billboard Aeonik Pro headlines, near-black/white binary, universal pill buttons, zero shadows.",
+    "source": "ux-ui-agent-skills/revolut",
+    "category": "Fintech & Crypto",
+    "spec": "LAYOUT: 8px grid; 80–120px section gaps; 12px nav, 20px cards, 9999px pill buttons.\nPALETTE: #191c1f dark, #ffffff white, #f4f4f4 surface, #494fdf blue, #e23b4a danger, #00a87e teal.\nTYPE: Aeonik Pro 500 for all headings (136px hero, -2.72px tracking); Inter 400/600 body, +0.16–0.24px tracking.\nSIGNATURE MOVES: Pill-everything buttons (14px 32px padding); flat color-contrast depth; semantic colors reserved for product UI.",
+    "avoid": "Shadows, bold 700 headings, small buttons, semantic colors on marketing surfaces."
+  },
+  {
+    "id": "sentry",
+    "label": "Sentry Dark IDE",
+    "summary": "Dark-mode developer tool with warm purple-black backgrounds, lime-green accents, and tactile inset-shadow buttons.",
+    "source": "ux-ui-agent-skills/sentry",
+    "category": "Backend & Data",
+    "spec": "LAYOUT: Max width 1152px; 8px spacing scale; 64-80px section gaps; 6-13px radii; asymmetric button padding.\nPALETTE: BG #1f1633/#150f23; border #362d59; interactive #6a5fc1/#79628c; accent #c2ef4e; text #fff/#e5e7eb.\nTYPE: Dammit Sans display (88px/700); Rubik UI (uppercase labels, 0.2px tracking); Monaco code.\nSIGNATURE MOVES: Inset shadows on buttons; frosted glass blur(18px) saturate(180%); lime-green CTA highlights.",
+    "avoid": "Pure black; Dammit Sans in body; gray borders; sharp corners; mixing lime with coral/pink; flat button shadows; missing letter-spacing on uppercase."
+  },
+  {
+    "id": "skeumorphism",
+    "label": "Skeuomorphism",
+    "summary": "Playful real-world mimicry with textured 3D surfaces, familiar physical metaphors, and a bold orange-led palette for intuitive, readable interfaces.",
+    "source": "ux-ui-agent-skills/skeumorphism",
+    "category": "Morphism & Effects",
+    "spec": "LAYOUT: Clear content blocks, consistent padding, obvious headline→support→action hierarchy, whitespace before borders/shadows.\nPALETTE: Primary #FA3C00, Secondary #F08321, Success #16A34A, Warning #D97706, Danger #DC2626, Surface #FFFFFF, Text #111827.\nTYPE: Roboto (body), Germania One (display), JetBrains Mono (mono); scale 12/14/16/20/24/32; weights 100-900.\nSIGNATURE MOVES: Bold orange CTA (#FA3C00), white cards, dark text (#111827), playful display headings, tactile 3D depth on interactive elements.",
+    "avoid": "Off-palette colors, flat hierarchy (same size/weight), decorative effects hurting readability, mixing unrelated physical metaphors."
+  },
+  {
+    "id": "spacious",
+    "label": "Spacious",
+    "summary": "Minimal, grid-based layouts with generous whitespace and clear hierarchy for clean, breathing interfaces.",
+    "source": "ux-ui-agent-skills/spacious",
+    "category": "Layout & Structure",
+    "spec": "LAYOUT: Grid-based; consistent padding; hierarchy headline→support→action; whitespace separates before borders/shadows.\nPALETTE: Primary #3B82F6; Surface #FFFFFF; Text #111827; Success #16A34A; Warning #D97706; Danger #DC2626.\nTYPE: Open Sans body, Montserrat display, IBM Plex Mono; scale 12/14/16/18/24/30/36.\nSIGNATURE MOVES: Generous whitespace; clean cards on white; primary CTA in #3B82F6.",
+    "avoid": "Off-palette colors; flattened hierarchy (same size/weight); decorative effects hurting readability; mixed visual metaphors."
+  },
+  {
+    "id": "spotify",
+    "label": "Spotify Dark",
+    "summary": "Immersive near-black music player where album art glows; charcoal surfaces, functional Spotify Green accents, pill/circle geometry, compact bold typography.",
+    "source": "ux-ui-agent-skills/spotify",
+    "category": "Media & Consumer",
+    "spec": "LAYOUT: 8px grid; fixed sidebar + content; full-width now-playing bar; dense content, dark bg provides rest; radius: 6px cards, 500px pills, 50% circles.\nPALETTE: bg #121212; surface #181818; elevated #1f1f1f; text #fff/#b3b3b3; accent #1ed760 (functional only); shadows rgba(0,0,0,0.5) 0 8px 24px; inset border rgb(18,18,18) 0 1px 0, rgb(124,124,124) 0 0 0 1px inset.\nTYPE: SpotifyMixUI/SpotifyMixUITitle; 700/400 binary, 600 sparing; buttons 14px uppercase, letter-spacing 1.4-2px; sizes 10-24px, compact line-heights.\nSIGNATURE MOVES: Pill buttons (500-9999px radius); circular play buttons; uppercase labels; heavy shadows on elevation; album art as color source.",
+    "avoid": "Green on backgrounds/decorative; light surfaces; square buttons; thin shadows; extra brand colors; relaxed line-heights; raw gray borders."
+  },
+  {
+    "id": "starbucks",
+    "label": "Starbucks",
+    "summary": "Warm cream canvas, four-tier greens, pill buttons, tight tracking, gold reserved for Rewards.",
+    "source": "ux-ui-agent-skills/starbucks",
+    "category": "E-Commerce & Retail",
+    "spec": "LAYOUT: 16px gutter/card padding; 40-64px section padding; 12px card radius; 50px pill buttons; 56px circular Frap CTA bottom-right with layered shadows (0 0 6px rgba(0,0,0,0.24)+0 8px 12px rgba(0,0,0,0.14)), scale(0.95) on press.\nPALETTE: Canvas #f2f0eb; cards #ffffff; CTA #00754A; headings #006241; dark bands #1E3932; text rgba(0,0,0,0.87)/0.58; on-dark rgba(255,255,255,1)/0.70; gold #cba258 only for Rewards.\nTYPE: SoDoSans, Helvetica Neue, Arial; -0.01em tracking; h1 24px/600 green, h2 24px/400 black; body 16px/1.5; serif (Lander Tall) only on Rewards headlines.\nSIGNATURE MOVES: Warm cream canvas; four-green hierarchy; pill CTAs with scale(0.95) press; layered low-alpha shadows; gold as Rewards-only ceremony.",
+    "avoid": "Pure-white canvas; single brand green; gold as general accent; square buttons; gradients; pure-black text; heavy single shadows; serifs/scripts in main flow."
+  },
+  {
+    "id": "stripe",
+    "label": "Stripe",
+    "summary": "Precise, luxurious fintech: white canvas, deep navy headings, signature purple, whisper-light 300-weight headlines, blue-tinted multi-layer shadows.",
+    "source": "ux-ui-agent-skills/stripe",
+    "category": "Fintech & Crypto",
+    "spec": "LAYOUT: 8px base; max 1080px; centered hero; 2-3 col feature grids; alternate white/dark #1c1e54 sections; radius 1-8px (4px workhorse).\nPALETTE: #ffffff bg; #061b31 headings; #533afd purple CTA/links; #4434d4 hover; #1c1e54 dark sections; #64748d body; #e5edf5 borders; accents #ea2261/#f96bee decorative only.\nTYPE: sohne-var (fallback SF Pro Display) with ss01 on all text; tnum for numbers; display 56px/300/-1.4px; body 16px/300-400; buttons 16px/400.\nSIGNATURE MOVES: Weight-300 headlines (anti-bold); blue-tinted shadows rgba(50,50,93,0.25)+rgba(0,0,0,0.1); tight negative tracking; dense data in generous chrome.",
+    "avoid": "No weight 600-700 headlines; no 12px+ radius/pills; no neutral gray shadows; no pure black; no warm accents on interactive; no positive display tracking; no magenta/ruby on buttons/links."
+  },
+  {
+    "id": "supabase",
+    "label": "Supabase Dark Dev Console",
+    "summary": "Dark-mode developer platform: near-black surfaces, emerald green accents, Circular typography with dense hero text, border-defined depth instead of shadows.",
+    "source": "ux-ui-agent-skills/supabase",
+    "category": "Backend & Data",
+    "spec": "LAYOUT: 8px base; 90-128px section gaps; 6px radius on buttons, 8px cards, 9999px pills; borders define separation, not shadows.\nPALETTE: bg #171717, button #0f0f0f, text #fafafa, muted #898989; green #3ecf8e for accents, links #00c573, borders rgba(62,207,142,0.3); borders #2e2e2e.\nTYPE: Circular (400/500 only, no bold); hero 72px/1.00 line-height; Source Code Pro uppercase 12px/1.2px tracking for labels.\nSIGNATURE MOVES: 1.00 hero line-height; green only on borders/links/accents; translucent rgba borders for depth.",
+    "avoid": "box-shadows; bold 700; green on large surfaces; warm colors as primary; hero line-height >1.00; radius between 6px and 9999px on buttons; backgrounds lighter than #171717."
+  },
+  {
+    "id": "tesla",
+    "label": "Tesla",
+    "summary": "Radical subtraction: full-viewport cinematic car photography, monochrome-plus-blue palette, restrained Universal Sans type, no shadows/gradients/borders.",
+    "source": "ux-ui-agent-skills/tesla",
+    "category": "Automotive",
+    "spec": "LAYOUT: Full-bleed 100vh hero sections; content centered; 8px base spacing; sharp edges (0-4px radius); max 2 CTAs per screen.\nPALETTE: Electric Blue #3E6AE1 for CTAs only; White #FFFFFF canvas; Carbon Dark #171A20 text; Graphite #393C41 body; Light Ash #F4F4F4 alt surface.\nTYPE: Universal Sans Display (hero 40px/500) and Text (nav/body 14px); normal letter-spacing; only weights 400/500; no uppercase.\nSIGNATURE MOVES: Floating nav with no background; frosted glass rgba(255,255,255,0.75) on scroll; white promo text over imagery; gallery-like scroll rhythm.",
+    "avoid": "Shadows, gradients, patterns, borders, rounded pills, >40px text, extra colors, hover scale/translate, multiple CTAs, decorative type."
+  },
+  {
+    "id": "tetris",
+    "label": "Tetris",
+    "summary": "High-contrast playful block-game aesthetic with bold display type and token-driven color.",
+    "source": "ux-ui-agent-skills/tetris",
+    "category": "Themed & Unique",
+    "spec": "LAYOUT: Clear content blocks, consistent padding, obvious hierarchy: headline → support → primary action. Whitespace before borders/shadows.\nPALETTE: Primary #1C202B, Secondary #7107E7, Surface #DFE7FF, Text #1C398E, Success #16A34A, Warning #D97706, Danger #DC2626. Favor Primary for CTAs, Surface for backgrounds/cards.\nTYPE: Bangers for headings/display, JetBrains Mono for mono. Expressive scale, full weight range. Body copy on Text for legibility.\nSIGNATURE MOVES: Bold Bangers headlines, high-contrast blocks, token-driven color pops, compact high-energy layouts.",
+    "avoid": "Off-palette colors, flat hierarchy (same size/weight), decorative effects hurting readability, mixing unrelated visual metaphors."
+  },
+  {
+    "id": "theverge",
+    "label": "The Verge — Dark Editorial Hazard",
+    "summary": "Near-black editorial canvas with acid-mint/ultraviolet hazard accents, massive Manuka display type, and saturated rounded color-block story tiles on a dashed timeline.",
+    "source": "ux-ui-agent-skills/theverge",
+    "category": "Media & Consumer",
+    "spec": "LAYOUT: Dark #131313 canvas, max 1280px. StoryStream: rounded 20-40px color-block tiles stacked on dashed vertical rule, mono-uppercase timestamps left rail. 8px spacing base. Flat depth — 1px borders, no shadows.\nPALETTE: Canvas #131313, mint #3cffd0, ultraviolet #5200ff, slate #2d2d2d, white #ffffff, text #949494. Link hover #3860be.\nTYPE: Manuka 900 at 60-107px for display only. PolySans for UI/headlines. PolySans Mono UPPERCASE for labels/timestamps.\nSIGNATURE MOVES: Saturated full-bleed story tiles (yellow/pink/orange/blue/purple). 20-40px pill radii everywhere. Mint as hazard accent on CTAs/links only.",
+    "avoid": "Light backgrounds, box-shadows, square corners, gradients, lowercase mono, Manuka in UI/body, mint/ultraviolet as background washes, new accent colors, mint text under 16px on dark."
+  },
+  {
+    "id": "vercel",
+    "label": "Vercel Geist",
+    "summary": "Black-and-white precision with Geist type, shadow-borders, and workflow accents.",
+    "source": "ux-ui-agent-skills/vercel",
+    "category": "Developer Tools",
+    "spec": "LAYOUT: Max width 1200px. 8px spacing scale. Hero centered single column; 2-3 column feature grids; 80-120px vertical section padding. Radius: 6px buttons, 8px cards, 12px images, 9999px pills.\nPALETTE: Background #ffffff, text #171717, body #4d4d4d, muted #666666. Borders via box-shadow rgba(0,0,0,0.08) 0 0 0 1px. Links #0072f5. Accents: Ship #ff5b4f, Preview #de1d8d, Develop #0a72ef. Badge bg #ebf5ff text #0068d6.\nTYPE: Geist Sans fallback Arial; Geist Mono for code. Display 48px/600/-2.4px, H2 40px/600/-2.4px, H3 32px/600/-1.28px, body 18px/400/1.56, mono caption 13px, micro 12px/500/uppercase.\nSIGNATURE MOVES: Shadow-as-border everywhere, never border; multi-layer shadow stacks; extreme negative headline tracking; gallery whitespace; pill badges.",
+    "avoid": "pure black text, traditional borders, color section backgrounds, relaxed display tracking, 20/24px spacing gaps, drop shadows without a border layer."
+  },
+  {
+    "id": "vintage-retro",
+    "label": "Vintage Retro",
+    "summary": "1950s-90s nostalgia: teal/silver palette, Silkscreen pixel type, grainy skeuomorphic textures.",
+    "source": "ux-ui-agent-skills/vintage",
+    "category": "Retro & Nostalgic",
+    "spec": "LAYOUT: Stack clear content blocks; headline, support text, primary action in strict order. Use whitespace before borders or shadows. Cards and sections share consistent radii, spacing, elevation.\nPALETTE: Primary #008080 for CTAs. Surface #C0C0C0 for large backgrounds and cards. Text #000000 for body. Success #16A34A, Warning #D97706, Danger #DC2626. No off-palette colors.\nTYPE: Headings in Silkscreen (400/700), body in JetBrains Mono. Scale 12/14/16/20/24/32. Headings carry retro pixel personality; body stays scannable and high-contrast.\nSIGNATURE MOVES: Lead with teal-on-silver CTA blocks. Grainy texture overlays on surfaces. Pixel-style display type for all headings. Skeuomorphic button bevels and input focus rings.",
+    "avoid": "Off-palette colors, flattened hierarchy with uniform type sizes, decorative effects that hurt readability, mixing unrelated visual metaphors."
+  },
+  {
+    "id": "warm-editorial",
+    "label": "Warm Editorial",
+    "summary": "A warm, unhurried, magazine-like aesthetic — New Yorker interview column online. Generous whitespace, long-form readability, restrained chrome, playful but never novelty.",
+    "source": "ux-ui-agent-skills/warm-editorial",
+    "category": "Starter",
+    "spec": "LAYOUT: 12-col grid, 1200px max, 24px gutters. Hero 72–120vh, top-biased. Body sections 80px/48px/32px spacing. One accent color per screen.\nPALETTE: BG #FAF7F2, FG #1C1A17, accent #C0512F (terracotta), secondary #2F5B4F (forest), muted #8A817A. No pure black/white.\nTYPE: Display 'GT Sectra' serif; body 'Söhne' sans; mono 'JetBrains Mono'. Scale 12–80px. Body lh 1.6, display 1.2; -0.02em above 40px.\nSIGNATURE MOVES: Warm paper bg, terracotta hero element, serif display with tight tracking, generous whitespace, restrained chrome.",
+    "avoid": "Pure black/white, centered heroes, multiple accents per screen, novelty type, dense layouts, cold grays."
+  },
+  {
+    "id": "warp",
+    "label": "Warp",
+    "summary": "Warm dark developer-tool aesthetic: earthy near-black canvas, cream parchment text, Matter typeface, monochromatic warm grays, editorial spacing with nature photography.",
+    "source": "ux-ui-agent-skills/warp",
+    "category": "Developer Tools",
+    "spec": "LAYOUT: Generous 80-120px section padding; wide ~1500px container; 8px spacing base; 50px pill buttons; 12px card radius; photography as breathing room.\nPALETTE: Warm Parchment #faf9f6 text; Deep warm near-black bg; Earth Gray #353534 buttons; Ash Gray #afaeac body; Stone Gray #868584 secondary; Mist Border rgba(226,226,226,0.35).\nTYPE: Matter Regular (400) throughout; hero 80px/-2.4px tracking; body 18px/1.3; uppercase labels 12px/2.4px tracking; never above Medium (500).\nSIGNATURE MOVES: Warm parchment instead of white; monochromatic warm grays; nature photography interleaved with product shots; editorial magazine pacing; opacity/underline for states.",
+    "avoid": "Pure white text; bold accent colors; font weights above 500; heavy shadows; cold/blue-tinted darks; decorative gradients; tight layouts; non-Matter typefaces."
+  },
+  {
+    "id": "wired",
+    "label": "WIRED",
+    "summary": "Dense editorial grid, paper-white, square corners, loud serif headlines, mono uppercase kickers, single blue accent.",
+    "source": "ux-ui-agent-skills/wired",
+    "category": "Media & Consumer",
+    "spec": "LAYOUT: Dense 12-col editorial grid, max 1280-1600px, 8px base, 24-32px gutters, hairline rules, no cards/shadows, square corners (radius 0), whitespace is editorial silence.\nPALETTE: Paper White #ffffff canvas, Page Ink #1a1a1a text, WIRED Black #000000 ribbons/borders, Caption Gray #757575, Hairline #e2e8f0, Link Blue #057dbc only accent.\nTYPE: WiredDisplay serif for headlines (64px, tight), BreveText serif for body, Apercu sans for UI, WiredMono uppercase kickers (13px, 0.92px tracking).\nSIGNATURE MOVES: Mono uppercase kickers with wide tracking, 2px black borders on buttons/links, single blue hover on links, dark footer only inverted region.",
+    "avoid": "No shadows, no rounded corners on containers, no gradients/blurs/glass, no extra colors, no lowercase kickers, no hover lift, no pill shapes except icons/inline spans."
+  },
+  {
+    "id": "wise",
+    "label": "Wise Bold Fintech",
+    "summary": "Billboard-scale 900-weight headlines, lime green accents, and pill buttons that grow on hover.",
+    "source": "ux-ui-agent-skills/wise",
+    "category": "Fintech & Crypto",
+    "spec": "LAYOUT: 8px base spacing. Buttons pill 9999px. Cards 16px/30px/40px radius. Ring shadows only: rgba(14,15,12,0.12) 0px 0px 0px 1px.\nPALETTE: Near black #0e0f0c text. White/off-white bg. Lime green #9fe870 accents. Dark green #163300 on green. Secondary gray #868685. Light mint #e2f6d5 surfaces.\nTYPE: Wise Sans 900 for display, line-height 0.85, sizes 126/96/64/40px. Inter 600 body default, 18px, line-height 1.44. Enable OpenType calt on all text.\nSIGNATURE MOVES: Buttons scale(1.05) on hover, scale(0.95) active. Green pill CTAs with dark green text. Ultra-tight billboard headlines. Green-tinted nav hover rgba(211,242,192,0.4).",
+    "avoid": "Light font weights for Wise Sans. Relaxed display line-height. Green as large background surface. Traditional drop shadows. Skipping button scale animation."
+  },
+  {
+    "id": "x-ai",
+    "label": "xAI Dark Monospace Brutalism",
+    "summary": "Dark-first, monospace-driven brutalist minimalism — near-black canvas, pure white text, zero decoration.",
+    "source": "ux-ui-agent-skills/x-ai",
+    "category": "AI & LLM",
+    "spec": "LAYOUT: 8px grid; max 1200px; full-viewport hero with 320px headline; generous 48-96px section padding; sharp 0px radius.\nPALETTE: bg #1f2228; text #ffffff; secondary rgba(255,255,255,.7); borders rgba(255,255,255,.1); hover dims to .5 opacity.\nTYPE: GeistMono display 320px/300; uppercase buttons 14px/1.4px tracking; universalSans body 16px/1.5, headings 30px/1.2.\nSIGNATURE MOVES: Monospace as luxury display; white-on-dark only; hover dims not brightens; whitespace as structure.",
+    "avoid": "No shadows, gradients, color accents, pill radii, bold weights, proportional buttons, or decorative elements."
+  }
 ]

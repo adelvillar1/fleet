@@ -205,15 +205,15 @@ changelog.
 - [x] **W5 — the size follows the brief.** A mobile brief's frame lands
       390×844, a tablet brief 768×1024 — Rust's rule, pinned by unit
       test, and the harness reads the frame's w/h.
-- [ ] **W6 — assets inline.** A frame with `assets` carries each as a
+- [x] **W6 — assets inline.** A frame with `assets` carries each as a
       `data:` URI; an oversized or non-image file is refused by name;
       `{{img:NAME}}` substitution is the one implementation, shared by
       preview and export. Pinned by unit tests over a real PNG and a
       temp file.
-- [ ] **W7 — the SVG import is sanitized.** A script/handler/external-ref
+- [x] **W7 — the SVG import is sanitized.** A script/handler/external-ref
       SVG loses those parts and still renders; the sanitizer is a Rust
       unit pin with hostile fixtures.
-- [ ] **W8 — brands and presets.** A brand's tokens reach the task and
+- [x] **W8 — brands and presets.** A brand's tokens reach the task and
       the frame's defaults; all 62 presets ride the read; a preset's
       avoid list composes into the task.
 - [ ] **W9 — the reference fetch is hardened.** `fetch_site` refuses a
@@ -369,7 +369,58 @@ the picker landed as one run per model — see the landed section below —
 because the owner ruled that a design run's route is the page's, not a
 chain's.)**
 
-T2–T6 remain unstarted.
+T3–T6 remain unstarted.
+
+## Landed: T2 — assets, brands, and the whole style library
+
+**The style library is the source's, whole.** All **62** directions — the
+curated ten and the mined fifty-two — are data
+(`src/gui/assets/design-presets.json`), each split where the source splits
+it: `spec` is the positive prompt and the library's own **`avoid` list is
+the negative one**, riding the task after the style line
+(`a_preset_carries_its_spec_and_its_avoid_list`; the library pinned whole
+by `the_preset_library_is_the_sources_sixty_two` — 62, unique ids, every
+entry with all seven fields). The composer's picker groups them by the
+library's category.
+
+**Assets inline through one path.** `put_asset` sniffs the MIME from the
+bytes (png/jpeg/gif/webp/svg), caps at 256 KiB, stores under
+`canvas/<slug>/assets/` with a manifest, and `substitute_assets` turns
+`{{img:NAME}}` into the `data:` URI. The `frame` tool takes
+`[{name, path}]`: a path is read only inside the fleet home or the working
+directory, then stored, then inlined. Pinned by
+`an_asset_is_stored_inlined_and_refused_when_it_is_not_an_image` (a real
+PNG, a non-image, a lying MIME hint, the cap, the missing placeholder) and
+`the_frame_tool_inlines_the_assets_the_page_names` (a temp file, a real
+`data:image/png` in the stored page, an unknown placeholder refused).
+
+**The SVG import is sanitized for real.** The first cut refused an event
+handler; the criterion wants the file cleaned and still rendering, so
+`svg_sanitize` now strips `<script>`, `<foreignObject>`, `<iframe>`,
+`<object>`, `<embed>`, every `on…=` attribute and every `href`/`src` that
+reaches outside the file (`javascript:`, `http:`, `https:`, `//`,
+`data:text/html`) — quote-aware, so a `d="a > b"` path survives. Fixtures
+pin a byte-identical clean file, the hostile one cleaned with its shape
+intact, and an in-document `#mark` plus a `data:` URI left alone. An
+imported mark lands as a page (`asset-frame`).
+
+**Brands are a design system the home keeps.** `canvas/brands/<name>.json`
+(tokens + doctrine), chosen per board (`brand-use`); a `color` tweak whose
+key names a token starts at the brand's value on landing (a slider keeps
+its number), and the tokens and doctrine ride the task. Pinned by
+`a_brand_seeds_the_pages_colors_and_the_board_keeps_the_choice` and
+`the_brand_ops_write_the_board_and_its_design_system` — including a
+hostile token value refused and a brand deleted under a board that had
+chosen it.
+
+**The surface**: an **assets** press on the instrument opens the pane with
+the board's files (thumbnails through the new
+`/api/design/asset/<slug>/<name>` route), a one-press placeholder copy, a
+drop, the SVG-as-page press, and a file input whose bytes go to the writer
+as base64; a **brand** picker sits beside the model in the composer and
+writes the choice onto the board. Harness: four checks on the design case.
+
+Suite **1,879/0**, harness **565 checks across 56 cases**.
 
 ## Landed: the page's models and the steer (the owner's correction)
 

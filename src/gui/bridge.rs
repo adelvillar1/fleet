@@ -2073,6 +2073,12 @@ impl Bridge {
         }))
     }
 
+    /// One asset's bytes and its sniffed MIME, for the preview route.
+    pub fn design_asset(&self, slug: &str, name: &str) -> Result<(String, Vec<u8>), String> {
+        let (asset, bytes) = crate::canvas::asset_bytes(&self.home, slug, name)?;
+        Ok((asset.mime, bytes))
+    }
+
     /// One frame's HTML for the preview route: the stored document with
     /// its tweak overrides injected. The route wraps it in a CSP; the
     /// transform is the same one the exporters run.
@@ -6869,6 +6875,8 @@ fn design_read(home: &std::path::Path, project: Option<&str>) -> Value {
                     "updated": document.updated,
                     "frames": frames,
                     "chat": document.chat,
+                    "brand": document.brand,
+                    "assets": crate::canvas::assets(home, slug),
                 }));
             }
             Err(error) => refused.push(error),
@@ -6886,6 +6894,10 @@ fn design_read(home: &std::path::Path, project: Option<&str>) -> Value {
         // list never borrows a routing chain, and an option the run would
         // refuse is never offered as if it could serve.
         "models": design_models(home),
+        // The brands this home keeps, and the active board's own choice:
+        // the composer's picker writes the choice onto the board, and
+        // every page landed there starts from its tokens.
+        "brands": crate::canvas::brands(home),
         "caps": {
             "max_frame_bytes": crate::canvas::MAX_FRAME_BYTES,
             "max_versions": crate::canvas::MAX_VERSIONS,
@@ -7132,12 +7144,80 @@ fn design_write(home: &std::path::Path, body: &str) -> Result<Value, String> {
                             .and_then(Value::as_str)
                             .unwrap_or_default()
                             .to_string();
-                        facts.preset = Some((label, spec));
+                        // The library's avoid list is the negative prompt.
+                        let avoid = preset
+                            .get("avoid")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_string();
+                        facts.preset = Some(crate::canvas::Preset { label, spec, avoid });
                     }
+                }
+            }
+            // The board's brand is binding on the task: its tokens and its
+            // doctrine ride, and the frame's own defaults were seeded from
+            // them when it landed.
+            if let Some(brand) = project.brand.as_deref() {
+                if let Ok(brand) = crate::canvas::load_brand(home, brand) {
+                    facts.brand = Some((brand.name, brand.tokens, brand.doctrine));
                 }
             }
             let task = crate::canvas::designer_task(mode, &brief, &slug, &facts);
             json!({ "type": "design_task", "mode": mode_word, "task": task })
+        }
+        "asset-put" => {
+            let slug = slug()?;
+            let name = text("name")?;
+            let data = text("data")?;
+            use base64::Engine;
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(data.trim())
+                .map_err(|error| format!("the upload is not base64: {error}"))?;
+            let mime = arguments.get("mime").and_then(Value::as_str);
+            let asset = crate::canvas::put_asset(home, &slug, &name, &bytes, mime)?;
+            json!({ "asset": asset })
+        }
+        "asset-delete" => {
+            let slug = slug()?;
+            let name = text("name")?;
+            crate::canvas::delete_asset(home, &slug, &name)?;
+            json!({ "name": name })
+        }
+        // An imported SVG is a mark; landing it as a page is the other
+        // half of the import — the same sanitized bytes, wrapped.
+        "asset-frame" => {
+            let slug = slug()?;
+            let name = text("name")?;
+            let id = crate::canvas::frame_from_svg(home, &slug, &name)?;
+            json!({ "id": id })
+        }
+        "brand-put" => {
+            let name = text("name")?;
+            let tokens: std::collections::BTreeMap<String, String> = arguments
+                .get("tokens")
+                .and_then(|tokens| serde_json::from_value(tokens.clone()).ok())
+                .ok_or_else(|| "the brand names its tokens".to_string())?;
+            let doctrine = arguments
+                .get("doctrine")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let brand = crate::canvas::put_brand(home, &name, tokens, doctrine)?;
+            json!({ "brand": brand })
+        }
+        "brand-delete" => {
+            let brand = text("brand")?;
+            crate::canvas::delete_brand(home, &brand)?;
+            json!({ "brand": brand })
+        }
+        "brand-use" => {
+            let slug = slug()?;
+            let brand = arguments
+                .get("brand")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|brand| !brand.is_empty());
+            crate::canvas::set_brand(home, &slug, brand)?;
+            json!({ "project": slug, "brand": brand })
         }
         "review-put" => {
             let slug = slug()?;
@@ -9429,6 +9509,146 @@ pub(crate) fn rank_with(
 #[cfg(test)]
 mod tests {
     // --- the design canvas ---------------------------------------------------
+
+    /// The asset ops: an upload is stored and sniffed, the read carries
+    /// it, the bytes come back with their own MIME, an SVG lands as a
+    /// page, and a drop empties the board.
+    #[test]
+    fn the_asset_ops_store_serve_and_land_an_svg() {
+        use base64::Engine;
+        let home = std::env::temp_dir().join(format!("fleet-design-asset-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        let (slug, _) = crate::canvas::create(&home, "Media").unwrap();
+        let png = [0x89u8, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+        let data = base64::engine::general_purpose::STANDARD.encode(png);
+        let put = design_write(
+            &home,
+            &serde_json::json!({
+                "op": "asset-put", "project": slug, "name": "mark",
+                "data": data, "mime": "image/png",
+            })
+            .to_string(),
+        )
+        .expect("the upload");
+        assert_eq!(put["wrote"]["asset"]["mime"], "image/png");
+        let read = design_read(&home, Some(&slug));
+        assert_eq!(read["active"]["assets"][0]["name"], "mark");
+        assert_eq!(read["active"]["assets"][0]["bytes"], png.len());
+        let (asset, bytes) = crate::canvas::asset_bytes(&home, &slug, "mark").unwrap();
+        assert_eq!(asset.mime, "image/png");
+        assert_eq!(&bytes[..4], b"\x89PNG");
+        // An SVG upload is cleaned, then lands as a page of its own.
+        let svg = base64::engine::general_purpose::STANDARD
+            .encode("<svg xmlns=\"http://www.w3.org/2000/svg\"><circle r=\"3\"/></svg>");
+        design_write(
+            &home,
+            &serde_json::json!({
+                "op": "asset-put", "project": slug, "name": "dot",
+                "data": svg, "mime": "image/svg+xml",
+            })
+            .to_string(),
+        )
+        .expect("the svg");
+        let landed = design_write(
+            &home,
+            &serde_json::json!({ "op": "asset-frame", "project": slug, "name": "dot" }).to_string(),
+        )
+        .expect("the page");
+        let id = landed["wrote"]["id"].as_str().unwrap();
+        assert!(crate::canvas::load(&home, &slug)
+            .unwrap()
+            .frames
+            .iter()
+            .any(|frame| frame.id == id));
+        design_write(
+            &home,
+            &serde_json::json!({ "op": "asset-delete", "project": slug, "name": "mark" })
+                .to_string(),
+        )
+        .expect("the drop");
+        let read = design_read(&home, Some(&slug));
+        assert_eq!(read["active"]["assets"].as_array().unwrap().len(), 1);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// The brand ops: create a design system, choose it on a board, read
+    /// both back off the canvas document, drop it.
+    #[test]
+    fn the_brand_ops_write_the_board_and_its_design_system() {
+        let home = std::env::temp_dir().join(format!("fleet-design-brand-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        let (slug, _) = crate::canvas::create(&home, "Branded").unwrap();
+        let put = design_write(
+            &home,
+            &serde_json::json!({
+                "op": "brand-put",
+                "name": "Bellows",
+                "tokens": { "accent": "#b4552d", "ink": "#1c1a17" },
+                "doctrine": "Warm, quiet, editorial.",
+            })
+            .to_string(),
+        )
+        .expect("the brand");
+        assert_eq!(put["wrote"]["brand"]["slug"], "bellows");
+        let used = design_write(
+            &home,
+            &serde_json::json!({ "op": "brand-use", "project": slug, "brand": "bellows" })
+                .to_string(),
+        )
+        .expect("the choice");
+        assert_eq!(used["wrote"]["brand"], "bellows");
+        let read = design_read(&home, Some(&slug));
+        assert_eq!(read["active"]["brand"], "bellows");
+        let brands = read["brands"].as_array().expect("the brands");
+        assert_eq!(brands.len(), 1);
+        assert_eq!(brands[0]["tokens"]["accent"], "#b4552d");
+        // Clearing the choice is the empty list, not a silent no-op.
+        design_write(
+            &home,
+            &serde_json::json!({ "op": "brand-use", "project": slug, "brand": "" }).to_string(),
+        )
+        .expect("the clear");
+        assert!(design_read(&home, Some(&slug))["active"]["brand"].is_null());
+        design_write(
+            &home,
+            &serde_json::json!({ "op": "brand-delete", "brand": "bellows" }).to_string(),
+        )
+        .expect("the drop");
+        assert!(design_read(&home, Some(&slug))["brands"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// The preset library is data, whole: the source's sixty-two
+    /// directions, each with the spec that is the positive prompt and the
+    /// avoid list that is the negative one, ids unique, categories named.
+    #[test]
+    fn the_preset_library_is_the_sources_sixty_two() {
+        let presets = design_presets();
+        let list = presets.as_array().expect("an array");
+        assert_eq!(list.len(), 62, "the curated ten plus the mined fifty-two");
+        let mut ids = std::collections::BTreeSet::new();
+        let mut categories = std::collections::BTreeSet::new();
+        for preset in list {
+            for key in [
+                "id", "label", "summary", "source", "category", "spec", "avoid",
+            ] {
+                let value = preset.get(key).and_then(Value::as_str).unwrap_or_default();
+                assert!(!value.trim().is_empty(), "`{key}` on {preset:?}");
+            }
+            ids.insert(preset["id"].as_str().unwrap().to_string());
+            categories.insert(preset["category"].as_str().unwrap().to_string());
+        }
+        assert_eq!(ids.len(), list.len(), "every id is unique");
+        assert!(categories.len() > 10, "{categories:?}");
+        // The curated ten head the list: the composer's first group.
+        assert_eq!(list[0]["id"], "agency-grid");
+        assert_eq!(list[0]["category"], "Editorial & curated");
+    }
 
     /// D9: the exports write the frame's own bytes — the page with its
     /// tweaks, the tokens the page declares, and a packet a reader opens.

@@ -655,6 +655,7 @@
     designMode: document.getElementById('design-mode-select'),
     designStyle: document.getElementById('design-style'),
     designModel: document.getElementById('design-model'),
+    designBrand: document.getElementById('design-brand'),
     designDirections: document.getElementById('design-directions'),
     designSend: document.getElementById('design-send'),
     designTitle: document.getElementById('design-title'),
@@ -16126,6 +16127,15 @@
     strip.appendChild(pin);
     strip.appendChild(readout);
     if (board) {
+      // The board's assets: the files its pages inline, one press away.
+      var assets = node('button', 'replay-button', 'assets' +
+        ((board.assets || []).length ? ' \u00b7 ' + board.assets.length : ''));
+      assets.type = 'button';
+      assets.dataset.act = 'design-assets';
+      assets.addEventListener('click', designAssetsCard);
+      strip.appendChild(assets);
+    }
+    if (board) {
       strip.appendChild(node('span', 'canvas-count',
         board.frames.length + ' frame' + (board.frames.length === 1 ? '' : 's')));
     }
@@ -16725,6 +16735,94 @@
     ]);
   }
 
+  /// The board's assets: what its pages inline, where each placeholder
+  /// leads, an upload, and an SVG imported as a page. Assets are stored by
+  /// the writer and served by the face with their own sniffed MIME, so the
+  /// panel shows the real bytes and never a copy.
+  function designAssetsCard() {
+    var board = designBoard();
+    if (!board) return;
+    var assets = board.assets || [];
+    var list = node('div', 'canvas-assets');
+    if (!assets.length) {
+      list.appendChild(node('p', 'board-empty',
+        'no assets yet — upload an image, or import an SVG as a page'));
+    }
+    assets.forEach(function (asset) {
+      var line = node('div', 'canvas-asset');
+      var thumb = node('img', 'canvas-asset-thumb');
+      thumb.src = '/api/design/asset/' + encodeURIComponent(board.slug) + '/' +
+        encodeURIComponent(asset.name);
+      thumb.alt = asset.name;
+      line.appendChild(thumb);
+      var body = node('span', 'canvas-asset-body');
+      body.appendChild(node('span', 'canvas-asset-name', asset.name));
+      body.appendChild(node('span', 'canvas-asset-facts',
+        asset.mime + ' \u00b7 ' + Math.round(asset.bytes / 1024) + ' KB'));
+      line.appendChild(body);
+      var acts = node('div', 'canvas-inline');
+      var copy = node('button', 'replay-button', 'copy placeholder');
+      copy.type = 'button';
+      copy.addEventListener('click', function () {
+        var text = '{{img:' + asset.name + '}}';
+        if (typeof navigator !== 'undefined' && navigator.clipboard &&
+            navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).catch(function () { });
+        }
+        notice('the placeholder is copied', text + ' — write it where the image goes');
+      });
+      acts.appendChild(copy);
+      if (asset.mime === 'image/svg+xml') {
+        var asPage = node('button', 'replay-button', 'as a page');
+        asPage.type = 'button';
+        asPage.addEventListener('click', function () {
+          designWrite('asset-frame', { project: board.slug, name: asset.name },
+            function () { closeDrawer(); });
+        });
+        acts.appendChild(asPage);
+      }
+      var drop = node('button', 'replay-button', 'drop');
+      drop.type = 'button';
+      drop.addEventListener('click', function () {
+        designWrite('asset-delete', { project: board.slug, name: asset.name },
+          function () { designAssetsCard(); });
+      });
+      acts.appendChild(drop);
+      line.appendChild(acts);
+      list.appendChild(line);
+    });
+    // The upload: a real file input, read in the page, and handed to the
+    // writer as base64 — the reader never becomes the writer.
+    var picker = node('input', 'canvas-asset-file');
+    picker.type = 'file';
+    picker.accept = 'image/png,image/jpeg,image/gif,image/webp,image/svg+xml,.svg';
+    picker.addEventListener('change', function () {
+      var file = picker.files && picker.files[0];
+      if (!file) return;
+      var reader = new FileReader();
+      reader.onload = function () {
+        var text = String(reader.result || '');
+        var comma = text.indexOf(',');
+        designWrite('asset-put', {
+          project: board.slug,
+          name: file.name.replace(/\.[a-z0-9]+$/i, ''),
+          mime: file.type || '',
+          data: comma >= 0 ? text.slice(comma + 1) : text
+        }, function (answer) {
+          notice('the asset is on the board',
+            (answer && answer.asset ? answer.asset.name : file.name) +
+            ' — a page writes {{img:NAME}} for it');
+          designAssetsCard();
+        });
+      };
+      reader.readAsDataURL(file);
+    });
+    openDrawer('assets \u00b7 ' + board.name, [
+      ['the files', list],
+      ['add one', picker]
+    ]);
+  }
+
   /// The board's conversation: the turns the document keeps, the frame
   /// chips they landed, and the composer that starts runs. The verbs are
   /// the composer's mode — refine and regenerate need a selection, fixes
@@ -16780,6 +16878,33 @@
     face.designModelChoice = el.designModel.value;
   }
 
+  /// The board's brand. A brand is a design system (tokens + doctrine)
+  /// this home keeps; choosing one writes it onto the board, so every page
+  /// landed there starts from its tokens and its doctrine rides the task.
+  function paintDesignBrand() {
+    var board = designBoard();
+    var brands = (face.design && face.design.brands) || [];
+    var chosen = (board && board.brand) || '';
+    el.designBrand.textContent = '';
+    var none = node('option', null, 'no brand');
+    none.value = '';
+    el.designBrand.appendChild(none);
+    brands.forEach(function (brand) {
+      var option = node('option', null, brand.name);
+      option.value = brand.slug;
+      el.designBrand.appendChild(option);
+    });
+    // A board pointing at a brand this home no longer keeps says so
+    // rather than silently reading as "no brand".
+    if (chosen && !brands.some(function (brand) { return brand.slug === chosen; })) {
+      var stale = node('option', null, chosen + ' \u00b7 missing');
+      stale.value = chosen;
+      el.designBrand.appendChild(stale);
+    }
+    el.designBrand.value = chosen;
+    el.designBrand.disabled = !board || !brands.length;
+  }
+
   function paintDesignChat() {
     var board = designBoard();
     el.designChatLog.textContent = '';
@@ -16826,14 +16951,35 @@
     });
     // The model first: it is the run's route, not a decoration.
     paintDesignModels();
-    // The styles: every preset the read carries.
+    paintDesignBrand();
+    // The styles: the source library's sixty-two directions, grouped by
+    // the category the library names (the curated ten first). Each
+    // preset's spec and its avoid list ride the composed task.
     if (!el.designStyle.children.length) {
       el.designStyle.appendChild(node('option', null, 'no style named'));
+      var groups = {};
+      var order = [];
       (face.design.presets || []).forEach(function (preset) {
-        var option = node('option', null, preset.label);
-        option.value = preset.id;
-        el.designStyle.appendChild(option);
+        var name = preset.category || 'other';
+        if (!groups[name]) {
+          groups[name] = [];
+          order.push(name);
+        }
+        groups[name].push(preset);
       });
+      order.forEach(function (name) {
+        var group = node('optgroup');
+        group.label = name;
+        groups[name].forEach(function (preset) {
+          var option = node('option', null, preset.label);
+          option.value = preset.id;
+          option.title = preset.summary || '';
+          group.appendChild(option);
+        });
+        el.designStyle.appendChild(group);
+      });
+      el.designStyle.title = order.length + ' categories \u00b7 ' +
+        (face.design.presets || []).length + ' directions';
     }
   }
 
@@ -17015,6 +17161,11 @@
     el.designSend.addEventListener('click', sendDesign);
     el.designMode.addEventListener('change', function () {
       face.designModeChoice = el.designMode.value;
+    });
+    el.designBrand.addEventListener('change', function () {
+      var board = designBoard();
+      if (!board) return;
+      designWrite('brand-use', { project: board.slug, brand: el.designBrand.value || '' });
     });
     el.designBrief.addEventListener('keydown', function (event) {
       if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {

@@ -1263,6 +1263,37 @@ async fn serve_connection(
         // scripts from anywhere, no frame ancestors, no form posts. The
         // canvas paints frames in a sandboxed srcdoc; a page opened
         // outside one earns this boundary instead.
+        // One asset's own bytes: the panel's thumbnails and a page's
+        // imported mark read through here, with the MIME the manifest
+        // sniffed. `nosniff` and a fixed type keep an upload from being
+        // re-interpreted as something executable.
+        ("GET", path) if path.starts_with("/api/design/asset/") => {
+            let rest = path.trim_start_matches("/api/design/asset/");
+            let mut parts = rest.splitn(2, '/');
+            let slug = percent_decode(parts.next().unwrap_or_default());
+            let name = percent_decode(parts.next().unwrap_or_default());
+            match bridge.design_asset(&slug, &name) {
+                Ok((mime, bytes)) => {
+                    let head = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: {mime}\r\nContent-Length: {}\r\n\
+                         Connection: close\r\nCache-Control: no-store\r\n\
+                         X-Content-Type-Options: nosniff\r\n\
+                         Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; script-src 'none'\r\n\r\n",
+                        bytes.len()
+                    );
+                    stream
+                        .write_all(head.as_bytes())
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    stream.write_all(&bytes).await.map_err(|e| e.to_string())?;
+                    stream.flush().await.map_err(|e| e.to_string())?;
+                    Ok(())
+                }
+                Err(message) => {
+                    write_reply(&mut stream, api(404, json!({"refused": [message]}))).await
+                }
+            }
+        }
         ("GET", path) if path.starts_with("/api/design/frame/") => {
             let rest = path.trim_start_matches("/api/design/frame/");
             let mut parts = rest.splitn(2, '/');
@@ -1974,6 +2005,12 @@ impl Request {
 /// reach the wire, so they have to come back off it.
 pub(crate) fn decode_query(query: &str, name: &str) -> String {
     let raw = query_value(query, name).unwrap_or_default();
+    percent_decode(raw)
+}
+
+/// Percent-decode one path or query segment. A malformed escape stays
+/// literal, which is what a reader of the raw bytes expects.
+pub(crate) fn percent_decode(raw: &str) -> String {
     let bytes = raw.as_bytes();
     let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
     let mut at = 0;

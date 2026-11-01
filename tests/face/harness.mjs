@@ -3996,6 +3996,9 @@ async function theDesignCanvasCarriesItsFramesAndWritesGeometry() {
       slug: 'sample-board',
       name: 'Sample board',
       frames: [frame('f-hero', 'hero', 0, 'glm'), frame('f-pricing', 'pricing', 1376, 'qwen')],
+      brand: null,
+      assets: [{ name: 'mark', file: 'mark.png', mime: 'image/png', bytes: 2048,
+        created: '2026-10-31T09:00:00Z' }],
       chat: [
         { role: 'owner', text: 'a pricing page for a developer tool', frames: [],
           at: '2026-10-31T09:00:00Z' },
@@ -4005,6 +4008,10 @@ async function theDesignCanvasCarriesItsFramesAndWritesGeometry() {
     },
     presets: [{ id: 'agency-grid', label: 'Agency grid', summary: 'editorial grid',
       source: 'x', spec: 'LAYOUT: grid' }],
+    // The home's design systems, and the board's own files.
+    brands: [{ slug: 'bellows', name: 'Bellows',
+      tokens: { accent: '#b4552d', ink: '#1c1a17' }, doctrine: 'Warm, quiet.',
+      created: '2026-10-31T09:00:00Z', updated: '2026-10-31T09:00:00Z' }],
     // The page's own models (the owner's designation): the head has no
     // key right now, so the picker opens on the first that can serve.
     models: [
@@ -4200,6 +4207,47 @@ async function theDesignCanvasCarriesItsFramesAndWritesGeometry() {
     modelOptions.map((one) => one.value + '/' + one.disabled).join(','));
   check('PM-D the picker opens on the first model that can serve',
     models.value === 'zai-coding-plan/GLM-5.3-Flash', models.value);
+
+  // The board's brand is a choice the page writes: its tokens default the
+  // colours of every page landed here.
+  const brandPicker = page.IDS['design-brand'];
+  const brandOptions = (brandPicker && brandPicker.children) || [];
+  check('PM-D the composer carries the home\u2019s brands',
+    brandOptions.length === 2 &&
+      brandOptions[0].value === '' &&
+      brandOptions[1].value === 'bellows' &&
+      brandPicker.value === '',
+    brandOptions.map((one) => one.value).join(','));
+  brandPicker.value = 'bellows';
+  brandPicker.fire('change', {});
+  await flush(60);
+  check('PM-D choosing a brand writes it onto the board',
+    page.calls.some((one) => one.method === 'POST' &&
+      String(one.body || '').includes('"op":"brand-use"') &&
+      String(one.body || '').includes('"brand":"bellows"')),
+    JSON.stringify(page.calls.filter((one) => String(one.body || '').includes('brand-use'))
+      .map((one) => one.body)));
+
+  // The board's assets, in the pane: what the page inlines and the
+  // placeholder it writes.
+  byAct(page.IDS['design-instrument'], 'design-assets').click();
+  await flush(40);
+  const assetPane = page.el('dock-object-body');
+  const assetImg = assetPane ? assetPane.find((one) => one.name === 'img')[0] : null;
+  check('PM-D the assets panel lists the board\u2019s files with their own route',
+    !!assetPane && String(assetPane.textContent).includes('mark') &&
+      !!assetImg && String(assetImg.src).includes('/api/design/asset/sample-board/mark'),
+    assetPane ? String(assetPane.textContent).slice(0, 120) : 'no pane');
+  const copy = assetPane.find((one) => one.className === 'replay-button' &&
+    String(one.textContent) === 'copy placeholder')[0];
+  if (copy) copy.click();
+  await flush(20);
+  check('PM-D the placeholder is one press away',
+    !copy || page.rows('.card-row').some((one) =>
+      String(one.textContent).includes('{{img:mark}}')),
+    copy ? String(copy.textContent) : 'no copy control');
+  page.fireOn('dock-object-close', 'click');
+  await flush(20);
 
   page.IDS['design-brief'].value = 'make the hero quieter';
   page.IDS['design-mode-select'].value = 'refine';

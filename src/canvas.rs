@@ -37,6 +37,20 @@ pub const MAX_FRAME_BYTES: usize = 512 * 1024;
 /// The most version snapshots one frame keeps; the oldest falls off.
 pub const MAX_VERSIONS: usize = 20;
 
+/// The brands' own directory under the canvas root. A brand is a board's
+/// design system: tokens and a doctrine, chosen per board, and binding on
+/// every page a run lands there.
+pub const BRANDS_DIR: &str = "brands";
+
+/// The most brands one home keeps.
+pub const MAX_BRANDS: usize = 50;
+
+/// The most tokens one brand carries.
+pub const MAX_BRAND_TOKENS: usize = 32;
+
+/// The most doctrine text one brand carries.
+pub const MAX_BRAND_DOCTRINE: usize = 2_000;
+
 /// The most reviews one frame keeps.
 pub const MAX_REVIEWS: usize = 10;
 
@@ -181,6 +195,10 @@ pub struct Project {
     /// The board's conversation, oldest first.
     #[serde(default)]
     pub chat: Vec<ChatTurn>,
+    /// The brand the board designs under, by slug: its tokens are the
+    /// default tweak values of every frame a run lands here.
+    #[serde(default)]
+    pub brand: Option<String>,
 }
 
 /// A project as the pickers list it.
@@ -236,6 +254,10 @@ pub fn projects(home: &Path) -> Vec<ProjectSummary> {
         .filter(|entry| entry.path().is_dir())
         .filter_map(|entry| {
             let slug = entry.file_name().to_string_lossy().to_string();
+            // `canvas/brands/` holds the design systems, not a board.
+            if slug == BRANDS_DIR {
+                return None;
+            }
             let project = load(home, &slug).ok()?;
             Some(ProjectSummary {
                 slug,
@@ -295,9 +317,589 @@ pub fn create(home: &Path, name: &str) -> Result<(String, Project), String> {
         updated: now,
         frames: Vec::new(),
         chat: Vec::new(),
+        brand: None,
     };
     save(home, &slug, &project)?;
     Ok((slug, project))
+}
+
+// --- brands -----------------------------------------------------------------
+
+/// One brand: the board's design system. Tokens are `:root` custom
+/// property names and values (the same names a frame's tweak spec writes),
+/// and the doctrine is the sentence or three a designer reads as
+/// standing instruction.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Brand {
+    pub slug: String,
+    pub name: String,
+    #[serde(default)]
+    pub tokens: BTreeMap<String, String>,
+    #[serde(default)]
+    pub doctrine: String,
+    pub created: String,
+    pub updated: String,
+}
+
+pub fn brands_dir(home: &Path) -> PathBuf {
+    canvas_root(home).join(BRANDS_DIR)
+}
+
+fn brand_path(home: &Path, slug: &str) -> PathBuf {
+    brands_dir(home).join(format!("{slug}.json"))
+}
+
+/// Every brand this home keeps, by name.
+pub fn brands(home: &Path) -> Vec<Brand> {
+    let Ok(entries) = std::fs::read_dir(brands_dir(home)) else {
+        return Vec::new();
+    };
+    let mut out: Vec<Brand> = entries
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "json"))
+        .filter_map(|entry| {
+            let text = std::fs::read_to_string(entry.path()).ok()?;
+            serde_json::from_str(&text).ok()
+        })
+        .collect();
+    out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    out
+}
+
+pub fn load_brand(home: &Path, slug: &str) -> Result<Brand, String> {
+    let path = brand_path(home, slug);
+    let text = std::fs::read_to_string(&path)
+        .map_err(|error| format!("the brand `{slug}` could not be read: {error}"))?;
+    serde_json::from_str(&text)
+        .map_err(|error| format!("the brand `{slug}` is not a brand: {error}"))
+}
+
+/// Write one brand, creating or replacing it by slug. A token is a custom
+/// property name and its value; the caps are refusals by name, never a
+/// silent trim.
+pub fn put_brand(
+    home: &Path,
+    name: &str,
+    tokens: BTreeMap<String, String>,
+    doctrine: &str,
+) -> Result<Brand, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("the brand names nothing".to_string());
+    }
+    let slug = slug_of(name);
+    let known = brands(home);
+    if !known.iter().any(|brand| brand.slug == slug) && known.len() >= MAX_BRANDS {
+        return Err(format!(
+            "this home keeps {MAX_BRANDS} brands already — drop one before adding another"
+        ));
+    }
+    if tokens.len() > MAX_BRAND_TOKENS {
+        return Err(format!(
+            "the brand carries {} tokens; the cap is {MAX_BRAND_TOKENS}",
+            tokens.len()
+        ));
+    }
+    for (token, value) in &tokens {
+        let key = token.trim_start_matches("--");
+        if key.is_empty() || key.len() > 40 || key.contains(char::is_whitespace) {
+            return Err(format!("`{token}` is not a custom property name"));
+        }
+        if value.len() > 120 || value.contains(';') || value.contains('}') {
+            return Err(format!(
+                "the value of `{key}` is not a token value (120 chars, no `;` or `}}`)"
+            ));
+        }
+    }
+    if doctrine.len() > MAX_BRAND_DOCTRINE {
+        return Err(format!(
+            "the doctrine is {} chars; the cap is {MAX_BRAND_DOCTRINE}",
+            doctrine.len()
+        ));
+    }
+    let now = crate::calib::stamp();
+    let created = known
+        .iter()
+        .find(|brand| brand.slug == slug)
+        .map(|brand| brand.created.clone())
+        .unwrap_or_else(|| now.clone());
+    let brand = Brand {
+        slug: slug.clone(),
+        name: name.to_string(),
+        tokens: tokens
+            .into_iter()
+            .map(|(token, value)| (token.trim_start_matches("--").to_string(), value))
+            .collect(),
+        doctrine: doctrine.trim().to_string(),
+        created,
+        updated: now,
+    };
+    let dir = brands_dir(home);
+    std::fs::create_dir_all(&dir)
+        .map_err(|error| format!("could not make {}: {error}", dir.display()))?;
+    let text = serde_json::to_string_pretty(&brand)
+        .map_err(|error| format!("the brand does not serialize: {error}"))?;
+    crate::settings::write_atomic(&brand_path(home, &slug), &text)?;
+    Ok(brand)
+}
+
+/// Drop one brand. A board that had chosen it keeps the choice recorded
+/// but the choice no longer resolves, which the read names.
+pub fn delete_brand(home: &Path, slug: &str) -> Result<(), String> {
+    let path = brand_path(home, slug);
+    if !path.is_file() {
+        return Err(format!("no brand `{slug}`"));
+    }
+    std::fs::remove_file(&path)
+        .map_err(|error| format!("could not drop {}: {error}", path.display()))
+}
+
+/// The board's assets: files (images, an inlined SVG) that a page refers
+/// to by name and the canvas inlines as `data:` URIs, so a frame stays one
+/// self-contained page.
+pub const ASSETS_DIR: &str = "assets";
+
+/// The most bytes one asset may carry. The frame cap is twice this, so a
+/// page can carry several real images and still be a page.
+pub const MAX_ASSET_BYTES: usize = 256 * 1024;
+
+/// The most assets one board keeps.
+pub const MAX_ASSETS: usize = 64;
+
+/// One board asset, as the manifest records it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Asset {
+    /// The placeholder name the page writes: `{{img:NAME}}`.
+    pub name: String,
+    /// The file under the board's `assets/` directory.
+    pub file: String,
+    #[serde(default = "asset_mime_default")]
+    pub mime: String,
+    pub bytes: usize,
+    pub created: String,
+}
+
+fn asset_mime_default() -> String {
+    "application/octet-stream".to_string()
+}
+
+pub fn assets_dir(home: &Path, slug: &str) -> PathBuf {
+    canvas_root(home).join(slug).join(ASSETS_DIR)
+}
+
+fn assets_manifest(home: &Path, slug: &str) -> PathBuf {
+    assets_dir(home, slug).join("manifest.json")
+}
+
+/// Every asset the board keeps, by name.
+pub fn assets(home: &Path, slug: &str) -> Vec<Asset> {
+    let Ok(text) = std::fs::read_to_string(assets_manifest(home, slug)) else {
+        return Vec::new();
+    };
+    let mut out: Vec<Asset> = serde_json::from_str(&text).unwrap_or_default();
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    out
+}
+
+fn save_assets(home: &Path, slug: &str, list: &[Asset]) -> Result<(), String> {
+    let dir = assets_dir(home, slug);
+    std::fs::create_dir_all(&dir)
+        .map_err(|error| format!("could not make {}: {error}", dir.display()))?;
+    let text = serde_json::to_string_pretty(list)
+        .map_err(|error| format!("the asset manifest does not serialize: {error}"))?;
+    crate::settings::write_atomic(&assets_manifest(home, slug), &text)
+}
+
+/// The MIME one asset's bytes are, sniffed from the bytes themselves: an
+/// extension is a claim, the magic is the fact. SVG is text and is
+/// recognized by its own root element.
+pub fn asset_mime(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
+        return Some("image/png");
+    }
+    if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        return Some("image/jpeg");
+    }
+    if bytes.starts_with(b"GIF8") {
+        return Some("image/gif");
+    }
+    if bytes.len() > 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        return Some("image/webp");
+    }
+    let head = String::from_utf8_lossy(&bytes[..bytes.len().min(1024)]).to_ascii_lowercase();
+    if head.contains("<svg") {
+        return Some("image/svg+xml");
+    }
+    None
+}
+
+/// Store one asset on a board. The name is the placeholder the page
+/// writes, the file is written beside the manifest, and a repeated name
+/// replaces in place. Caps by name: the byte cap, the count, the MIME —
+/// an asset the canvas cannot inline is not an asset.
+pub fn put_asset(
+    home: &Path,
+    slug: &str,
+    name: &str,
+    bytes: &[u8],
+    mime_hint: Option<&str>,
+) -> Result<Asset, String> {
+    if !exists(home, slug) {
+        return Err(format!("no canvas board `{slug}`"));
+    }
+    let name = slug_of(name);
+    if name.is_empty() || name == "untitled" {
+        return Err("the asset names nothing; give it a name the page can write".to_string());
+    }
+    if bytes.is_empty() {
+        return Err(format!("the asset `{name}` is empty"));
+    }
+    if bytes.len() > MAX_ASSET_BYTES {
+        return Err(format!(
+            "the asset `{name}` is {} bytes; the cap is {MAX_ASSET_BYTES}",
+            bytes.len()
+        ));
+    }
+    let sniffed = asset_mime(bytes).ok_or_else(|| {
+        format!(
+            "the asset `{name}` is not an image the canvas inlines (png, jpeg, gif, webp or svg)"
+        )
+    })?;
+    if let Some(hint) = mime_hint.filter(|hint| !hint.trim().is_empty()) {
+        let hint = hint.trim();
+        // A hint may only agree with the bytes: the sniff is the truth.
+        if !hint.starts_with(sniffed) && !sniffed.starts_with(hint) {
+            return Err(format!(
+                "the asset `{name}` declares `{hint}` but its bytes are `{sniffed}`"
+            ));
+        }
+    }
+    let bytes = if sniffed == "image/svg+xml" {
+        let text = String::from_utf8(bytes.to_vec())
+            .map_err(|_| format!("the svg asset `{name}` is not UTF-8 text"))?;
+        svg_sanitize(&text)?.into_bytes()
+    } else {
+        bytes.to_vec()
+    };
+    if bytes.len() > MAX_ASSET_BYTES {
+        return Err(format!(
+            "the asset `{name}` is {} bytes after cleaning; the cap is {MAX_ASSET_BYTES}",
+            bytes.len()
+        ));
+    }
+    let mut list = assets(home, slug);
+    let ext = match sniffed {
+        "image/png" => "png",
+        "image/jpeg" => "jpg",
+        "image/gif" => "gif",
+        "image/webp" => "webp",
+        _ => "svg",
+    };
+    let file = format!("{name}.{ext}");
+    if !list.iter().any(|asset| asset.name == name) && list.len() >= MAX_ASSETS {
+        return Err(format!(
+            "the board keeps {MAX_ASSETS} assets already — drop one before adding another"
+        ));
+    }
+    let dir = assets_dir(home, slug);
+    std::fs::create_dir_all(&dir)
+        .map_err(|error| format!("could not make {}: {error}", dir.display()))?;
+    std::fs::write(dir.join(&file), &bytes)
+        .map_err(|error| format!("could not write the asset `{name}`: {error}"))?;
+    let now = crate::calib::stamp();
+    let created = list
+        .iter()
+        .find(|asset| asset.name == name)
+        .map(|asset| asset.created.clone())
+        .unwrap_or_else(|| now.clone());
+    // A replacement with a different extension leaves no orphan behind.
+    for old in list
+        .iter()
+        .filter(|asset| asset.name == name && asset.file != file)
+    {
+        let _ = std::fs::remove_file(dir.join(&old.file));
+    }
+    let asset = Asset {
+        name: name.clone(),
+        file,
+        mime: sniffed.to_string(),
+        bytes: bytes.len(),
+        created,
+    };
+    list.retain(|entry| entry.name != name);
+    list.push(asset.clone());
+    list.sort_by(|a, b| a.name.cmp(&b.name));
+    save_assets(home, slug, &list)?;
+    Ok(asset)
+}
+
+/// One asset's bytes, read back through the manifest.
+pub fn asset_bytes(home: &Path, slug: &str, name: &str) -> Result<(Asset, Vec<u8>), String> {
+    let name = slug_of(name);
+    let asset = assets(home, slug)
+        .into_iter()
+        .find(|asset| asset.name == name)
+        .ok_or_else(|| format!("no asset `{name}` on board `{slug}`"))?;
+    let path = assets_dir(home, slug).join(&asset.file);
+    let bytes = std::fs::read(&path)
+        .map_err(|error| format!("the asset `{name}` could not be read: {error}"))?;
+    Ok((asset, bytes))
+}
+
+/// One asset as the `data:` URI a page embeds — the single inlining path,
+/// so the preview, the export and the model's own page agree.
+pub fn asset_data_uri(home: &Path, slug: &str, name: &str) -> Result<String, String> {
+    let (asset, bytes) = asset_bytes(home, slug, name)?;
+    use base64::Engine;
+    let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    Ok(format!("data:{};base64,{}", asset.mime, encoded))
+}
+
+pub fn delete_asset(home: &Path, slug: &str, name: &str) -> Result<(), String> {
+    let name = slug_of(name);
+    let mut list = assets(home, slug);
+    let Some(asset) = list.iter().find(|asset| asset.name == name).cloned() else {
+        return Err(format!("no asset `{name}` on board `{slug}`"));
+    };
+    list.retain(|entry| entry.name != name);
+    let dir = assets_dir(home, slug);
+    std::fs::remove_file(dir.join(&asset.file))
+        .map_err(|error| format!("could not drop the asset `{name}`: {error}"))?;
+    save_assets(home, slug, &list)
+}
+
+/// Make an SVG safe to inline: the active elements go, event handlers go,
+/// and external or script targets go — the file still renders, it just
+/// cannot act or reach out. A design asset is a picture; the cleaning is a
+/// scanner over tags and attributes, the same rule the a11y scan follows.
+pub fn svg_sanitize(svg: &str) -> Result<String, String> {
+    let lower = svg.to_ascii_lowercase();
+    if !lower.contains("<svg") {
+        return Err("the file is not an SVG (no <svg element)".to_string());
+    }
+    let mut out = svg.to_string();
+    for (open, close) in [
+        ("<script", "</script>"),
+        ("<foreignobject", "</foreignobject>"),
+        ("<iframe", "</iframe>"),
+        ("<object", "</object>"),
+        ("<embed", "</embed>"),
+    ] {
+        loop {
+            let lower_out = out.to_ascii_lowercase();
+            let Some(start) = lower_out.find(open) else {
+                break;
+            };
+            let end = lower_out[start..]
+                .find(close)
+                .map(|at| start + at + close.len())
+                .unwrap_or(out.len());
+            out.replace_range(start..end, "");
+        }
+    }
+    Ok(strip_attributes(&out))
+}
+
+/// Strip the attributes an asset must not carry: an `on<event>=` handler,
+/// or a `href`/`src` that reaches outside the document. Everything else is
+/// copied byte for byte, so the picture is unchanged.
+fn strip_attributes(svg: &str) -> String {
+    let mut out = String::with_capacity(svg.len());
+    let mut rest = svg;
+    while let Some(lt) = rest.find('<') {
+        out.push_str(&rest[..lt]);
+        let after = &rest[lt..];
+        // A tag ends at the first `>` outside quotes: a `d="a > b"` path
+        // must not be cut in half.
+        let mut quote: Option<char> = None;
+        let mut end = None;
+        for (at, ch) in after.char_indices() {
+            match quote {
+                Some(mark) if ch == mark => quote = None,
+                Some(_) => {}
+                None if ch == '"' || ch == '\'' => quote = Some(ch),
+                None if ch == '>' => {
+                    end = Some(at);
+                    break;
+                }
+                None => {}
+            }
+        }
+        let Some(end) = end else {
+            out.push_str(after);
+            return out;
+        };
+        let tag = &after[..=end];
+        out.push_str(&clean_tag(tag));
+        rest = &after[end + 1..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// One tag with its forbidden attributes removed. The tag name, the
+/// whitespace between attributes and every allowed attribute survive as
+/// written.
+fn clean_tag(tag: &str) -> String {
+    let mut out = String::with_capacity(tag.len());
+    let mut at = 0;
+    let bytes = tag.as_bytes();
+    // The name (and the leading `<`, `/` or `!`) copies verbatim.
+    while at < bytes.len() {
+        let ch = bytes[at];
+        if ch.is_ascii_whitespace() || ch == b'>' || ch == b'/' {
+            break;
+        }
+        at += 1;
+    }
+    out.push_str(&tag[..at]);
+    while at < bytes.len() {
+        // Whitespace before an attribute.
+        let space = at;
+        while at < bytes.len() && bytes[at].is_ascii_whitespace() {
+            at += 1;
+        }
+        let gap = &tag[space..at];
+        if at >= bytes.len() || bytes[at] == b'>' || bytes[at] == b'/' {
+            out.push_str(gap);
+            out.push_str(&tag[at..]);
+            return out;
+        }
+        // The name.
+        let name_start = at;
+        while at < bytes.len() {
+            let ch = bytes[at];
+            if ch.is_ascii_alphanumeric()
+                || ch == b' '
+                || ch == b':'
+                || ch == b'-'
+                || ch == b'_'
+                || ch == b'.'
+            {
+                at += 1;
+            } else {
+                break;
+            }
+        }
+        let name = tag[name_start..at].trim().to_ascii_lowercase();
+        // The value, if one follows the `=`.
+        let mut value_start = at;
+        while value_start < bytes.len() && bytes[value_start].is_ascii_whitespace() {
+            value_start += 1;
+        }
+        let mut value = "";
+        let mut value_end = at;
+        if value_start < bytes.len() && bytes[value_start] == b'=' {
+            let mut cursor = value_start + 1;
+            while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
+                cursor += 1;
+            }
+            if cursor < bytes.len() && (bytes[cursor] == b'"' || bytes[cursor] == b'\'') {
+                let mark = bytes[cursor];
+                let start = cursor + 1;
+                let mut close = start;
+                while close < bytes.len() && bytes[close] != mark {
+                    close += 1;
+                }
+                value = &tag[start..close.min(tag.len())];
+                value_end = (close + 1).min(tag.len());
+            } else {
+                let start = cursor;
+                let mut close = start;
+                while close < bytes.len()
+                    && !bytes[close].is_ascii_whitespace()
+                    && bytes[close] != b'>'
+                {
+                    close += 1;
+                }
+                value = &tag[start..close];
+                value_end = close;
+            }
+        }
+        let handler = name.starts_with("on") && name.len() > 2;
+        let external = matches!(name.as_str(), "href" | "src" | "xlink:href") && {
+            let lower = value.trim().to_ascii_lowercase();
+            lower.starts_with("http:")
+                || lower.starts_with("https:")
+                || lower.starts_with("//")
+                || lower.starts_with("javascript:")
+                || lower.starts_with("data:text/html")
+        };
+        if !handler && !external {
+            let end = if value.is_empty() { at } else { value_end };
+            out.push_str(gap);
+            out.push_str(&tag[name_start..end]);
+            at = end;
+            // A value-less attribute keeps its own name only.
+            if value.is_empty() && at == name_start {
+                at += 1;
+            }
+        } else {
+            at = if value.is_empty() { at } else { value_end };
+        }
+    }
+    out.push_str(&tag[at.min(tag.len())..]);
+    out
+}
+
+/// Inline a page's `{{img:NAME}}` placeholders. Every placeholder must
+/// resolve: a page that names an asset the board does not keep is refused
+/// by name, because the alternative is a page that renders a literal
+/// `{{img:…}}` to the owner.
+pub fn substitute_assets(
+    html: &str,
+    resolved: &BTreeMap<String, String>,
+) -> Result<String, String> {
+    let mut out = String::with_capacity(html.len());
+    let mut rest = html;
+    while let Some(start) = rest.find("{{img:") {
+        out.push_str(&rest[..start]);
+        let after = &rest[start + "{{img:".len()..];
+        let Some(end) = after.find("}}") else {
+            return Err("a `{{img:` placeholder never closes with `}}`".to_string());
+        };
+        let name = slug_of(after[..end].trim());
+        let uri = resolved
+            .get(&name)
+            .ok_or_else(|| format!("the page names an asset `{name}` the board does not keep"))?;
+        out.push_str(uri);
+        rest = &after[end + 2..];
+    }
+    out.push_str(rest);
+    Ok(out)
+}
+
+/// One asset landed as a page: an SVG wrapped in a document that centres
+/// it, so an imported mark is a frame like any other.
+pub fn frame_from_svg(home: &Path, slug: &str, name: &str) -> Result<String, String> {
+    let (asset, bytes) = asset_bytes(home, slug, name)?;
+    if asset.mime != "image/svg+xml" {
+        return Err(format!(
+            "`{}` is {}; only an svg becomes a page",
+            asset.name, asset.mime
+        ));
+    }
+    let svg = String::from_utf8(bytes)
+        .map_err(|_| format!("the svg asset `{}` is not UTF-8 text", asset.name))?;
+    let page = format!(
+        "<!doctype html><html><head><meta name=\"viewport\" content=\"width=device-width\"><style>:root{{--page:#ffffff;--ink:#1c1a17}}html,body{{margin:0;height:100%;display:grid;place-items:center;background:var(--page);color:var(--ink)}}svg{{max-width:100%;max-height:100%}}</style></head><body>{svg}</body></html>"
+    );
+    put_frame(home, slug, &asset.name, &page, None, None, "import")
+}
+
+/// Choose the board's brand — or clear it with `None`.
+pub fn set_brand(home: &Path, slug: &str, brand: Option<&str>) -> Result<(), String> {
+    let mut project = load(home, slug)?;
+    if let Some(brand) = brand {
+        // The choice must resolve: a board pointing at a brand this home
+        // does not keep is a board whose tokens were never real.
+        load_brand(home, brand)?;
+        project.brand = Some(brand.to_string());
+    } else {
+        project.brand = None;
+    }
+    project.updated = crate::calib::stamp();
+    save(home, slug, &project)
 }
 
 /// Adopt the sample board on a home that has no projects yet: the two
@@ -391,6 +993,17 @@ pub const DESIGN_MODELS: &[(&str, &str)] = &[
     ("ollama-cloud", "glm-5.3-flash"),
 ];
 
+/// The style preset one request chose, split where the library splits it:
+/// the spec is the positive prompt, the avoid list the negative one. Both
+/// ride the task; the library is data (`assets/design-presets.json`), so a
+/// preset is always exactly what the source's authors wrote.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Preset {
+    pub label: String,
+    pub spec: String,
+    pub avoid: String,
+}
+
 /// The facts one composed task may carry, each optional: the mode decides
 /// which ride.
 #[derive(Debug, Clone, Default)]
@@ -401,8 +1014,9 @@ pub struct DesignFacts {
     pub pins: Vec<String>,
     /// The review stored on the frame, when one is.
     pub review: Option<Value>,
-    /// The chosen style preset's label and spec.
-    pub preset: Option<(String, String)>,
+    /// The chosen style preset: its spec, and the avoid list that rides
+    /// the task as the negative prompt.
+    pub preset: Option<Preset>,
     /// The chosen brand's name, tokens and doctrine.
     pub brand: Option<(String, BTreeMap<String, String>, String)>,
     /// The brief's target frame size, decided by [`frame_size_for`].
@@ -550,8 +1164,16 @@ pub fn designer_task(mode: DesignMode, brief: &str, slug: &str, facts: &DesignFa
             directions = facts.directions
         ));
     }
-    if let Some((label, spec)) = &facts.preset {
-        task.push_str(&format!("\n\nStyle: {label} \u{2014} {spec}"));
+    if let Some(preset) = &facts.preset {
+        task.push_str(&format!(
+            "\n\nStyle: {} \u{2014} {}",
+            preset.label, preset.spec
+        ));
+        // The library's own avoid list is the negative prompt: named so a
+        // run knows what the direction is *not*.
+        if !preset.avoid.trim().is_empty() {
+            task.push_str(&format!("\n\nAvoid: {}", preset.avoid));
+        }
     }
     if let Some((name, tokens, doctrine)) = &facts.brand {
         task.push_str(&format!("\n\nThe brand `{name}` is binding. Its tokens:"));
@@ -912,6 +1534,34 @@ pub fn frame_from_tool(home: &Path, arguments: &Value) -> Result<(String, String
             "no canvas board `{slug}` — create the board first, or check the slug the brief named"
         ));
     }
+    // The page's assets: each entry either names one the board keeps or
+    // hands a file to be read, MIME-checked and stored first. Both end the
+    // same way — one `data:` URI per name — and the page's placeholders
+    // are inlined through that single map.
+    let mut resolved: BTreeMap<String, String> = BTreeMap::new();
+    if let Some(list) = arguments.get("assets").and_then(Value::as_array) {
+        for entry in list {
+            let name = entry
+                .get("name")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .ok_or_else(|| {
+                    "an asset entry names nothing; each is `{name, path}`".to_string()
+                })?;
+            if let Some(path) = entry
+                .get("path")
+                .and_then(Value::as_str)
+                .filter(|path| !path.trim().is_empty())
+            {
+                let bytes = read_asset_file(home, path)?;
+                put_asset(home, &slug, name, &bytes, None)?;
+            }
+            resolved.insert(slug_of(name), asset_data_uri(home, &slug, name)?);
+        }
+    }
+    let html = substitute_assets(html, &resolved)?;
+    let html = html.as_str();
     let added = frame_id.is_none();
     // The page's viewport: the brief's own rule decides the default, and
     // an explicit word from the call wins.
@@ -931,7 +1581,73 @@ pub fn frame_from_tool(home: &Path, arguments: &Value) -> Result<(String, String
         "designer",
         Some((w, h)),
     )?;
+    // The board's brand seeds the page's color defaults: a spec key that
+    // names one of the brand's tokens starts at the brand's value, so a
+    // branded board lands pages in its own palette without a second pass.
+    seed_brand_tokens(home, &slug, &id)?;
     Ok((slug, id, added))
+}
+
+/// The bytes of one file the `frame` tool named. A model may point at a
+/// file inside the fleet home or inside the run's own working directory —
+/// nowhere else, so a call cannot read the machine behind the owner's
+/// back.
+fn read_asset_file(home: &Path, path: &str) -> Result<Vec<u8>, String> {
+    let named = Path::new(path);
+    let resolved = if named.is_absolute() {
+        named.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map_err(|error| format!("the working directory could not be read: {error}"))?
+            .join(named)
+    };
+    let canonical = resolved
+        .canonicalize()
+        .map_err(|error| format!("the asset `{path}` could not be read: {error}"))?;
+    let home_root = home.canonicalize().unwrap_or_else(|_| home.to_path_buf());
+    let cwd = std::env::current_dir()
+        .map(|dir| dir.canonicalize().unwrap_or(dir))
+        .unwrap_or_default();
+    if !canonical.starts_with(&home_root) && !canonical.starts_with(&cwd) {
+        return Err(format!(
+            "the asset `{path}` is outside the fleet home and the working directory — pass a path inside them, or upload it to the board"
+        ));
+    }
+    std::fs::read(&canonical)
+        .map_err(|error| format!("the asset `{path}` could not be read: {error}"))
+}
+
+/// Give one frame the board's brand as its color defaults. Only a color
+/// tweak takes a token — a slider's value is a number and a token is a
+/// declaration — and a value the frame already carries is left alone.
+fn seed_brand_tokens(home: &Path, slug: &str, frame_id: &str) -> Result<(), String> {
+    let mut project = load(home, slug)?;
+    let Some(brand_slug) = project.brand.clone() else {
+        return Ok(());
+    };
+    let Ok(brand) = load_brand(home, &brand_slug) else {
+        return Ok(());
+    };
+    let Some(frame) = project.frames.iter_mut().find(|frame| frame.id == frame_id) else {
+        return Ok(());
+    };
+    let mut seeded = false;
+    for spec in &frame.tweak_spec {
+        if spec.kind != "color" || frame.tweak_values.contains_key(&spec.key) {
+            continue;
+        }
+        if let Some(value) = brand.tokens.get(&spec.key) {
+            frame
+                .tweak_values
+                .insert(spec.key.clone(), Value::String(value.clone()));
+            seeded = true;
+        }
+    }
+    if seeded {
+        project.updated = crate::calib::stamp();
+        save(home, slug, &project)?;
+    }
+    Ok(())
 }
 
 // --- pins -------------------------------------------------------------------
@@ -1484,6 +2200,234 @@ mod tests {
         // A picker offers these and only these: the head is strong at a
         // page, and the third is the same family on another host.
         assert_eq!(DESIGN_MODELS.len(), 3);
+    }
+
+    /// W7: the sanitizer loses the dangerous parts and keeps the picture.
+    #[test]
+    fn the_svg_sanitizer_strips_the_script_and_keeps_the_picture() {
+        // A clean file is unchanged, byte for byte.
+        let clean = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><path d="M0 0 L10 10" stroke="red"/></svg>"#;
+        assert_eq!(svg_sanitize(clean).unwrap(), clean);
+        // A handler, a script target and an external reference all go;
+        // the shape stays.
+        let hostile = r#"<svg onload="alert(1)" xmlns="http://www.w3.org/2000/svg"><a href="javascript:alert(1)"><circle r="2"/></a><image href="https://evil.example/x.png"/></svg>"#;
+        let cleaned = svg_sanitize(hostile).unwrap();
+        assert!(!cleaned.contains("onload"), "{cleaned}");
+        assert!(!cleaned.contains("javascript:"), "{cleaned}");
+        assert!(!cleaned.contains("evil.example"), "{cleaned}");
+        assert!(cleaned.contains("<circle r=\"2\"/>"), "{cleaned}");
+        // An in-document reference and a data URI stay: they reach
+        // nothing outside the file.
+        let local = r##"<svg xmlns="http://www.w3.org/2000/svg"><image href="data:image/png;base64,AAAA"/><use xlink:href="#mark"/></svg>"##;
+        assert_eq!(svg_sanitize(local).unwrap(), local);
+        // Text that is not an SVG is refused by name.
+        let error = svg_sanitize("<html><body>not a mark</body></html>").unwrap_err();
+        assert!(error.contains("not an SVG"), "{error}");
+    }
+
+    /// An asset is stored, sniffed and inlined; a placeholder that names
+    /// nothing is refused by name rather than left to render literally.
+    #[test]
+    fn an_asset_is_stored_inlined_and_refused_when_it_is_not_an_image() {
+        let home = scratch("assets");
+        let (slug, _) = create(&home, "Assets").unwrap();
+        let png: Vec<u8> = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0];
+        let asset = put_asset(&home, &slug, "Logo Mark", &png, None).unwrap();
+        assert_eq!(asset.name, "logo-mark");
+        assert_eq!(asset.mime, "image/png");
+        let uri = asset_data_uri(&home, &slug, "logo-mark").unwrap();
+        assert!(uri.starts_with("data:image/png;base64,"), "{uri}");
+        let mut resolved = BTreeMap::new();
+        resolved.insert("logo-mark".to_string(), uri.clone());
+        let html = substitute_assets("<img src=\"{{img:logo-mark}}\">", &resolved).unwrap();
+        assert!(html.contains(&uri), "{html}");
+        let error = substitute_assets("<img src=\"{{img:ghost}}\">", &resolved).unwrap_err();
+        assert!(error.contains("ghost"), "{error}");
+        // Bytes that are not an image are refused by name…
+        let error = put_asset(&home, &slug, "notes", b"plain text, no image", None).unwrap_err();
+        assert!(error.contains("not an image"), "{error}");
+        // …a declared type must agree with them…
+        let error = put_asset(&home, &slug, "logo-mark", &png, Some("image/gif")).unwrap_err();
+        assert!(error.contains("image/png"), "{error}");
+        // …and the byte cap is a refusal, not a trim.
+        let error =
+            put_asset(&home, &slug, "big", &vec![0u8; MAX_ASSET_BYTES + 1], None).unwrap_err();
+        assert!(error.contains("cap"), "{error}");
+        assert_eq!(assets(&home, &slug).len(), 1);
+        delete_asset(&home, &slug, "logo-mark").unwrap();
+        assert!(assets(&home, &slug).is_empty());
+    }
+
+    /// An SVG is cleaned on the way in (the active elements go), an event
+    /// handler is refused rather than rewritten, and the imported mark can
+    /// become a page.
+    #[test]
+    fn an_svg_is_cleaned_and_a_page_can_come_from_it() {
+        let home = scratch("svg");
+        let (slug, _) = create(&home, "Marks").unwrap();
+        let svg = "<svg xmlns=\"http://www.w3.org/2000/svg\"><script>alert(1)</script><circle r=\"4\"/><foreignObject><p>x</p></foreignObject></svg>";
+        let asset = put_asset(&home, &slug, "dot", svg.as_bytes(), None).unwrap();
+        assert_eq!(asset.mime, "image/svg+xml");
+        let (_, bytes) = asset_bytes(&home, &slug, "dot").unwrap();
+        let text = String::from_utf8(bytes).unwrap();
+        assert!(!text.to_lowercase().contains("<script"), "{text}");
+        assert!(!text.to_lowercase().contains("foreignobject"), "{text}");
+        assert!(text.contains("<circle"), "{text}");
+        let hostile = "<svg onload=\"alert(1)\"><circle r=\"2\"/></svg>";
+        put_asset(&home, &slug, "hostile", hostile.as_bytes(), None).unwrap();
+        let (_, bytes) = asset_bytes(&home, &slug, "hostile").unwrap();
+        let text = String::from_utf8(bytes).unwrap();
+        assert!(!text.contains("onload"), "{text}");
+        assert!(
+            text.contains("<circle"),
+            "the picture still renders: {text}"
+        );
+        let id = frame_from_svg(&home, &slug, "dot").unwrap();
+        let project = load(&home, &slug).unwrap();
+        let frame = project.frames.iter().find(|frame| frame.id == id).unwrap();
+        assert!(frame.html.starts_with("<!doctype html>"), "{}", frame.html);
+        assert!(frame.html.contains("<circle"), "{}", frame.html);
+    }
+
+    /// The `frame` tool inlines the assets a page names: a file handed in
+    /// by path is stored first, then every placeholder becomes its data
+    /// URI — and a placeholder naming a file the board does not keep is
+    /// refused by name.
+    #[test]
+    fn the_frame_tool_inlines_the_assets_the_page_names() {
+        let home = scratch("tool-assets");
+        let (slug, _) = create(&home, "Tool").unwrap();
+        let dir = canvas_root(&home).join("incoming");
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("mark.png");
+        std::fs::write(&file, [0x89u8, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]).unwrap();
+        let html =
+            "<!doctype html><html><body><img alt=\"mark\" src=\"{{img:mark}}\"></body></html>";
+        let arguments = serde_json::json!({
+            "project": slug, "name": "hero", "html": html,
+            "assets": [{"name": "mark", "path": file.to_str().unwrap()}],
+        });
+        let (_, id, _) = frame_from_tool(&home, &arguments).unwrap();
+        let frame = load(&home, &slug)
+            .unwrap()
+            .frames
+            .into_iter()
+            .find(|frame| frame.id == id)
+            .unwrap();
+        assert!(
+            frame.html.contains("data:image/png;base64,"),
+            "{}",
+            frame.html
+        );
+        assert!(!frame.html.contains("{{img:"), "{}", frame.html);
+        assert_eq!(assets(&home, &slug).len(), 1, "the file was stored");
+        let arguments = serde_json::json!({
+            "project": slug, "name": "x",
+            "html": "<!doctype html><html><body><img src=\"{{img:ghost}}\"></body></html>",
+        });
+        let error = frame_from_tool(&home, &arguments).unwrap_err();
+        assert!(error.contains("ghost"), "{error}");
+    }
+
+    /// A brand is the board's design system: its tokens default the
+    /// colours of every page landed there, the choice is written on the
+    /// board, and a choice naming no brand is refused by name.
+    #[test]
+    fn a_brand_seeds_the_pages_colors_and_the_board_keeps_the_choice() {
+        let home = scratch("brand");
+        let (slug, _) = create(&home, "Branded").unwrap();
+        let mut tokens = BTreeMap::new();
+        tokens.insert("accent".to_string(), "#b4552d".to_string());
+        tokens.insert("scale".to_string(), "1.3".to_string());
+        let brand = put_brand(&home, "Bellows", tokens, "Warm, quiet, editorial.").unwrap();
+        assert_eq!(brand.slug, "bellows");
+        assert_eq!(brand.tokens["accent"], "#b4552d");
+        set_brand(&home, &slug, Some("bellows")).unwrap();
+        assert_eq!(
+            load(&home, &slug).unwrap().brand.as_deref(),
+            Some("bellows")
+        );
+        // The brand is not a board: the canvas lists only projects.
+        let listed: Vec<String> = projects(&home).into_iter().map(|one| one.slug).collect();
+        assert_eq!(listed, vec![slug.clone()], "{listed:?}");
+
+        let spec = serde_json::json!([
+            {"key":"accent","label":"accent","kind":"color","default":"#111","css_var":"accent"},
+            {"key":"scale","label":"scale","kind":"slider","min":0.8,"max":1.4,"step":0.05,
+             "default":1,"css_var":"scale"}
+        ]);
+        let arguments = serde_json::json!({
+            "project": slug, "name": "hero", "html": PAGE, "tweak_spec": spec,
+        });
+        let (_, id, _) = frame_from_tool(&home, &arguments).unwrap();
+        let frame = load(&home, &slug)
+            .unwrap()
+            .frames
+            .into_iter()
+            .find(|frame| frame.id == id)
+            .unwrap();
+        // A color token becomes the page's colour; a slider keeps its own
+        // numeric default, because a token is a declaration, not a number.
+        assert_eq!(
+            frame.tweak_values.get("accent"),
+            Some(&Value::String("#b4552d".to_string()))
+        );
+        assert!(
+            !frame.tweak_values.contains_key("scale"),
+            "{:?}",
+            frame.tweak_values
+        );
+
+        // A choice naming no brand is refused by name.
+        let error = set_brand(&home, &slug, Some("nope")).unwrap_err();
+        assert!(error.contains("nope"), "{error}");
+        // A token value cannot smuggle CSS: `;` and `}` are refused.
+        let mut hostile = BTreeMap::new();
+        hostile.insert("accent".to_string(), "red;}</style>".to_string());
+        let error = put_brand(&home, "Hostile", hostile, "").unwrap_err();
+        assert!(error.contains("accent"), "{error}");
+        // Dropping the brand leaves the choice recorded but unresolvable,
+        // which the read names rather than the board silently forgetting.
+        delete_brand(&home, "bellows").unwrap();
+        assert!(brands(&home).is_empty());
+        assert_eq!(
+            load(&home, &slug).unwrap().brand.as_deref(),
+            Some("bellows")
+        );
+    }
+
+    /// A preset is two prompts: its spec, and the avoid list the library
+    /// wrote as the direction's negative.
+    #[test]
+    fn a_preset_carries_its_spec_and_its_avoid_list() {
+        let facts = DesignFacts {
+            preset: Some(Preset {
+                label: "Agency grid".to_string(),
+                spec: "LAYOUT: a disciplined grid".to_string(),
+                avoid: "rounded corners, heavy gradients, playful type".to_string(),
+            }),
+            ..Default::default()
+        };
+        let task = designer_task(DesignMode::Generate, "a pricing page", "board", &facts);
+        assert!(
+            task.contains("Style: Agency grid \u{2014} LAYOUT: a disciplined grid"),
+            "{task}"
+        );
+        assert!(
+            task.contains("Avoid: rounded corners, heavy gradients, playful type"),
+            "{task}"
+        );
+        // A preset with no avoid list says nothing rather than "Avoid: ".
+        let bare = DesignFacts {
+            preset: Some(Preset {
+                label: "Bare".to_string(),
+                spec: "LAYOUT: none".to_string(),
+                avoid: String::new(),
+            }),
+            ..Default::default()
+        };
+        let task = designer_task(DesignMode::Generate, "a page", "board", &bare);
+        assert!(!task.contains("Avoid:"), "{task}");
     }
 
     /// The task builders: every surface asks in the same words — the

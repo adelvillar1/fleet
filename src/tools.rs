@@ -318,6 +318,18 @@ pub fn frame_spec() -> ToolSpec {
                     "type": "string",
                     "description": "Refine this existing frame instead of adding one: its page becomes this html, and the previous page is kept as a version."
                 },
+                "assets": {
+                    "type": "array",
+                    "description": "Files the page inlines by name: each entry's bytes are read, MIME-checked and stored on the board, and the page's `{{img:NAME}}` placeholders become data: URIs. Pass `path` to hand a file in (it must be inside the fleet home or the working directory) or only `name` for one the board already keeps.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": { "type": "string", "description": "The placeholder name: {{img:this}}." },
+                            "path": { "type": "string", "description": "The file to read and store first." }
+                        },
+                        "required": ["name"]
+                    }
+                },
                 "tweak_spec": {
                     "type": "array",
                     "description": "Live tweaks the page exposes: each writes one :root custom property.",

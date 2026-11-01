@@ -115,6 +115,15 @@ per frame, **20 versions** per frame, **10 reviews** kept in a frame's
 history. A fresh home adopts the bundled sample board (the two
 proven-valid fixture frames from the source project).
 
+The project also carries `brand` (the design system it designs under) and
+the board keeps its files beside the document:
+
+```
+<fleet-home>/canvas/<slug>/project.json     the board
+<fleet-home>/canvas/<slug>/assets/          the board's files + manifest.json
+<fleet-home>/canvas/brands/<name>.json      the home's design systems
+```
+
 ## The tools
 
 Two model-facing tools carry the canvas, both available to any run:
@@ -132,6 +141,64 @@ Two model-facing tools carry the canvas, both available to any run:
 The **`designer` role** (`roles/designer.md`) is the persona that uses
 them: a frame is one complete page opened by its conclusion, the token
 system comes first, and refining means keeping the frame's identity.
+
+## Assets
+
+A page stays one self-contained document, so an image is **inlined**, never
+linked. The board keeps the files it uses under `canvas/<slug>/assets/`
+with a `manifest.json` (name, file, sniffed MIME, bytes, created), and a
+page refers to one by name: `{{img:mark}}`.
+
+- **The `frame` tool's `assets`** takes `[{name, path}]`. A `path` hands a
+  file in: it is read (only inside the fleet home or the run's working
+  directory — a call cannot read the machine behind the owner's back),
+  MIME-sniffed from its magic bytes, capped at **256 KiB**, and stored on
+  the board first. An entry with only a `name` resolves one the board
+  already keeps. Either way the placeholder becomes the asset's `data:`
+  URI, and a placeholder naming a file the board does not keep is refused
+  by name rather than rendered literally.
+- **`PUT`-style upload** — the writer's `asset-put` op takes `{project,
+  name, data (base64), mime?}`; a declared MIME must agree with the bytes.
+  The assets panel in the pane lists the board's files (thumbnails through
+  `/api/design/asset/<slug>/<name>`), copies a placeholder in one press,
+  drops a file, and imports an SVG as a page.
+- **The SVG import is sanitized** (`canvas::svg_sanitize`): `<script>`,
+  `<foreignObject>`, `<iframe>`, `<object>` and `<embed>` go, `on…=`
+  handlers go, and an `href`/`src` that reaches outside the file
+  (`http:`, `https:`, `//`, `javascript:`, `data:text/html`) goes — the
+  picture still renders. `asset-frame` then wraps the cleaned mark in a
+  centred document: an imported logo is a frame like any other.
+
+The caps are refusals by name: 256 KiB per asset, 64 assets per board,
+and only the image types the canvas can inline (png, jpeg, gif, webp, svg).
+
+## Brands
+
+A brand is a design system the home keeps: `<home>/canvas/brands/<name>.json`
+holds `{name, tokens, doctrine}` — `:root` custom property names and
+values, plus the sentence or three a designer reads as standing
+instruction. A board **chooses** one (`brand-use`), and from then on:
+
+- the tokens seed the **default colours of every frame landed there** —
+  a `color` tweak whose key names a brand token starts at the brand's
+  value (a slider keeps its own number: a token is a declaration);
+- the tokens and the doctrine **ride the composed task**, so a run knows
+  the palette before it writes a page.
+
+Caps: 32 tokens, a 120-character token value with no `;` or `}`, 2,000
+characters of doctrine, 50 brands per home. A choice naming a brand the
+home no longer keeps reads as *missing* rather than silently clearing.
+
+## The style library
+
+The composer's style picker carries the source project's **62 directions**
+— the curated ten (editorial, technical, paper, industrial) and the mined
+fifty-two (style families and recognizable brand languages) — as data:
+`src/gui/assets/design-presets.json`, grouped by the library's own
+category. Each entry is split where the source splits it: the `spec` is
+the positive prompt, and its **`avoid` list is the negative one**, riding
+the task as `Avoid: …` after the style line. Nothing about a preset is
+invented by fleet; the file is re-derived from the source's two tables.
 
 ## Transforms, one implementation each
 
@@ -159,9 +226,14 @@ system comes first, and refining means keeping the frame's identity.
 - `POST /api/design` — the one writer: `create`, `rename`,
   `frame-update` (geometry, name, description, tweak values, z),
   `frame-delete`, `frame-duplicate`, `version-restore`, `pin-add`,
-  `pin-reply`, `pin-resolve`, `review-put`.
+  `pin-reply`, `pin-resolve`, `review-put`, `asset-put`, `asset-delete`,
+  `asset-frame`, `brand-put`, `brand-delete`, `brand-use`. (`task` is the
+  one read: the composed instruction, answered flat.)
 - `POST /api/design/inject` — stateless injection: `{html, tweak_spec,
   tweak_values}` → `{html}`.
+- `GET /api/design/asset/<slug>/<name>` — one stored file's bytes with
+  the MIME the manifest sniffed (`nosniff`, no scripting), for the
+  panel's thumbnails and an imported mark.
 - `GET /api/design/frame/<slug>/<id>` — the preview: the stored page with
   its tweaks, served under a CSP (`default-src 'none'`, inline styles
   only, no scripts, no frame ancestors, no form posts) and `nosniff`.
