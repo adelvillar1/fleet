@@ -269,7 +269,13 @@ recommendations. The rulings:
       running with `--ignored`), its hermetic half is deck.rs's
       KeywordStub pin, and the vestigial embed gate in doctor's
       render-only recall test is gone; a sweep proves the gate's
-      shared-embedder class is empty. KI-328 closed.*
+      shared-embedder class is empty. KI-328 closed. **O5** — the
+      rule widened to the substance (a corpus snapshot carries a year,
+      either order), `seed_task` stamps the canonical spelling
+      (pinned), seven escapes untracked — the agreement granted by the
+      ruling; the month-named one renamed to its dashed date — and the
+      durable fact verified still tracked; the live store reconciled,
+      all 14 corpus-refresh jobs carrying the stamp. KI-386 closed.*
 - [ ] **KI-249 / KI-252 stay with their plan** — the embed-bounds
       plan's window criterion is their gate; nothing here re-opens
       them.

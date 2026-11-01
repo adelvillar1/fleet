@@ -24,11 +24,19 @@ __pycache__/
 # scheduled window, written through `remember` by the cron lane and
 # superseded by the next window's. Runtime state like the index above —
 # the run is the record and the fact is its stamp — so they stay on disk
-# (recall reads them) but out of the tree. Both rules key on the shape
-# the writer stamps, a date or an item count, never on the word: a
-# durable fact about the corpus is named for its claim and stays tracked.
-/memories/*-corpus*-20[0-9][0-9]-*.md
-/memories/*-corpus-*-items*.md
+# (recall reads them) but out of the tree. The rules key on the
+# SUBSTANCE the ruling named (KI-386): a corpus snapshot carries a year,
+# before or after the token — id-before-token, undashed dates, and
+# date-before-token all land under one class, so a spelling can never
+# decide what gets committed. `seed_task` stamps the canonical shape
+# (corpus at the head, a dashed date at the tail) so new snapshots land
+# by construction. A durable fact about the corpus is named for its
+# claim — no year, no item count — and stays tracked; the one shape
+# these rules cannot tell apart is a durable claim that itself names a
+# year beside the word corpus, so name such a claim without the year.
+/memories/*corpus*20[0-9][0-9]*.md
+/memories/*20[0-9][0-9]*corpus*.md
+/memories/*corpus*-items*.md
 
 # Claude local env reference — env var names and URLs only, not credential values
 CLAUDE.local.md
