@@ -2111,12 +2111,15 @@ pub fn classify_shape(text: &str) -> Option<&'static str> {
 // --- the memory ------------------------------------------------------------
 
 /// The loaded corpus: the facts, the probed embedder, and the cached
-/// vectors keyed by fact name.
+/// vectors keyed by fact name. Both collections are interior-mutable —
+/// a fact remembered or superseded mid-task enters or leaves the live
+/// index at write time (KI-332), so the load is a starting point, not
+/// a snapshot the task is stuck with.
 pub struct Memory {
     root: PathBuf,
     embedder: Box<dyn Embedder>,
     facts: Mutex<Vec<Fact>>,
-    vectors: HashMap<String, Vec<f32>>,
+    vectors: Mutex<HashMap<String, Vec<f32>>>,
     /// The adjacency map over the frontmatter's own edges, derived at
     /// load. See [`crate::recall_graph`].
     graph: crate::recall_graph::Graph,
@@ -2148,6 +2151,17 @@ impl Memory {
 /// corpus is still sound — the calibration writer's own rule.
 fn lock_facts(facts: &Mutex<Vec<Fact>>) -> std::sync::MutexGuard<'_, Vec<Fact>> {
     facts
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// The vectors map, recovered from poison the same way — the only
+/// critical sections are reads, a write-through insert, and a
+/// write-through removal, none of which can panic.
+fn lock_vectors(
+    vectors: &Mutex<HashMap<String, Vec<f32>>>,
+) -> std::sync::MutexGuard<'_, HashMap<String, Vec<f32>>> {
+    vectors
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
@@ -2407,7 +2421,7 @@ impl Memory {
             root: root.to_path_buf(),
             embedder,
             facts: Mutex::new(facts),
-            vectors,
+            vectors: Mutex::new(vectors),
             graph,
             two_stage: std::sync::atomic::AtomicBool::new(false),
             build_embeds_ms,
@@ -2450,7 +2464,7 @@ impl Memory {
             root: PathBuf::new(),
             embedder,
             facts: Mutex::new(facts),
-            vectors,
+            vectors: Mutex::new(vectors),
             graph,
             two_stage: std::sync::atomic::AtomicBool::new(false),
             build_embeds_ms: Vec::new(),
@@ -2490,7 +2504,7 @@ impl Memory {
     /// than re-embedding the corpus: this is the one accessor that
     /// turns the cache inside [`Memory::load_with`] into a read.
     pub fn vector_of(&self, name: &str) -> Option<Vec<f32>> {
-        self.vectors.get(name).cloned()
+        lock_vectors(&self.vectors).get(name).cloned()
     }
 
     /// The protected tier: every non-forgotten protected fact, sorted by
@@ -2542,7 +2556,8 @@ impl Memory {
         // The two-stage prefilter, when the setting is on: the slice
         // stage's top-K is the only set whose vector term survives.
         let prefilter = if self.two_stage.load(std::sync::atomic::Ordering::Relaxed) {
-            vector_prefilter(&query_vector, &self.vectors, PREFILTER_K)
+            let vectors = lock_vectors(&self.vectors);
+            vector_prefilter(&query_vector, &vectors, PREFILTER_K)
         } else {
             None
         };
@@ -2826,7 +2841,7 @@ impl Memory {
         let vector = if sliced_out {
             0.0
         } else {
-            match (query_vector, self.vectors.get(&fact.name)) {
+            match (query_vector, lock_vectors(&self.vectors).get(&fact.name)) {
                 (Some(query), Some(fact_vector)) => cosine(query, fact_vector).max(0.0),
                 _ => 0.0,
             }
@@ -4288,7 +4303,7 @@ impl Memory {
         let today = calib::today();
         let path = write_document(&self.root, request, &today, true)?;
         let stamp = file_stamp(&path);
-        Ok(Fact {
+        let fact = Fact {
             name: request.name.clone(),
             description: request.description.clone(),
             fact_type: request.fact_type.clone(),
@@ -4304,7 +4319,43 @@ impl Memory {
             body: request.body.clone(),
             path,
             stamp,
-        })
+        };
+        // The tool's promise is "read back on later turns" — and a
+        // later turn is inside this same task. The load is a starting
+        // point, not a snapshot: the fact enters the live index now
+        // (KI-332), so the next recall in this run can surface it
+        // without a reload.
+        self.index_live(&fact);
+        Ok(fact)
+    }
+
+    /// One fact into the live index, beside the disk write that already
+    /// landed: the facts vec replaces-by-name then pushes (a re-remember
+    /// after an archive serial must not double-count), and the vector is
+    /// a best-effort embed — the file is the record, so a backend that
+    /// will not answer leaves the fact keyword-recallable and the next
+    /// load's index build embeds it properly. Lock order is facts, then
+    /// vectors, never both at once: the vector half runs after the facts
+    /// guard drops.
+    fn index_live(&self, fact: &Fact) {
+        let name = fact.name.clone();
+        {
+            let mut facts = lock_facts(&self.facts);
+            facts.retain(|existing| existing.name != name);
+            facts.push(fact.clone());
+        }
+        if let Some(vector) = self.embedder.embed(&fact.indexed_text()) {
+            lock_vectors(&self.vectors).insert(name, vector);
+        }
+    }
+
+    /// One fact out of the live index — the supersession and retirement
+    /// path's half of the same promise: a fact the disk has retired
+    /// must stop surfacing in this run's recalls, and its vector must
+    /// never displace a live fact's.
+    fn forget_live(&self, name: &str) {
+        lock_facts(&self.facts).retain(|existing| existing.name != name);
+        lock_vectors(&self.vectors).remove(name);
     }
 }
 
@@ -4547,7 +4598,7 @@ impl Memory {
                     valid_until,
                     body,
                 };
-                write_document(&self.root, &replacement_request, &today, true)?;
+                let path = write_document(&self.root, &replacement_request, &today, true)?;
                 // The replacement is on disk; the old fact must now be
                 // stamped retired or both stay live — and a row here
                 // would claim a retirement the file never took. The
@@ -4566,6 +4617,29 @@ impl Memory {
                         reason: request.justification.clone(),
                     }));
                 }
+                // The live index follows the disk (KI-332): the retired
+                // fact leaves and the replacement enters at write time,
+                // so this task's next recall reads the supersession the
+                // files just recorded rather than the load's snapshot.
+                let replacement_fact = Fact {
+                    name: replacement.clone(),
+                    description: request.description.clone(),
+                    fact_type: replacement_request.fact_type.clone(),
+                    date: today.clone(),
+                    basis: Basis::Inferred,
+                    tier: fact.tier,
+                    shape: replacement_request.shape.clone(),
+                    phrases: replacement_request.phrases.clone(),
+                    missing: replacement_request.missing.clone(),
+                    recall_count: 0,
+                    superseded_by: String::new(),
+                    valid_until: replacement_request.valid_until.clone(),
+                    body: replacement_request.body.clone(),
+                    stamp: file_stamp(&path),
+                    path,
+                };
+                self.forget_live(&fact.name);
+                self.index_live(&replacement_fact);
                 Ok(Superseded::By {
                     from: fact.name,
                     into: replacement.clone(),
@@ -4604,6 +4678,10 @@ impl Memory {
                         reason: request.justification.clone(),
                     }));
                 }
+                // The retirement is on disk; the live index follows it
+                // (KI-332) — a forgotten fact stops surfacing in this
+                // task's recalls the moment it is forgotten.
+                self.forget_live(&fact.name);
                 Ok(Superseded::Forgotten { fact: fact.name })
             }
         }
@@ -6598,6 +6676,100 @@ mod tests {
     }
 
     #[test]
+    fn a_fact_remembered_mid_task_recalls_without_a_reload() {
+        // KI-332's promise: the tool documents "one file, read back on
+        // later turns" — and a later turn is inside this same task. The
+        // load is a starting point, not a snapshot: the write-through
+        // puts the fact into this instance's live index, so a recall
+        // here surfaces it with no reload.
+        let root = scratch("remember-write-through");
+        order_corpus(&root);
+        let (_calls, embedder) = ScriptedEmbedder::new();
+        let memory = Memory::load_with(&root, embedder);
+        // Before the write the fact exists nowhere this instance can
+        // see (`junk` carries the word walnut, not this name).
+        assert!(memory
+            .recall("walnut sideboard refinish")
+            .iter()
+            .all(|hit| hit.fact.name != "walnut-sideboard"));
+        let request = Remember::parse(&serde_json::json!({
+            "name": "walnut-sideboard",
+            "description": "the walnut sideboard refinish",
+            "basis": "inferred",
+            "type": "project",
+            "shape": "state-sync",
+            "body": "The walnut sideboard was refinished."
+        }))
+        .expect("the request parses");
+        memory.remember(&request).expect("the write lands");
+        let hits = memory.recall("walnut sideboard refinish");
+        assert!(
+            hits.iter().any(|hit| hit.fact.name == "walnut-sideboard"),
+            "a fact written this task must recall in this task: {:?}",
+            hits.iter().map(|hit| &hit.fact.name).collect::<Vec<_>>()
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_supersession_moves_the_live_index_with_the_disk() {
+        // The other half of KI-332: a supersession the disk records
+        // must move THIS instance's index too — the retired fact stops
+        // surfacing, the replacement enters, and a forget evicts the
+        // same way. The row's symptom was the superseded fact keeping
+        // its vector while the new one had none.
+        let root = scratch("supersede-write-through");
+        order_corpus(&root);
+        let (_calls, embedder) = ScriptedEmbedder::new();
+        let memory = Memory::load_with(&root, embedder);
+        assert!(memory
+            .recall("railway deploy per branch")
+            .iter()
+            .any(|hit| hit.fact.name == "alpha"));
+        let modify = Supersede::parse(&serde_json::json!({
+            "name": "alpha",
+            "justification": "the deploy moved to the platform's own runner",
+            "replacement": "alpha-runs",
+            "description": "the railway deploy runs on the platform runner",
+            "body": "The deploy runs on the platform's own runner."
+        }))
+        .expect("the modify parses");
+        memory
+            .supersede(&modify, true, None)
+            .expect("the supersession lands");
+        let names: Vec<String> = memory
+            .recall("railway deploy per branch")
+            .iter()
+            .map(|hit| hit.fact.name.clone())
+            .collect();
+        assert!(
+            !names.contains(&"alpha".to_string()),
+            "the retired fact left the live index: {names:?}"
+        );
+        assert!(
+            names.contains(&"alpha-runs".to_string()),
+            "the replacement entered the live index: {names:?}"
+        );
+
+        let forget = Supersede::parse(&serde_json::json!({
+            "name": "junk",
+            "justification": "the walnut table fact was a test artifact"
+        }))
+        .expect("the forget parses");
+        memory
+            .supersede(&forget, true, None)
+            .expect("the retirement lands");
+        assert!(
+            memory
+                .recall("walnut table texture")
+                .iter()
+                .all(|hit| hit.fact.name != "junk"),
+            "a forgotten fact stops surfacing in this instance"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn the_hybrid_ranker_orders_a_scripted_corpus_deterministically() {
         let root = scratch("order");
         order_corpus(&root);
@@ -8425,7 +8597,9 @@ mod tests {
         let (calls, embedder) = ScriptedEmbedder::new();
         let memory = Memory::load_with(&root, embedder);
         assert_eq!(calls.load(Ordering::Relaxed), 4);
-        assert!(memory.vectors.values().all(|vector| vector.len() == 5));
+        assert!(lock_vectors(&memory.vectors)
+            .values()
+            .all(|vector| vector.len() == 5));
         drop(memory);
 
         // A model swap — the same embedder name serving three
@@ -8437,7 +8611,9 @@ mod tests {
         let (calls, embedder) = ScriptedEmbedder::at_dims(3);
         let memory = Memory::load_with(&root, embedder);
         assert_eq!(calls.load(Ordering::Relaxed), 4);
-        assert!(memory.vectors.values().all(|vector| vector.len() == 3));
+        assert!(lock_vectors(&memory.vectors)
+            .values()
+            .all(|vector| vector.len() == 3));
         drop(memory);
 
         // The rewritten index is keyed to the new model, so the next
@@ -8481,7 +8657,10 @@ mod tests {
         let (calls, embedder) = ScriptedEmbedder::new();
         let memory = Memory::load_with(&root, embedder);
         assert_eq!(calls.load(Ordering::Relaxed), 1);
-        assert_eq!(memory.vectors["alpha"], vec![1.0, 1.0, 0.0, 0.0, 0.0]);
+        assert_eq!(
+            lock_vectors(&memory.vectors)["alpha"],
+            vec![1.0, 1.0, 0.0, 0.0, 0.0]
+        );
         let _ = fs::remove_dir_all(&root);
     }
 
