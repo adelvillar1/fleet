@@ -5561,6 +5561,10 @@ fn cards_from_records(records: &[session::Record]) -> (Vec<Value>, usize) {
             | session::Record::Curated { .. }
             | session::Record::Routed { .. }
             | session::Record::Resume { .. }
+            // The turn's typed failure is the log's own diagnosis
+            // (KI-352): the face shows the run's failure through its
+            // event, the transcript does not grow a block for it.
+            | session::Record::TurnFailed { .. }
             // A leave only ends a participation the join row opened;
             // the join row itself is what the transcript shows.
             | session::Record::Leave { .. } => {}

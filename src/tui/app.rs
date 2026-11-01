@@ -3083,6 +3083,10 @@ fn entry_of(record: &Record) -> Option<Entry> {
         // run's memory line already told the owner. Not a conversation
         // block.
         Record::Curated { .. } => None,
+        // Bookkeeping: a turn that died without model output is the
+        // log's own diagnosis (KI-352) — the run's failure is what the
+        // status line shows, not a pane block.
+        Record::TurnFailed { .. } => None,
         // Bookkeeping: how a call was resolved is audit material, not a
         // conversation block.
         Record::ToolResolution { .. } => None,

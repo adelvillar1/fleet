@@ -164,6 +164,20 @@ pub enum Record {
         lane: String,
         reason: String,
     },
+    /// A turn that ended with no model output — the model call itself
+    /// failed, or answered with no choices — recorded where the turn
+    /// died, before the typed error propagates. The stage says which
+    /// (`model` / `empty`), the error carries the failure's own words,
+    /// and `route` is the task's hash — the key the routing decision
+    /// rows are keyed by — so the stall joins the decision that routed
+    /// it. Without this the log carried the run's preamble and then
+    /// nothing: the gap KI-352 found, diagnosable only from its shape.
+    /// Bookkeeping, like `lane_failed`: it replays to no message.
+    TurnFailed {
+        stage: String,
+        error: String,
+        route: String,
+    },
     /// The tools one lane brought into a run, recorded the moment the
     /// lane joined. The tool declarations are dynamic now — a lane's
     /// tools enter the model's tool set mid-run — so this record is what
@@ -1155,6 +1169,7 @@ pub fn conversation(records: &[Record]) -> Conversation {
             Record::Start { .. }
             | Record::End { .. }
             | Record::LaneFailed { .. }
+            | Record::TurnFailed { .. }
             | Record::LaneTools { .. }
             | Record::Declarations { .. }
             | Record::Skills { .. }

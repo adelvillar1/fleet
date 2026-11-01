@@ -1251,6 +1251,22 @@ pub fn near_exact_term<'a>(vocabulary: &'a Vocabulary, candidate: &str) -> Optio
     found.into_iter().next()
 }
 
+/// Whether an entry's claimed established form is actually written at
+/// one of its own cited sites — the evidence an establishment claim
+/// rests on. A camel-split re-render (`HashMap` stored as `Hash_Map`)
+/// exists at no site, and the write-time guard's refusal built on it
+/// would name a form the tree never wrote (KI-353). Read on the
+/// refusal path only, over the entry's bounded sites; a site that
+/// cannot be read counts as unwritten — the conservative side of a
+/// strong action.
+pub fn term_is_written(root: &Path, entry: &Entry) -> bool {
+    entry.sites.iter().any(|site| {
+        std::fs::read_to_string(root.join(&site.file))
+            .map(|text| text.contains(&entry.term))
+            .unwrap_or(false)
+    })
+}
+
 /// The candidate check against an already-derived vocabulary.
 pub fn check_in(vocabulary: &Vocabulary, candidate: &str) -> Option<Convention> {
     let parts = split_identifier(candidate);

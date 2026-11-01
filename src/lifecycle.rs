@@ -79,7 +79,13 @@ pub fn days_between(earlier: &str, later: &str) -> Option<u64> {
         era * 146_097 + year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year
     };
     let difference = days(parse(earlier)?) - days(parse(later)?);
-    Some(difference.unsigned_abs())
+    // For a correct pair this is negative — `earlier` minus `later` —
+    // so the age is its absolute value; a REVERSED pair is positive,
+    // and that sign is the caller's bug: `None` is the conservative
+    // answer both callers already treat as "not old enough", and a
+    // swapped argument can no longer read as a believable number
+    // (KI-383).
+    (difference <= 0).then_some(difference.unsigned_abs())
 }
 
 /// One lifecycle candidate the sweep found, in whatever kind.
@@ -379,13 +385,43 @@ pub fn sweep_plan(
             State::Protected => outcome
                 .skipped
                 .push((entry.name.clone(), "protected".to_string())),
-            State::Trial => outcome.skipped.push((
-                entry.name.clone(),
-                format!(
-                    "trial \u{2014} {} of {} runs",
-                    entry.declared_runs, thresholds.trial_runs
-                ),
-            )),
+            State::Trial => {
+                // Name the term that HOLDS the tool in trial: the gate
+                // is runs AND age, and "50 of 10 runs" alone reads as
+                // an impossible comparison when the runs cleared and
+                // the age is the holder (KI-382).
+                let age = days_between(&entry.first_declared, &entry.today).unwrap_or(0);
+                let runs_clear = entry.declared_runs >= thresholds.trial_runs;
+                let age_clear = age >= thresholds.trial_days;
+                let reason = match (runs_clear, age_clear) {
+                    (true, false) => format!(
+                        "trial \u{2014} first declared {}, {age} of {} days",
+                        entry.first_declared, thresholds.trial_days
+                    ),
+                    (false, true) => format!(
+                        "trial \u{2014} {} of {} runs",
+                        entry.declared_runs, thresholds.trial_runs
+                    ),
+                    (false, false) => format!(
+                        "trial \u{2014} {} of {} runs, first declared {}, {age} of {} days",
+                        entry.declared_runs,
+                        thresholds.trial_runs,
+                        entry.first_declared,
+                        thresholds.trial_days
+                    ),
+                    // Both cleared cannot be State::Trial; reach here
+                    // only through a state_of/sweep_plan disagreement,
+                    // and naming both terms is still the honest line.
+                    (true, true) => format!(
+                        "trial \u{2014} {} of {} runs, first declared {}, {age} of {} days",
+                        entry.declared_runs,
+                        thresholds.trial_runs,
+                        entry.first_declared,
+                        thresholds.trial_days
+                    ),
+                };
+                outcome.skipped.push((entry.name.clone(), reason));
+            }
             _ => {}
         }
     }
@@ -422,7 +458,9 @@ pub struct KindSweep {
 /// the caller's metrics (the advisor's), the other three read their own
 /// stores. Each kind applies at most `max_disable_per_sweep`; the
 /// write is the kind's own config entry, and every applied disable
-/// lands in the calibration stream by the caller.
+/// lands in the calibration stream **here, as it applies** — one row
+/// per disable, the kind as the row's own field (KI-384: the CLI's
+/// second recording pass was the duplicate).
 pub fn sweep(
     home: &Path,
     thresholds: &LifecycleThresholds,
@@ -827,6 +865,129 @@ mod tests {
         assert_eq!(days_between("2026-09-30", "2026-10-01"), Some(1));
         assert_eq!(days_between("2025-12-31", "2026-01-01"), Some(1));
         assert_eq!(days_between("nonsense", "2026-10-23"), None);
+        // A reversed pair is not an age: the caller's swap is a bug,
+        // and `None` is the conservative answer (KI-383). Without this
+        // the swap read as the same 22 days as the correct order.
+        assert_eq!(days_between("2026-10-23", "2026-10-01"), None);
+    }
+
+    fn scratch(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "fleet-lifecycle-{tag}-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn count_lifecycle_rows(dir: &std::path::Path, name: &str) -> usize {
+        // Loud by construction: a scratch root that cannot be read is
+        // a failed test, not a zero count — a silent `return 0` here
+        // once dressed a writer race up as a missing row.
+        let entries = std::fs::read_dir(dir).unwrap_or_else(|error| {
+            panic!("the scratch root {} must read: {error}", dir.display())
+        });
+        let mut count = 0;
+        for entry in entries {
+            let path = entry
+                .unwrap_or_else(|error| panic!("a root entry must read: {error}"))
+                .path();
+            if path.is_dir() {
+                count += count_lifecycle_rows(&path, name);
+            } else if path.file_name().is_some_and(|file| file == "events.jsonl") {
+                let text = std::fs::read_to_string(&path).unwrap_or_else(|error| {
+                    panic!("the day file {} must read: {error}", path.display())
+                });
+                let named = format!("\"name\":\"{name}\"");
+                for line in text.lines() {
+                    if line.contains("\"op\":\"lifecycle\"") && line.contains(&named) {
+                        count += 1;
+                    }
+                }
+            }
+        }
+        count
+    }
+
+    /// Wait for the stream's writer to drain its queue — the rows land
+    /// on a background thread (calib's own `settle` pattern), and a
+    /// count taken before the drain reads a race, not a fact.
+    fn settle(stream: &crate::calib::Stream) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while stream.pending() > 0 && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        assert_eq!(stream.pending(), 0, "the writer did not drain in budget");
+        assert_eq!(stream.dropped(), 0, "a row was dropped");
+        assert_eq!(stream.failed(), 0, "a row failed to append");
+    }
+
+    #[test]
+    fn an_applied_sweep_records_each_disable_once() {
+        let dir = scratch("sweep-rows");
+        let home = dir.join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        let root = dir.join("logs");
+        let stream = crate::calib::Stream::open(root.as_path());
+        // Two candidates; the sweep applies both, and each disable is
+        // recorded exactly once — sweep's own record, no second pass
+        // anywhere (KI-384: the CLI loop used to file the same disable
+        // again with a `tools: ` prefix).
+        let list = vec![metrics("deck", 30, 0, 0, 0), metrics("vision", 30, 0, 0, 0)];
+        let plan = sweep(&home, &thresholds(), &list, &[], true, Some(&stream));
+        let applied: usize = plan.iter().map(|(_, kind)| kind.applied.len()).sum();
+        assert_eq!(applied, 2, "{plan:?}");
+        settle(&stream);
+        assert_eq!(count_lifecycle_rows(&root, "deck"), 1);
+        assert_eq!(count_lifecycle_rows(&root, "vision"), 1);
+        drop(stream);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_trial_reason_names_which_term_holds() {
+        let base = thresholds();
+        // Runs cleared, age holds: the reason says the age with both
+        // dates — the 2026-10-31 sweep's `50 of 10 runs` shape (KI-382).
+        let young = Metrics {
+            first_declared: "2026-10-20".to_string(),
+            ..metrics("recall", 50, 0, 0, 0)
+        };
+        let outcome = sweep_plan(&[young], &base, &[]);
+        assert_eq!(outcome.skipped.len(), 1, "{outcome:?}");
+        let age = days_between("2026-10-20", "2026-10-23").unwrap();
+        assert_eq!(
+            outcome.skipped[0].1,
+            format!(
+                "trial \u{2014} first declared 2026-10-20, {age} of {} days",
+                base.trial_days
+            )
+        );
+
+        // Age cleared, runs hold: the runs alone, the term that failed.
+        let sparse = metrics("deck", 3, 0, 0, 0);
+        let outcome = sweep_plan(&[sparse], &base, &[]);
+        assert_eq!(
+            outcome.skipped[0].1,
+            format!("trial \u{2014} 3 of {} runs", base.trial_runs)
+        );
+
+        // Both short: both terms, so neither reads as the impossible
+        // half of the comparison.
+        let both = Metrics {
+            first_declared: "2026-10-20".to_string(),
+            ..metrics("vision", 3, 0, 0, 0)
+        };
+        let outcome = sweep_plan(&[both], &base, &[]);
+        assert_eq!(
+            outcome.skipped[0].1,
+            format!(
+                "trial \u{2014} 3 of {} runs, first declared 2026-10-20, {age} of {} days",
+                base.trial_runs, base.trial_days
+            )
+        );
     }
 
     #[test]

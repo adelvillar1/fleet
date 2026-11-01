@@ -1184,16 +1184,11 @@ fn tools_sweep(home: &std::path::Path, apply: bool) -> ExitCode {
             println!("  skip     {name}  \u{2014} {reason}");
         }
     }
-    for (kind, result) in &plan {
-        for candidate in &result.applied {
-            lifecycle_row(
-                home,
-                &candidate.name,
-                "disable",
-                &format!("{kind}: {}", candidate.reason),
-            );
-        }
-    }
+    // No second recording pass here: `lifecycle::sweep` records each
+    // applied disable itself as it applies (the kind rides the row),
+    // so the audit trail answers one row per write. This CLI loop used
+    // to file the same disables a second time with a `tools: ` prefix
+    // (KI-384).
     ExitCode::SUCCESS
 }
 

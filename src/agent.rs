@@ -2539,8 +2539,23 @@ impl<'a> Agent<'a> {
                     }
                     _ => {}
                 })
-                .await
-                .map_err(AgentError::Api)?;
+                .await;
+            let response = match response {
+                Ok(response) => response,
+                Err(error) => {
+                    // The turn ends with no model output: the typed
+                    // failure lands in the log before the error
+                    // propagates, so a stalled run is diagnosable from
+                    // the log alone — the gap KI-352 found, where the
+                    // preamble was followed by nothing at all.
+                    self.record(&Record::TurnFailed {
+                        stage: "model".to_string(),
+                        error: error.to_string(),
+                        route: crate::calib::hash16(task),
+                    })?;
+                    return Err(AgentError::Api(error));
+                }
+            };
             // A turn that thought and then went straight to a tool call has
             // no answer to close the block; the response's end does.
             if let Some((text, seconds)) = thinking.close() {
@@ -2566,9 +2581,21 @@ impl<'a> Agent<'a> {
                     .unwrap_or_else(|| compaction::estimate_tokens(&self.messages)),
                 completion_tokens: response.usage.completion_tokens,
             });
-            let choice = response.choices.into_iter().next().ok_or_else(|| {
-                AgentError::Api(ClientError::Decode("response had no choices".to_string()))
-            })?;
+            let choice = match response.choices.into_iter().next() {
+                Some(choice) => choice,
+                None => {
+                    // A degenerate 200 with no choices is no answer
+                    // either (KI-068's residue): the same typed record,
+                    // the stage that names it (KI-352).
+                    let error = ClientError::Decode("response had no choices".to_string());
+                    self.record(&Record::TurnFailed {
+                        stage: "empty".to_string(),
+                        error: error.to_string(),
+                        route: crate::calib::hash16(task),
+                    })?;
+                    return Err(AgentError::Api(error));
+                }
+            };
             // The recall hits fire here: the first response has landed
             // AND yielded a choice, so the assembled facts were ones the
             // model saw (KI-068 — and the seam's own residue: a
@@ -6941,6 +6968,21 @@ fn guard_content(root: &std::path::Path, path: &str, content: &str) -> WriteGuar
         // separator variant has to find its term in one lookup rather
         // than a scan.
         let parts = crate::nomenclature::split_identifier(&token);
+        // An all-caps spelling is a NAMESPACE, not prose drift: the
+        // environment's own names (`HOME`, `FLEET_HOME`) and the
+        // language's constants (`MAX_TOKENS`) are spelled the way
+        // their world spells them, and every part uppercase is that
+        // world's mark (KI-353). Exempt whole — neither refused nor
+        // flagged; the guard polices this project's prose-shaped
+        // naming, not the operating system's.
+        if !parts.is_empty()
+            && parts.iter().all(|part| {
+                part.chars()
+                    .all(|c| c.is_ascii_uppercase() || !c.is_ascii_alphabetic())
+            })
+        {
+            continue;
+        }
         let spellings = [
             parts.join("_"),
             parts
@@ -6950,6 +6992,7 @@ fn guard_content(root: &std::path::Path, path: &str, content: &str) -> WriteGuar
                 .join("_"),
         ];
         let mut established = false;
+        let mut unwritten_claim = false;
         for spelling in spellings {
             let Some(entry) = vocabulary.get(&spelling) else {
                 continue;
@@ -6959,6 +7002,16 @@ fn guard_content(root: &std::path::Path, path: &str, content: &str) -> WriteGuar
             // separator variant of it is drift with no other
             // explanation, and the module's own verdict is what says so.
             if token != entry.term && crate::nomenclature::is_near_exact(&token, &entry.term) {
+                // The claimed established form must be WRITTEN where
+                // the entry says it is: a camel-split re-render
+                // (`HashMap` stored as `Hash_Map`) exists at none of
+                // the entry's own sites, and a refusal would name a
+                // form the tree never wrote (KI-353). The token is the
+                // spelling the sites carry — the established one.
+                if !crate::nomenclature::term_is_written(root, entry) {
+                    unwritten_claim = true;
+                    break;
+                }
                 let site = entry
                     .sites
                     .first()
@@ -6974,6 +7027,12 @@ fn guard_content(root: &std::path::Path, path: &str, content: &str) -> WriteGuar
             // The term itself: nothing to flag, and the other spelling
             // is the same term.
             break;
+        }
+        if unwritten_claim {
+            // The vocabulary re-rendered a spelling the tree never
+            // wrote: the token is the form the sites carry, so it is
+            // established as written — neither refused nor flagged.
+            continue;
         }
         if established {
             continue;
@@ -9634,6 +9693,71 @@ You are auditing a change. Read the diff before you judge it.
     }
 
     #[tokio::test]
+    async fn a_turn_that_dies_without_model_output_leaves_a_typed_record() {
+        // KI-352's own pin: the model call fails before any output
+        // lands, and the log carries a typed failure record — the
+        // stage, the error's own words, and the route row's key — so
+        // a stalled run is diagnosable from the log alone rather than
+        // from the shape of a gap between the preamble and the next
+        // user message.
+        let home = scratch("turn-failed-record");
+        let client = Box::leak(Box::new(Client::new("http://127.0.0.1:9", "k")));
+        let session = Box::leak(Box::new(
+            crate::session::Session::create(&home, "m").unwrap(),
+        ));
+        let options = AgentOptions {
+            goal: None,
+            model: "m".to_string(),
+            identity: None,
+            max_turns: 1,
+            ui_tx: None,
+            lane_specs: None,
+            calib: None,
+            skills: Vec::new(),
+            role_overlay: None,
+            memory: None,
+            scope: None,
+            improve_home: None,
+            route_home: None,
+            gui_prompt: None,
+            compact_now: false,
+            checkpoints: None,
+            file_access: FileAccess::Unrestricted,
+            plan_mode: false,
+        };
+        let progress: &'static mut Vec<u8> = Box::leak(Box::new(Vec::new()));
+        let mut agent = Agent::new(
+            client,
+            options,
+            session,
+            Box::new(ApproveAll),
+            &mut *progress,
+        )
+        .unwrap();
+
+        let error = agent.run("the turn dies here").await.unwrap_err();
+        assert!(matches!(error, AgentError::Api(_)), "{error:?}");
+        drop(agent);
+
+        let records = crate::session::replay(session.path()).unwrap();
+        let failed = records
+            .iter()
+            .find_map(|record| match record {
+                Record::TurnFailed {
+                    stage,
+                    error,
+                    route,
+                } => Some((stage.clone(), error.clone(), route.clone())),
+                _ => None,
+            })
+            .expect("a typed failure record lands in the log");
+        assert_eq!(failed.0, "model");
+        assert!(!failed.1.is_empty(), "the error carries its own words");
+        assert_eq!(failed.2, crate::calib::hash16("the turn dies here"));
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[tokio::test]
     async fn an_empty_assembly_records_nothing_and_adds_no_block() {
         let home = scratch("memory-empty");
         // A corpus with nothing that can match: one unrelated fact.
@@ -11345,6 +11469,74 @@ You are auditing a change. Read the diff before you judge it.
             matches!(guard, WriteGuard::Refused { .. }),
             "a backticked variant is still policed: {guard:?}"
         );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_guard_exempts_a_namespace_and_a_form_the_tree_never_wrote() {
+        // KI-353's three false refusals, each passing after its
+        // exemption, with the established-term refusal intact beside
+        // them.
+        let root = vocabulary_root("guard-ki353");
+        // `home` established through the identifier channel; and
+        // `recallCount` written exactly once, camelCase — the
+        // vocabulary stores it re-rendered as `recall_Count`, which
+        // exists nowhere in the tree.
+        std::fs::write(root.join("src/home.rs"), "pub fn home() {}\n").unwrap();
+        std::fs::write(root.join("src/api.rs"), "pub fn recallCount() {}\n").unwrap();
+
+        // The premise, pinned: the entry's claimed form is unwritten.
+        let vocabulary = crate::nomenclature::vocabulary(&root);
+        let entry = vocabulary
+            .get("recall_Count")
+            .expect("the camel split establishes recall_Count");
+        assert!(
+            !crate::nomenclature::term_is_written(&root, entry),
+            "recall_Count exists at no site — the refusal would name a form the tree never wrote"
+        );
+
+        // (b) All-caps is a namespace: HOME and FLEET_HOME are the
+        // environment's spellings, not case drift of `home`.
+        let guard = write_guard(
+            &root,
+            &serde_json::json!({
+                "path":"src/x.rs",
+                "content":"pub fn run() { let h = HOME; let f = FLEET_HOME; }\n"
+            }),
+        );
+        assert_eq!(guard, WriteGuard::Clean, "{guard:?}");
+
+        // (a) The camel spelling the tree itself wrote: the claimed
+        // established form exists at none of the sites, so the token
+        // is the established one — not a variant of a form that
+        // exists nowhere.
+        let guard = write_guard(
+            &root,
+            &serde_json::json!({
+                "path":"src/x.rs",
+                "content":"pub fn call() { recallCount(); }\n"
+            }),
+        );
+        assert_eq!(guard, WriteGuard::Clean, "{guard:?}");
+
+        // The refusal beside them is intact: judgeRoute against the
+        // written `judge_route` still dies, both names and the site
+        // riding the reason.
+        let guard = write_guard(
+            &root,
+            &serde_json::json!({
+                "path":"src/x.rs",
+                "content":"let judgeRoute = judge_route();\n"
+            }),
+        );
+        match guard {
+            WriteGuard::Refused { reason } => {
+                assert!(reason.contains("judgeRoute"), "{reason}");
+                assert!(reason.contains("judge_route"), "{reason}");
+                assert!(reason.contains("src/lib.rs"), "{reason}");
+            }
+            other => panic!("expected a refusal, got {other:?}"),
+        }
         let _ = std::fs::remove_dir_all(&root);
     }
 
