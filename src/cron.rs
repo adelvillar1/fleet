@@ -833,20 +833,22 @@ pub fn seed_task(project: &str) -> String {
     }
     format!(
         "Refresh the {project} project's fact corpus from its docs. The lane tool is not in \
-         your toolset; use the spawn route: run the vendored blend1 lane child \
-         (python3 -u <fleet repo>/services/blend1/service/mcp_server.py, cwd <fleet repo>/services/blend1, \
-         env BLEND1_PYTHONPATH plus the four sibling *_PYTHONPATH vars — the launch spec \
-         src/lanes.rs produces) and drive its stdio JSON-RPC by hand: initialize \
-         (protocolVersion 2024-11-05), notifications/initialized, then tools/call with \
-         name \"refresh\" with the arguments {{\"project\": \"{project}\", \"sources\": \
-         [\"<repo home>/{project}/docs/**/*.md\", \"<repo home>/{project}/*.md\"]}} — \
-         <repo home> is the parent directory of <fleet repo>, and every project's \
-         corpus is its docs tree plus root .md files. It replies with project, \
-         source_files, items, dropped_duplicates, changed, action, store, and \
-         missing_sources. Then record the run's state fact with remember, named \
-         canonically: corpus-{project}-<YYYY-MM-DD>.md — corpus at the head, a \
-         dashed date at the tail (that spelling is what the tree's ignore rule \
-         finds, so a snapshot can never be committed by accident; KI-386)."
+         your toolset; use the spawn route: fleet mcp call blend1 refresh \
+         '{{\"project\": \"{project}\", \"sources\": \
+         [\"<repo home>/{project}/docs/**/*.md\", \"<repo home>/{project}/*.md\", \
+         \"<fleet home>/canvas/digests/{project}/*.md\"]}}' — \
+         the verb spawns the vendored lane through its own launch spec, initializes with \
+         the cold window a first run needs, calls, prints the reply, and tears down \
+         (KI-369: one command instead of a hand-driven stdio session). <repo home> is the \
+         parent directory of <fleet repo>, <fleet home> is FLEET_HOME (default ~/.fleet), \
+         and every project's corpus is its docs tree plus root .md files plus the \
+         digests of the design boards bound to it (a board is project knowledge; each \
+         save writes its digest). It replies with project, source_files, items, \
+         dropped_duplicates, changed, action, store, and missing_sources. Then record the \
+         run's state fact with remember, named canonically: \
+         corpus-{project}-<YYYY-MM-DD>.md — corpus at the head, a dashed date at the tail \
+         (that spelling is what the tree's ignore rule finds, so a snapshot can never be \
+         committed by accident; KI-386)."
     )
 }
 
@@ -2806,7 +2808,11 @@ mod tests {
     fn the_manifest_task_names_the_route_the_driver_has() {
         let task = seed_task("fleet");
         assert!(!task.contains("mcp__blend1__refresh"), "{task}");
-        assert!(task.contains("mcp_server.py"), "{task}");
+        // The hand-driven stdio session is retired: the task names the
+        // one-command route (O7/KI-369), so no run re-derives framing
+        // the client already speaks.
+        assert!(!task.contains("mcp_server.py"), "{task}");
+        assert!(task.contains("fleet mcp call blend1 refresh"), "{task}");
         assert!(task.contains("refresh"), "{task}");
         assert!(task.contains("fleet"), "{task}");
         // The writer stamp (O5/KI-386): the task names the canonical
@@ -2864,6 +2870,55 @@ mod tests {
         );
         assert_eq!(job.schedule, "9 5 * * *", "the owner's schedule wins");
         assert!(!job.enabled, "the owner's enabled flag wins");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// K4 (designs-are-project-knowledge): the refresh task embeds the
+    /// design digests — the project-keyed glob each board's save
+    /// writes — and a job seeded before the glob existed reconciles to
+    /// the wording that carries it (the KI-277 path).
+    #[test]
+    fn the_refresh_task_embeds_the_design_digests() {
+        let task = seed_task("fleet");
+        assert!(
+            task.contains("<fleet home>/canvas/digests/fleet/*.md"),
+            "the digest glob rides the task: {task}"
+        );
+        assert!(
+            task.contains("digests of the design boards bound to it"),
+            "the task says what the glob is: {task}"
+        );
+        let home = temp_home("seed-digest");
+        let mut store = Store::open(&home).unwrap();
+        store
+            .add(
+                "corpus-refresh-fleet",
+                "10 0 * * *",
+                "Refresh the fleet project's fact corpus from its docs — the two \
+                 globs, before the digests joined",
+                true,
+            )
+            .unwrap();
+        let report = seed_missing(&home).expect("the seed lands");
+        assert!(
+            report
+                .reconciled
+                .iter()
+                .any(|name| name == "corpus-refresh-fleet"),
+            "the stale task is named: {report:?}"
+        );
+        let job = Store::open(&home)
+            .unwrap()
+            .jobs()
+            .iter()
+            .find(|job| job.name == "corpus-refresh-fleet")
+            .expect("the job")
+            .clone();
+        assert!(
+            job.task.contains("canvas/digests/fleet/*.md"),
+            "the reconciled task embeds the digests"
+        );
+        assert_eq!(job.schedule, "10 0 * * *", "the owner's schedule wins");
         let _ = std::fs::remove_dir_all(&home);
     }
 

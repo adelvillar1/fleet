@@ -2080,14 +2080,41 @@ impl<'a> Agent<'a> {
     /// byte-for-byte the run it has always been — the same prompt, no
     /// record, no rows.
     fn prepare_memory(&mut self, task: &str) -> Result<Option<String>, AgentError> {
+        // K6 (designs-are-project-knowledge): the run's workspace
+        // project's design boards ride the standing context — bounded,
+        // digest-read, absent when the project has none. The section is
+        // independent of the corpus: a corpus-less run in a project
+        // with boards still carries them.
+        let design = self.design_context();
+        let design_block = match &design {
+            Some(section) => format!("## Design\n\n{section}"),
+            None => String::new(),
+        };
         let Some(memory) = self.memory.clone() else {
-            return Ok(None);
+            if design_block.is_empty() {
+                return Ok(None);
+            }
+            // Rule 5: what the model sees is in the log — the design
+            // section alone still earns its record.
+            self.record(&Record::Memory {
+                shape: String::new(),
+                facts: Vec::new(),
+                design,
+            })?;
+            return Ok(Some(design_block));
         };
         let assembly = memory.assemble(task, &memory.working());
         let block = memory::render_assembly(&assembly);
-        if block.is_empty() {
+        if block.is_empty() && design_block.is_empty() {
             return Ok(None);
         }
+        let full = if block.is_empty() {
+            design_block.clone()
+        } else if design_block.is_empty() {
+            block.clone()
+        } else {
+            format!("{block}\n\n{design_block}")
+        };
         let shape = assembly.shape.unwrap_or_default().to_string();
         let facts: Vec<String> = assembly
             .protected
@@ -2096,28 +2123,32 @@ impl<'a> Agent<'a> {
             .chain(assembly.recalled.iter().map(|hit| hit.fact.name.clone()))
             .chain(assembly.working.iter().map(|fact| fact.name.clone()))
             .collect();
-        // The hits do not fire here. KI-068: a hit means the model saw
-        // the fact, and at assembly time no request has been made yet —
-        // they ride along as pending state and the loop records them
-        // after the first successful response, so a run that never gets
-        // one leaves the corpus untouched.
-        self.pending_hits = Some(PendingHits {
-            memory,
-            recalled: assembly.recalled,
-            shape: assembly.shape,
-        });
-        // The drift trigger's base: the opening task's own vector, so
-        // the first steer is compared against the instruction the block
-        // was actually ranked for. One extra embed per run; the curation
-        // path reuses the same embedder and scale.
-        self.curate_base = self
-            .memory
-            .as_ref()
-            .and_then(|memory| memory.instruction_vector(task));
-        self.curate_text = Some(task.to_string());
+        if !block.is_empty() {
+            // The hits do not fire here. KI-068: a hit means the model
+            // saw the fact, and at assembly time no request has been
+            // made yet — they ride along as pending state and the loop
+            // records them after the first successful response, so a
+            // run that never gets one leaves the corpus untouched.
+            self.pending_hits = Some(PendingHits {
+                memory,
+                recalled: assembly.recalled,
+                shape: assembly.shape,
+            });
+            // The drift trigger's base: the opening task's own vector,
+            // so the first steer is compared against the instruction
+            // the block was actually ranked for. One extra embed per
+            // run; the curation path reuses the same embedder and
+            // scale.
+            self.curate_base = self
+                .memory
+                .as_ref()
+                .and_then(|memory| memory.instruction_vector(task));
+            self.curate_text = Some(task.to_string());
+        }
         self.record(&Record::Memory {
             shape: shape.clone(),
             facts: facts.clone(),
+            design,
         })?;
         let named = if shape.is_empty() {
             "no shape (surface recall)".to_string()
@@ -2143,7 +2174,34 @@ impl<'a> Agent<'a> {
             shape,
             facts: facts.len(),
         });
-        Ok(Some(block))
+        Ok(Some(full))
+    }
+
+    /// The design section for the workspace this run was born in: the
+    /// process cwd's final segment keys the digest directory — a run
+    /// started inside `~/Projects/harbor` carries harbor's boards. The
+    /// pin points it at a fixture; absent one, a test run reads no
+    /// section — a run's assembly must never depend on this machine's
+    /// canvas.
+    fn design_context(&self) -> Option<String> {
+        #[cfg(test)]
+        {
+            if let Some((home, key)) = TEST_DESIGN_CONTEXT.lock().unwrap().clone() {
+                return crate::canvas::design_context_section(&home, &key);
+            }
+            return None;
+        }
+        #[cfg(not(test))]
+        {
+            let home = crate::home::fleet_home(
+                std::env::var("FLEET_HOME").ok().as_deref(),
+                std::env::var("HOME").ok().as_deref(),
+            )
+            .ok()?;
+            let cwd = std::env::current_dir().ok()?;
+            let key = cwd.file_name()?.to_string_lossy().to_string();
+            crate::canvas::design_context_section(&home, &key)
+        }
     }
 
     /// Record the recall hits the assembly surfaced — once, after the
@@ -7864,6 +7922,13 @@ fn lane_call_output(result: &CallResult) -> String {
     }
 }
 
+/// The fixture pair (canvas home, project key) the design-section pin
+/// points `design_context` at; absent it, a test run reads no section —
+/// a run's assembly must never depend on this machine's own canvas.
+#[cfg(test)]
+static TEST_DESIGN_CONTEXT: std::sync::Mutex<Option<(std::path::PathBuf, String)>> =
+    std::sync::Mutex::new(None);
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -7896,6 +7961,100 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    /// K6 (designs-are-project-knowledge): the assembled block carries
+    /// the workspace project's design section — bounded, digest-read —
+    /// beside the memory block, and the `memory` record carries it too
+    /// (hard rule 5). Under test the section reads this fixture, never
+    /// the machine's own canvas.
+    #[test]
+    fn the_assembled_block_carries_the_design_section() {
+        let home = scratch("design-section");
+        let (slug, _) = crate::canvas::create(&home, "Harbor").unwrap();
+        crate::canvas::put_frame(
+            &home,
+            &slug,
+            "hero",
+            "<html><head><style>:root{--accent:#3b6cf6}</style></head><body>hero</body></html>",
+            None,
+            None,
+            "m",
+        )
+        .unwrap();
+        let mut project = crate::canvas::load(&home, &slug).unwrap();
+        project.project = Some("/x/Projects/acme".to_string());
+        crate::canvas::save(&home, &slug, &project).unwrap();
+        *TEST_DESIGN_CONTEXT.lock().unwrap() = Some((home.clone(), "acme".to_string()));
+        let root = corpus(
+            "design-section-corpus",
+            &[("working-note", &confirmed("working-note", "a note"))],
+        );
+        let stream_root = scratch("design-section-stream");
+        let stream = crate::calib::Stream::open(&stream_root);
+        let client = Box::leak(Box::new(Client::new("http://127.0.0.1:9", "k")));
+        let session = Box::leak(Box::new(
+            crate::session::Session::create(&home, "m").unwrap(),
+        ));
+        let memory = Arc::new(Memory::load_with(
+            &root,
+            Box::new(crate::memory::KeywordOnly),
+        ));
+        let options = AgentOptions {
+            goal: None,
+            model: "m".to_string(),
+            identity: None,
+            max_turns: 1,
+            ui_tx: None,
+            lane_specs: None,
+            calib: Some(stream.clone()),
+            skills: Vec::new(),
+            role_overlay: None,
+            memory: Some(memory),
+            scope: None,
+            improve_home: None,
+            route_home: None,
+            gui_prompt: None,
+            compact_now: false,
+            checkpoints: None,
+            file_access: FileAccess::Unrestricted,
+            plan_mode: false,
+        };
+        let progress: &'static mut Vec<u8> = Box::leak(Box::new(Vec::new()));
+        let mut agent = Agent::new(
+            client,
+            options,
+            session,
+            Box::new(ApproveAll),
+            &mut *progress,
+        )
+        .unwrap();
+        let block = agent
+            .prepare_memory("design a landing page for acme")
+            .unwrap()
+            .expect("the block");
+        // Both sections: the memory block and the design section.
+        assert!(block.contains("Standing context"), "{block}");
+        assert!(block.contains("## Design"), "{block}");
+        assert!(block.contains("Harbor"), "{block}");
+        assert!(block.contains("1 page"), "{block}");
+        // The record carries the section (rule 5: the log holds it).
+        drop(agent);
+        let records = crate::session::replay(session.path()).unwrap();
+        match records
+            .iter()
+            .find(|record| matches!(record, Record::Memory { .. }))
+        {
+            Some(Record::Memory { design, .. }) => {
+                let design = design.as_ref().expect("the section rides the record");
+                assert!(design.contains("Harbor"), "{design}");
+            }
+            other => panic!("expected a memory record, got {other:?}"),
+        }
+        *TEST_DESIGN_CONTEXT.lock().unwrap() = None;
+        let _ = std::fs::remove_dir_all(&home);
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&stream_root);
     }
 
     /// Plan mode's floor: the write-class tools are refused by name and
@@ -9555,7 +9714,7 @@ You are auditing a change. Read the diff before you judge it.
             .iter()
             .find(|record| matches!(record, Record::Memory { .. }))
         {
-            Some(Record::Memory { shape, facts }) => {
+            Some(Record::Memory { shape, facts, .. }) => {
                 assert_eq!(shape, "deploy");
                 assert_eq!(
                     facts,
@@ -9665,7 +9824,7 @@ You are auditing a change. Read the diff before you judge it.
             .iter()
             .find(|record| matches!(record, Record::Memory { .. }))
         {
-            Some(Record::Memory { shape, facts }) => {
+            Some(Record::Memory { shape, facts, .. }) => {
                 assert_eq!(shape, "deploy");
                 assert_eq!(facts, &vec!["identity".to_string(), "top".to_string()]);
             }

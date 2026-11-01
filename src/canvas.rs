@@ -208,6 +208,17 @@ pub struct Project {
     /// job) reads the same ones.
     #[serde(default)]
     pub reference: Option<BoardReference>,
+    /// The project folder this board belongs to — an absolute path, when
+    /// one was named. A board is project knowledge (the owner's
+    /// 2026-11-01 ruling): the binding feeds the rail's grouping, the
+    /// digest's path, the corpus-refresh glob, and the fact the
+    /// lifecycle writes. None is the unbound board, kept visible.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        alias = "projectPath"
+    )]
+    pub project: Option<String>,
 }
 
 /// A scanned reference site, as the board keeps it.
@@ -229,6 +240,10 @@ pub struct ProjectSummary {
     pub name: String,
     pub frames: usize,
     pub updated: String,
+    /// The bound project folder, when the board carries one — the rail
+    /// groups by it without a second read.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
 }
 
 // --- the store --------------------------------------------------------------
@@ -285,6 +300,7 @@ pub fn projects(home: &Path) -> Vec<ProjectSummary> {
                 name: project.name,
                 frames: project.frames.len(),
                 updated: project.updated,
+                project: project.project,
             })
         })
         .collect();
@@ -303,7 +319,9 @@ pub fn load(home: &Path, slug: &str) -> Result<Project, String> {
 }
 
 /// Write one project, atomically: a unique temp beside it, then a rename,
-/// so a reader never sees half a document.
+/// so a reader never sees half a document. A bound board's digest is
+/// regenerated here — the one funnel every write path crosses, so no
+/// path can move the document without refreshing its knowledge account.
 pub fn save(home: &Path, slug: &str, project: &Project) -> Result<(), String> {
     let path = project_path(home, slug);
     let dir = path
@@ -313,7 +331,224 @@ pub fn save(home: &Path, slug: &str, project: &Project) -> Result<(), String> {
         .map_err(|error| format!("could not make {}: {error}", dir.display()))?;
     let text = serde_json::to_string_pretty(project)
         .map_err(|error| format!("the project does not serialize: {error}"))?;
-    crate::settings::write_atomic(&path, &text)
+    crate::settings::write_atomic(&path, &text)?;
+    refresh_digest(home, slug, project)
+}
+
+// --- the digest --------------------------------------------------------------
+//
+// A board is project knowledge (the owner's 2026-11-01 ruling): every
+// bound board keeps a deterministic markdown account of itself at a
+// project-keyed path — the unit the corpus-refresh globs embed. The
+// pages' HTML is the artifact; the digest is the knowledge.
+
+/// The directory of digests, under the canvas root: one subdirectory per
+/// project key, one file per board.
+pub const DIGESTS_DIR: &str = "digests";
+
+/// The project key of a bound path: its final segment — the same name
+/// the corpus-refresh jobs and the blend1 vector stores key by. A path
+/// with no final segment (a root) is unkeyable, so the binding reads
+/// as unbound.
+pub fn project_key(project: &str) -> Option<String> {
+    let trimmed = project.trim_end_matches('/');
+    let name = Path::new(trimmed)
+        .file_name()?
+        .to_string_lossy()
+        .to_string();
+    if name.is_empty() {
+        None
+    } else {
+        Some(name)
+    }
+}
+
+/// Where a bound board's digest lives.
+pub fn digest_path(home: &Path, key: &str, slug: &str) -> PathBuf {
+    canvas_root(home)
+        .join(DIGESTS_DIR)
+        .join(key)
+        .join(format!("{slug}.md"))
+}
+
+/// The digest's bounds: a board this large still embeds as one file.
+const DIGEST_PAGES: usize = 40;
+const DIGEST_TOKENS: usize = 60;
+const DIGEST_REVIEWS: usize = 10;
+
+/// The deterministic markdown account of a board. Same document, same
+/// bytes — a refresh that re-embeds an unchanged board drops nothing.
+pub fn digest_markdown(slug: &str, project: &Project) -> String {
+    let mut out = String::new();
+    out.push_str(&format!("# {}\n\n", project.name));
+    out.push_str(&format!("board: {slug}\n"));
+    out.push_str(&format!(
+        "project: {}\n",
+        project.project.as_deref().unwrap_or("\u{2014}")
+    ));
+    out.push_str(&format!("updated: {}\n", project.updated));
+    out.push_str(&format!(
+        "brand: {}\n",
+        project.brand.as_deref().unwrap_or("\u{2014}")
+    ));
+    out.push_str(&format!("pages: {}\n", project.frames.len()));
+
+    out.push_str("\n## Pages\n\n");
+    for frame in project.frames.iter().take(DIGEST_PAGES) {
+        out.push_str(&format!(
+            "- {} \u{b7} {}x{} \u{b7} model {} \u{b7} set {}\n",
+            frame.name,
+            frame.w as i64,
+            frame.h as i64,
+            if frame.model.is_empty() {
+                "\u{2014}"
+            } else {
+                frame.model.as_str()
+            },
+            frame.set.as_deref().unwrap_or("\u{2014}")
+        ));
+    }
+    if project.frames.len() > DIGEST_PAGES {
+        out.push_str(&format!(
+            "- \u{2026} {} more\n",
+            project.frames.len() - DIGEST_PAGES
+        ));
+    }
+
+    // The token system, as the pages declare it: the union of every
+    // page's `:root` custom-property names, sorted — the same sheet the
+    // exports and the packet read.
+    let mut tokens: Vec<String> = Vec::new();
+    for frame in &project.frames {
+        for (key, _) in extract_root_tokens(&frame.html) {
+            if !tokens.contains(&key) {
+                tokens.push(key);
+            }
+        }
+    }
+    tokens.sort();
+    tokens.truncate(DIGEST_TOKENS);
+    out.push_str("\n## Tokens\n\n");
+    if tokens.is_empty() {
+        out.push_str("\u{2014}\n");
+    } else {
+        out.push_str(&tokens.join(", "));
+        out.push('\n');
+    }
+
+    // The reviews the pages carry: the eight scores, in name order. A
+    // page without a review is not listed.
+    let mut reviews = Vec::new();
+    for frame in &project.frames {
+        let Some(review) = frame.review.as_ref() else {
+            continue;
+        };
+        let Some(scores) = review.get("scores").and_then(Value::as_object) else {
+            continue;
+        };
+        if scores.is_empty() {
+            continue;
+        }
+        let mut parts: Vec<String> = scores
+            .iter()
+            .map(|(name, score)| {
+                let number = score.as_f64().unwrap_or(f64::NAN);
+                format!("{name} {}", number as i64)
+            })
+            .collect();
+        parts.sort();
+        reviews.push(format!("- {}: {}\n", frame.name, parts.join(", ")));
+        if reviews.len() >= DIGEST_REVIEWS {
+            break;
+        }
+    }
+    if !reviews.is_empty() {
+        out.push_str("\n## Reviews\n\n");
+        for line in reviews {
+            out.push_str(&line);
+        }
+    }
+    out
+}
+
+/// Regenerate a bound board's digest beside its document; an unbound
+/// board keeps no digest (there is no key to file it under).
+fn refresh_digest(home: &Path, slug: &str, project: &Project) -> Result<(), String> {
+    let Some(key) = project.project.as_deref().and_then(project_key) else {
+        return Ok(());
+    };
+    let path = digest_path(home, &key, slug);
+    let dir = path
+        .parent()
+        .ok_or_else(|| "the digest path has no directory".to_string())?;
+    std::fs::create_dir_all(dir)
+        .map_err(|error| format!("could not make {}: {error}", dir.display()))?;
+    crate::settings::write_atomic(&path, &digest_markdown(slug, project))
+}
+
+/// Remove one board's digest at the key the caller names — the clearing
+/// op and the delete path know the old binding; `save` never guesses.
+pub fn remove_digest(home: &Path, key: &str, slug: &str) -> Result<(), String> {
+    let path = digest_path(home, key, slug);
+    match std::fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!(
+            "could not remove the digest {}: {error}",
+            path.display()
+        )),
+    }
+}
+
+/// K6 (designs-are-project-knowledge): the bounded design account a run
+/// born in a project carries in its assembled context — one line per
+/// board from the project's digests, newest first, absent when the
+/// project has none. The digest is the knowledge; this is its read.
+pub fn design_context_section(home: &Path, key: &str) -> Option<String> {
+    let dir = canvas_root(home).join(DIGESTS_DIR).join(key);
+    let entries = std::fs::read_dir(&dir).ok()?;
+    let mut boards: Vec<(std::time::SystemTime, String, String, usize)> = entries
+        .flatten()
+        .filter_map(|entry| {
+            let path = entry.path();
+            if path.extension()?.to_str()? != "md" {
+                return None;
+            }
+            let text = std::fs::read_to_string(&path).ok()?;
+            let name = text
+                .lines()
+                .find_map(|line| line.strip_prefix("# "))?
+                .to_string();
+            let pages = text
+                .lines()
+                .find_map(|line| line.strip_prefix("pages: "))?
+                .trim()
+                .parse::<usize>()
+                .ok()?;
+            let stamp = entry.metadata().ok()?.modified().ok()?;
+            Some((
+                stamp,
+                name,
+                path.file_stem()?.to_string_lossy().to_string(),
+                pages,
+            ))
+        })
+        .collect();
+    if boards.is_empty() {
+        return None;
+    }
+    boards.sort_by(|a, b| b.0.cmp(&a.0));
+    boards.truncate(8);
+    let mut out = format!(
+        "Design boards bound to `{key}` (from their digests; the board file is the truth):\n"
+    );
+    for (_, name, slug, pages) in boards {
+        out.push_str(&format!(
+            "- {name} ({slug}) \u{2014} {pages} page{}\n",
+            if pages == 1 { "" } else { "s" }
+        ));
+    }
+    Some(out)
 }
 
 /// Create an empty project under a fresh slug. A name that collides takes
@@ -340,6 +575,7 @@ pub fn create(home: &Path, name: &str) -> Result<(String, Project), String> {
         chat: Vec::new(),
         brand: None,
         reference: None,
+        project: None,
     };
     save(home, &slug, &project)?;
     Ok((slug, project))
@@ -4897,6 +5133,149 @@ h1{font-size:64px;border-radius:2px}
         let project = load(&home, &slug).unwrap();
         assert_eq!(project.frames.len(), 1);
         assert_eq!(project.frames[0].id, copy);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// K1 + K3 (the designs-are-project-knowledge plan): the binding is a
+    /// field that survives the store round-trip, and every save of a
+    /// bound board regenerates its digest at the project-keyed path —
+    /// while an unbound board writes none, and a clear removes the file
+    /// the old binding had left.
+    #[test]
+    fn a_bound_board_writes_its_digest_and_a_clear_removes_it() {
+        let home = scratch("digest");
+        let (slug, _) = create(&home, "Digest").unwrap();
+        // Unbound: the save writes no digest anywhere.
+        save(&home, &slug, &load(&home, &slug).unwrap()).unwrap();
+        assert!(
+            !digest_path(&home, "fleet", &slug).exists(),
+            "an unbound board must not write a digest"
+        );
+        // Bound: the digest lands at the project-keyed path.
+        let mut project = load(&home, &slug).unwrap();
+        project.project = Some("/Users/owner/Projects/fleet".to_string());
+        put_frame(&home, &slug, "hero", PAGE, None, None, "deepseek-flash").unwrap();
+        let mut project = load(&home, &slug).unwrap();
+        project.project = Some("/Users/owner/Projects/fleet".to_string());
+        save(&home, &slug, &project).unwrap();
+        let path = digest_path(&home, "fleet", &slug);
+        assert!(path.is_file(), "a bound board's save writes its digest");
+        let digest = std::fs::read_to_string(&path).unwrap();
+        assert!(digest.contains("project: /Users/owner/Projects/fleet"));
+        assert!(digest.contains("- hero \u{b7} 1280x900 \u{b7} model deepseek-flash"));
+        assert!(
+            digest.contains("accent, ink, page"),
+            "the token union rides, sorted, bare names"
+        );
+        // The binding round-trips through the document itself.
+        assert_eq!(
+            load(&home, &slug).unwrap().project.as_deref(),
+            Some("/Users/owner/Projects/fleet")
+        );
+        // A clear removes the digest the old binding left behind — the
+        // op that clears knows the old key; the store never guesses.
+        remove_digest(&home, "fleet", &slug).unwrap();
+        assert!(!path.exists(), "clearing the binding removes the digest");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// The digest is deterministic and carries the whole account: the
+    /// name, the pages with their sizes and models, the sorted token
+    /// union, and a page's review scores when it carries them.
+    #[test]
+    fn the_digest_names_every_page_tokens_and_review() {
+        let now = "2026-11-01T00:00:00Z".to_string();
+        let mut frame = Frame {
+            id: "f-1".to_string(),
+            name: "Landing".to_string(),
+            description: String::new(),
+            html: PAGE.to_string(),
+            x: 0.0,
+            y: 0.0,
+            w: 1280.0,
+            h: 900.0,
+            tweak_spec: Vec::new(),
+            tweak_values: BTreeMap::new(),
+            model: "deepseek-flash".to_string(),
+            set: Some("site".to_string()),
+            gen_meta: None,
+            versions: Vec::new(),
+            pins: Vec::new(),
+            review: Some(serde_json::json!({"scores": {"spacing": 7, "hierarchy": 9}})),
+            created: now.clone(),
+            updated: now.clone(),
+        };
+        frame.description = String::new();
+        let project = Project {
+            version: 1,
+            name: "Site".to_string(),
+            created: now.clone(),
+            updated: now,
+            frames: vec![frame],
+            chat: Vec::new(),
+            brand: Some("acme".to_string()),
+            reference: None,
+            project: Some("/x/projects/acme".to_string()),
+        };
+        let digest = digest_markdown("site", &project);
+        assert_eq!(
+            digest,
+            "# Site\n\nboard: site\nproject: /x/projects/acme\nupdated: \
+             2026-11-01T00:00:00Z\nbrand: acme\npages: 1\n\n## Pages\n\n- \
+             Landing \u{b7} 1280x900 \u{b7} model deepseek-flash \u{b7} set \
+             site\n\n## Tokens\n\naccent, ink, page\n\n## Reviews\n\n- \
+             Landing: hierarchy 9, spacing 7\n",
+            "the digest is byte-deterministic"
+        );
+        let _ = std::fs::remove_dir_all(scratch("digest-exact"));
+    }
+
+    /// The key is the bound path's final segment — the name the refresh
+    /// jobs and the vector stores already use — and a root path reads
+    /// as unkeyable rather than inventing a key.
+    #[test]
+    fn the_project_key_is_the_paths_final_segment() {
+        assert_eq!(
+            project_key("/Users/owner/Projects/fleet"),
+            Some("fleet".to_string())
+        );
+        assert_eq!(
+            project_key("/Users/owner/Projects/fleet/"),
+            Some("fleet".to_string())
+        );
+        assert_eq!(project_key("/"), None);
+        assert_eq!(project_key(""), None);
+    }
+
+    /// K6 (designs-are-project-knowledge): the context section reads a
+    /// project's digests — both directions: a project with boards
+    /// yields the bounded account (newest first, one line per board),
+    /// and a project with none yields nothing rather than an empty
+    /// section.
+    #[test]
+    fn the_design_context_reads_a_projects_digests_or_none() {
+        let home = scratch("context");
+        // A project with two bound boards: two digests under its key.
+        for name in ["Harbor", "Kiosk"] {
+            let (slug, _) = create(&home, name).unwrap();
+            let mut project = load(&home, &slug).unwrap();
+            project.project = Some("/x/Projects/acme".to_string());
+            put_frame(&home, &slug, "p", PAGE, None, None, "m").unwrap();
+            let mut project = load(&home, &slug).unwrap();
+            project.project = Some("/x/Projects/acme".to_string());
+            save(&home, &slug, &project).unwrap();
+        }
+        let section = design_context_section(&home, "acme").expect("the section");
+        assert!(
+            section.contains("Design boards bound to `acme`"),
+            "{section}"
+        );
+        assert_eq!(section.matches("- ").count(), 2, "{section}");
+        assert!(section.contains("Harbor"), "{section}");
+        assert!(section.contains("Kiosk"), "{section}");
+        assert!(section.contains("1 page"), "{section}");
+        // A project with no digests: none, not an empty section.
+        assert_eq!(design_context_section(&home, "nowhere"), None);
         let _ = std::fs::remove_dir_all(&home);
     }
 }

@@ -1986,7 +1986,7 @@ async fn memory_recall(mock_bin: PathBuf) -> ScenarioOutcome {
                         Ok(_) => {
                             let system = mock.system(0);
                             let memory_record = records.iter().find_map(|record| match record {
-                                Record::Memory { shape, facts } => {
+                                Record::Memory { shape, facts, .. } => {
                                     Some((shape.clone(), facts.clone()))
                                 }
                                 _ => None,
