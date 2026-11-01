@@ -14704,14 +14704,24 @@
         if (name.value === derived) name.value = next;
         derived = next;
       });
+      // The card answers itself: a refusal or a discovery failure lands
+      // here, on the surface the press was made, never only in the
+      // conversation feed.
+      var said = node('p', 'derivation');
+      said.setAttribute('role', 'alert');
+      said.hidden = true;
+      function answer(text, bad) {
+        said.hidden = false;
+        said.textContent = text;
+        said.dataset.tone = bad ? 'bad' : 'good';
+      }
       var act = node('button', 'replay-button replay-resume', 'connect it');
       act.type = 'button';
       act.dataset.act = 'provider-connect';
       act.addEventListener('click', function () {
         var base = endpoint.value.trim();
         if (!base) {
-          notice('the provider was refused',
-            'an endpoint is needed — https://the-provider/v1');
+          answer('an endpoint is needed — https://the-provider/v1', true);
           return;
         }
         var id = name.value.trim() || providerIdFromUrl(base);
@@ -14729,22 +14739,19 @@
           key: key.value.trim()
         }).then(function (reply) {
           if (reply.status !== 200) {
-            notice('the provider was refused',
-              (reply.body && reply.body.error) || 'the surface said no without a reason');
+            answer((reply.body && reply.body.error) || 'the surface said no without a reason', true);
             return;
           }
           var wrote = (reply.body && reply.body.wrote) || {};
           if (wrote.discovery && wrote.discovery.ok === false && wrote.discovery.error) {
-            notice('the provider is saved, the catalog did not answer', wrote.discovery.error);
-          } else if (wrote.key_store) {
-            notice('the provider is connected',
-              entry.id + ' · the key landed in ' + wrote.key_store);
+            answer('saved, but the catalog did not answer: ' + wrote.discovery.error, true);
           } else {
-            notice('the provider is connected', entry.id);
+            answer(id + ' is connected — its models are in the list' +
+              (wrote.key_store ? '; the key landed in ' + wrote.key_store : ''), false);
           }
           readSettings(true);
         }).catch(function () {
-          notice('the provider was refused', 'the face lost the server');
+          answer('the face lost the server — the provider did not land', true);
         });
       });
       return [
@@ -14756,7 +14763,8 @@
           'the id this home uses for it — the model list says provider/model')],
         ['what happens', node('p', 'derivation',
           'the models are discovered from the provider and land on this surface with their windows.')],
-        ['the write', act]
+        ['the write', act],
+        ['what it answered', said]
       ];
     }
 

@@ -3949,6 +3949,8 @@ pre.drawer-code {
 }
 
 .derivation { color: var(--dsw-alias-ink-secondary); font-size: 12px; line-height: 1.55; }
+.derivation[data-tone="bad"] { color: var(--dsw-alias-down); }
+.derivation[data-tone="good"] { color: var(--dsw-alias-ok); }
 
 /* Related objects, ranked by the server's related index across every
    kind. The percentage is the cosine the index returned, not a
