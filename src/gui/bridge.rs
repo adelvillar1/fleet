@@ -7478,6 +7478,16 @@ fn design_write(home: &std::path::Path, body: &str) -> Result<Value, String> {
             remember_board(home, &slug, &project, "rename");
             json!({ "slug": slug, "name": project.name })
         }
+        // P3 (design-parity C10): the page's set — the membership the
+        // model's `set` argument writes, assignable from the frame bar;
+        // an empty set clears it.
+        "frame-set" => {
+            let slug = slug()?;
+            let id = frame_id()?;
+            let set = text("set")?;
+            crate::canvas::set_frame_set(home, &slug, &id, &set)?;
+            json!({ "id": id, "set": set })
+        }
         // P2 (design-parity C5): the board deletes whole — the store,
         // its digest and its fact — after the face's confirm.
         "board-delete" => {

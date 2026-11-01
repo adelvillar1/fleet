@@ -436,6 +436,15 @@ function boot(options) {
         json: () => Promise.resolve({ type: 'design_export', kind: 'html', path: '/tmp/frame.html', bytes: 12 }),
       });
     }
+    if (pathOnly === '/api/design/review') {
+      return Promise.resolve({
+        status: 200,
+        json: () => Promise.resolve({
+          type: 'design_review',
+          task: 'the composed review task for the vision read',
+        }),
+      });
+    }
     if (pathOnly === '/api/resume') {
       return Promise.resolve({ status: 200, json: () => Promise.resolve({ type: 'resume', agent: true, session: 'x' }) });
     }
@@ -3976,7 +3985,8 @@ async function theDesignCanvasCarriesItsFramesAndWritesGeometry() {
   const frame = (id, name, x, model) => ({
     id,
     name,
-    description: '',
+    description: name === 'hero' ? 'The landing page for the developer tool' : '',
+    gen_meta: name === 'hero' ? { duration_ms: 4200, tokens: 1800 } : null,
     html: '<!doctype html><html><body><h1>' + name + '</h1></body></html>',
     html_raw: '<!doctype html><html><body><h1>' + name + '</h1></body></html>',
     x,
@@ -3998,8 +4008,12 @@ async function theDesignCanvasCarriesItsFramesAndWritesGeometry() {
       strengths: ['the type scale holds'],
       fixes: ['tighten the hero spacing'],
       reviewed: '2026-10-31T09:30:00Z',
-      history: [{ scores: { hierarchy: 6 }, summary: 'the first look',
-        reviewed: '2026-10-30T09:00:00Z' }],
+      history: [
+        { scores: { hierarchy: 6, spacing: 4 }, summary: 'the first look',
+          reviewed: '2026-10-29T09:00:00Z' },
+        { scores: { hierarchy: 5, spacing: 4 }, summary: 'before the tighten',
+          reviewed: '2026-10-30T09:00:00Z' },
+      ],
     } : null,
     versions: [{ id: 'v-one', name, source: 'generate', created: '2026-10-31T09:00:00Z' }],
     pins: name === 'hero'
@@ -4312,8 +4326,53 @@ async function theDesignCanvasCarriesItsFramesAndWritesGeometry() {
   check('PM-D the review\u2019s history shows',
     !!reviewPane && String(reviewPane.textContent).includes('the first look'),
     reviewPane ? String(reviewPane.textContent).slice(-90) : 'no pane');
+  // P3 (design-parity C9): the history carries the delta each review
+  // introduced — the change from the one before it.
+  check('C9 the history shows each review\u2019s score delta',
+    !!reviewPane &&
+      String(reviewPane.textContent).includes('before the tighten') &&
+      String(reviewPane.textContent).includes('hierarchy -1'),
+    reviewPane ? String(reviewPane.textContent).slice(-120) : 'no pane');
+  // P3 (design-parity C9): the critic is the review's own choice —
+  // set here to a different model than the composer's pick, so the run
+  // that leaves proves the select rode the pin.
+  const critic = reviewPane ?
+    reviewPane.find((one) => one.dataset && one.dataset.act === 'design-critic')[0] : null;
+  check('C9 the review card carries the critic choice',
+    !!critic && critic.children.length === 3 &&
+      String(critic.children[0].textContent).includes('unavailable'),
+    critic ? critic.children.map((one) => one.value + '/' + one.disabled).join(',') : 'no critic');
+  if (critic) critic.value = 'ollama-cloud/glm-5.3-flash';
   byAct(reviewPane, 'design-review-ask').click();
   await flush(60);
+  const reviewRun = page.calls.filter((one) => one.method === 'POST' &&
+    String(one.url || '').includes('/api/run') &&
+    String(one.body || '').includes('the composed review task')).slice(-1)[0];
+  check('C9 the review run pins the critic the card chose',
+    !!reviewRun && String(reviewRun.body).includes('"pin":"ollama-cloud/glm-5.3-flash"'),
+    reviewRun ? String(reviewRun.body).slice(-110) : 'no review run');
+  // P3 (design-parity C9): fix drift — the coherence report's findings
+  // ride the run's instruction (the owner's line of the task, recorded
+  // in the board's chat). The board's set is incoherent, so the press
+  // is offered on a reopened review card.
+  const heroCardDrift = page.rows('.canvas-frame')[0];
+  byAct(heroCardDrift, 'review-hero').click();
+  await flush(30);
+  const driftPane = page.el('dock-object-body');
+  const driftPress = driftPane ?
+    driftPane.find((one) => one.dataset && one.dataset.act === 'design-fix-drift')[0] : null;
+  check('C9 the review card offers fix drift for an incoherent set',
+    !!driftPress, driftPress ? 'offered' : 'no press');
+  if (driftPress) {
+    driftPress.click();
+    await flush(60);
+    const driftChat = page.calls.filter((one) => one.method === 'POST' &&
+      String(one.body || '').includes('"op":"chat"') &&
+      String(one.body || '').includes('coherence drift')).slice(-1)[0];
+    check('C9 the fix-drift run names the coherence findings',
+      !!driftChat && String(driftChat.body).includes('pricing: page'),
+      driftChat ? String(driftChat.body).slice(0, 200) : 'no chat write');
+  }
   check('PM-D the review ask captures desktop and phone through the server',
     page.calls.some((one) => one.method === 'POST' &&
       String(one.url || '').includes('/api/design/review') &&
@@ -4475,18 +4534,23 @@ async function theDesignCanvasCarriesItsFramesAndWritesGeometry() {
         String(one.body).includes('"mode":"refine"')),
     JSON.stringify(page.calls.slice(-5).map((one) => one.method + ' ' +
       one.url + ' ' + String(one.body || '').slice(0, 70))));
-  const run = page.calls.filter((one) => one.method === 'POST' &&
-    String(one.url || '').includes('/api/run'));
+  // The composer's sends, not the review ask's run: each run carries
+  // the task its own call composed.
+  const composerRuns = page.calls.filter((one) => one.method === 'POST' &&
+    String(one.url || '').includes('/api/run') &&
+    String(one.body || '').includes('composed for sample-board'));
   check('PM-D the run carries the composed task, not a hand-built one',
-    run.length === 1 && String(run[0].body).includes('composed for sample-board'),
-    JSON.stringify(run.map((one) => String(one.body).slice(0, 160))));
+    composerRuns.length >= 1 &&
+      String(composerRuns[0].body).includes('composed for sample-board'),
+    JSON.stringify(composerRuns.map((one) => String(one.body).slice(0, 160))));
   // Routing for a design run is the page's: the picked `provider/model`
   // rides the request as the pin, so the router never selects among the
-  // designated three.
+  // designated three. The send just above is the LAST composer run.
+  const sendRun = composerRuns[composerRuns.length - 1];
   check('PM-D the run pins the model the page names',
-    run.length === 1 &&
-      String(run[0].body).includes('"pin":"ollama-cloud/glm-5.3-flash"'),
-    JSON.stringify(run.map((one) => String(one.body).slice(-90))));
+    !!sendRun &&
+      String(sendRun.body).includes('"pin":"ollama-cloud/glm-5.3-flash"'),
+    sendRun ? String(sendRun.body).slice(-90) : 'no send run');
   // The run's close writes the board turn: its words and the frames it
   // landed (a frame the board did not hold when the request went out).
   const beforeTurns = page.calls.filter((one) =>
@@ -4606,6 +4670,68 @@ async function theDesignCanvasCarriesItsFramesAndWritesGeometry() {
     check('C6 double-clicking a frame name opens its rename input', false,
       'no frame name on the card');
     check('C6 the frame rename writes through frame-update', false, 'no input');
+  }
+
+  // P3 (design-parity C8): the frame line carries the page's whole
+  // account — dimensions, model, versions, provenance, description —
+  // read before any resize below changes the dimensions.
+  let heroCard2 = page.rows('.canvas-frame')[0];
+  const tweaksAct = heroCard2 ?
+    heroCard2.find((one) => one.dataset && one.dataset.act === 'tweaks-hero')[0] : null;
+  if (tweaksAct) {
+    tweaksAct.click();
+    await flush(30);
+    const tweaksPane = page.el('dock-object-body');
+    const frameLine = tweaksPane ?
+      String(tweaksPane.textContent) : '';
+    check('C8 the frame line carries the page settings and provenance',
+      frameLine.includes('hero') && frameLine.includes('1280') &&
+        frameLine.includes('glm') && frameLine.includes('version(s)') &&
+        frameLine.includes('4.2s') && frameLine.includes('1800 tokens') &&
+        frameLine.includes('The landing page for the developer tool'),
+      frameLine.slice(-160));
+  } else {
+    check('C8 the frame line carries the page settings and provenance',
+      false, 'no tweaks act');
+  }
+  // P3 (design-parity C7): the viewport presets sit on the frame —
+  // press one and the resize rides the writer. (The write re-reads and
+  // repaints, so every card reference below is re-queried.)
+  heroCard2 = page.rows('.canvas-frame')[0];
+  const phonePreset = heroCard2 ?
+    heroCard2.find((one) => one.dataset && one.dataset.act === 'design-viewport-phone')[0] : null;
+  check('C7 the frame bar carries the viewport presets',
+    !!heroCard2 &&
+      !!heroCard2.find((one) => one.dataset && one.dataset.act === 'design-viewport-desktop')[0] &&
+      !!phonePreset,
+    heroCard2 ? 'presets present' : 'no card');
+  if (phonePreset) {
+    phonePreset.click();
+    await flush(60);
+    const resize = page.calls.filter((one) => one.method === 'POST' &&
+      String(one.body || '').includes('"op":"frame-update"') &&
+      String(one.body || '').includes('"w":390')).slice(-1)[0];
+    check('C7 the preset resize writes through the writer',
+      !!resize, resize ? String(resize.body).slice(0, 130) : 'no resize');
+  }
+  // P3 (design-parity C10): the set picker on the bar assigns the
+  // membership through the writer; an empty pick clears it.
+  const heroCard3 = page.rows('.canvas-frame')[0];
+  const setPick = heroCard3 ?
+    heroCard3.find((one) => one.dataset &&
+      one.dataset.act === 'design-set-f-hero')[0] : null;
+  check('C10 the frame bar carries the set picker',
+    !!setPick && setPick.value === 'site',
+    setPick ? setPick.value : 'no picker');
+  if (setPick) {
+    setPick.value = '';
+    setPick.fire('change');
+    await flush(60);
+    const membership = page.calls.filter((one) => one.method === 'POST' &&
+      String(one.body || '').includes('"op":"frame-set"')).slice(-1)[0];
+    check('C10 the set change writes through frame-set',
+      !!membership && String(membership.body).includes('"set":""'),
+      membership ? String(membership.body).slice(0, 130) : 'no write');
   }
 }
 

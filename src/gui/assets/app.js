@@ -16406,6 +16406,54 @@
       bar.appendChild(badge(frame.pins.length + ' pin' + (frame.pins.length === 1 ? '' : 's'),
         frame.pins.some(function (pin) { return !pin.resolved_frame_id; }) ? 'warn' : 'ok'));
     }
+    // P3 (design-parity C7): the viewport presets sit on the frame —
+    // the source's own placement — and resize the page through the
+    // writer. The tweak card keeps its own copy.
+    (face.design.caps && face.design.caps.viewports || []).forEach(function (viewport) {
+      var preset = node('button', 'canvas-act', viewport.name.slice(0, 1));
+      preset.type = 'button';
+      preset.setAttribute('aria-label', 'resize ' + frame.name + ' to ' + viewport.name);
+      preset.title = viewport.name + ' \u00b7 ' + viewport.w + '\u00d7' + viewport.h;
+      preset.dataset.act = 'design-viewport-' + viewport.name;
+      if (Math.round(frame.w) === viewport.w && Math.round(frame.h) === viewport.h) {
+        preset.classList.add('on');
+      }
+      preset.addEventListener('click', function (event) {
+        event.stopPropagation();
+        designWrite('frame-update', {
+          project: designBoard().slug, id: frame.id,
+          update: { w: viewport.w, h: viewport.h }
+        });
+      });
+      bar.appendChild(preset);
+    });
+    // P3 (design-parity C10): the page's set is assignable — the
+    // membership the model's `set` argument writes, surfaced as a
+    // picker over the board's sets; the badge follows the re-read.
+    var setNames = ((face.design && face.design.active && face.design.active.sets) || [])
+      .map(function (one) { return one.name; });
+    if (setNames.length || frame.set) {
+      var setPick = node('select', 'canvas-act canvas-set');
+      setPick.setAttribute('aria-label', 'the page\u2019s set');
+      setPick.dataset.act = 'design-set-' + frame.id;
+      var noSet = node('option', null, 'no set');
+      noSet.value = '';
+      setPick.appendChild(noSet);
+      setNames.forEach(function (setName) {
+        var option = node('option', null, setName);
+        option.value = setName;
+        setPick.appendChild(option);
+      });
+      setPick.value = frame.set || '';
+      setPick.addEventListener('click', function (event) { event.stopPropagation(); });
+      setPick.addEventListener('change', function (event) {
+        event.stopPropagation();
+        designWrite('frame-set', {
+          project: designBoard().slug, id: frame.id, set: setPick.value
+        });
+      });
+      bar.appendChild(setPick);
+    }
     // The packet's selection: a check on the bar, gathered into the
     // export. It is separate from the board's own selection, which drives
     // refine and fixes.
@@ -16737,9 +16785,26 @@
       sizes.appendChild(button);
     });
     sections.push(['the viewport', sizes]);
-    sections.push(['the frame', node('p', 'derivation',
-      frame.name + ' \u00b7 ' + Math.round(frame.w) + '\u00d7' + Math.round(frame.h) +
-      (frame.model ? ' \u00b7 ' + frame.model : '') + ' \u00b7 ' + (frame.versions || []).length + ' version(s)')]);
+    // P3 (design-parity C8): the frame line carries the page's whole
+    // account — name, dimensions, model, versions, the generation's
+    // provenance when the frame carries it, and the description the
+    // model wrote (the source's inspector shows the same).
+    var provenance = '';
+    var meta = frame.gen_meta || null;
+    if (meta) {
+      var bits = [];
+      var duration = meta.duration_ms != null ? meta.duration_ms
+        : (meta.duration != null ? meta.duration : meta.ms);
+      if (duration != null) bits.push((Math.round(duration / 100) / 10) + 's');
+      var tokens = meta.tokens != null ? meta.tokens : meta.total_tokens;
+      if (tokens != null) bits.push(tokens + ' tokens');
+      if (bits.length) provenance = ' \u00b7 ' + bits.join(' \u00b7 ');
+    }
+    var frameLine = frame.name + ' \u00b7 ' + Math.round(frame.w) + '\u00d7' + Math.round(frame.h) +
+      (frame.model ? ' \u00b7 ' + frame.model : '') + provenance +
+      ' \u00b7 ' + (frame.versions || []).length + ' version(s)' +
+      (frame.description ? '\n' + frame.description : '');
+    sections.push(['the frame', node('p', 'derivation', frameLine)]);
     openDrawer(frame.name + ' \u00b7 tweaks', sections);
   }
 
@@ -16873,13 +16938,18 @@
       (review.fixes || []).forEach(function (fix) {
         scores.appendChild(node('p', 'derivation', '\u2192 ' + fix));
       });
-      // The history the store keeps, oldest first: each earlier review is
-      // one line with its own date and summary.
+      // The history the store keeps, oldest first: each earlier review
+      // is one line with its date, its summary, and the delta it
+      // introduced — the change from the review before it (P3, C9).
       if ((review.history || []).length) {
         var history = node('div', 'design-review-history');
-        review.history.forEach(function (older) {
+        review.history.forEach(function (older, index) {
           var line = node('p', 'derivation',
             (older.reviewed || '') + ' \u2014 ' + (older.summary || ''));
+          if (index > 0) {
+            var deltas = designScoreDeltas(review.history[index - 1].scores, older.scores);
+            if (deltas) line.textContent += ' \u00b7 ' + deltas;
+          }
           history.appendChild(line);
         });
         scores.appendChild(history);
@@ -16891,6 +16961,22 @@
     var ask = node('button', 'replay-button replay-resume', 'ask the designer to review');
     ask.type = 'button';
     ask.dataset.act = 'design-review-ask';
+    // P3 (design-parity C9): the critic is the review's own choice —
+    // the designated models, availability named, the pick riding the
+    // run as its pin (a review reads through a different model than
+    // the one that drew the page).
+    var critic = node('select', 'knob-box');
+    critic.dataset.act = 'design-critic';
+    critic.setAttribute('aria-label', 'the critic model');
+    ((face.design && face.design.models) || []).forEach(function (model) {
+      var value = model.provider + '/' + model.model;
+      var option = node('option', null,
+        model.model + (model.available ? '' : ' \u00b7 unavailable'));
+      option.value = value;
+      option.disabled = !model.available;
+      critic.appendChild(option);
+    });
+    if (el.designModel.value) critic.value = el.designModel.value;
     // The ask drives both captures in Rust and starts the run with the
     // task it composes: desktop and phone reach the vision read together.
     ask.addEventListener('click', function () {
@@ -16909,7 +16995,7 @@
           return;
         }
         closeDrawer();
-        designStartRun(answer.task, board.slug);
+        designStartRun(answer.task, board.slug, critic.value);
       }).catch(function () { ask.disabled = false; });
     });
     var applyFixes = node('button', 'replay-button', 'apply the fixes');
@@ -16919,19 +17005,73 @@
       designSelect(frame.id);
       designAsk('fixes', '', frame.id);
     });
+    // P3 (design-parity C9): fix drift — the coherence report's own
+    // findings, as the run's instruction. The first incoherent set on
+    // the board names the target page and every finding the drift
+    // carries; the run repairs what the drift names.
+    var drift = null;
+    ((board && board.sets) || []).forEach(function (set) {
+      var coherence = set.coherence || {};
+      var broken = (coherence.missing || []).length +
+        (coherence.broken || []).length + (coherence.duplicates || []).length;
+      if (!drift && broken) drift = { set: set, coherence: coherence };
+    });
+    var fixDrift = null;
+    if (drift) {
+      fixDrift = node('button', 'replay-button', 'fix the drift');
+      fixDrift.type = 'button';
+      fixDrift.dataset.act = 'design-fix-drift';
+      fixDrift.addEventListener('click', function () {
+        var findings = [];
+        (drift.coherence.missing || []).forEach(function (one) {
+          findings.push('a page misses the shared token `' + one + '`');
+        });
+        (drift.coherence.broken || []).forEach(function (one) {
+          findings.push('a nav link resolves to no page: `' + one + '`');
+        });
+        (drift.coherence.duplicates || []).forEach(function (one) {
+          findings.push('a duplicate slug: `' + one + '`');
+        });
+        var target = ((drift.set.pages || [])[0] || {}).id || '';
+        if (target) designSelect(target);
+        designAsk('fixes',
+          'Fix the page set `' + drift.set.name + '`\u2019s coherence drift: ' +
+          findings.join('; ') + '. Repair exactly what the drift names \u2014 the ' +
+          'same tokens on every page, every nav target a real page, one slug each.',
+          target);
+      });
+    }
     openDrawer(frame.name + ' \u00b7 review', [
       ['the deterministic checks', facts],
       ['the designer\u2019s review', scores],
       ['the ask', (function () {
         var holder = node('div', 'canvas-inline');
+        holder.appendChild(critic);
         holder.appendChild(ask);
         if (review && (review.fixes || []).length) holder.appendChild(applyFixes);
+        if (fixDrift) holder.appendChild(fixDrift);
         return holder;
       })()],
       ['why both', node('p', 'derivation',
         'the scan measures the page\u2019s own tokens and markup; the review reads the rendered page \u2014 ' +
         'measured facts win where they disagree.')]
     ]);
+  }
+
+  /// The score deltas between two reviews: the names that moved, with
+  /// the sign — `spacing +2 \u00b7 contrast -1` — or nothing when every
+  /// score held. Unscored names are skipped, not guessed.
+  function designScoreDeltas(before, after) {
+    if (!before || !after) return '';
+    var parts = [];
+    Object.keys(after).forEach(function (key) {
+      var was = before[key];
+      var now = after[key];
+      if (typeof was !== 'number' || typeof now !== 'number' || was === now) return;
+      var change = now - was;
+      parts.push(key + ' ' + (change > 0 ? '+' : '') + change);
+    });
+    return parts.join(' \u00b7 ');
   }
 
   function designExportCard(frame) {
@@ -17371,7 +17511,8 @@
 
   /// Start the run and watch for its landing: the pending record carries
   /// the frames the board had, so the diff is the run's contribution.
-  function designStartRun(task, slug) {
+  /// An explicit pin (the review's critic) outruns the composer's pick.
+  function designStartRun(task, slug, pin) {
     var runPath = '/api/run' + (face.session ? '?session=' + encodeURIComponent(face.session) : '');
     // The page names the model: `provider/model` pins both halves, so the
     // router skips the judgment entirely — routing for a design run is
@@ -17379,7 +17520,7 @@
     post(runPath, {
       task: task,
       mode: face.permissions,
-      pin: el.designModel.value || face.providerPin || null
+      pin: pin || el.designModel.value || face.providerPin || null
     })
       .then(function (reply) {
         if (reply.status === 200) {
