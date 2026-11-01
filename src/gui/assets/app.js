@@ -20084,6 +20084,10 @@
     }).then(function (reply) {
       if (epoch !== undefined && epoch !== face.commandEpoch) return;
       if (reply.status !== 200 || !reply.body.ranked) return;
+      // A partial semantic answer (the shared embedder failed some
+      // candidates) is not an order: keep the lexical pass rather than
+      // ranking on a hole.
+      if (reply.body.degraded) return;
       var best = reply.body.ranked.filter(function (entry) { return entry.score > 0.25; });
       if (!best.length) return;
       var order = best.map(function (entry) { return entry.index; });

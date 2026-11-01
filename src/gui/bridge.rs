@@ -2905,7 +2905,7 @@ impl Bridge {
         })
         .await
         .unwrap_or_default();
-        let mut ranked = ranked;
+        let (mut ranked, degraded) = ranked;
         ranked.sort_by(|left, right| {
             right["score"]
                 .as_f64()
@@ -2913,7 +2913,7 @@ impl Bridge {
                 .partial_cmp(&left["score"].as_f64().unwrap_or(0.0))
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
-        json!({"type": "rank", "ranked": ranked})
+        json!({"type": "rank", "ranked": ranked, "degraded": degraded})
     }
 
     /// The inspector's related suggestions: one selected object, the
@@ -9892,22 +9892,32 @@ pub(crate) fn rank_with(
     embedder: &dyn crate::memory::Embedder,
     asked: &str,
     candidates: &[String],
-) -> Vec<serde_json::Value> {
+) -> (Vec<serde_json::Value>, bool) {
     let query = embedder.embed(asked);
-    candidates
+    // Whether the semantic leg answered completely. A backend that fails
+    // one candidate mid-flight (a busy shared embedder) leaves a zero
+    // where a real score belongs, and a ranker that cannot say so lets a
+    // partial answer read as a considered one — the honest surface names
+    // the degradation and the browser falls back to its lexical pass.
+    let mut degraded = query.is_none();
+    let ranked = candidates
         .iter()
         .enumerate()
         .map(|(index, text)| {
             let score = match &query {
-                Some(query) => embedder
-                    .embed(text)
-                    .map(|vector| crate::memory::cosine(query, &vector))
-                    .unwrap_or(0.0),
+                Some(query) => match embedder.embed(text) {
+                    Some(vector) => crate::memory::cosine(query, &vector),
+                    None => {
+                        degraded = true;
+                        0.0
+                    }
+                },
                 None => 0.0,
             };
             serde_json::json!({"index": index, "score": score})
         })
-        .collect()
+        .collect();
+    (ranked, degraded)
 }
 
 #[cfg(test)]

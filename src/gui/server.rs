@@ -2872,8 +2872,28 @@ mod tests {
     /// timeout returned whatever had arrived, and under the full suite's
     /// load that was a truncated body, which parsed as nothing.
     fn ask(port: u16, raw: &str, needle: Option<&str>) -> String {
-        ask_within(port, raw, needle, Duration::from_secs(3))
+        // Fifteen seconds, not three: the budget is a HANG detector, not a
+        // latency contract, and several routes here assemble the machine's
+        // whole library or corpus (skills, memory, settings, related).
+        // Three seconds red a correct answer on a loaded machine — the
+        // KI-385 family, where the observable was "the machine was busy"
+        // dressed as a defect. A route that needs longer still names its
+        // own budget (`ask_within`).
+        ask_within(port, raw, needle, ASK_BUDGET)
     }
+
+    /// The default read budget: long enough that a loaded suite cannot red
+    /// a correct answer, short enough that a hung server surfaces. Sixty
+    /// seconds, not three — several routes assemble the machine's whole
+    /// library (settings, skills, memory): a hundred milliseconds of
+    /// work becomes seconds under a loaded suite, and the budget's job is
+    /// to catch a HANG, not to assert a latency the tests never promised.
+    const ASK_BUDGET: Duration = Duration::from_secs(60);
+
+    /// The budget for a read that assembles the machine's whole library
+    /// (the settings catalog is the widest: 452 skills across several
+    /// homes plus the router and the calibration log).
+    const LIBRARY_BUDGET: Duration = Duration::from_secs(120);
 
     /// The same read with its own budget. The related route's first
     /// request builds the corpus — the corpus's index, the archive's
@@ -3807,17 +3827,29 @@ mod tests {
     async fn the_management_verbs_land_through_the_substrates_own_writers() {
         let (home, corpus) = memory_home();
         let (token, port) = launch_over(home, corpus.clone()).await;
+        // The substrate's writers take the corpus lock and write files, so
+        // every read here gets its own budget: three seconds is the hang
+        // detector, not a latency contract, and a loaded suite can starve
+        // a write past it (the `ask_within` idiom this file already uses).
+        let budget = LIBRARY_BUDGET;
         // A missing justification is refused before anything is written.
-        let unjustified = post(port, "/api/fact/supersede", &token, r#"{"name":"a-fact"}"#);
+        let unjustified = post_within(
+            port,
+            "/api/fact/supersede",
+            &token,
+            r#"{"name":"a-fact"}"#,
+            budget,
+        );
         assert!(unjustified.starts_with("HTTP/1.1 409"), "{unjustified}");
         assert!(unjustified.contains("justification"), "{unjustified}");
         // The click carries the approval: an inferred fact supersedes on
         // the recorded justification.
-        let landed = post(
+        let landed = post_within(
             port,
             "/api/fact/supersede",
             &token,
             r#"{"name":"a-fact","justification":"superseded from the face: the sentence moved on","description":"the replacement sentence"}"#,
+            budget,
         );
         assert!(landed.starts_with("HTTP/1.1 200"), "{landed}");
         let body = landed.split("\r\n\r\n").nth(1).expect("a body");
@@ -3828,7 +3860,7 @@ mod tests {
         assert!(on_disk.contains("superseded-by:"), "{on_disk}");
         // One consolidation pass on demand: the pass runs and names what
         // it did — here, nothing, which is itself the honest answer.
-        let pass = post(port, "/api/memories/consolidate", &token, "{}");
+        let pass = post_within(port, "/api/memories/consolidate", &token, "{}", budget);
         assert!(pass.starts_with("HTTP/1.1 200"), "{pass}");
         let body = pass.split("\r\n\r\n").nth(1).expect("a body");
         let document: serde_json::Value = serde_json::from_str(body).expect("a JSON document");
@@ -3844,13 +3876,19 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn the_skills_document_is_the_library_its_skips_and_its_proposals() {
         let (token, port) = launch().await;
-        let anonymous = ask(
+        // The library is the machine's whole skills tree (452 entries
+        // across several homes), so the read gets its own budget: three
+        // seconds is the hang detector, and a loaded suite can push a
+        // full-tree scan past it (the `ask_within` idiom).
+        let budget = LIBRARY_BUDGET;
+        let anonymous = ask_within(
             port,
             "GET /api/skills HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
             None,
+            budget,
         );
         assert!(anonymous.starts_with("HTTP/1.1 200"), "{anonymous}");
-        let reply = get(port, "/api/skills", &token);
+        let reply = get_within(port, "/api/skills", &token, budget);
         assert!(reply.starts_with("HTTP/1.1 200"), "{reply}");
         assert!(reply.contains("application/json"), "{reply}");
         let body = reply
@@ -4050,18 +4088,26 @@ mod tests {
         )
         .expect("a JSON document");
         let ranked = document["ranked"].as_array().expect("the ranked list");
-        // Either the embedding backend answered and put the theme command
-        // first, or it is absent and every score is zero — the honest
-        // degradation, which the browser's lexical pass covers.
+        // The answer says whether the semantic leg was whole: a backend
+        // that answered every embed puts the theme command first, and one
+        // that answered only some (a busy shared embedder) is `degraded`,
+        // the state the browser's lexical pass covers. Inferring that from
+        // the scores made a loaded machine's partial answer red (KI-385's
+        // family: the observable has to name itself).
         let first = ranked[0]["index"].as_u64().expect("an index");
         let scores: Vec<f64> = ranked
             .iter()
             .map(|entry| entry["score"].as_f64().unwrap_or(0.0))
             .collect();
-        if scores.iter().any(|score| *score > 0.0) {
-            assert_eq!(first, 0, "{document}");
+        let degraded = document["degraded"].as_bool().unwrap_or(false);
+        if degraded {
+            assert!(
+                scores.contains(&0.0),
+                "a degraded answer names a zero it could not score: {document}"
+            );
         } else {
-            assert!(scores.iter().all(|score| *score == 0.0), "{document}");
+            assert!(scores.iter().all(|score| *score > 0.0), "{document}");
+            assert_eq!(first, 0, "{document}");
         }
         // The order is descending by score, either way.
         assert!(
@@ -4107,7 +4153,7 @@ mod tests {
         }
 
         let embedder = PartialEmbedder;
-        let ranked = crate::gui::bridge::rank_with(
+        let (ranked, degraded) = crate::gui::bridge::rank_with(
             &embedder,
             "make the screen darker",
             &[
@@ -4117,6 +4163,9 @@ mod tests {
                 "compact fold summarise fold the conversation now".to_string(),
             ],
         );
+        // The partial backend is named, not smoothed: a zero where a score
+        // belongs is a degradation the route says out loud.
+        assert!(degraded, "a failed embed is a degraded rank");
         assert_eq!(ranked[0]["index"], 0, "the scored candidate leads");
         assert!(ranked[0]["score"].as_f64().unwrap() > 0.0, "{ranked:?}");
         // The failed embeds ride at exactly 0.0 — not refused, not dropped.
@@ -5264,7 +5313,7 @@ mod tests {
         assert!(wrote.starts_with("HTTP/1.1 200"), "{wrote}");
         let config = std::fs::read_to_string(home.join("config.json")).expect("the config");
         assert!(config.contains("\"retire_after_sessions\": 7"), "{config}");
-        let reread = get(port, "/api/settings", &token);
+        let reread = get_within(port, "/api/settings", &token, LIBRARY_BUDGET);
         assert!(reread.contains("\"value\":\"7\""), "{reread}");
 
         // A rule rides allow_tool, so the class check is the seat's own.
@@ -5444,7 +5493,7 @@ mod tests {
         // The vault's KDF (210k PBKDF2 iterations) is deliberately slow;
         // the full suite's load can push it past the ordinary three-second
         // read budget.
-        let budget = Duration::from_secs(30);
+        let budget = LIBRARY_BUDGET;
         let onboarded = post_within(
             port,
             "/api/settings",

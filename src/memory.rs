@@ -2166,17 +2166,109 @@ impl std::fmt::Debug for Memory {
     }
 }
 
-/// The embedder the corpus loads with, from the probe's answer cached
-/// per process. KI-064: every load ran one real round trip, so a chat
-/// session paid it per message and a black-holed port would cost the
-/// probe's five-second budget every task. The endpoint's liveness
-/// rarely changes within a process's life, so the answer is taken once
-/// and the rest of the session reads it.
+/// The process's probe slot.
+///
+/// The probe is one real round trip (up to `PROBE_TIMEOUT` with retries),
+/// and the answer outlives any single call — KI-064, so a chat session
+/// does not pay it per message. But **no caller waits on it**: a caller
+/// that finds the probe unresolved answers with the keyword-only
+/// degradation, and the probe lands on its own thread. The old shape
+/// (`OnceLock::get_or_init(probe)`) ran the whole retrying probe on
+/// whichever thread arrived first, under the initialiser's own lock:
+/// a memory write inside the face's async worker could hold a tokio
+/// worker for sixteen seconds, two such writes stopped the server
+/// answering at all, and a probe that failed at startup stayed failed
+/// for the process's life (KI-385's family — the observable, and the
+/// liveness of a shared service, are what the suite kept tripping on).
+enum ProbeSlot {
+    Unprobed,
+    Probing,
+    Ready(Box<dyn Embedder>),
+    /// No backend answered. Retried after the cooldown rather than
+    /// cached forever: a busy endpoint at startup must not leave the
+    /// process keyword-only.
+    Failed(std::time::Instant),
+}
+
+/// How long a failed probe is believed before another attempt.
+const PROBE_COOLDOWN: Duration = Duration::from_secs(60);
+
+fn probe_slot() -> &'static std::sync::Mutex<ProbeSlot> {
+    static SLOT: std::sync::OnceLock<std::sync::Mutex<ProbeSlot>> = std::sync::OnceLock::new();
+    SLOT.get_or_init(|| std::sync::Mutex::new(ProbeSlot::Unprobed))
+}
+
+/// One probe on its own thread, recording what it found.
+fn start_probe() {
+    std::thread::spawn(|| {
+        let landed: Option<Box<dyn Embedder>> = HttpEmbedder::probe(&embedding_endpoint())
+            .map(|http| Box::new(http) as Box<dyn Embedder>);
+        let now = std::time::Instant::now();
+        let mut guard = probe_slot()
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        *guard = match landed {
+            Some(embedder) => ProbeSlot::Ready(embedder),
+            None => ProbeSlot::Failed(now),
+        };
+    });
+}
+
+/// The embedder the corpus loads with: the probe's answer once it is in,
+/// the keyword-only degradation until then. Never blocks, never poisons.
 pub fn probed_embedder() -> Box<dyn Embedder> {
-    static PROBED: std::sync::OnceLock<Box<dyn Embedder>> = std::sync::OnceLock::new();
-    PROBED
-        .get_or_init(|| probe(&embedding_endpoint()).embedder())
-        .box_clone()
+    let mut guard = probe_slot()
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
+    match &*guard {
+        ProbeSlot::Ready(embedder) => embedder.box_clone(),
+        ProbeSlot::Probing => Box::new(KeywordOnly),
+        ProbeSlot::Failed(at) if at.elapsed() < PROBE_COOLDOWN => Box::new(KeywordOnly),
+        ProbeSlot::Unprobed | ProbeSlot::Failed(_) => {
+            *guard = ProbeSlot::Probing;
+            drop(guard);
+            start_probe();
+            Box::new(KeywordOnly)
+        }
+    }
+}
+
+/// Resolve the probe now, waiting for it within `timeout`.
+///
+/// This is the seam for a caller that needs the live answer rather than
+/// the degradation — the suite's live-embed tests, which hold the embed
+/// gate and then assert against the real backend. Production code never
+/// waits: a request that arrives before the probe reads keyword-only and
+/// the next one reads the vector path.
+#[cfg(test)]
+pub(crate) fn probed_embedder_ready(timeout: Duration) -> Box<dyn Embedder> {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        let mut probing = false;
+        {
+            let mut guard = probe_slot()
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            match &*guard {
+                ProbeSlot::Ready(embedder) => return embedder.box_clone(),
+                ProbeSlot::Probing => probing = true,
+                // A failed attempt is retried, not believed: the caller
+                // asked to wait for the backend, and on a one-slot server
+                // a probe that missed the queue said nothing about the
+                // service.
+                ProbeSlot::Unprobed | ProbeSlot::Failed(_) => {
+                    *guard = ProbeSlot::Probing;
+                }
+            }
+        }
+        if !probing {
+            start_probe();
+        }
+        if std::time::Instant::now() >= deadline {
+            return Box::new(KeywordOnly);
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
 }
 
 /// The suite's one live-embedder gate — KI-340's class, widened

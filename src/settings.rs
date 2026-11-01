@@ -1674,8 +1674,10 @@ mod router_tests {
             "base_url": format!("http://{addr}/v1"),
         })
         .to_string();
+        // No passphrase: the dotenv is the store, whatever the process
+        // has been unlocked to by anything else running in parallel.
         let (id, store, discovery) =
-            set_provider_with_key(&home, &entry, Some("the-key-value")).unwrap();
+            set_provider_with_key_with(&home, &entry, Some("the-key-value"), None).unwrap();
         assert_eq!(id, "myprovider");
         assert_eq!(store.as_deref(), Some(".env"), "no passphrase: the dotenv");
         // (the state read names the same store its own way)
@@ -1740,7 +1742,9 @@ mod router_tests {
         set_provider(&home, &amended).unwrap();
         // The reload resolves the key the way the walk does — the dotenv
         // here — and names the absence rather than listing blind.
-        set_secret(&home, "MYPROVIDER_API_KEY", "the-key-value").unwrap();
+        // The dotenv is the store here whatever the process may be
+        // unlocked to: the write names no passphrase.
+        set_secret_with(&home, "MYPROVIDER_API_KEY", "the-key-value", None).unwrap();
         let discovered = rediscover_provider(&home, "myprovider").unwrap();
         assert!(discovered.ok, "{:?}", discovered.error);
         let document = read_json(&home.join("config.json")).unwrap();
@@ -2722,6 +2726,18 @@ pub fn set_provider_with_key(
     entry: &str,
     key: Option<&str>,
 ) -> Result<(String, Option<String>, Option<Discovery>), String> {
+    let passphrase = crate::home::vault_passphrase();
+    set_provider_with_key_with(home, entry, key, passphrase.as_deref())
+}
+
+/// The same save with the vault's passphrase in hand, so the store it
+/// picks is testable without the process-global unlock.
+pub fn set_provider_with_key_with(
+    home: &Path,
+    entry: &str,
+    key: Option<&str>,
+    passphrase: Option<&str>,
+) -> Result<(String, Option<String>, Option<Discovery>), String> {
     let value: serde_json::Value = serde_json::from_str(entry)
         .map_err(|error| format!("the entry is not valid JSON: {error}"))?;
     let id = value
@@ -2740,7 +2756,7 @@ pub fn set_provider_with_key(
             .filter(|name| !name.trim().is_empty())
             .map(str::to_string)
             .unwrap_or_else(|| format!("{}_API_KEY", id.to_ascii_uppercase()));
-        store = Some(set_secret(home, &name, key)?);
+        store = Some(set_secret_with(home, &name, key, passphrase)?);
     }
     // Verify before saving: the discovery runs against the key in hand
     // (just written, or the env name the entry carries — resolved the

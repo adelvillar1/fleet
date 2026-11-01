@@ -273,12 +273,21 @@ impl RelayKeys {
     }
 }
 
-/// The relay client: the address, the device session, and the secret.
-/// One per face; the session outlives any single poll.
+/// The relay client: the address, the device session, the secret, and
+/// its own HTTP agent.
+///
+/// The agent is the client's, not `ureq`'s process-wide default, and it
+/// keeps **no idle pool**: the relay loop is one exchange at a time
+/// against a server that closes after answering, so a pooled connection
+/// is one the other end has already dropped — reusing it is a spurious
+/// "Error encountered in a header" on a read (KI-385). A connect timeout
+/// makes an unreachable relay fail in seconds rather than spending the
+/// poll's whole ceiling on a socket that never opens.
 pub struct Client {
     base_url: String,
     sid: String,
     hash: String,
+    agent: ureq::Agent,
 }
 
 impl Client {
@@ -288,9 +297,17 @@ impl Client {
             base_url: base_url.trim_end_matches('/').to_string(),
             sid,
             hash,
+            agent: ureq::AgentBuilder::new()
+                .max_idle_connections(0)
+                .max_idle_connections_per_host(0)
+                .timeout_connect(Duration::from_secs(10))
+                .timeout(CALL_TIMEOUT)
+                .build(),
         }
     }
+}
 
+impl Client {
     /// The relay's base URL.
     pub fn base_url(&self) -> &str {
         &self.base_url
@@ -300,14 +317,26 @@ impl Client {
     /// twice is the same session, which is what a reconnect wants.
     pub fn join(&self) -> Result<(), String> {
         let url = format!("{}/join", self.base_url);
-        ureq::post(&url)
-            .timeout(CALL_TIMEOUT)
-            .send_json(Join {
+        // One retry: a join is idempotent by its own contract (joining
+        // twice is the same session), and a connection reset on a first
+        // exchange with a freshly started relay is a transport fact, not
+        // an answer.
+        let join = || {
+            self.agent.post(&url).send_json(Join {
                 sid: self.sid.clone(),
                 hash: self.hash.clone(),
             })
-            .map_err(|error| format!("the relay refused the join: {error}"))?;
-        Ok(())
+        };
+        match join() {
+            Ok(_) => Ok(()),
+            Err(first) => {
+                std::thread::sleep(Duration::from_millis(150));
+                match join() {
+                    Ok(_) => Ok(()),
+                    Err(_) => Err(format!("the relay refused the join: {first}")),
+                }
+            }
+        }
     }
 
     /// Hold one poll and return the frames that arrived. An empty vec is
@@ -315,8 +344,9 @@ impl Client {
     /// ceiling: the caller polls again.
     pub fn poll(&self) -> Result<Vec<Frame>, String> {
         let url = format!("{}/poll?sid={}", self.base_url, self.sid);
-        let response = ureq::get(&url)
-            .timeout(CALL_TIMEOUT)
+        let response = self
+            .agent
+            .get(&url)
             .call()
             .map_err(|error| format!("the relay poll failed: {error}"))?;
         let frames: Vec<Frame> = response
@@ -328,11 +358,22 @@ impl Client {
     /// Post one answer back against its frame's id.
     pub fn answer(&self, answer: &Answer) -> Result<(), String> {
         let url = format!("{}/frame?sid={}", self.base_url, self.sid);
-        ureq::post(&url)
-            .timeout(CALL_TIMEOUT)
-            .send_json(answer)
-            .map_err(|error| format!("the relay refused the answer: {error}"))?;
-        Ok(())
+        // One retry, for the same reason as the join: an answer is keyed
+        // by the frame's id, so a duplicate is harmless and a reset on
+        // the first exchange should not cost the phone its reply. A poll
+        // does NOT retry: a poll the relay already received has handed
+        // its frames out, and a second one would find an empty queue.
+        let post = || self.agent.post(&url).send_json(answer);
+        match post() {
+            Ok(_) => Ok(()),
+            Err(first) => {
+                std::thread::sleep(Duration::from_millis(150));
+                match post() {
+                    Ok(_) => Ok(()),
+                    Err(_) => Err(format!("the relay refused the answer: {first}")),
+                }
+            }
+        }
     }
 }
 
@@ -651,16 +692,39 @@ mod tests {
                 let relay = Arc::clone(&relay);
                 tokio::spawn(async move {
                     use tokio::io::{AsyncReadExt, AsyncWriteExt};
-                    let mut head = Vec::new();
-                    let mut chunk = [0u8; 1024];
-                    while !head.windows(4).any(|w| w == b"\r\n\r\n") {
+                    // Read the WHOLE request — the head and the body its
+                    // `Content-Length` names — before answering. Closing
+                    // with unread bytes in the receive buffer makes the
+                    // kernel reset the connection under the client's read
+                    // (a spurious "Error encountered in a header"), which
+                    // is exactly the KI-385 signature under load.
+                    let mut buffer = Vec::new();
+                    let mut chunk = [0u8; 4096];
+                    let head_end = loop {
+                        if let Some(at) = buffer.windows(4).position(|w| w == b"\r\n\r\n") {
+                            break at + 4;
+                        }
                         let read = stream.read(&mut chunk).await.unwrap_or(0);
                         if read == 0 {
                             return;
                         }
-                        head.extend_from_slice(&chunk[..read]);
+                        buffer.extend_from_slice(&chunk[..read]);
+                    };
+                    let text = String::from_utf8_lossy(&buffer[..head_end]).to_string();
+                    let declared = text
+                        .lines()
+                        .filter_map(|line| line.split_once(':'))
+                        .find(|(name, _)| name.eq_ignore_ascii_case("content-length"))
+                        .and_then(|(_, value)| value.trim().parse::<usize>().ok())
+                        .unwrap_or(0);
+                    while buffer.len() < head_end + declared {
+                        let read = stream.read(&mut chunk).await.unwrap_or(0);
+                        if read == 0 {
+                            break;
+                        }
+                        buffer.extend_from_slice(&chunk[..read]);
                     }
-                    let text = String::from_utf8_lossy(&head).to_string();
+                    let body_text = String::from_utf8_lossy(&buffer[head_end..]).to_string();
                     let (status, body) = if text.starts_with("POST /join") {
                         relay
                             .joined
@@ -675,8 +739,11 @@ mod tests {
                             .most_in_flight
                             .fetch_max(flight, std::sync::atomic::Ordering::SeqCst);
                         // Hold the poll the way the real relay does: the
-                        // client's own timeout is what ends it.
-                        std::thread::sleep(std::time::Duration::from_millis(300));
+                        // client's own timeout is what ends it. `tokio`'s
+                        // sleep, not a thread's — a sleeping worker under a
+                        // parallel suite starves the accept loop that every
+                        // other connection needs (KI-385).
+                        tokio::time::sleep(Duration::from_millis(300)).await;
                         relay
                             .in_flight
                             .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
@@ -699,11 +766,7 @@ mod tests {
                             format!("{}\n", serde_json::to_string(&queued).unwrap()),
                         )
                     } else if text.starts_with("POST /frame") {
-                        let body = text
-                            .split("\r\n\r\n")
-                            .nth(1)
-                            .unwrap_or_default()
-                            .to_string();
+                        let body = body_text.clone();
                         if let Ok(answer) = serde_json::from_str::<Answer>(body.trim()) {
                             relay.record(&answer.body);
                             relay
@@ -721,6 +784,10 @@ mod tests {
                         body.len()
                     );
                     let _ = stream.write_all(reply.as_bytes()).await;
+                    let _ = stream.flush().await;
+                    // Half-close before dropping: the client reads a clean
+                    // end of stream rather than a reset.
+                    let _ = stream.shutdown().await;
                 });
             }
         });

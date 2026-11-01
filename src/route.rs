@@ -5556,8 +5556,12 @@ mod tests {
             !plain.contains_key("STEPFUN_API_KEY"),
             "the plaintext no longer carries the key"
         );
-        crate::home::unlock_vault("vault-test-pass");
-        let overlaid = crate::home::read_dotenv_with_process_vault(&home);
+        // The passphrase rides the read, not the process: a global
+        // unlock here is visible to every other test running at the same
+        // moment, and a settings test that expects the dotenv then finds
+        // the vault instead (the KI-385 family — a green-alone test whose
+        // process-global reach reds a neighbour under a parallel suite).
+        let overlaid = crate::home::read_dotenv_with_vault(&home, Some("vault-test-pass"));
         assert_eq!(
             overlaid.get("STEPFUN_API_KEY").map(String::as_str),
             Some("sk-sealed-value"),
@@ -5572,10 +5576,6 @@ mod tests {
             .find(|entry| entry.candidate.key_env == "STEPFUN_API_KEY")
             .expect("a roster candidate keyed by STEPFUN_API_KEY");
         assert!(stepfun.usable(), "the sealed key makes it usable");
-        // The unlock is this test's alone: it never leaks into another
-        // test's resolution.
-        crate::home::lock_vault();
-        crate::home::reset_vault_unlock();
         let _ = std::fs::remove_dir_all(&home);
     }
 

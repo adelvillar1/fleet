@@ -131,6 +131,13 @@ pub fn vault_passphrase() -> Option<String> {
 }
 
 /// Hold `passphrase` for this process until it exits or [`lock_vault`].
+///
+/// This is a **process-global** switch, and a test that flips it is
+/// visible to every other test running at the same moment: a settings
+/// test that expects a secret in `.env` finds it in the vault instead.
+/// Tests must pass a passphrase through the `_with` seams
+/// (`read_dotenv_with_vault`, `set_secret_with`, `vault_onboard_with`)
+/// rather than unlock the process.
 pub fn unlock_vault(passphrase: &str) {
     let mut state = vault_unlock_state()
         .lock()
