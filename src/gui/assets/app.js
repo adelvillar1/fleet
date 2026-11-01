@@ -669,6 +669,7 @@
     designNote: document.getElementById('design-note'),
     designEyebrow: document.getElementById('design-eyebrow'),
     designNew: document.getElementById('design-new'),
+    designDelete: document.getElementById('design-delete'),
     panelLater: document.getElementById('panel-later'),
     laterTitle: document.getElementById('later-title'),
     laterNote: document.getElementById('later-note'),
@@ -16364,7 +16365,41 @@
   function designFrameBar(frame) {
     var bar = node('div', 'canvas-frame-bar');
     bar.dataset.drag = frame.id;
-    bar.appendChild(node('span', 'canvas-frame-name', frame.name));
+    var name = node('span', 'canvas-frame-name', frame.name);
+    // P2 (design-parity C6): the page renames in place — double-click
+    // the title bar's name, type, and the write lands through the
+    // writer the model's own renames ride.
+    name.addEventListener('dblclick', function (event) {
+      event.stopPropagation();
+      if (name.querySelector('input')) return;
+      var input = node('input', 'canvas-rename');
+      input.type = 'text';
+      input.value = frame.name;
+      input.setAttribute('aria-label', 'the page\u2019s name');
+      name.textContent = '';
+      name.appendChild(input);
+      input.focus();
+      input.select();
+      var finish = function (save) {
+        var next = input.value.trim();
+        name.textContent = '';
+        if (save && next && next !== frame.name) {
+          designWrite('frame-update', {
+            project: designBoard().slug,
+            id: frame.id,
+            update: { name: next }
+          });
+        } else {
+          name.textContent = frame.name;
+        }
+      };
+      input.addEventListener('blur', function () { finish(true); });
+      input.addEventListener('keydown', function (keyEvent) {
+        if (keyEvent.key === 'Enter') { keyEvent.preventDefault(); finish(true); }
+        else if (keyEvent.key === 'Escape') { keyEvent.preventDefault(); finish(false); }
+      });
+    });
+    bar.appendChild(name);
     if (frame.set) bar.appendChild(badge(frame.set, 'ok'));
     if (frame.model) bar.appendChild(badge(frame.model));
     if (frame.pins && frame.pins.length) {
@@ -17521,6 +17556,49 @@
         face.canvas = null;
         readDesign(true);
       });
+    });
+    // P2 (design-parity C4): the head's title renames the board in
+    // place — the rename op the writer already held, surfaced: double-
+    // click, type, and the write lands; Escape puts the name back.
+    el.designTitle.addEventListener('dblclick', function () {
+      var board = designBoard();
+      if (!board || el.designTitle.querySelector('input')) return;
+      var input = node('input', 'canvas-rename');
+      input.type = 'text';
+      input.value = board.name;
+      input.setAttribute('aria-label', 'the board\u2019s name');
+      el.designTitle.textContent = '';
+      el.designTitle.appendChild(input);
+      input.focus();
+      input.select();
+      var finish = function (save) {
+        var next = input.value.trim();
+        el.designTitle.textContent = '';
+        paintDesignHead();
+        if (save && next && next !== board.name) {
+          designWrite('rename', { project: board.slug, name: next });
+        }
+      };
+      input.addEventListener('blur', function () { finish(true); });
+      input.addEventListener('keydown', function (keyEvent) {
+        if (keyEvent.key === 'Enter') { keyEvent.preventDefault(); finish(true); }
+        else if (keyEvent.key === 'Escape') { keyEvent.preventDefault(); finish(false); }
+      });
+    });
+    // P2 (design-parity C5): the head's delete removes the board after
+    // a confirm that names what it takes — the source's own shape.
+    el.designDelete.addEventListener('click', function () {
+      var board = designBoard();
+      if (!board) return;
+      var count = (board.frames || []).length;
+      var takes = count + ' frame' + (count === 1 ? '' : 's') +
+        ', its conversation and its files';
+      if (!window.confirm('Delete `' + board.name + '`? It holds ' + takes +
+        ' \u2014 the board file is gone.')) return;
+      designSetSlug('');
+      face.designSelection = null;
+      face.canvas = null;
+      designWrite('board-delete', { project: board.slug });
     });
   }
 

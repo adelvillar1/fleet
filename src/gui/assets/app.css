@@ -7998,6 +7998,19 @@ body[data-work="collapsed"] .work-list { display: none; }
 }
 .design-focus[data-focus="page"] { color: var(--dsw-alias-accent); }
 .design-focus[data-focus="page"] .design-focus-dot { background: var(--dsw-alias-accent); }
+/* The in-place rename: an input that reads as the text it replaced —
+   the head's title and a frame bar's name both edit this way. */
+.canvas-rename {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  padding: 0;
+  width: 100%;
+  min-width: 80px;
+}
+.canvas-rename:focus { outline: none; }
 .design-chat-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
 .design-chat-log { display: flex; flex-direction: column; gap: var(--space-2); overflow-y: auto; min-height: 0; }
 .design-turn {

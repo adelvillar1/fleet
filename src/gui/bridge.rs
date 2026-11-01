@@ -7478,6 +7478,15 @@ fn design_write(home: &std::path::Path, body: &str) -> Result<Value, String> {
             remember_board(home, &slug, &project, "rename");
             json!({ "slug": slug, "name": project.name })
         }
+        // P2 (design-parity C5): the board deletes whole — the store,
+        // its digest and its fact — after the face's confirm.
+        "board-delete" => {
+            let slug = slug()?;
+            let project = crate::canvas::load(home, &slug)?;
+            crate::canvas::delete_project(home, &slug)?;
+            remember_board(home, &slug, &project, "delete");
+            json!({ "slug": slug })
+        }
         // K1 + K5: the binding — a board belongs to a project folder.
         // Setting or clearing it moves the digest (the old key's file is
         // removed by the op that knows it) and the board's fact.
@@ -10268,10 +10277,18 @@ mod tests {
             "{}",
             live[0].body
         );
-        // Delete (the writer the parity plan's board-delete op calls):
-        // the live fact retires and no account remains.
-        let bound = crate::canvas::load(&home, &slug).unwrap();
-        remember_board_at(&corpus, &slug, &bound, "delete").unwrap();
+        // P2: the board-delete op removes the store and the digest and
+        // retires the fact — the whole account, in one write.
+        design_write(
+            &home,
+            &serde_json::json!({ "op": "board-delete", "project": slug }).to_string(),
+        )
+        .expect("the delete");
+        assert!(!crate::canvas::exists(&home, &slug), "the board is gone");
+        assert!(
+            !crate::canvas::digest_path(&home, "fleet", &slug).exists(),
+            "the digest is gone with it"
+        );
         let facts = crate::memory::load_facts(&corpus);
         let live: Vec<_> = facts
             .iter()

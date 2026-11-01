@@ -189,6 +189,7 @@ class El {
   // pointer for a gesture; the stub has no capture, only the calls.
   setPointerCapture() {}
   releasePointerCapture() {}
+  select() {}
   click() { this.fire('click', {}); }
   fire(kind, event) {
     const ev = event || {};
@@ -4555,6 +4556,57 @@ async function theDesignCanvasCarriesItsFramesAndWritesGeometry() {
   check('C3 a send with a page carries that frame_id',
     !!pageTask && String(pageTask.body).includes('"frame_id":"f-hero"'),
     pageTask ? String(pageTask.body).slice(0, 160) : 'no task');
+
+  // P2 (design-parity C4): the head's title renames the board in
+  // place — double-click, type, and the write rides the writer.
+  page.IDS['design-title'].fire('dblclick');
+  await flush(10);
+  const titleInput = page.IDS['design-title'].querySelector('input');
+  check('C4 double-clicking the head title opens the rename input',
+    !!titleInput, String(!!titleInput));
+  if (titleInput) {
+    titleInput.value = 'Renamed board';
+    titleInput.fire('blur');
+    await flush(60);
+    const rename = page.calls.filter((one) => one.method === 'POST' &&
+      String(one.body || '').includes('"op":"rename"')).slice(-1)[0];
+    check('C4 the rename writes through the writer',
+      !!rename && String(rename.body).includes('"name":"Renamed board"'),
+      rename ? String(rename.body).slice(0, 120) : 'no rename');
+  }
+  // P2 (design-parity C5): the head's delete removes the board after a
+  // confirm that names what it takes.
+  page.fireOn('design-delete', 'click');
+  await flush(60);
+  const removal = page.calls.filter((one) => one.method === 'POST' &&
+    String(one.body || '').includes('"op":"board-delete"')).slice(-1)[0];
+  check('C5 the head delete confirms and removes the board',
+    !!removal, removal ? String(removal.body).slice(0, 120) : 'no delete');
+  // P2 (design-parity C6): a frame renames in place — the title bar's
+  // name edits and rides frame-update.
+  const heroCard = page.rows('.canvas-frame')[0];
+  const heroName = heroCard ? heroCard.querySelector('.canvas-frame-name') : null;
+  if (heroName) {
+    heroName.fire('dblclick');
+    await flush(10);
+    const nameInput = heroName.querySelector('input');
+    check('C6 double-clicking a frame name opens its rename input',
+      !!nameInput, String(!!nameInput));
+    if (nameInput) {
+      nameInput.value = 'landing';
+      nameInput.fire('blur');
+      await flush(60);
+      const frameRename = page.calls.filter((one) => one.method === 'POST' &&
+        String(one.body || '').includes('"op":"frame-update"') &&
+        String(one.body || '').includes('"name":"landing"')).slice(-1)[0];
+      check('C6 the frame rename writes through frame-update',
+        !!frameRename, frameRename ? String(frameRename.body).slice(0, 140) : 'no update');
+    }
+  } else {
+    check('C6 double-clicking a frame name opens its rename input', false,
+      'no frame name on the card');
+    check('C6 the frame rename writes through frame-update', false, 'no input');
+  }
 }
 
 // Design work started outside the design page — a conversation, a cron

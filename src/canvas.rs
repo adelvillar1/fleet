@@ -551,6 +551,20 @@ pub fn design_context_section(home: &Path, key: &str) -> Option<String> {
     Some(out)
 }
 
+/// Delete a board whole: its directory (frames, assets, exports,
+/// reviews and versions ride along) and its digest at the key the
+/// binding names. A board that is not there is a named error — a
+/// delete is exact, never a silent no-op.
+pub fn delete_project(home: &Path, slug: &str) -> Result<(), String> {
+    let project = load(home, slug)?;
+    if let Some(key) = project.project.as_deref().and_then(project_key) {
+        remove_digest(home, &key, slug)?;
+    }
+    let dir = canvas_root(home).join(slug);
+    std::fs::remove_dir_all(&dir)
+        .map_err(|error| format!("the board `{slug}` could not be removed: {error}"))
+}
+
 /// Create an empty project under a fresh slug. A name that collides takes
 /// a numeric suffix so a second board never overwrites the first.
 pub fn create(home: &Path, name: &str) -> Result<(String, Project), String> {
@@ -5245,6 +5259,27 @@ h1{font-size:64px;border-radius:2px}
         );
         assert_eq!(project_key("/"), None);
         assert_eq!(project_key(""), None);
+    }
+
+    /// P2 (design-parity C5): a board deletes whole — its directory
+    /// and its digest — and a missing board is a named error, not a
+    /// silent no-op.
+    #[test]
+    fn deleting_a_board_removes_its_store_and_its_digest() {
+        let home = scratch("delete-project");
+        let (slug, _) = create(&home, "Doomed").unwrap();
+        put_frame(&home, &slug, "p", PAGE, None, None, "m").unwrap();
+        let mut project = load(&home, &slug).unwrap();
+        project.project = Some("/x/Projects/acme".to_string());
+        save(&home, &slug, &project).unwrap();
+        let digest = digest_path(&home, "acme", &slug);
+        assert!(digest.is_file());
+        delete_project(&home, &slug).unwrap();
+        assert!(!exists(&home, &slug), "the board's directory is gone");
+        assert!(!digest.exists(), "the board's digest is gone");
+        let refused = delete_project(&home, &slug).expect_err("a missing board refuses");
+        assert!(refused.contains(&slug), "{refused}");
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     /// K6 (designs-are-project-knowledge): the context section reads a
