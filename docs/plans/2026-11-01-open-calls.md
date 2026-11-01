@@ -252,7 +252,10 @@ recommendations. The rulings:
       and `FLEET_BOT_RELAY_JOIN_SECRET`), fail-closed both sides,
       proofless-join pinned against the real relay, KI-367 closed;
       the OpenShip env + redeploy is the owner's deployment step,
-      named in the row.*
+      named in the row. **O2** — the send path's refusal speaks the
+      product's words at the operative cap (no invented ceiling),
+      pinned by `an_oversized_body_is_refused_in_the_products_words`;
+      KI-378 closed with both halves standing.*
 - [ ] **KI-249 / KI-252 stay with their plan** — the embed-bounds
       plan's window criterion is their gate; nothing here re-opens
       them.

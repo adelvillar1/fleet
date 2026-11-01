@@ -1609,8 +1609,15 @@ pub(crate) async fn read_body(
         .and_then(|value| value.trim().parse::<usize>().ok())
         .unwrap_or(0);
     if length > MAX_BODY_BYTES {
+        // The cap in the product's own words (KI-378, O2): the send
+        // path meets this boundary, and the refusal names the bound and
+        // the way around it — a giant task belongs in a file — instead
+        // of stating a transport fact the owner cannot act on. The cap
+        // is unchanged: it is the operative bound the request already
+        // had, not a new number.
         return Err(format!(
-            "fleet gui refused a body of {length} bytes; the cap is {MAX_BODY_BYTES}"
+            "the request is {length} bytes; one request may carry up to {MAX_BODY_BYTES} — \
+trim the payload (for a run, put the bulk in a file: attach it and name it in the task)"
         ));
     }
     let mut body = rest;
@@ -2514,6 +2521,22 @@ fn origin_is_loopback(origin: &str) -> bool {
 mod tests {
     use super::*;
     use std::io::{Read, Write};
+
+    #[tokio::test]
+    async fn an_oversized_body_is_refused_in_the_products_words() {
+        // KI-378's open half (O2): the cap the send path meets is the
+        // request's own boundary, and the refusal names it the way the
+        // product does — the bound and the way around it — instead of
+        // as a transport fact.
+        let head = "POST /api/run HTTP/1.1\r\ncontent-length: 100000\r\n\r\n";
+        let request = Request::parse(head).expect("a well-formed head");
+        let error = read_body(&mut tokio::io::empty(), &request, Vec::new())
+            .await
+            .expect_err("a body past the cap is refused");
+        assert!(error.contains("one request may carry up to"), "{error}");
+        assert!(error.contains("attach"), "{error}");
+        assert!(error.contains("100000"), "{error}");
+    }
 
     #[test]
     fn attachments_are_framed_ahead_of_the_task_and_their_names_bound() {
