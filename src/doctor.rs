@@ -1337,10 +1337,11 @@ mod tests {
     #[test]
     fn the_recall_check_names_the_live_path_both_ways() {
         // The vector path: the endpoint and the dimensionality the probe
-        // found are named where an operator looks. The gate is KI-340's
-        // widened rule: the probe's five-second budget must not race the
-        // suite's own embed traffic, so live-embed tests take turns.
-        let _gate = crate::memory::embed_gate_blocking();
+        // found are named where an operator looks. No embed gate here:
+        // `evaluate_recall` renders gathered facts and opens no socket —
+        // the serialization gate would imply a probe this test never
+        // makes (the KI-328/O4 class rule: no gate test asserts machine
+        // liveness, and this one asserts only the render).
         let live = evaluate_recall(Some(("http://127.0.0.1:8901/v1/embeddings", 768)));
         assert!(live.ok);
         assert!(live.detail.contains("vector path live"), "{}", live.detail);

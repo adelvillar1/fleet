@@ -4857,12 +4857,18 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "on-demand: ranks against the machine's shared embed endpoint — the class rule (KI-328/O4) is that no gate test asserts machine liveness; the hermetic pin is deck's suggest_layout_matches_the_intent_across_the_index; run with --ignored"]
     fn the_deck_tool_suggest_mode_ranks_for_an_intent() {
-        // Against the machine's own embed endpoint (loopback, fleet's
-        // own service): the ranking names layouts, best first. The gate
-        // is KI-340's widened rule — one live-embed test at a time, so
-        // this call never queues behind its siblings' embeds. The probe
-        // is resolved first: `probed_embedder` answers keyword-only until
+        // The live half of the ranking's proof: against the machine's
+        // own embed endpoint (loopback, fleet's own service), the
+        // ranking names layouts, best first. The contract we own —
+        // ordering over embeddings — is pinned hermetically in deck.rs
+        // against the suite's own KeywordStub; this run grades the
+        // MACHINE (the shared one-slot embedder under load), which is
+        // why it is on-demand and not in the gate (KI-328: three reds
+        // on a green tree, every one green alone). The gate is KI-340's
+        // widened rule — one live-embed test at a time — and the probe
+        // resolves first: `probed_embedder` answers keyword-only until
         // it lands, which is right for a request and wrong for a test
         // asserting the vector path.
         let _gate = crate::memory::embed_gate_blocking();

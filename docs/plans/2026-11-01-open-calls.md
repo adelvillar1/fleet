@@ -262,7 +262,14 @@ recommendations. The rulings:
       names the six as the whole vocabulary; KI-391 closed, pinned by
       the red/green fixture runs. Carried in the same commit:
       **KI-392**, filed by the parallel design-parity session mid-work
-      (their row, unedited — severity already in vocabulary).*
+      (their row, unedited — severity already in vocabulary).
+      **O4** — the class rule landed: *no test in the gate asserts
+      machine liveness* (TECHNICAL-DOCUMENTATION's gate runbook); the
+      deck-suggest live ranking is `#[ignore]`d on-demand (proven
+      running with `--ignored`), its hermetic half is deck.rs's
+      KeywordStub pin, and the vestigial embed gate in doctor's
+      render-only recall test is gone; a sweep proves the gate's
+      shared-embedder class is empty. KI-328 closed.*
 - [ ] **KI-249 / KI-252 stay with their plan** — the embed-bounds
       plan's window criterion is their gate; nothing here re-opens
       them.

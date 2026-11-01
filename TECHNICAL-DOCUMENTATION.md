@@ -128,9 +128,15 @@ calibration day-files under
 
 - **The gate.** `cargo fmt --all --check`, `cargo clippy --all-targets --
   -D warnings`, `cargo build --release`, `cargo test` — read by exit
-  code, never through a status-losing pipe. 1,489 tests at the last
-  increment; one live-API e2e is `#[ignore]`d and runs on demand with
-  the key set.
+  code, never through a status-losing pipe. ~1,897 tests at the last
+  increment. **No test in the gate asserts machine liveness** (KI-328's
+  class rule): a contract this repo owns gets a deterministic double —
+  the suite's own stub endpoint, the KeywordStub embedder — while a
+  probe of a shared machine service (the loopback embedder, the live
+  API) is `#[ignore]`d and runs on demand — the live-API e2e with the
+  key set, the deck-suggest live ranking with `--ignored`. A service a
+  test spawns and owns (the vendored lanes, the mock API) is not
+  machine liveness; it stays in the gate.
 - **Rebuild and restart.** `cargo build --release` puts the binary at
   `target/release/fleet` (`~/.local/bin/fleet` is a symlink to it); the
   running face must be kickstarted or it keeps serving the old embedded
