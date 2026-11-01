@@ -364,6 +364,66 @@ runs (or N child runs), which is exactly the orchestration question T4's
 notes already defer to a measurement. The faces keep the router's choice
 for now; a pin in the composer covers "use this model", and the
 measurement T4 names will decide whether N runs or a subagent fan-out is
-the right shape for both directions and models.
+the right shape for both directions and models. **(Revised the same day:
+the picker landed as one run per model — see the landed section below —
+because the owner ruled that a design run's route is the page's, not a
+chain's.)**
 
 T2–T6 remain unstarted.
+
+## Landed: the page's models and the steer (the owner's correction)
+
+The owner corrected the routing model this plan had tried: design-canvas
+uses **three models or lets the user choose**, and the router must not use
+the models designated for design work — not route a selection of them.
+The router's `design` workload was removed whole (no preference entry, no
+sys1 label, no leader exception, no surface workload hint), and routing
+for a design run now comes **from the design page**, by the fact that the
+request came from the page.
+
+What landed instead:
+
+- **The designation** — `canvas::DESIGN_MODELS`: `deepseek-flash`, zai's
+  `GLM-5.3-Flash`, and the same GLM on `ollama-cloud`, in the owner's
+  order, pinned by `the_design_page_carries_the_owners_three_models`.
+- **The read resolves it** — `GET /api/design` carries `models`, each with
+  availability from the roster (`Resolved::usable`: declared, enabled,
+  keyed or key-free), so the page refuses an option before a run starts
+  instead of failing inside one.
+- **The picker** — `#design-model` in the composer: three options, one
+  disabled and named *unavailable*, the open choice the first that can
+  serve, the owner's pick kept across repaints. The run goes out
+  `pin: "<provider>/<model>"` — a pair pin, which skips the router's
+  judgment entirely. The harness pins the three options, the refusal, the
+  default, and the run body carrying
+  `"pin":"ollama-cloud/glm-5.3-flash"` when the owner picks it.
+- **The steer** — a `frame` (or `review_frame`) landing while the owner is
+  not on the design page raises **one** card naming the board it landed
+  on; its press opens `#/design/<slug>` there, and a fan-out updates the
+  one card rather than stacking them. The design stage now honors the
+  address's board. Harness case **PM-E**, four checks.
+- **The doctrine** — the `frame` tool's description and `roles/designer.md`
+  say a design asked for in a conversation belongs on the page; the tool's
+  result now names the preview route (`/api/design/frame/<slug>/<id>`) so
+  a run can browse → screenshot → vision what it landed.
+
+**The live proof** (2026-10-31, the rebuilt face): a run started exactly
+as the composer starts one — `POST /api/run` with the composed task and
+`pin: "deepseek/deepseek-flash"` — landed `frame f-48b9fac8` on
+`sample-board` with no approval seat, and its `end` record reads
+`served_model: "deepseek-flash"`. The route was the page's, not a
+chain's.
+
+**The composer's shape** — the chat panel is 319px wide, and four knobs
+plus a send on one line ran 668px past it (the row could not wrap and
+pushed the pane out of the viewport). The controls now wrap and the model
+keeps a line of its own ("the model · deepseek-flash · send"), so every
+label reads whole; a 1440×900 render confirmed no clipping and no
+horizontal overflow.
+
+**What that live run also exposed**: twelve turns, eight of them `browse`
+hunting a canvas route (`/canvas/sample-board`, `/design`,
+`/design/sample-board` — all 404: the canvas is a hash route) before it
+gave up on seeing its own page. The preview-route sentence in the `frame`
+result is the fix; the review loop (T5) is where the capture becomes
+routine.

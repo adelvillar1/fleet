@@ -6880,6 +6880,12 @@ fn design_read(home: &std::path::Path, project: Option<&str>) -> Value {
         "projects": summaries,
         "active": active,
         "presets": design_presets(),
+        // The page's own models, each with whether a run may attempt it
+        // now. A design run's route comes from this page — the picker
+        // names one of these and the run goes out pinned to it — so the
+        // list never borrows a routing chain, and an option the run would
+        // refuse is never offered as if it could serve.
+        "models": design_models(home),
         "caps": {
             "max_frame_bytes": crate::canvas::MAX_FRAME_BYTES,
             "max_versions": crate::canvas::MAX_VERSIONS,
@@ -6890,6 +6896,30 @@ fn design_read(home: &std::path::Path, project: Option<&str>) -> Value {
         },
         "refused": refused,
     })
+}
+
+/// The models designated for design work, resolved against the roster:
+/// each `(provider, model)` with whether a run may attempt it now — the
+/// provider is declared and enabled, and either has a key or needs none.
+/// A roster the home cannot load leaves every entry unavailable, which the
+/// page reads as "no model to pick" rather than as a silent default.
+fn design_models(home: &std::path::Path) -> Vec<Value> {
+    let resolved = match crate::route::load_roster(home) {
+        Ok(roster) => {
+            let dotenv = crate::home::read_dotenv_with_process_vault(home);
+            crate::route::resolve(&roster.candidates, &dotenv)
+        }
+        Err(_) => Vec::new(),
+    };
+    crate::canvas::DESIGN_MODELS
+        .iter()
+        .map(|(provider, model)| {
+            let available = resolved
+                .iter()
+                .any(|entry| entry.id() == *provider && entry.usable());
+            json!({ "provider": provider, "model": model, "available": available })
+        })
+        .collect()
 }
 
 /// The design writer: one op per edit, the settings writer's shape. Every

@@ -376,6 +376,21 @@ impl DesignMode {
     }
 }
 
+/// The models designated for design work (the owner's ruling, 2026-10-31).
+/// A page asks a different question of a model than code or prose does, so
+/// the design surface carries its own set instead of borrowing a routing
+/// chain: the page's picker names one per run and the run goes out pinned
+/// to exactly that `provider/model`. The router neither picks among these
+/// nor walks them as a workload — the fact that a run started here is what
+/// makes its route a design route.
+pub const DESIGN_MODELS: &[(&str, &str)] = &[
+    ("deepseek", "deepseek-flash"),
+    ("zai-coding-plan", "GLM-5.3-Flash"),
+    // The same GLM on Ollama's cloud account: a different host for the
+    // family, and the owner's fallback when zai's GLM is unavailable.
+    ("ollama-cloud", "glm-5.3-flash"),
+];
+
 /// The facts one composed task may carry, each optional: the mode decides
 /// which ride.
 #[derive(Debug, Clone, Default)]
@@ -1451,6 +1466,25 @@ mod tests {
     }
 
     const PAGE: &str = "<!doctype html><html><head><style>:root{--page:#0b0e14;--ink:#e6e9ef;--accent:#3b6cf6}body{color:var(--ink);background:var(--page)}img{max-width:100%}:focus{outline:2px solid var(--accent)}</style><meta name=\"viewport\" content=\"width=device-width\"></head><body><h1>hi</h1><img src=\"data:image/png;base64,AA\" alt=\"a mark\"><form><input aria-label=\"email\"></form></body></html>";
+
+    /// The design surface's own model set (the owner's ruling,
+    /// 2026-10-31): three models, in the owner's order, and not a routing
+    /// chain — a design run pins the one this page names.
+    #[test]
+    fn the_design_page_carries_the_owners_three_models() {
+        assert_eq!(
+            DESIGN_MODELS,
+            &[
+                ("deepseek", "deepseek-flash"),
+                ("zai-coding-plan", "GLM-5.3-Flash"),
+                ("ollama-cloud", "glm-5.3-flash"),
+            ],
+            "the owner's designation, in their order"
+        );
+        // A picker offers these and only these: the head is strong at a
+        // page, and the third is the same family on another host.
+        assert_eq!(DESIGN_MODELS.len(), 3);
+    }
 
     /// The task builders: every surface asks in the same words — the
     /// board and the frame are named, a review's fixes ride, the size and

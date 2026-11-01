@@ -113,6 +113,14 @@ tail appears once. The `allow_api_models: false` gate keeps it out like
 every hosted model, and a disabled reserve adds nothing, in which case an
 exhausted walk fails by name as it did before the ruling.
 
+**Design work is pinned by its page, not routed.** The design canvas
+carries its own three designated models and names one per run, sending
+`<provider>/<model>` as a pin (`docs/features/design.md`): a design run's
+route is the page's decision, the pair pin skips the judgment, and no
+router chain selects among them. The router has no `design` workload, and
+design-shaped work judged as `frontend` walks `frontend`'s chain like any
+other interface work.
+
 ## Pins and the nominal model
 
 No surface seeds a provider's model as a default. `AgentOptions::default`

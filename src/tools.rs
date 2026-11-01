@@ -298,7 +298,7 @@ pub const FRAME_TOOL: &str = "frame";
 pub fn frame_spec() -> ToolSpec {
     ToolSpec::function(
         FRAME_TOOL,
-        "Put a design frame on the canvas: one complete, self-contained HTML page — inline styles or a <style> block, no external scripts, no build step, tokens declared as :root custom properties. Use it when the owner asks for a designed page, screen or component sheet. The page is validated before it lands (a complete document under the size cap) and the frame's id comes back; pass frame_id to replace an existing frame's page with a new version instead of adding a new frame, and pass tweak_spec to expose colors, spacing or sizes as live tweaks the owner can adjust without another generation.",
+        "Put a design frame on the canvas: one complete, self-contained HTML page — inline styles or a <style> block, no external scripts, no build step, tokens declared as :root custom properties. Use it when the owner asks for a designed page, screen or component sheet — including from a conversation: design asks for the design page, where the page can be seen, tweaked and reviewed, and the owner is taken there. The page is validated before it lands (a complete document under the size cap) and the frame's id comes back; pass frame_id to replace an existing frame's page with a new version instead of adding a new frame, and pass tweak_spec to expose colors, spacing or sizes as live tweaks the owner can adjust without another generation.",
         serde_json::json!({
             "type": "object",
             "properties": {

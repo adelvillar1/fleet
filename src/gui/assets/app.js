@@ -654,6 +654,7 @@
     designBrief: document.getElementById('design-brief'),
     designMode: document.getElementById('design-mode-select'),
     designStyle: document.getElementById('design-style'),
+    designModel: document.getElementById('design-model'),
     designDirections: document.getElementById('design-directions'),
     designSend: document.getElementById('design-send'),
     designTitle: document.getElementById('design-title'),
@@ -2507,6 +2508,9 @@
         if (event.role === 'owner') {
           face.running = true;
           face.stop = null;
+          // A new task gets its own steer: the previous run's pages have
+          // their card already.
+          face.designSteer = null;
           ownerRow(event);
           break;
         }
@@ -2565,7 +2569,13 @@
         // A frame landing on the design canvas repaints it in place: the
         // run streams while the board fills, which is the point of the
         // frame tool being a run's tool rather than a separate app.
-        if (event.tool === 'frame' && face.panel === 'design') readDesign(true);
+        if (event.tool === 'frame' || event.tool === 'review_frame') {
+          if (face.panel === 'design') readDesign(true);
+          // Design work started elsewhere — the conversation, a cron job,
+          // the CLI — routes the owner to the page that owns it instead of
+          // leaving a page nobody can see.
+          else if (event.approved !== false) designSteered(event);
+        }
         break;
       case 'routed':
         face.route = event;
@@ -16734,6 +16744,42 @@
     return modes;
   }
 
+  /// The models designated for design work. A design run's route comes
+  /// from this page — the fact that the request started here is what makes
+  /// it design work — so the owner names the model (defaulting to the
+  /// first that can serve now) and the run goes out pinned to it. The
+  /// router neither picks among these nor walks them as a workload.
+  function paintDesignModels() {
+    var models = (face.design && face.design.models) || [];
+    var chosen = el.designModel.value || face.designModelChoice || '';
+    el.designModel.textContent = '';
+    var offered = 0;
+    models.forEach(function (model) {
+      var value = model.provider + '/' + model.model;
+      var option = node('option', null,
+        model.model + (model.available ? '' : ' \u00b7 unavailable'));
+      option.value = value;
+      option.disabled = !model.available;
+      el.designModel.appendChild(option);
+      if (model.available) offered += 1;
+    });
+    if (!offered) {
+      var none = node('option', null, 'no design model can serve');
+      none.value = '';
+      el.designModel.appendChild(none);
+      el.designModel.value = '';
+      el.designModel.title = 'none of the design models has a key';
+      return;
+    }
+    el.designModel.title = '';
+    var wanted = models.filter(function (model) {
+      return model.available && model.provider + '/' + model.model === chosen;
+    })[0];
+    if (!wanted) wanted = models.filter(function (model) { return model.available; })[0];
+    el.designModel.value = wanted.provider + '/' + wanted.model;
+    face.designModelChoice = el.designModel.value;
+  }
+
   function paintDesignChat() {
     var board = designBoard();
     el.designChatLog.textContent = '';
@@ -16778,6 +16824,8 @@
       if (face.designModeChoice && mode.value === face.designModeChoice) option.selected = true;
       el.designMode.appendChild(option);
     });
+    // The model first: it is the run's route, not a decoration.
+    paintDesignModels();
     // The styles: every preset the read carries.
     if (!el.designStyle.children.length) {
       el.designStyle.appendChild(node('option', null, 'no style named'));
@@ -16832,7 +16880,14 @@
   /// the frames the board had, so the diff is the run's contribution.
   function designStartRun(task, slug) {
     var runPath = '/api/run' + (face.session ? '?session=' + encodeURIComponent(face.session) : '');
-    post(runPath, { task: task, mode: face.permissions, pin: face.providerPin || null })
+    // The page names the model: `provider/model` pins both halves, so the
+    // router skips the judgment entirely — routing for a design run is
+    // this page's decision, and an empty picker leaves the router's own.
+    post(runPath, {
+      task: task,
+      mode: face.permissions,
+      pin: el.designModel.value || face.providerPin || null
+    })
       .then(function (reply) {
         if (reply.status === 200) {
           face.running = true;
@@ -16846,6 +16901,37 @@
           el.designSend.disabled = false;
         }
       });
+  }
+
+  /// A design result that landed while the owner was on another surface:
+  /// one card, one press, and the board that holds the page opens. The
+  /// run is the same run — nothing is re-routed, nothing is lost; the
+  /// owner is simply taken to where the work lives.
+  function designSteered(event) {
+    var landing = /project `([^`]+)`/.exec(String(event.preview || ''));
+    if (!landing) return;
+    var slug = landing[1];
+    // The board behind the card is fresh before the press: the open board
+    // is the one this page landed on.
+    readDesign(true);
+    if (face.designSteer) {
+      // A fan-out lands several pages in one run: one card that counts,
+      // not a card per page.
+      face.designSteer.slug = slug;
+      face.designSteer.sub.textContent = 'open `' + slug + '`';
+      return;
+    }
+    var el0 = card('design', null, 'a page landed on the design board', 'open `' + slug + '`', null, null);
+    el0.classList.add('design-steer');
+    el0.querySelector('.glyph').appendChild(icon('design', 'glyph-icon'));
+    var sub = el0.querySelector('.sub');
+    el0.querySelector('.card-open').addEventListener('click', function () {
+      window.location.hash = '#/design/' + encodeURIComponent(face.designSteer
+        ? face.designSteer.slug : slug);
+    });
+    row(el0, event, null);
+    settle();
+    face.designSteer = { slug: slug, sub: sub };
   }
 
   /// The run is over: record the designer's turn with the frames it
@@ -18602,7 +18688,14 @@
         });
       },
       calibration: function () { paintCalibration(); readCalibration(true).then(paintCalibration); },
-      design: function () { paintDesign(); readDesign(true).then(paintDesign); },
+      design: function () {
+        // `#/design/<slug>` opens that board: the steer card names the
+        // board its page landed on, so the press lands on the work.
+        if (face.focus && face.focus.id) designSetSlug(face.focus.id);
+        face.designReadAt = 0;
+        paintDesign();
+        readDesign(true).then(paintDesign);
+      },
       'second-brain': function () { paintBrain(); readBrain(true).then(paintBrain); readPlugin(true); },
       'workspace-history': function () {
         paintWorkspaceHistory();

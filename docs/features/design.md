@@ -182,14 +182,51 @@ preset's spec, and the board's slug, and it asks for the page through
 its full log. The style presets are the source project's curated set,
 embedded once.
 
+## The page's models
+
+A design run's route comes from this page. A page asks a different
+question of a model than code or prose does, so fleet designates three
+models for design work (`canvas::DESIGN_MODELS`) and the composer's
+picker names one per run:
+
+```
+deepseek-flash · zai GLM-5.3-Flash · ollama-cloud glm-5.3-flash
+```
+
+The picker opens on the first candidate that can serve *now* — the read
+resolves each against the roster, so a model with no key reads
+*unavailable* and is refused up front instead of failing mid-run — and
+the owner's choice persists across repaints. The run then goes out pinned
+to `<provider>/<model>`: a pair pin skips the router's judgment entirely,
+because the fact that the request started here *is* what makes it design
+work. No router chain selects among the designated three, and the
+router's own workloads never name them as a design route. A board whose
+models can none of them serve says so and leaves the route to the router.
+
+## Design work started elsewhere
+
+A design asked for in the conversation — or by a cron job, or the CLI —
+lands on the board all the same: any run can call `frame`. When a frame
+lands while the owner is not on the design page, the conversation raises
+one **steer card** naming the board it landed on, and its press opens
+`#/design/<slug>` there. A fan-out that lands several pages in one run
+updates the one card rather than stacking them. Nothing is re-routed and
+nothing is re-generated: the run is the same run, and the owner is
+walked to where the work lives. The designer's doctrine says the same
+thing from the model's side — a design asked for in a conversation
+belongs on the page, never in prose.
+
 ## What is proven, and what is not
 
 The gate pins the document and its caps, the injection (including a
 hostile value and the unit rule), the scan's facts, the tools'
 validation, delete/duplicate/restore, the exports (a real ZIP), the
-preview's injected page, the composer's run and the canvas's gestures
-and writes; a live Chromium render at 1440×900 is the visual review, and
-the PNG export ran against the browser lane. **Not yet exercised end to
+preview's injected page, the composer's run and its model picker (the
+pinned `provider/model`, the unavailable option refused, the default
+being the first that can serve), the steer a frame landing off the board
+raises, and the canvas's gestures and writes; a live Chromium render at
+1440×900 is the visual review, and the PNG export ran against the
+browser lane. **Not yet exercised end to
 end:** the review ask — browse → screenshot → vision → `review_frame` —
 whose pieces are each pinned but which no model run has walked. A design
 run also cannot see its own output: the review is a second run.

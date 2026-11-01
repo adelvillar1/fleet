@@ -3718,7 +3718,7 @@ impl<'a> Agent<'a> {
                 Ok((slug, frame_id, added)) => {
                     let what = if added { "added" } else { "refined" };
                     settled(format!(
-                        "frame {what}: project `{slug}`, frame `{frame_id}`. The canvas shows it now; a refine can name frame_id `{frame_id}`."
+                        "frame {what}: project `{slug}`, frame `{frame_id}`. It is on the design page now; a refine can name frame_id `{frame_id}`. The page itself is served at /api/design/frame/{slug}/{frame_id} on the face's origin — browse and screenshot it to review what landed."
                     ))
                 }
             });

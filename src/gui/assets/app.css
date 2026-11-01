@@ -7957,9 +7957,20 @@ body[data-work="collapsed"] .work-list { display: none; }
   cursor: pointer;
 }
 .design-frame-chip:hover { color: var(--dsw-alias-accent); border-color: var(--dsw-alias-accent); }
-.design-chat-compose { display: grid; gap: var(--space-1); }
-.design-chat-row { display: flex; gap: var(--space-1); align-items: center; }
-.design-chat-row select { min-width: 0; flex: 1; }
+.design-chat-compose { display: grid; gap: var(--space-1); min-width: 0; }
+/* The composer's controls wrap: four knobs and the send do not fit the
+   panel's own width, and a row that cannot wrap pushes the pane past the
+   viewport instead of growing a line. Each knob keeps an atomic label and
+   the button keeps its box. */
+.design-chat-row { display: flex; gap: var(--space-1); align-items: center; flex-wrap: wrap; min-width: 0; }
+/* Natural widths first (a knob's own label is the width it needs), and
+   only then a shrink — a select that cannot show its value is a knob
+   nobody can read. */
+.design-chat-row select { min-width: 0; flex: 1 1 auto; max-width: 100%; }
+.design-chat-row .replay-button { flex: 0 0 auto; }
+.design-chat-model { flex-wrap: nowrap; }
+.design-chat-model .knob-box { flex: 1 1 auto; min-width: 0; }
+.design-model-label { flex: 0 0 auto; font-size: var(--text-xs); color: var(--dsw-alias-ink-tertiary); }
 .canvas-head { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--space-4); }
 .canvas-head-acts { display: flex; align-items: center; gap: var(--space-2); padding-bottom: 4px; }
 .canvas-head-acts .knob-box { min-width: 220px; }

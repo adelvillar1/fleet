@@ -4005,6 +4005,13 @@ async function theDesignCanvasCarriesItsFramesAndWritesGeometry() {
     },
     presets: [{ id: 'agency-grid', label: 'Agency grid', summary: 'editorial grid',
       source: 'x', spec: 'LAYOUT: grid' }],
+    // The page's own models (the owner's designation): the head has no
+    // key right now, so the picker opens on the first that can serve.
+    models: [
+      { provider: 'deepseek', model: 'deepseek-flash', available: false },
+      { provider: 'zai-coding-plan', model: 'GLM-5.3-Flash', available: true },
+      { provider: 'ollama-cloud', model: 'glm-5.3-flash', available: true },
+    ],
     caps: { max_frame_bytes: 524288, max_versions: 20,
       viewports: [{ name: 'desktop', w: 1280, h: 900 }, { name: 'tablet', w: 768, h: 1024 },
         { name: 'phone', w: 390, h: 844 }] },
@@ -4178,8 +4185,26 @@ async function theDesignCanvasCarriesItsFramesAndWritesGeometry() {
   check('PM-D a chip selects its frame on the board',
     page.rows('.canvas-frame.selected').length === 1,
     String(page.rows('.canvas-frame.selected').length));
+  // The page names the model: the picker carries the designated three,
+  // an unavailable one refuses instead of failing later, and the open
+  // choice is the first that can serve.
+  const models = page.IDS['design-model'];
+  const modelOptions = (models && models.children) || [];
+  check('PM-D the composer carries the models designated for design',
+    modelOptions.length === 3 &&
+      modelOptions[0].value === 'deepseek/deepseek-flash' &&
+      modelOptions[0].disabled === true &&
+      String(modelOptions[0].textContent).includes('unavailable') &&
+      modelOptions[1].value === 'zai-coding-plan/GLM-5.3-Flash' &&
+      modelOptions[1].disabled === false,
+    modelOptions.map((one) => one.value + '/' + one.disabled).join(','));
+  check('PM-D the picker opens on the first model that can serve',
+    models.value === 'zai-coding-plan/GLM-5.3-Flash', models.value);
+
   page.IDS['design-brief'].value = 'make the hero quieter';
   page.IDS['design-mode-select'].value = 'refine';
+  // The owner's own choice wins over the default.
+  models.value = 'ollama-cloud/glm-5.3-flash';
   page.fireOn('design-send', 'click');
   await flush(80);
   const posts = page.calls.filter((one) => one.method === 'POST' &&
@@ -4195,6 +4220,13 @@ async function theDesignCanvasCarriesItsFramesAndWritesGeometry() {
   check('PM-D the run carries the composed task, not a hand-built one',
     run.length === 1 && String(run[0].body).includes('composed for sample-board'),
     JSON.stringify(run.map((one) => String(one.body).slice(0, 160))));
+  // Routing for a design run is the page's: the picked `provider/model`
+  // rides the request as the pin, so the router never selects among the
+  // designated three.
+  check('PM-D the run pins the model the page names',
+    run.length === 1 &&
+      String(run[0].body).includes('"pin":"ollama-cloud/glm-5.3-flash"'),
+    JSON.stringify(run.map((one) => String(one.body).slice(-90))));
   // The run's close writes the board turn: its words and the frames it
   // landed (a frame the board did not hold when the request went out).
   const beforeTurns = page.calls.filter((one) =>
@@ -4237,6 +4269,76 @@ async function theDesignCanvasCarriesItsFramesAndWritesGeometry() {
   check('PM-D the directions control rides the task request',
     withDirections.length === 1,
     JSON.stringify(withDirections.map((one) => String(one.body).slice(0, 120))));
+}
+
+// Design work started outside the design page — a conversation, a cron
+// job, the CLI — puts its page on the board all the same; the owner is
+// routed to the page that owns it instead of being left with a page they
+// cannot see.
+async function theDesignWorkStartedElsewhereRoutesTheOwnerToThePage() {
+  const designDoc = {
+    type: 'design',
+    read_at: 'now',
+    projects: [{ slug: 'sample-board', name: 'Sample board', frames: 2,
+      updated: '2026-10-31T09:00:00Z' }],
+    active: {
+      slug: 'sample-board',
+      name: 'Sample board',
+      frames: [{
+        id: 'f-hero', name: 'hero', description: '',
+        html: '<!doctype html><html><body><h1>hero</h1></body></html>',
+        html_raw: '<!doctype html><html><body><h1>hero</h1></body></html>',
+        x: 0, y: 0, w: 1280, h: 900, tweak_spec: [], tweak_values: {},
+        model: 'glm', versions: [], pins: [],
+      }],
+      chat: [],
+    },
+    presets: [],
+    models: [{ provider: 'deepseek', model: 'deepseek-flash', available: true }],
+    caps: { max_frame_bytes: 524288, max_versions: 20, viewports: [] },
+    refused: [],
+  };
+  const page = boot({ width: 1440, hash: '#/chat',
+    documents: { design: designDoc, state: (asked) => emptyState(asked) } });
+  await flush();
+  page.open();
+  await flush(80);
+  check('PM-E the newcomer starts on the conversation',
+    page.IDS['panel-chat'].hidden === false && page.IDS['panel-design'].hidden === true,
+    'chat: ' + page.IDS['panel-chat'].hidden + ' design: ' + page.IDS['panel-design'].hidden);
+
+  // A chat run calls `frame`: the page lands on the board, and the steer
+  // names the board it landed on.
+  page.push({ type: 'tool_result', tool: 'frame', approved: true,
+    preview: 'frame added: project `sample-board`, frame `f-ninth`. The canvas shows it now; ' +
+      'a refine can name frame_id `f-ninth`.' });
+  await flush(80);
+  const steer = page.rows('.design-steer');
+  check('PM-E a frame landing off the board raises the steer',
+    steer.length === 1 &&
+      String(steer[0].textContent).includes('a page landed on the design board') &&
+      String(steer[0].textContent).includes('sample-board'),
+    JSON.stringify(steer.map((one) => String(one.textContent).slice(0, 120))));
+  check('PM-E the steer reads the board behind it',
+    page.calls.some((one) => String(one.url || '').includes('/api/design')),
+    JSON.stringify(page.calls.filter((one) => String(one.url || '').includes('/api/design')).length));
+
+  // A fan-out lands several pages in one run: one card that counts, not a
+  // card per page.
+  page.push({ type: 'tool_result', tool: 'frame', approved: true,
+    preview: 'frame added: project `sample-board`, frame `f-tenth`.' });
+  await flush(60);
+  check('PM-E a fan-out keeps one steer card', page.rows('.design-steer').length === 1,
+    String(page.rows('.design-steer').length));
+
+  // The press is the routing: the design page opens on that board.
+  steer[0].querySelector('.card-open').click();
+  await flush(120);
+  check('PM-E the press opens the design page on the board the page landed on',
+    page.window.location.hash === '#/design/sample-board' &&
+      page.IDS['panel-design'].hidden === false &&
+      page.IDS['panel-chat'].hidden === true,
+    page.window.location.hash + ' / design hidden: ' + page.IDS['panel-design'].hidden);
 }
 
 async function theSettingsRailCarriesOneSectionAtATime() {
@@ -5691,6 +5793,7 @@ const cases = [
   ['BOTS the bots surface mints the bot card', theBotsSurfaceMintsTheBotCard],
   ['SET the settings rail carries one section at a time', theSettingsRailCarriesOneSectionAtATime],
   ['PM-D the design canvas carries its frames and writes geometry', theDesignCanvasCarriesItsFramesAndWritesGeometry],
+  ['PM-E design work started elsewhere routes the owner to the page', theDesignWorkStartedElsewhereRoutesTheOwnerToThePage],
   ['BOTS the bots rail groups by persona', theBotsRailGroupsByPersona],
   ['SKILL the skills rail carries the categories and the pane', theSkillsRailCarriesOneSectionAtATime],
   ['MEM the memory rail carries the queue and the verbs', theMemoryRailCarriesTheQueueAndTheVerbs],

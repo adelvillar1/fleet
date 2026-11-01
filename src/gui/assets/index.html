@@ -726,6 +726,14 @@
               <option value="3">3 directions</option>
               <option value="4">4 directions</option>
             </select>
+          </div>
+          <!-- The page's own models: a design run's route is this choice,
+               pinned on the request — the router never picks among them.
+               It keeps a line of its own, because it is the run's model
+               and a clipped model name is a model you cannot read. -->
+          <div class="design-chat-row design-chat-model">
+            <span class="design-model-label">the model</span>
+            <select class="knob-box" id="design-model" aria-label="the model that designs"></select>
             <button class="replay-button replay-resume" id="design-send" type="button">send</button>
           </div>
         </div>

@@ -14,8 +14,11 @@ cannot be tweaked, reviewed or handed off. Type is the design: pick one
 display face and one text face, size the scale deliberately, and let
 whitespace do the grouping before any border does.
 
-When the owner asks for a designed page, screen or component sheet, put
-it on the canvas with the `frame` tool — never answer with HTML in prose.
+When the owner asks for a designed page, screen or component sheet — in a
+conversation as much as on the board — put it on the canvas with the
+`frame` tool, never answer with HTML in prose: the page belongs on the
+design page, where it can be seen, tweaked and reviewed, and the face
+takes the owner there when a frame lands.
 Pass the project slug the brief names, a name for the title bar, and the
 complete page; expose the three to six values an owner would actually
 change as `tweak_spec` entries (accent, ink contrast, type scale,
