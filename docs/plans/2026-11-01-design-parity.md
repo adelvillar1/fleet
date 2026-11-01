@@ -1,5 +1,5 @@
 ---
-status: active
+status: completed
 created: 2026-11-01
 updated: 2026-11-01
 slug: design-parity
@@ -182,70 +182,70 @@ through it.
 
 ## Acceptance criteria
 
-- [ ] **C1 — the composer sits in the center frame.** The design stage
+- [x] **C1 — the composer sits in the center frame.** The design stage
       renders the board's log, the approval seat and the `.composer` form
       as one bottom-center stack over the canvas, at the conversation's
       idiom; at 1440×900 the stack is visible, unclipped and the canvas
       is not overlapped beyond its bottom band (render + harness).
-- [ ] **C2 — the focus is visible and complete.** With no page selected
+- [x] **C2 — the focus is visible and complete.** With no page selected
       the composer reads `board · <name>` with a board placeholder and
       offers only the global verbs; with a page selected it reads
       `page · <name>` with a page placeholder, defaults the mode to
       refine and offers the page verbs; clicking the canvas background
       clears the selection and the focus returns to the board (harness).
-- [ ] **C3 — the focused request is the page's.** A send with a page
+- [x] **C3 — the focused request is the page's.** A send with a page
       selected composes a task carrying that `frame_id` and the frame's
       facts; a send with none composes a board-global task — pinned on
       the wire in the harness (the composition path already exists; the
       pin names it).
-- [ ] **C4 — the board renames from its head.** The design head's title
+- [x] **C4 — the board renames from its head.** The design head's title
       is inline-editable and the rename persists across a reload (the
       existing `rename` op, surfaced).
-- [ ] **C5 — the board deletes with a confirm.** The head's trash press
+- [x] **C5 — the board deletes with a confirm.** The head's trash press
       confirms with the board's frame count, removes `canvas/<slug>/`
       whole, and the rail no longer lists it (`canvas::delete_project`,
       pinned with a fixture board).
-- [ ] **C6 — a frame renames in place.** Double-clicking a frame's title
+- [x] **C6 — a frame renames in place.** Double-clicking a frame's title
       bar name opens an input; the entered name persists across a reload
       via `frame-update {name}`.
-- [ ] **C7 — the viewport presets sit on the frame.** The three preset
+- [x] **C7 — the viewport presets sit on the frame.** The three preset
       buttons render on the frame's title bar and resize the page
       (`frame-update {w,h}`), the tweak card's viewport section keeping
       its own copy.
-- [ ] **C8 — the frame line carries the page's settings.** The tweak
+- [x] **C8 — the frame line carries the page's settings.** The tweak
       card's frame line reads name · dimensions · model · description ·
       version count — description and `gen_meta` provenance when the
       frame carries them.
-- [ ] **C9 — the review card closes the source's gaps.** It offers the
+- [x] **C9 — the review card closes the source's gaps.** It offers the
       critic-model choice, shows score deltas in the history, and a fix
       drift press composes a run whose task names the coherence
       report's findings (harness asserts the task text).
-- [ ] **C10 — set membership is assignable.** A set picker on the frame
+- [x] **C10 — set membership is assignable.** A set picker on the frame
       writes `set_frame_set` and the frame's set badge updates without a
       reload.
-- [ ] **C11 — every gesture shows its save.** The design head's chip
+- [x] **C11 — every gesture shows its save.** The design head's chip
       reads `saving…` while a write is in flight, `saved` on its ack and
       `save failed: <reason>` on a refusal, for every `designWrite`
       gesture (harness drives one of each).
-- [ ] **C12 — every export downloads.** Each export button (html,
+- [x] **C12 — every export downloads.** Each export button (html,
       tokens.css, tokens.json, zip, tsx, png) offers a download of its
       file, not only a disk-path notice; a refused or missing file
       names itself in the notice.
-- [ ] **C13 — the board hosts locally.** The site route serves a board's
+- [x] **C13 — the board hosts locally.** The site route serves a board's
       page as a live document with rewritten links and a network-dead
       CSP (a fetch from the served page to the face's API is refused);
       the export card's site kind produces the ZIP with an index page,
       one page per frame, the token sheet and the manifest, and the zip
       opens.
-- [ ] **C14 — close-out.** The full gate green by exit code, the ledger
+- [x] **C14 — close-out.** The full gate green by exit code, the ledger
       checker green over the real file, and the contract docs carrying
       the new surface (design.md, the verbs table, the interface
       contracts).
-- [ ] **C15 — the model control is a multi-select.** The composer's
+- [x] **C15 — the model control is a multi-select.** The composer's
       model control offers the design catalog as a multi-select with
       availability per option; with the default single selection the run
       body carries exactly one pin, as today (harness).
-- [ ] **C16 — K models, K runs, K cards.** With K models selected, one
+- [x] **C16 — K models, K runs, K cards.** With K models selected, one
       composed task goes out as K runs carrying K distinct pins, and each
       run's frames land under its own variant card with its own progress
       line (harness asserts the K pins and the K cards).
@@ -352,3 +352,47 @@ commit.
   `deck::zip_parts` — the site build's parts.
 - The face's `openDrawer`/pane idiom — where the settings cards already
   mount.
+
+## Landed
+
+Every criterion confirmed. The gate's four legs by exit code at
+close-out — fmt 0, clippy 0, build 0, **test 1,908 passed / 0 failed
+across all targets** (the lib 1,714, the integration binaries, and the
+face harness at **608 checks across 56 cases**) — and the ledger
+checker reads the real file green (392 rows, zero problems).
+
+- **P1 (C1–C3)** landed `4f2ee6f`: the floating bottom-center stack
+  (the render at 1440×900 read and confirmed — collapsed log, focus
+  chip reading `board · <name>`, no clipping), the focus chip +
+  placeholder + verb filter, the background deselect, and the wire
+  contract (`frame_id` iff a page selected) — the first harness cut
+  taught the flat-map rule: the harness's ids have no tree, so
+  parentage and bubbling are the render leg's and the listeners are
+  driven directly.
+- **P2 (C4–C6)** landed `466e36c`: the head's inline rename through
+  the existing op, the confirm-and-delete (`canvas::delete_project`
+  takes store, digest and fact — the K5 delete event through the op),
+  the in-place page rename on `frame-update {name}`.
+- **P3 (C7–C10)** landed `c61a0e5`: viewport presets on the frame bar,
+  the frame line's whole account (description + `gen_meta` when
+  carried), the review card's critic (its pick rides the run's pin),
+  the history's per-review score deltas, fix drift over the coherence
+  report, and the set picker on the bar (`frame-set`, empty clears).
+- **P4 (C11–C13)** landed `fb757a1`: the save chip's three states
+  (the harness observes `saving…` synchronously, before the flush),
+  every export downloadable through the one-segment route (the
+  walk-out refusal pinned), and the **local host** — `GET
+  /site/<slug>/<page>` under the network-dead CSP, proven live: the
+  index served with its rewritten page links, the CSP header carrying
+  `connect-src 'none'`, and the site ZIP the same bytes.
+- **P5 (C15–C16)** landed `def9867`: the model chips as a
+  multi-select — one pressed is one pinned run, several pressed fan
+  the brief out (K runs, K distinct pins, one progress line each) —
+  the owner's amendment that different models have different
+  strengths. The first cut orphaned the clicks (a repaint reassigned
+  the picks array under the handlers); the harness caught it as a
+  one-model "fan-out".
+- **C14** landed `e66de1b` + here: the contract docs carry the new
+  surface (design.md's sections, the route lists, the surfaces
+  atlas, cron.md's digest glob), and this section is the record.
+

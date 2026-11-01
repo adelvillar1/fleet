@@ -1,5 +1,5 @@
 ---
-status: active
+status: completed
 created: 2026-11-01
 updated: 2026-11-01
 slug: designs-are-project-knowledge
@@ -107,33 +107,33 @@ Five small seams, each reusing a standing mechanism:
 
 ## Acceptance criteria
 
-- [ ] **K1 — every board carries its project.** The document read
+- [x] **K1 — every board carries its project.** The document read
       carries `project` (a path or none); the design head's picker sets
       and clears it through the writer; the choice persists across a
       reload (pinned on the wire and in the store).
-- [ ] **K2 — the rail groups by project.** The boards rail renders one
+- [x] **K2 — the rail groups by project.** The boards rail renders one
       section per bound project with its boards, then the unbound
       section; pick and fold behave as before (harness over a two-
       project fixture — two items, never one).
-- [ ] **K3 — every save writes the digest.** A bound board's save
+- [x] **K3 — every save writes the digest.** A bound board's save
       regenerates its digest at the project-keyed path — deterministic
       markdown naming every page, the tokens, the review scores and the
       brand; clearing the binding removes the file; an unbound board
       writes none (unit pins over a fixture document).
-- [ ] **K4 — the refresh embeds the digests.** `seed_task` names the
+- [x] **K4 — the refresh embeds the digests.** `seed_task` names the
       digest glob; a seed pass reconciles an existing corpus-refresh
       job to the new wording (the KI-277 path, pinned); a live refresh
       of a bound project reports the digest among its embedded sources.
-- [ ] **K5 — the lifecycle writes a fact.** Creating, renaming and
+- [x] **K5 — the lifecycle writes a fact.** Creating, renaming and
       deleting a board each move one `design-board-<slug>` fact through
       the substrate's writer; `fleet memories --recall` over a design
       instruction surfaces it (pinned on a fixture home, never the
       owner's).
-- [ ] **K6 — the run carries the design summary.** A session born in a
+- [x] **K6 — the run carries the design summary.** A session born in a
       project workspace whose project has boards gets the bounded design
       section in its assembled context; one born where no boards exist
       gets none (assembly pin, both directions).
-- [ ] **K7 — close-out.** The full gate green by exit code, the ledger
+- [x] **K7 — close-out.** The full gate green by exit code, the ledger
       checker green over the real file, and the contract docs carrying
       the new surface (design.md's store section, the cron seed's task
       wording, the memory fact lifecycle, the interface contracts).
@@ -223,3 +223,21 @@ as the last act before the commit.
   the shared files fold deliberately.
 - The KI-277 seed-reconcile and the KI-339 explicit-globs lessons —
   both already in the tree, both load-bearing here.
+
+## Landed
+
+Every criterion confirmed. The Rust block landed `223e4a5` (K1–K6:
+the binding field and the `board-project` op, the digest at the save
+funnel, the seed glob with the KI-277 reconcile, the lifecycle facts
+through the substrate's own supersession chain, the assembly's design
+section with the `Record::Memory` field that keeps it reconstructable)
+and the rail's grouping `67a4764` (K2 — a header row in the shared
+`sectionRail`, one family per bound project, unbound last). Each
+criterion's pins are green: the digest's byte-determinism, the fact
+chain's single live account, the reconcile boundary over a pre-glob
+job, the context section both directions, the two-project rail fixture.
+The isolation seams are load-bearing and named: the bridge's fact
+writer and the agent's design section both point at fixture roots
+under test, because any other resolution would adopt the machine's own
+corpus (the KI-087 walk in reverse).
+
