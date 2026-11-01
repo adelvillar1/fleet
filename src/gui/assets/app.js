@@ -16129,15 +16129,18 @@
     strip.appendChild(grid);
     strip.appendChild(pin);
     strip.appendChild(readout);
-    if (board && (board.sets || []).length) {
+    if (board && ((board.sets || []).length || (face.designPicked || []).length)) {
       // A page set hands over whole: every page captured, the tokens, the
       // manifest with its coherence, the changelog — one packet.
       var first = (board.sets || [])[0];
       var selectedFrame = designSelected();
-      var set = (selectedFrame && selectedFrame.set) || first.name;
-      var report = (first.coherence || {});
+      var picked = face.designPicked || [];
+      var set = (selectedFrame && selectedFrame.set) || (first && first.name) || '';
+      var report = (first && first.coherence) || {};
+      var label = picked.length ? picked.length + ' picked' : set;
       var packet = node('button', 'replay-button' +
-        (report.ok === false ? ' warn' : ''), 'packet \u00b7 ' + set);
+        (report.ok === false && !picked.length ? ' warn' : ''),
+        'packet \u00b7 ' + label);
       packet.type = 'button';
       packet.dataset.act = 'design-packet';
       packet.title = report.ok === false
@@ -16148,7 +16151,9 @@
         packet.disabled = true;
         notice('packing the set', set + ' \u2014 pages, tokens, PNGs and the changelog');
         post('/api/design/export', {
-          project: board.slug, kind: 'set-png', set: set,
+          project: board.slug, kind: 'set-png',
+          set: picked.length ? null : set,
+          ids: picked,
           origin: window.location.origin || 'http://127.0.0.1:3080'
         }).then(function (reply) {
           packet.disabled = false;
@@ -16311,7 +16316,21 @@
       bar.appendChild(badge(frame.pins.length + ' pin' + (frame.pins.length === 1 ? '' : 's'),
         frame.pins.some(function (pin) { return !pin.resolved_frame_id; }) ? 'warn' : 'ok'));
     }
+    // The packet's selection: a check on the bar, gathered into the
+    // export. It is separate from the board's own selection, which drives
+    // refine and fixes.
+    var pick = node('button', 'canvas-act canvas-pick',
+      (face.designPicked || []).indexOf(frame.id) >= 0 ? '\u2713' : '+');
+    pick.type = 'button';
+    pick.setAttribute('aria-label', 'pick ' + frame.name + ' for the packet');
+    pick.dataset.act = 'design-pick';
+    if ((face.designPicked || []).indexOf(frame.id) >= 0) pick.classList.add('on');
+    pick.addEventListener('click', function (event) {
+      event.stopPropagation();
+      designPick(frame.id);
+    });
     var acts = node('div', 'canvas-frame-acts');
+    acts.appendChild(pick);
     function act(label, aria, run) {
       var button = node('button', 'canvas-act', label);
       button.type = 'button';
@@ -16365,6 +16384,17 @@
       layer.appendChild(dot);
     });
     return layer;
+  }
+
+  /// The packet's selection, kept apart from the board's selection: a
+  /// check gathers frames, and the export hands exactly those over.
+  function designPick(frameId) {
+    face.designPicked = face.designPicked || [];
+    var at = face.designPicked.indexOf(frameId);
+    if (at >= 0) face.designPicked.splice(at, 1);
+    else face.designPicked.push(frameId);
+    paintDesignWorld();
+    paintDesignInstrument();
   }
 
   function designFrameCard(frame) {
@@ -16580,10 +16610,49 @@
     if (!versions.length) {
       rows.appendChild(node('p', 'board-empty', 'No versions yet \u2014 a refine or a restore creates one.'));
     }
+    var diffPane = node('div', 'canvas-diff');
+    diffPane.appendChild(node('p', 'board-empty',
+      'press a version\u2019s diff to see what its tokens changed'));
+    var previewPane = node('div', 'canvas-diff-preview');
     versions.slice().reverse().forEach(function (version) {
       var row = node('div', 'cfg-fallback');
       row.appendChild(node('span', 'cfg-item-value', version.source + ' \u00b7 ' + version.created));
       row.appendChild(node('span', 'cfg-item-mark', version.name));
+      // The token diff: Rust compares the snapshot with the page as it
+      // stands, and the older page opens in a framed preview beside it.
+      var diff = node('button', 'replay-button', 'diff');
+      diff.type = 'button';
+      diff.dataset.act = 'design-diff-' + version.id;
+      diff.addEventListener('click', function () {
+        fetch('/api/design/diff/' + encodeURIComponent(board.slug) + '/' +
+          encodeURIComponent(frame.id) + '/' + encodeURIComponent(version.id))
+          .then(function (reply) { return reply.json(); })
+          .then(function (document) {
+            diffPane.textContent = '';
+            var changes = (document && document.changes) || [];
+            if (!changes.length) {
+              diffPane.appendChild(node('p', 'board-empty',
+                'no token changed between this version and the page'));
+            }
+            changes.forEach(function (change) {
+              var line = node('div', 'cfg-fallback');
+              line.dataset.token = change.token;
+              line.appendChild(node('span', 'cfg-item-value', change.token));
+              line.appendChild(node('span', 'cfg-item-mark',
+                (change.before || '\u2014') + ' \u2192 ' + (change.after || '\u2014')));
+              diffPane.appendChild(line);
+            });
+            previewPane.textContent = '';
+            var view = node('iframe', 'canvas-diff-page');
+            view.setAttribute('sandbox', 'allow-scripts');
+            view.setAttribute('title', frame.name + ' at ' + version.id);
+            view.src = '/api/design/version/' + encodeURIComponent(board.slug) + '/' +
+              encodeURIComponent(frame.id) + '/' + encodeURIComponent(version.id);
+            previewPane.appendChild(view);
+          })
+          .catch(function () { });
+      });
+      row.appendChild(diff);
       var restore = node('button', 'replay-button', 'restore');
       restore.type = 'button';
       restore.dataset.act = 'design-restore-' + version.id;
@@ -16595,8 +16664,29 @@
       row.appendChild(restore);
       rows.appendChild(row);
     });
+    // The component export: the page as a React component, Rust's own
+    // transform, written beside the board.
+    var tsx = node('button', 'replay-button', 'export the component');
+    tsx.type = 'button';
+    tsx.dataset.act = 'design-tsx';
+    tsx.addEventListener('click', function () {
+      post('/api/design/export', {
+        project: board.slug, id: frame.id, kind: 'tsx'
+      }).then(function (reply) {
+        if (reply.status !== 200) {
+          notice('the component was refused', (reply.body && reply.body.error) || '');
+          return;
+        }
+        notice('the component is on disk',
+          (reply.body && reply.body.component ? reply.body.component + ' \u2014 ' : '') +
+          ((reply.body && reply.body.path) || ''));
+      }).catch(function () { });
+    });
     openDrawer(frame.name + ' \u00b7 versions', [
       ['the history, newest first', rows],
+      ['the token diff', diffPane],
+      ['the older page', previewPane],
+      ['hand-off', tsx],
       ['what it costs', node('p', 'derivation',
         'A restore snapshots the current page first, so restoring is itself a version.')]
     ]);

@@ -1294,6 +1294,53 @@ async fn serve_connection(
                 }
             }
         }
+        // A version's page for the older-page preview: the same CSP-framed
+        // document the current page gets.
+        ("GET", path) if path.starts_with("/api/design/version/") => {
+            let rest = path.trim_start_matches("/api/design/version/");
+            let mut parts = rest.splitn(3, '/');
+            let slug = percent_decode(parts.next().unwrap_or_default());
+            let frame_id = percent_decode(parts.next().unwrap_or_default());
+            let version_id = percent_decode(parts.next().unwrap_or_default());
+            match bridge.design_version_html(&slug, &frame_id, &version_id) {
+                Ok(html) => {
+                    let head = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\n\
+                         Connection: close\r\nCache-Control: no-store\r\n\
+                         X-Content-Type-Options: nosniff\r\n\
+                         Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; img-src data: https:; font-src data:; script-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'\r\n\r\n",
+                        html.len()
+                    );
+                    stream
+                        .write_all(head.as_bytes())
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    stream
+                        .write_all(html.as_bytes())
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    stream.flush().await.map_err(|e| e.to_string())?;
+                    Ok(())
+                }
+                Err(message) => {
+                    write_reply(&mut stream, api(404, json!({"refused": [message]}))).await
+                }
+            }
+        }
+        // The token diff between a stored version and the page as it stands.
+        ("GET", path) if path.starts_with("/api/design/diff/") => {
+            let rest = path.trim_start_matches("/api/design/diff/");
+            let mut parts = rest.splitn(3, '/');
+            let slug = percent_decode(parts.next().unwrap_or_default());
+            let frame_id = percent_decode(parts.next().unwrap_or_default());
+            let version_id = percent_decode(parts.next().unwrap_or_default());
+            match bridge.design_diff(&slug, &frame_id, &version_id) {
+                Ok(reply) => write_reply(&mut stream, api(200, reply)).await,
+                Err(message) => {
+                    write_reply(&mut stream, api(404, json!({"refused": [message]}))).await
+                }
+            }
+        }
         ("GET", path) if path.starts_with("/api/design/asset/") => {
             let rest = path.trim_start_matches("/api/design/asset/");
             let mut parts = rest.splitn(2, '/');

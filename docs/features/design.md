@@ -221,6 +221,27 @@ A frame is reviewed by a run, and the review has a shape:
 - **The fixes become a run**: a stored review's fixes compose the *apply
   the fixes* verb from the board's conversation.
 
+## Versions, the diff, and the component
+
+- **A version's token diff** (`canvas::token_diff`) names exactly the
+  `:root` variables that changed between a snapshot and the page as it
+  stands — added, dropped, and changed value, ordered by token — and the
+  versions card opens the **older page** in its own framed preview
+  (`/api/design/version/<slug>/<frame>/<version>`, under the same CSP as
+  the current page).
+- **The React component** (`canvas::to_tsx`, the source's codegen ported):
+  the page's body as JSX (attribute names renamed, inline styles as
+  objects, void tags self-closed, text escaped, comments as JSX comments),
+  the page's style in a `<style>` element, and the frame's tweaks as
+  **props that override the same custom properties**. Inline scripts are
+  held out of the component and named as a `TODO` — a page's behaviour is
+  not a mechanical transform. `kind: "tsx"` writes `<slug>-tsx-<stamp>.tsx`
+  beside the board.
+- **Board-level selection**: a check on a frame's bar gathers it into the
+  packet; the instrument's press then exports exactly the picked frames
+  (`selection_packet`) rather than a set — pages, tokens, manifest,
+  changelog and, through `set-png`, each frame's captures.
+
 ## Page sets
 
 A **page set** is a site on the board: frames that share a `set` name (the

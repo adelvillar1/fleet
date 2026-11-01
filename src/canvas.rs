@@ -1838,6 +1838,482 @@ fn ranked(list: Vec<(String, usize)>, cap: usize) -> Vec<String> {
     list.into_iter().take(cap).map(|(value, _)| value).collect()
 }
 
+// --- the codegen and the diff ------------------------------------------------
+
+/// A component name from a frame's name, the source's own rule: words are
+/// PascalCase, and a name that cannot start an identifier gets `Frame`.
+pub fn to_component_name(name: &str) -> String {
+    let cleaned: String = name
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { ' ' })
+        .collect();
+    let joined: String = cleaned
+        .split_whitespace()
+        .map(|word| {
+            let mut chars = word.chars();
+            match chars.next() {
+                Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                None => String::new(),
+            }
+        })
+        .collect();
+    match joined.chars().next() {
+        Some(first) if first.is_ascii_alphabetic() => joined,
+        _ => format!("Frame{joined}"),
+    }
+}
+
+/// A React component from a frame page: the body's markup as JSX (attribute
+/// names renamed, styles as objects, void tags self-closed, text escaped,
+/// scripts held out as a TODO), the page's style in a `<style>` element, and
+/// the frame's tweaks as props that override the same custom properties.
+/// A deterministic transform — the source's own, ported — so the export is
+/// testable and the CLI, the face and a cron job write identical bytes.
+pub fn to_tsx(
+    frame_name: &str,
+    html: &str,
+    tweaks: &[TweakSpec],
+    values: &BTreeMap<String, Value>,
+) -> String {
+    let component = to_component_name(frame_name);
+    let css = between(html, "<style", "</style>")
+        .map(|chunk| {
+            chunk
+                .split_once('>')
+                .map(|(_, css)| css.trim().to_string())
+                .unwrap_or_default()
+        })
+        .unwrap_or_default();
+    let body = between(html, "<body", "</body>")
+        .map(|chunk| {
+            chunk
+                .split_once('>')
+                .map(|(_, body)| body.to_string())
+                .unwrap_or_default()
+        })
+        .unwrap_or_else(|| html.to_string());
+    // Scripts are held out of the component and named as a TODO: a page's
+    // behaviour is not a mechanical transform.
+    let mut scripts: Vec<String> = Vec::new();
+    let mut body = body;
+    loop {
+        let lower = body.to_ascii_lowercase();
+        let Some(start) = lower.find("<script") else {
+            break;
+        };
+        let Some(close) = lower[start..].find("</script>") else {
+            break;
+        };
+        let end = start + close + "</script>".len();
+        let tag_end = lower[start..]
+            .find('>')
+            .map(|at| start + at + 1)
+            .unwrap_or(end);
+        if tag_end <= end {
+            scripts.push(body[tag_end..start + close].trim().to_string());
+        }
+        body.replace_range(start..end, "");
+    }
+    let jsx = convert_element(&body);
+    let mut props: Vec<String> = Vec::new();
+    let mut types: Vec<String> = Vec::new();
+    let mut injections: Vec<String> = Vec::new();
+    for spec in tweaks {
+        let ident = safe_ident(&spec.key);
+        let current = values.get(&spec.key).cloned().unwrap_or_else(|| {
+            if spec.default.is_null() {
+                match spec.kind.as_str() {
+                    "toggle" => Value::Bool(true),
+                    _ => Value::Number(0.into()),
+                }
+            } else {
+                spec.default.clone()
+            }
+        });
+        let literal = match &current {
+            Value::String(text) => format!("\"{}\"", text.replace('"', "\\\"")),
+            other => other.to_string(),
+        };
+        let kind = match spec.kind.as_str() {
+            "toggle" => "boolean",
+            "slider" => "number",
+            _ => "string | number",
+        };
+        let label = if spec.label.is_empty() {
+            &spec.key
+        } else {
+            &spec.label
+        };
+        props.push(format!("  /** {label} */\n  {ident} = {literal},"));
+        types.push(format!("    /** {label} */\n    {ident}?: {kind};"));
+        injections.push(format!("    --{}: ${{{ident}}} as any,", spec.key));
+    }
+    let props_block = if props.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "  {{\n{}\n  }}: {{\n{}\n  }} = {{}}",
+            props.join("\n"),
+            types.join("\n")
+        )
+    };
+    // The tweak props override the page's own custom properties.
+    let sheet = if injections.is_empty() {
+        css.clone()
+    } else {
+        let override_block = format!("\n      :root {{\n{}\n      }}", injections.join("\n"));
+        if css.to_ascii_lowercase().contains(":root") {
+            format!("{css}{override_block}")
+        } else {
+            format!("{override_block}\n{css}")
+        }
+    };
+    let indented = jsx
+        .split('\n')
+        .map(|line| {
+            if line.trim().is_empty() {
+                line.to_string()
+            } else {
+                format!("      {line}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let script_note = if scripts.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "\n/*\n * TODO: port inline script(s) from the original frame:\n{}\n */",
+            scripts
+                .iter()
+                .map(|script| format!(
+                    " * {}",
+                    script.split('\n').collect::<Vec<_>>().join("\n * ")
+                ))
+                .collect::<Vec<_>>()
+                .join("\n *\n")
+        )
+    };
+    format!(
+        "/**\n * {frame_name} — generated by fleet's design canvas.\n * Design tokens live in :root below (or in tokens.css); the tweak props map to\n * the same CSS custom properties, so the component stays live-tweakable.\n */\nexport default function {component}({props_block}) {{\n  return (\n    <>\n      <style>{{`\n{sheet}\n      `}}</style>\n{indented}\n    </>\n  );\n}}{script_note}\n"
+    )
+}
+
+fn safe_ident(key: &str) -> String {
+    let cleaned: String = key
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
+        .collect();
+    if cleaned.is_empty() {
+        "tweak".to_string()
+    } else if cleaned.chars().next().is_some_and(|ch| ch.is_ascii_digit()) {
+        format!("_{cleaned}")
+    } else {
+        cleaned
+    }
+}
+
+fn jsx_attr_name(attr: &str) -> String {
+    let lower = attr.to_ascii_lowercase();
+    let renamed = match lower.as_str() {
+        "class" => Some("className"),
+        "for" => Some("htmlFor"),
+        "tabindex" => Some("tabIndex"),
+        "readonly" => Some("readOnly"),
+        "maxlength" => Some("maxLength"),
+        "minlength" => Some("minLength"),
+        "autocomplete" => Some("autoComplete"),
+        "autofocus" => Some("autoFocus"),
+        "autoplay" => Some("autoPlay"),
+        "colspan" => Some("colSpan"),
+        "rowspan" => Some("rowSpan"),
+        "contenteditable" => Some("contentEditable"),
+        "crossorigin" => Some("crossOrigin"),
+        "datetime" => Some("dateTime"),
+        "enctype" => Some("encType"),
+        "novalidate" => Some("noValidate"),
+        "spellcheck" => Some("spellCheck"),
+        "srcdoc" => Some("srcDoc"),
+        "srcset" => Some("srcSet"),
+        "usemap" => Some("useMap"),
+        _ => None,
+    };
+    if let Some(name) = renamed {
+        return name.to_string();
+    }
+    if lower.starts_with("data-") || lower.starts_with("aria-") {
+        return lower;
+    }
+    let mut out = String::with_capacity(attr.len());
+    let mut upper = false;
+    for ch in attr.chars() {
+        if ch == '-' {
+            upper = true;
+        } else if upper {
+            out.extend(ch.to_uppercase());
+            upper = false;
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
+/// An inline style string as a JSX object literal.
+fn style_string_to_object(style: &str) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    for declaration in style.split(';') {
+        let Some((prop, value)) = declaration.split_once(':') else {
+            continue;
+        };
+        let prop = prop.trim();
+        let value = value.trim();
+        if prop.is_empty() || value.is_empty() {
+            continue;
+        }
+        let key = if prop.starts_with("--") {
+            format!("\"{prop}\"")
+        } else {
+            let mut out = String::new();
+            let mut upper = false;
+            for ch in prop.chars() {
+                if ch == '-' {
+                    upper = true;
+                } else if upper {
+                    out.extend(ch.to_uppercase());
+                    upper = false;
+                } else {
+                    out.push(ch);
+                }
+            }
+            out
+        };
+        parts.push(format!(
+            "{key}: {}",
+            serde_json::to_string(value).unwrap_or_else(|_| "\"\"".to_string())
+        ));
+    }
+    format!("{{{{ {} }}}}", parts.join(", "))
+}
+
+fn escape_jsx_text(text: &str) -> String {
+    text.replace('{', "&#123;")
+        .replace('}', "&#125;")
+        .replace('\'', "&apos;")
+}
+
+/// The page's markup as JSX. A scanner over tags (quotes honored), the same
+/// discipline as the rest of the module.
+fn convert_element(html: &str) -> String {
+    let mut out = String::with_capacity(html.len());
+    let mut at = 0;
+    while at < html.len() {
+        let comment = html[at..].find("<!--").map(|found| at + found);
+        let Some(tag_start) = html[at..].find('<').map(|found| at + found) else {
+            out.push_str(&escape_jsx_text(&html[at..]));
+            break;
+        };
+        out.push_str(&escape_jsx_text(&html[at..tag_start]));
+        if comment == Some(tag_start) {
+            match html[tag_start..].find("-->") {
+                Some(close) => {
+                    out.push_str(&format!(
+                        "{{/*{}*/}}",
+                        &html[tag_start + 4..tag_start + close]
+                    ));
+                    at = tag_start + close + 3;
+                    continue;
+                }
+                None => {
+                    out.push_str(&html[tag_start..]);
+                    break;
+                }
+            }
+        }
+        let Some(tag_end) = find_tag_end(html, tag_start) else {
+            out.push_str(&html[tag_start..]);
+            break;
+        };
+        let raw = &html[tag_start..=tag_end];
+        at = tag_end + 1;
+        let name: String = raw
+            .trim_start_matches('<')
+            .trim_start_matches('/')
+            .chars()
+            .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '-')
+            .collect::<String>()
+            .to_ascii_lowercase();
+        if name.is_empty() {
+            out.push_str(&format!(
+                "{{{}}}",
+                serde_json::to_string(raw).unwrap_or_default()
+            ));
+            continue;
+        }
+        if raw.starts_with("</") {
+            out.push_str(&format!("</{name}>"));
+            continue;
+        }
+        let self_closing = raw.ends_with("/>")
+            || matches!(
+                name.as_str(),
+                "area"
+                    | "base"
+                    | "br"
+                    | "col"
+                    | "embed"
+                    | "hr"
+                    | "img"
+                    | "input"
+                    | "link"
+                    | "meta"
+                    | "param"
+                    | "source"
+                    | "track"
+                    | "wbr"
+            );
+        let attrs = parse_attrs(raw);
+        let rendered: Vec<String> = attrs
+            .iter()
+            .map(|(attr, value)| {
+                let name = jsx_attr_name(attr);
+                match value {
+                    None => name,
+                    Some(value) if name == "style" && !value.contains('{') => {
+                        format!("style={}", style_string_to_object(value))
+                    }
+                    Some(value) => format!(
+                        "{name}={}",
+                        serde_json::to_string(value).unwrap_or_default()
+                    ),
+                }
+            })
+            .collect();
+        let attr_str = if rendered.is_empty() {
+            String::new()
+        } else {
+            format!(" {}", rendered.join(" "))
+        };
+        out.push_str(&format!(
+            "<{name}{attr_str}{}>",
+            if self_closing { " /" } else { "" }
+        ));
+    }
+    out
+}
+
+/// The index of a tag's closing `>`, honoring quotes.
+fn find_tag_end(html: &str, start: usize) -> Option<usize> {
+    let mut quote: Option<char> = None;
+    for (offset, ch) in html[start + 1..].char_indices() {
+        match quote {
+            Some(mark) if ch == mark => quote = None,
+            Some(_) => {}
+            None if ch == '"' || ch == '\'' => quote = Some(ch),
+            None if ch == '>' => return Some(start + 1 + offset),
+            None => {}
+        }
+    }
+    None
+}
+
+/// A tag's attributes, in order; a value-less attribute has `None`.
+fn parse_attrs(tag: &str) -> Vec<(String, Option<String>)> {
+    let body = tag
+        .trim_start_matches('<')
+        .trim_start_matches('/')
+        .trim_end_matches('>')
+        .trim_end_matches('/');
+    let name_end = body.find(char::is_whitespace).unwrap_or(body.len());
+    let mut out: Vec<(String, Option<String>)> = Vec::new();
+    let rest = &body[name_end..];
+    let bytes = rest.as_bytes();
+    let mut at = 0;
+    while at < bytes.len() {
+        while at < bytes.len() && bytes[at].is_ascii_whitespace() {
+            at += 1;
+        }
+        if at >= bytes.len() {
+            break;
+        }
+        let name_start = at;
+        while at < bytes.len()
+            && (bytes[at].is_ascii_alphanumeric()
+                || matches!(bytes[at], b':' | b'_' | b'.' | b'-' | b'@'))
+        {
+            at += 1;
+        }
+        if at == name_start {
+            at += 1;
+            continue;
+        }
+        let name = rest[name_start..at].to_string();
+        let mut value = None;
+        let mut probe = at;
+        while probe < bytes.len() && bytes[probe].is_ascii_whitespace() {
+            probe += 1;
+        }
+        if probe < bytes.len() && bytes[probe] == b'=' {
+            let mut cursor = probe + 1;
+            while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
+                cursor += 1;
+            }
+            if cursor < bytes.len() && (bytes[cursor] == b'"' || bytes[cursor] == b'\'') {
+                let mark = bytes[cursor];
+                let start = cursor + 1;
+                let mut close = start;
+                while close < bytes.len() && bytes[close] != mark {
+                    close += 1;
+                }
+                value = Some(rest[start..close.min(rest.len())].to_string());
+                at = (close + 1).min(bytes.len());
+            } else {
+                let start = cursor;
+                let mut close = start;
+                while close < bytes.len() && !bytes[close].is_ascii_whitespace() {
+                    close += 1;
+                }
+                value = Some(rest[start..close].to_string());
+                at = close;
+            }
+        }
+        out.push((name, value));
+    }
+    out
+}
+
+/// One token's change between two versions of a page.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct TokenChange {
+    pub token: String,
+    pub before: Option<String>,
+    pub after: Option<String>,
+}
+
+/// The token diff between two versions of a page: what was added, what was
+/// dropped, what changed value. Deterministic and ordered by token name.
+pub fn token_diff(before_html: &str, after_html: &str) -> Vec<TokenChange> {
+    let before: BTreeMap<String, String> = extract_root_tokens(before_html).into_iter().collect();
+    let after: BTreeMap<String, String> = extract_root_tokens(after_html).into_iter().collect();
+    let mut names: Vec<String> = before.keys().chain(after.keys()).cloned().collect();
+    names.sort();
+    names.dedup();
+    let mut out = Vec::new();
+    for token in names {
+        let was = before.get(&token);
+        let now = after.get(&token);
+        if was == now {
+            continue;
+        }
+        out.push(TokenChange {
+            token,
+            before: was.cloned(),
+            after: now.cloned(),
+        });
+    }
+    out
+}
+
 // --- page sets ---------------------------------------------------------------
 
 /// One page of a set: the frame, its name, and the slug its file takes.
@@ -2047,8 +2523,38 @@ pub fn set_packet(
     if frames.is_empty() {
         return Err(format!("no page set `{set}` on board `{slug}`"));
     }
-    let slugs = page_set_slugs(&frames);
-    let report = coherence(&frames);
+    frames_packet(slug, set, &frames, pngs)
+}
+
+/// The packet of any chosen frames — a set, or the owner's own selection:
+/// each page's file, the tokens, the manifest, the changelog, and whatever
+/// captures the caller brought.
+pub fn selection_packet(
+    home: &Path,
+    slug: &str,
+    ids: &[String],
+    pngs: &BTreeMap<String, Vec<u8>>,
+) -> Result<Vec<u8>, String> {
+    let project = load(home, slug)?;
+    let frames: Vec<&Frame> = project
+        .frames
+        .iter()
+        .filter(|frame| ids.iter().any(|id| id == &frame.id))
+        .collect();
+    if frames.is_empty() {
+        return Err("the selection names no frame on this board".to_string());
+    }
+    frames_packet(slug, "selection", &frames, pngs)
+}
+
+fn frames_packet(
+    slug: &str,
+    set: &str,
+    frames: &[&Frame],
+    pngs: &BTreeMap<String, Vec<u8>>,
+) -> Result<Vec<u8>, String> {
+    let slugs = page_set_slugs(frames);
+    let report = coherence(frames);
     let mut parts: Vec<(String, Vec<u8>)> = Vec::new();
     let mut manifest_pages: Vec<Value> = Vec::new();
     let mut tokens_css = String::from("/* the set's tokens, as the pages declare them */\n");
@@ -3259,6 +3765,100 @@ mod tests {
         // Text that is not an SVG is refused by name.
         let error = svg_sanitize("<html><body>not a mark</body></html>").unwrap_err();
         assert!(error.contains("not an SVG"), "{error}");
+    }
+
+    /// W14: a page becomes a React component (attrs renamed, styles as
+    /// objects, scripts held out as a TODO, tweaks as props) and the token
+    /// diff names exactly the variables that changed.
+    #[test]
+    fn a_frame_becomes_a_react_component() {
+        let tweaks: Vec<TweakSpec> = serde_json::from_value(serde_json::json!([
+            {"key": "accent", "label": "the accent", "kind": "color",
+             "default": "#3b6cf6", "css_var": "accent"},
+            {"key": "density", "label": "density", "kind": "slider",
+             "min": 0.8, "max": 1.4, "step": 0.05, "default": 1, "css_var": "density"}
+        ]))
+        .unwrap();
+        let values = BTreeMap::from([("accent".to_string(), serde_json::json!("#b4552d"))]);
+        let page = "<!doctype html><html><head><style>:root{--ink:#111;--accent:#b4552d}</style></head>\
+<body><div class=\"card\" style=\"color: var(--ink); margin-top: 8px\"><label for=\"e\">Email</label>\
+<input id=\"e\" type=\"text\"><br><img src=\"data:image/png;base64,AA\" alt=\"a mark\"></div></body></html>";
+        let tsx = to_tsx("Hero panel", page, &tweaks, &values);
+        assert!(tsx.contains("export default function HeroPanel("), "{tsx}");
+        assert!(tsx.contains("className=\"card\""), "{tsx}");
+        assert!(tsx.contains("htmlFor=\"e\""), "{tsx}");
+        assert!(
+            tsx.contains("style={{ color: \"var(--ink)\", marginTop: \"8px\" }}"),
+            "{tsx}"
+        );
+        // Void tags self-close; the mark keeps its data URI.
+        assert!(tsx.contains("<br />"), "{tsx}");
+        assert!(
+            tsx.contains("<img src=\"data:image/png;base64,AA\" alt=\"a mark\" />"),
+            "{tsx}"
+        );
+        // The tweaks are props, and each one overrides its custom property.
+        assert!(tsx.contains("accent = \"#b4552d\","), "{tsx}");
+        assert!(tsx.contains("density?: number;"), "{tsx}");
+        assert!(tsx.contains("--accent: ${accent} as any,"), "{tsx}");
+        assert!(tsx.contains("--density: ${density} as any,"), "{tsx}");
+        // A script is held out of the component and named as a TODO.
+        let scripted = "<!doctype html><html><head><style>:root{--ink:#111}</style></head>\
+<body><p>hello</p><script>console.log(\"hi\")</script></body></html>";
+        let tsx = to_tsx("Scripted", scripted, &[], &BTreeMap::new());
+        assert!(tsx.contains("TODO: port inline script(s)"), "{tsx}");
+        assert!(!tsx.contains("<script"), "{tsx}");
+        assert!(tsx.contains("hello"), "{tsx}");
+        // A name nothing can start an identifier with still yields one.
+        assert_eq!(to_component_name("3 hero — v2"), "Frame3HeroV2");
+    }
+
+    /// W14: the diff names added, dropped and changed tokens, in order.
+    #[test]
+    fn the_token_diff_names_the_changed_variables() {
+        let before = "<style>:root{--ink:#111111;--accent:#111111;--gone:1px}</style>";
+        let after = "<style>:root{--ink:#111111;--accent:#b4552d;--new:2px}</style>";
+        let changes = token_diff(before, after);
+        assert_eq!(changes.len(), 3, "{changes:?}");
+        assert_eq!(changes[0].token, "accent");
+        assert_eq!(changes[0].before.as_deref(), Some("#111111"));
+        assert_eq!(changes[0].after.as_deref(), Some("#b4552d"));
+        assert_eq!(changes[1].token, "gone");
+        assert_eq!(changes[1].after, None);
+        assert_eq!(changes[2].token, "new");
+        assert_eq!(changes[2].before, None);
+        // An unchanged page has nothing to name.
+        assert!(token_diff(before, before).is_empty());
+    }
+
+    /// W14: a selection packet holds exactly the frames the owner checked —
+    /// no more, and none of the board's other pages.
+    #[test]
+    fn a_selection_packet_holds_only_the_frames_picked() {
+        let home = scratch("selection");
+        let (slug, _) = create(&home, "Board").unwrap();
+        let one = put_frame(&home, &slug, "one", PAGE, None, None, "m").unwrap();
+        let two = put_frame(&home, &slug, "two", PAGE, None, None, "m").unwrap();
+        let three = put_frame(&home, &slug, "three", PAGE, None, None, "m").unwrap();
+        let bytes = selection_packet(
+            &home,
+            &slug,
+            &[one.clone(), three.clone()],
+            &BTreeMap::new(),
+        )
+        .unwrap();
+        let text = String::from_utf8_lossy(&bytes);
+        assert!(text.contains("one.html"), "the first picked page");
+        assert!(text.contains("three.html"), "the second picked page");
+        assert!(
+            !text.contains("two.html"),
+            "an unpicked page is not in the packet"
+        );
+        assert_eq!(&bytes[0..2], b"PK");
+        // An empty selection is refused by name.
+        let error = selection_packet(&home, &slug, &[], &BTreeMap::new()).unwrap_err();
+        assert!(error.contains("no frame"), "{error}");
+        let _ = two;
     }
 
     /// W13: the review names eight scores, the ask drives two captures,

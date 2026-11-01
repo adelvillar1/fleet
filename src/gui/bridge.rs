@@ -2129,6 +2129,59 @@ impl Bridge {
         ))
     }
 
+    /// One version's page, for the older-page preview: the stored snapshot
+    /// with the tweaks it carried, through the same injection path.
+    pub fn design_version_html(
+        &self,
+        slug: &str,
+        frame_id: &str,
+        version_id: &str,
+    ) -> Result<String, String> {
+        let project = crate::canvas::load(&self.home, slug)?;
+        let frame = project
+            .frames
+            .iter()
+            .find(|frame| frame.id == frame_id)
+            .ok_or_else(|| format!("no frame `{frame_id}` on this board"))?;
+        let version = frame
+            .versions
+            .iter()
+            .find(|version| version.id == version_id)
+            .ok_or_else(|| format!("no version `{version_id}` on frame `{frame_id}`"))?;
+        Ok(crate::canvas::inject_tweaks(
+            &version.html,
+            &frame.tweak_spec,
+            &version.tweak_values,
+        ))
+    }
+
+    /// The token diff between a stored version and the frame as it stands.
+    pub fn design_diff(
+        &self,
+        slug: &str,
+        frame_id: &str,
+        version_id: &str,
+    ) -> Result<Value, String> {
+        let project = crate::canvas::load(&self.home, slug)?;
+        let frame = project
+            .frames
+            .iter()
+            .find(|frame| frame.id == frame_id)
+            .ok_or_else(|| format!("no frame `{frame_id}` on this board"))?;
+        let version = frame
+            .versions
+            .iter()
+            .find(|version| version.id == version_id)
+            .ok_or_else(|| format!("no version `{version_id}` on frame `{frame_id}`"))?;
+        let changes = crate::canvas::token_diff(&version.html, &frame.html);
+        Ok(json!({
+            "type": "design_diff",
+            "from": version.id,
+            "from_created": version.created,
+            "changes": changes,
+        }))
+    }
+
     /// The PNG export: the frame rendered by the browser lane — the one
     /// rasterizer fleet ships. The lane opens the preview route (the
     /// served bytes, under its CSP) and captures it into the exports
@@ -2305,8 +2358,22 @@ impl Bridge {
         let set = arguments
             .get("set")
             .and_then(Value::as_str)
-            .ok_or_else(|| "the export names its set".to_string())?
-            .to_string();
+            .map(str::to_string);
+        // A selection is its own packet: the frames the owner checked,
+        // nothing else.
+        let ids: Vec<String> = arguments
+            .get("ids")
+            .and_then(Value::as_array)
+            .map(|ids| {
+                ids.iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default();
+        if set.is_none() && ids.is_empty() {
+            return Err("the export names a page set or the frames it wants".to_string());
+        }
         let origin = arguments
             .get("origin")
             .and_then(Value::as_str)
@@ -2322,12 +2389,23 @@ impl Bridge {
             ));
         }
         let project = crate::canvas::load(&self.home, &slug)?;
-        let frames: Vec<(String, String, f64, f64)> = crate::canvas::page_set(&project, &set)
+        let chosen: Vec<&crate::canvas::Frame> = match &set {
+            Some(set) => crate::canvas::page_set(&project, set),
+            None => project
+                .frames
+                .iter()
+                .filter(|frame| ids.iter().any(|id| id == &frame.id))
+                .collect(),
+        };
+        let frames: Vec<(String, String, f64, f64)> = chosen
             .iter()
             .map(|frame| (frame.id.clone(), frame.name.clone(), frame.w, frame.h))
             .collect();
         if frames.is_empty() {
-            return Err(format!("no page set `{set}` on board `{slug}`"));
+            return Err(match &set {
+                Some(set) => format!("no page set `{set}` on board `{slug}`"),
+                None => "the selection names no frame on this board".to_string(),
+            });
         }
         let spec = crate::lanes::spec_for("browser")?;
         let dir = crate::canvas::canvas_root(&self.home)
@@ -2371,10 +2449,17 @@ impl Bridge {
             }
         }
         let _ = server.close().await;
-        let bytes = crate::canvas::set_packet(&self.home, &slug, &set, &pngs)?;
+        let label = match &set {
+            Some(set) => set.clone(),
+            None => "selection".to_string(),
+        };
+        let bytes = match &set {
+            Some(set) => crate::canvas::set_packet(&self.home, &slug, set, &pngs)?,
+            None => crate::canvas::selection_packet(&self.home, &slug, &ids, &pngs)?,
+        };
         let stem = format!(
             "{}-set-{}",
-            crate::canvas::slug_of(&set),
+            crate::canvas::slug_of(&label),
             crate::calib::stamp().replace([':', '-'], "")
         );
         let path = dir.join(format!("{stem}.zip"));
@@ -7515,6 +7600,41 @@ fn design_export(home: &std::path::Path, body: &str) -> Result<Value, String> {
         .get("kind")
         .and_then(Value::as_str)
         .unwrap_or("html");
+    // The React component: the source's own transform, ported — the page
+    // as JSX with its tokens as `:root` and its tweaks as props.
+    if kind == "tsx" {
+        let project = crate::canvas::load(home, slug)?;
+        let frame = project
+            .frames
+            .iter()
+            .find(|frame| frame.id == frame_id)
+            .ok_or_else(|| format!("no frame `{frame_id}` on this board"))?;
+        let tsx = crate::canvas::to_tsx(
+            &frame.name,
+            &frame.html,
+            &frame.tweak_spec,
+            &frame.tweak_values,
+        );
+        let dir = crate::canvas::canvas_root(home).join(slug).join("exports");
+        std::fs::create_dir_all(&dir)
+            .map_err(|error| format!("could not make {}: {error}", dir.display()))?;
+        let name = crate::canvas::to_component_name(&frame.name);
+        let stem = format!(
+            "{}-tsx-{}",
+            crate::canvas::slug_of(&frame.name),
+            crate::calib::stamp().replace([':', '-'], "")
+        );
+        let path = dir.join(format!("{stem}.tsx"));
+        std::fs::write(&path, tsx.as_bytes())
+            .map_err(|error| format!("could not write {}: {error}", path.display()))?;
+        return Ok(json!({
+            "type": "design_export",
+            "kind": "tsx",
+            "component": name,
+            "path": path.display().to_string(),
+            "bytes": tsx.len(),
+        }));
+    }
     // A page set is one packet: every page, its tokens, the manifest with
     // the coherence report, and the changelog.
     if kind == "set" {

@@ -1,5 +1,5 @@
 ---
-status: active
+status: complete
 created: 2026-10-31
 updated: 2026-10-31
 slug: design-canvas-complete
@@ -230,7 +230,7 @@ changelog.
 - [x] **W13 — the review loop closed.** Two captures (desktop, mobile)
       reach the vision read; the stored review names the 8 scores; the
       history holds bounded entries; the fix run starts from it.
-- [ ] **W14 — versions and exports completed.** The token diff names the
+- [x] **W14 — versions and exports completed.** The token diff names the
       changed variables; the TSX export parses as TypeScript; the
       board-level ZIP holds only the selected frames.
 
@@ -369,7 +369,31 @@ the picker landed as one run per model — see the landed section below —
 because the owner ruled that a design run's route is the page's, not a
 chain's.)**
 
-T6 remains unstarted.
+**All phases landed.** The plan is complete: T0–T6, W1–W14.
+
+## Landed: T6 — versions, the diff, the component, the selection
+
+**The token diff** (`canvas::token_diff`) names added, dropped and changed
+`:root` variables between a snapshot and the page as it stands, ordered by
+token (`the_token_diff_names_the_changed_variables`). The versions card
+opens that diff and the **older page** in its own framed preview route,
+under the same CSP as the current page.
+
+**The component** is `canvas::to_tsx` — the source's `codegen.ts` ported:
+the body as JSX (attribute renames, style strings as object literals, void
+tags self-closed, text escaped, comments as JSX comments), the page's CSS
+in a `<style>` element, tweaks as props that override the same custom
+properties, and inline scripts held out as a `TODO`. Pinned by
+`a_frame_becomes_a_react_component`; the live export's `.tsx` parses under
+TypeScript (below).
+
+**Board-level selection**: a check on a frame's bar gathers it, and the
+instrument's packet press exports exactly the picked frames
+(`selection_packet`, pinned by `a_selection_packet_holds_only_the_frames_picked`):
+pages, tokens, manifest, changelog, and — through `set-png` — each frame's
+desktop and phone captures.
+
+Suite **1,889/0**, harness **578 checks across 56 cases**.
 
 ## Landed: T5 — the review loop, closed
 

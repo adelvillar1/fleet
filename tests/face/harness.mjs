@@ -411,6 +411,18 @@ function boot(options) {
         });
       return Promise.resolve({ status: 200, json: () => Promise.resolve(document_) });
     }
+    if (pathOnly.startsWith('/api/design/diff/')) {
+      return Promise.resolve({
+        status: 200,
+        json: () => Promise.resolve({
+          type: 'design_diff',
+          changes: [
+            { token: 'accent', before: '#3b6cf6', after: '#b4552d' },
+            { token: 'gone', before: '1px', after: null },
+          ],
+        }),
+      });
+    }
     if (pathOnly === '/api/design/inject') {
       return Promise.resolve({
         status: 200,
@@ -4257,8 +4269,58 @@ async function theDesignCanvasCarriesItsFramesAndWritesGeometry() {
   page.fireOn('dock-object-close', 'click');
   await flush(20);
 
+  // The version history: a diff asks Rust and names the changed tokens, the
+  // older page opens in its own frame, and the component export asks for the
+  // TSX render of the page.
+  byAct(cards[0], 'versions-hero').click();
+  await flush(40);
+  const versionsPane = page.el('dock-object-body');
+  const diffButton = versionsPane.find((one) => one.dataset &&
+    one.dataset.act === 'design-diff-v-one')[0];
+  if (diffButton) diffButton.click();
+  await flush(80);
+  check('PM-D a version\u2019s diff names the changed tokens',
+    !!diffButton &&
+      page.calls.some((one) => String(one.url || '').includes('/api/design/diff/')) &&
+      String(versionsPane.textContent).includes('accent') &&
+      String(versionsPane.textContent).includes('#b4552d'),
+    versionsPane.textContent ? String(versionsPane.textContent).slice(-120) : 'no pane');
+  const previewFrame = versionsPane.find((one) => one.name === 'iframe')[0];
+  check('PM-D the older page opens in its own frame',
+    !!previewFrame && String(previewFrame.src).includes('/api/design/version/'),
+    previewFrame ? String(previewFrame.src) : 'no frame');
+  const tsxButton = versionsPane.find((one) => one.dataset &&
+    one.dataset.act === 'design-tsx')[0];
+  if (tsxButton) tsxButton.click();
+  await flush(60);
+  check('PM-D the component export asks for the TSX',
+    !!tsxButton && page.calls.some((one) => one.method === 'POST' &&
+      String(one.body || '').includes('"kind":"tsx"')),
+    tsxButton ? 'pressed' : 'no control');
+  page.fireOn('dock-object-close', 'click');
+  await flush(20);
+
+  // The packet's selection: a pick gathers frames, and the export hands over
+  // exactly those.
+  byAct(cards[0], 'design-pick').click();
+  await flush(40);
+  const packetButton = page.IDS['design-instrument'].find((one) => one.dataset &&
+    one.dataset.act === 'design-packet')[0];
+  check('PM-D a picked frame offers the selection packet',
+    !!packetButton, packetButton ? String(packetButton.textContent) : 'no packet press');
+  if (packetButton) packetButton.click();
+  await flush(60);
+  check('PM-D the selection packet carries the picked ids',
+    page.calls.some((one) => String(one.url || '').includes('/api/design/export') &&
+      String(one.body || '').includes('"ids":["f-hero"]')),
+    JSON.stringify(page.calls.filter((one) => String(one.body || '').includes('"ids"'))
+      .map((one) => one.body)));
+
   // A page set: the title bars say which set a page belongs to, the verb
-  // is offered, and one press hands the whole set over.
+  // is offered, and one press hands the whole set over. The pick is cleared
+  // first, so the press falls back to the set.
+  byAct(cards[0], 'design-pick').click();
+  await flush(30);
   const setBadge = cards[0].find((one) => one.className === 'canvas-badge' &&
     String(one.textContent) === 'site');
   check('PM-D a page of a set says which set on its bar',
