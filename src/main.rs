@@ -175,6 +175,7 @@ fn dispatch_sync(args: &[String]) -> ExitCode {
         Ok(Command::Vault(options)) => vault_command(&options),
         Ok(Command::Remember(options)) => remember_command(&options),
         Ok(Command::Doctor(options)) => doctor_command(&options),
+        Ok(Command::Ki(options)) => ki_command(&options),
         Ok(Command::Install(options)) => install_command(&options),
         Err(message) => {
             eprintln!("fleet: {message}");
@@ -3331,6 +3332,43 @@ fn doctor_command(options: &cli::DoctorOptions) -> ExitCode {
     }
 
     doctor_checks()
+}
+
+/// `fleet ki append`: file one hand-written row into the ledger. The
+/// path is `--ledger`'s or `docs/known-issues.md` from the working
+/// directory — the diagnosis filing's own convention (KI-099's family),
+/// named in the output so a run from the wrong directory says which
+/// ledger it wrote (KI-106's rule). The id is printed from the writer's
+/// own return — it was derived from the table under the lock, so the
+/// caller cites it rather than recounting.
+fn ki_command(options: &cli::KiOptions) -> ExitCode {
+    let path = options
+        .ledger
+        .as_ref()
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            std::env::current_dir()
+                .unwrap_or_default()
+                .join("docs")
+                .join("known-issues.md")
+        });
+    let row = fleet::doctor::KiRow {
+        severity: &options.severity,
+        issue: &options.issue,
+        evidence: &options.evidence,
+        status: &options.status,
+        next_action: &options.next_action,
+    };
+    match fleet::doctor::append_ledger_row(&path, &row) {
+        Ok(id) => {
+            println!("fleet: ki: {id} filed into {}", path.display());
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("fleet: {error}");
+            ExitCode::FAILURE
+        }
+    }
 }
 
 /// The doctor's boot checks: credentials, home, API reachability,

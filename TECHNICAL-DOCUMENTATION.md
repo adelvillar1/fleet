@@ -58,7 +58,11 @@ its contract, and the implementation is the module reference.
 usage errors name the offending flag. Exit codes: `0` completed,
 `1` runtime failure, `2` usage or configuration, `3` the turn cap was
 reached (resume with `--session <id>`). The authoritative list of
-headless entry points is the subcommand surface (`fleet help`).
+headless entry points is the subcommand surface (`fleet help`). The
+ledger's own writer, `fleet ki append` (`doctor::append_ledger_row`),
+derives the row's id from the table while the ledger's sibling lock is
+held — the run-time append path, concurrent-safe by the same lock the
+diagnosis filing uses.
 
 **The face's HTTP surface.** Hand-rolled HTTP/1.1 on loopback
 (`127.0.0.1:3080` by default); the address alone opens it and a

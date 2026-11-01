@@ -758,6 +758,100 @@ pub fn file_ledger_row(path: &Path, entry: &LedgerEntry) -> Result<Filed, String
     Ok(Filed::Appended { id })
 }
 
+/// One hand-filed ledger row's cells, in the table's own order minus the
+/// id — the id is the writer's to derive, under the lock, at write time.
+#[derive(Debug, Clone, Copy)]
+pub struct KiRow<'a> {
+    pub severity: &'a str,
+    pub issue: &'a str,
+    pub evidence: &'a str,
+    pub status: &'a str,
+    pub next_action: &'a str,
+}
+
+/// The leading word of a status cell, markdown emphasis and gloss aside —
+/// the Rust twin of the checker's `status_word` (`scripts/ki_ledger.py`):
+/// the first word before a dash, parenthesis, colon, or space, so the
+/// table's own `closed-fixed` and `open — reason` shapes both land.
+fn status_word(status: &str) -> &str {
+    let word = status
+        .trim()
+        .trim_matches(|c| matches!(c, '*' | '_' | '`'))
+        .trim();
+    let end = word
+        .find([' ', '\u{2014}', '\u{2013}', '-', '(', ':'])
+        .unwrap_or(word.len());
+    &word[..end]
+}
+
+/// Append one six-cell row to a ledger: the id derived from the table
+/// **while the ledger's sibling lock is held**, then rendered in the
+/// table's own shape and written through a temp file and a rename. This
+/// is the run-time append path KI-331 named — a scheduled run files
+/// through this verb instead of editing the table by hand, so two
+/// concurrent catch-ups cannot share an id and cannot lose a row to a
+/// vanished anchor. `file_ledger_row` above keeps the diagnose path's
+/// signature-keyed update semantics; this is the plain append beside it.
+///
+/// A cell carrying a pipe or a newline would shift the row's cells or
+/// split it — the checker's cell-count class (KI-084) — so it is refused
+/// by name before anything is written. The status must lead with a word
+/// the checker's vocabulary accepts (`open`, `closed`, `noted`, `none`),
+/// so a row that would die at the checker instead dies here, at the
+/// writer that would have filed it.
+pub fn append_ledger_row(path: &Path, row: &KiRow<'_>) -> Result<String, String> {
+    let cells = [
+        ("severity", row.severity),
+        ("issue", row.issue),
+        ("evidence", row.evidence),
+        ("status", row.status),
+        ("next action", row.next_action),
+    ];
+    for (name, cell) in cells {
+        if cell.contains('|') || cell.contains('\n') || cell.contains('\r') {
+            return Err(format!(
+                "the {name} cell carries a pipe or a newline — it would shift or split the row; write it without"
+            ));
+        }
+    }
+    for (name, cell) in [
+        ("severity", row.severity),
+        ("status", row.status),
+        ("next action", row.next_action),
+    ] {
+        if cell.trim().is_empty() {
+            return Err(format!("the {name} cell is empty — the row would not read"));
+        }
+    }
+    if !matches!(
+        status_word(row.status),
+        "open" | "closed" | "noted" | "none"
+    ) {
+        return Err(format!(
+            "the status cell leads with {:?} — expected open, closed, noted, or none (the checker's own refusal, KI-322)",
+            status_word(row.status)
+        ));
+    }
+    let _lock = crate::filelock::FileLock::take(&crate::filelock::FileLock::beside(path));
+    let text = fs::read_to_string(path)
+        .map_err(|error| format!("could not read {}: {error}", path.display()))?;
+    let id = next_ki_id(&text);
+    let mut out = text;
+    if !out.ends_with('\n') {
+        out.push('\n');
+    }
+    out.push_str(&format!(
+        "| {id} | {severity} | {issue} | {evidence} | {status} | {next_action} |\n",
+        severity = row.severity,
+        issue = row.issue,
+        evidence = row.evidence,
+        status = row.status,
+        next_action = row.next_action,
+    ));
+    write_atomic(path, &out)?;
+    Ok(id)
+}
+
 /// Write `text` to `path` through a temp file and a rename.
 fn write_atomic(path: &Path, text: &str) -> Result<(), String> {
     let mut temp = path.as_os_str().to_os_string();
@@ -1579,6 +1673,116 @@ mod tests {
         );
         let text = std::fs::read_to_string(&ledger).unwrap();
         assert_eq!(text.matches("| KI-").count(), filers + 1, "{text}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn concurrent_hand_appends_never_share_an_id() {
+        let dir = scratch("ledger-hand-race");
+        let ledger = dir.join("known-issues.md");
+        std::fs::write(
+            &ledger,
+            "# Known issues\n\n| ID | Severity | Issue | Evidence | Status | Next action |\n|---|---|---|---|---|---|\n| KI-001 | defect | a human row | evidence | open | keep |\n",
+        )
+        .unwrap();
+
+        // Eight appends released together — the path a scheduled run
+        // files through. Without the lock every one would read the same
+        // maximum and append the same id (KI-331's live repro).
+        let appenders = 8;
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(appenders));
+        let handles: Vec<_> = (0..appenders)
+            .map(|n| {
+                let ledger = ledger.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    let issue = format!("catch-up row number {n}");
+                    let row = KiRow {
+                        severity: "defect",
+                        issue: &issue,
+                        evidence: "the run's own log",
+                        status: "open",
+                        next_action: "fix the class",
+                    };
+                    barrier.wait();
+                    append_ledger_row(&ledger, &row).unwrap()
+                })
+            })
+            .collect();
+        let mut ids: Vec<String> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+        ids.sort();
+        let mut unique = ids.clone();
+        unique.dedup();
+        assert_eq!(unique.len(), appenders, "appends shared an id: {ids:?}");
+        assert_eq!(
+            unique,
+            (2..=appenders + 1)
+                .map(|n| format!("KI-{n:03}"))
+                .collect::<Vec<_>>(),
+            "the ids are the table's next run, not a process counter"
+        );
+        let text = std::fs::read_to_string(&ledger).unwrap();
+        // Every row whole: each KI line carries exactly six cells, so
+        // the checker's own parse reads all of them (KI-322's bar).
+        for line in text.lines().filter(|line| line.starts_with("| KI-")) {
+            // `| a | b |` splits into four parts; the two edge parts
+            // are the delimiters, so the cells are parts minus two.
+            let cells = line.split('|').count() - 2;
+            assert_eq!(cells, 6, "a row lost a cell: {line}");
+        }
+        assert_eq!(text.matches("| KI-").count(), appenders + 1, "{text}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_hand_append_refuses_the_row_the_checker_would() {
+        let dir = scratch("ledger-hand-refusals");
+        let ledger = dir.join("known-issues.md");
+        let original = "# Known issues\n\n| ID | Severity | Issue | Evidence | Status | Next action |\n|---|---|---|---|---|---|\n| KI-001 | defect | a human row | evidence | open | keep |\n";
+        std::fs::write(&ledger, original).unwrap();
+
+        // A pipe in the issue cell would shift the row's cells (the
+        // KI-084 class): refused by name, file untouched.
+        let shifted = KiRow {
+            severity: "defect",
+            issue: "a | pipe",
+            evidence: "proof",
+            status: "open",
+            next_action: "none",
+        };
+        let error = append_ledger_row(&ledger, &shifted).unwrap_err();
+        assert!(error.contains("pipe"), "{error}");
+        assert_eq!(std::fs::read_to_string(&ledger).unwrap(), original);
+
+        // A status outside the vocabulary dies at the writer, not days
+        // later at the checker (KI-322's class).
+        let bad_status = KiRow {
+            severity: "defect",
+            issue: "a row",
+            evidence: "proof",
+            status: "in-progress",
+            next_action: "pick a word",
+        };
+        let error = append_ledger_row(&ledger, &bad_status).unwrap_err();
+        assert!(error.contains("open, closed, noted, or none"), "{error}");
+        assert_eq!(std::fs::read_to_string(&ledger).unwrap(), original);
+
+        // The good row lands, and its status gloss (`closed-fixed`) is
+        // read as `closed` — the table's own joined shape.
+        let good = KiRow {
+            severity: "gap",
+            issue: "a row",
+            evidence: "proof",
+            status: "closed-fixed",
+            next_action: "done",
+        };
+        let id = append_ledger_row(&ledger, &good).unwrap();
+        assert_eq!(id, "KI-002");
+        let text = std::fs::read_to_string(&ledger).unwrap();
+        assert!(
+            text.contains("| KI-002 | gap | a row | proof | closed-fixed | done |"),
+            "{text}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

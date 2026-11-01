@@ -1,5 +1,5 @@
 ---
-status: active
+status: complete
 created: 2026-11-01
 updated: 2026-11-01
 slug: ledger-tooling
@@ -70,27 +70,30 @@ supplies the append the lock was built for.**
 
 ## Acceptance criteria
 
-- [ ] **L1 — the checker refuses an unknown status.** A scratch
-      ledger whose status cell reads anything but open/closed/noted/
-      none (emphasis aside) makes `scripts/ki_ledger.py` exit 1 with
-      a problem naming that row's line and cell; the real ledger
-      still exits 0. Proven by running the checker against both
-      files, not by reading the code.
-- [ ] **L2 — the append rides the lock.** `fleet ki append
-      --severity … --issue … --evidence … --status … --next …`
-      appends one six-cell row under the next id and prints it;
-      pinned by a test that fires N appends concurrently at one
-      scratch ledger and asserts N distinct ids with every row whole
-      (the checker's own parse over the result is the assertion's
-      second half).
-- [ ] **L3 — the rule and the docs name the verb.** The ledger rule
-      names `fleet ki append` as the run-time append path; the two
-      contract docs list the verb; KI-322 and KI-331 read `closed`
-      with their evidence in the same commit.
-- [ ] **L4 — close-out.** `cargo fmt --all --check`, `cargo clippy
-      --all-targets -- -D warnings`, `cargo build --release`,
-      `cargo test` each exit 0 read directly; `python3
-      scripts/ki_ledger.py docs/known-issues.md` exits 0.
+- [x] **L1 — the checker refuses an unknown status.** *Landed
+      `d62c217`: a scratch ledger whose status reads `in-progress` is
+      refused at its line (exit 1, the problem naming row and cell);
+      the real ledger stays green. The table's own joined `closed-fixed`
+      shape landed in the vocabulary after the first pass split it —
+      70 rows carry it.*
+- [x] **L2 — the append rides the lock.** *Landed: `fleet ki append`
+      derives the id under `FileLock::beside`, refuses a pipe/newline
+      cell and a status outside the vocabulary at the writer, and
+      prints the id. Pinned by `concurrent_hand_appends_never_share_an_id`
+      (8 released together → KI-002…KI-009, every row six cells) and
+      `the_hand_append_refuses_the_row_the_checker_would`; proven live
+      — the verb filed KI-002 into a scratch ledger the checker read
+      green, and refused an `in-progress` status by name.*
+- [x] **L3 — the rule and the docs name the verb.** *The ledger's id
+      rule now names `fleet ki append` and both refusals;
+      FUNCTIONAL-SPECIFICATIONS' verbs table and TECHNICAL-DOCUMENTATION's
+      CLI contract carry the verb; KI-322 closed at `d62c217`, KI-331
+      closed here with its pins as evidence.*
+- [x] **L4 — close-out.** *The full gate green by exit code — fmt 0,
+      clippy 0, build 0, test 1699 passed / 0 failed / 2 ignored (plus
+      the integration binaries' suites, all green) — and
+      `python3 scripts/ki_ledger.py` reads 391 rows, 37 open, zero
+      problems.*
 
 ## Files to be touched
 

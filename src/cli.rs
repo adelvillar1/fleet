@@ -90,6 +90,11 @@ pub enum Command {
     /// Environment and connectivity checks; `--diagnose` classifies one
     /// session's failure and drafts an evidence-cited recap.
     Doctor(DoctorOptions),
+    /// The ledger's run-time append: one hand-filed row under the next
+    /// id, the id derived from the table while the ledger's own lock is
+    /// held — the path a scheduled run files through instead of editing
+    /// the table by hand (KI-331).
+    Ki(KiOptions),
     /// The install: the idempotent home layout, the config scaffold,
     /// the optional heavy-lane venvs, and the doctor gate.
     Install(InstallOptions),
@@ -374,6 +379,22 @@ pub struct DoctorOptions {
     /// Read the ledger's open action items back instead of running the
     /// boot checks. Mutually exclusive with `diagnose`.
     pub open: bool,
+}
+
+/// Options for `fleet ki append`: one hand-filed ledger row. The five
+/// cells are the table's own minus the id — the writer derives the id
+/// from the table under the ledger's lock (KI-331), so a run appends
+/// instead of editing the table by hand. `ledger` points the append at
+/// a file; the bare form resolves `docs/known-issues.md` from the
+/// working directory, the same convention the diagnosis filing uses.
+#[derive(Debug, PartialEq, Eq)]
+pub struct KiOptions {
+    pub ledger: Option<String>,
+    pub severity: String,
+    pub issue: String,
+    pub evidence: String,
+    pub status: String,
+    pub next_action: String,
 }
 
 /// Options for `fleet install`. The bare command creates the home
@@ -769,6 +790,15 @@ usage:
                                 next actions, as cards — read-only; the
                                 bare form names the repo's own
                                 docs/known-issues.md and writes nothing
+  fleet ki append --severity <s> --issue \"<text>\" --evidence \"<text>\"
+                  --status <word> --next \"<text>\" [--ledger <path>]
+                                file one row into the known-issues ledger:
+                                the id is derived from the table while the
+                                ledger's own lock is held and printed with
+                                the row, so concurrent appends never share
+                                it — a run's append path instead of editing
+                                the table by hand (KI-331); the status must
+                                lead with open, closed, noted, or none
   fleet eval                     run the fixed eval corpus headless and land a
                                 row in the calibration stream
   fleet eval --last              the last run's per-scenario scores
@@ -873,6 +903,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "vault" => parse_vault(rest),
         "remember" => parse_remember(rest),
         "doctor" => parse_doctor(rest),
+        "ki" => parse_ki(rest),
         "install" => parse_install(rest),
         "eval" => parse_eval(rest),
         "explain" => parse_explain(rest),
@@ -2080,6 +2111,66 @@ fn parse_doctor(args: &[String]) -> Result<Command, String> {
     }))
 }
 
+/// `fleet ki append`: one hand-filed ledger row. The verb takes the
+/// five row cells — severity, issue, evidence, status, next action —
+/// and `--ledger <path>` points the append at a file; without it the
+/// target is `docs/known-issues.md` from the working directory, the
+/// diagnosis filing's own convention. The id is the writer's to derive
+/// under the ledger's lock, so nothing here names one. Every cell is
+/// required: a missing flag is a usage error, never a silently empty
+/// cell.
+fn parse_ki(args: &[String]) -> Result<Command, String> {
+    let Some(action) = args.first().map(String::as_str) else {
+        return Err(
+            "`fleet ki` needs a verb — `append` files one row (see `fleet help`)".to_string(),
+        );
+    };
+    if action == "--help" || action == "-h" {
+        return Ok(Command::Help);
+    }
+    if action != "append" {
+        return Err(format!(
+            "unknown ki verb `{action}` — the ledger's verb is `append` (see `fleet help`)"
+        ));
+    }
+    let mut ledger: Option<String> = None;
+    let mut severity: Option<String> = None;
+    let mut issue: Option<String> = None;
+    let mut evidence: Option<String> = None;
+    let mut status: Option<String> = None;
+    let mut next_action: Option<String> = None;
+    let mut index = 1;
+    while index < args.len() {
+        let arg = args[index].as_str();
+        match arg {
+            "--ledger" => ledger = Some(take_value(args, &mut index, arg)?),
+            "--severity" => severity = Some(take_value(args, &mut index, arg)?),
+            "--issue" => issue = Some(take_value(args, &mut index, arg)?),
+            "--evidence" => evidence = Some(take_value(args, &mut index, arg)?),
+            "--status" => status = Some(take_value(args, &mut index, arg)?),
+            "--next" => next_action = Some(take_value(args, &mut index, arg)?),
+            other if other.starts_with('-') && other != "-" => {
+                return Err(format!("unknown ki option `{other}`"));
+            }
+            other => {
+                return Err(format!("`{other}` takes no value here; see `fleet help`"));
+            }
+        }
+        index += 1;
+    }
+    let need = |flag: &str, value: Option<String>| -> Result<String, String> {
+        value.ok_or_else(|| format!("`fleet ki append` needs {flag} (see `fleet help`)"))
+    };
+    Ok(Command::Ki(KiOptions {
+        ledger,
+        severity: need("--severity", severity)?,
+        issue: need("--issue", issue)?,
+        evidence: need("--evidence", evidence)?,
+        status: need("--status", status)?,
+        next_action: need("--next", next_action)?,
+    }))
+}
+
 /// `fleet install`: the bare command lays out the home and ends on the
 /// doctor gate; `--lanes` also bootstraps the heavy-lane venvs. The
 /// install is one sequence, not a toolkit: nothing else is accepted,
@@ -3218,6 +3309,82 @@ mod tests {
             parse(&args(&["doctor", "--open", "--help"])).unwrap(),
             Command::Help
         );
+    }
+
+    #[test]
+    fn ki_parses_the_append_verb_and_needs_every_cell() {
+        // The verb with every cell, and with --ledger pointing the file.
+        assert_eq!(
+            parse(&args(&[
+                "ki",
+                "append",
+                "--severity",
+                "defect",
+                "--issue",
+                "the issue",
+                "--evidence",
+                "the evidence",
+                "--status",
+                "open",
+                "--next",
+                "the next action",
+            ]))
+            .unwrap(),
+            Command::Ki(KiOptions {
+                ledger: None,
+                severity: "defect".to_string(),
+                issue: "the issue".to_string(),
+                evidence: "the evidence".to_string(),
+                status: "open".to_string(),
+                next_action: "the next action".to_string(),
+            })
+        );
+        assert_eq!(
+            parse(&args(&[
+                "ki",
+                "append",
+                "--ledger",
+                "/tmp/ki.md",
+                "--severity",
+                "gap",
+                "--issue",
+                "i",
+                "--evidence",
+                "e",
+                "--status",
+                "closed — fixed",
+                "--next",
+                "n",
+            ]))
+            .unwrap(),
+            Command::Ki(KiOptions {
+                ledger: Some("/tmp/ki.md".to_string()),
+                severity: "gap".to_string(),
+                issue: "i".to_string(),
+                evidence: "e".to_string(),
+                status: "closed — fixed".to_string(),
+                next_action: "n".to_string(),
+            })
+        );
+        // A missing cell, an unknown verb, a bare `ki`, and an unknown
+        // flag are each a usage error — never a silently empty cell.
+        assert!(parse(&args(&[
+            "ki",
+            "append",
+            "--severity",
+            "defect",
+            "--issue",
+            "i",
+            "--evidence",
+            "e",
+            "--status",
+            "open",
+        ]))
+        .is_err());
+        assert!(parse(&args(&["ki", "close"])).is_err());
+        assert!(parse(&args(&["ki"])).is_err());
+        assert!(parse(&args(&["ki", "append", "--json"])).is_err());
+        assert_eq!(parse(&args(&["ki", "--help"])).unwrap(), Command::Help);
     }
 
     #[test]

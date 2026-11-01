@@ -232,6 +232,7 @@ store and its diff, and a command palette over every pane and panel
 | the self-maintenance proposals | `fleet improve` (`apply`, `undo`) |
 | what this project calls a concept | `fleet convention <concept>` |
 | the machine checked | `fleet install` (then `fleet doctor`, with `--diagnose <session>` and `--open`) |
+| a ledger row filed | `fleet ki append --severity <s> --issue "…" --evidence "…" --status <word> --next "…"` — the id comes from the table while the ledger's own lock is held, so a run appends instead of editing the table by hand; the status leads with open, closed, noted, or none |
 | the context folded now | `fleet compact` |
 
 ### In the conversation
