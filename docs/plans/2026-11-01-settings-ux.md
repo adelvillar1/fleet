@@ -18,6 +18,14 @@ happens **after a press**, what a value **means**, and how a wrong
 turn is **undone**. The revamp moved 18,448 px of page into eight
 lists; it did not give the lists a conversation.
 
+A second steer, the same day: **the surface keeps too much of the
+router's own machinery**. The models section opens on workload
+tiers, candidate chains and gates — the vocabulary of a failover
+engine — when the owner's question is "which model am I on, and how
+do I change it". And **the money section goes**: the owner runs on
+coding and token plans, so a spend dashboard answers a question
+they do not ask. Seven sections, not eight.
+
 Every gap below is evidence in the code as shipped, measured against
 the research this plan was commissioned on.
 
@@ -99,6 +107,13 @@ nested scroll traps and dual visual languages — those refusals stand.
   (`set`/`env`/`default`) and `fleet settings`' words
   (`unset · default`) name the same facts differently; neither
   document maps them.
+- **G11 — the models section leads with machinery.** Its first card
+  is `the tiers` — a workload, its primary and its fallback chain —
+  then `the gates` (pin, confidence floor, default workload), then
+  providers keyed `billing · kind` (`app.js:14520-14580`). A
+  comparable harness answers the same question with one list: every
+  `provider/model`, the current one marked, one press to switch.
+  Fleet shows the engine and hides the answer behind it.
 
 ## Approach
 
@@ -165,21 +180,41 @@ compiled bound is a change to the constant, not a config value"
 (its own summary, surfaced); a vault-gated value — the passphrase
 flow. No line states a problem without the action.
 
-### U6 — the value, translated where the data already exists
+### U6 — withdrawn: the money section goes
 
-Only numbers the calibration stream already holds: the money
-section's budget cards show **yesterday's spend beside the cap**
-(stream `spend` rows), the turn cap shows the **observed turns of
-the last runs** (stream `turn` rows) when the stream answers, and
-absence is named ("no spend recorded yet") rather than zeroed. No
-new telemetry, no new writer — the cards read what `fleet calib`
-already reads, through the settings read.
+The owner's 2026-11-01 ruling: budget is not a concern on coding and
+token plans, so a spend dashboard answers a question they do not
+ask. **The `money` section is removed**; its three caps fall into
+environment's catch-all list like every other scalar, unlabeled by a
+dashboard. The translation idea survives only where a number would
+otherwise be meaningless — a cap's own card names the compiled
+ceiling and the door, and nothing else claims to be a spend view.
 
 ### U7 — one vocabulary
 
 A mapping table in the settings feature doc — the GUI's marks, the
 CLI's words, the document's sources — one passage both surfaces
 cite. The CLI itself is unchanged; the words converge on the doc.
+
+### U8 — the model is the section
+
+The owner's 2026-11-01 steer, sequenced **first**: the models
+section opens on the answer, not the engine.
+
+- **Every model, one list.** A `provider/model` row for every roster
+  entry, the model the walk starts from marked `current`; one press
+  makes another the model (the pin's write), and the mark and the
+  topbar's model chip follow it. No tier vocabulary on the front
+  page.
+- **The accounts, not billing classes.** Provider rows carry what
+  they serve and whether they answer (`key`, `on`), never
+  `billing · kind`; the reserve is named as the reserve, not as
+  `payg`.
+- **The walk behind a door.** The workload chains and the gates keep
+  their editor, collapsed under `the walk — how a request falls
+  back`, opened by a press and by a filter hit inside it.
+- **The topbar names the model** (`zai-coding-plan/GLM-5.3-Flash`),
+  not the day's spend.
 
 ## Acceptance criteria
 
@@ -206,12 +241,19 @@ cite. The CLI itself is unchanged; the words converge on the doc.
 - [ ] **U5 — every refusal names the door.** The env, ceiling and
       vault derivations each carry their next step; harness
       assertions on the three lines.
-- [ ] **U6 — the translation reads the stream.** Budget and turn-cap
-      cards carry the stream's numbers when present and the honest
-      absence when not. Harness with a written fixture stream.
+- [ ] **U6 — the money section is gone.** Seven sections on the
+      rail; the three caps are reachable in environment's catch-all;
+      no spend dashboard and no topbar meter. Harness: the rail's
+      section list and the caps' rows.
 - [ ] **U7 — one vocabulary.** The mapping passage exists and both
       surfaces' doc sections cite it.
-- [ ] **U8 — the gate.** fmt, clippy, build, test by exit code; the
+- [ ] **U8 — the model is the section.** Every roster model is
+      listed as `provider/model`, exactly one carries `current`, a
+      press writes the model and moves the mark and the topbar
+      chip, the accounts carry no billing class, and the walk's
+      door is closed by default and opens on a filter hit. Harness
+      on each.
+- [ ] **U9 — the gate.** fmt, clippy, build, test by exit code; the
       face harness green; a Chromium probe quoting: a save's
       confirmation visible on `#/settings`, the no-results card
       present, and the filter reaching a known knob in three
@@ -219,19 +261,20 @@ cite. The CLI itself is unchanged; the words converge on the doc.
 
 ## Files to be touched
 
-`src/gui/assets/app.js` (U1–U5, the confirmation card, the filter,
-the field validation, the derivation lines), `src/settings.rs` (U2's
-`default` on the read, U6's stream numbers beside the caps),
+`src/gui/assets/app.js` (U1–U5 and U8, the confirmation card, the
+filter, the field validation, the derivation lines, the model list
+and the walk's door), `src/settings.rs` (U2's `default` on the
+read, the models section's read),
 `src/gui/bridge.rs` (the settings read's additions), the face
 harness (`tests/face/harness.mjs`) for every pin, the Chromium probe
 in `tmp/`, `docs/features/gui.md` (U7's passage).
 
 ## Out of scope
 
-- **Re-partitioning the eight sections** — the owner's 10-29
-  ruling stands; if `models` still reads as four questions in one
-  coat after this plan, that is its own ruling, named here so it is
-  not silently reopened.
+- **The other six sections' shapes** — the owner's 2026-11-01 steer
+  fixed `models` (the model first) and removed `money`; the rest
+  keep their cards. A section that still reads as machinery is its
+  own ruling, named here so it is not silently reopened.
 - **The TUI's settings surface** — the vocabulary converges through
   the doc (U7); the TUI's own revamp is a later slice.
 - **New telemetry** — U6 reads the stream that exists; a card never
