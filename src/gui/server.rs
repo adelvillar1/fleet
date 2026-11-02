@@ -1511,6 +1511,16 @@ async fn serve_connection(
             let session = asked_session(bridge, &request);
             write_reply(&mut stream, api(200, bridge.diff(&session, turn).await)).await
         }
+        ("POST", "/api/diff/accept") => {
+            let body = match read_body(&mut stream, &request, rest).await {
+                Ok(body) => body,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            match bridge.diff_accept(&body).await {
+                Ok(accepted) => write_reply(&mut stream, api(200, accepted)).await,
+                Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
+            }
+        }
         ("POST", "/api/diff/reject") => {
             let body = match read_body(&mut stream, &request, rest).await {
                 Ok(body) => body,
@@ -5763,6 +5773,60 @@ mod tests {
             after,
             "one\nTWO\nthree\nFOUR\n".replace("FOUR", "four"),
             "{after}"
+        );
+
+        // Accept it again (gui-revamp C13): the run's lines come back,
+        // anchored on the context the review saw. The body is the
+        // *reviewed hunk* read back from the diff, not an index — the
+        // hunk that was rejected is no longer in a fresh diff.
+        let reviewed = diff
+            .split_once("\r\n\r\n")
+            .map(|(_, body)| body)
+            .and_then(|body| serde_json::from_str::<serde_json::Value>(body).ok())
+            .and_then(|doc| {
+                doc.get("files")
+                    .and_then(serde_json::Value::as_array)
+                    .and_then(|files| {
+                        files.iter().find(|file| {
+                            file.get("path").and_then(serde_json::Value::as_str)
+                                == Some("changed.txt")
+                        })
+                    })
+                    .and_then(|file| file.get("hunks"))
+                    .and_then(serde_json::Value::as_array)
+                    .and_then(|hunks| hunks.get(1))
+                    .cloned()
+            })
+            .expect("the reviewed hunk");
+        let accept_body = serde_json::json!({
+            "turn": 1,
+            "path": "changed.txt",
+            "hunk": reviewed,
+        })
+        .to_string();
+        let accepted = post(port, "/api/diff/accept", &token, &accept_body);
+        assert!(accepted.starts_with("HTTP/1.1 200"), "{accepted}");
+        let back = std::fs::read_to_string(tree.join("changed.txt")).expect("the file");
+        assert_eq!(back, "one\nTWO\nthree\nFOUR\n", "{back}");
+        let twice = post(port, "/api/diff/accept", &token, &accept_body);
+        assert!(twice.starts_with("HTTP/1.1 200"), "{twice}");
+        assert_eq!(
+            std::fs::read_to_string(tree.join("changed.txt")).expect("the file"),
+            "one\nTWO\nthree\nFOUR\n",
+            "the second accept changed nothing"
+        );
+        // A whole-file accept has nothing to restore: the checkpoint
+        // holds the turn's before bytes, not the run's.
+        let whole = post(
+            port,
+            "/api/diff/accept",
+            &token,
+            r#"{"turn":1,"path":"changed.txt"}"#,
+        );
+        assert!(whole.starts_with("HTTP/1.1 409"), "{whole}");
+        assert!(
+            whole.contains("whole-file reject cannot be undone"),
+            "the refusal names why: {whole}"
         );
 
         // Reject the whole added file: it goes.

@@ -367,6 +367,110 @@ pub struct Hunk {
     pub old: Vec<String>,
     pub new: Vec<String>,
     pub new_at: usize,
+    /// The unchanged lines around the change, up to three each way and
+    /// **on each side**: the old side for an accept, the new side for a
+    /// reject. They are the anchor a verdict splices against, because a
+    /// neighbour's verdict moves every line number below it — a splice
+    /// at `new_at` lands in the wrong place the moment anything above
+    /// the hunk is put back. Each side's context stops short of a
+    /// neighbouring hunk's lines, so the anchor survives whatever the
+    /// owner decides about its neighbours, in whatever order.
+    pub before_old: Vec<String>,
+    pub after_old: Vec<String>,
+    pub before_new: Vec<String>,
+    pub after_new: Vec<String>,
+}
+
+/// How many context lines a hunk carries on each side.
+const HUNK_CONTEXT: usize = 3;
+
+/// The context for one run, on one side: up to [`HUNK_CONTEXT`] lines
+/// before it and after it, trimmed to the matched lines between it and
+/// its neighbours — a neighbour's changed lines are never part of this
+/// hunk's anchor, because a verdict on the neighbour would move them.
+fn side_context(
+    lines: &[String],
+    start: usize,
+    end: usize,
+    floor: usize,
+    ceiling: usize,
+) -> (Vec<String>, Vec<String>) {
+    let before_count = (start - floor).min(HUNK_CONTEXT);
+    let before = lines[start - before_count..start].to_vec();
+    let after_count = (ceiling - end).min(HUNK_CONTEXT);
+    let after = lines[end..end + after_count].to_vec();
+    (before, after)
+}
+
+/// Which side of a hunk to find in the current file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Side {
+    Old,
+    New,
+}
+
+impl Hunk {
+    fn side(&self, side: Side) -> &[String] {
+        match side {
+            Side::Old => &self.old,
+            Side::New => &self.new,
+        }
+    }
+
+    fn context(&self, side: Side) -> (&[String], &[String]) {
+        match side {
+            Side::Old => (&self.before_old, &self.after_old),
+            Side::New => (&self.before_new, &self.after_new),
+        }
+    }
+}
+
+/// Find the hunk's block between its recorded context lines. `Ok(None)`
+/// when the block is not there, the index of the block's first line when
+/// it is there exactly once, and an error when the context is ambiguous —
+/// two places a splice could land is a file this function will not guess
+/// about.
+fn locate(
+    current: &[String],
+    hunk: &Hunk,
+    side: Side,
+    path: &str,
+) -> std::io::Result<Option<usize>> {
+    let block = hunk.side(side);
+    let (before, after) = hunk.context(side);
+    let mut pattern: Vec<&String> = before.iter().collect();
+    pattern.extend(block.iter());
+    pattern.extend(after.iter());
+    if pattern.is_empty() {
+        return Ok(None);
+    }
+    let mut found: Option<usize> = None;
+    if current.len() >= pattern.len() {
+        for start in 0..=current.len() - pattern.len() {
+            let holds = pattern
+                .iter()
+                .enumerate()
+                .all(|(offset, line)| &current[start + offset] == *line);
+            if holds {
+                if found.is_some() {
+                    return Err(std::io::Error::other(format!(
+                        "the hunk's context appears more than once in `{path}` — the file cannot say which place the review meant"
+                    )));
+                }
+                found = Some(start + before.len());
+            }
+        }
+    }
+    Ok(found)
+}
+
+/// Write `current` back with the file's own trailing-newline shape kept.
+fn write_lines(path: &Path, current: &[String], had_newline: bool) -> std::io::Result<()> {
+    let mut written = current.join("\n");
+    if had_newline || current.is_empty() {
+        written.push('\n');
+    }
+    std::fs::write(path, written)
 }
 
 /// The tree at `root` against turn `turn`'s checkpoint: added, removed,
@@ -448,50 +552,103 @@ fn align(before: &[u8], after: &[u8]) -> (Vec<Hunk>, bool) {
             };
         }
     }
-    // The walk emits the changed runs between the matched lines.
-    let mut hunks: Vec<Hunk> = Vec::new();
+    // The walk emits the changed runs between the matched lines. Each
+    // run keeps its span on both sides, so the context a verdict anchors
+    // on can be trimmed to the *matched* lines around it — a neighbour's
+    // changed lines never enter this hunk's anchor, because a verdict on
+    // the neighbour would move them.
+    struct Run {
+        old: Vec<String>,
+        new: Vec<String>,
+        start_old: usize,
+        start_new: usize,
+        end_old: usize,
+        end_new: usize,
+    }
+    let mut runs: Vec<Run> = Vec::new();
     let mut run_old: Vec<String> = Vec::new();
     let mut run_new: Vec<String> = Vec::new();
-    let mut run_at = 0usize;
+    let mut run_start: Option<(usize, usize)> = None;
+    let begin = |i: usize, j: usize, start: &mut Option<(usize, usize)>| {
+        if start.is_none() {
+            *start = Some((i, j));
+        }
+    };
     let (mut i, mut j) = (0usize, 0usize);
     while i < rows && j < cols {
         if old_lines[i] == new_lines[j] {
-            if !run_old.is_empty() || !run_new.is_empty() {
-                hunks.push(Hunk {
+            if let Some((start_old, start_new)) = run_start.take() {
+                runs.push(Run {
                     old: std::mem::take(&mut run_old),
                     new: std::mem::take(&mut run_new),
-                    new_at: run_at,
+                    start_old,
+                    start_new,
+                    end_old: i,
+                    end_new: j,
                 });
             }
             i += 1;
             j += 1;
         } else if table[(i + 1) * (cols + 1) + j] >= table[i * (cols + 1) + j + 1] {
+            begin(i, j, &mut run_start);
             run_old.push(old_lines[i].clone());
             i += 1;
         } else {
-            if run_new.is_empty() {
-                run_at = j;
-            }
+            begin(i, j, &mut run_start);
             run_new.push(new_lines[j].clone());
             j += 1;
         }
     }
     while i < rows {
+        begin(i, j, &mut run_start);
         run_old.push(old_lines[i].clone());
         i += 1;
     }
     while j < cols {
-        if run_new.is_empty() {
-            run_at = j;
-        }
+        begin(i, j, &mut run_start);
         run_new.push(new_lines[j].clone());
         j += 1;
     }
-    if !run_old.is_empty() || !run_new.is_empty() {
-        hunks.push(Hunk {
+    if let Some((start_old, start_new)) = run_start.take() {
+        runs.push(Run {
             old: run_old,
             new: run_new,
-            new_at: run_at,
+            start_old,
+            start_new,
+            end_old: rows,
+            end_new: cols,
+        });
+    }
+    let mut hunks: Vec<Hunk> = Vec::with_capacity(runs.len());
+    for (index, run) in runs.iter().enumerate() {
+        let prev = index.checked_sub(1).map(|at| &runs[at]);
+        let next = runs.get(index + 1);
+        let floor_old = prev.map(|run| run.end_old).unwrap_or(0);
+        let floor_new = prev.map(|run| run.end_new).unwrap_or(0);
+        let ceiling_old = next.map(|run| run.start_old).unwrap_or(rows);
+        let ceiling_new = next.map(|run| run.start_new).unwrap_or(cols);
+        let (before_old, after_old) = side_context(
+            &old_lines,
+            run.start_old,
+            run.end_old,
+            floor_old,
+            ceiling_old,
+        );
+        let (before_new, after_new) = side_context(
+            &new_lines,
+            run.start_new,
+            run.end_new,
+            floor_new,
+            ceiling_new,
+        );
+        hunks.push(Hunk {
+            old: run.old.clone(),
+            new: run.new.clone(),
+            new_at: run.start_new,
+            before_old,
+            after_old,
+            before_new,
+            after_new,
         });
     }
     (hunks, false)
@@ -512,16 +669,46 @@ pub fn reject_hunk(root: &Path, file: &FileDiff, hunk: &Hunk) -> std::io::Result
     let path = root.join(&file.path);
     let text = String::from_utf8_lossy(&std::fs::read(&path)?).into_owned();
     let mut current: Vec<String> = text.lines().map(str::to_string).collect();
-    let end = (hunk.new_at + hunk.new.len()).min(current.len());
-    if end < hunk.new_at {
-        return Err(std::io::Error::other("the hunk is past the file’s end"));
+    // Anchored on the hunk's own context, not on `new_at`: a neighbour's
+    // reject moves every line after it, and a blind splice at a stale
+    // coordinate corrupts the file silently (the cheap fix this
+    // replaces). The block is looked up where it was and refused when it
+    // is not there or is there twice.
+    let Some(at) = locate(&current, hunk, Side::New, &file.path)? else {
+        // Already rejected: the checkpoint's lines are where the run's
+        // were. A second press is a no-op, not a second splice.
+        if locate(&current, hunk, Side::Old, &file.path)?.is_some() {
+            return Ok(());
+        }
+        return Err(std::io::Error::other(format!(
+            "`{}` no longer carries hunk at line {} — the file changed since the review",
+            file.path,
+            hunk.new_at + 1
+        )));
+    };
+    current.splice(at..at + hunk.new.len(), hunk.old.iter().cloned());
+    write_lines(&path, &current, text.ends_with('\n'))
+}
+
+/// Accept one hunk: put the run's lines back where a reject left the
+/// checkpoint's — the inverse of [`reject_hunk`] over the same
+/// coordinate, so a hunk rejected by mistake is accepted again without
+/// touching its neighbours (gui-revamp C13).
+pub fn accept_hunk(root: &Path, file: &str, hunk: &Hunk) -> std::io::Result<()> {
+    let path = root.join(file);
+    let text = String::from_utf8_lossy(&std::fs::read(&path)?).into_owned();
+    let mut current: Vec<String> = text.lines().map(str::to_string).collect();
+    // Already accepted: the run's lines are where the checkpoint's were.
+    if locate(&current, hunk, Side::New, file)?.is_some() {
+        return Ok(());
     }
-    current.splice(hunk.new_at..end, hunk.old.iter().cloned());
-    let mut written = current.join("\n");
-    if text.ends_with('\n') || current.is_empty() {
-        written.push('\n');
-    }
-    std::fs::write(&path, written)
+    let Some(at) = locate(&current, hunk, Side::Old, file)? else {
+        return Err(std::io::Error::other(format!(
+            "`{file}` carries neither side of the reviewed hunk — the file changed since the review"
+        )));
+    };
+    current.splice(at..at + hunk.old.len(), hunk.new.iter().cloned());
+    write_lines(&path, &current, text.ends_with('\n'))
 }
 
 /// Reject a whole file: the checkpoint's bytes, or removal when the
@@ -592,6 +779,125 @@ mod tests {
         let listed = list(&store, "s-1");
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0], snapshot);
+        let _ = std::fs::remove_dir_all(tree.parent().unwrap());
+    }
+
+    /// A file with two changed regions, four lines each, so a hunk has
+    /// real context on both sides and the second hunk sits below the
+    /// first (the ordering the anchored verbs are for).
+    fn two_region_file(tree: &Path, store: &Path) -> FileDiff {
+        let before = "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\n";
+        let after = "ONE\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nNINE\nten\n";
+        std::fs::write(tree.join("f.txt"), before).unwrap();
+        capture(tree, store, "s-1", 1).unwrap();
+        std::fs::write(tree.join("f.txt"), after).unwrap();
+        let files = diff(tree, store, "s-1", 1).unwrap();
+        files.into_iter().find(|file| file.path == "f.txt").unwrap()
+    }
+
+    #[test]
+    fn a_rejected_hunk_is_accepted_again_by_its_context() {
+        let (tree, store) = scratch("accept");
+        let file = two_region_file(&tree, &store);
+        assert_eq!(file.hunks.len(), 2, "{file:?}");
+        reject_hunk(&tree, &file, &file.hunks[0]).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(tree.join("f.txt")).unwrap(),
+            "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nNINE\nten\n"
+        );
+        accept_hunk(&tree, &file.path, &file.hunks[0]).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(tree.join("f.txt")).unwrap(),
+            "ONE\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nNINE\nten\n",
+            "the accept puts the run's lines back"
+        );
+        // A second press is a no-op, not a second splice.
+        accept_hunk(&tree, &file.path, &file.hunks[0]).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(tree.join("f.txt")).unwrap(),
+            "ONE\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nNINE\nten\n"
+        );
+        let _ = std::fs::remove_dir_all(tree.parent().unwrap());
+    }
+
+    #[test]
+    fn a_neighbours_reject_does_not_move_a_later_verdict() {
+        // The blind-splice defect: rejecting the first hunk moves every
+        // line below it, so a second verdict addressed by line number
+        // lands in the wrong place. Anchored on context, the order of
+        // verdicts does not matter.
+        let (tree, store) = scratch("order");
+        let file = two_region_file(&tree, &store);
+        reject_hunk(&tree, &file, &file.hunks[0]).unwrap();
+        reject_hunk(&tree, &file, &file.hunks[1]).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(tree.join("f.txt")).unwrap(),
+            "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\n",
+            "both regions are back"
+        );
+        accept_hunk(&tree, &file.path, &file.hunks[1]).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(tree.join("f.txt")).unwrap(),
+            "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nNINE\nten\n",
+            "the second region is the run's again, the first is not"
+        );
+        let _ = std::fs::remove_dir_all(tree.parent().unwrap());
+    }
+
+    #[test]
+    fn a_file_that_moved_under_the_review_is_refused_by_name() {
+        let (tree, store) = scratch("moved");
+        let file = two_region_file(&tree, &store);
+        reject_hunk(&tree, &file, &file.hunks[0]).unwrap();
+        // Someone edits a line the hunk's own context names ("two" is
+        // the line just after the change): the block and its context
+        // are no longer in the file, so the verb refuses rather than
+        // splicing at a coordinate it can no longer trust.
+        std::fs::write(
+            tree.join("f.txt"),
+            "one\nTWO\nthree\nfour\nfive\nsix\nseven\neight\nNINE\nten\n",
+        )
+        .unwrap();
+        let refused =
+            accept_hunk(&tree, &file.path, &file.hunks[0]).expect_err("the moved file refuses");
+        assert!(
+            refused.to_string().contains("f.txt"),
+            "the refusal names the file: {refused}"
+        );
+        let _ = std::fs::remove_dir_all(tree.parent().unwrap());
+    }
+
+    #[test]
+    fn an_ambiguous_context_is_refused_rather_than_guessed() {
+        // The same block and its context twice in one file: two places a
+        // splice could land is a file the verb will not guess about.
+        let (tree, store) = scratch("ambiguous");
+        let pattern = "alpha\nbeta\ngamma\ndelta\n";
+        std::fs::write(tree.join("f.txt"), format!("{pattern}{pattern}")).unwrap();
+        capture(&tree, &store, "s-1", 1).unwrap();
+        std::fs::write(
+            tree.join("f.txt"),
+            format!("{pattern}{pattern}").replace("beta", "BETA"),
+        )
+        .unwrap();
+        let files = diff(&tree, &store, "s-1", 1).unwrap();
+        let file = files.iter().find(|file| file.path == "f.txt").unwrap();
+        // Two identical regions change identically: the hunk's own lines
+        // appear twice, and the verb says so.
+        let twin = Hunk {
+            before_old: Vec::new(),
+            after_old: Vec::new(),
+            before_new: Vec::new(),
+            after_new: Vec::new(),
+            old: vec!["beta".to_string()],
+            new: vec!["BETA".to_string()],
+            new_at: 1,
+        };
+        let refused = reject_hunk(&tree, file, &twin).expect_err("the twin is ambiguous");
+        assert!(
+            refused.to_string().contains("more than once"),
+            "the refusal names the ambiguity: {refused}"
+        );
         let _ = std::fs::remove_dir_all(tree.parent().unwrap());
     }
 

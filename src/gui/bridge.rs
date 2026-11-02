@@ -1025,6 +1025,60 @@ impl Bridge {
         }
     }
 
+    /// Accept one hunk: the inverse of a reject, for a hunk the owner
+    /// put back and then wanted after all (gui-revamp C13). The body
+    /// carries the *reviewed hunk* — its two blocks and their context —
+    /// not an index into a fresh diff: a verdict changes what the diff
+    /// shows (a rejected hunk is no longer a change), so an index would
+    /// name a different hunk the moment a neighbour was decided. The
+    /// hunk is anchored on the context the review saw.
+    pub async fn diff_accept(&self, body: &str) -> Result<Value, String> {
+        let arguments: serde_json::Value = serde_json::from_str(body)
+            .map_err(|error| format!("the accept is not a JSON object: {error}"))?;
+        let path = arguments
+            .get("path")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| "an accept names the file".to_string())?
+            .to_string();
+        let hunk = arguments.get("hunk").ok_or_else(|| {
+            "an accept names the reviewed hunk — a whole-file reject cannot be undone from \
+                 the checkpoint, which holds the turn's before bytes and not the run's"
+                .to_string()
+        })?;
+        let lines = |key: &str| -> Result<Vec<String>, String> {
+            hunk.get(key)
+                .and_then(serde_json::Value::as_array)
+                .map(|list| {
+                    list.iter()
+                        .filter_map(serde_json::Value::as_str)
+                        .map(str::to_string)
+                        .collect::<Vec<_>>()
+                })
+                .ok_or_else(|| format!("the hunk carries no `{key}`"))
+        };
+        let reviewed = crate::checkpoints::Hunk {
+            old: lines("old")?,
+            new: lines("new")?,
+            new_at: hunk
+                .get("new_at")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0) as usize,
+            before_old: lines("before_old")?,
+            after_old: lines("after_old")?,
+            before_new: lines("before_new")?,
+            after_new: lines("after_new")?,
+        };
+        let root = self.cwd.clone();
+        let owned = path.clone();
+        tokio::task::spawn_blocking(move || {
+            crate::checkpoints::accept_hunk(&root, &owned, &reviewed)
+                .map_err(|error| format!("the hunk could not be accepted: {error}"))
+        })
+        .await
+        .map_err(|_| "the accept did not land".to_string())??;
+        Ok(json!({"type": "diff_accept", "path": path}))
+    }
+
     /// The delegation panel's document: the live run's tree, the past
     /// runs' trees, and the declared dependency graph with the unlock
     /// conditions the code actually requires. Read-only, and read off
@@ -8607,6 +8661,13 @@ fn diff_file_json(file: &crate::checkpoints::FileDiff) -> Value {
             "old": hunk.old,
             "new": hunk.new,
             "new_at": hunk.new_at,
+            // The anchor each verdict splices against (gui-revamp C13):
+            // the review's hunk is what an accept sends back, so the
+            // server applies exactly what was on screen.
+            "before_old": hunk.before_old,
+            "after_old": hunk.after_old,
+            "before_new": hunk.before_new,
+            "after_new": hunk.after_new,
         })).collect::<Vec<_>>(),
     })
 }

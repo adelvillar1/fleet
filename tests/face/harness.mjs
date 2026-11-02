@@ -212,7 +212,9 @@ class El {
   removeAttribute(k) { delete this.attrs[k]; }
   addEventListener(kind, fn) { (this.listeners[kind] = this.listeners[kind] || []).push(fn); }
   removeEventListener() {}
-  focus() {}
+  // A real focus is observable; the stub records it so a boot's
+  // autofocus is a fact a case can assert.
+  focus() { this.focused = true; }
   blur() {}
   scrollIntoView() {}
   setSelectionRange() {}
@@ -366,6 +368,12 @@ function boot(options) {
     }
     if (pathOnly === '/api/diff') {
       const turn = new URL('http://x' + url).searchParams.get('turn') || '1';
+      if (documents.diff) {
+        return Promise.resolve({
+          status: 200,
+          json: () => Promise.resolve(documents.diff),
+        });
+      }
       return Promise.resolve({
         status: 200,
         json: () => Promise.resolve({
@@ -3484,6 +3492,50 @@ async function theQueuedMessagesCarryTheirActions() {
 }
 
 
+// gui-revamp C13: the diff offers both verdicts per hunk, and the accept
+// sends the *reviewed hunk* back — its blocks and the context the review
+// showed — because a decision changes what a fresh diff would number.
+async function theDiffOffersBothVerdictsPerHunk() {
+  const diff = {
+    type: 'diff', turn: 1,
+    files: [{
+      path: 'f.txt', kind: 'modified', too_large: false,
+      hunks: [{
+        old: ['four'], new: ['FOUR'], new_at: 3,
+        before_old: ['one', 'two', 'three'], after_old: [],
+        before_new: ['one', 'TWO', 'three'], after_new: [],
+      }],
+    }],
+  };
+  const page = boot({
+    width: 1440,
+    hash: '#/chat',
+    documents: { diff, state: (asked) => emptyState(asked) },
+  });
+  await flush();
+  page.open();
+  await flush();
+  // The review is the composer's slash command.
+  page.IDS.task.value = '/review';
+  page.IDS.task.fire('keydown', { key: 'Enter', shiftKey: false });
+  await flush(200);
+  const accept = page.rows('.replay-button')
+    .filter((one) => String(one.textContent).trim() === 'accept this hunk');
+  const reject = page.rows('.replay-button')
+    .filter((one) => String(one.textContent).trim() === 'reject this hunk');
+  check('REV each hunk offers both verdicts',
+    accept.length === 1 && reject.length === 1,
+    accept.length + ' accept / ' + reject.length + ' reject');
+  accept[0].click();
+  await flush(160);
+  const posted = page.calls.filter((c) => c.method === 'POST' && c.url === '/api/diff/accept');
+  check('REV the accept sends the reviewed hunk',
+    posted.length === 1 && String(posted[0].body).includes('"old":["four"]') &&
+      String(posted[0].body).includes('"new":["FOUR"]') &&
+      String(posted[0].body).includes('"before_old":["one","two","three"]'),
+    JSON.stringify(posted.map((c) => c.body)));
+}
+
 // conversation-control C3/C8: the queue is an ordered list the owner
 // moves (a drag lands the row where it was dropped), the run ending
 // drains the head, and a live turn's rewind stays hidden until its run
@@ -3522,6 +3574,9 @@ async function theQueueReordersByDragAndDrainsWhenTheRunEnds() {
   await enqueue('three');
   const rows = () => page.rows('.queue-row');
   const texts = () => rows().map((r) => r.querySelector('.queue-text').textContent);
+  // C9: the app opens on the conversation with the composer focused.
+  check('C9 the composer holds the focus at boot', page.IDS.task.focused === true,
+    String(page.IDS.task.focused));
   check('QCON three messages queue while the run works',
     texts().join(',') === 'one,two,three', texts().join(','));
 
@@ -6967,6 +7022,7 @@ const cases = [
   ['N2 New mints nothing until words exist', newMintsNothingUntilWordsExist],
   ['N3 the rail badge says where the work is', theRailBadgeSaysWhereTheWorkIs],
   ['Q the queued messages carry their actions', theQueuedMessagesCarryTheirActions],
+  ['REV the diff offers both verdicts per hunk', theDiffOffersBothVerdictsPerHunk],
   ['QCON the queue reorders by drag and drains when the run ends', theQueueReordersByDragAndDrainsWhenTheRunEnds],
   ['QCON a live turn\u2019s rewind returns when the run ends', aLiveTurnsRewindReturnsWhenTheRunEnds],
   ['P the pane is one surface with the owner\u2019s hand on it', thePaneIsOneSurfaceWithTheOwnersHandOnIt],

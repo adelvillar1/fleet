@@ -4786,6 +4786,10 @@ mod tests {
                 old: vec!["old line".to_string()],
                 new: vec!["new line".to_string()],
                 new_at: 2,
+                before_old: Vec::new(),
+                after_old: Vec::new(),
+                before_new: Vec::new(),
+                after_new: Vec::new(),
             }],
             too_large: false,
         }

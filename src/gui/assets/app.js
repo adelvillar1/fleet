@@ -5200,6 +5200,15 @@
       el.routerBoard.appendChild(decisionCard());
       return;
     }
+    if (face.routerRefused && face.routerRefused.length) {
+      // The read that just failed, named beside the board it could not
+      // replace: the numbers on screen are the last good ones.
+      var stale = boardCard(12, 'the read did not land', null, null);
+      stale.appendChild(node('p', 'board-empty',
+        face.routerRefused.join(' \u00b7 ') +
+        ' \u2014 the board below is the last read that landed.'));
+      el.routerBoard.appendChild(stale);
+    }
     var tiers = read.tiers || [];
     var totals = read.totals || {};
     var errors = totals.errors || 0;
@@ -5265,6 +5274,15 @@
         return reply.json();
       })
       .then(function (doc) {
+        // A refused document is not a route (gui-revamp C2): the last
+        // good read stays on the board and the refusal is shown beside
+        // it, so a transient read never blanks a panel that was whole.
+        if (doc && doc.refused) {
+          face.routerRefused = doc.refused;
+          if (face.panel === 'router') paintRouter();
+          return;
+        }
+        face.routerRefused = null;
         face.router = doc;
         if (face.panel === 'router') paintRouter();
       })
@@ -20081,6 +20099,15 @@
       var new_ = node('pre', 'diff-new', hunk.new.join('\n'));
       block.appendChild(old_);
       block.appendChild(new_);
+      // The two verdicts per hunk (gui-revamp C13): reject puts the
+      // checkpoint's lines back, accept puts the run's back — the
+      // server anchors both on the hunk's own context, so the order the
+      // owner presses them in does not matter.
+      var accept = node('button', 'replay-button');
+      accept.type = 'button';
+      accept.textContent = 'accept this hunk';
+      accept.addEventListener('click', function () { acceptHunk(turn, file.path, hunk); });
+      block.appendChild(accept);
       var reject = node('button', 'replay-button');
       reject.type = 'button';
       reject.textContent = 'reject this hunk';
@@ -20089,6 +20116,22 @@
       wrap.appendChild(block);
     });
     return wrap;
+  }
+
+  // The reviewed hunk itself goes back (gui-revamp C13): a decision
+  // changes what the diff shows, so an index would name a different
+  // hunk after a neighbour's verdict — the hunk's own blocks and
+  // context are what the server anchors on.
+  function acceptHunk(turn, path, hunk) {
+    post('/api/diff/accept', { turn: turn, path: path, hunk: hunk }).then(function (reply) {
+      if (reply.status !== 200) {
+        notice('the accept was refused',
+          (reply.body && reply.body.error) || 'the face said no without a reason');
+        return;
+      }
+      notice('the hunk is accepted', path + ' \u00b7 the run\u2019s lines are back');
+      openReview();
+    }).catch(function () { });
   }
 
   function rejectHunk(turn, path, hunk) {
@@ -22063,6 +22106,18 @@
     } catch (error) { }
   }
   showRoute();
+  // gui-revamp C9: the app opens on the conversation with the composer
+  // focused, so the first keystroke is already the owner's words — the
+  // door's own field when a first-run door is up, because the door is
+  // the only thing on screen then.
+  (function focusTheComposer() {
+    var field = (!el.onboardDoor || el.onboardDoor.hidden)
+      ? el.task
+      : el.onboardKeyValue;
+    if (field && field.focus) {
+      try { field.focus(); } catch (error) { }
+    }
+  })();
 
   window.setInterval(function () {
     if (face.process && face.process.active) paintProcess();
