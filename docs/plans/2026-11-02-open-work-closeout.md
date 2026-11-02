@@ -237,7 +237,7 @@ owns its status-pass table.
 - [x] **C13 — MCP results are typed.** *(2026-11-02: `outputSchema` parsed on `tools/list`, `structuredContent` validated (root type, `required`, property types) with a named note on mismatch; `readOnlyHint` read and selecting the read tier, `destructiveHint` the destructive one, the stricter winning; the tier recorded on the `tool_screen` row. Four pins; `docs/features/mcp.md` carries the passage.)*  `structuredContent` is validated
       against an `outputSchema` where one is declared, `readOnlyHint` is
       read, and the absence of a schema is recorded rather than assumed.
-- [ ] **C14 — the conversation-control pins land.** Drag-reorder (or a
+- [x] **C14 — the conversation-control pins land.** *(2026-11-02: the drag reorder and the failed→drain, the control-driven fold, the pause wait with a stop inside it, and the live turn's rewind returning at the run's end — two harness cases and two Rust tests.)*  Drag-reorder (or a
       stated reason it cannot be pinned), the control-driven fold, the
       unusable pin named, the pause wait driven by a test, and the
       live-turn rewind/stop face test.

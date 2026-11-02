@@ -2497,25 +2497,10 @@ impl<'a> Agent<'a> {
             // rides this turn's request as a message labelled as the
             // owner's; a stop ends the run here, before another token
             // is spent and with the partial result still in hand.
-            match self.read_control() {
-                Some(Control::Steer(text)) => self.apply_steer(&text).await?,
-                Some(Control::Stop) => return self.stop_by_owner(),
-                Some(Control::Fold) => self.compact_now = true,
-                Some(Control::Pin(text)) => self.apply_pin(&text).await?,
-                // A pause holds the run before the next model call. The
-                // wait costs nothing but the wall clock — no request is
-                // in flight — and a stop still lands while it waits.
-                Some(Control::Pause) => loop {
-                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-                    match self.read_control() {
-                        Some(Control::Resume) => break,
-                        Some(Control::Stop) => return self.stop_by_owner(),
-                        _ => {}
-                    }
-                },
-                // A resume with nothing paused is a no-op.
-                Some(Control::Resume) => {}
-                None => {}
+            if let Some(control) = self.read_control() {
+                if self.apply_control(control).await? == ControlEffect::Stop {
+                    return self.stop_by_owner();
+                }
             }
 
             // The system prompt is the compiled-in constant plus this
@@ -2886,6 +2871,32 @@ impl<'a> Agent<'a> {
     /// not interrupted; an unusable pin leaves the run on its route. A
     /// run with no home has no roster to prepare against and says so by
     /// doing nothing.
+    /// Apply one control the loop read (conversation-control C4/C6): a
+    /// steer rides the next request, a stop ends the run where the loop
+    /// will see it, a fold arms the next boundary, a pin re-routes, and a
+    /// pause holds the run before the next model call — the wait costs
+    /// nothing but the wall clock, no request is in flight, and a stop
+    /// still lands while it waits.
+    async fn apply_control(&mut self, control: Control) -> Result<ControlEffect, AgentError> {
+        match control {
+            Control::Steer(text) => self.apply_steer(&text).await?,
+            Control::Stop => return Ok(ControlEffect::Stop),
+            Control::Fold => self.compact_now = true,
+            Control::Pin(text) => self.apply_pin(&text).await?,
+            Control::Pause => loop {
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                match self.read_control() {
+                    Some(Control::Resume) => break,
+                    Some(Control::Stop) => return Ok(ControlEffect::Stop),
+                    _ => {}
+                }
+            },
+            // A resume with nothing paused is a no-op.
+            Control::Resume => {}
+        }
+        Ok(ControlEffect::Continue)
+    }
+
     async fn apply_pin(&mut self, asked: &str) -> Result<(), AgentError> {
         let Some(home) = self.options.improve_home.clone() else {
             return Ok(());
@@ -8125,6 +8136,13 @@ fn output_schema_note(
     }
 }
 
+/// What one control asked of the loop (conversation-control C4/C6).
+#[derive(Debug, PartialEq, Eq)]
+enum ControlEffect {
+    Continue,
+    Stop,
+}
+
 /// What the model sees for one lane call: the server's text, and the
 /// `error:` marker a refusal carries — the same failure vocabulary the
 /// built-ins use, so the model reads one shape either way.
@@ -8472,6 +8490,122 @@ mod tests {
         let mut approver = approver;
         assert!(!approver.approve(&call("c2", "bash", "{}")));
         ui.join().unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_fold_control_arms_the_next_boundary_and_writes_no_message() {
+        // conversation-control C4: the control the loop reads is what
+        // arms the fold — not only the option a test can set — and the
+        // control itself never lands in the log.
+        let home = scratch("control-fold");
+        let mut session = crate::session::Session::create(&home, "m").unwrap();
+        // Read before the agent borrows the session: the control file and
+        // the log are both facts about that same session.
+        let session_path = session.path().to_path_buf();
+        let control_path = session_path.with_extension("control");
+        let client = Client::new("http://127.0.0.1:9", "k");
+        let options = AgentOptions {
+            session_id: None,
+            goal: None,
+            model: "m".to_string(),
+            identity: None,
+            max_turns: 1,
+            ui_tx: None,
+            lane_specs: None,
+            calib: None,
+            skills: Vec::new(),
+            role_overlay: None,
+            memory: None,
+            scope: None,
+            improve_home: None,
+            route_home: None,
+            gui_prompt: None,
+            compact_now: false,
+            checkpoints: None,
+            file_access: FileAccess::Unrestricted,
+            plan_mode: false,
+        };
+        let mut progress = Vec::new();
+        let mut agent = Agent::new(
+            &client,
+            options,
+            &mut session,
+            Box::new(ApproveAll),
+            &mut progress,
+        )
+        .unwrap();
+        let before = crate::session::replay(&session_path).unwrap().len();
+        std::fs::write(&control_path, r#"{"fold":true}"#).unwrap();
+        let control = agent.read_control().expect("the fold control");
+        assert!(matches!(control, Control::Fold), "{control:?}");
+        assert_eq!(
+            agent.apply_control(control).await.unwrap(),
+            ControlEffect::Continue
+        );
+        assert!(agent.compact_now, "the fold is armed at the boundary");
+        let after = crate::session::replay(&session_path).unwrap().len();
+        assert_eq!(after, before, "the control wrote no message");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[tokio::test]
+    async fn a_pause_holds_until_resume_and_a_stop_lands_while_it_waits() {
+        // conversation-control C6: the wait is the wall clock and
+        // nothing else — a resume releases it, a stop ends the run from
+        // inside it, and neither writes a record.
+        let home = scratch("control-pause");
+        let mut session = crate::session::Session::create(&home, "m").unwrap();
+        let session_path = session.path().to_path_buf();
+        let control_path = session_path.with_extension("control");
+        let client = Client::new("http://127.0.0.1:9", "k");
+        let options = AgentOptions {
+            session_id: None,
+            goal: None,
+            model: "m".to_string(),
+            identity: None,
+            max_turns: 1,
+            ui_tx: None,
+            lane_specs: None,
+            calib: None,
+            skills: Vec::new(),
+            role_overlay: None,
+            memory: None,
+            scope: None,
+            improve_home: None,
+            route_home: None,
+            gui_prompt: None,
+            compact_now: false,
+            checkpoints: None,
+            file_access: FileAccess::Unrestricted,
+            plan_mode: false,
+        };
+        let mut progress = Vec::new();
+        let mut agent = Agent::new(
+            &client,
+            options,
+            &mut session,
+            Box::new(ApproveAll),
+            &mut progress,
+        )
+        .unwrap();
+        let before = crate::session::replay(&session_path).unwrap().len();
+        // A resume already waiting releases the pause on its first read.
+        std::fs::write(&control_path, r#"{"resume":true}"#).unwrap();
+        assert_eq!(
+            agent.apply_control(Control::Pause).await.unwrap(),
+            ControlEffect::Continue,
+            "a resume waiting releases the pause"
+        );
+        // And a stop written while the pause waits ends the run from it.
+        std::fs::write(&control_path, r#"{"stop":true}"#).unwrap();
+        assert_eq!(
+            agent.apply_control(Control::Pause).await.unwrap(),
+            ControlEffect::Stop,
+            "a stop lands inside the wait"
+        );
+        let after = crate::session::replay(&session_path).unwrap().len();
+        assert_eq!(after, before, "neither control wrote a record");
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     #[test]

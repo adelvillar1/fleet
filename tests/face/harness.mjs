@@ -44,8 +44,11 @@ function matchesSimple(el, sel) {
   // element's property of that name (a stub sets `.name`, which in a
   // browser reflects to the attribute).
   const attrs = [];
-  const bare = text.replace(/\[[^\]=]+="[^"]*"\]/g, (part) => {
-    attrs.push(part);
+  // `[name="value"]` and a bare `[name]` both: the face selects a live
+  // row by the attribute's presence (`.row-rewind[data-live]`), which a
+  // browser honours and the stub now honours too.
+  const bare = text.replace(/\[([^\]=]+)(?:="([^"]*)")?\]/g, (part, name, value) => {
+    attrs.push({ name, value });
     return '';
   });
   const tag = bare.match(/^[a-zA-Z][\w-]*/);
@@ -56,9 +59,15 @@ function matchesSimple(el, sel) {
   const held = el.className.split(/\s+/).filter(Boolean);
   if (classes.some((cls) => !held.includes(cls.slice(1)))) return false;
   for (const attr of attrs) {
-    const m = attr.match(/\[([^\]=]+)="([^"]*)"\]/);
-    const value = typeof el[m[1]] === 'string' ? el[m[1]] : null;
-    if (value !== m[2]) return false;
+    if (attr.value === undefined) {
+      const mirrored = el.attrs && el.attrs[attr.name] !== undefined;
+      const property = el[attr.name];
+      const set = property === true || property === 'true' || property === '';
+      if (!mirrored && !set) return false;
+    } else {
+      const value = typeof el[attr.name] === 'string' ? el[attr.name] : null;
+      if (value !== attr.value) return false;
+    }
   }
   return Boolean(tag || ids.length || classes.length || attrs.length);
 }
@@ -94,7 +103,27 @@ class El {
     // throws where a browser answers zero.
     this.childNodes = this.children;
     this.parentNode = null;
-    this.dataset = {};
+    // A real DOM's `dataset` IS the element's `data-*` attributes:
+    // reading `el.dataset.state` and matching `[data-state]` are the
+    // same fact. The stub mirrors every write into attrs, so a face
+    // selector a browser honours is a selector the harness honours too
+    // — the flat-DOM lesson, one layer down.
+    // attrs is declared later in the constructor; the mirror closes
+    // over the object itself, so declaration order does not matter.
+    this.attrs = this.attrs || {};
+    const attributes = this.attrs;
+    this.dataset = new Proxy({}, {
+      set(target, key, value) {
+        target[key] = String(value);
+        attributes['data-' + String(key)] = String(value);
+        return true;
+      },
+      deleteProperty(target, key) {
+        delete target[key];
+        delete attributes['data-' + String(key)];
+        return true;
+      },
+    });
     this.style = {
       _props: {},
       setProperty(name, value) { this._props[name] = String(value); },
@@ -114,7 +143,9 @@ class El {
     this.tabIndex = 0;
     this.draggable = false;
     this.listeners = {};
-    this.attrs = {};
+    // Keep the object the dataset mirror closed over: a reassignment
+    // would leave the mirror writing into an orphan.
+    this.attrs = this.attrs || {};
     this.scrollTop = 0;
     this.scrollHeight = 1000;
     this.clientHeight = 500;
@@ -3452,6 +3483,108 @@ async function theQueuedMessagesCarryTheirActions() {
     ruleBlock('.queue-text') + ' | ' + ruleBlock('.queue-row'));
 }
 
+
+// conversation-control C3/C8: the queue is an ordered list the owner
+// moves (a drag lands the row where it was dropped), the run ending
+// drains the head, and a live turn's rewind stays hidden until its run
+// is over.
+async function theQueueReordersByDragAndDrainsWhenTheRunEnds() {
+  const page = boot({
+    width: 1440,
+    hash: '#/sessions/this-one',
+    documents: {
+      sessions: {
+        type: 'sessions', read_at: 'now', current: 'this-one',
+        counts: { needs: 0, working: 1, background: 0, earlier: 0, total: 1 },
+        sessions: [row('this-one', 'working', { title: 'this conversation' })],
+      },
+      state: (asked) => ({ ...emptyState(asked), session: asked,
+        driving: 'this-one', running: true }),
+    },
+  });
+  await flush();
+  page.open();
+  await flush();
+  // Bind the conversation first: the reducer reads every event against
+  // the session it belongs to, and the turn is what makes the run live.
+  page.push({ type: 'session', session: 'this-one' });
+  page.push({ type: 'turn', session: 'this-one', turn: 1 });
+  page.push({ type: 'token', session: 'this-one', text: 'working' });
+  await flush(80);
+  // A run is in flight, so a send queues rather than starting one.
+  const enqueue = async (text) => {
+    page.IDS.task.value = text;
+    page.fireOn('composer', 'submit', {});
+    await flush();
+  };
+  await enqueue('one');
+  await enqueue('two');
+  await enqueue('three');
+  const rows = () => page.rows('.queue-row');
+  const texts = () => rows().map((r) => r.querySelector('.queue-text').textContent);
+  check('QCON three messages queue while the run works',
+    texts().join(',') === 'one,two,three', texts().join(','));
+
+  // C3: a drag lands the row where it was dropped. The dataTransfer is
+  // the harness's own, carrying the source index the way the browser's
+  // does.
+  const transfer = {
+    data: '0',
+    effectAllowed: '',
+    setData(key, value) { this.data = String(value); },
+    getData() { return this.data; },
+  };
+  rows()[0].fire('dragstart', { dataTransfer: transfer });
+  rows()[2].fire('drop', { preventDefault() {}, dataTransfer: transfer });
+  await flush();
+  check('QCON a drag moves the row to the drop position',
+    texts().join(',') === 'two,three,one', texts().join(','));
+
+  // A failure drains the head exactly as a finish does (C3): the head
+  // leaves the queue and the composer takes its words. The dispatch it
+  // starts is the send path's own pin.
+  page.push({ type: 'failed', session: 'this-one', stop_reason: 'the run failed' });
+  await flush(200);
+  check('QCON the run failing drains the queue head',
+    texts().join(',') === 'three,one', texts().join(','));
+}
+
+// conversation-control C8: a live turn hides its rewind, and the run's
+// end brings it back — the affordance describes an ended run.
+async function aLiveTurnsRewindReturnsWhenTheRunEnds() {
+  const page = boot({
+    width: 1440,
+    hash: '#/sessions/live-1',
+    documents: {
+      sessions: {
+        type: 'sessions', read_at: 'now', current: 'live-1',
+        counts: { needs: 0, working: 1, background: 0, earlier: 0, total: 1 },
+        sessions: [row('live-1', 'working', { title: 'a live run' })],
+      },
+      state: (asked) => ({ ...emptyState(asked), session: asked,
+        driving: 'live-1', running: true }),
+    },
+  });
+  await flush();
+  page.open();
+  await flush();
+  page.push({ type: 'turn', session: 'live-1', turn: 1 });
+  page.push({ type: 'token', session: 'live-1', text: 'working on it' });
+  await flush(120);
+  const liveRows = () => page.rows('.row-rewind')
+    .filter((one) => one.dataset && one.dataset.live === 'true');
+  const live = liveRows();
+  check('QCON a live turn carries its rewind, hidden', live.length >= 1 &&
+    live.every((one) => one.hidden === true),
+    String(live.length) + ' live / ' + page.rows('.row-rewind').length + ' rewind / ' +
+      page.rows('.assistant').length + ' assistant / ' + page.rows('.turn-row').length + ' turnrows');
+  page.push({ type: 'finished', session: 'live-1', stop_reason: 'done' });
+  await flush(160);
+  const after = liveRows();
+  check('QCON the run ending brings the rewind back',
+    after.length >= 1 && after.every((one) => one.hidden === false),
+    after.map((one) => String(one.hidden)).join(','));
+}
 
 // The unified pane: one entry, the run tab alive, the object card in
 // the pane, the grip owning the width, and the web tab rendering live
@@ -6834,6 +6967,8 @@ const cases = [
   ['N2 New mints nothing until words exist', newMintsNothingUntilWordsExist],
   ['N3 the rail badge says where the work is', theRailBadgeSaysWhereTheWorkIs],
   ['Q the queued messages carry their actions', theQueuedMessagesCarryTheirActions],
+  ['QCON the queue reorders by drag and drains when the run ends', theQueueReordersByDragAndDrainsWhenTheRunEnds],
+  ['QCON a live turn\u2019s rewind returns when the run ends', aLiveTurnsRewindReturnsWhenTheRunEnds],
   ['P the pane is one surface with the owner\u2019s hand on it', thePaneIsOneSurfaceWithTheOwnersHandOnIt],
   ['PV the preview renders the common formats', thePreviewRendersTheCommonFormats],
   ['OB the door is the welcome in its first-run state', theDoorIsTheWelcomeInItsFirstRunState],
