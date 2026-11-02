@@ -3290,10 +3290,16 @@ impl Bridge {
         dotenv: &std::collections::HashMap<String, String>,
     ) -> Result<String, String> {
         const TASK: &str = "say hello in five words";
-        let prepared =
-            crate::route::prepare_with_pin(home, dotenv, TASK, &Default::default(), None)
-                .await
-                .map_err(|error| format!("{error}"))?;
+        let prepared = crate::route::prepare_with_pin(
+            home,
+            dotenv,
+            TASK,
+            &Default::default(),
+            None,
+            None,
+        )
+        .await
+        .map_err(|error| format!("{error}"))?;
         let client = crate::api::Client::routed(prepared.router.clone());
         let model = prepared.decision.model.clone();
         let handle = tokio::runtime::Handle::current();
@@ -3577,13 +3583,15 @@ impl Bridge {
                 let dotenv = crate::home::read_dotenv(&home);
                 // The route is prepared for the aside itself, with a
                 // fixed task text, so the decision cache serves every ask
-                // after the first.
+                // after the first. The aside rides its conversation's
+                // session seed: the same bucket, the same cache.
                 let prepared = crate::route::prepare_with_pin(
                     &home,
                     &dotenv,
                     "a side question about the work in progress",
                     &std::collections::HashMap::new(),
                     pin.as_deref(),
+                    Some(session.as_str()),
                 )
                 .await
                 .map_err(|error| error.to_string())?;
@@ -9897,6 +9905,7 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
                                 &task,
                                 &std::collections::HashMap::new(),
                                 pin.as_deref(),
+                                Some(driving.as_str()),
                             )
                             .await
                             {
@@ -10034,6 +10043,9 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
                             goal: session_goal(&home, &driving),
                             model: model.clone(),
                             max_turns: turn_budget,
+                            // The run's resolved `{session}` value, so a
+                            // mid-run re-route re-seeds the same id.
+                            session_id: Some(prepared.session_id.clone()),
                             identity: crate::home::read_soul(&home),
                             ui_tx: Some(ui_tx.clone()),
                             lane_specs,

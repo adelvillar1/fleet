@@ -2095,6 +2095,7 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
     };
 
     let options = AgentOptions {
+        session_id: None,
         goal: None,
         model: child_route.model,
         max_turns,
@@ -3130,6 +3131,7 @@ mod tests {
         let error = AgentError::Api(crate::api::ClientError::Api(crate::api::ApiError {
             status: 402,
             message: "Insufficient Balance".to_string(),
+            request_id: None,
         }));
         let result = SubagentResult {
             summary: String::new(),

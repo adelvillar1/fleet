@@ -786,6 +786,7 @@ fn spawn_agent(config: AgentConfig) -> thread::JoinHandle<()> {
                                 &dotenv,
                                 &task,
                                 &std::collections::HashMap::new(),
+                                current_session.as_deref(),
                             )
                             .await
                             {
@@ -866,6 +867,9 @@ fn spawn_agent(config: AgentConfig) -> thread::JoinHandle<()> {
                             goal: None,
                             model: model.clone(),
                             max_turns: DEFAULT_MAX_TURNS,
+                            // The re-route's seed: the same resolved id
+                            // this preparation carries.
+                            session_id: Some(prepared.session_id.clone()),
                             identity: crate::home::read_soul(&home),
                             ui_tx: Some(ui_tx.clone()),
                             lane_specs,

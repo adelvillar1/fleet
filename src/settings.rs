@@ -1043,6 +1043,25 @@ mod list_tests {
         )
         .unwrap();
         assert_eq!(with_headers, "stepfun");
+        // The static-value trap is named where it is set: a constant in
+        // a session-named header warns (advisory, the save lands), a
+        // placeholder value does not.
+        let constant = [("x-opencode-session".to_string(), "fixed-bucket".to_string())]
+            .into_iter()
+            .collect();
+        let warning = session_constant_warning(&constant).expect("the trap is named");
+        assert!(
+            warning.contains("x-opencode-session") && warning.contains("bucket"),
+            "{warning}"
+        );
+        let placeholder = [("x-opencode-session".to_string(), "{session}".to_string())]
+            .into_iter()
+            .collect();
+        assert!(session_constant_warning(&placeholder).is_none());
+        let unrelated = [("x-route".to_string(), "fixed".to_string())]
+            .into_iter()
+            .collect();
+        assert!(session_constant_warning(&unrelated).is_none());
         // And a well-formed one lands.
         let id = set_provider(
             &home,
@@ -2962,6 +2981,26 @@ pub fn set_provider_with_key_with(
     Ok((id, store, discovery))
 }
 
+/// The writer's advisory line for the static-value trap: a header whose
+/// name carries `session` and whose value carries no placeholder is a
+/// constant — every conversation shares one affinity bucket, the cost
+/// the fork's own migration measured (slower calls, colder caches).
+/// `None` for placeholder values and session-unrelated headers.
+fn session_constant_warning(
+    headers: &std::collections::BTreeMap<String, String>,
+) -> Option<String> {
+    let (name, _) = headers
+        .iter()
+        .find(|(name, value)| {
+            name.to_ascii_lowercase().contains("session") && !value.contains('{')
+        })?;
+    Some(format!(
+        "note: header `{name}` carries a constant value — a `{{session}}` id is what \
+         keeps the gateway's cache affinity per conversation; a constant collapses \
+         every conversation into one bucket"
+    ))
+}
+
 pub fn set_provider(home: &Path, entry: &str) -> Result<String, String> {
     let value: Value = serde_json::from_str(entry)
         .map_err(|error| format!("the entry is not valid JSON: {error}"))?;
@@ -2976,6 +3015,13 @@ pub fn set_provider(home: &Path, entry: &str) -> Result<String, String> {
         return Err(format!(
             "`{id}` names an empty models list; a provider needs at least one model"
         ));
+    }
+    // The static-value trap, named where it is set: a session-named
+    // header carrying a constant value collapses every conversation into
+    // one affinity bucket — the cost the fork's own migration measured.
+    // Advisory: the save lands.
+    if let Some(warning) = parsed.headers.as_ref().and_then(session_constant_warning) {
+        eprintln!("fleet: {warning}");
     }
     let path = home.join("config.json");
     let mut document = read_json(&path)?;

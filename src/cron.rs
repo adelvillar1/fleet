@@ -1547,6 +1547,7 @@ pub async fn execute(
         }
     }
     let options = AgentOptions {
+        session_id: None,
         goal: None,
         model: model.clone(),
         max_turns: DEFAULT_MAX_TURNS,
@@ -1639,7 +1640,8 @@ pub async fn run_job(
     catch_up: bool,
 ) -> Result<RunOutcome, String> {
     let dotenv = crate::home::read_dotenv_with_process_vault(home);
-    let prepared = route::prepare(home, &dotenv, &job.task, &HashMap::new())
+    // Each fire is its own conversation: a fresh `{session}` id.
+    let prepared = route::prepare(home, &dotenv, &job.task, &HashMap::new(), None)
         .await
         .map_err(|error| error.to_string())?;
     let client = Client::routed(prepared.router.clone());

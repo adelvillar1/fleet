@@ -351,6 +351,11 @@ pub struct AgentOptions {
     pub goal: Option<String>,
     pub model: String,
     pub max_turns: usize,
+    /// The run's resolved `{session}` value — `Prepared.session_id` — so
+    /// a mid-run re-route re-seeds the same id and the conversation's
+    /// gateway affinity bucket survives the provider switch. `None` for
+    /// the paths that never re-route (tests, one-shot internal routes).
+    pub session_id: Option<String>,
     /// The run's identity base, read from `<FLEET_HOME>/SOUL.md` at the
     /// boundary (sanitized and bounded by [`crate::home::read_soul`]).
     /// `None` is the compiled-in [`SYSTEM_PROMPT`] — the run this crate
@@ -493,6 +498,7 @@ impl Default for AgentOptions {
             goal: None,
             model: crate::route::AUTO_MODEL.to_string(),
             max_turns: DEFAULT_MAX_TURNS,
+            session_id: None,
             identity: None,
             ui_tx: None,
             lane_specs: None,
@@ -2890,8 +2896,15 @@ impl<'a> Agent<'a> {
         // A fixed task text: a mid-run switch is about the provider, and
         // the route-decision cache then serves every re-route after the
         // first instead of paying a judgment each time.
-        if let Ok(prepared) =
-            crate::route::prepare_with_pin(&home, &dotenv, "a mid-run re-route", &specs, pin).await
+        if let Ok(prepared) = crate::route::prepare_with_pin(
+            &home,
+            &dotenv,
+            "a mid-run re-route",
+            &specs,
+            pin,
+            self.options.session_id.as_deref(),
+        )
+        .await
         {
             self.rerouted = Some(Client::routed(prepared.router.clone()));
         }
@@ -8049,6 +8062,7 @@ mod tests {
             Box::new(crate::memory::KeywordOnly),
         ));
         let options = AgentOptions {
+            session_id: None,
             goal: None,
             model: "m".to_string(),
             identity: None,
@@ -8166,6 +8180,7 @@ mod tests {
         let mut session = crate::session::Session::create(&home, "m").unwrap();
         let client = Client::new("http://127.0.0.1:9", "k");
         let options = AgentOptions {
+            session_id: None,
             goal: None,
             model: "m".to_string(),
             identity: None,
@@ -8593,6 +8608,7 @@ mod tests {
             Box::new(crate::memory::KeywordOnly),
         ));
         let options = AgentOptions {
+            session_id: None,
             goal: None,
             model: "m".to_string(),
             identity: None,
@@ -8729,6 +8745,7 @@ mod tests {
                 Box::new(crate::memory::KeywordOnly),
             ));
             let options = AgentOptions {
+                session_id: None,
                 goal: None,
                 model: "m".to_string(),
                 identity: None,
@@ -8853,6 +8870,7 @@ mod tests {
         let mut session = crate::session::Session::create(&home, "m").unwrap();
         let client = Client::new("http://127.0.0.1:9", "k");
         let options = AgentOptions {
+            session_id: None,
             goal: None,
             model: "m".to_string(),
             identity: None,
@@ -8911,6 +8929,7 @@ mod tests {
         let mut session = crate::session::Session::create(&home, "m").unwrap();
         let client = Client::new("http://127.0.0.1:9", "k");
         let options = AgentOptions {
+            session_id: None,
             goal: None,
             model: "m".to_string(),
             identity: None,
@@ -9043,6 +9062,7 @@ mod tests {
         let none = {
             let mut progress = Vec::new();
             let options = AgentOptions {
+                session_id: None,
                 goal: None,
                 model: "m".to_string(),
                 ..AgentOptions::default()
@@ -9102,6 +9122,7 @@ mod tests {
                 crate::session::Session::create(&home, "m").unwrap(),
             ));
             let options = AgentOptions {
+                session_id: None,
                 goal: None,
                 model: "m".to_string(),
                 identity: Some(identity.to_string()),
@@ -9171,6 +9192,7 @@ mod tests {
 You are auditing a change. Read the diff before you judge it.
 [ROLE OVERLAY END]";
         let options = AgentOptions {
+            session_id: None,
             goal: None,
             model: "m".to_string(),
             identity: None,
@@ -9206,6 +9228,7 @@ You are auditing a change. Read the diff before you judge it.
         // Without the overlay the same construction is the constant.
         let mut session = crate::session::Session::create(&home, "m").unwrap();
         let options = AgentOptions {
+            session_id: None,
             goal: None,
             model: "m".to_string(),
             identity: None,
@@ -9256,6 +9279,7 @@ You are auditing a change. Read the diff before you judge it.
         let client = Client::new("http://127.0.0.1:9", "k");
         let line = crate::gui::prompt_line("http://127.0.0.1:3080");
         let options = AgentOptions {
+            session_id: None,
             goal: None,
             model: "m".to_string(),
             identity: None,
@@ -9293,6 +9317,7 @@ You are auditing a change. Read the diff before you judge it.
         // Without the line the same construction is the constant.
         let mut session = crate::session::Session::create(&home, "m").unwrap();
         let options = AgentOptions {
+            session_id: None,
             goal: None,
             model: "m".to_string(),
             identity: None,
@@ -9341,6 +9366,7 @@ You are auditing a change. Read the diff before you judge it.
         let mut session = crate::session::Session::create(&home, "m").unwrap();
         let client = Client::new("http://127.0.0.1:9", "k");
         let options = AgentOptions {
+            session_id: None,
             goal: None,
             model: "m".to_string(),
             identity: None,
@@ -9392,6 +9418,7 @@ You are auditing a change. Read the diff before you judge it.
         let mut session = crate::session::Session::create(&home, "m").unwrap();
         let client = Client::new("http://127.0.0.1:9", "k");
         let options = AgentOptions {
+            session_id: None,
             goal: None,
             model: "m".to_string(),
             identity: Some("You are the owner's own voice.".to_string()),
@@ -9515,6 +9542,7 @@ You are auditing a change. Read the diff before you judge it.
         let id = session.id().to_string();
         let client = Client::new("http://127.0.0.1:9", "k");
         let options = AgentOptions {
+            session_id: None,
             goal: None,
             model: "m".to_string(),
             identity: None,
@@ -9584,6 +9612,7 @@ You are auditing a change. Read the diff before you judge it.
         let id = session.id().to_string();
         let client = Client::new("http://127.0.0.1:9", "k");
         let options = AgentOptions {
+            session_id: None,
             goal: None,
             model: "m".to_string(),
             identity: None,
@@ -9693,6 +9722,7 @@ You are auditing a change. Read the diff before you judge it.
             Box::new(crate::memory::KeywordOnly),
         ));
         let options = AgentOptions {
+            session_id: None,
             goal: None,
             model: "m".to_string(),
             identity: None,
@@ -9829,6 +9859,7 @@ You are auditing a change. Read the diff before you judge it.
             Box::new(crate::memory::KeywordOnly),
         ));
         let options = AgentOptions {
+            session_id: None,
             goal: None,
             model: "m".to_string(),
             identity: None,
@@ -9913,6 +9944,7 @@ You are auditing a change. Read the diff before you judge it.
             crate::session::Session::create(&home, "m").unwrap(),
         ));
         let options = AgentOptions {
+            session_id: None,
             goal: None,
             model: "m".to_string(),
             identity: None,
@@ -10436,6 +10468,7 @@ You are auditing a change. Read the diff before you judge it.
         let mut session = crate::session::Session::create(&home, "m").unwrap();
         let client = Client::new("http://127.0.0.1:9", "k");
         let options = AgentOptions {
+            session_id: None,
             goal: None,
             model: "m".to_string(),
             identity: None,
@@ -10494,6 +10527,7 @@ You are auditing a change. Read the diff before you judge it.
         let mut session = crate::session::Session::create(&home, "m").unwrap();
         let client = Client::new("http://127.0.0.1:9", "k");
         let options = AgentOptions {
+            session_id: None,
             goal: None,
             model: "m".to_string(),
             identity: None,
@@ -10562,6 +10596,7 @@ You are auditing a change. Read the diff before you judge it.
             resolved, decision,
         )));
         let options = AgentOptions {
+            session_id: None,
             goal: None,
             model: "step-5-preview".to_string(),
             identity: None,
@@ -10618,6 +10653,7 @@ You are auditing a change. Read the diff before you judge it.
         // behaviour every run had before windows were declared.
         let plain = Client::new("http://127.0.0.1:9", "k");
         let plain_options = AgentOptions {
+            session_id: None,
             goal: None,
             model: "m".to_string(),
             identity: None,
@@ -10782,6 +10818,7 @@ You are auditing a change. Read the diff before you judge it.
         let client = Box::leak(Box::new(Client::new("http://127.0.0.1:9", "k")));
         let session = Box::leak(Box::new(crate::session::Session::open(path).unwrap()));
         let options = AgentOptions {
+            session_id: None,
             goal: None,
             model: "m".to_string(),
             identity: None,
@@ -11183,6 +11220,7 @@ You are auditing a change. Read the diff before you judge it.
             crate::session::Session::create(home, "m").unwrap(),
         ));
         let options = AgentOptions {
+            session_id: None,
             goal: None,
             model: "m".to_string(),
             identity: None,

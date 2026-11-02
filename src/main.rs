@@ -320,13 +320,16 @@ async fn run_command(options: &RunOptions) -> ExitCode {
     // The route is prepared before the session exists: the session's
     // first record and the first line the owner reads name the route
     // that will actually serve, not the CLI's requested default — and
-    // a failed route no longer leaves an empty session behind.
+    // a failed route no longer leaves an empty session behind. A resumed
+    // session seeds the route's `{session}` id from its own, so the
+    // conversation's gateway bucket survives the restart.
     let prepared = match route::prepare_with_pin(
         &home,
         &dotenv,
         &options.task,
         &HashMap::new(),
         pin.as_deref(),
+        options.session.as_deref(),
     )
     .await
     {
@@ -471,8 +474,15 @@ async fn chat_command(options: &ChatOptions) -> ExitCode {
             break;
         }
         if prepared.is_none() {
-            match route::prepare_with_pin(&home, &dotenv, trimmed, &HashMap::new(), pin.as_deref())
-                .await
+            match route::prepare_with_pin(
+                &home,
+                &dotenv,
+                trimmed,
+                &HashMap::new(),
+                pin.as_deref(),
+                Some(session.id()),
+            )
+            .await
             {
                 Ok(fresh) => {
                     eprintln!(
@@ -2839,6 +2849,9 @@ async fn drive(
         goal: None,
         model,
         max_turns,
+        // The re-route's seed: the same resolved id this preparation
+        // carries, so a mid-run provider switch keeps the bucket.
+        session_id: Some(prepared.session_id.clone()),
         identity: crate::home::read_soul(home),
         ui_tx: None,
         lane_specs,
@@ -3019,7 +3032,15 @@ async fn compact_command(session_id: Option<&str>, force: bool) -> ExitCode {
     let passphrase = home::vault_passphrase();
     let dotenv = fleet::home::read_dotenv_with_vault(&home, passphrase.as_deref());
     let prepared =
-        match fleet::route::prepare(&home, &dotenv, "compact a session", &HashMap::new()).await {
+        match fleet::route::prepare(
+            &home,
+            &dotenv,
+            "compact a session",
+            &HashMap::new(),
+            None,
+        )
+        .await
+        {
             Ok(prepared) => prepared,
             Err(error) => {
                 eprintln!("fleet: the route could not be prepared: {error}");

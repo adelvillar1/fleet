@@ -504,6 +504,11 @@ pub struct Usage {
 pub struct ApiError {
     pub status: u16,
     pub message: String,
+    /// The provider's own per-request diagnostic id, from a bounded
+    /// allowlist of response headers — the id support channels ask for
+    /// when a refusal is reported upstream. `None` when the answer
+    /// carried none of them.
+    pub request_id: Option<String>,
 }
 
 impl std::fmt::Display for ApiError {
@@ -514,7 +519,14 @@ impl std::fmt::Display for ApiError {
             429 => " — slow down or retry later",
             _ => "",
         };
-        write!(f, "API error {}: {}{}", self.status, self.message, hint)
+        match &self.request_id {
+            Some(id) => write!(
+                f,
+                "API error {}: {}{} — request id {id}",
+                self.status, self.message, hint
+            ),
+            None => write!(f, "API error {}: {}{}", self.status, self.message, hint),
+        }
     }
 }
 
@@ -637,12 +649,16 @@ impl Client {
         }
         let response = call.send_json(request).map_err(map_send_error)?;
         let status = response.status();
+        if status != 200 {
+            let request_id = diagnostic_id(&response);
+            let body = response
+                .into_string()
+                .map_err(|error| ClientError::Network(error.to_string()))?;
+            return Err(ClientError::Api(api_error(status, &body, request_id)));
+        }
         let body = response
             .into_string()
             .map_err(|error| ClientError::Network(error.to_string()))?;
-        if status != 200 {
-            return Err(ClientError::Api(api_error(status, &body)));
-        }
         serde_json::from_str(&body).map_err(|error| ClientError::Decode(error.to_string()))
     }
 
@@ -789,10 +805,11 @@ fn stream_response(
     let status = response.status();
     if status != 200 {
         // An error answer is one document, not a stream.
+        let request_id = diagnostic_id(&response);
         let text = response
             .into_string()
             .map_err(|error| ClientError::Network(error.to_string()))?;
-        return Err(ClientError::Api(api_error(status, &text)));
+        return Err(ClientError::Api(api_error(status, &text, request_id)));
     }
     parse_sse(std::io::BufReader::new(response.into_reader()), events)
 }
@@ -929,17 +946,46 @@ impl From<&ToolCallDraft> for ToolCall {
 /// body, everything else is transport.
 fn map_send_error(error: ureq::Error) -> ClientError {
     match error {
-        ureq::Error::Status(status, response) => match response.into_string() {
-            Ok(body) => ClientError::Api(api_error(status, &body)),
-            Err(read) => ClientError::Network(read.to_string()),
-        },
+        ureq::Error::Status(status, response) => {
+            let request_id = diagnostic_id(&response);
+            match response.into_string() {
+                Ok(body) => ClientError::Api(api_error(status, &body, request_id)),
+                Err(read) => ClientError::Network(read.to_string()),
+            }
+        }
         ureq::Error::Transport(transport) => ClientError::Network(transport.to_string()),
     }
 }
 
+/// The response-header allowlist a refusal's diagnostic id is read from
+/// — the ids providers and gateways ask to see when a request is
+/// reported upstream (Anthropic's `request-id`, LiteLLM's call id,
+/// OpenCode's log id, Cloudflare's ray). First present wins, capped.
+fn diagnostic_id(response: &ureq::Response) -> Option<String> {
+    const ALLOWLIST: [&str; 5] = [
+        "x-request-id",
+        "request-id",
+        "x-opencode-log-id",
+        "x-litellm-call-id",
+        "cf-ray",
+    ];
+    ALLOWLIST
+        .iter()
+        .find_map(|name| {
+            response
+                .header(name)
+                .filter(|value| !value.trim().is_empty())
+        })
+        .map(|value| {
+            let mut capped = value.trim().to_string();
+            capped.truncate(128);
+            capped
+        })
+}
+
 /// Build an `ApiError` from a raw body, extracting `{"error":{"message":…}}`
 /// when present, falling back to a bounded excerpt.
-fn api_error(status: u16, body: &str) -> ApiError {
+fn api_error(status: u16, body: &str, request_id: Option<String>) -> ApiError {
     let message = serde_json::from_str::<serde_json::Value>(body)
         .ok()
         .and_then(|value| {
@@ -950,7 +996,11 @@ fn api_error(status: u16, body: &str) -> ApiError {
                 .map(str::to_string)
         })
         .unwrap_or_else(|| excerpt(body, 300));
-    ApiError { status, message }
+    ApiError {
+        status,
+        message,
+        request_id,
+    }
 }
 
 /// First `limit` bytes of `text` on a char boundary, with an elision marker
@@ -1083,9 +1133,10 @@ mod tests {
 
     #[test]
     fn api_error_reads_the_documented_error_message() {
-        let error = api_error(401, r#"{"error":{"message":"auth failed"}}"#);
+        let error = api_error(401, r#"{"error":{"message":"auth failed"}}"#, None);
         assert_eq!(error.status, 401);
         assert_eq!(error.message, "auth failed");
+        assert!(error.request_id.is_none());
     }
 
     #[test]
@@ -1093,6 +1144,7 @@ mod tests {
         let error = api_error(
             500,
             "<html>not json at all, and long enough to matter</html>",
+            None,
         );
         assert_eq!(error.status, 500);
         assert!(error.message.contains("not json"));
@@ -1400,6 +1452,63 @@ mod tests {
             .collect()
     }
 
+    /// A stub endpoint that answers every request with `status` and the
+    /// given error body, optionally carrying an `x-request-id` response
+    /// header — the refusal the request-id pins assert against. A 200
+    /// answers a parseable chat response with the same header present.
+    fn stub_refusal(status: u16, request_id: Option<&str>) -> u16 {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let id_line = request_id
+            .map(|id| format!("x-request-id: {id}\r\n"))
+            .unwrap_or_default();
+        let body = r#"{"error":{"message":"MissingSessionID","code":"MissingSessionID"}}"#;
+        let ok_body = r#"{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}"#;
+        let served = if status == 200 { ok_body } else { body };
+        std::thread::spawn(move || {
+            for mut stream in listener.incoming().flatten() {
+                read_and_drain_request(&mut stream);
+                let reply = format!(
+                    "HTTP/1.1 {status} E\r\nContent-Type: application/json\r\n{id_line}Content-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    served.len(),
+                    served
+                );
+                let _ = stream.write_all(reply.as_bytes());
+            }
+        });
+        port
+    }
+
+    /// Read one request to its declared end so the client's write
+    /// completes before the connection closes.
+    fn read_and_drain_request(stream: &mut std::net::TcpStream) {
+        let mut request: Vec<u8> = Vec::new();
+        let mut chunk = [0u8; 4096];
+        let head_end = loop {
+            let read = stream.read(&mut chunk).unwrap_or(0);
+            if read == 0 {
+                break request.len();
+            }
+            request.extend_from_slice(&chunk[..read]);
+            if let Some(at) = request.windows(4).position(|w| w == b"\r\n\r\n") {
+                break at + 4;
+            }
+        };
+        let declared: usize = String::from_utf8_lossy(&request[..head_end.min(request.len())])
+            .to_ascii_lowercase()
+            .lines()
+            .find_map(|line| line.strip_prefix("content-length:"))
+            .and_then(|value| value.trim().parse().ok())
+            .unwrap_or(0);
+        while request.len() < head_end + declared {
+            let read = stream.read(&mut chunk).unwrap_or(0);
+            if read == 0 {
+                break;
+            }
+            request.extend_from_slice(&chunk[..read]);
+        }
+    }
+
     #[test]
     fn a_configured_header_rides_both_request_paths() {
         let json_answer = r#"{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}"#;
@@ -1523,6 +1632,75 @@ mod tests {
         assert!(
             !plain.iter().any(|line| line.starts_with("x-")),
             "no configured header rides: {plain:?}"
+        );
+    }
+
+    #[test]
+    fn a_refusal_carries_the_providers_request_id() {
+        let messages = vec![Message::text(Role::User, "hi")];
+        let request = ChatRequest {
+            model: "m",
+            messages: &messages,
+            tools: Vec::new(),
+            max_tokens: None,
+        };
+
+        // The plain path: the 400's `x-request-id` rides the error's own
+        // words, the id a support channel asks to see.
+        let port = stub_refusal(400, Some("req-opencode-123"));
+        let error = Client::new(format!("http://127.0.0.1:{port}"), "k")
+            .chat(&request)
+            .expect_err("the refusal");
+        let text = error.to_string();
+        assert!(
+            text.contains("400") && text.contains("request id req-opencode-123"),
+            "{text}"
+        );
+
+        // The streamed path keeps the same capture.
+        let stream_port = stub_refusal(400, Some("req-stream-9"));
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("a runtime");
+        let stream_error = runtime.block_on(async {
+            Client::new(format!("http://127.0.0.1:{stream_port}"), "k")
+                .chat_stream(&request, |_| {})
+                .await
+                .expect_err("the streamed refusal")
+        });
+        assert!(
+            stream_error
+                .to_string()
+                .contains("request id req-stream-9"),
+            "{stream_error}"
+        );
+
+        // A 200 carrying the allowlist header parses fine: the capture
+        // is an error-path concern, never a success-path one.
+        let ok_port = stub_refusal(200, Some("req-ok"));
+        let answer = Client::new(format!("http://127.0.0.1:{ok_port}"), "k")
+            .chat(&request)
+            .expect("the 200 parses");
+        assert_eq!(answer.choices[0].message.content.as_deref(), Some("ok"));
+    }
+
+    #[test]
+    fn an_answer_without_the_header_names_nothing() {
+        let port = stub_refusal(400, None);
+        let messages = vec![Message::text(Role::User, "hi")];
+        let request = ChatRequest {
+            model: "m",
+            messages: &messages,
+            tools: Vec::new(),
+            max_tokens: None,
+        };
+        let error = Client::new(format!("http://127.0.0.1:{port}"), "k")
+            .chat(&request)
+            .expect_err("the refusal");
+        assert!(
+            !error.to_string().contains("request id"),
+            "{error:?}"
         );
     }
 }

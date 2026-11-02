@@ -1299,13 +1299,27 @@ fn resolve_key(name: &str, dotenv: &HashMap<String, String>) -> Option<String> {
 /// settings writer and the router's build refuse one, naming the header.
 const RESERVED_HEADERS: [&str; 4] = ["authorization", "content-type", "host", "content-length"];
 
-/// Every header's name must be non-empty and unreserved, and every value
-/// a literal or a composition of the two legal placeholders: `{session}`
-/// — the client's stable per-preparation id — and `{env:NAME}` with a
-/// non-empty NAME. Returns the first refusal, naming the header. The
-/// shared check behind both gates: the settings writer (the owner's
-/// mistake surfaces at set time) and the router's build (a hand-edited
-/// file skipped the writer).
+/// An HTTP header-name token character (RFC 7230's `tchar`): the
+/// alphabet a request line's field names are built from.
+fn is_token_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric()
+        || matches!(
+            b,
+            b'!' | b'#' | b'$' | b'%' | b'&' | b'\'' | b'*' | b'+' | b'-' | b'.' | b'^' | b'_'
+                | b'`' | b'|' | b'~'
+        )
+}
+
+/// Every header's name must be non-empty, unreserved, and made of HTTP
+/// token characters only, and every value free of control characters —
+/// a carriage return or line feed in either would inject headers into
+/// the request line — and a literal or a composition of the two legal
+/// placeholders: `{session}` — the conversation's stable, opaque id —
+/// and `{env:NAME}` with a non-empty NAME. Returns the first refusal,
+/// naming the header. The shared check behind both gates: the settings
+/// writer (the owner's mistake surfaces at set time) and the router's
+/// build (a hand-edited file skipped the writer, and this half sees the
+/// env-substituted values).
 pub(crate) fn validate_headers(
     headers: &std::collections::BTreeMap<String, String>,
 ) -> Result<(), String> {
@@ -1313,10 +1327,22 @@ pub(crate) fn validate_headers(
         if name.is_empty() {
             return Err("a header name is empty".to_string());
         }
+        if let Some(bad) = name.bytes().position(|b| !is_token_byte(b)) {
+            return Err(format!(
+                "header `{name}` carries a character that is not a header-name token \
+                 (at byte {bad})"
+            ));
+        }
         let lowered = name.to_ascii_lowercase();
         if RESERVED_HEADERS.contains(&lowered.as_str()) {
             return Err(format!(
                 "header `{name}` is reserved — the client sets it itself"
+            ));
+        }
+        if let Some(bad) = value.bytes().position(|b| b.is_ascii_control()) {
+            return Err(format!(
+                "header `{name}` carries a control character (at byte {bad}) — a value \
+                 rides one header line, whole"
             ));
         }
         let mut rest = value.as_str();
@@ -1397,20 +1423,59 @@ fn wire_headers(
     Ok(pairs)
 }
 
-/// A stable-per-client session id for `{session}` placeholders: mixed
-/// from the process id and the clock's nanoseconds, so two clients built
-/// in the same preparation differ and one client's id holds for its
-/// whole walk. Short hex; no crate.
-fn fresh_session_id() -> String {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|since| since.as_nanos() as u64)
-        .unwrap_or(0);
+/// The wire value for a `{session}` placeholder: an opaque, UUID-shaped
+/// id. A seeded preparation — a conversation with an id, resumed or
+/// live — derives it deterministically from that id, so the same
+/// conversation presents the same value across restarts, re-preparations,
+/// and mid-run re-routes; an unseeded one draws fresh entropy from the
+/// OS. The seed is idempotent on its own output: a value already in the
+/// wire shape rides verbatim, so a preparation's resolved id can re-seed
+/// a later preparation (the mid-run re-route) without shifting the
+/// bucket. The raw conversation id never rides the wire.
+fn session_id_for(seed: Option<&str>) -> String {
+    match seed {
+        Some(seed) if is_uuid_shaped(seed) => seed.to_string(),
+        Some(seed) => {
+            let mut hex = crate::calib::hash16(&format!("session-header:{seed}"));
+            hex.push_str(&crate::calib::hash16(&format!("{seed}:session-header")));
+            shape_uuid(&hex)
+        }
+        None => {
+            // Two independent draws from the OS's per-instance entropy;
+            // no process fact, no clock fact in the value itself.
+            use std::hash::{BuildHasher, Hasher};
+            let a = std::collections::hash_map::RandomState::new()
+                .build_hasher()
+                .finish();
+            let b = std::collections::hash_map::RandomState::new()
+                .build_hasher()
+                .finish();
+            shape_uuid(&format!("{a:016x}{b:016x}"))
+        }
+    }
+}
+
+/// 32 hex chars into the 8-4-4-4-12 reading.
+fn shape_uuid(hex: &str) -> String {
     format!(
-        "{:08x}{:08x}",
-        std::process::id(),
-        nanos as u32 ^ (nanos >> 32) as u32
+        "{}-{}-{}-{}-{}",
+        &hex[0..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..32]
     )
+}
+
+/// Whether `s` is already in the wire shape — 8-4-4-4-12 hex — so a
+/// resolved id can re-seed a later preparation verbatim.
+fn is_uuid_shaped(s: &str) -> bool {
+    let parts: Vec<&str> = s.split('-').collect();
+    parts.len() == 5
+        && [8, 4, 4, 4, 12]
+            .iter()
+            .zip(&parts)
+            .all(|(len, part)| part.len() == *len && part.bytes().all(|b| b.is_ascii_hexdigit()))
 }
 
 /// Resolve every candidate's key for this run. `dotenv` is the
@@ -2611,7 +2676,14 @@ pub struct Router {
 impl Router {
     /// A router over `resolved`, starting its walk at the decision's index.
     pub fn new(resolved: Vec<Resolved>, decision: RouteDecision) -> Router {
-        Router::build(resolved, decision, Vec::new(), &HashMap::new(), None)
+        Router::build(
+            resolved,
+            decision,
+            Vec::new(),
+            &HashMap::new(),
+            None,
+            &session_id_for(None),
+        )
     }
 
     /// The pin this route was prepared under, when the run has one.
@@ -2636,12 +2708,13 @@ impl Router {
         calibration_skips: Vec<calib::CalibrationCell>,
         lane_specs: &HashMap<String, ServerSpec>,
         pin: Option<String>,
+        session_id: &str,
     ) -> Router {
         let endpoints = resolved
             .iter()
             .map(|entry| match entry.candidate.kind {
                 CandidateKind::Http => Endpoint::Http(
-                    wire_headers(entry.id(), &entry.candidate.headers, &fresh_session_id()).map(
+                    wire_headers(entry.id(), &entry.candidate.headers, session_id).map(
                         |headers| {
                             Client::with_headers(
                                 entry.candidate.base_url.as_str(),
@@ -3089,6 +3162,14 @@ pub struct Prepared {
     /// The calibration stream: this session's rows go here, and its first
     /// read is what demoted the chain.
     pub calib: calib::Stream,
+    /// The resolved `{session}` value every HTTP candidate's client
+    /// carries — opaque and UUID-shaped, derived from the preparation's
+    /// session seed (the conversation's id) or drawn fresh. A later
+    /// preparation of the same conversation (a resumed run, the GUI's
+    /// re-prepare, a mid-run re-route) re-seeds from this value, which
+    /// the derivation passes through verbatim, so the conversation's
+    /// affinity bucket survives everything but a new conversation.
+    pub session_id: String,
 }
 
 impl Prepared {
@@ -3109,8 +3190,9 @@ pub async fn prepare(
     dotenv: &HashMap<String, String>,
     task: &str,
     specs: &HashMap<String, ServerSpec>,
+    session_seed: Option<&str>,
 ) -> Result<Prepared, ConfigError> {
-    prepare_with_pin(home, dotenv, task, specs, None).await
+    prepare_with_pin(home, dotenv, task, specs, None, session_seed).await
 }
 
 /// [`prepare`] with the chat's own provider pin laid over the roster's:
@@ -3125,8 +3207,9 @@ pub async fn prepare_with_pin(
     task: &str,
     specs: &HashMap<String, ServerSpec>,
     pin: Option<&str>,
+    session_seed: Option<&str>,
 ) -> Result<Prepared, ConfigError> {
-    prepare_walk(home, dotenv, task, specs, pin, Walk::Leader).await
+    prepare_walk(home, dotenv, task, specs, pin, Walk::Leader, session_seed).await
 }
 
 /// A delegated child's route: the same roster, the same pin the parent
@@ -3142,7 +3225,9 @@ pub async fn prepare_child(
     pin: Option<&str>,
 ) -> Result<Prepared, ConfigError> {
     let dotenv = crate::home::read_dotenv_with_process_vault(home);
-    prepare_walk(home, &dotenv, brief, specs, pin, Walk::Judged).await
+    // A child is its own conversation: a fresh id, per the lifecycle
+    // contract the session-header-parity plan holds.
+    prepare_walk(home, &dotenv, brief, specs, pin, Walk::Judged, None).await
 }
 
 async fn prepare_walk(
@@ -3152,6 +3237,7 @@ async fn prepare_walk(
     specs: &HashMap<String, ServerSpec>,
     pin: Option<&str>,
     walk: Walk,
+    session_seed: Option<&str>,
 ) -> Result<Prepared, ConfigError> {
     let mut roster = load_roster(home)?;
     if let Some(pin) = pin {
@@ -3244,18 +3330,24 @@ async fn prepare_walk(
         .iter()
         .position(|(provider, _)| provider == &decision.provider)
         .unwrap_or(0);
+    // One resolved id per preparation, shared by every candidate's
+    // client: one conversation, one affinity value, across the whole
+    // walk and every surface that later re-seeds from it.
+    let session_id = session_id_for(session_seed);
     let router = Arc::new(Router::build(
         resolved,
         decision.clone(),
         skips,
         specs,
         roster.pin.clone(),
+        &session_id,
     ));
     Ok(Prepared {
         router,
         decision,
         latency_ms,
         calib,
+        session_id,
     })
 }
 
@@ -3818,6 +3910,7 @@ mod tests {
         ClientError::Api(crate::api::ApiError {
             status,
             message: "x".to_string(),
+            request_id: None,
         })
     }
 
@@ -4613,14 +4706,16 @@ mod tests {
         let headers = [("x-opencode-session".to_string(), "{session}".to_string())]
             .into_iter()
             .collect();
-        let first = wire_headers("p", &headers, &fresh_session_id()).unwrap();
-        let second = wire_headers("p", &headers, &fresh_session_id()).unwrap();
+        let first = wire_headers("p", &headers, &session_id_for(None)).unwrap();
+        let second = wire_headers("p", &headers, &session_id_for(None)).unwrap();
         let first_value = first[0].1.as_str();
         let second_value = second[0].1.as_str();
         assert!(!first_value.contains("{session}"), "{first_value}");
         assert!(!second_value.contains("{session}"), "{second_value}");
         assert_ne!(first_value, second_value, "two clients differ");
         let again = wire_headers("p", &headers, first_value).unwrap();
+        // A seed already in the wire shape rides verbatim: a later
+        // preparation re-seeded from a resolved id reproduces it.
         assert_eq!(again[0].1, first_value, "one client's id is stable");
     }
 
@@ -4760,6 +4855,121 @@ mod tests {
         let recorded = lock(&router.state).attempts.clone();
         assert_eq!(recorded.len(), 1);
         assert_eq!(recorded[0].outcome, "failed");
+    }
+
+    #[test]
+    fn the_session_id_is_uuid_shaped_opaque_and_resume_stable() {
+        // The lifecycle contract: a seeded conversation derives the same
+        // opaque, UUID-shaped value on every preparation; different
+        // conversations differ; an unseeded preparation draws fresh.
+        let resumed = session_id_for(Some("conv-9"));
+        assert_eq!(resumed, session_id_for(Some("conv-9")),
+            "one conversation, one id");
+        assert!(is_uuid_shaped(&resumed), "{resumed}");
+        assert_ne!(resumed, "conv-9", "the raw id never rides");
+        assert_ne!(resumed, session_id_for(Some("conv-10")));
+        let fresh_a = session_id_for(None);
+        let fresh_b = session_id_for(None);
+        assert!(is_uuid_shaped(&fresh_a) && is_uuid_shaped(&fresh_b));
+        assert_ne!(fresh_a, fresh_b, "an unseeded preparation draws fresh");
+        // Idempotence: a resolved id re-seeds verbatim, so the mid-run
+        // re-route and the GUI's re-prepare reproduce the same value.
+        assert_eq!(session_id_for(Some(&resumed)), resumed);
+    }
+
+    #[test]
+    fn a_control_character_in_a_header_is_refused_naming_it() {
+        // Injection safety: a carriage return or line feed in a name or
+        // a value would split the request line; a non-token name is not
+        // a header name at all. Each refusal names the header.
+        for bad_name in ["x session", "x\rsession", "x:session"] {
+            let headers = [(bad_name.to_string(), "v".to_string())]
+                .into_iter()
+                .collect();
+            let error = validate_headers(&headers).unwrap_err();
+            assert!(
+                error.contains("not a header-name token") && error.contains(bad_name),
+                "{error}"
+            );
+        }
+        for bad_value in ["a\rb", "a\nb", "a\u{0}b"] {
+            let headers = [("x-a".to_string(), bad_value.to_string())]
+                .into_iter()
+                .collect();
+            let error = validate_headers(&headers).unwrap_err();
+            assert!(
+                error.contains("x-a") && error.contains("control"),
+                "{error}"
+            );
+        }
+        // The build's half sees the env-substituted values: an env value
+        // carrying a carriage return is caught there, naming the header.
+        let mut candidate = default_roster()
+            .into_iter()
+            .find(|c| c.id == "deepseek")
+            .unwrap();
+        candidate
+            .headers
+            .insert("x-opencode-session".to_string(), "{env:TOK}".to_string());
+        let dotenv: HashMap<String, String> = [(
+            "TOK".to_string(),
+            "tok\r\ninjected: header".to_string(),
+        )]
+        .into_iter()
+        .collect();
+        let resolved = resolve(std::slice::from_ref(&candidate), &dotenv);
+        let error =
+            wire_headers("deepseek", &resolved[0].candidate.headers, "s").unwrap_err();
+        assert!(
+            error.contains("x-opencode-session") && error.contains("control"),
+            "{error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_resumed_sessions_seed_rides_the_preparation() {
+        // The seed's whole ride: prepare with a conversation's id, and
+        // the prepared route carries that conversation's opaque id —
+        // reproduced on every later preparation of the same id, distinct
+        // from every other conversation's.
+        let home = roster_config_home(
+            "seed-ride",
+            serde_json::json!({ "id": "deepseek", "enabled": true, "key_required": false }),
+        );
+        let first = prepare(
+            &home,
+            &HashMap::new(),
+            "route a resumed session",
+            &std::collections::HashMap::new(),
+            Some("conv-9"),
+        )
+        .await
+        .unwrap();
+        let second = prepare(
+            &home,
+            &HashMap::new(),
+            "route a resumed session",
+            &std::collections::HashMap::new(),
+            Some("conv-9"),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            first.session_id, second.session_id,
+            "one conversation, one id across preparations"
+        );
+        assert!(is_uuid_shaped(&first.session_id), "{}", first.session_id);
+        let other = prepare(
+            &home,
+            &HashMap::new(),
+            "route a resumed session",
+            &std::collections::HashMap::new(),
+            Some("conv-10"),
+        )
+        .await
+        .unwrap();
+        assert_ne!(first.session_id, other.session_id);
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     #[test]
@@ -5169,7 +5379,7 @@ mod tests {
             .collect();
         std::fs::write(&day_file, format!("{}\n", rows.join("\n"))).unwrap();
 
-        let prepared = prepare(&home, &HashMap::new(), "route through the router", &specs)
+        let prepared = prepare(&home, &HashMap::new(), "route through the router", &specs, None)
             .await
             .unwrap();
 
@@ -5691,7 +5901,7 @@ mod tests {
             spend_usd: 0.0016,
             cost_per_right: None,
         };
-        let router = Router::build(resolved, decision, vec![cell], &HashMap::new(), None);
+        let router = Router::build(resolved, decision, vec![cell], &HashMap::new(), None, "s");
         // The head is the walk's start, so it is never skipped; zai is
         // skipped, and the clause names the cell that did it.
         assert_eq!(router.calibration_skip(0, 0), None);

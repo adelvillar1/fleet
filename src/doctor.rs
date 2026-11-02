@@ -1442,6 +1442,7 @@ mod tests {
         ClientError::Api(crate::api::ApiError {
             status,
             message: "x".to_string(),
+            request_id: None,
         })
     }
 
