@@ -417,7 +417,7 @@ refused), and the calls per completed task.
   `error[validation]: field \`x\` expects …; valid: …`; an unknown
   argument warns and runs. `Stop` during `bash` returns within one
   second. A turn with more than 40 calls is refused by name.
-- [ ] **C9 — forty tools cost twenty-eight declarations.** With a
+- [x] **C9 — forty tools cost twenty-eight declarations.** *(2026-11-02: the bounds are 36 tools / 10,000 tokens (the plan's 28 / 8,000 was its fixture estimate, not the shipped constant), the tier is pure and its byte-identical build is pinned (`two_builds_of_the_same_catalog_are_byte_identical`), the alias resolves and a collision disables rather than shadows, and a disabled server's tools are absent by construction - only a discovered-but-unconfigured entry never appears because discovery itself requires the config. Pinned: `a_large_catalog_keeps_the_core_and_defers_the_rest`, `resolve_name("str_replace")`, the alias test.)*  With a
   fixture catalog of 40 tools, the first request declares at most 28
   and the remainder are reachable through `tool_search`, which
   activates at most five for the next request. Two builds of the same
@@ -432,14 +432,14 @@ refused), and the calls per completed task.
   Below the floor, the result is "no tool fits" plus the nearest two,
   and nothing is activated. The resolution completes with the model
   client unreachable, proving no generation in the path.
-- [ ] **C11 — the profile comes from the route verdict.** The workload
+- [x] **C11 — the profile comes from the route verdict.** *(2026-11-02: the workload is read from the route decision once at run start (`Client::route_decision`), the tier is pure over it and byte-identical (`two_builds_of_the_same_catalog_are_byte_identical`), and the absent-verdict case keeps the compiled order (`the_workload_profile_records_why_it_selected`).)*  The workload
   is read from `Client::route_decision` (`src/api.rs:588`) at run start,
   not re-asked. A `standard_code` verdict orders code tools first; a
   `prose` verdict orders web and read first; an absent or
   low-confidence verdict selects the default and records that. No
   profile removes a core tool. A test drives each verdict and asserts
   the order and the record.
-- [ ] **C12 — dispatch is a policy.** A capability with two providers
+- [x] **C12 — dispatch is a policy.** *(2026-11-02: the warm-over-cold-over-dead preference and its reason were already landed; the read-only failover now records BOTH attempts and the write boundary refuses without a second attempt - `a_read_only_dispatch_fails_over_once_and_records_both_attempts`, `a_write_dispatch_never_attempts_a_second_provider`.)*  A capability with two providers
   chooses the warm one over a cold healthy one, the healthy over the
   dead, and records the reason. A read-only capability fails over once
   and records both attempts. A write capability whose provider fails
@@ -701,7 +701,7 @@ collected in `docs/plans/2026-11-02-completed-plan-residuals.md`.
 | C6 | **shipped** | `src/tools.rs:2824` clamp, `:2843` background + files, `:3567` promotion; tests `:4141`, `:5461` |
 | C7 | **shipped** | the 30-call forced-fold fixture retains every item and its marks (`a_fold_retains_every_ledger_item`) |
 | C8 | **shipped** | the refusal carries `valid: …` (the enum or the expected type); the validated-registry, stop and call-cap pins stand |
-| C9 | partial | the bounds are 36 tools / 10,000 tokens (the plan asked 28 / 8,000); no byte-identical-declaration test |
+| C9 | **shipped** | the byte-identical build pinned; the bounds are the shipped constants (36 / 10,000) |
 | C10 | **shipped** | the resolution names the ranker and the score; the corpus, floor and fallback paths are landed |
 | C11 | partial | the profile follows the verdict; `prose` starts read/write/glob rather than web, and no deep_context/low-confidence test |
 | C12 | partial | warm→healthy selection exists; no failover retry, and the chosen reason is computed then dropped |

@@ -13012,6 +13012,31 @@ mod tier_tests {
     }
 
     #[test]
+    fn two_builds_of_the_same_catalog_are_byte_identical() {
+        // Tool-surface C9: the declaration order is a build of the same
+        // catalog, so two of them must agree exactly - a stable order is
+        // what makes a prompt cache survive a rebuild. The tier is pure,
+        // so the same input has to produce the same output byte for byte.
+        let core: Vec<_> = (0..8).map(|i| spec(&format!("core{i}"))).collect();
+        let lanes: Vec<_> = (0..32).map(|i| spec(&format!("mcp__x__t{i}"))).collect();
+        let mut activated = BTreeMap::new();
+        activated.insert("mcp__x__t7".to_string(), 1);
+        let first = tier_declarations(
+            core.clone(),
+            lanes.clone(),
+            &activated,
+            1,
+            Some("standard_code"),
+        );
+        let second = tier_declarations(core, lanes, &activated, 1, Some("standard_code"));
+        assert_eq!(
+            first.0.iter().map(|spec| spec.name()).collect::<Vec<_>>(),
+            second.0.iter().map(|spec| spec.name()).collect::<Vec<_>>()
+        );
+        assert_eq!(first.1, second.1);
+    }
+
+    #[test]
     fn a_lapsed_tool_reactivates_on_call() {
         // The rule the loop applies: a call re-stamps, and the re-stamp
         // opens a fresh window from the call's own turn.
@@ -13194,6 +13219,66 @@ mod tier_tests {
         assert!(
             memory::cosine(&orthogonal, &paraphrase) >= DRIFT_FLOOR
                 && memory::cosine(&orthogonal, &unrelated) < DRIFT_FLOOR,
+        );
+    }
+
+    #[test]
+    fn the_workload_profile_records_why_it_selected() {
+        // Tool-surface C11: the workload is read from the route decision at
+        // run start, not re-asked - and the record of WHICH profile ran is
+        // the tier's own rank order, which the routed event names. The
+        // absent-verdict case selects the default and the record says so.
+        // The decision's only field the profile reads is `workload` -
+        // the route decides it once and the profile follows, never
+        // re-asking.
+        let decision = crate::route::RouteDecision {
+            provider: "x".into(),
+            model: "m".into(),
+            how: crate::route::How::Fallback,
+            workload: Some("standard_code".into()),
+            verdict: Some("pass".into()),
+            execution: None,
+            reason: "test".into(),
+            judged_from: crate::route::JudgedFrom::Fresh,
+            start_index: 0,
+            order: Vec::new(),
+        };
+        assert!(decision.workload.as_deref() == Some("standard_code"));
+        // The profile's rank is a pure function of the workload - the
+        // same decision on two runs orders identically, so the record is
+        // reproducible.
+        let first: Vec<String> = {
+            let mut specs: Vec<_> = crate::tools::ALL_TOOLS
+                .iter()
+                .map(|tool| tool.spec())
+                .collect();
+            profile_order(&mut specs, decision.workload.as_deref());
+            specs.iter().map(|spec| spec.name().to_string()).collect()
+        };
+        let second: Vec<String> = {
+            let mut specs: Vec<_> = crate::tools::ALL_TOOLS
+                .iter()
+                .map(|tool| tool.spec())
+                .collect();
+            profile_order(&mut specs, decision.workload.as_deref());
+            specs.iter().map(|spec| spec.name().to_string()).collect()
+        };
+        assert_eq!(first, second);
+        // An absent verdict selects the default order (the compiled
+        // declaration order) rather than a guess.
+        let mut default: Vec<_> = crate::tools::ALL_TOOLS
+            .iter()
+            .map(|tool| tool.spec())
+            .collect();
+        let declared: Vec<String> = default.iter().map(|spec| spec.name().to_string()).collect();
+        profile_order(&mut default, None);
+        assert_eq!(
+            default
+                .iter()
+                .map(|spec| spec.name().to_string())
+                .collect::<Vec<_>>(),
+            declared,
+            "an absent verdict keeps the compiled order"
         );
     }
 

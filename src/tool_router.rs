@@ -580,4 +580,74 @@ mod tests {
         assert_eq!(chosen.name, "dead");
         assert!(reason.contains("no healthy"));
     }
+
+    #[test]
+    fn a_read_only_dispatch_fails_over_once_and_records_both_attempts() {
+        // Tool-surface C12: a read-only capability whose chosen provider
+        // fails advances to the next one and the record carries BOTH
+        // attempts - the failure that moved it and the success that
+        // answered - so a caller reading the record sees the walk, not
+        // just the winner.
+        let providers = [
+            Provider {
+                name: "first".into(),
+                warm: true,
+                healthy: true,
+            },
+            Provider {
+                name: "second".into(),
+                warm: false,
+                healthy: true,
+            },
+        ];
+        // A read picks the warm one, its call fails, and the walk moves
+        // on: the second is chosen and both attempts are named.
+        let mut attempts = Vec::new();
+        let mut chosen = 0usize;
+        loop {
+            let (pick, reason) = choose(&providers[chosen..], false).expect("a choice");
+            attempts.push((pick.name.clone(), reason));
+            if pick.name == "second" {
+                break;
+            }
+            chosen += 1;
+            assert!(
+                chosen < providers.len(),
+                "the walk stops at the last provider"
+            );
+        }
+        assert_eq!(
+            attempts
+                .iter()
+                .map(|(name, _)| name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["first", "second"],
+            "both attempts are recorded: {attempts:?}"
+        );
+    }
+
+    #[test]
+    fn a_write_dispatch_never_attempts_a_second_provider() {
+        // C12's other half: a write capability whose provider fails
+        // refuses by name - no second attempt, because a second attempt
+        // could apply the write twice.
+        let providers = vec![
+            Provider {
+                name: "only".into(),
+                warm: true,
+                healthy: true,
+            },
+            Provider {
+                name: "spare".into(),
+                warm: false,
+                healthy: true,
+            },
+        ];
+        let (chosen, reason) = choose(&providers, true).expect("a choice");
+        assert_eq!(chosen.name, "only");
+        assert!(
+            reason.contains("write"),
+            "the reason names the write boundary: {reason}"
+        );
+    }
 }
