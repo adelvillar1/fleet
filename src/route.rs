@@ -253,6 +253,14 @@ pub struct Candidate {
     /// Per-model settings — the provider's declaration or the owner's
     /// override — that the window and request builders read.
     pub model_settings: std::collections::BTreeMap<String, ModelSettings>,
+    /// Headers every request to this provider carries beside the
+    /// `Authorization` the key builds — the provider-session-headers
+    /// plan. A value may carry `{session}` (a stable id per router
+    /// preparation) or `{env:NAME}`, resolved from the dotenv chain at
+    /// roster resolution; a name that resolves to nothing fails the walk
+    /// by name, never a silent drop. Values are never printed: a value
+    /// may carry a secret, so every surface shows names only.
+    pub headers: std::collections::BTreeMap<String, String>,
 }
 
 impl Candidate {
@@ -319,6 +327,7 @@ pub fn default_roster() -> Vec<Candidate> {
             disabled_reason: None,
             disabled_models: Vec::new(),
             model_settings: std::collections::BTreeMap::new(),
+            headers: std::collections::BTreeMap::new(),
         },
         Candidate {
             id: "xiaomi-mimo".into(),
@@ -337,6 +346,7 @@ pub fn default_roster() -> Vec<Candidate> {
             disabled_reason: None,
             disabled_models: Vec::new(),
             model_settings: std::collections::BTreeMap::new(),
+            headers: std::collections::BTreeMap::new(),
         },
         Candidate {
             id: "stepfun".into(),
@@ -355,6 +365,7 @@ pub fn default_roster() -> Vec<Candidate> {
             disabled_reason: None,
             disabled_models: Vec::new(),
             model_settings: std::collections::BTreeMap::new(),
+            headers: std::collections::BTreeMap::new(),
         },
         Candidate {
             id: "token-plan".into(),
@@ -369,6 +380,7 @@ pub fn default_roster() -> Vec<Candidate> {
             disabled_reason: None,
             disabled_models: Vec::new(),
             model_settings: std::collections::BTreeMap::new(),
+            headers: std::collections::BTreeMap::new(),
         },
         Candidate {
             id: "deepseek".into(),
@@ -382,6 +394,7 @@ pub fn default_roster() -> Vec<Candidate> {
             disabled_reason: None,
             disabled_models: Vec::new(),
             model_settings: std::collections::BTreeMap::new(),
+            headers: std::collections::BTreeMap::new(),
         },
         // Liquid's own API — the blend1 generative lane's endpoint
         // (lfm2.5-24b-a2b), declared here so the owner's config can pin
@@ -405,6 +418,7 @@ pub fn default_roster() -> Vec<Candidate> {
             disabled_reason: None,
             disabled_models: Vec::new(),
             model_settings: std::collections::BTreeMap::new(),
+            headers: std::collections::BTreeMap::new(),
         },
         // blend1 — the grounding provider: the composed ask (Liquid's
         // hosted lfm 24B synthesizer over the specialized legs sys1 /
@@ -425,6 +439,7 @@ pub fn default_roster() -> Vec<Candidate> {
             disabled_reason: None,
             disabled_models: Vec::new(),
             model_settings: std::collections::BTreeMap::new(),
+            headers: std::collections::BTreeMap::new(),
         },
         // Ollama Cloud: a hosted multimodal reserve, declared for the
         // vision workload. Declared only, like Liquid — the chain order
@@ -443,6 +458,7 @@ pub fn default_roster() -> Vec<Candidate> {
             disabled_reason: None,
             disabled_models: Vec::new(),
             model_settings: std::collections::BTreeMap::new(),
+            headers: std::collections::BTreeMap::new(),
         },
     ]
 }
@@ -801,6 +817,11 @@ pub struct ProviderEntry {
     /// keyed by the model id as the listing spells it.
     #[serde(default)]
     pub model_settings: Option<std::collections::BTreeMap<String, ModelSettings>>,
+    /// Headers every request to this provider carries beside the key's
+    /// `Authorization`. Absent means none — every existing config
+    /// overrides nothing and sends exactly what it sent before.
+    #[serde(default)]
+    pub headers: Option<std::collections::BTreeMap<String, String>>,
 }
 
 impl ProviderEntry {
@@ -860,8 +881,17 @@ impl ModelSettings {
 /// proposal; the refusal names the offending field the way the roster's
 /// own parse error does.
 pub fn validate_provider_entry(value: &serde_json::Value) -> Result<ProviderEntry, String> {
-    serde_json::from_value::<ProviderEntry>(value.clone())
-        .map_err(|error| format!("the config entry is not a provider entry: {error}"))
+    let parsed = serde_json::from_value::<ProviderEntry>(value.clone())
+        .map_err(|error| format!("the config entry is not a provider entry: {error}"))?;
+    // The headers arm rides the same gate: a reserved name or a
+    // malformed placeholder is refused here, naming the header, before
+    // anything is written — the writer's half of the two-gate check.
+    if let Some(headers) = &parsed.headers {
+        validate_headers(headers).map_err(|reason| {
+            format!("the config entry's headers are not usable: {reason}")
+        })?;
+    }
+    Ok(parsed)
 }
 
 /// The `calib` section: where the calibration stream lives when
@@ -1173,6 +1203,9 @@ fn merge(
             if let Some(value) = &entry.model_settings {
                 existing.model_settings = value.clone();
             }
+            if let Some(value) = &entry.headers {
+                existing.headers = value.clone();
+            }
         } else {
             let models = entry
                 .models
@@ -1191,6 +1224,7 @@ fn merge(
                     disabled_reason: entry.disabled_reason.clone(),
                     disabled_models: entry.disabled_models.clone().unwrap_or_default(),
                     model_settings: entry.model_settings.clone().unwrap_or_default(),
+                    headers: entry.headers.clone().unwrap_or_default(),
                 }),
                 _ => {
                     return Err(ConfigError::BadEntry(format!(
@@ -1259,6 +1293,127 @@ fn resolve_key(name: &str, dotenv: &HashMap<String, String>) -> Option<String> {
     crate::home::resolve_setting(name, dotenv)
 }
 
+// --- headers ----------------------------------------------------------------
+
+/// The header names a client already sets itself; a roster header with
+/// one of these names would clobber the client's own, so both the
+/// settings writer and the router's build refuse one, naming the header.
+const RESERVED_HEADERS: [&str; 4] = ["authorization", "content-type", "host", "content-length"];
+
+/// Every header's name must be non-empty and unreserved, and every value
+/// a literal or a composition of the two legal placeholders: `{session}`
+/// — the client's stable per-preparation id — and `{env:NAME}` with a
+/// non-empty NAME. Returns the first refusal, naming the header. The
+/// shared check behind both gates: the settings writer (the owner's
+/// mistake surfaces at set time) and the router's build (a hand-edited
+/// file skipped the writer).
+pub(crate) fn validate_headers(
+    headers: &std::collections::BTreeMap<String, String>,
+) -> Result<(), String> {
+    for (name, value) in headers {
+        if name.is_empty() {
+            return Err("a header name is empty".to_string());
+        }
+        let lowered = name.to_ascii_lowercase();
+        if RESERVED_HEADERS.contains(&lowered.as_str()) {
+            return Err(format!(
+                "header `{name}` is reserved — the client sets it itself"
+            ));
+        }
+        let mut rest = value.as_str();
+        while let Some(open) = rest.find('{') {
+            let after = &rest[open + 1..];
+            let Some(close) = after.find('}') else {
+                return Err(format!("header `{name}` carries an unclosed `{{`"));
+            };
+            let token = &after[..close];
+            match token.strip_prefix("env:") {
+                Some(env_name) if !env_name.is_empty() => {}
+                Some(_) => return Err(format!("header `{name}` carries an empty env name")),
+                None if token == "session" => {}
+                None => {
+                    return Err(format!(
+                        "header `{name}` carries an unknown placeholder `{{{token}}}` — \
+                         only {{session}} and {{env:NAME}} resolve"
+                    ));
+                }
+            }
+            rest = &after[close + 1..];
+        }
+    }
+    Ok(())
+}
+
+/// Substitute each `{env:NAME}` in one candidate's header values from the
+/// dotenv chain. A name that resolves to nowhere is left standing — the
+/// router's build refuses the survivor by name, so the walk carries the
+/// named failure instead of a silently absent header.
+fn resolve_header_env(
+    headers: &mut std::collections::BTreeMap<String, String>,
+    dotenv: &HashMap<String, String>,
+) {
+    for value in headers.values_mut() {
+        while let Some(open) = value.find("{env:") {
+            let after = &value[open + 1..];
+            let Some(close) = after.find('}') else {
+                break;
+            };
+            let env_name = &after["env:".len()..close];
+            let Some(found) = resolve_key(env_name, dotenv) else {
+                break;
+            };
+            let mut replaced = String::with_capacity(value.len());
+            replaced.push_str(&value[..open]);
+            replaced.push_str(&found);
+            replaced.push_str(&after[close + 1..]);
+            *value = replaced;
+        }
+    }
+}
+
+/// One candidate's headers, resolved for the wire: `{session}` becomes
+/// the client's own stable id, and a `{env:NAME}` survivor — a name
+/// roster resolution found nowhere — is the named failure, header and
+/// var both. The build's gate for a hand-edited file that skipped the
+/// writer.
+fn wire_headers(
+    provider: &str,
+    headers: &std::collections::BTreeMap<String, String>,
+    session: &str,
+) -> Result<Vec<(String, String)>, String> {
+    validate_headers(headers).map_err(|reason| format!("provider `{provider}`: {reason}"))?;
+    let mut pairs = Vec::with_capacity(headers.len());
+    for (name, value) in headers {
+        if let Some(open) = value.find("{env:") {
+            let after = &value[open + 1..];
+            let end = after.find('}').unwrap_or(after.len());
+            let env_name = &after["env:".len()..end];
+            return Err(format!(
+                "provider `{provider}`: header `{name}` names env `{env_name}`, which resolved \
+                 to nothing — set it in the environment or `<home>/.env`"
+            ));
+        }
+        pairs.push((name.clone(), value.replace("{session}", session)));
+    }
+    Ok(pairs)
+}
+
+/// A stable-per-client session id for `{session}` placeholders: mixed
+/// from the process id and the clock's nanoseconds, so two clients built
+/// in the same preparation differ and one client's id holds for its
+/// whole walk. Short hex; no crate.
+fn fresh_session_id() -> String {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|since| since.as_nanos() as u64)
+        .unwrap_or(0);
+    format!(
+        "{:08x}{:08x}",
+        std::process::id(),
+        nanos as u32 ^ (nanos >> 32) as u32
+    )
+}
+
 /// Resolve every candidate's key for this run. `dotenv` is the
 /// `<home>/.env` map the caller already read.
 /// The pre-flight: the key env vars a machine would still need for any
@@ -1299,9 +1454,13 @@ pub fn preflight(home: &Path, dotenv: &HashMap<String, String>) -> Result<(), Ve
 pub fn resolve(candidates: &[Candidate], dotenv: &HashMap<String, String>) -> Vec<Resolved> {
     candidates
         .iter()
-        .map(|candidate| Resolved {
-            candidate: candidate.clone(),
-            key: resolve_key(&candidate.key_env, dotenv),
+        .map(|candidate| {
+            let mut resolved = Resolved {
+                candidate: candidate.clone(),
+                key: resolve_key(&candidate.key_env, dotenv),
+            };
+            resolve_header_env(&mut resolved.candidate.headers, dotenv);
+            resolved
         })
         .collect()
 }
@@ -2411,7 +2570,11 @@ struct RouterState {
 /// named reason no spec could be resolved, which fails every attempt
 /// by name and lets the walk advance.
 enum Endpoint {
-    Http(Client),
+    /// The candidate's client, or the named reason its headers did not
+    /// resolve — the lane shape, so a misconfigured header fails the
+    /// walk by name at this candidate instead of failing the build for
+    /// every provider that would have served.
+    Http(Result<Client, String>),
     Lane(Result<ServerSpec, String>),
 }
 
@@ -2478,10 +2641,17 @@ impl Router {
         let endpoints = resolved
             .iter()
             .map(|entry| match entry.candidate.kind {
-                CandidateKind::Http => Endpoint::Http(Client::new(
-                    entry.candidate.base_url.as_str(),
-                    entry.key.clone().unwrap_or_default(),
-                )),
+                CandidateKind::Http => Endpoint::Http(
+                    wire_headers(entry.id(), &entry.candidate.headers, &fresh_session_id()).map(
+                        |headers| {
+                            Client::with_headers(
+                                entry.candidate.base_url.as_str(),
+                                entry.key.clone().unwrap_or_default(),
+                                headers,
+                            )
+                        },
+                    ),
+                ),
                 CandidateKind::Lane => Endpoint::Lane(
                     lane_specs
                         .get(entry.id())
@@ -2850,6 +3020,14 @@ impl Router {
         let model = self.models[position].clone();
         match &self.endpoints[index] {
             Endpoint::Http(client) => {
+                // A candidate whose headers did not resolve fails by name
+                // before any request — the lane's shape, so one
+                // misconfigured provider cannot fail the walk for the
+                // providers that would have served.
+                let client = match client {
+                    Ok(client) => client,
+                    Err(reason) => return Err((ClientError::Network(reason.clone()), false)),
+                };
                 let streamed = Arc::new(AtomicBool::new(false));
                 let routed = ChatRequest {
                     model: &model,
@@ -3974,6 +4152,7 @@ mod tests {
                     disabled_reason: None,
                     disabled_models: Vec::new(),
                     model_settings: std::collections::BTreeMap::new(),
+                    headers: std::collections::BTreeMap::new(),
                 },
                 key: None,
             },
@@ -3990,6 +4169,7 @@ mod tests {
                     disabled_reason: None,
                     disabled_models: Vec::new(),
                     model_settings: std::collections::BTreeMap::new(),
+                    headers: std::collections::BTreeMap::new(),
                 },
                 key: None,
             },
@@ -4288,6 +4468,240 @@ mod tests {
     }
 
     #[test]
+    fn headers_merge_over_an_entry_without_disturbing_its_fields() {
+        // The provider-session-headers plan's C0: the headers arm rides
+        // the same field-by-field merge as base_url and key_env, and an
+        // entry that names only headers leaves everything else standing.
+        let file: ConfigFile = serde_json::from_str(
+            r#"{
+                "providers": [
+                    {
+                        "id": "zai-coding-plan",
+                        "headers": {
+                            "x-opencode-session": "{session}",
+                            "x-gateway-route": "{env:GATEWAY_ROUTE}"
+                        }
+                    }
+                ]
+            }"#,
+        )
+        .unwrap();
+        let (candidates, _) = merge(default_roster(), &file).unwrap();
+        let zai = candidates
+            .iter()
+            .find(|c| c.id == "zai-coding-plan")
+            .expect("the entry");
+        assert_eq!(zai.base_url, "https://api.z.ai/api/coding/paas/v4");
+        assert_eq!(zai.key_env, "ZAI_CODING_API_KEY");
+        assert_eq!(
+            zai.headers.get("x-opencode-session").map(String::as_str),
+            Some("{session}")
+        );
+        assert_eq!(
+            zai.headers.get("x-gateway-route").map(String::as_str),
+            Some("{env:GATEWAY_ROUTE}")
+        );
+    }
+
+    #[test]
+    fn a_roster_without_headers_is_the_empty_map() {
+        // Every existing config and every compiled entry parses
+        // byte-identical: the field is optional and defaults to none.
+        let file: ConfigFile = serde_json::from_str(
+            r#"{ "providers": [ { "id": "deepseek", "enabled": false } ] }"#,
+        )
+        .unwrap();
+        let (candidates, _) = merge(default_roster(), &file).unwrap();
+        let deepseek = candidates.iter().find(|c| c.id == "deepseek").unwrap();
+        assert!(deepseek.headers.is_empty());
+        assert!(deepseek.enabled == false);
+    }
+
+    #[test]
+    fn a_fully_specified_new_entry_carries_its_headers() {
+        let file: ConfigFile = serde_json::from_str(
+            r#"{ "providers": [ {
+                    "id": "my-gateway",
+                    "base_url": "https://g.example/v1",
+                    "key_env": "MY_KEY",
+                    "model": "m1",
+                    "headers": { "x-opencode-session": "{session}" }
+                } ] }"#,
+        )
+        .unwrap();
+        let (candidates, _) = merge(default_roster(), &file).unwrap();
+        let added = candidates
+            .iter()
+            .find(|c| c.id == "my-gateway")
+            .expect("the new entry");
+        assert_eq!(
+            added.headers.get("x-opencode-session").map(String::as_str),
+            Some("{session}")
+        );
+    }
+
+    #[test]
+    fn a_bad_header_is_refused_naming_it() {
+        // The shared check's refusals, each naming the header: a reserved
+        // name (case-insensitive — the writer's check, the build's gate),
+        // an empty name, a malformed placeholder, an unclosed brace, and
+        // an empty env name.
+        let reserved = [("Authorization".to_string(), "x".to_string())]
+            .into_iter()
+            .collect();
+        let error = validate_headers(&reserved).unwrap_err();
+        assert!(error.contains("Authorization") && error.contains("reserved"), "{error}");
+        let reserved = [("CONTENT-TYPE".to_string(), "x".to_string())]
+            .into_iter()
+            .collect();
+        let error = validate_headers(&reserved).unwrap_err();
+        assert!(error.contains("CONTENT-TYPE"), "{error}");
+        let empty = [(String::new(), "x".to_string())].into_iter().collect();
+        assert!(validate_headers(&empty).unwrap_err().contains("empty"));
+        let unknown = [("x-a".to_string(), "{workload}".to_string())]
+            .into_iter()
+            .collect();
+        let error = validate_headers(&unknown).unwrap_err();
+        assert!(
+            error.contains("x-a") && error.contains("{workload}"),
+            "{error}"
+        );
+        let unclosed = [("x-a".to_string(), "prefix {session".to_string())]
+            .into_iter()
+            .collect();
+        let error = validate_headers(&unclosed).unwrap_err();
+        assert!(error.contains("x-a") && error.contains("unclosed"), "{error}");
+        let empty_env = [("x-a".to_string(), "{env:}".to_string())]
+            .into_iter()
+            .collect();
+        let error = validate_headers(&empty_env).unwrap_err();
+        assert!(error.contains("x-a") && error.contains("empty env"), "{error}");
+        // The legal forms pass.
+        let legal = [(
+            "x-opencode-session".to_string(),
+            "conv-{session}-{env:TOK}".to_string(),
+        )]
+        .into_iter()
+        .collect();
+        validate_headers(&legal).expect("the legal composition passes");
+    }
+
+    #[test]
+    fn the_session_placeholder_resolves_stable_and_distinct() {
+        // One client's `{session}` holds for its whole walk; two clients
+        // built in the same preparation differ.
+        let headers = [("x-opencode-session".to_string(), "{session}".to_string())]
+            .into_iter()
+            .collect();
+        let first = wire_headers("p", &headers, &fresh_session_id()).unwrap();
+        let second = wire_headers("p", &headers, &fresh_session_id()).unwrap();
+        let first_value = first[0].1.as_str();
+        let second_value = second[0].1.as_str();
+        assert!(!first_value.contains("{session}"), "{first_value}");
+        assert!(!second_value.contains("{session}"), "{second_value}");
+        assert_ne!(first_value, second_value, "two clients differ");
+        let again = wire_headers("p", &headers, first_value).unwrap();
+        assert_eq!(again[0].1, first_value, "one client's id is stable");
+    }
+
+    #[test]
+    fn an_env_placeholder_resolves_from_the_dotenv_chain() {
+        // Roster resolution substitutes what the chain answers; a name it
+        // answers nothing for is left standing for the build to name.
+        let mut candidate = default_roster()
+            .into_iter()
+            .find(|c| c.id == "deepseek")
+            .unwrap();
+        candidate
+            .headers
+            .insert("x-opencode-session".to_string(), "{env:TOK}".to_string());
+        let dotenv: HashMap<String, String> =
+            [("TOK".to_string(), "tok-value".to_string())].into_iter().collect();
+        let resolved = resolve(std::slice::from_ref(&candidate), &dotenv);
+        assert_eq!(
+            resolved[0].candidate.headers.get("x-opencode-session").map(String::as_str),
+            Some("tok-value"),
+            "the chain's answer substitutes"
+        );
+        // The miss: the placeholder survives resolution and the build
+        // refuses it, naming the header and the var.
+        let resolved = resolve(std::slice::from_ref(&candidate), &HashMap::new());
+        assert_eq!(
+            resolved[0].candidate.headers.get("x-opencode-session").map(String::as_str),
+            Some("{env:TOK}"),
+            "the miss stands for the build to name"
+        );
+        let error =
+            wire_headers("deepseek", &resolved[0].candidate.headers, "s").unwrap_err();
+        assert!(
+            error.contains("x-opencode-session") && error.contains("TOK"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn a_config_proposals_headers_ride_the_entry_gate() {
+        // The slice-12 proposal gate and the settings writer share
+        // validate_provider_entry, so a bad header is refused at both —
+        // the writer's half of the two-gate check.
+        let error = validate_provider_entry(&serde_json::json!({
+            "id": "x", "headers": { "content-length": "5" }
+        }))
+        .unwrap_err();
+        assert!(error.contains("content-length"), "{error}");
+        validate_provider_entry(&serde_json::json!({
+            "id": "x", "headers": { "x-a": "{session}" }
+        }))
+        .expect("the well-formed map passes the gate");
+    }
+
+    #[tokio::test]
+    async fn a_bad_header_in_a_hand_edited_roster_fails_the_walk_by_name() {
+        // A hand-edited file skipped the writer, so the build is the
+        // second gate: the candidate's endpoint carries the named reason
+        // and the walk fails by it, header and var both.
+        let mut candidate = default_roster()
+            .into_iter()
+            .find(|c| c.id == "deepseek")
+            .unwrap();
+        candidate.key_required = false;
+        candidate
+            .headers
+            .insert("x-opencode-session".to_string(), "{env:NO_SUCH_VAR}".to_string());
+        let resolved = resolve(std::slice::from_ref(&candidate), &HashMap::new());
+        let decision = RouteDecision {
+            provider: "deepseek".to_string(),
+            model: "deepseek-model".to_string(),
+            how: How::Judged,
+            workload: Some("hard".to_string()),
+            verdict: None,
+            execution: None,
+            reason: "test".to_string(),
+            judged_from: crate::route::JudgedFrom::Fresh,
+            start_index: 0,
+            order: vec![("deepseek".to_string(), "deepseek-model".to_string())],
+        };
+        let router = Router::new(resolved, decision);
+        let message = crate::api::Message::text(crate::api::Role::User, "hi");
+        let request = crate::api::ChatRequest {
+            model: "deepseek-model",
+            messages: std::slice::from_ref(&message),
+            tools: Vec::new(),
+            max_tokens: None,
+        };
+        let outcome = router.chat_stream(&request, &mut |_| {}).await;
+        let error = outcome.err().expect("the walk fails by name");
+        let text = error.to_string();
+        assert!(
+            text.contains("x-opencode-session") && text.contains("NO_SUCH_VAR"),
+            "{text}"
+        );
+        let recorded = lock(&router.state).attempts.clone();
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(recorded[0].outcome, "failed");
+    }
+
+    #[test]
     fn a_missing_config_file_is_the_defaults() {
         let home = std::env::temp_dir().join(format!("fleet-route-nocfg-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&home);
@@ -4397,6 +4811,7 @@ mod tests {
                 disabled_reason: None,
                 disabled_models: Vec::new(),
                 model_settings: std::collections::BTreeMap::new(),
+                headers: std::collections::BTreeMap::new(),
             },
             key: None,
         }
@@ -4737,6 +5152,7 @@ mod tests {
                 disabled_reason: None,
                 disabled_models: Vec::new(),
                 model_settings: std::collections::BTreeMap::new(),
+                headers: std::collections::BTreeMap::new(),
             },
             key: None,
         }

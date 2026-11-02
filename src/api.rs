@@ -546,6 +546,12 @@ impl std::error::Error for ClientError {}
 pub struct Client {
     base_url: String,
     api_key: String,
+    /// Extra headers every request carries beside `Authorization`, in the
+    /// roster's resolved order — the provider-session-headers plan. The
+    /// pairs arrive fully resolved (placeholders substituted by the
+    /// router's build) and never carry a reserved name: both the settings
+    /// writer and the router's build refuse one.
+    headers: Vec<(String, String)>,
     agent: ureq::Agent,
     /// When set, every request routes through the roster with failover
     /// ([`Router`]) instead of talking to `base_url` directly. `None` is a
@@ -557,10 +563,23 @@ pub struct Client {
 impl Client {
     /// A client for `base_url` (trailing slash tolerated) and `api_key`.
     pub fn new(base_url: impl Into<String>, api_key: impl Into<String>) -> Client {
+        Client::with_headers(base_url, api_key, Vec::new())
+    }
+
+    /// A client that carries extra headers beside `Authorization` on every
+    /// request — one provider's resolved roster `headers`. The pairs are
+    /// sent after `Authorization`, in the order given, on both the plain
+    /// and the streamed path.
+    pub fn with_headers(
+        base_url: impl Into<String>,
+        api_key: impl Into<String>,
+        headers: Vec<(String, String)>,
+    ) -> Client {
         let base_url = base_url.into().trim_end_matches('/').to_string();
         Client {
             base_url,
             api_key: api_key.into(),
+            headers,
             // The overall timeout bounds every phase including the connect;
             // ureq's `timeout_connect` path leaves reads broken on macOS
             // sandboxed environments, so it is deliberately not set.
@@ -579,6 +598,7 @@ impl Client {
         Client {
             base_url: String::new(),
             api_key: String::new(),
+            headers: Vec::new(),
             agent: ureq::AgentBuilder::new()
                 .timeout(Duration::from_secs(600))
                 .build(),
@@ -608,12 +628,14 @@ impl Client {
     /// One chat completion.
     pub fn chat(&self, request: &ChatRequest) -> Result<ChatResponse, ClientError> {
         let url = format!("{}/chat/completions", self.base_url);
-        let response = self
+        let mut call = self
             .agent
             .post(&url)
-            .set("Authorization", &format!("Bearer {}", self.api_key))
-            .send_json(request)
-            .map_err(map_send_error)?;
+            .set("Authorization", &format!("Bearer {}", self.api_key));
+        for (name, value) in &self.headers {
+            call = call.set(name, value);
+        }
+        let response = call.send_json(request).map_err(map_send_error)?;
         let status = response.status();
         let body = response
             .into_string()
@@ -664,10 +686,11 @@ impl Client {
         })
         .map_err(|error| ClientError::Decode(error.to_string()))?;
         let agent = self.agent.clone();
+        let headers = self.headers.clone();
 
         let (events, mut receiver) = tokio::sync::mpsc::unbounded_channel::<StreamEvent>();
         let reader = tokio::task::spawn_blocking(move || {
-            let outcome = stream_response(&agent, &url, &key, &body, &events);
+            let outcome = stream_response(&agent, &url, &key, &body, &headers, &events);
             // Drop the sender inside the blocking task, so a read failure or
             // a dropped receiver both end the pump instead of deadlocking.
             drop(events);
@@ -752,14 +775,17 @@ fn stream_response(
     url: &str,
     api_key: &str,
     body: &[u8],
+    headers: &[(String, String)],
     events: &tokio::sync::mpsc::UnboundedSender<StreamEvent>,
 ) -> Result<bool, ClientError> {
-    let response = agent
+    let mut call = agent
         .post(url)
         .set("Authorization", &format!("Bearer {api_key}"))
-        .set("Content-Type", "application/json")
-        .send_bytes(body)
-        .map_err(map_send_error)?;
+        .set("Content-Type", "application/json");
+    for (name, value) in headers {
+        call = call.set(name, value);
+    }
+    let response = call.send_bytes(body).map_err(map_send_error)?;
     let status = response.status();
     if status != 200 {
         // An error answer is one document, not a stream.
@@ -943,6 +969,8 @@ fn excerpt(text: &str, limit: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{Read, Write};
+    use std::sync::Mutex;
 
     #[test]
     fn a_text_message_serializes_as_the_string_it_always_was() {
@@ -1311,5 +1339,194 @@ mod tests {
         assert!(matches!(error, ClientError::Decode(_)), "{error:?}");
         drop(events);
         assert!(receiver.try_recv().is_err());
+    }
+
+    /// A stub endpoint that records every request's head — the lines up to
+    /// the blank line — and answers `body` with 200. The heads are what
+    /// the header pins assert on.
+    fn stub_head_capture(body: &'static str) -> (u16, Arc<Mutex<Vec<String>>>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let seen: Arc<Mutex<Vec<String>>> = Arc::default();
+        let writer = Arc::clone(&seen);
+        std::thread::spawn(move || {
+            for mut stream in listener.incoming().flatten() {
+                let mut request: Vec<u8> = Vec::new();
+                let mut chunk = [0u8; 4096];
+                let head_end = loop {
+                    let read = stream.read(&mut chunk).unwrap_or(0);
+                    if read == 0 {
+                        break request.len();
+                    }
+                    request.extend_from_slice(&chunk[..read]);
+                    if let Some(at) = request.windows(4).position(|w| w == b"\r\n\r\n") {
+                        break at + 4;
+                    }
+                };
+                // Drain the declared body so the client's write completes
+                // before the connection closes.
+                let head = String::from_utf8_lossy(&request[..head_end.min(request.len())])
+                    .to_string();
+                let declared: usize = head
+                    .to_ascii_lowercase()
+                    .lines()
+                    .find_map(|line| line.strip_prefix("content-length:"))
+                    .and_then(|value| value.trim().parse().ok())
+                    .unwrap_or(0);
+                while request.len() < head_end + declared {
+                    let read = stream.read(&mut chunk).unwrap_or(0);
+                    if read == 0 {
+                        break;
+                    }
+                    request.extend_from_slice(&chunk[..read]);
+                }
+                writer.lock().unwrap().push(head);
+                let reply = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(reply.as_bytes());
+            }
+        });
+        (port, seen)
+    }
+
+    fn header_lines(head: &str) -> Vec<String> {
+        head.lines()
+            .skip(1) // the request line
+            .take_while(|line| !line.is_empty())
+            .map(|line| line.trim().to_ascii_lowercase())
+            .collect()
+    }
+
+    #[test]
+    fn a_configured_header_rides_both_request_paths() {
+        let json_answer = r#"{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}"#;
+        let sse_answer = concat!(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n",
+        );
+        let (plain_port, plain_seen) = stub_head_capture(json_answer);
+        let (stream_port, stream_seen) = stub_head_capture(sse_answer);
+        let headers = vec![
+            ("x-opencode-session".to_string(), "conv-7".to_string()),
+            ("x-gateway-route".to_string(), "go".to_string()),
+        ];
+        let messages = vec![Message::text(Role::User, "hi")];
+        let request = ChatRequest {
+            model: "m",
+            messages: &messages,
+            tools: Vec::new(),
+            max_tokens: None,
+        };
+
+        // The plain path: both configured headers ride, after
+        // `Authorization`, and the key still resolves from the client.
+        Client::with_headers(
+            format!("http://127.0.0.1:{plain_port}"),
+            "sekret",
+            headers.clone(),
+        )
+        .chat(&request)
+        .expect("the plain path answers against the stub");
+        let heads = plain_seen.lock().unwrap();
+        assert_eq!(heads.len(), 1, "one request so far: {:?}", *heads);
+        let plain = header_lines(&heads[0]);
+        let authorization = plain
+            .iter()
+            .position(|line| line.starts_with("authorization:"))
+            .expect("authorization is set");
+        let session = plain
+            .iter()
+            .position(|line| line.starts_with("x-opencode-session:"))
+            .expect("the session header rides");
+        let route = plain
+            .iter()
+            .position(|line| line.starts_with("x-gateway-route:"))
+            .expect("the second header rides");
+        assert!(authorization < session && session < route, "{plain:?}");
+        assert!(
+            plain
+                .iter()
+                .any(|line| line.starts_with("x-opencode-session: conv-7")),
+            "{plain:?}"
+        );
+
+        // The streamed path: the same headers cross into the blocking
+        // task's request, and the stream's Content-Type is still set.
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("a runtime");
+        runtime.block_on(async {
+            Client::with_headers(
+                format!("http://127.0.0.1:{stream_port}"),
+                "sekret",
+                headers,
+            )
+            .chat_stream(&request, |_| {})
+            .await
+            .expect("the streamed path answers against the stub");
+        });
+        let heads = stream_seen.lock().unwrap();
+        assert_eq!(heads.len(), 1, "the streamed request arrived: {:?}", *heads);
+        let streamed = header_lines(&heads[0]);
+        assert!(
+            streamed
+                .iter()
+                .any(|line| line.starts_with("content-type: application/json")),
+            "{streamed:?}"
+        );
+        assert!(
+            streamed
+                .iter()
+                .any(|line| line.starts_with("x-opencode-session: conv-7")),
+            "{streamed:?}"
+        );
+        assert!(
+            streamed
+                .iter()
+                .any(|line| line.starts_with("x-gateway-route: go")),
+            "{streamed:?}"
+        );
+        assert!(
+            streamed
+                .iter()
+                .any(|line| line.starts_with("authorization: bearer sekret")),
+            "{streamed:?}"
+        );
+    }
+
+    #[test]
+    fn a_plain_client_sends_no_extra_headers() {
+        // The default shape stays byte-identical: `Client::new` carries no
+        // headers, so every existing caller and roster sends exactly what
+        // it sent before.
+        let body = r#"{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}"#;
+        let (port, seen) = stub_head_capture(body);
+        let client = Client::new(format!("http://127.0.0.1:{port}"), "k");
+        let messages = vec![Message::text(Role::User, "hi")];
+        let request = ChatRequest {
+            model: "m",
+            messages: &messages,
+            tools: Vec::new(),
+            max_tokens: None,
+        };
+        client.chat(&request).expect("answers");
+        let heads = seen.lock().unwrap();
+        assert_eq!(heads.len(), 1);
+        let plain = header_lines(&heads[0]);
+        assert!(
+            plain
+                .iter()
+                .any(|line| line.starts_with("authorization: bearer k")),
+            "{plain:?}"
+        );
+        assert!(
+            !plain.iter().any(|line| line.starts_with("x-")),
+            "no configured header rides: {plain:?}"
+        );
     }
 }
