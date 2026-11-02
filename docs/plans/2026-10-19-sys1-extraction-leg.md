@@ -1,7 +1,7 @@
 ---
-status: active
+status: cancelled
 created: 2026-10-19
-updated: 2026-10-26
+updated: 2026-11-02
 slug: sys1-extraction-leg
 ---
 
@@ -357,3 +357,24 @@ that already landed instead of beside it.
   extract leg this plan supplies
 - `src/memory.rs` `HttpEmbedder` / `probed_embedder()` — the pattern
   the leg follows
+
+## Status pass — 2026-11-02
+
+The 2026-10-25 audit above read this plan against the commit history and
+found it partly overtaken by the Perception leg; this pass turns that
+into state, and folds what survives into
+`docs/plans/2026-11-02-open-work-closeout.md`.
+
+| Increment | State | Evidence |
+|---|---|---|
+| E0 the wire probe | **open, unrun** | no Clairic trace exists under `tmp/` in any tree; the probe needs a live extraction key this machine does not carry. The closeout plan's C18 owns the live-run decision class |
+| E1 the four-verb leg | **superseded** | the owner's 2026-10-25 re-point; the Perception leg (`5782497`, `35a3335`) is the landed extraction capability, and no `src/extract.rs` / `sys1_extracts()` exists |
+| E2 fleet inherits | **superseded** | `crate::documents::extract` is the local lineage, not this plan's lane tool |
+| E3 the calibration loop's inheritance | **overtaken** | KI-249's bounds landed 2026-11-02 from the measured tail instead (`docs/plans/2026-10-24-embed-bounds-from-measured-tail.md`) |
+| E4–E6 (deck, card bus, web lane) | **never started** | the four-verb model they would consume never shipped; nothing to inherit |
+
+So the plan is **cancelled**, not completed: its central increment was
+re-pointed by the owner's ruling, and the one criterion that remains
+alive (E0's live wire probe) needs a live extraction key and is named in
+the closeout plan rather than left here as an active plan that cannot
+move.

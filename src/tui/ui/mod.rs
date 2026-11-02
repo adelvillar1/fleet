@@ -2657,6 +2657,26 @@ mod tests {
         );
     }
 
+    #[test]
+    fn the_frame_fits_eighty_and_a_hundred_and_twenty_columns() {
+        // KI-077/078 (ki-triage C4): every line of the fixed-width
+        // surfaces renders inside 80 and inside 120 columns, with a
+        // pinned route named — the state that used to clip the bar's
+        // last segment mid-word.
+        let mut routed = fresh();
+        routed.status.routing = Some("visual-mock".to_string());
+        for width in [80u16, 120u16] {
+            let frame = draw(&routed, width, 30);
+            for line in frame.lines() {
+                assert!(
+                    line.chars().count() <= width as usize,
+                    "a {width}-column frame drew a wider line: {line:?} ({})",
+                    line.chars().count()
+                );
+            }
+        }
+    }
+
     /// KI-078: the tool card's goal is bounded before the state token,
     /// so a long delegation goal cannot push the state off the line.
     #[test]

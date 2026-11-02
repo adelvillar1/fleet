@@ -264,6 +264,7 @@ mod tests {
                 reason: "declared".into(),
                 catalog: 20,
                 tier: "core".into(),
+                argument_sources: std::collections::BTreeMap::new(),
             })
             .unwrap();
         session
@@ -284,6 +285,7 @@ mod tests {
                 reason: "declared".into(),
                 catalog: 20,
                 tier: "core".into(),
+                argument_sources: std::collections::BTreeMap::new(),
             })
             .unwrap();
         session
@@ -304,6 +306,7 @@ mod tests {
                 reason: "activated by tool_search".into(),
                 catalog: 20,
                 tier: "deferred".into(),
+                argument_sources: std::collections::BTreeMap::new(),
             })
             .unwrap();
         session
@@ -324,6 +327,7 @@ mod tests {
                 reason: "error: unknown tool `ghost`".into(),
                 catalog: 20,
                 tier: "core".into(),
+                argument_sources: std::collections::BTreeMap::new(),
             })
             .unwrap();
         session

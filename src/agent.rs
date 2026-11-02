@@ -2896,7 +2896,7 @@ impl<'a> Agent<'a> {
         // A fixed task text: a mid-run switch is about the provider, and
         // the route-decision cache then serves every re-route after the
         // first instead of paying a judgment each time.
-        if let Ok(prepared) = crate::route::prepare_with_pin(
+        match crate::route::prepare_with_pin(
             &home,
             &dotenv,
             "a mid-run re-route",
@@ -2906,7 +2906,33 @@ impl<'a> Agent<'a> {
         )
         .await
         {
-            self.rerouted = Some(Client::routed(prepared.router.clone()));
+            Ok(prepared) => {
+                // C5: a pin that prepared a route nobody serves is not a
+                // pin. The decision names the provider that would answer;
+                // if the asked pin names another one, the re-route did
+                // not take and the record says so rather than the run
+                // continuing on a route the owner did not choose.
+                let asked = pin.unwrap_or("");
+                if !asked.is_empty()
+                    && !prepared.decision.provider.starts_with(asked)
+                    && !prepared.decision.provider.contains(asked)
+                {
+                    let _ = self.record(&Record::PinRefused {
+                        asked: asked.to_string(),
+                        reason: format!(
+                            "the walk landed on `{}`, which is not on the pinned route",
+                            prepared.decision.provider
+                        ),
+                    });
+                }
+                self.rerouted = Some(Client::routed(prepared.router.clone()));
+            }
+            Err(error) => {
+                let _ = self.record(&Record::PinRefused {
+                    asked: pin.unwrap_or("").to_string(),
+                    reason: error.to_string(),
+                });
+            }
         }
         Ok(())
     }
@@ -3571,6 +3597,7 @@ impl<'a> Agent<'a> {
                 reason: resolution.reason,
                 catalog: resolution.catalog,
                 tier: resolution.tier,
+                argument_sources: self.argument_sources(call),
             })?;
             self.record(&Record::ToolResult {
                 call_id: call.id.clone(),
@@ -5996,6 +6023,45 @@ impl Agent<'_> {
     /// Resolve one call for the record: the name it asked for, the tool
     /// that answered, and the method that joined them. The gate's
     /// override makes a sibling refusal.
+    /// Where each argument came from (tool-surface C1): `model` for a
+    /// key the call carried, `default` for a schema default the tool will
+    /// apply. A denied call records this too — the record is written
+    /// before the result, so what the model asked for survives a refusal.
+    fn argument_sources(&self, call: &ToolCall) -> std::collections::BTreeMap<String, String> {
+        let mut sources = std::collections::BTreeMap::new();
+        let given = serde_json::from_str::<serde_json::Value>(&call.function.arguments)
+            .unwrap_or(serde_json::Value::Null);
+        if let Some(object) = given.as_object() {
+            for key in object.keys() {
+                sources.insert(key.clone(), "model".to_string());
+            }
+        }
+        let wanted = tools::resolve_name(&call.function.name)
+            .map(|(tool, _)| tool.name().to_string())
+            .unwrap_or_else(|| call.function.name.clone());
+        if let Some(spec) = self
+            .declarations()
+            .iter()
+            .find(|spec| spec.name() == wanted)
+        {
+            if let Some(properties) = spec
+                .parameters()
+                .get("properties")
+                .and_then(serde_json::Value::as_object)
+            {
+                for (key, property) in properties {
+                    if sources.contains_key(key) {
+                        continue;
+                    }
+                    if property.get("default").is_some() {
+                        sources.insert(key.clone(), "default".to_string());
+                    }
+                }
+            }
+        }
+        sources
+    }
+
     fn resolution_for(&self, call: &ToolCall) -> Resolution {
         let declared = self.declarations();
         let catalog = declared.len();

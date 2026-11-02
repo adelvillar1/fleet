@@ -129,6 +129,13 @@ pub enum Record {
         catalog: usize,
         /// `core` or `deferred`.
         tier: String,
+        /// Where each argument came from: `model` for a key the call
+        /// carried, `default` for a schema default that filled one in.
+        /// Tool-surface C1: a resolution that cannot say what the model
+        /// actually supplied cannot tell a grounded call from a guessed
+        /// one. Absent in logs written before the field existed.
+        #[serde(default)]
+        argument_sources: std::collections::BTreeMap<String, String>,
     },
     /// The tool declarations this run's first request carried, recorded
     /// once before that request: the model-visible names, the count, and
@@ -177,6 +184,16 @@ pub enum Record {
         stage: String,
         error: String,
         route: String,
+    },
+    /// A control's re-route that could not be honoured, named where it
+    /// happened: the pin the owner asked for did not resolve to a
+    /// candidate, and the run kept the route it had. Recorded rather than
+    /// swallowed — a pin that silently does nothing is the failure this
+    /// record ends (conversation-control C5). Bookkeeping: it replays to
+    /// no message.
+    PinRefused {
+        asked: String,
+        reason: String,
     },
     /// The tools one lane brought into a run, recorded the moment the
     /// lane joined. The tool declarations are dynamic now — a lane's
@@ -1174,6 +1191,7 @@ pub fn conversation(records: &[Record]) -> Conversation {
             }
             Record::Start { .. }
             | Record::End { .. }
+            | Record::PinRefused { .. }
             | Record::LaneFailed { .. }
             | Record::TurnFailed { .. }
             | Record::LaneTools { .. }

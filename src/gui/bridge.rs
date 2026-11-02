@@ -5595,6 +5595,7 @@ fn cards_from_records(records: &[session::Record]) -> (Vec<Value>, usize) {
         match record {
             session::Record::Start { .. }
             | session::Record::End { .. }
+            | session::Record::PinRefused { .. }
             | session::Record::ToolResolution { .. }
             | session::Record::Declarations { .. }
             | session::Record::Curated { .. }

@@ -6041,10 +6041,10 @@ mod tests {
         const MEDIAN_MS: f64 = 83.0;
         assert_eq!(PROBE_TIMEOUT, EMBED_TIMEOUT);
         assert_eq!(
-            PROBE_TIMEOUT.as_millis() as u128,
+            PROBE_TIMEOUT.as_millis(),
             crate::calib::embed_bound_ms(MAX_MS, MEDIAN_MS)
         );
-        assert_eq!(PROBE_TIMEOUT.as_millis() as u128, MAX_MS * 3);
+        assert_eq!(PROBE_TIMEOUT.as_millis(), MAX_MS * 3);
         assert!(
             MAX_MS * 3 > (MEDIAN_MS * 10.0) as u128,
             "this tail's max governs its floor"

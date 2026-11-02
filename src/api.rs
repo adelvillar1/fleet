@@ -352,6 +352,14 @@ impl ToolSpec {
         &self.function.description
     }
 
+    /// The declaration's argument schema — the JSON Schema the model
+    /// reads, and the source of a call's defaults (`tool-surface C1`: a
+    /// resolution record says which arguments the model gave and which a
+    /// default filled).
+    pub fn parameters(&self) -> &serde_json::Value {
+        &self.function.parameters
+    }
+
     /// The declaration with its description replaced — the one seam a
     /// per-run declaration needs (the improve tool hands its lesson
     /// store back this way).

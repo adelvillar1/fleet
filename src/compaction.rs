@@ -182,21 +182,55 @@ pub fn elide_tool_results(messages: &[Message], keep: usize) -> Vec<Message> {
         .enumerate()
         .map(|(index, message)| {
             if elide.contains(&index) {
-                let bytes = message
-                    .content
-                    .as_deref()
-                    .map(|text| text.len())
-                    .unwrap_or(0);
+                let text = message.content.as_deref().unwrap_or("");
+                let bytes = text.len();
+                // Tool-surface C14: the stub names the tool that produced
+                // the result and, when the call spilled, the artifact
+                // that holds it — so a folded conversation can still say
+                // what ran and where its output went, and a later call
+                // can read it back.
+                let tool = tool_name_for(messages, message.tool_call_id.as_deref())
+                    .unwrap_or("a tool");
+                let artifact = spilled_path(text);
                 let mut stub = message.clone();
-                stub.content = Some(format!(
-                    "[tool output elided before the fold: {bytes} bytes; the result was already read]"
-                ));
+                stub.content = Some(match artifact {
+                    Some(path) => format!(
+                        "[tool output elided before the fold: {tool} \u{b7} {bytes} bytes; full output at {path}]"
+                    ),
+                    None => format!(
+                        "[tool output elided before the fold: {tool} \u{b7} {bytes} bytes; the result was already read]"
+                    ),
+                });
                 stub
             } else {
                 message.clone()
             }
         })
         .collect()
+}
+
+/// The tool that produced a result: the assistant message that asked for
+/// `call_id` names it. Scanned backwards from the result, because a fold
+/// elides old results and the call is always just above its answer.
+fn tool_name_for<'a>(messages: &'a [Message], call_id: Option<&str>) -> Option<&'a str> {
+    let wanted = call_id?;
+    messages.iter().rev().find_map(|message| {
+        message
+            .tool_calls
+            .iter()
+            .find(|call| call.id == wanted)
+            .map(|call| call.function.name.as_str())
+    })
+}
+
+/// The artifact a spilled call left (`[…[full output: <path>]]`), if the
+/// result carries one.
+fn spilled_path(text: &str) -> Option<&str> {
+    let at = text.rfind("[full output: ")?;
+    let rest = &text[at + "[full output: ".len()..];
+    let end = rest.find(']')?;
+    let path = &rest[..end];
+    (!path.is_empty()).then_some(path)
 }
 
 pub fn tail_start(messages: &[Message]) -> usize {
@@ -486,5 +520,66 @@ mod elision_tests {
         assert_eq!(elided[3].content.as_deref(), Some("tool output 2"));
         assert_eq!(elided[8].content.as_deref(), Some("tool output 7"));
         assert_eq!(elided[0].content.as_deref(), Some("start"));
+    }
+
+    #[test]
+    fn an_elided_result_names_its_tool_and_its_artifact() {
+        // Tool-surface C14: after a fold an old result is a stub naming
+        // the tool, the bytes, and the path it spilled to — and the path
+        // is real, so the result is recoverable with a read. The fixture
+        // is the 30-call shape: thirty asked calls, six kept verbatim.
+        use crate::api::{FunctionCall, ToolCall};
+        let dir = std::env::temp_dir().join(format!(
+            "fleet-fold-artifact-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let artifact = dir.join("c0.out");
+        std::fs::write(&artifact, "the whole spilled output\n").unwrap();
+        let mut messages = vec![Message::text(Role::User, "go")];
+        for index in 0..30 {
+            let mut ask = Message::text(Role::Assistant, "");
+            ask.tool_calls.push(ToolCall {
+                id: format!("c{index}"),
+                kind: "function".to_string(),
+                function: FunctionCall {
+                    name: "read_file".to_string(),
+                    arguments: "{}".to_string(),
+                },
+            });
+            messages.push(ask);
+            let body = if index == 0 {
+                format!(
+                    "bounded head\n\u{2026}[full output: {}]",
+                    artifact.display()
+                )
+            } else {
+                format!("output {index}")
+            };
+            messages.push(Message::tool_result(format!("c{index}"), body));
+        }
+        let elided = elide_tool_results(&messages, 6);
+        let first = elided[2].content.as_deref().expect("the stub");
+        assert!(first.contains("elided before the fold"), "{first}");
+        assert!(first.contains("read_file"), "the tool is named: {first}");
+        assert!(
+            first.contains(&artifact.display().to_string()),
+            "the artifact is named: {first}"
+        );
+        assert!(artifact.exists(), "every path in a stub exists");
+        // And the artifact recovers: the read tool returns the bytes.
+        let outcome = crate::tools::Tool::ReadFile
+            .execute(&serde_json::json!({
+                "path": artifact.display().to_string()
+            }))
+            .expect("the artifact reads back");
+        assert!(
+            outcome.output.contains("spilled output"),
+            "{}",
+            outcome.output
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

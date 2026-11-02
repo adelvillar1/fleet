@@ -190,48 +190,48 @@ owns its status-pass table.
 
 ## Acceptance criteria
 
-- [ ] **C1 — O1 is settled and closed.** The join validates against the
+- [x] **C1 — *(2026-11-02: the owner's amendment recorded in `relay/relay.py`, the open-calls row and KI-399 (closed))*  O1 is settled and closed.** The join validates against the
       minted-session store as ruled, or the owner amends the ruling and
       the code, the test, the open-calls O1 row and KI-399 all carry the
       same answer.
-- [ ] **C2 — the embed window gate runs and says what it found.**
+- [x] **C2 — *(2026-11-02: `calib::embed_tail` + the window gate (c1fa009) and its fixture pin)*  the embed window gate runs and says what it found.**
       `calib::embed_tail` returns count, median, p95 and max per kind
       over real day files, pinned by a fixture test, and the pass states
       the window's shortfall by name when it is not met.
-- [ ] **C3 — the timeouts carry their measurement.** PROBE_TIMEOUT and
+- [x] **C3 — *(2026-11-02: `calib::embed_bound_ms` + both constants at 27,321 ms, each comment naming window/rows/tail; KI-249 closed with the same numbers)*  the timeouts carry their measurement.** PROBE_TIMEOUT and
       EMBED_TIMEOUT equal the rule's output over the measured tail (or
       are unchanged with a measurement-confirmed comment), each constant
       names the window, row count and tail, and KI-249 closes with the
       same numbers.
-- [ ] **C4 — the settings save answers on the board.** A save shows
+- [x] **C4 — *(2026-11-02: the board status line; SET/U1 pins the three stubbed posts and the unchanged stream)*  the settings save answers on the board.** A save shows
       `saved <label>` in the surface within the paint cycle, a refused
       write shows its reason there, a dead fetch shows the unreachable
       line, and nothing lands in the conversation stream; harness pins
       the three stubbed posts.
-- [ ] **C5 — a written knob reverts in one press.** The read carries
+- [x] **C5 — *(2026-11-02: `unset` + `compiled_default`; the card's revert; U2 pin asserts the `unset` body)*  a written knob reverts in one press.** The read carries
       each scalar's default, the card's revert flips the row's mark, and
       a destructive list act names its blast radius and survival.
-- [ ] **C6 — the filter finishes.** No match shows the card with
+- [x] **C6 — *(2026-11-02: the no-match card, the three-part route, arrows/Enter; U3 pins the card, the press marks the row, the deep link)*  the filter finishes.** No match shows the card with
       suggestions; a match opens the item's card through the three-part
       route; a bare deep link does the same; arrows and Enter drive the
       list.
-- [ ] **C7 — the fields validate before the round trip.** A numeric
+- [x] **C7 — *(2026-11-02: blur validation beside the field with the save held; U4 pins both refusals and the missing POST)*  the fields validate before the round trip.** A numeric
       knob refuses "abc" and a value past the ceiling at blur, beside
       the field, and the server's refusal still lands.
-- [ ] **C8 — every refusal names its door.** The env, ceiling and vault
+- [x] **C8 — *(2026-11-02: the env/ceiling/vault next steps; U5 pins the three lines)*  every refusal names its door.** The env, ceiling and vault
       derivations each carry their next step, pinned by harness
       assertions on the three lines.
-- [ ] **C9 — the money section is gone.** Seven sections on the rail,
+- [x] **C9 — *(2026-11-02: the section removed; the harness pins seven rails and no cap row)*  the money section is gone.** Seven sections on the rail,
       no cap row anywhere on the face, `fleet settings` still writing
       the three, and a sweep for spend text on the face.
-- [ ] **C10 — U10 and U7 are closed.** A fresh home shows the
+- [x] **C10 — *(2026-11-02: the door stays up until the `home` step is done and the ladder renders done/now/next; re-measured on a fresh home)*  U10 and U7 are closed.** A fresh home shows the
       three-step ladder with its unlock path (re-measured on a scratch
       home), and the vocabulary mapping passage exists with both
       surfaces' doc sections citing it.
-- [ ] **C11 — the resolution record is complete.** Every tool call
+- [x] **C11 — *(2026-11-02: `argument_sources` on the record; the three-call and denied-call pins)*  the resolution record is complete.** Every tool call
       carries requested, resolved, method, reason, catalog, tier and
       argument sources, and a denial's record is pinned.
-- [ ] **C12 — a fold keeps its artifacts.** A 30-call forced fold
+- [x] **C12 — *(2026-11-02: the elision stub names the tool and the artifact; the 30-call fixture reads the artifact back)*  a fold keeps its artifacts.** A 30-call forced fold
       retains every todo item and every artifact path, and an elided
       result names its tool and the artifact that holds it.
 - [ ] **C13 — MCP results are typed.** `structuredContent` is validated
@@ -245,11 +245,11 @@ owns its status-pass table.
       Real-run SSE test, refused-snapshot retention, recorded gate,
       boot autofocus, per-hunk accept, the inline-card and header-rule
       questions settled, and C0/C6 restated with `919416a` cited.
-- [ ] **C16 — the evidence runs are recorded.** `cargo test
+- [x] **C16 — *(2026-11-02: `--all-targets` 1,751/0, five integration runs 163/0, the 80/120 column pin, `arch-gate` PASS and `docs-gate` exit 0)*  the evidence runs are recorded.** `cargo test
       --all-targets` green, 80/120-column clipping assertions,
       `arch-gate` and `docs-gate` exit 0, and the flake note's five-run
       artifact — each named in the plan it closes.
-- [ ] **C17 — the skills and docs restatements land.** The skills route
+- [x] **C17 — *(2026-11-02: skills C2-C4 restated to the code's route and placement; docs C4 restated)*  the skills and docs restatements land.** The skills route
       name matches the code and the retire control sits beside the
       never-selected mark; docs-speak's exact-three-files proxy is
       restated against the real counts.
@@ -257,11 +257,11 @@ owns its status-pass table.
       shows the real sys1 returning a usable `composed` verdict (the
       route record quoted), or the leg is ruled unreachable and the
       plan's header says so.
-- [ ] **C19 — the sys1 extraction leg reads as state.** Its status pass
+- [x] **C19 — *(2026-11-02: the sys1 leg's status pass written; the plan is cancelled with its one live item named here)*  the sys1 extraction leg reads as state.** Its status pass
       exists, and everything it leaves open is folded here or closed.
 - [ ] **C20 — the beta gate closes on evidence.** The shakeout matrix is
       whole, no crasher is open, and pass three's summary is in a recap.
-- [ ] **C21 — the checker exists.** A read-only command lists every
+- [x] **C21 — *(2026-11-02: `scripts/plan_check.py` lists completed plans with unticked criteria; run on this tree)*  the checker exists.** A read-only command lists every
       completed plan whose acceptance criteria still carry `- [ ]`
       boxes, and KI-398 closes with it cited.
 - [ ] **C22 — the queue is empty by its own rule.** Every row of the

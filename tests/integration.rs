@@ -925,6 +925,64 @@ async fn every_call_writes_one_resolution_and_the_methods_are_named() {
     assert_eq!(resolutions[2].0, "ghost");
     assert_eq!(resolutions[2].2, "refused");
     assert!(resolutions[2].1.is_empty());
+    // Tool-surface C1: each record says where its arguments came from —
+    // the model supplied `path` (and `pattern` for the grep), and the
+    // ghost call carried nothing at all.
+    let sources: Vec<std::collections::BTreeMap<String, String>> = records
+        .iter()
+        .filter_map(|record| match record {
+            Record::ToolResolution {
+                argument_sources, ..
+            } => Some(argument_sources.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(sources.len(), 3, "{sources:?}");
+    assert_eq!(sources[0].get("path").map(String::as_str), Some("model"));
+    assert_eq!(sources[1].get("pattern").map(String::as_str), Some("model"));
+    assert!(sources[2].is_empty(), "{:?}", sources[2]);
+    std::fs::remove_dir_all(&home).ok();
+}
+
+#[tokio::test]
+async fn a_denied_call_still_writes_its_resolution() {
+    // The record is written before the result, so a refusal keeps what
+    // the model asked for: the resolution names the call the seat
+    // stopped, with its argument sources.
+    let home = temp_home("resolution-denied");
+    let note = home.join("note.txt");
+    std::fs::write(&note, "hello\n").unwrap();
+    let stream = stream(vec![
+        tool_call_delta(
+            0,
+            "d1",
+            "write_file",
+            &format!(r#"{{"path":"{}","content":"x"}}"#, note.display()),
+        ),
+        finish_frame("tool_calls"),
+        usage_frame(10, 5),
+        "data: [DONE]".to_string(),
+    ]);
+    let mock = MockApi::start(vec![stream, assistant_stream(TOOL_REPORT)]);
+    let mut session = Session::create(&home, "test-model").unwrap();
+    run_on(&mock, &mut session, Box::new(DenyAll), 5, "write it")
+        .await
+        .unwrap();
+    let records = session::replay(session.path()).unwrap();
+    let denied = records.iter().find_map(|record| match record {
+        Record::ToolResolution {
+            requested,
+            method,
+            argument_sources,
+            ..
+        } => Some((requested.clone(), method.clone(), argument_sources.clone())),
+        _ => None,
+    });
+    let (requested, method, sources) = denied.expect("the denied call's resolution");
+    assert_eq!(requested, "write_file");
+    assert_eq!(method, "refused");
+    assert_eq!(sources.get("path").map(String::as_str), Some("model"));
+    assert_eq!(sources.get("content").map(String::as_str), Some("model"));
     std::fs::remove_dir_all(&home).ok();
 }
 

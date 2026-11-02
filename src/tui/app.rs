@@ -3066,7 +3066,12 @@ fn entry_of(record: &Record) -> Option<Entry> {
     match record {
         // Bookkeeping: a rewind marks a cut the pane's own seed applies,
         // and a plan rides the assistant message beside it.
-        Record::Rewind { .. } | Record::Plan { .. } | Record::Resume { .. } => None,
+        Record::Rewind { .. }
+        | Record::Plan { .. }
+        | Record::Resume { .. }
+        // Bookkeeping: a refused pin is named in the log, and the
+        // run keeps the route it had.
+        | Record::PinRefused { .. } => None,
         // Bookkeeping: the standing goal rides the prompt, and the run
         // card is where a TUI reads it.
         Record::Goal { .. } => None,
