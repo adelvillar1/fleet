@@ -8,7 +8,7 @@ tier: durable
 shape: [change]
 phrases: [the pin names a provider for quota; the router picks that provider's model per judged workload; blend1 is the composed workload's grounding provider; honest att…]
 missing: []
-recall-count: 379
+recall-count: 388
 superseded-by:
 valid-until:
 ---
