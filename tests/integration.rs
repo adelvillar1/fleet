@@ -5022,6 +5022,8 @@ fn resolved(id: &str, base_url: String, key_required: bool, key: Option<&str>) -
             disabled_models: Vec::new(),
             model_settings: std::collections::BTreeMap::new(),
             headers: std::collections::BTreeMap::new(),
+            protocol: None,
+            model_protocols: std::collections::BTreeMap::new(),
         },
         key: key.map(str::to_string),
     }

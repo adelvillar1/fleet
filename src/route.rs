@@ -261,12 +261,30 @@ pub struct Candidate {
     /// by name, never a silent drop. Values are never printed: a value
     /// may carry a secret, so every surface shows names only.
     pub headers: std::collections::BTreeMap<String, String>,
+    /// The entry-level wire dialect for this provider's models —
+    /// [`Protocol::Chat`] when absent. A model's `model_protocols`
+    /// override wins.
+    pub protocol: Option<Protocol>,
+    /// Per-model dialect overrides for mixed gateways — the OpenCode
+    /// shape: most models over `/chat/completions`, the Luna class over
+    /// `/responses`. Keyed by model id as the roster spells it.
+    pub model_protocols: std::collections::BTreeMap<String, Protocol>,
 }
 
 impl Candidate {
     /// The provider's default model — the first of its list.
     pub fn model(&self) -> &str {
         self.models.first().map(String::as_str).unwrap_or_default()
+    }
+
+    /// The wire dialect one of this provider's models speaks: the
+    /// per-model override, else the entry-level protocol, else chat.
+    pub fn protocol_for(&self, model: &str) -> Protocol {
+        self.model_protocols
+            .get(model)
+            .copied()
+            .or(self.protocol)
+            .unwrap_or(Protocol::Chat)
     }
 }
 
@@ -287,6 +305,19 @@ pub enum Billing {
 pub enum CandidateKind {
     Http,
     Lane,
+}
+
+/// Which wire dialect a model speaks: the chat-completions path every
+/// OpenAI-compatible candidate has always had, or OpenAI's Responses
+/// protocol. The Responses reading is dialect-only — `store: false`, no
+/// `previous_response_id`, the full history every turn — because the
+/// conversation's state lives in Fleet's own session log (hard rule 5),
+/// never on the server (the session-parity-remainders plan's spine).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Protocol {
+    Chat,
+    Responses,
 }
 
 /// The compiled-in defaults, in the owner's declared chain order. Every
@@ -328,6 +359,8 @@ pub fn default_roster() -> Vec<Candidate> {
             disabled_models: Vec::new(),
             model_settings: std::collections::BTreeMap::new(),
             headers: std::collections::BTreeMap::new(),
+            protocol: None,
+            model_protocols: std::collections::BTreeMap::new(),
         },
         Candidate {
             id: "xiaomi-mimo".into(),
@@ -347,6 +380,8 @@ pub fn default_roster() -> Vec<Candidate> {
             disabled_models: Vec::new(),
             model_settings: std::collections::BTreeMap::new(),
             headers: std::collections::BTreeMap::new(),
+            protocol: None,
+            model_protocols: std::collections::BTreeMap::new(),
         },
         Candidate {
             id: "stepfun".into(),
@@ -366,6 +401,8 @@ pub fn default_roster() -> Vec<Candidate> {
             disabled_models: Vec::new(),
             model_settings: std::collections::BTreeMap::new(),
             headers: std::collections::BTreeMap::new(),
+            protocol: None,
+            model_protocols: std::collections::BTreeMap::new(),
         },
         Candidate {
             id: "token-plan".into(),
@@ -381,6 +418,8 @@ pub fn default_roster() -> Vec<Candidate> {
             disabled_models: Vec::new(),
             model_settings: std::collections::BTreeMap::new(),
             headers: std::collections::BTreeMap::new(),
+            protocol: None,
+            model_protocols: std::collections::BTreeMap::new(),
         },
         Candidate {
             id: "deepseek".into(),
@@ -395,6 +434,8 @@ pub fn default_roster() -> Vec<Candidate> {
             disabled_models: Vec::new(),
             model_settings: std::collections::BTreeMap::new(),
             headers: std::collections::BTreeMap::new(),
+            protocol: None,
+            model_protocols: std::collections::BTreeMap::new(),
         },
         // Liquid's own API — the blend1 generative lane's endpoint
         // (lfm2.5-24b-a2b), declared here so the owner's config can pin
@@ -419,6 +460,8 @@ pub fn default_roster() -> Vec<Candidate> {
             disabled_models: Vec::new(),
             model_settings: std::collections::BTreeMap::new(),
             headers: std::collections::BTreeMap::new(),
+            protocol: None,
+            model_protocols: std::collections::BTreeMap::new(),
         },
         // blend1 — the grounding provider: the composed ask (Liquid's
         // hosted lfm 24B synthesizer over the specialized legs sys1 /
@@ -440,6 +483,8 @@ pub fn default_roster() -> Vec<Candidate> {
             disabled_models: Vec::new(),
             model_settings: std::collections::BTreeMap::new(),
             headers: std::collections::BTreeMap::new(),
+            protocol: None,
+            model_protocols: std::collections::BTreeMap::new(),
         },
         // Ollama Cloud: a hosted multimodal reserve, declared for the
         // vision workload. Declared only, like Liquid — the chain order
@@ -459,6 +504,8 @@ pub fn default_roster() -> Vec<Candidate> {
             disabled_models: Vec::new(),
             model_settings: std::collections::BTreeMap::new(),
             headers: std::collections::BTreeMap::new(),
+            protocol: None,
+            model_protocols: std::collections::BTreeMap::new(),
         },
     ]
 }
@@ -822,6 +869,14 @@ pub struct ProviderEntry {
     /// overrides nothing and sends exactly what it sent before.
     #[serde(default)]
     pub headers: Option<std::collections::BTreeMap<String, String>>,
+    /// The entry-level wire dialect (`chat` | `responses`), chat when
+    /// absent. An unknown value is the parse's own named refusal.
+    #[serde(default)]
+    pub protocol: Option<Protocol>,
+    /// Per-model dialect overrides, keyed by model id — the mixed
+    /// gateway's shape.
+    #[serde(default)]
+    pub model_protocols: Option<std::collections::BTreeMap<String, Protocol>>,
 }
 
 impl ProviderEntry {
@@ -1205,6 +1260,12 @@ fn merge(
             if let Some(value) = &entry.headers {
                 existing.headers = value.clone();
             }
+            if let Some(value) = entry.protocol {
+                existing.protocol = Some(value);
+            }
+            if let Some(value) = &entry.model_protocols {
+                existing.model_protocols = value.clone();
+            }
         } else {
             let models = entry
                 .models
@@ -1224,6 +1285,8 @@ fn merge(
                     disabled_models: entry.disabled_models.clone().unwrap_or_default(),
                     model_settings: entry.model_settings.clone().unwrap_or_default(),
                     headers: entry.headers.clone().unwrap_or_default(),
+                    protocol: entry.protocol,
+                    model_protocols: entry.model_protocols.clone().unwrap_or_default(),
                 }),
                 _ => {
                     return Err(ConfigError::BadEntry(format!(
@@ -1305,8 +1368,20 @@ fn is_token_byte(b: u8) -> bool {
     b.is_ascii_alphanumeric()
         || matches!(
             b,
-            b'!' | b'#' | b'$' | b'%' | b'&' | b'\'' | b'*' | b'+' | b'-' | b'.' | b'^' | b'_'
-                | b'`' | b'|' | b'~'
+            b'!' | b'#'
+                | b'$'
+                | b'%'
+                | b'&'
+                | b'\''
+                | b'*'
+                | b'+'
+                | b'-'
+                | b'.'
+                | b'^'
+                | b'_'
+                | b'`'
+                | b'|'
+                | b'~'
         )
 }
 
@@ -1355,11 +1430,11 @@ pub(crate) fn validate_headers(
             match token.strip_prefix("env:") {
                 Some(env_name) if !env_name.is_empty() => {}
                 Some(_) => return Err(format!("header `{name}` carries an empty env name")),
-                None if token == "session" => {}
+                None if token == "session" || token == "trace" => {}
                 None => {
                     return Err(format!(
                         "header `{name}` carries an unknown placeholder `{{{token}}}` — \
-                         only {{session}} and {{env:NAME}} resolve"
+                         only {{session}}, {{trace}}, and {{env:NAME}} resolve"
                     ));
                 }
             }
@@ -1405,6 +1480,7 @@ fn wire_headers(
     provider: &str,
     headers: &std::collections::BTreeMap<String, String>,
     session: &str,
+    trace: &str,
 ) -> Result<Vec<(String, String)>, String> {
     validate_headers(headers).map_err(|reason| format!("provider `{provider}`: {reason}"))?;
     let mut pairs = Vec::with_capacity(headers.len());
@@ -1418,7 +1494,10 @@ fn wire_headers(
                  to nothing — set it in the environment or `<home>/.env`"
             ));
         }
-        pairs.push((name.clone(), value.replace("{session}", session)));
+        pairs.push((
+            name.clone(),
+            value.replace("{session}", session).replace("{trace}", trace),
+        ));
     }
     Ok(pairs)
 }
@@ -2683,6 +2762,7 @@ impl Router {
             &HashMap::new(),
             None,
             &session_id_for(None),
+            &session_id_for(None),
         )
     }
 
@@ -2709,20 +2789,20 @@ impl Router {
         lane_specs: &HashMap<String, ServerSpec>,
         pin: Option<String>,
         session_id: &str,
+        trace_id: &str,
     ) -> Router {
         let endpoints = resolved
             .iter()
             .map(|entry| match entry.candidate.kind {
                 CandidateKind::Http => Endpoint::Http(
-                    wire_headers(entry.id(), &entry.candidate.headers, session_id).map(
-                        |headers| {
-                            Client::with_headers(
-                                entry.candidate.base_url.as_str(),
-                                entry.key.clone().unwrap_or_default(),
-                                headers,
-                            )
-                        },
-                    ),
+                    wire_headers(entry.id(), &entry.candidate.headers, session_id, trace_id)
+                        .map(|headers| {
+                        Client::with_headers(
+                            entry.candidate.base_url.as_str(),
+                            entry.key.clone().unwrap_or_default(),
+                            headers,
+                        )
+                    }),
                 ),
                 CandidateKind::Lane => Endpoint::Lane(
                     lane_specs
@@ -3334,6 +3414,11 @@ async fn prepare_walk(
     // client: one conversation, one affinity value, across the whole
     // walk and every surface that later re-seeds from it.
     let session_id = session_id_for(session_seed);
+    // The trace is the preparation's own: fresh even when the session id
+    // is derived, because a trace is not a session — and a re-route's
+    // fresh trace is the honest reading (the observability chain broke
+    // at the re-route anyway).
+    let trace_id = session_id_for(None);
     let router = Arc::new(Router::build(
         resolved,
         decision.clone(),
@@ -3341,6 +3426,7 @@ async fn prepare_walk(
         specs,
         roster.pin.clone(),
         &session_id,
+        &trace_id,
     ));
     Ok(Prepared {
         router,
@@ -4258,6 +4344,8 @@ mod tests {
                     disabled_models: Vec::new(),
                     model_settings: std::collections::BTreeMap::new(),
                     headers: std::collections::BTreeMap::new(),
+                    protocol: None,
+                    model_protocols: std::collections::BTreeMap::new(),
                 },
                 key: None,
             },
@@ -4275,6 +4363,8 @@ mod tests {
                     disabled_models: Vec::new(),
                     model_settings: std::collections::BTreeMap::new(),
                     headers: std::collections::BTreeMap::new(),
+                    protocol: None,
+                    model_protocols: std::collections::BTreeMap::new(),
                 },
                 key: None,
             },
@@ -4706,14 +4796,14 @@ mod tests {
         let headers = [("x-opencode-session".to_string(), "{session}".to_string())]
             .into_iter()
             .collect();
-        let first = wire_headers("p", &headers, &session_id_for(None)).unwrap();
-        let second = wire_headers("p", &headers, &session_id_for(None)).unwrap();
+        let first = wire_headers("p", &headers, &session_id_for(None), "t").unwrap();
+        let second = wire_headers("p", &headers, &session_id_for(None), "t").unwrap();
         let first_value = first[0].1.as_str();
         let second_value = second[0].1.as_str();
         assert!(!first_value.contains("{session}"), "{first_value}");
         assert!(!second_value.contains("{session}"), "{second_value}");
         assert_ne!(first_value, second_value, "two clients differ");
-        let again = wire_headers("p", &headers, first_value).unwrap();
+        let again = wire_headers("p", &headers, first_value, "t").unwrap();
         // A seed already in the wire shape rides verbatim: a later
         // preparation re-seeded from a resolved id reproduces it.
         assert_eq!(again[0].1, first_value, "one client's id is stable");
@@ -4755,7 +4845,7 @@ mod tests {
             Some("{env:TOK}"),
             "the miss stands for the build to name"
         );
-        let error = wire_headers("deepseek", &resolved[0].candidate.headers, "s").unwrap_err();
+        let error = wire_headers("deepseek", &resolved[0].candidate.headers, "s", "t").unwrap_err();
         assert!(
             error.contains("x-opencode-session") && error.contains("TOK"),
             "{error}"
@@ -4863,8 +4953,11 @@ mod tests {
         // opaque, UUID-shaped value on every preparation; different
         // conversations differ; an unseeded preparation draws fresh.
         let resumed = session_id_for(Some("conv-9"));
-        assert_eq!(resumed, session_id_for(Some("conv-9")),
-            "one conversation, one id");
+        assert_eq!(
+            resumed,
+            session_id_for(Some("conv-9")),
+            "one conversation, one id"
+        );
         assert!(is_uuid_shaped(&resumed), "{resumed}");
         assert_ne!(resumed, "conv-9", "the raw id never rides");
         assert_ne!(resumed, session_id_for(Some("conv-10")));
@@ -4911,15 +5004,12 @@ mod tests {
         candidate
             .headers
             .insert("x-opencode-session".to_string(), "{env:TOK}".to_string());
-        let dotenv: HashMap<String, String> = [(
-            "TOK".to_string(),
-            "tok\r\ninjected: header".to_string(),
-        )]
-        .into_iter()
-        .collect();
+        let dotenv: HashMap<String, String> =
+            [("TOK".to_string(), "tok\r\ninjected: header".to_string())]
+                .into_iter()
+                .collect();
         let resolved = resolve(std::slice::from_ref(&candidate), &dotenv);
-        let error =
-            wire_headers("deepseek", &resolved[0].candidate.headers, "s").unwrap_err();
+        let error = wire_headers("deepseek", &resolved[0].candidate.headers, "s", "t").unwrap_err();
         assert!(
             error.contains("x-opencode-session") && error.contains("control"),
             "{error}"
@@ -4970,6 +5060,74 @@ mod tests {
         .unwrap();
         assert_ne!(first.session_id, other.session_id);
         let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn a_protocol_rides_the_roster_and_the_model_wins() {
+        // The entry-level protocol is the default; a model's override
+        // wins; an unconfigured entry is chat, byte-identical to before.
+        let file: ConfigFile = serde_json::from_str(
+            r#"{
+                "providers": [
+                    {
+                        "id": "mixed-gateway",
+                        "base_url": "https://g.example/v1",
+                        "key_env": "MIXED_KEY",
+                        "model": "kimi-k3",
+                        "models": ["kimi-k3", "gpt-6-luna"],
+                        "protocol": "chat",
+                        "model_protocols": { "gpt-6-luna": "responses" }
+                    }
+                ]
+            }"#,
+        )
+        .unwrap();
+        let (candidates, _) = merge(default_roster(), &file).unwrap();
+        let mixed = candidates
+            .iter()
+            .find(|c| c.id == "mixed-gateway")
+            .expect("the new entry");
+        assert_eq!(mixed.protocol_for("kimi-k3"), Protocol::Chat);
+        assert_eq!(mixed.protocol_for("gpt-6-luna"), Protocol::Responses);
+        // The compiled roster is all chat.
+        let zai = default_roster()
+            .into_iter()
+            .find(|c| c.id == "zai-coding-plan")
+            .unwrap();
+        assert_eq!(zai.protocol_for("GLM-5.3-Flash"), Protocol::Chat);
+        // An unknown protocol value is the parse's own named refusal.
+        let error = validate_provider_entry(&serde_json::json!({
+            "id": "x", "protocol": "xmpp"
+        }))
+        .unwrap_err();
+        assert!(error.contains("protocol") || error.contains("variant"), "{error}");
+        validate_provider_entry(&serde_json::json!({
+            "id": "x", "protocol": "responses"
+        }))
+        .expect("the documented value parses");
+    }
+
+    #[test]
+    fn a_trace_is_fresh_distinct_and_shaped() {
+        // The trace is the preparation's own: fresh even when the session
+        // id is derived, distinct from it, UUID-shaped, and substituted
+        // beside the session in the same header value.
+        let headers = [(
+            "x-portkey-trace-id".to_string(),
+            "trace-{trace}-session-{session}".to_string(),
+        )]
+        .into_iter()
+        .collect();
+        let first = wire_headers("p", &headers, "session-1", "trace-1").unwrap();
+        assert_eq!(first[0].1, "trace-trace-1-session-session-1");
+        // Two preparations of the SAME conversation: same session, fresh
+        // traces.
+        let session = session_id_for(Some("conv-9"));
+        let trace_a = session_id_for(None);
+        let trace_b = session_id_for(None);
+        assert_ne!(trace_a, trace_b, "a trace is fresh per preparation");
+        assert_ne!(trace_a, session, "a trace is not a session");
+        assert!(is_uuid_shaped(&trace_a) && is_uuid_shaped(&session));
     }
 
     #[test]
@@ -5083,6 +5241,8 @@ mod tests {
                 disabled_models: Vec::new(),
                 model_settings: std::collections::BTreeMap::new(),
                 headers: std::collections::BTreeMap::new(),
+                protocol: None,
+                model_protocols: std::collections::BTreeMap::new(),
             },
             key: None,
         }
@@ -5379,9 +5539,15 @@ mod tests {
             .collect();
         std::fs::write(&day_file, format!("{}\n", rows.join("\n"))).unwrap();
 
-        let prepared = prepare(&home, &HashMap::new(), "route through the router", &specs, None)
-            .await
-            .unwrap();
+        let prepared = prepare(
+            &home,
+            &HashMap::new(),
+            "route through the router",
+            &specs,
+            None,
+        )
+        .await
+        .unwrap();
 
         // C1: the scratch home's own stream is the one that resolved —
         // the note below can only come from the rows planted there.
@@ -5424,6 +5590,8 @@ mod tests {
                 disabled_models: Vec::new(),
                 model_settings: std::collections::BTreeMap::new(),
                 headers: std::collections::BTreeMap::new(),
+                protocol: None,
+                model_protocols: std::collections::BTreeMap::new(),
             },
             key: None,
         }
@@ -5901,7 +6069,8 @@ mod tests {
             spend_usd: 0.0016,
             cost_per_right: None,
         };
-        let router = Router::build(resolved, decision, vec![cell], &HashMap::new(), None, "s");
+        let router =
+            Router::build(resolved, decision, vec![cell], &HashMap::new(), None, "s", "t");
         // The head is the walk's start, so it is never skipped; zai is
         // skipped, and the clause names the cell that did it.
         assert_eq!(router.calibration_skip(0, 0), None);
