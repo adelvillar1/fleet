@@ -182,7 +182,8 @@ dev-decisions' own log root — `<user home>/.local/share/dev-decisions/logs/<YY
 
 - `fleet providers` — the roster as cards in chain order, per-provider state
   (configured/unconfigured, key present/absent — never the value), the head
-  marked. No network, no spawn.
+  marked, any configured headers by name and count (never a value). No
+  network, no spawn.
 - The TUI status bar shows the active provider for the current/last run and
   how it was chosen.
 - A headless run prints `route: <provider-id> (<judged|fallback|pinned>)` at
@@ -207,6 +208,26 @@ silently ignored. Unknown fields are rejected the same way: a misspelled
 override (`keyenv`) fails the load rather than vanishing. A new provider id
 must be fully specified (base_url, key_env, model) to be added; a partial one
 is a named error.
+
+**Per-provider headers.** An entry may carry `headers` — a JSON object of
+extra headers every request to that provider carries beside the
+`Authorization` its key builds, in map order, on both the plain and the
+streamed path (the provider-session-headers plan):
+
+```json
+{ "id": "my-gateway", "headers": { "x-opencode-session": "{session}" } }
+```
+
+A value may compose two placeholders: `{session}` — a stable id per
+router preparation, the caching granularity a session-gated gateway asks
+for — and `{env:NAME}`, resolved from the same dotenv chain the key
+resolves from, so a secret never enters this file. A name that resolves
+to nothing fails the walk at that provider, naming the header and the
+var; a reserved name (`Authorization`, `Content-Type`, `Host`,
+`Content-Length` — case-insensitive), an empty name, or a malformed
+placeholder is refused at the settings writer and again at the router's
+build, each refusal naming the header. A header value is never printed:
+every surface shows the names and the count only.
 
 The gates live in `<FLEET_HOME>/routing.json` and are all optional:
 `gates.min_confidence`, `gates.default_workload`, and

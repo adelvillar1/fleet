@@ -887,9 +887,8 @@ pub fn validate_provider_entry(value: &serde_json::Value) -> Result<ProviderEntr
     // malformed placeholder is refused here, naming the header, before
     // anything is written — the writer's half of the two-gate check.
     if let Some(headers) = &parsed.headers {
-        validate_headers(headers).map_err(|reason| {
-            format!("the config entry's headers are not usable: {reason}")
-        })?;
+        validate_headers(headers)
+            .map_err(|reason| format!("the config entry's headers are not usable: {reason}"))?;
     }
     Ok(parsed)
 }
@@ -4520,14 +4519,13 @@ mod tests {
     fn a_roster_without_headers_is_the_empty_map() {
         // Every existing config and every compiled entry parses
         // byte-identical: the field is optional and defaults to none.
-        let file: ConfigFile = serde_json::from_str(
-            r#"{ "providers": [ { "id": "deepseek", "enabled": false } ] }"#,
-        )
-        .unwrap();
+        let file: ConfigFile =
+            serde_json::from_str(r#"{ "providers": [ { "id": "deepseek", "enabled": false } ] }"#)
+                .unwrap();
         let (candidates, _) = merge(default_roster(), &file).unwrap();
         let deepseek = candidates.iter().find(|c| c.id == "deepseek").unwrap();
         assert!(deepseek.headers.is_empty());
-        assert!(deepseek.enabled == false);
+        assert!(!deepseek.enabled);
     }
 
     #[test]
@@ -4563,7 +4561,10 @@ mod tests {
             .into_iter()
             .collect();
         let error = validate_headers(&reserved).unwrap_err();
-        assert!(error.contains("Authorization") && error.contains("reserved"), "{error}");
+        assert!(
+            error.contains("Authorization") && error.contains("reserved"),
+            "{error}"
+        );
         let reserved = [("CONTENT-TYPE".to_string(), "x".to_string())]
             .into_iter()
             .collect();
@@ -4583,12 +4584,18 @@ mod tests {
             .into_iter()
             .collect();
         let error = validate_headers(&unclosed).unwrap_err();
-        assert!(error.contains("x-a") && error.contains("unclosed"), "{error}");
+        assert!(
+            error.contains("x-a") && error.contains("unclosed"),
+            "{error}"
+        );
         let empty_env = [("x-a".to_string(), "{env:}".to_string())]
             .into_iter()
             .collect();
         let error = validate_headers(&empty_env).unwrap_err();
-        assert!(error.contains("x-a") && error.contains("empty env"), "{error}");
+        assert!(
+            error.contains("x-a") && error.contains("empty env"),
+            "{error}"
+        );
         // The legal forms pass.
         let legal = [(
             "x-opencode-session".to_string(),
@@ -4628,11 +4635,16 @@ mod tests {
         candidate
             .headers
             .insert("x-opencode-session".to_string(), "{env:TOK}".to_string());
-        let dotenv: HashMap<String, String> =
-            [("TOK".to_string(), "tok-value".to_string())].into_iter().collect();
+        let dotenv: HashMap<String, String> = [("TOK".to_string(), "tok-value".to_string())]
+            .into_iter()
+            .collect();
         let resolved = resolve(std::slice::from_ref(&candidate), &dotenv);
         assert_eq!(
-            resolved[0].candidate.headers.get("x-opencode-session").map(String::as_str),
+            resolved[0]
+                .candidate
+                .headers
+                .get("x-opencode-session")
+                .map(String::as_str),
             Some("tok-value"),
             "the chain's answer substitutes"
         );
@@ -4640,12 +4652,15 @@ mod tests {
         // refuses it, naming the header and the var.
         let resolved = resolve(std::slice::from_ref(&candidate), &HashMap::new());
         assert_eq!(
-            resolved[0].candidate.headers.get("x-opencode-session").map(String::as_str),
+            resolved[0]
+                .candidate
+                .headers
+                .get("x-opencode-session")
+                .map(String::as_str),
             Some("{env:TOK}"),
             "the miss stands for the build to name"
         );
-        let error =
-            wire_headers("deepseek", &resolved[0].candidate.headers, "s").unwrap_err();
+        let error = wire_headers("deepseek", &resolved[0].candidate.headers, "s").unwrap_err();
         assert!(
             error.contains("x-opencode-session") && error.contains("TOK"),
             "{error}"
@@ -4710,9 +4725,10 @@ mod tests {
             .find(|c| c.id == "deepseek")
             .unwrap();
         candidate.key_required = false;
-        candidate
-            .headers
-            .insert("x-opencode-session".to_string(), "{env:NO_SUCH_VAR}".to_string());
+        candidate.headers.insert(
+            "x-opencode-session".to_string(),
+            "{env:NO_SUCH_VAR}".to_string(),
+        );
         let resolved = resolve(std::slice::from_ref(&candidate), &HashMap::new());
         let decision = RouteDecision {
             provider: "deepseek".to_string(),
@@ -4735,7 +4751,7 @@ mod tests {
             max_tokens: None,
         };
         let outcome = router.chat_stream(&request, &mut |_| {}).await;
-        let error = outcome.err().expect("the walk fails by name");
+        let error = outcome.expect_err("the walk fails by name");
         let text = error.to_string();
         assert!(
             text.contains("x-opencode-session") && text.contains("NO_SUCH_VAR"),

@@ -108,7 +108,13 @@ calibration day-files under
   the process environment then `<FLEET_HOME>/.env` only — fleet reads
   its own home and nothing else (the owner's 2026-10-16 ruling). Keys
   never print; `fleet doctor` masks to the last four characters. Sealed
-  values live in the vault, unlocked per process.
+  values live in the vault, unlocked per process. A provider's roster
+  `headers` ride the same chain: a value's `{env:NAME}` resolves where
+  the key resolves (with `{session}` a stable id per router
+  preparation), a reserved or malformed header is refused at the
+  writer and again at the router's build, and a value never prints —
+  every surface shows the names only (the provider-session-headers
+  plan).
 - **The lanes.** Five vendored services under `services/`; heavy
   dependencies (GLiNER, the tabular models, sentence-transformers,
   kokoro, blend1's union) are per-lane venvs under

@@ -1028,20 +1028,14 @@ mod list_tests {
         // The headers arm rides the same gate: a reserved name is refused
         // naming the header, before anything is written, and a
         // well-formed map lands (the provider-session-headers plan's C1).
-        let reserved = set_provider(
-            &home,
-            r#"{"id":"stepfun","headers":{"Authorization":"x"}}"#,
-        )
-        .expect_err("a reserved header must refuse at the writer");
+        let reserved = set_provider(&home, r#"{"id":"stepfun","headers":{"Authorization":"x"}}"#)
+            .expect_err("a reserved header must refuse at the writer");
         assert!(
             reserved.contains("Authorization") && reserved.contains("reserved"),
             "{reserved}"
         );
-        let malformed = set_provider(
-            &home,
-            r#"{"id":"stepfun","headers":{"x-a":"{workload}"}}"#,
-        )
-        .expect_err("a malformed placeholder must refuse at the writer");
+        let malformed = set_provider(&home, r#"{"id":"stepfun","headers":{"x-a":"{workload}"}}"#)
+            .expect_err("a malformed placeholder must refuse at the writer");
         assert!(malformed.contains("x-a"), "{malformed}");
         let with_headers = set_provider(
             &home,

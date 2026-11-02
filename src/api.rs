@@ -1365,8 +1365,8 @@ mod tests {
                 };
                 // Drain the declared body so the client's write completes
                 // before the connection closes.
-                let head = String::from_utf8_lossy(&request[..head_end.min(request.len())])
-                    .to_string();
+                let head =
+                    String::from_utf8_lossy(&request[..head_end.min(request.len())]).to_string();
                 let declared: usize = head
                     .to_ascii_lowercase()
                     .lines()
@@ -1461,14 +1461,10 @@ mod tests {
             .build()
             .expect("a runtime");
         runtime.block_on(async {
-            Client::with_headers(
-                format!("http://127.0.0.1:{stream_port}"),
-                "sekret",
-                headers,
-            )
-            .chat_stream(&request, |_| {})
-            .await
-            .expect("the streamed path answers against the stub");
+            Client::with_headers(format!("http://127.0.0.1:{stream_port}"), "sekret", headers)
+                .chat_stream(&request, |_| {})
+                .await
+                .expect("the streamed path answers against the stub");
         });
         let heads = stream_seen.lock().unwrap();
         assert_eq!(heads.len(), 1, "the streamed request arrived: {:?}", *heads);
