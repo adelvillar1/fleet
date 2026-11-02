@@ -59,3 +59,13 @@
   Python), and the co-tenant may be mid-build — the recap step's
   cache sweep is deliberately skipped rather than run blind under a
   live build.
+
+## Addendum — the strand moved to master, later the same day
+
+The owner ruled the design work done; the design-parity line merged
+into master at `8bc1ec0` (the 19 recall-counter conflicts resolved
+arithmetically — ours + theirs − base, no content difference on any
+file), pushed `4448d4e..8bc1ec0`, then `dc0dd19` with KI-397 closed.
+Nothing awaits the fast-forward anymore. The design-parity branch
+remains checked out in the main worktree with its counter dirt, which
+master already contains — the co-tenant's to commit or discard.
