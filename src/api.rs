@@ -5,7 +5,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::route::{RouteDecision, Router};
+use crate::route::{Protocol, RouteDecision, Router};
 
 /// Public DeepSeek API base.
 pub const DEFAULT_BASE_URL: &str = "https://api.deepseek.com";
@@ -713,74 +713,428 @@ impl Client {
             outcome
         });
 
-        let mut content = String::new();
-        let mut tool_calls: Vec<ToolCall> = Vec::new();
-        let mut usage = Usage::default();
-        while let Some(event) = receiver.recv().await {
-            match &event {
-                StreamEvent::Content(delta) => content.push_str(delta),
-                // Reasoning is shown and logged by the caller; it is not
-                // part of the answer the conversation carries.
-                StreamEvent::Reasoning(_) => {}
-                StreamEvent::ToolCalls(calls) => tool_calls = calls.clone(),
-                StreamEvent::Usage(counted) => {
-                    if counted.finish_reason.is_some() {
-                        usage.finish_reason = counted.finish_reason.clone();
+        pump_stream(receiver, reader, on_event).await
+    }
+
+    /// One streamed exchange over the Responses protocol — the
+    /// dialect-only reading: `store: false`, no `previous_response_id`,
+    /// the full history every turn. The typed events map onto the same
+    /// [`StreamEvent`] vocabulary the chat path pumps, so the assembly
+    /// below is shared byte for byte.
+    pub(crate) async fn chat_stream_responses(
+        &self,
+        request: &ChatRequest<'_>,
+        on_event: impl FnMut(StreamEvent),
+    ) -> Result<ChatResponse, ClientError> {
+        let url = format!("{}/responses", self.base_url);
+        let key = self.api_key.clone();
+        let body = serde_json::to_vec(&responses_request_value(request, true))
+            .map_err(|error| ClientError::Decode(error.to_string()))?;
+        let agent = self.agent.clone();
+        let headers = self.headers.clone();
+
+        let (events, receiver) = tokio::sync::mpsc::unbounded_channel::<StreamEvent>();
+        let reader = tokio::task::spawn_blocking(move || {
+            let outcome = stream_responses_response(&agent, &url, &key, &body, &headers, &events);
+            drop(events);
+            outcome
+        });
+
+        pump_stream(receiver, reader, on_event).await
+    }
+
+    /// One non-streaming exchange over the Responses protocol — the
+    /// mapper's other half, and the shape the doctor-style probes and
+    /// the mapper pins read.
+    pub(crate) fn chat_responses(
+        &self,
+        request: &ChatRequest,
+    ) -> Result<ChatResponse, ClientError> {
+        let url = format!("{}/responses", self.base_url);
+        let mut call = self
+            .agent
+            .post(&url)
+            .set("Authorization", &format!("Bearer {}", self.api_key));
+        for (name, value) in &self.headers {
+            call = call.set(name, value);
+        }
+        let response = call
+            .send_json(responses_request_value(request, false))
+            .map_err(map_send_error)?;
+        let status = response.status();
+        if status != 200 {
+            let request_id = diagnostic_id(&response);
+            let body = response
+                .into_string()
+                .map_err(|error| ClientError::Network(error.to_string()))?;
+            return Err(ClientError::Api(api_error(status, &body, request_id)));
+        }
+        let body = response
+            .into_string()
+            .map_err(|error| ClientError::Network(error.to_string()))?;
+        let document: serde_json::Value =
+            serde_json::from_str(&body).map_err(|error| ClientError::Decode(error.to_string()))?;
+        responses_response_value(&document)
+    }
+}
+
+/// The pump every streamed exchange shares: drain the channel into the
+/// assembled answer while the caller sees each event live, wait for the
+/// blocking reader, and demand a clean close. The chat-completions and
+/// Responses mappers differ only in what they emit into the channel;
+/// this assembly is byte-for-byte shared.
+async fn pump_stream(
+    mut receiver: tokio::sync::mpsc::UnboundedReceiver<StreamEvent>,
+    reader: tokio::task::JoinHandle<Result<bool, ClientError>>,
+    mut on_event: impl FnMut(StreamEvent),
+) -> Result<ChatResponse, ClientError> {
+    let mut content = String::new();
+    let mut tool_calls: Vec<ToolCall> = Vec::new();
+    let mut usage = Usage::default();
+    while let Some(event) = receiver.recv().await {
+        match &event {
+            StreamEvent::Content(delta) => content.push_str(delta),
+            // Reasoning is shown and logged by the caller; it is not
+            // part of the answer the conversation carries.
+            StreamEvent::Reasoning(_) => {}
+            StreamEvent::ToolCalls(calls) => tool_calls = calls.clone(),
+            StreamEvent::Usage(counted) => {
+                if counted.finish_reason.is_some() {
+                    usage.finish_reason = counted.finish_reason.clone();
+                }
+                usage = counted.clone();
+            }
+        }
+        on_event(event);
+    }
+
+    // A pump that ended without a closing event failed; its error is the
+    // run's error. A stream that ended without one is a decode failure,
+    // exactly as on the non-streaming path.
+    let closed = reader
+        .await
+        .map_err(|error| ClientError::Network(error.to_string()))??;
+    if !closed {
+        return Err(ClientError::Decode(
+            "the stream ended without a completion".to_string(),
+        ));
+    }
+    let usage = Usage {
+        total_tokens: if usage.total_tokens == 0 {
+            usage.prompt_tokens.saturating_add(usage.completion_tokens)
+        } else {
+            usage.total_tokens
+        },
+        // KI-019: the streamed path's finish_reason arrived as `None`
+        // whenever the provider carried it on the choice rather than
+        // inside the usage object, so the assembled response disagreed
+        // with the non-streaming one. The API's own value wins when it
+        // is there; otherwise the message says which it was — calls
+        // assembled means `tool_calls`, and a clean close with none
+        // means `stop`. A provider that sends nothing else and a
+        // truncated stream are both decode failures before this point.
+        finish_reason: usage.finish_reason.or_else(|| {
+            Some(if tool_calls.is_empty() {
+                "stop".to_string()
+            } else {
+                "tool_calls".to_string()
+            })
+        }),
+        ..usage
+    };
+    Ok(ChatResponse {
+        choices: vec![Choice {
+            message: Message {
+                role: Role::Assistant,
+                content: (!content.is_empty()).then_some(content),
+                tool_calls,
+                tool_call_id: None,
+                images: Vec::new(),
+            },
+            finish_reason: usage.finish_reason.clone(),
+        }],
+        usage,
+    })
+}
+
+/// The Responses-dialect body for one chat request: the system frames
+/// become `instructions`, the history becomes typed input items, and
+/// the tool results become `function_call_output` items referencing
+/// their call ids. `store: false` and no `previous_response_id`,
+/// always — the conversation's state lives in Fleet's session log,
+/// never on the server (hard rule 5; the session-parity-remainders
+/// plan's spine).
+fn responses_request_value(request: &ChatRequest<'_>, stream: bool) -> serde_json::Value {
+    let mut instructions: Vec<&str> = Vec::new();
+    let mut input: Vec<serde_json::Value> = Vec::new();
+    for message in request.messages {
+        match message.role {
+            Role::System => {
+                if let Some(text) = &message.content {
+                    if !text.is_empty() {
+                        instructions.push(text);
                     }
-                    usage = counted.clone();
                 }
             }
-            on_event(event);
+            Role::User => {
+                let mut parts: Vec<serde_json::Value> = Vec::new();
+                if let Some(text) = &message.content {
+                    if !text.is_empty() {
+                        parts.push(serde_json::json!({ "type": "input_text", "text": text }));
+                    }
+                }
+                for image in &message.images {
+                    parts.push(serde_json::json!({
+                        "type": "input_image",
+                        "image_url": image.data_url(),
+                    }));
+                }
+                input.push(serde_json::json!({ "role": "user", "content": parts }));
+            }
+            Role::Assistant => {
+                if let Some(text) = &message.content {
+                    if !text.is_empty() {
+                        input.push(serde_json::json!({
+                            "role": "assistant",
+                            "content": [{ "type": "output_text", "text": text }],
+                        }));
+                    }
+                }
+                for call in &message.tool_calls {
+                    input.push(serde_json::json!({
+                        "type": "function_call",
+                        "call_id": call.id,
+                        "name": call.function.name,
+                        "arguments": call.function.arguments,
+                    }));
+                }
+            }
+            Role::Tool => {
+                input.push(serde_json::json!({
+                    "type": "function_call_output",
+                    "call_id": message.tool_call_id,
+                    "output": message.content,
+                }));
+            }
         }
-
-        // A pump that ended without a closing event failed; its error is the
-        // run's error. A stream that ended without one is a decode failure,
-        // exactly as on the non-streaming path.
-        let closed = reader
-            .await
-            .map_err(|error| ClientError::Network(error.to_string()))??;
-        if !closed {
-            return Err(ClientError::Decode(
-                "the stream ended without a completion".to_string(),
-            ));
-        }
-        let usage = Usage {
-            total_tokens: if usage.total_tokens == 0 {
-                usage.prompt_tokens.saturating_add(usage.completion_tokens)
-            } else {
-                usage.total_tokens
-            },
-            // KI-019: the streamed path's finish_reason arrived as `None`
-            // whenever the provider carried it on the choice rather than
-            // inside the usage object, so the assembled response disagreed
-            // with the non-streaming one. The API's own value wins when it
-            // is there; otherwise the message says which it was — calls
-            // assembled means `tool_calls`, and a clean close with none
-            // means `stop`. A provider that sends nothing else and a
-            // truncated stream are both decode failures before this point.
-            finish_reason: usage.finish_reason.or_else(|| {
-                Some(if tool_calls.is_empty() {
-                    "stop".to_string()
-                } else {
-                    "tool_calls".to_string()
-                })
-            }),
-            ..usage
-        };
-        Ok(ChatResponse {
-            choices: vec![Choice {
-                message: Message {
-                    role: Role::Assistant,
-                    content: (!content.is_empty()).then_some(content),
-                    tool_calls,
-                    tool_call_id: None,
-                    images: Vec::new(),
-                },
-                finish_reason: usage.finish_reason.clone(),
-            }],
-            usage,
-        })
     }
+    let tools: Vec<serde_json::Value> = request
+        .tools
+        .iter()
+        .map(|spec| {
+            serde_json::json!({
+                "type": "function",
+                "name": spec.function.name,
+                "description": spec.function.description,
+                "parameters": spec.function.parameters,
+                "strict": false,
+            })
+        })
+        .collect();
+    let mut body = serde_json::json!({
+        "model": request.model,
+        "input": input,
+        "store": false,
+        "stream": stream,
+    });
+    if !instructions.is_empty() {
+        body["instructions"] = serde_json::Value::String(instructions.join("\n\n"));
+    }
+    if !tools.is_empty() {
+        body["tools"] = serde_json::Value::Array(tools);
+    }
+    body
+}
+
+/// The Responses document → the assembled `ChatResponse`: `output`
+/// items become the choice's content and tool calls, and the protocol's
+/// own usage accounting rides across. The finish reason follows the
+/// shape the chat path assembles: calls present means `tool_calls`.
+fn responses_response_value(document: &serde_json::Value) -> Result<ChatResponse, ClientError> {
+    let mut content = String::new();
+    let mut calls: Vec<ToolCall> = Vec::new();
+    let mut finish = "stop";
+    if let Some(items) = document.get("output").and_then(|value| value.as_array()) {
+        for item in items {
+            match item.get("type").and_then(|kind| kind.as_str()) {
+                Some("message") => {
+                    if let Some(parts) = item.get("content").and_then(|value| value.as_array()) {
+                        for part in parts {
+                            if part.get("type").and_then(|kind| kind.as_str())
+                                == Some("output_text")
+                            {
+                                if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
+                                    content.push_str(text);
+                                }
+                            }
+                        }
+                    }
+                }
+                Some("function_call") => {
+                    finish = "tool_calls";
+                    calls.push(ToolCall {
+                        id: item
+                            .get("call_id")
+                            .and_then(|value| value.as_str())
+                            .unwrap_or_default()
+                            .to_string(),
+                        kind: "function".to_string(),
+                        function: FunctionCall {
+                            name: item
+                                .get("name")
+                                .and_then(|value| value.as_str())
+                                .unwrap_or_default()
+                                .to_string(),
+                            arguments: item
+                                .get("arguments")
+                                .and_then(|value| value.as_str())
+                                .unwrap_or_default()
+                                .to_string(),
+                        },
+                    });
+                }
+                _ => {}
+            }
+        }
+    }
+    let usage_json = document.get("usage").cloned().unwrap_or_default();
+    let token = |name: &str| {
+        usage_json
+            .get(name)
+            .and_then(|value| value.as_u64())
+            .unwrap_or(0)
+    };
+    let usage = Usage {
+        prompt_tokens: token("input_tokens"),
+        completion_tokens: token("output_tokens"),
+        total_tokens: token("total_tokens"),
+        finish_reason: Some(finish.to_string()),
+    };
+    Ok(ChatResponse {
+        choices: vec![Choice {
+            message: Message {
+                role: Role::Assistant,
+                content: (!content.is_empty()).then_some(content),
+                tool_calls: calls,
+                tool_call_id: None,
+                images: Vec::new(),
+            },
+            finish_reason: Some(finish.to_string()),
+        }],
+        usage,
+    })
+}
+
+/// The blocking half of a streamed Responses exchange: send the request,
+/// then hand the body reader to the typed-event parser. Returns whether
+/// the stream closed cleanly.
+fn stream_responses_response(
+    agent: &ureq::Agent,
+    url: &str,
+    api_key: &str,
+    body: &[u8],
+    headers: &[(String, String)],
+    events: &tokio::sync::mpsc::UnboundedSender<StreamEvent>,
+) -> Result<bool, ClientError> {
+    let mut call = agent
+        .post(url)
+        .set("Authorization", &format!("Bearer {api_key}"))
+        .set("Content-Type", "application/json");
+    for (name, value) in headers {
+        call = call.set(name, value);
+    }
+    let response = call.send_bytes(body).map_err(map_send_error)?;
+    let status = response.status();
+    if status != 200 {
+        let request_id = diagnostic_id(&response);
+        let text = response
+            .into_string()
+            .map_err(|error| ClientError::Network(error.to_string()))?;
+        return Err(ClientError::Api(api_error(status, &text, request_id)));
+    }
+    parse_responses_sse(std::io::BufReader::new(response.into_reader()), events)
+}
+
+/// Read a Responses stream line by line, mapping the typed SSE events
+/// onto the shared [`StreamEvent`] vocabulary. Text and reasoning
+/// deltas stream live; the tool calls ride the terminal
+/// `response.completed` event's own output — the authoritative whole
+/// call, so the argument-delta fragments are consumed without effect
+/// and can never double-assemble. `response.completed` closes; a
+/// `response.failed` or `error` event is the typed failure.
+fn parse_responses_sse(
+    reader: impl std::io::BufRead,
+    events: &tokio::sync::mpsc::UnboundedSender<StreamEvent>,
+) -> Result<bool, ClientError> {
+    let mut closed = false;
+    for line in reader.lines() {
+        let line = line.map_err(|error| ClientError::Network(error.to_string()))?;
+        let Some(payload) = sse_data(&line) else {
+            continue;
+        };
+        if payload == "[DONE]" {
+            closed = true;
+            break;
+        }
+        let event: serde_json::Value = serde_json::from_str(payload)
+            .map_err(|error| ClientError::Decode(format!("bad SSE event: {error}")))?;
+        match event.get("type").and_then(|kind| kind.as_str()) {
+            Some("response.output_text.delta") => {
+                if let Some(delta) = event.get("delta").and_then(|value| value.as_str()) {
+                    if !delta.is_empty() && events.send(StreamEvent::Content(delta.to_string())).is_err() {
+                        return Ok(true);
+                    }
+                }
+            }
+            Some("response.reasoning_summary_text.delta") => {
+                if let Some(delta) = event.get("delta").and_then(|value| value.as_str()) {
+                    if !delta.is_empty()
+                        && events
+                            .send(StreamEvent::Reasoning(delta.to_string()))
+                            .is_err()
+                    {
+                        return Ok(true);
+                    }
+                }
+            }
+            // Argument fragments stream live but carry nothing the
+            // terminal event does not carry whole; consumed here so an
+            // unknown-type fallthrough never mistakes them.
+            Some("response.function_call_arguments.delta") => {}
+            Some("response.completed") => {
+                let document = event.get("response").cloned().unwrap_or(event.clone());
+                let assembled = responses_response_value(&document)?;
+                if let Some(choice) = assembled.choices.first() {
+                    if !choice.message.tool_calls.is_empty() {
+                        if events
+                            .send(StreamEvent::ToolCalls(choice.message.tool_calls.clone()))
+                            .is_err()
+                        {
+                            return Ok(true);
+                        }
+                    }
+                }
+                if events.send(StreamEvent::Usage(assembled.usage)).is_err() {
+                    return Ok(true);
+                }
+                closed = true;
+                break;
+            }
+            Some("response.failed") | Some("error") => {
+                let message = event
+                    .get("response")
+                    .and_then(|response| response.get("error"))
+                    .and_then(|error| error.get("message"))
+                    .and_then(|message| message.as_str())
+                    .or_else(|| event.get("message").and_then(|m| m.as_str()))
+                    .unwrap_or("the stream answered with a failure event")
+                    .to_string();
+                return Err(ClientError::Decode(message));
+            }
+            _ => {}
+        }
+    }
+    Ok(closed)
 }
 
 /// The blocking half of a streamed exchange: send the request, then hand
@@ -1480,8 +1834,8 @@ mod tests {
     }
 
     /// Read one request to its declared end so the client's write
-    /// completes before the connection closes.
-    fn read_and_drain_request(stream: &mut std::net::TcpStream) {
+    /// completes before the connection closes. Returns the head.
+    fn read_and_drain_request(stream: &mut std::net::TcpStream) -> String {
         let mut request: Vec<u8> = Vec::new();
         let mut chunk = [0u8; 4096];
         let head_end = loop {
@@ -1507,6 +1861,44 @@ mod tests {
             }
             request.extend_from_slice(&chunk[..read]);
         }
+        String::from_utf8_lossy(&request[..head_end.min(request.len())]).to_string()
+    }
+
+    /// A stub that answers per path — the mixed gateway: everything but
+    /// `/responses` gets the chat body with a refusal status, `/responses`
+    /// gets the SSE answer. Records each request line.
+    fn stub_by_path(
+        chat_body: &'static str,
+        responses_body: String,
+    ) -> (u16, Arc<Mutex<Vec<String>>>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let seen: Arc<Mutex<Vec<String>>> = Arc::default();
+        let writer = Arc::clone(&seen);
+        std::thread::spawn(move || {
+            for mut stream in listener.incoming().flatten() {
+                let head = read_and_drain_request(&mut stream);
+                let path = head
+                    .lines()
+                    .next()
+                    .and_then(|line| line.split_whitespace().nth(1))
+                    .unwrap_or_default()
+                    .to_string();
+                writer.lock().unwrap().push(path.clone());
+                let (status, body) = if path.ends_with("/responses") {
+                    ("HTTP/1.1 200 OK".to_string(), responses_body.clone())
+                } else {
+                    ("HTTP/1.1 500 E".to_string(), chat_body.to_string())
+                };
+                let reply = format!(
+                    "{status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(reply.as_bytes());
+            }
+        });
+        (port, seen)
     }
 
     #[test]
@@ -1670,9 +2062,7 @@ mod tests {
                 .expect_err("the streamed refusal")
         });
         assert!(
-            stream_error
-                .to_string()
-                .contains("request id req-stream-9"),
+            stream_error.to_string().contains("request id req-stream-9"),
             "{stream_error}"
         );
 
@@ -1698,9 +2088,211 @@ mod tests {
         let error = Client::new(format!("http://127.0.0.1:{port}"), "k")
             .chat(&request)
             .expect_err("the refusal");
+        assert!(!error.to_string().contains("request id"), "{error:?}");
+    }
+
+    /// A history with every message kind, for the request-mapper pins.
+    fn full_history() -> (Vec<Message>, Vec<ToolSpec>) {
+        let messages = vec![
+            Message::text(Role::System, "be brief"),
+            Message::text(Role::User, "list the files"),
+            Message {
+                role: Role::Assistant,
+                content: None,
+                tool_calls: vec![ToolCall {
+                    id: "call-1".to_string(),
+                    kind: "function".to_string(),
+                    function: FunctionCall {
+                        name: "bash".to_string(),
+                        arguments: "{}".to_string(),
+                    },
+                }],
+                tool_call_id: None,
+                images: Vec::new(),
+            },
+            Message {
+                role: Role::Tool,
+                content: Some("a.txt".to_string()),
+                tool_calls: Vec::new(),
+                tool_call_id: Some("call-1".to_string()),
+                images: Vec::new(),
+            },
+        ];
+        let tools = vec![ToolSpec {
+            r#type: "function".to_string(),
+            function: FunctionSpec {
+                name: "bash".to_string(),
+                description: "run a command".to_string(),
+                parameters: serde_json::json!({"type": "object"}),
+            },
+        }];
+        (messages, tools)
+    }
+
+    #[test]
+    fn the_responses_request_maps_the_history_statelessly() {
+        let (messages, tools) = full_history();
+        let request = ChatRequest {
+            model: "gpt-6-luna",
+            messages: &messages,
+            tools,
+            max_tokens: None,
+        };
+        let body = responses_request_value(&request, true);
+        // The statelessness is a contract, not a preference: the whole
+        // history rides, nothing is stored, nothing is chained.
+        assert_eq!(body["store"], false, "{body}");
+        assert_eq!(body["stream"], true, "{body}");
+        assert!(body.get("previous_response_id").is_none(), "{body}");
+        // The system frame became instructions; the user message became
+        // a typed input item.
+        assert_eq!(body["instructions"], "be brief", "{body}");
+        assert_eq!(body["input"][0]["role"], "user", "{body}");
+        assert_eq!(body["input"][0]["content"][0]["type"], "input_text");
+        // The assistant's call and the tool's answer map to the
+        // protocol's own pair, joined by the call id.
+        assert_eq!(body["input"][1]["type"], "function_call", "{body}");
+        assert_eq!(body["input"][1]["call_id"], "call-1");
+        assert_eq!(body["input"][2]["type"], "function_call_output", "{body}");
+        assert_eq!(body["input"][2]["call_id"], "call-1");
+        assert_eq!(body["input"][2]["output"], "a.txt");
+        // The tool declaration is the flat function shape, non-strict.
+        assert_eq!(body["tools"][0]["type"], "function", "{body}");
+        assert_eq!(body["tools"][0]["name"], "bash");
+        assert_eq!(body["tools"][0]["strict"], false, "{body}");
+    }
+
+    #[test]
+    fn the_responses_answer_maps_back_to_the_chat_shape() {
+        let document = serde_json::json!({
+            "output": [
+                {"type": "message",
+                 "content": [{"type": "output_text", "text": "here is the listing"}]},
+                {"type": "function_call",
+                 "call_id": "call-9", "name": "bash", "arguments": "{\"cmd\":\"ls\"}"}
+            ],
+            "usage": {"input_tokens": 5, "output_tokens": 7, "total_tokens": 12}
+        });
+        let answer = responses_response_value(&document).expect("maps");
+        let choice = &answer.choices[0];
+        assert_eq!(choice.message.content.as_deref(), Some("here is the listing"));
+        assert_eq!(choice.message.tool_calls[0].id, "call-9");
+        assert_eq!(choice.message.tool_calls[0].function.name, "bash");
+        assert_eq!(choice.finish_reason.as_deref(), Some("tool_calls"));
+        assert_eq!(answer.usage.prompt_tokens, 5);
+        assert_eq!(answer.usage.completion_tokens, 7);
+        assert_eq!(answer.usage.total_tokens, 12);
+    }
+
+    #[test]
+    fn the_responses_stream_maps_the_typed_events() {
+        let stream = concat!(
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hel\"}\n\n",
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"lo\"}\n\n",
+            "data: {\"type\":\"response.reasoning_summary_text.delta\",\"delta\":\"thinking\"}\n\n",
+            "data: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"i1\",\"delta\":\"{\\\"\"}\n\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"output\":[{\"type\":\"function_call\",\"call_id\":\"call-1\",\"name\":\"bash\",\"arguments\":\"{\\\"cmd\\\":\\\"ls\\\"}\"}],\"usage\":{\"input_tokens\":5,\"output_tokens\":7,\"total_tokens\":12}}}\n\n",
+        );
+        let (events, mut receiver) = tokio::sync::mpsc::unbounded_channel::<StreamEvent>();
+        let closed =
+            parse_responses_sse(std::io::Cursor::new(stream.as_bytes()), &events).expect("parses");
+        assert!(closed, "the completed event closes");
+        drop(events);
+        let mut seen = Vec::new();
+        while let Ok(event) = receiver.try_recv() {
+            seen.push(event);
+        }
+        // The text deltas streamed live, in order.
+        let content: Vec<&str> = seen
+            .iter()
+            .filter_map(|event| match event {
+                StreamEvent::Content(delta) => Some(delta.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(content, vec!["hel", "lo"], "{seen:?}");
+        // The reasoning delta rode its own event.
+        assert!(matches!(seen[2], StreamEvent::Reasoning(_)), "{seen:?}");
+        // The argument-delta fragment was consumed without effect — the
+        // terminal event's own output is the authoritative whole call.
+        let calls = seen
+            .iter()
+            .find_map(|event| match event {
+                StreamEvent::ToolCalls(calls) => Some(calls.clone()),
+                _ => None,
+            })
+            .expect("the calls are emitted");
+        assert_eq!(calls.len(), 1, "{seen:?}");
+        assert_eq!(calls[0].id, "call-1");
+        assert_eq!(calls[0].function.name, "bash");
+        assert_eq!(calls[0].function.arguments, "{\"cmd\":\"ls\"}");
+        // The usage rode the completion with its finish reason.
+        let usage = seen
+            .iter()
+            .find_map(|event| match event {
+                StreamEvent::Usage(counted) => Some(counted.clone()),
+                _ => None,
+            })
+            .expect("the usage is emitted");
+        assert_eq!(usage.total_tokens, 12);
+        assert_eq!(usage.finish_reason.as_deref(), Some("tool_calls"));
+    }
+
+    #[tokio::test]
+    async fn a_responses_marked_model_rides_the_responses_path() {
+        // The mixed gateway, end to end: one candidate whose model is
+        // marked `responses`; the walk serves it over /responses and
+        // never touches the chat path.
+        let sse = concat!(
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"listing\"}\n\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"listing\"}]}],\"usage\":{\"input_tokens\":3,\"output_tokens\":4,\"total_tokens\":7}}}\n\n",
+        );
+        let (port, seen) = stub_by_path(
+            r#"{"error":{"message":"chat path refused"}}"#,
+            sse.to_string(),
+        );
+        let mut candidate = crate::route::default_roster()
+            .into_iter()
+            .find(|c| c.id == "zai-coding-plan")
+            .unwrap();
+        candidate.base_url = format!("http://127.0.0.1:{port}");
+        candidate.key_required = false;
+        candidate
+            .model_protocols
+            .insert("GLM-5.3-Flash".to_string(), Protocol::Responses);
+        let resolved = crate::route::resolve(
+            std::slice::from_ref(&candidate),
+            &std::collections::HashMap::new(),
+        );
+        let decision = RouteDecision {
+            provider: "zai-coding-plan".to_string(),
+            model: "GLM-5.3-Flash".to_string(),
+            how: crate::route::How::Judged,
+            workload: Some("hard".to_string()),
+            verdict: None,
+            execution: None,
+            reason: "test".to_string(),
+            judged_from: crate::route::JudgedFrom::Fresh,
+            start_index: 0,
+            order: vec![("zai-coding-plan".to_string(), "GLM-5.3-Flash".to_string())],
+        };
+        let router = Router::new(resolved, decision);
+        let message = Message::text(Role::User, "hi");
+        let request = ChatRequest {
+            model: "GLM-5.3-Flash",
+            messages: std::slice::from_ref(&message),
+            tools: Vec::new(),
+            max_tokens: None,
+        };
+        let answer = router
+            .chat_stream(&request, &mut |_| {})
+            .await
+            .expect("the responses-marked model serves");
+        assert_eq!(answer.choices[0].message.content.as_deref(), Some("listing"));
+        let paths = seen.lock().unwrap();
         assert!(
-            !error.to_string().contains("request id"),
-            "{error:?}"
+            paths.iter().all(|path| path.ends_with("/responses")),
+            "every request rode the responses path: {paths:?}"
         );
     }
 }

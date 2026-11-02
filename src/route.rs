@@ -3187,13 +3187,20 @@ impl Router {
                     tools: request.tools.clone(),
                     max_tokens: None,
                 };
+                // The position's model names the wire dialect: the mixed
+                // gateway's chat models ride /chat/completions, the
+                // Luna-class override rides /responses — one walk, both
+                // protocols.
+                let protocol = self.resolved[index].candidate.protocol_for(&model);
                 let flag = Arc::clone(&streamed);
-                let result = client
-                    .chat_stream_plain(&routed, |event| {
-                        flag.store(true, Ordering::Relaxed);
-                        on_event(event);
-                    })
-                    .await;
+                let mut emit = |event| {
+                    flag.store(true, Ordering::Relaxed);
+                    on_event(event);
+                };
+                let result = match protocol {
+                    Protocol::Chat => client.chat_stream_plain(&routed, &mut emit).await,
+                    Protocol::Responses => client.chat_stream_responses(&routed, &mut emit).await,
+                };
                 result.map_err(|error| (error, streamed.load(Ordering::Relaxed)))
             }
             Endpoint::Lane(spec) => {
