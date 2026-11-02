@@ -181,10 +181,13 @@ per-item classification, scoring, or gate fits sys1; nothing delegates.
       own values, add/edit/remove), never renders a resolved value, and
       shows the constant-value warning inline. Face-harness pinned.
       Lands with settings-ux U9's card or after it.
-      *OPEN BY DESIGN — the increment waits: settings-ux U9's account card has not
-      landed, and this plan's own approach step 5 names the wait rather than a row
-      bolted onto the surface that plan is reworking. The pin list above is the
-      contract the row's work will walk when U9 lands.*
+      *UNBLOCKED 2026-11-02 — settings-ux U9 has landed: the account card now
+      completes its chain (models, the walks it serves with raise/lower/stop
+      and add, the job card's next fire), so the headers editor has the card
+      this criterion waits for. The cut is the card's: a new row inside
+      `providerSections`, its write riding the provider entry's `headers`
+      object, and its text never a resolved value. The pin list above is still
+      the contract that row will walk.*
 - [x] **C5 — the docs and the gate.** routing.md (the protocol passage,
       the trace placeholder), gui.md (the row), TECHNICAL-DOCUMENTATION.md
       and FUNCTIONAL-SPECIFICATIONS.md (the field rows); fmt, clippy,
