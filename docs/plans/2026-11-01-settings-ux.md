@@ -369,7 +369,7 @@ What the pass established, with the evidence it read:
 | Criterion | State | Evidence |
 |---|---|---|
 | U1 the confirmation is on-surface | **built** | `settingsSay` paints the board's own line (`saved <label>`, the refusal's words, the unreachable sentence); every settings notice routes there, not to the conversation stream — SET/U1 pins three stubbed posts |
-| U2 a written knob reverts | **built** | the read carries `default` (`settings::compiled_default`), the card's revert writes `unset`, and the row's mark flips on the re-read — U2 pin asserts the `unset` body |
+| U2 a written knob reverts | **built** | the read carries `default` from `settings::compiled_default` — ten settings tied to the constant the code itself falls back on (the pin caught the first draft's wrong `approvals` claim), `None` where unsetting *is* the default — the card names what the revert returns to, the revert writes `unset`, and the row's mark flips on the re-read |
 | U3 the filter finishes the job | **built** | a no-match card with the sections it could mean, the three-part route (`#/settings/<section>/<item>`) opening and marking the row, arrows/Enter on the list — U3 pins the card, the press, the deep link |
 | U4 the field validates | **built** | a numeric knob refuses 'abc' and a value past the ceiling at blur, beside the field, and the save is held — U4 pins the error and the missing POST |
 | U5 every refusal names the door | **built** | the env, ceiling and vault lines each carry their next step (`unset the variable`, `only be tightened`, `re-seal it from this panel`) — U5 pins the three |

@@ -524,13 +524,37 @@ pub fn unset(home: &Path, key: &str) -> Result<(), String> {
 }
 
 /// The value a setting falls back to when nothing writes it — what a
-/// revert returns the key to (settings-ux U2). Only settings with a
-/// compiled literal are named; `None` means the code's own fallback
-/// applies and the surface says so rather than inventing a value.
-pub fn compiled_default(key: &str) -> Option<&'static str> {
+/// revert returns the key to (settings-ux U2). Every entry is a compiled
+/// literal the code itself uses when the key is absent, and the test
+/// below ties each one to that constant, so the two cannot drift.
+///
+/// A setting with no literal fallback answers `None`: unsetting it *is*
+/// the default (a pin is empty, a path walks up, a toggle is read by its
+/// own consumer). The card says that rather than inventing a value.
+pub fn compiled_default(key: &str) -> Option<String> {
     match key {
-        // `approvals::resolve(None, _)` answers `YesGuarded`.
-        "approvals" => Some("yes-guarded"),
+        // `approvals::resolve(None, None)` answers Ask — the default IS
+        // the prompting mode, which the pin below checks rather than
+        // trusting this comment (it caught the first draft's claim).
+        "approvals" => Some(crate::approvals::resolve(None, None).label().to_string()),
+        // `agent::DEFAULT_MAX_TURNS`.
+        "runs.max_turns" => Some(crate::agent::DEFAULT_MAX_TURNS.to_string()),
+        // `skills::DEFAULT_RETIRE_AFTER_SESSIONS`.
+        "skills.retire_after_sessions" => {
+            Some(crate::skills::DEFAULT_RETIRE_AFTER_SESSIONS.to_string())
+        }
+        // `skills::MERGE_SIMILARITY_THRESHOLD`.
+        "skills.merge_similarity" => Some(crate::skills::MERGE_SIMILARITY_THRESHOLD.to_string()),
+        // `route::Gates::default()`.
+        "gates.min_confidence" => Some("0.6".to_string()),
+        "gates.default_workload" => Some("standard_code".to_string()),
+        "gates.allow_api_models" => Some("true".to_string()),
+        // `agent::DELEGATION_CONCURRENCY`, which `FLEET_CONCURRENCY` can only lower.
+        "FLEET_CONCURRENCY" => Some(crate::agent::DELEGATION_CONCURRENCY.to_string()),
+        // `web_cache::DEFAULT_TTL_SECS`.
+        "FLEET_WEB_CACHE_TTL_SECS" => Some(crate::web_cache::DEFAULT_TTL_SECS.to_string()),
+        // `memory::DEFAULT_EMBEDDING_ENDPOINT`.
+        "FLEET_EMBEDDING_ENDPOINT" => Some(crate::memory::DEFAULT_EMBEDDING_ENDPOINT.to_string()),
         _ => None,
     }
 }
@@ -706,6 +730,66 @@ fn read_env_file(path: &Path) -> BTreeMap<String, String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn every_compiled_default_is_the_constant_the_code_uses() {
+        // settings-ux U2: the read's default is what a revert returns
+        // the key to, so each entry is tied to the constant the code
+        // itself falls back on — a copy that drifts fails here.
+        assert_eq!(
+            compiled_default("runs.max_turns").as_deref(),
+            Some(crate::agent::DEFAULT_MAX_TURNS.to_string().as_str())
+        );
+        assert_eq!(
+            compiled_default("skills.retire_after_sessions").as_deref(),
+            Some(
+                crate::skills::DEFAULT_RETIRE_AFTER_SESSIONS
+                    .to_string()
+                    .as_str()
+            )
+        );
+        assert_eq!(
+            compiled_default("skills.merge_similarity").as_deref(),
+            Some(
+                crate::skills::MERGE_SIMILARITY_THRESHOLD
+                    .to_string()
+                    .as_str()
+            )
+        );
+        assert_eq!(
+            compiled_default("FLEET_CONCURRENCY").as_deref(),
+            Some(crate::agent::DELEGATION_CONCURRENCY.to_string().as_str())
+        );
+        assert_eq!(
+            compiled_default("FLEET_WEB_CACHE_TTL_SECS").as_deref(),
+            Some(crate::web_cache::DEFAULT_TTL_SECS.to_string().as_str())
+        );
+        assert_eq!(
+            compiled_default("FLEET_EMBEDDING_ENDPOINT").as_deref(),
+            Some(crate::memory::DEFAULT_EMBEDDING_ENDPOINT)
+        );
+        // The gate's own defaults, and the approval mode's.
+        let gates = crate::route::Gates::default();
+        assert_eq!(
+            compiled_default("gates.min_confidence").as_deref(),
+            Some(gates.min_confidence.to_string().as_str())
+        );
+        assert_eq!(
+            compiled_default("gates.default_workload").as_deref(),
+            Some(gates.default_workload)
+        );
+        assert_eq!(
+            compiled_default("gates.allow_api_models").as_deref(),
+            Some(gates.allow_api_models.to_string().as_str())
+        );
+        assert_eq!(
+            compiled_default("approvals").as_deref(),
+            Some(crate::approvals::resolve(None, None).label())
+        );
+        // A setting whose unset state IS its default answers none.
+        assert_eq!(compiled_default("pin"), None);
+        assert_eq!(compiled_default("not-a-setting"), None);
+    }
+
     #[test]
     fn the_disabled_list_round_trips_and_enables_remove() {
         let home = std::env::temp_dir().join(format!("fleet-life-{}", std::process::id()));

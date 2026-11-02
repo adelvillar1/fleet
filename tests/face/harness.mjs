@@ -5173,7 +5173,7 @@ async function theSettingsBoardAnswersForItself() {
   });
   const scalars = [
     { key: 'runs.max_turns', value: '12', kind: 'number', source: 'file',
-      summary: 'turns', ceiling: 20, default: null },
+      summary: 'turns', ceiling: 20, default: '100' },
     { key: 'approvals', value: 'ask', kind: 'choice', source: 'file',
       summary: 'whether tool calls ask', choices: ['ask', 'yes', 'yes-guarded'],
       default: 'yes-guarded' },
@@ -5285,6 +5285,9 @@ async function theSettingsBoardAnswersForItself() {
     String(c.body).includes('"key":"runs.max_turns"'));
   check('U2 the revert writes the override away', unset.length === 1,
     JSON.stringify(revert.calls.map((c) => c.body)));
+  check('U2 the card names what the revert returns to',
+    /the compiled default is 100/.test(revert.text('dock-object-body')),
+    revert.text('dock-object-body').slice(0, 160));
 
   // U5 — each refusal derivation carries its next step. The env line, the
   // ceiling line and the vault's own sentence.
