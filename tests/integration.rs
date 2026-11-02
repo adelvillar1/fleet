@@ -10899,6 +10899,7 @@ async fn what_the_model_saw_is_the_request_itself() {
         None,
         Some(gui_line.as_str()),
         &FileAccess::Unrestricted,
+        false,
     );
     // The system prompt is the first message's content, byte for byte.
     assert_eq!(

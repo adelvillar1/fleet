@@ -1341,6 +1341,13 @@ struct PendingHits {
     shape: Option<&'static str>,
 }
 
+/// What plan mode tells the model it is (tool-surface C0). The refusal
+/// at the gate is half the contract; this is the other half — the model
+/// reads the boundary before it reaches it, including the honest
+/// exception: `bash` is allowed for reading and is not made read-only,
+/// so the guarantee is tool-level, not shell-level.
+pub const PLAN_MODE_PROMPT: &str = "## Plan mode\n\nThis run is in plan mode: the write-class tools are refused by name at the gate — write_file, edit, apply_patch, computer_use, remember, supersede, improve, plan, and the design frame tools. Read and search freely; produce the plan as your final message, because it lands as the editable plan the owner builds from. The boundary is tool-level: bash is allowed and is not made read-only, so a plan must not use it to change files — the owner's review sees the plan, not the shell's side effects.";
+
 /// Plan mode's refusal for one tool, or `None` when the call is
 /// allowed. The write-class tools are refused by name; the shell is
 /// allowed because planning reads through it (`ls`, `cat`, `git log`),
@@ -1558,6 +1565,7 @@ impl<'a> Agent<'a> {
             self.options.goal.as_deref(),
             &self.options.file_access,
             execution.as_ref(),
+            self.options.plan_mode,
         )
     }
 
@@ -1588,7 +1596,7 @@ impl<'a> Agent<'a> {
     /// the role overlay, the surface line, the file access, and the
     /// execution head — in the order the loop has always composed them.
     #[allow(clippy::too_many_arguments)]
-    fn composed_prompt(
+    pub(crate) fn composed_prompt(
         identity: Option<&str>,
         skills: &[crate::skills::SkillRef],
         memory_block: Option<&str>,
@@ -1597,6 +1605,7 @@ impl<'a> Agent<'a> {
         goal: Option<&str>,
         file_access: &FileAccess,
         execution: Option<&crate::route::ExecutionHead>,
+        plan_mode: bool,
     ) -> String {
         let base = identity.unwrap_or(SYSTEM_PROMPT);
         let execution_line = execution.and_then(Self::execution_prompt_line);
@@ -1608,12 +1617,18 @@ impl<'a> Agent<'a> {
             && goal.is_none()
             && execution_line.is_none()
             && *file_access == FileAccess::Unrestricted
+            && !plan_mode
         {
             return default_prompt();
         }
         let mut prompt = String::from(base);
         prompt.push_str("\n\n");
         prompt.push_str(REPORTING_CONTRACT);
+        // C0: the boundary the model reads before it reaches it.
+        if plan_mode {
+            prompt.push_str("\n\n");
+            prompt.push_str(PLAN_MODE_PROMPT);
+        }
         // The execution verdict the leader hears (C3): one compiled-in
         // line when the judgment named this request a decomposition,
         // none otherwise. The line names the tool that decomposes; it
@@ -1699,6 +1714,7 @@ impl<'a> Agent<'a> {
         identity: Option<&str>,
         gui_prompt: Option<&str>,
         file_access: &FileAccess,
+        plan_mode: bool,
     ) -> serde_json::Value {
         use crate::session::Record;
         // The run's reconstructable facts, in record order. A lane's
@@ -1735,6 +1751,7 @@ impl<'a> Agent<'a> {
             goal,
             file_access,
             execution,
+            plan_mode,
         );
         let Conversation { messages, .. } = crate::session::conversation(records);
         let mut request_messages = Vec::with_capacity(messages.len() + 1);
@@ -8533,6 +8550,43 @@ mod tests {
     /// the read tools are not. The shell rides through, because planning
     /// reads through it — the gate is the floor, the prompt is the intent.
     #[test]
+    fn the_plan_mode_prompt_states_the_boundary_and_the_bash_exception() {
+        // Tool-surface C0: the refusal at the gate is half the contract;
+        // this is the other half — the model reads the boundary, and the
+        // bash exception is stated, not implied.
+        let prompt = Agent::composed_prompt(
+            None,
+            &[],
+            None,
+            None,
+            None,
+            None,
+            &FileAccess::Unrestricted,
+            None,
+            true,
+        );
+        assert!(prompt.contains("## Plan mode"), "{prompt}");
+        assert!(prompt.contains("refused by name"), "{prompt}");
+        assert!(
+            prompt.contains("bash is allowed and is not made read-only"),
+            "the exception is stated: {prompt}"
+        );
+        // And a run not in plan mode carries none of it.
+        let plain = Agent::composed_prompt(
+            None,
+            &[],
+            None,
+            None,
+            None,
+            None,
+            &FileAccess::Unrestricted,
+            None,
+            false,
+        );
+        assert!(!plain.contains("Plan mode"), "{plain}");
+    }
+
+    #[test]
     fn plan_mode_refuses_the_write_class_and_allows_the_reads() {
         assert!(
             plan_refusal(false, "write_file").is_none(),
@@ -9108,7 +9162,7 @@ mod tests {
             },
         ];
         let tool_names = |records: &[Record]| {
-            let doc = Agent::reconstruct_document(records, None, None, &FileAccess::None);
+            let doc = Agent::reconstruct_document(records, None, None, &FileAccess::None, false);
             doc["tools"]
                 .as_array()
                 .unwrap()

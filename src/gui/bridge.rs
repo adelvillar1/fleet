@@ -70,7 +70,7 @@ const BROADCAST_DEPTH: usize = 256;
 /// panel can re-anchor the face to an archived log, which is what the
 /// TUI's picker always did. The view side reseeds before the command is
 /// sent, so a resumed face never shows the old conversation's tail.
-pub(crate) enum Command {
+pub enum Command {
     /// Run this task in this session, working in `folder` when the
     /// chat names one. The session is part of the command because the
     /// thread drives more than one: a phone and a desktop may each be
@@ -93,24 +93,24 @@ pub(crate) enum Command {
 /// The agent thread's inputs, as one struct because the thread's own
 /// function already reads its seven neighbours and clippy counts
 /// arguments.
-struct AgentInputs {
-    home: PathBuf,
-    model: String,
+pub struct AgentInputs {
+    pub home: PathBuf,
+    pub model: String,
     /// The session to log runs in, when one already exists — a resumed
     /// session. `None` is the launch case, and the log is created on the
     /// first run rather than at launch (KI-022).
-    session_id: Option<String>,
-    ui_tx: UnboundedSender<UiEvent>,
-    approval_tx: UnboundedSender<ApprovalRequest>,
-    command_rx: UnboundedReceiver<Command>,
-    base_url: String,
+    pub session_id: Option<String>,
+    pub ui_tx: UnboundedSender<UiEvent>,
+    pub approval_tx: UnboundedSender<ApprovalRequest>,
+    pub command_rx: UnboundedReceiver<Command>,
+    pub base_url: String,
     /// The corpus root the consolidator walks — the same root the
     /// browser's memory panel reads, resolved once by the bridge.
-    memories_root: PathBuf,
+    pub memories_root: PathBuf,
     /// The shared face state, so the thread can name the session it is
     /// driving: the events it emits have to land in that session's log,
     /// and the thread is the only place that knows which one is running.
-    state: Arc<Mutex<GuiState>>,
+    pub state: Arc<Mutex<GuiState>>,
 }
 
 /// One attached session's live face: its ordered event log, whether a
@@ -164,7 +164,7 @@ fn epoch_millis() -> u64 {
 /// somewhere else — and the driving session is the one whose events are
 /// crossing the wire, which is exact because the thread's command loop
 /// is serial.
-struct GuiState {
+pub struct GuiState {
     sessions: std::collections::HashMap<String, SessionState>,
     /// A re-run waiting on its seat (D11): the ask-class call the owner
     /// pressed re-run on, standing the seat the run path would stand.
@@ -308,7 +308,10 @@ pub struct Bridge {
     /// harness's config — the own-home ruling, applied to a browser that
     /// can now ask for a file.
     cwd: PathBuf,
-    state: Arc<Mutex<GuiState>>,
+    /// The face's live state, shared with the agent thread. `pub` for
+    /// the SSE contract test (gui-revamp C1), which needs the same
+    /// handle the launch's own thread gets.
+    pub state: Arc<Mutex<GuiState>>,
     rules: Arc<Mutex<approvals::Rules>>,
     events: broadcast::Sender<Value>,
     /// The welcome's one bounded read: the run archive, the corpus
@@ -463,7 +466,11 @@ impl Bridge {
     /// Crate-private because a door is not something the outside hands
     /// out: the only doors are the one `spawn` opens and the one a test
     /// opens standing in for it.
-    pub(crate) fn connect(&mut self) -> tokio::sync::mpsc::UnboundedReceiver<Command> {
+    /// The browser face's end of the command channel: what the caller
+    /// feeds drives the runs. `pub` because the SSE contract test
+    /// (gui-revamp C1) walks the same three pieces the launch does —
+    /// detached, connect, the thread — against a real mock route.
+    pub fn connect(&mut self) -> tokio::sync::mpsc::UnboundedReceiver<Command> {
         let (commands, receiver) = tokio::sync::mpsc::unbounded_channel();
         self.commands = Some(commands);
         receiver
@@ -2037,6 +2044,7 @@ impl Bridge {
                 identity.as_deref(),
                 Some(gui_prompt.as_str()),
                 &crate::agent::FileAccess::Unrestricted,
+                false,
             ))
         })
         .await;
@@ -9833,6 +9841,15 @@ fn clear_control(path: &std::path::Path) {
 /// never wait on the network or on a tool. The shape is `spawn_agent`'s
 /// in the TUI, call for call; the differences are the prompt line and
 /// the approver, and both are the point of this face.
+/// The agent thread, visible to the crate's own integration test
+/// (gui-revamp C1): the face's SSE contract is what a *real* run emits,
+/// and only a real thread over a real mock route can emit it. The
+/// production path is `Bridge::detached` + `connect` + this spawn, and
+/// the test walks exactly that.
+pub fn spawn_agent_for_tests(inputs: AgentInputs) -> thread::JoinHandle<()> {
+    spawn_agent(inputs)
+}
+
 fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
     thread::spawn(move || {
         let AgentInputs {

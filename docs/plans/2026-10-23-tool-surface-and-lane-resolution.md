@@ -359,7 +359,7 @@ refused), and the calls per completed task.
 
 ## Acceptance criteria
 
-- [ ] **C0 — the surface stops lying.** `vision` refuses an absolute
+- [x] **C0 — the surface stops lying.** *(2026-11-02: complete — the one missing half, the plan-mode prompt, now states the boundary and the bash exception before the model reaches it (`PLAN_MODE_PROMPT`, pinned by `the_plan_mode_prompt_states_the_boundary_and_the_bash_exception`); the refusal, the media sniff, the atomic write, the exact supersede match, the artifact-bearing computer_use and the TUI seeding were already landed and pinned.)*  `vision` refuses an absolute
   path and any path outside the run root, canonicalizes before reading,
   and sniffs the media type instead of defaulting to PNG
   (`src/agent.rs:923-975`). Plan mode refuses every file-writing tool by
@@ -449,7 +449,7 @@ refused), and the calls per completed task.
   the candidates; a path that does not exist lists the three nearest
   actual entries; a defaulted argument names its source. A test asserts
   no model request is made while resolving an argument.
-- [ ] **C14 — old results become artifacts.** After a fold, an old
+- [x] **C14 — old results become artifacts.** *(2026-11-02: `an_elided_result_names_its_tool_and_its_artifact` — the 30-call fixture, the stub naming read_file and the artifact path, every path existing, and the spilled result recovered with `read_file`.)* After a fold, an old
   result is a stub naming tool, bytes, and path; every path in the
   stubs exists. A 30-call fixture compacts and recovers a spilled
   result with `read_file`.
@@ -706,6 +706,6 @@ collected in `docs/plans/2026-11-02-completed-plan-residuals.md`.
 | C11 | partial | the profile follows the verdict; `prose` starts read/write/glob rather than web, and no deep_context/low-confidence test |
 | C12 | partial | warm→healthy selection exists; no failover retry, and the chosen reason is computed then dropped |
 | C13 | partial | nearest-3 path suggestions and the defaults note land; no model/catalog enum and no no-model-request test |
-| C14 | partial | the elision stub says `[tool output elided … N bytes]` — no tool name and no artifact path |
+| C14 | **shipped** | the stub names the tool and the artifact path; the 30-call fixture recovers the spilled result |
 | C15 | **shipped** | pagination, cancel, image artifacts and pre-join refusal land; `readOnlyHint` now selects the read tier and `structuredContent` is validated against the declared `outputSchema`, the mismatch named beside the answer (`docs/features/mcp.md`'s "The typed answer, and the hints") |
 | C16 | partial | the tools card and its screenshot exist; the card has no deferred count, and the gate run is not recorded here |

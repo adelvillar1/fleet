@@ -531,7 +531,9 @@ panel:
   write-class tools by name at the gate — its child delegations inherit
   the floor — and its final message records as a `plan` the browser
   renders editable, with Build posting the edited text as an ordinary
-  run.
+  run. The run's prompt states the boundary before the model reaches it,
+  including the honest exception: `bash` is allowed and is not made
+  read-only, so the guarantee is tool-level, not shell-level.
 - **Diff review.** `/review` measures the tree against a checkpoint and
   renders each file's changes as hunks; a reject puts that hunk's
   checkpoint lines back and re-reads the diff rather than pretending the
