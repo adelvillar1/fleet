@@ -16871,6 +16871,19 @@
     if (!bar) return;
     bar.addEventListener('pointerdown', function (event) {
       if (event.button !== 0) return;
+      // The bar's own controls own their gesture: a press on a button
+      // or the set picker must not become a drag — the preventDefault
+      // and capture below cancel the click before it reaches the
+      // control, which is how every act on this bar went dead in a
+      // real browser while the harness (which drives listeners
+      // directly, with no default-action suppression) stayed green.
+      // Found by the gallery shoot, 2026-11-02.
+      var target = event.target;
+      if (target && target.closest &&
+        target.closest('button, select, a, input')) {
+        designSelect(frame.id);
+        return;
+      }
       event.preventDefault();
       event.stopPropagation();
       designSelect(frame.id);
@@ -16912,13 +16925,14 @@
     // The mode follows the focus (the owner's rule): a page means
     // refine, no page returns to the board's default — and a choice
     // the focus does not allow falls back rather than silently
-    // sending the wrong verb.
+    // sending the wrong verb. The options rebuild with it, so the
+    // select never shows a verb the list does not carry.
     var want = id ? 'refine' : 'generate';
     var modes = designModes(designBoard() || {});
     if (modes.some(function (mode) { return mode.value === want; })) {
       face.designModeChoice = want;
     }
-    designApplyModeChoice();
+    designPaintModes();
   }
 
   /// The focus chip: what this request is about — the board, or the
@@ -16941,6 +16955,22 @@
         ? 'refine this page, or ask about it'
         : 'ask about the board, or say what to design';
     }
+  }
+
+  /// The mode select's options follow the selection — rebuilt wherever
+  /// the focus changes, not only on a full paint: a page's verbs must
+  /// exist the moment it is selected (the gallery screenshot caught a
+  /// blank select until the next read repaint).
+  function designPaintModes() {
+    var board = designBoard();
+    if (!board || !el.designMode) return;
+    el.designMode.textContent = '';
+    designModes(board).forEach(function (mode) {
+      var option = node('option', null, mode.label);
+      option.value = mode.value;
+      el.designMode.appendChild(option);
+    });
+    designApplyModeChoice();
   }
 
   /// The mode select holds the choice the focus allows: the list is
@@ -17769,13 +17799,7 @@
     el.designChatLog.scrollTop = el.designChatLog.scrollHeight;
     // The verbs, by what the selection allows — and the choice the
     // focus permits lands after the list does.
-    el.designMode.textContent = '';
-    designModes(board).forEach(function (mode) {
-      var option = node('option', null, mode.label);
-      option.value = mode.value;
-      el.designMode.appendChild(option);
-    });
-    designApplyModeChoice();
+    designPaintModes();
     // The reference: the site the board models, and the pages it points
     // at — the owner picks the ones a redesign should read.
     var reference = board.reference || null;

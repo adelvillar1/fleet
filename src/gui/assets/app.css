@@ -8070,6 +8070,10 @@ body[data-work="collapsed"] .work-list { display: none; }
    only then a shrink — a select that cannot show its value is a knob
    nobody can read. */
 .design-chat-row select { min-width: 0; flex: 1 1 120px; max-width: 100%; }
+/* The mode's value names the act AND its subject ("refine — Landing"),
+   so it keeps the row's widest share and ellipsizes rather than
+   clipping mid-word: a cut verb reads as a different verb. */
+#design-mode-select { flex: 2 1 150px; text-overflow: ellipsis; }
 .design-chat-row .replay-button { flex: 0 0 auto; }
 .design-chat-model { flex-wrap: nowrap; }
 .design-chat-model .knob-box { flex: 1 1 auto; min-width: 0; }
