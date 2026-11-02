@@ -38,6 +38,20 @@ pub mod server;
 pub mod themes;
 pub mod usage;
 
+/// The join proof for a relay deployment (KI-393): resolved through the
+/// own-home chain every other credential uses — the process environment
+/// wins, `<FLEET_HOME>/.env` (with the vault laid over) falls back, and
+/// an empty value counts as unset. The relay check used to read the
+/// process environment alone while its comment claimed this chain, so a
+/// face launched outside an exporting shell (launchd, a script) refused
+/// at launch even with its proof sitting in `.env`.
+fn relay_join_proof(home: &std::path::Path, name: &str) -> Option<String> {
+    let dotenv = crate::home::read_dotenv_with_process_vault(home);
+    crate::home::resolve_setting(name, &dotenv)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
 use std::process::Command;
 use std::sync::Arc;
 
@@ -299,17 +313,14 @@ pub async fn serve(options: GuiOptions) -> Result<(), String> {
         let sid = listener.device_session();
         let hash = listener.device_secret();
         // The join proof: the deployment's secret, resolved through the
-        // own-home chain (process env, or <FLEET_HOME>/.env loaded
-        // before this runs). Absent is a named refusal at launch — the
-        // relay would refuse the join anyway (KI-367), and a dial that
-        // cannot authenticate says so before it tries.
-        let join_secret = std::env::var("FLEET_RELAY_JOIN_SECRET")
-            .ok()
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
+        // own-home chain (process env, or <FLEET_HOME>/.env — KI-393
+        // made the code match these words). Absent is a named refusal at
+        // launch — the relay would refuse the join anyway (KI-367), and a
+        // dial that cannot authenticate says so before it tries.
+        let join_secret = relay_join_proof(&bridge.home_path(), "FLEET_RELAY_JOIN_SECRET")
             .ok_or_else(|| {
                 "fleet gui --relay needs FLEET_RELAY_JOIN_SECRET (env, or <FLEET_HOME>/.env): \
- the relay refuses a join that carries no session proof"
+                 the relay refuses a join that carries no session proof"
                     .to_string()
             })?;
         let keys = Arc::new(std::sync::Mutex::new(
@@ -371,14 +382,12 @@ pub async fn serve(options: GuiOptions) -> Result<(), String> {
             );
         };
         // The bot relay is its own deployment, so it carries its own
-        // join proof — same rule, its own name (KI-367).
-        let join_secret = std::env::var("FLEET_BOT_RELAY_JOIN_SECRET")
-            .ok()
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
+        // join proof — same rule, its own name (KI-367), the same chain
+        // as the console's (KI-393).
+        let join_secret = relay_join_proof(&bridge.home_path(), "FLEET_BOT_RELAY_JOIN_SECRET")
             .ok_or_else(|| {
                 "fleet gui --bot-relay needs FLEET_BOT_RELAY_JOIN_SECRET (env, or <FLEET_HOME>/.env): \
- the relay refuses a join that carries no session proof"
+                 the relay refuses a join that carries no session proof"
                     .to_string()
             })?;
         let keys = Arc::new(std::sync::Mutex::new(
@@ -453,5 +462,51 @@ fn open_browser(url: &str) -> Result<(), String> {
         Ok(())
     } else {
         Err(format!("{program} exited with {status}"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::relay_join_proof;
+
+    /// KI-393: the join proof resolves through the own-home chain — a
+    /// name living in the home's `.env` answers (the launchd face's
+    /// case), the process environment wins when it carries the name,
+    /// and an absent name is None — the named refusal the caller
+    /// raises. The name is test-unique so a process-level value (or a
+    /// parallel test's set) can never reach these assertions.
+    #[test]
+    fn the_join_proof_reads_the_env_then_the_home_dotenv() {
+        let name = "FLEET_TEST_RELAY_PROOF_393";
+        std::env::remove_var(name);
+        let home = std::env::temp_dir().join(format!(
+            "fleet-join-proof-{}-{}",
+            std::process::id(),
+            name.len()
+        ));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        // Absent everywhere: None — the refusal's own answer.
+        assert_eq!(relay_join_proof(&home, name), None);
+        // The `.env` fallback: the launchd/nohup case that KI-393 named.
+        std::fs::write(home.join(".env"), format!("{name}=from-dotenv\n")).unwrap();
+        assert_eq!(
+            relay_join_proof(&home, name).as_deref(),
+            Some("from-dotenv"),
+            "the home's .env answers when the process env is silent"
+        );
+        // The process environment wins over the file.
+        std::env::set_var(name, "from-env");
+        assert_eq!(
+            relay_join_proof(&home, name).as_deref(),
+            Some("from-env"),
+            "a scripted export outranks the file"
+        );
+        std::env::remove_var(name);
+        // An empty value counts as unset — the file's blank line is not
+        // a proof.
+        std::fs::write(home.join(".env"), format!("{name}=\n")).unwrap();
+        assert_eq!(relay_join_proof(&home, name), None);
+        let _ = std::fs::remove_dir_all(&home);
     }
 }
