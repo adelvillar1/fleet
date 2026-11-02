@@ -2763,6 +2763,21 @@ body[data-object-card="open"] .dock-object {
 
 .seat-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 
+/* The seat's answer keys (gui-revamp C12): the digit rides the button
+   it answers, quiet until the seat is up. */
+.decision-key {
+  display: inline-block;
+  min-width: 16px;
+  margin-right: 4px;
+  padding: 1px 5px;
+  border: var(--card-hairline);
+  border-radius: 5px;
+  background: var(--dsw-alias-surface-raised);
+  color: var(--dsw-alias-ink-tertiary);
+  font-size: 10px;
+  font-weight: 600;
+  text-align: center;
+}
 .decision {
   min-height: 34px;
   padding: 7px 14px;

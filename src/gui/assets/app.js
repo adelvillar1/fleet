@@ -2095,6 +2095,10 @@
       line.tabIndex = 0;
       var open = function (stop) {
         if (stop && stop.target && stop.target.closest && stop.target.closest('.row-rewind')) return;
+        // C11: the folded line is a summary of a record the owner can
+        // still reach, not a hole. The drawer is the record — the same
+        // pane every row's card opens — so the strip keeps the transcript
+        // short without hiding anything the conversation saw.
         openDrawer(one.kind, [
           ['the record', node('pre', 'raw', JSON.stringify(one.event || {}, null, 2))]
         ]);
@@ -2714,9 +2718,16 @@
         face.running = true;
         face.seat = event;
         face.seatSince = event.since || Date.now();
-        // KI-380: the cue moves to the tab itself, where a dead page's
-        // styling cannot reach it.
+        // C12: the seat is the one thing on screen that needs an answer,
+        // so it takes the focus — but never out from under words the
+        // owner is mid-way through. An empty composer yields; words in
+        // it keep their focus, and the digits stay the owner's.
         paintTabCue();
+        paintSeat();
+        if (el.seatActions && !el.seatActions.hidden && !el.task.value) {
+          var first = el.seatActions.querySelector('.decision');
+          if (first && first.focus) first.focus();
+        }
         break;
       case 'seat_cleared':
         face.seat = null;
@@ -2933,11 +2944,16 @@
   // honour it. Offering a promise the one writer refuses is the kind of
   // lie this face exists to not tell — so a destructive call is asked
   // every time, and the seat says why rather than hiding a button.
+  // The seat's answers, and the keys that answer without the mouse
+  // (gui-revamp C12): 1 allow, 2 allow for the run, 3 deny, 4 remember.
+  // A digit typed anywhere the owner is not already typing lands on the
+  // seat, because the seat is the one thing on screen that needs an
+  // answer and the owner's hands are usually on the keys.
   var DECISIONS = [
-    ['once', 'Yes', 'allow this call'],
-    ['always', 'Yes, and the rest of this run', 'allow this call and its class until the run ends'],
-    ['deny', 'No', 'refuse this call'],
-    ['remember', 'Yes, and don\u2019t ask again', 'allow this call and write the rule through the one writer']
+    ['once', '1', 'Yes', 'allow this call'],
+    ['always', '2', 'Yes, and the rest of this run', 'allow this call and its class until the run ends'],
+    ['deny', '3', 'No', 'refuse this call'],
+    ['remember', '4', 'Yes, and don\u2019t ask again', 'allow this call and write the rule through the one writer']
   ];
 
   /// The seat, on the design page's own panel. A run started from the
@@ -2963,10 +2979,12 @@
     var acts = node('div', 'canvas-inline');
     DECISIONS.forEach(function (pair) {
       if (pair[0] === 'remember' && !seat.allowlistable) return;
-      var button = node('button', 'decision', pair[1]);
+      var button = node('button', 'decision', pair[2]);
       button.type = 'button';
       button.dataset.decision = pair[0];
-      button.title = pair[2];
+      button.title = pair[3] + ' \u00b7 key ' + pair[1];
+      button.appendChild(node('span', 'decision-key', pair[1]));
+      button.appendChild(document.createTextNode(' ' + pair[2]));
       button.addEventListener('click', function () { answer(pair[0]); });
       acts.appendChild(button);
     });
@@ -2994,10 +3012,12 @@
     el.seatActions.textContent = '';
     DECISIONS.forEach(function (pair) {
       if (pair[0] === 'remember' && !seat.allowlistable) return;
-      var button = node('button', 'decision', pair[1]);
+      var button = node('button', 'decision', pair[2]);
       button.type = 'button';
       button.dataset.decision = pair[0];
-      button.title = pair[2];
+      button.title = pair[3] + ' \u00b7 key ' + pair[1];
+      button.appendChild(node('span', 'decision-key', pair[1]));
+      button.appendChild(document.createTextNode(' ' + pair[2]));
       button.addEventListener('click', function () { answer(pair[0]); });
       el.seatActions.appendChild(button);
     });
@@ -22077,8 +22097,28 @@
   // it, and a pane holding a file stays up while the hash walks home —
   // close-when-empty, home-when-file-open.
   window.addEventListener('keydown', function (event) {
-    var typing = document.activeElement === el.paletteInput
-      || document.activeElement === el.task;
+    // C12: the seat answers without the mouse. A digit answers when the
+    // focus is already the seat's — the seat took it when it arrived —
+    // or nothing in particular is focused. An input holding the focus
+    // is the owner typing, and the digits stay their words.
+    var seatHoldsFocus = document.activeElement &&
+      document.activeElement.classList &&
+      document.activeElement.classList.contains('decision');
+    var nothingFocused = !document.activeElement ||
+      document.activeElement === document.body ||
+      document.activeElement === document.documentElement;
+    var inAnInput = document.activeElement &&
+      (document.activeElement.tagName === 'INPUT' ||
+       document.activeElement.tagName === 'TEXTAREA' ||
+       document.activeElement.isContentEditable);
+    if (face.seat && (seatHoldsFocus || nothingFocused) && !inAnInput &&
+        event.key >= '1' && event.key <= '4') {
+      var index = Number(event.key) - 1;
+      if (index === 3 && !face.seat.allowlistable) return;
+      event.preventDefault();
+      answer(DECISIONS[index][0]);
+      return;
+    }
     if ((event.metaKey || event.ctrlKey) && (event.key === 'k' || event.key === 'K')) {
       event.preventDefault();
       if (el.palette.hidden) openPalette(); else closePalette();

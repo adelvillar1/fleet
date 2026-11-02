@@ -212,9 +212,22 @@ class El {
   removeAttribute(k) { delete this.attrs[k]; }
   addEventListener(kind, fn) { (this.listeners[kind] = this.listeners[kind] || []).push(fn); }
   removeEventListener() {}
-  // A real focus is observable; the stub records it so a boot's
-  // autofocus is a fact a case can assert.
-  focus() { this.focused = true; }
+  // A real focus is observable, and document.activeElement tracks it:
+  // the boot's autofocus and the seat's typing guard both read it, so
+  // the stub keeps the same fact a browser keeps.
+  focus() {
+    this.focused = true;
+    if (typeof DOCUMENT_REF !== 'undefined' && DOCUMENT_REF.current) {
+      DOCUMENT_REF.current.activeElement = this;
+    }
+  }
+  blur() {
+    this.focused = false;
+    if (typeof DOCUMENT_REF !== 'undefined' && DOCUMENT_REF.current &&
+        DOCUMENT_REF.current.activeElement === this) {
+      DOCUMENT_REF.current.activeElement = null;
+    }
+  }
   blur() {}
   scrollIntoView() {}
   setSelectionRange() {}
@@ -262,6 +275,9 @@ const PAGE_IDS = [...HTML.matchAll(/id="([^"]+)"/g)].map((m) => m[1]);
 // ---------------------------------------------------------------- pages
 
 let timerIds = 0;
+// The active document the El.focus/blur pair tracks — assigned at boot,
+// because the El class is built before any document exists.
+const DOCUMENT_REF = { current: null };
 function boot(options) {
   const opts = { width: 1440, ...options };
   const IDS = {};
@@ -269,6 +285,10 @@ function boot(options) {
   const body = new El('body');
   const documentElement = new El('html');
   documentElement.children = Object.values(IDS);
+  // The document's own element: a face that sets a data-build tag or
+  // reads --pane-width walks document.documentElement, and the stub
+  // keeps the same path. Assigned after document_ exists — see below.
+  const DOCUMENT_ELEMENT_REF = documentElement;
   // A static `hidden` attribute is the element's real initial state: the
   // pane, the drawer, the work column all boot hidden, and a face that
   // toggles them reads the attribute, not a stub default.
@@ -702,14 +722,14 @@ function boot(options) {
     querySelector: (sel) => document_.documentElement.querySelector(sel) || null,
     querySelectorAll: (sel) => document_.documentElement.querySelectorAll(sel),
     addEventListener: () => {},
-    documentElement,
-    body,
-    hidden: false,
-    title: 'fleet',
     activeElement: null,
   };
-  // The page's own tree, so document-wide queries walk it.
-  documentElement.children = Object.values(IDS);
+  // The El.focus/blur pair tracks this document's activeElement — the
+  // seat's typing guard and the boot's autofocus both read it — and the
+  // document carries its own element for the tags the face sets on it.
+  DOCUMENT_REF.current = document_;
+  document_.documentElement = DOCUMENT_ELEMENT_REF;
+  document_.body = body;
 
   const windowListeners = {};
   // The hash is a route: a real browser fires hashchange on every
@@ -1950,6 +1970,64 @@ async function returningIsAnchored() {
   const failNote = page.sandbox.Notification.instances.slice(-1)[0];
   check('C6 a hidden tab is told the run ended',
     failNote && failNote.title.includes('failed'), JSON.stringify(failNote));
+}
+
+// gui-revamp C12: the seat answers without the mouse — a digit the
+// owner was not typing is the answer, and the allowlistable seat's
+// remember writes through the one writer.
+async function theSeatAnswersFromTheKeys() {
+  const page = boot({
+    width: 1440, hash: '#/chat',
+    documents: { state: (asked) => emptyState(asked) },
+  });
+  await flush();
+  page.open();
+  await flush();
+  page.push({ type: 'seat', tool: 'bash', label: 'run a command',
+    summary: 'echo hi', allowlistable: true });
+  await flush(60);
+  // The handler reads `window.__seatProbe`: the face's `window` is the
+  // stub's window_, a distinct object from the sandbox itself.
+  page.window.__seatProbe = [];
+  const buttons = page.rows('.decision');
+  check('C12 the seat names its keys',
+    buttons.length === 8 && buttons[0].textContent.includes('1') &&
+      buttons[3].textContent.includes('4'),
+    buttons.map((one) => one.textContent).join(' | '));
+  // A digit the owner was not typing answers the seat.
+  page.fireWindow('keydown', { key: '1' });
+  await flush(120);
+  const answered = page.calls.filter((c) => c.method === 'POST' &&
+    c.url.startsWith('/api/approve') && String(c.body).includes('"decision":"once"'));
+  check('C12 key 1 answers once', answered.length === 1,
+    JSON.stringify(answered.map((c) => c.body)) + ' / probe=' +
+      JSON.stringify((page.window.__seatProbe || []).slice(0, 3).map((one) => one.el)));
+
+  // 4 remembers through the one writer.
+  page.push({ type: 'seat', tool: 'grep', label: 'search',
+    summary: 'pattern', allowlistable: true });
+  await flush(60);
+  page.fireWindow('keydown', { key: '4' });
+  await flush(120);
+  const remembered = page.calls.filter((c) => c.method === 'POST' &&
+    String(c.body).includes('"decision":"remember"'));
+  check('C12 key 4 remembers through the one writer', remembered.length === 1,
+    JSON.stringify(remembered.map((c) => c.body)));
+
+  // A digit typed into the composer is the owner's words, never an
+  // answer: the guard reads document.activeElement, which the stub's
+  // focus() sets on the task.
+  page.push({ type: 'seat', tool: 'bash', label: 'run again',
+    summary: 'echo hi', allowlistable: true });
+  await flush(60);
+  page.IDS.task.value = '4 is my text';
+  page.IDS.task.focus();
+  page.fireWindow('keydown', { key: '4' });
+  await flush(80);
+  const after = page.calls.filter((c) => c.method === 'POST' &&
+    String(c.body).includes('"decision"')).length;
+  check('C12 a digit while typing is the owner\u2019s words', after === 2,
+    String(after));
 }
 
 // C7 (artifacts and clickable paths): the finished run's receipt lists
@@ -7026,6 +7104,7 @@ const cases = [
   ['N3 the rail badge says where the work is', theRailBadgeSaysWhereTheWorkIs],
   ['Q the queued messages carry their actions', theQueuedMessagesCarryTheirActions],
   ['REV the diff offers both verdicts per hunk', theDiffOffersBothVerdictsPerHunk],
+  ['C12 the seat answers from the keys', theSeatAnswersFromTheKeys],
   ['QCON the queue reorders by drag and drains when the run ends', theQueueReordersByDragAndDrainsWhenTheRunEnds],
   ['QCON a live turn\u2019s rewind returns when the run ends', aLiveTurnsRewindReturnsWhenTheRunEnds],
   ['P the pane is one surface with the owner\u2019s hand on it', thePaneIsOneSurfaceWithTheOwnersHandOnIt],

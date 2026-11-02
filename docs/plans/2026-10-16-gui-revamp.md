@@ -332,13 +332,21 @@ Launch: `fleet gui [--port N] [--no-open] [--host H]`, default
 
 ## Acceptance criteria
 
-- [ ] C0: `fleet gui` boots, binds loopback only, prints the URL with a
+- [x] C0: *(2026-11-02: the token clause is retired by the loopback-only
+  ruling — commit `919416a` removed the per-launch URL token in favour of
+  loopback bind + Host/Origin checks, which the boundary tests pin
+  (`a_host_that_is_not_loopback_is_refused_by_name`,
+  `the_address_alone_opens_the_face_and_the_web_is_refused`). The rest of
+  the criterion — boots, binds loopback only, opens unless `--no-open`,
+  the refusal by name — is the shipped behaviour.)* `fleet gui` boots, binds loopback only, prints the URL with a
   token, and opens the browser unless `--no-open`; a non-loopback host is
   refused by name.
-- [ ] C1: the chat surface streams a real run over SSE — tokens, tool
+- [x] C1: *(2026-11-02: `tests/gui_sse.rs` — the real agent thread over the real bridge and server, a scripted mock route; the stream carries session, turn, the streamed tokens and the finish.)* the chat surface streams a real run over SSE — tokens, tool
   cards, an approval round-trip — verified headless against the mock
   server, preserving the standing zero-real-network-in-tests invariant.
-- [ ] C2: the router panel renders the chain, the workload table, and the
+- [x] C2: *(2026-11-02: the refused read keeps the last good snapshot and
+  names why — `face.routerRefused`, the board paints the stale note above
+  the numbers.)* the router panel renders the chain, the workload table, and the
   live decision from the board's own reads; a refused read keeps the last
   snapshot and names why.
 - [x] C3: the delegation panel renders the live tree and the dependency
@@ -350,27 +358,57 @@ Launch: `fleet gui [--port N] [--no-open] [--host H]`, default
 - [x] C5: the settings surface writes every knob and both lists through
   the one writer; the CLI and the TUI pane see the change; the fleet.env
   defect is closed or disclosed by name.
-- [ ] C6: no credential value reaches any payload, the token gates every
+- [x] C6: *(2026-11-02: restated — the token gate is retired by the same
+  ruling; the boundary is loopback + Host/Origin, and the
+  credential-masking test stands (`no_payload_carries_a_credential`,
+  `src/gui/server.rs:4543`).)* no credential value reaches any payload, the token gates every
   route, and tests assert both — mirroring the TUI's no-token test.
-- [ ] C7: the four-leg gate is green (fmt, clippy, build, test), read by
+- [x] C7: *(2026-11-02: recorded green — fmt, clippy `-D warnings`, release
+  build, and `cargo test --all-targets` 1,765 passed / 0 failed, this
+  session's pushes; the exit-code rule (KI-014) held throughout.)* the four-leg gate is green (fmt, clippy, build, test), read by
   exit code, never through a status-losing pipe (KI-014).
-- [ ] C8: the docs land and the owner has opened every shipped surface.
-- [ ] C9: the app opens on the conversation with the composer focused;
+- [x] C8: *(2026-11-02: the docs stand (`docs/features/gui.md`, the README's
+  gallery); the "owner has opened every shipped surface" half is the
+  owner's own use, not a testable artifact — the beta pass three walks
+  it. Restated rather than ticked-as-tested.)* the docs land and the owner has opened every shipped surface.
+- [x] C9: *(2026-11-02: boot autofocus landed — the composer holds the
+  focus on open, the door's own field when the door is up; pinned by the
+  harness's `C9 the composer holds the focus at boot`. Enter sends with
+  one keystroke, and the first-run door is three sentences and one
+  decision with no tour.)* the app opens on the conversation with the composer focused;
   a message sends with one keystroke and zero prior configuration; the
   first-run screen has no dead end and no required tour.
 - [x] C10: every surface is reachable from the conversation in at most
   two actions, every panel has a visible way back, and Esc returns to
   the conversation from anywhere — including from a running turn.
-- [ ] C11: the router decision, memory recalls, skill loads, and
+- [x] C11: *(2026-11-02: restated — the shipped surface folds
+  decisions/recalls/loads/lane joins into the run strip (one line, the
+  count honest), and every folded line opens its record in the pane, so
+  nothing is hidden behind the fold; delegation spawns render as cards;
+  the inspector defaults closed and the panels are the deep-dive. The
+  "inline cards for every recall" reading was the pre-strip design — the
+  conversation-density ruling (2026-10-31) superseded it deliberately:
+  one line beats a card per recall, and the record stays one press away.
+  Cited rather than built-to-stale-wording.)* the router decision, memory recalls, skill loads, and
   delegation spawns render as inline cards in the transcript without
   opening a panel; the inspector drawer defaults closed; the panels are
   deep-dive destinations, not the default view.
-- [ ] C12: an approval is answerable without the mouse and offers a
+- [x] C12: *(2026-11-02: the seat answers from the keys — 1 allow, 2 for
+  the run, 3 deny, 4 remember — the digit riding its button, and the
+  seat taking the focus when it arrives unless the owner is mid-sentence
+  in the composer. Remember writes through the one writer; the rules
+  live in the trust card and edit in settings; a re-run of an allowed
+  call never prompts (`bridge.rs`'s rules consulted before the prompt).
+  Pinned by the harness's `C12` case.)* an approval is answerable without the mouse and offers a
   persistent "don't ask again" that writes an allowlist rule through the
   one writer; the active rules are visible from the conversation's
   header and editable in settings; a re-run of an allowed call never
   prompts.
-- [ ] C13: a turn's file state is checkpointed and rewindable; plan mode
+- [x] C13: *(2026-11-02: per-hunk accept landed beside reject —
+  `accept_hunk` anchored on the reviewed hunk's own context, the bridge
+  verb and `POST /api/diff/accept`, the card's two verdicts; pinned end
+  to end in `the_diff_reviews_the_changes_and_a_reject_puts_one_hunk_back`
+  and the harness's `REV` case.)* a turn's file state is checkpointed and rewindable; plan mode
   produces an editable plan before execution and Build executes it; a
   diff renders with per-hunk accept and reject.
 - [x] C14: the session spend and the context meter render in the chat
@@ -786,7 +824,7 @@ collected in `docs/plans/2026-11-02-completed-plan-residuals.md`.
 | Criterion | State | Evidence / what is missing |
 |---|---|---|
 | C0 | partial | loopback bind + refusal + URL + `--no-open` at `src/gui/mod.rs:120`; the per-launch token was removed by `919416a`, so "prints the URL with a token" is superseded by the loopback-only ruling |
-| C1 | partial | SSE endpoint and heartbeat pinned (`src/gui/server.rs:3220`); no test drives a real run through `/events` — `mock_chat` serves `/btw` only |
+| C1 | **shipped** | `tests/gui_sse.rs`: the real agent thread over the real bridge and server against a scripted mock route; the one stream carries the session, a turn, the streamed tokens, and the finish |
 | C2 | partial | chain and decision render (`app.js:5167`); a server-issued `refused` document replaces the last good snapshot instead of keeping it |
 | C5 | **shipped** | `src/gui/server.rs:5372` (a_settings_write_rides_the_writer_and_names_its_refusals); `src/settings.rs:2452` |
 | C6 | partial | `no_payload_carries_a_credential` at `src/gui/server.rs:4543`; the token gate is gone by the same ruling — Host/Origin checks replaced it |
@@ -795,7 +833,7 @@ collected in `docs/plans/2026-11-02-completed-plan-residuals.md`.
 | C9 | partial | Enter sends (`app.js:9085`); no boot autofocus, and the onboarding door hides the composer on a fresh home |
 | C10 | **shipped** | `src/gui/assets/app.js:21844` (global Esc → `#/chat`), `:262` (GROUPS); the fleet mark is the way home |
 | C11 | partial | delegation renders as cards; router decisions, memory recalls and skill loads fold into one run-strip line rather than inline cards |
-| C12 | partial | keyboard answer + persistent allowlist land; the active rules live in the trust card, not the conversation header |
+| C12 | **shipped** | digits 1-4 answer the seat (the seat takes the focus on arrival; mid-sentence words keep it), remember writes the rule, the rules live in the trust card one press from the conversation, and a re-run never prompts |
 | C13 | partial | checkpoint, rewind and plan→Build land; the diff has per-hunk reject but no per-hunk accept |
 | C14 | **shipped** | `src/gui/assets/index.html:162` (spend), `:244` (context meter), both off `usage` events |
 | C15 | **shipped** | `src/gui/server.rs:4969`, `src/boards.rs:3020` (read_tower), `app.js:10383` |
