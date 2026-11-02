@@ -374,7 +374,7 @@ refused), and the calls per completed task.
   user servers (`src/tui/mod.rs:842-849`). `supersede` matches its name
   exactly (`src/agent.rs:2680`). `write_file` writes atomically.
   Each is pinned by a test.
-- [ ] **C1 — one resolution record per call.** Every call that reaches
+- [x] **C1 — one resolution record per call.** *(2026-11-02: complete — the record carries argument sources (`model`/`default`, the model's own keys against the schema defaults), a denied call still writes one, and the audit reads them (`argument sources: default 1 · model 1`), pinned by `the_audit_reads_the_argument_sources` plus the earlier three-call and denial pins.)*  Every call that reaches
   execution writes a `ToolResolution` with requested name, resolved
   name, method (`exact` | `alias` | `retrieved` | `refused`), reason
   (score, ranker, profile, or refusal), catalog size and tier, and
@@ -693,7 +693,7 @@ collected in `docs/plans/2026-11-02-completed-plan-residuals.md`.
 | Criterion | State | Evidence / what is missing |
 |---|---|---|
 | C0 | partial | vision/plan-refusal/supersede/atomic land (`src/agent.rs:1113`, `:1349`); no plan-mode prompt exists (only the refusal), and gui.md does not state the bash exception |
-| C1 | partial | the record carries requested/resolved/method/reason/catalog/tier (`src/agent.rs:3432`); no argument sources, and no test of a denial's resolution |
+| C1 | **shipped** | argument sources on the record, the denial pin, and the audit reading them; pinned |
 | C2 | **shipped** | truncation and redundancy print as shares with their counts; pinned exact |
 | C3 | partial | windowed reads with continuation land (`src/tools.rs:3830`); no 4,000-line offset test, no empty-file test, and the total-lines scan reads to EOF |
 | C4 | partial | all six behaviours exist (`src/fileops.rs:169`); no `replace_all` test and no capped-diff test |

@@ -31,6 +31,10 @@ pub struct Audit {
     pub methods: BTreeMap<String, usize>,
     /// Resolutions by tier.
     pub tiers: BTreeMap<String, usize>,
+    /// Calls by argument source: `model` when the call's own keys
+    /// supplied at least half the arguments, `default` when the schema
+    /// defaults carried it. C1's grounding, read as one number.
+    pub argument_source: BTreeMap<String, usize>,
 }
 
 impl Audit {
@@ -72,9 +76,33 @@ pub fn audit(path: &Path) -> Result<Audit, String> {
                 }
                 results.insert(call_id.clone(), (name.clone(), failed, output.len()));
             }
-            Record::ToolResolution { method, tier, .. } => {
+            Record::ToolResolution {
+                method,
+                tier,
+                argument_sources,
+                ..
+            } => {
                 *audit.methods.entry(method.clone()).or_insert(0) += 1;
                 *audit.tiers.entry(tier.clone()).or_insert(0) += 1;
+                // C1: where the arguments came from — the model's own
+                // keys against the schema defaults that filled the rest.
+                // A grounded session reads high on `model`; a session
+                // leaning on defaults says so.
+                let model_supplied = argument_sources
+                    .values()
+                    .filter(|source| source.as_str() == "model")
+                    .count();
+                let total = argument_sources.len();
+                if total > 0 {
+                    *audit
+                        .argument_source
+                        .entry(if model_supplied * 2 >= total {
+                            "model".to_string()
+                        } else {
+                            "default".to_string()
+                        })
+                        .or_insert(0) += 1;
+                }
             }
             _ => {}
         }
@@ -204,6 +232,17 @@ pub fn render(session: &str, audit: &Audit) -> String {
             .map(|(class, count)| format!("{class} {count}"))
             .collect();
         out.push_str(&format!("  error classes: {}\n", classes.join(" \u{b7} ")));
+    }
+    if !audit.argument_source.is_empty() {
+        let sources: Vec<String> = audit
+            .argument_source
+            .iter()
+            .map(|(source, count)| format!("{source} {count}"))
+            .collect();
+        out.push_str(&format!(
+            "  argument sources: {}\n",
+            sources.join(" \u{b7} ")
+        ));
     }
     let methods: Vec<String> = audit
         .methods
@@ -373,6 +412,62 @@ mod tests {
         assert_eq!(audit.methods["retrieved"], 1);
         assert_eq!(audit.methods["refused"], 1);
         assert_eq!(audit.tiers["deferred"], 1);
+    }
+
+    #[test]
+    fn the_audit_reads_the_argument_sources() {
+        // C1's grounding, read as one number: a record whose own keys
+        // supplied at least half the arguments counts as `model`, and
+        // one leaning on schema defaults counts as `default`.
+        let home = scratch("sources");
+        let mut session = Session::create(&home, "test-model").unwrap();
+        session
+            .record(&Record::ToolResolution {
+                call_id: "s1".into(),
+                requested: "read_file".into(),
+                resolved: "read_file".into(),
+                method: "exact".into(),
+                reason: "declared".into(),
+                catalog: 20,
+                tier: "core".into(),
+                argument_sources: std::collections::BTreeMap::from([
+                    ("path".to_string(), "model".to_string()),
+                    ("offset".to_string(), "default".to_string()),
+                ]),
+            })
+            .unwrap();
+        session
+            .record(&Record::ToolResolution {
+                call_id: "s2".into(),
+                requested: "grep".into(),
+                resolved: "grep".into(),
+                method: "exact".into(),
+                reason: "declared".into(),
+                catalog: 20,
+                tier: "core".into(),
+                argument_sources: std::collections::BTreeMap::from([
+                    ("pattern".to_string(), "default".to_string()),
+                    ("path".to_string(), "default".to_string()),
+                ]),
+            })
+            .unwrap();
+        session
+            .record(&Record::Assistant {
+                content: None,
+                tool_calls: vec![call("s1", "read_file", "{}"), call("s2", "grep", "{}")],
+                persona: None,
+            })
+            .unwrap();
+        let audit = audit(session.path()).unwrap();
+        assert_eq!(audit.calls, 2);
+        assert_eq!(audit.argument_source["model"], 1);
+        assert_eq!(audit.argument_source["default"], 1);
+        let card = render("sources", &audit);
+        assert!(
+            card.contains("argument sources: default 1 \u{b7} model 1"),
+            "{card}"
+        );
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     #[test]
