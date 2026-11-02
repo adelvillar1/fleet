@@ -385,7 +385,7 @@ refused), and the calls per completed task.
   p95 result bytes, truncation share, redundant-call rate, recovery
   rate, and resolutions by method. A fixture session with injected
   counts produces exact numbers, not approximations.
-- [ ] **C3 — ranged, line-numbered reads.** `read_file` takes
+- [x] **C3 — ranged, line-numbered reads.** *(2026-11-02: `a_window_at_offset_3800_is_bounded_by_the_window_not_the_file` — the 4,000-line fixture, offset 3,800, correct numbers, the continuation line, the empty file named. The real defect the pin exposed is fixed: `read_window` no longer scans to EOF for the total — it stops one line past the window, and a continued read's header says "at least N lines" instead of printing a count the read never reached.)*  `read_file` takes
   `offset`/`limit`, returns line numbers, a `path (N lines)` header,
   and `(showing 1–200 of 3,841; continue with offset=201)`. A 4,000-line
   fixture read at offset 3,800 returns 200 lines with the correct
@@ -695,7 +695,7 @@ collected in `docs/plans/2026-11-02-completed-plan-residuals.md`.
 | C0 | partial | vision/plan-refusal/supersede/atomic land (`src/agent.rs:1113`, `:1349`); no plan-mode prompt exists (only the refusal), and gui.md does not state the bash exception |
 | C1 | **shipped** | argument sources on the record, the denial pin, and the audit reading them; pinned |
 | C2 | **shipped** | truncation and redundancy print as shares with their counts; pinned exact |
-| C3 | partial | windowed reads with continuation land (`src/tools.rs:3830`); no 4,000-line offset test, no empty-file test, and the total-lines scan reads to EOF |
+| C3 | **shipped** | the offset fixture lands, and the scan-to-EOF defect is fixed — the scan stops at the window and the header is honest about the bound |
 | C4 | partial | all six behaviours exist (`src/fileops.rs:169`); no `replace_all` test and no capped-diff test |
 | C5 | **shipped** | `src/search.rs:12` caps, `:229` "narrow the query", `:318` glob cap; tests `:612`, `:628` |
 | C6 | **shipped** | `src/tools.rs:2824` clamp, `:2843` background + files, `:3567` promotion; tests `:4141`, `:5461` |

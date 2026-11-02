@@ -3846,7 +3846,15 @@ fn run_read_file_window(
         return Err(missing_path(&path, &resolved));
     }
     let window = crate::fileops::read_window(&resolved, offset, limit)?;
-    let mut output = format!("{path} ({} lines)\n", window.total_lines);
+    // The scan stops at the window, so a continued read's total is "at
+    // least": the header says so rather than printing a whole-file count
+    // it stopped before reaching.
+    let total = if window.total_exact {
+        format!("{}", window.total_lines)
+    } else {
+        format!("at least {}", window.total_lines)
+    };
+    let mut output = format!("{path} ({total} lines)\n");
     if window.total_lines == 0 {
         output.push_str("(empty file)\n");
     } else if window.end == 0 {
@@ -3856,7 +3864,7 @@ fn run_read_file_window(
         ));
     } else {
         output.push_str(&window.text);
-        if window.end < window.total_lines {
+        if !window.total_exact || window.end < window.total_lines {
             output.push_str(&format!(
                 "(showing {}-{} of {}; continue with offset={})\n",
                 window.start,
@@ -5325,8 +5333,11 @@ mod tests {
                 &dir,
             )
             .unwrap();
+        // The scan stops one line past the window, so a continued read's
+        // count is "at least" - the honest header, not a whole-file count
+        // the read never reached.
         assert!(
-            window.output.starts_with("big.txt (40 lines)\n"),
+            window.output.starts_with("big.txt (at least 16 lines)\n"),
             "{}",
             window.output
         );

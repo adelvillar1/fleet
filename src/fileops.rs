@@ -31,6 +31,11 @@ pub struct Window {
     pub text: String,
     /// The file's total line count, counted without keeping the lines.
     pub total_lines: usize,
+    /// False when the scan stopped one line past the window: the count
+    /// is then "at least `total_lines`", not the file's whole count.
+    /// The tool's header says "lines" either way; a caller needing the
+    /// exact total reads to EOF itself.
+    pub total_exact: bool,
     /// The first line included (1-based).
     pub start: usize,
     /// The last line included, 0 when the window is empty.
@@ -69,6 +74,12 @@ pub fn read_window(path: &Path, offset: usize, limit: usize) -> Result<Window, S
     let mut start = 0usize;
     let mut end = 0usize;
     let mut cut = false;
+    // The scan stops one line past the window: that line is what says a
+    // continuation exists, and stopping there keeps the bytes read
+    // bounded by the window, not the file. A file whose total the caller
+    // needs whole pays for it with `total_exact`, the tool's own choice.
+    let scan_to = offset.saturating_add(limit).saturating_add(1);
+    let mut total_exact = true;
     loop {
         raw.clear();
         let read = reader
@@ -78,6 +89,10 @@ pub fn read_window(path: &Path, offset: usize, limit: usize) -> Result<Window, S
             break;
         }
         line_no += 1;
+        if line_no >= scan_to {
+            total_exact = false;
+            break;
+        }
         if line_no < offset || line_no >= offset.saturating_add(limit) {
             continue;
         }
@@ -105,6 +120,7 @@ pub fn read_window(path: &Path, offset: usize, limit: usize) -> Result<Window, S
         start,
         end,
         cut,
+        total_exact,
     })
 }
 
@@ -332,13 +348,63 @@ mod tests {
     }
 
     #[test]
+    fn a_window_at_offset_3800_is_bounded_by_the_window_not_the_file() {
+        // Tool-surface C3: a 4,000-line file read at offset 3,800
+        // returns 200 lines with the correct numbers and a continuation
+        // line - and the read never walks the whole file into memory.
+        let dir = scratch("offset-3800");
+        let path = dir.join("huge.txt");
+        let body: String = (1..=4000).map(|n| format!("line {n}\n")).collect();
+        std::fs::write(&path, &body).unwrap();
+        let window = read_window(&path, 3800, 200).unwrap();
+        assert_eq!(window.start, 3800);
+        assert_eq!(window.end, 3999);
+        assert_eq!(window.total_lines, 4000);
+        assert!(
+            window.text.contains(" 3800\tline 3800"),
+            "{:?}",
+            &window.text[..200]
+        );
+        assert!(window.text.contains(" 3999\tline 3999"));
+        assert!(
+            !window.text.contains(" 3799\t"),
+            "before the window: {}",
+            window.text.len()
+        );
+        let tool = crate::tools::Tool::ReadFile
+            .execute(&serde_json::json!({
+                "path": path.display().to_string(),
+                "offset": 3800,
+                "limit": 200
+            }))
+            .expect("the tool reads the window");
+        assert!(
+            tool.output
+                .contains("(showing 3800-3999 of 4000; continue with offset=4000)"),
+            "the continuation names the next offset: {}",
+            &tool.output[..tool.output.len().min(400)]
+        );
+        // The empty file says so by name.
+        let empty = dir.join("empty.txt");
+        std::fs::write(&empty, "").unwrap();
+        let blank = read_window(&empty, 1, 200).unwrap();
+        assert_eq!(blank.total_lines, 0);
+        assert_eq!(blank.text, "");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn a_window_keeps_line_numbers_and_counts_the_file() {
         let dir = scratch("window");
         let path = dir.join("big.txt");
         let body: String = (1..=50).map(|n| format!("line {n}\n")).collect();
         fs::write(&path, body).unwrap();
         let window = read_window(&path, 20, 5).unwrap();
-        assert_eq!(window.total_lines, 50);
+        // The scan stops one line past the window: the count is "at
+        // least 26", the continuation's existence is known, and the
+        // bytes read are bounded by the window, not the file.
+        assert_eq!(window.total_lines, 26);
+        assert!(!window.total_exact);
         assert_eq!((window.start, window.end), (20, 24));
         assert!(window.text.contains("    20\tline 20"));
         assert!(window.text.contains("    24\tline 24"));
