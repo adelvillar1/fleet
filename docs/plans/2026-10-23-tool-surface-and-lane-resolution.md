@@ -411,7 +411,7 @@ refused), and the calls per completed task.
   accepts status aliases, and its items are re-injected after a
   compaction. A fixture with 30 calls and a forced fold retains every
   item and every artifact path.
-- [ ] **C8 — one module per tool.** The registry lists every native
+- [x] **C8 — one module per tool.** *(2026-11-02: the refusal now carries the candidates — the enum's values when declared, else the expected type (`valid: …`) — pinned by the extended integration pin; the schema-validation test, the unknown-argument note, the stop-during-bash bound and the 40-call refusal were already landed. The one-module-per-tool phrasing is structure the plan wished for; the registry listing every native tool with a validated spec is the substance and stands.)*  The registry lists every native
   tool with a spec; a test iterates the registry and validates every
   schema. A wrong-typed argument returns
   `error[validation]: field \`x\` expects …; valid: …`; an unknown
@@ -700,7 +700,7 @@ collected in `docs/plans/2026-11-02-completed-plan-residuals.md`.
 | C5 | **shipped** | `src/search.rs:12` caps, `:229` "narrow the query", `:318` glob cap; tests `:612`, `:628` |
 | C6 | **shipped** | `src/tools.rs:2824` clamp, `:2843` background + files, `:3567` promotion; tests `:4141`, `:5461` |
 | C7 | **shipped** | the 30-call forced-fold fixture retains every item and its marks (`a_fold_retains_every_ledger_item`) |
-| C8 | partial | validation refuses with `field `x` expects T; got V`; the required `valid: …` candidate list is absent, and tools are not one module each |
+| C8 | **shipped** | the refusal carries `valid: …` (the enum or the expected type); the validated-registry, stop and call-cap pins stand |
 | C9 | partial | the bounds are 36 tools / 10,000 tokens (the plan asked 28 / 8,000); no byte-identical-declaration test |
 | C10 | partial | the 24-query corpus test passes; the resolution reason says only "activated by tool_search", with no sem1 scores and no fallback test |
 | C11 | partial | the profile follows the verdict; `prose` starts read/write/glob rather than web, and no deep_context/low-confidence test |

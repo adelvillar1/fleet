@@ -2405,6 +2405,9 @@ async fn capability_tools_declare_translate_and_validate() {
         "{}",
         outputs[1]
     );
+    // C8: the refusal carries the candidates - the expected type when
+    // no enum declares values.
+    assert!(outputs[1].contains("valid: array"), "{}", outputs[1]);
     std::fs::remove_dir_all(&home).ok();
 }
 

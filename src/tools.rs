@@ -2765,8 +2765,23 @@ pub fn validate(tool: Tool, arguments: &serde_json::Value) -> Result<(), String>
         }
         if let Some(kind) = property.get("type").and_then(|kind| kind.as_str()) {
             if !type_matches(kind, value) {
+                // C8: the refusal carries the candidates — the enum's
+                // values when the property declares them, else the
+                // expected type — so the model can correct without a
+                // second round trip to the schema.
+                let valid = property
+                    .get("enum")
+                    .and_then(serde_json::Value::as_array)
+                    .map(|values| {
+                        values
+                            .iter()
+                            .map(|value| value.to_string())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    })
+                    .unwrap_or_else(|| kind.to_string());
                 return Err(format!(
-                    "field `{key}` expects {kind}; got {}",
+                    "field `{key}` expects {kind}; got {}; valid: {valid}",
                     json_kind(value)
                 ));
             }
