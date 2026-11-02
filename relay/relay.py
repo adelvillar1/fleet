@@ -44,6 +44,22 @@ session, so a squatter cannot claim a sid or capture the origin root's
 open paths — the residual KI-367 named. The relay fails closed: with
 no join secret configured, every join is refused by name.
 
+**The join secret is the trust boundary, and that is the whole of it**
+(owner ruling, 2026-11-02; the open-calls O1 amendment, KI-399). The
+earlier ruling described a join validated against "the relay's own
+minted-session store", naming `relay-sessions.json` — but that file is
+the *face's* local store in its home (`src/remote/listener.rs`, the
+KI-370 fix), and this relay runs in a sibling container that cannot read
+it. There is no independent knowledge here of which sessions are
+legitimate: the face mints them, and the only channel across the
+deployment boundary is the secret. So a party holding the join secret
+is, by definition, the deployment's own face — it may register a fresh
+`sid`, and the relay trusts that. A second store on this side would add
+a file to keep in step, not a check that means anything: whoever can
+mint here could also mint there. What actually holds is stated where it
+belongs — the secret is deployment-wide, and rotating it is the
+containment.
+
 Threat model, stated plainly: the relay sees metadata — paths, frame
 ids, sizes — and ciphertext for everything content-bearing. Frames the
 phone marked `x-fleet-enc: 1` carry bodies sealed end to end with a key

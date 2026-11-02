@@ -914,10 +914,24 @@ fn endpoint_from(lookup: impl Fn(&str) -> Option<String>) -> String {
         .unwrap_or_else(|| DEFAULT_EMBEDDING_ENDPOINT.to_string())
 }
 
-/// The probe's round-trip budget. A live server answers a single embed
-/// in milliseconds; a dead one refuses the connect instantly. The budget
-/// is the ceiling for a black-holed port, not the expected cost.
-const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
+/// The measured single-embed tail both bounds below are set from
+/// (KI-249). The stream is this machine's own calibration log
+/// (`~/.local/share/dev-decisions/logs`), the window 2026-10-26T00:04Z →
+/// 2026-11-02T02:30Z, and the rows are the `embed` kind — one row per
+/// call the load's index build made: **60 rows**, median 83 ms, p95
+/// 5,921 ms, max 9,107 ms. `calib::embed_bound_ms` turns that max into
+/// the bound: 9,107 × 3 = 27,321 ms, over the floor (10 × 83 = 830 ms)
+/// and under the cap.
+///
+/// The probe and the steady-state embed share this tail because they are
+/// the same operation: one embed round trip. The old 5 s probe budget cut
+/// the p95 (5,921 ms) and the max (9,107 ms) — a slow answer reported as a
+/// dead backend. A bound is a hang detector, not a latency assertion.
+/// The probe's round-trip budget, from the measured tail above. A live
+/// server answers in milliseconds; a slow one — the p95 and max above —
+/// must not read as dead, and a black-holed port is bounded per try
+/// (three tries, paid once per load).
+const PROBE_TIMEOUT: Duration = Duration::from_millis(27_321);
 
 /// The pause between the probe's tries. The machine's endpoint flaps —
 /// a request hangs past every budget, an identical one answers in
@@ -937,8 +951,13 @@ const PROBE_RETRY_PAUSE: Duration = Duration::from_millis(750);
 /// nobody's to promise.
 const PROBE_RETRIES: usize = 2;
 
-/// A steady-state embed's budget, for the load-time index build.
-const EMBED_TIMEOUT: Duration = Duration::from_secs(10);
+/// A steady-state embed's budget, for the load-time index build — the
+/// same measured tail as the probe's above (60 rows over
+/// 2026-10-26 → 2026-11-02, median 83 ms, p95 5,921 ms, max 9,107 ms),
+/// because it bounds the same operation. The old 10 s sat under no
+/// measured max with room to spare — a cold build's slowest call was one
+/// sample away from being dropped and reported as a failure.
+const EMBED_TIMEOUT: Duration = Duration::from_millis(27_321);
 
 /// The text the probe embeds. A real round trip, not a `/health` poll: a
 /// health endpoint that answers ok proves nothing about the embeddings
@@ -6010,6 +6029,27 @@ mod tests {
     use std::io::Write as _;
     use std::os::unix::fs::PermissionsExt;
     use std::sync::Arc;
+
+    #[test]
+    fn the_embed_bounds_are_the_rules_output_over_the_measured_tail() {
+        // KI-249's C2: PROBE_TIMEOUT and EMBED_TIMEOUT are
+        // calib::embed_bound_ms over the measured `embed` tail — 60 rows
+        // over 2026-10-26..2026-11-02, median 83 ms, p95 5,921 ms, max
+        // 9,107 ms. A silent edit to a bound fails here rather than at a
+        // dropped call in the wild.
+        const MAX_MS: u128 = 9_107;
+        const MEDIAN_MS: f64 = 83.0;
+        assert_eq!(PROBE_TIMEOUT, EMBED_TIMEOUT);
+        assert_eq!(
+            PROBE_TIMEOUT.as_millis() as u128,
+            crate::calib::embed_bound_ms(MAX_MS, MEDIAN_MS)
+        );
+        assert_eq!(PROBE_TIMEOUT.as_millis() as u128, MAX_MS * 3);
+        assert!(
+            MAX_MS * 3 > (MEDIAN_MS * 10.0) as u128,
+            "this tail's max governs its floor"
+        );
+    }
 
     #[test]
     fn the_probe_retries_after_a_pause_so_a_flap_is_not_a_missing_backend() {

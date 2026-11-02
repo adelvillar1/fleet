@@ -258,34 +258,34 @@ after the home works, never before.
 
 ## Acceptance criteria
 
-- [ ] **U1 — the confirmation is on-surface.** A save shows
+- [x] **U1 — the confirmation is on-surface.** A save shows
       `saved <label>` in the board within the same paint cycle; a
       refused write shows the reason there; a dead fetch shows the
       unreachable line — and nothing lands in the conversation
       stream. Harness: stub the post three ways.
-- [ ] **U2 — a written knob reverts.** The read carries each
+- [x] **U2 — a written knob reverts.** The read carries each
       scalar's default; a file-sourced knob's card reverts in one
       press and the row's mark flips; a destructive list act names
       its blast radius and the survival (the key, the facts).
       Harness: the fixture's revert round-trip.
-- [ ] **U3 — the filter finishes.** No match shows the card with
+- [x] **U3 — the filter finishes.** No match shows the card with
       suggestions; a match opens the item's card through the
       three-part route (the route handler opens the section, finds
       the row, opens and marks it — S9's half that never shipped);
       a bare deep link to `#/settings/<section>/<item>` does the
       same; arrows and Enter drive the list. Harness on each.
-- [ ] **U4 — the field validates.** A numeric knob refuses "abc"
+- [x] **U4 — the field validates.** A numeric knob refuses "abc"
       and a value past the ceiling **at blur**, beside the field;
       the server's refusal still lands. Harness with a fixture
       ceiling.
-- [ ] **U5 — every refusal names the door.** The env, ceiling and
+- [x] **U5 — every refusal names the door.** The env, ceiling and
       vault derivations each carry their next step; harness
       assertions on the three lines.
-- [ ] **U6 — the money section is gone.** Seven sections on the
+- [x] **U6 — the money section is gone.** Seven sections on the
       rail and no cap row anywhere on the face; `fleet settings`
       still writes the three. Harness: the rail's section list, the
       absence of the cap rows, and a sweep for spend text.
-- [ ] **U7 — one vocabulary.** The mapping passage exists and both
+- [x] **U7 — one vocabulary.** The mapping passage exists and both
       surfaces' doc sections cite it.
 - [ ] **U8 — the model is the section.** Every roster model is
       listed as `provider/model`, exactly one carries `current`, a
@@ -307,7 +307,7 @@ after the home works, never before.
       stop removed the provider from `routing.json`'s walk, add put it
       back. The lane card, the scan's import and the connect card were
       already there.)*
-- [ ] **U10 — a fresh home opens on the ladder.** With no key the
+- [x] **U10 — a fresh home opens on the ladder.** With no key the
       board shows the three steps; adding an account unlocks the
       model step; no counts, chip or pane before the home works.
       Harness: the fresh fixture and the step's unlock.
@@ -368,16 +368,16 @@ What the pass established, with the evidence it read:
 
 | Criterion | State | Evidence |
 |---|---|---|
-| U1 the confirmation is on-surface | **open** | no settings-level confirmation card exists; writes answer through the shared notice only |
-| U2 a written knob reverts | **open** | no revert act on a written knob (the only `revert` controls are the deck card's and the workload's override removal) |
-| U3 the filter finishes the job | **open** | the rail's filter searches across sections; no no-results card and no per-hit landing |
-| U4 the field validates | **open** | no client-side numeric check before the round trip |
-| U5 every refusal names the door | **open, unmeasured** | the shared refusal notice prints the bridge's own error; whether each of the three doors is named was not re-measured |
-| U6 the money section is gone | **open** | `app.js` still builds the `money` section, and the harness still pins **eight** rail sections |
-| U7 one vocabulary | **open, unverified** | not re-read in this pass |
+| U1 the confirmation is on-surface | **built** | `settingsSay` paints the board's own line (`saved <label>`, the refusal's words, the unreachable sentence); every settings notice routes there, not to the conversation stream — SET/U1 pins three stubbed posts |
+| U2 a written knob reverts | **built** | the read carries `default` (`settings::compiled_default`), the card's revert writes `unset`, and the row's mark flips on the re-read — U2 pin asserts the `unset` body |
+| U3 the filter finishes the job | **built** | a no-match card with the sections it could mean, the three-part route (`#/settings/<section>/<item>`) opening and marking the row, arrows/Enter on the list — U3 pins the card, the press, the deep link |
+| U4 the field validates | **built** | a numeric knob refuses 'abc' and a value past the ceiling at blur, beside the field, and the save is held — U4 pins the error and the missing POST |
+| U5 every refusal names the door | **built** | the env, ceiling and vault lines each carry their next step (`unset the variable`, `only be tightened`, `re-seal it from this panel`) — U5 pins the three |
+| U6 the money section is gone | **built** | the section is removed from the face; the harness now pins **seven** rail sections, no `BUDGET_USD_DAY` row, and `fleet settings` still writes the three |
+| U7 one vocabulary | **built** | `docs/features/gui.md`'s One vocabulary table maps the face's marks to the CLI's verbs, and `FUNCTIONAL-SPECIFICATIONS.md` cites it |
 | U8 the model is the section | **built** | roster rows (`provider/model`), the one-press pin, the walk's door closed by default — MODEL pins in the harness |
 | U9 a chained setting completes on one surface | **built** | this pass: the account card's walks (raise/lower/stop + add) and the job card's next fire; SET/U9 pins and a live scratch-home round trip |
-| U10 a fresh home opens on the ladder | **built, not re-measured** | the onboarding ladder and its fixtures are in the harness; U10's three-step unlock was not re-walked this pass |
+| U10 a fresh home opens on the ladder | **built** | the door now shows while the `home` step is incomplete (not only while fleet cannot answer), the read's ladder renders with done/now/next, and the counts, composer, chip and pane stand down — re-measured live on `/tmp/fleet-fresh-home` |
 | U11 the gate | **green for this pass** | fmt, clippy, build and the suite by exit code; the face harness 624 checks across 56 cases |
 
 U9 was the load-bearing one: `2026-11-02-provider-session-headers.md`

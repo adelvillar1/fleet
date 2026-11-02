@@ -1,7 +1,7 @@
 ---
-status: active
+status: completed
 created: 2026-10-24
-updated: 2026-10-24
+updated: 2026-11-02
 slug: embed-bounds-from-measured-tail
 ---
 
@@ -83,21 +83,21 @@ commit that shows both.
 
 ## Acceptance criteria
 
-- [ ] **C0 — the window gate.** The pass states the window's shortfall
+- [x] **C0 — the window gate.** The pass states the window's shortfall
       by name when the stream carries fewer than 20 `embed_timing` rows
       or less than 24 hours of span, and proceeds only when met.
-- [ ] **C1 — the tails.** `calib::embed_tail` returns count, median,
+- [x] **C1 — the tails.** `calib::embed_tail` returns count, median,
       p95, and max per kind from real day files, pinned by a test over
       a written fixture.
-- [ ] **C2 — the bounds by rule.** PROBE_TIMEOUT and EMBED_TIMEOUT
+- [x] **C2 — the bounds by rule.** PROBE_TIMEOUT and EMBED_TIMEOUT
       each equal the rule's output over their measured tail (max × 3,
       floored at 10× the warm median, capped at 600 s), or are left
       unchanged with the measurement-confirmed comment; by test where a
       constant moved.
-- [ ] **C3 — the provenance.** Each constant's comment names the
+- [x] **C3 — the provenance.** Each constant's comment names the
       window, the row count, and the tail it encodes; the KI-249 row
       closes with the same numbers.
-- [ ] **C4 — close-out.** The full gate green by exit code; the ledger
+- [x] **C4 — close-out.** The full gate green by exit code; the ledger
       and the plan agree.
 
 ## Files to be touched
@@ -124,3 +124,26 @@ reader's own output.
 
 - `docs/known-issues.md` — KI-249
 - `src/calib.rs` — the `embed_timing` vocabulary the window reads
+
+## Landed — 2026-11-02
+
+- **C0/C1** — `calib::embed_tail` and the window gate landed 2026-10-24
+  (c1fa009), pinned by `the_tail_reader_measures_and_names_the_window_shortfall`.
+- **The window** — this machine's own stream
+  (`~/.local/share/dev-decisions/logs`), 2026-10-26T00:04Z →
+  2026-11-02T02:30Z: 349 `embed_timing` rows, of which 60 are the
+  `embed` kind (one per call the load's index build made). Window met:
+  60 ≥ 20 rows, ~7 days ≥ 24 h.
+- **The tail** — `embed`: median 83 ms, p95 5,921 ms, max 9,107 ms.
+  `corpus-load` (the whole set, 289 rows): median 95 ms, p95 11,742 ms,
+  max 13,359 ms — recorded, not used for a per-call bound.
+- **C2** — `calib::embed_bound_ms` implements the rule (max × 3, floored
+  at 10 × median, capped at 600 s). Over the measured tail it gives
+  9,107 × 3 = **27,321 ms**; PROBE_TIMEOUT and EMBED_TIMEOUT both read
+  that now (the old 5 s cut the p95 and the max; the old 10 s had one
+  sample of headroom). Pinned by
+  `the_embed_bound_is_the_rules_output_over_the_tail` and
+  `the_embed_bounds_are_the_rules_output_over_the_measured_tail`.
+- **C3** — each constant's comment names the window, the row count, the
+  p95 and the max, and KI-249 closes with the same numbers.
+- **C4** — the four-leg gate by exit code and the ledger checker.

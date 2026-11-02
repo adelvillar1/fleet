@@ -50,6 +50,21 @@ demonstrated: `sid:"probe"` is not a slot-exhaustion curiosity, it
 is proof that session identity at the join is currently
 self-asserted.
 
+**Amendment, 2026-11-02 (owner ruling).** Ruling (a) named a store that
+does not exist where the check would run: `relay-sessions.json` is the
+*face's* local file in its home (`src/remote/listener.rs`, the KI-370
+fix), and the deployed relay is a sibling container that cannot read it.
+The relay has no independent knowledge of which sessions are legitimate
+— the face mints them, and the only channel across that boundary is the
+join secret. **The ruling is amended**: the deployment join secret is
+the trust boundary. A joiner without it is refused by name (the shipped
+gate, `relay/relay.py`'s header and `_join`); a party holding it is by
+definition the deployment's own face, and may register a fresh `sid`. A
+relay-side store would add a file to keep in step, not a check: whoever
+can mint here could mint there. Containment is deployment-wide, and
+rotating the secret is the lever. Recorded in the relay's header, this
+row, and KI-399.
+
 ### O2 — KI-378 (the open half): the task's send bound
 
 **Evidence**: the goal writer refuses past 2,000 chars (fixed,
@@ -244,7 +259,7 @@ recommendations. The rulings:
 - [x] **O1–O7 each carry the owner's ruling**, recorded in the
       Rulings section above (2026-11-01) and in each call's row as
       its follow-through lands.
-- [ ] **Each ruling's follow-through lands** as its own increment
+- [x] **Each ruling's follow-through lands** as its own increment
       with its pin, in the order the rows' own severity puts them
       (crashers and data-loss first — none here are; O1 and O2
       before the cosmetic calls). *Landed so far: **O1** — the join
@@ -252,7 +267,10 @@ recommendations. The rulings:
       and `FLEET_BOT_RELAY_JOIN_SECRET`), fail-closed both sides,
       proofless-join pinned against the real relay, KI-367 closed;
       the OpenShip env + redeploy is the owner's deployment step,
-      named in the row. **O2** — the send path's refusal speaks the
+      named in the row. **Amended 2026-11-02**: ruling (a)'s
+      minted-session store cannot exist on the relay side (that file
+      is the face's), so the owner ruled the join secret is the trust
+      boundary — the relay's header, this row and KI-399 say so. **O2** — the send path's refusal speaks the
       product's words at the operative cap (no invented ceiling),
       pinned by `an_oversized_body_is_refused_in_the_products_words`;
       KI-378 closed with both halves standing. **O3** — all 30 drifted
@@ -350,4 +368,4 @@ collected in `docs/plans/2026-11-02-completed-plan-residuals.md`.
 
 | Criterion | State | Evidence / what is missing |
 |---|---|---|
-| O | partial | O2–O7 land with their pins; **O1 does not match its ruled mechanism** — ruling (a) was to validate `sid`/`hash` against the relay's minted-session store, and what shipped is a shared join secret (`relay/relay.py:250`), which a secret-holder can use to assert a new sid |
+| O | **closed by amendment** | O2–O7 land with their pins; O1's ruled minted-session store cannot exist on the relay side (that file is the face's), and the owner ruled 2026-11-02 that the join secret is the trust boundary — recorded in `relay/relay.py`'s header, the O1 row above, and KI-399 |

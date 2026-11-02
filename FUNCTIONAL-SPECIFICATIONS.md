@@ -197,7 +197,11 @@ advisorial badges and one import each — the registry carries env NAMES
 only), the roles, the vault, the spend caps, the remembered rules, the
 cron jobs (each job's card names its task, its cadence, **the next
 fire** computed from that cadence, and its last fire's outcome), and the
-identity slot. Every value is picked from what this
+identity slot. The face's marks — `set`, `env`, `default`, `own`, `revert` — map to the
+CLI's verbs in `docs/features/gui.md`'s One vocabulary table, which is the
+one place the two surfaces' words are reconciled.
+
+Every value is picked from what this
 home already knows; every write rides the one writer the CLI rides.
 
 **System — calibration.** The work rail's idiom: **the gate** first —

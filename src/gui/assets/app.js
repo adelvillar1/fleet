@@ -4038,8 +4038,13 @@
   function paintOnboard() {
     var doc = face.onboard;
     if (!doc || doc.refused) return;
-    var door = !doc.ready;
     var step = (doc.steps || []).filter(function (one) { return one.id === 'home'; })[0];
+    // U10: the door is up until the home itself is set up, not merely
+    // until fleet can answer — a fresh home can reach a lane and still
+    // have nothing of its own (its counts describe a home, its method a
+    // machine). `steps` says which; `ready` alone hid the ladder on this
+    // machine because a vendored lane answered.
+    var door = !doc.ready || (step && !step.done);
     // The door's copy is the document's own; nothing here restates it.
     if (door) {
       var copy = doc.door || {};
@@ -4056,8 +4061,27 @@
       // door is up — the door's own field is the only field.
       el.composer.hidden = true;
       var discovered = el.doorDiscovered;
+      var steps = doc.steps || [];
       discovered.textContent = '';
-      discovered.hidden = !copy.discovered;
+      // U10: the ladder is the document's own — every step, what is done
+      // and which one this screen is. The door asks one decision at a
+      // time; the ladder is how the owner sees where they are.
+      if (steps.length) {
+        var ladder = node('div', 'onboard-ladder');
+        ladder.dataset.step = doc.first_incomplete || '';
+        steps.forEach(function (one) {
+          var line = node('div', 'onboard-ladder-step');
+          line.dataset.done = one.done ? 'true' : 'false';
+          line.dataset.current = one.id === doc.first_incomplete ? 'true' : 'false';
+          line.appendChild(node('span', 'onboard-ladder-mark',
+            one.done ? 'done' : (one.id === doc.first_incomplete ? 'now' : 'next')));
+          line.appendChild(node('span', 'onboard-ladder-name',
+            (one.narration && one.narration.title) || one.id));
+          ladder.appendChild(line);
+        });
+        discovered.appendChild(ladder);
+      }
+      discovered.hidden = !copy.discovered && !steps.length;
       if (copy.discovered) {
         var press = node('button', 'offer');
         press.type = 'button';
@@ -4327,8 +4351,7 @@
       github: '#/settings/environment',
       trust: '#/settings/trust',
       vault: '#/settings/trust',
-      roster: '#/settings/models',
-      money: '#/settings/money'
+      roster: '#/settings/models'
     };
     window.location.hash = landing[step] || '#/settings/models';
     // The vault step lands on its own card, not only on the section that
@@ -13037,18 +13060,67 @@
       .catch(function () { });
   }
 
+  // The settings board's own answer line (settings-ux U1). A settings
+  // write is a surface act, not a turn: its confirmation, its refusal and
+  // its unreachable case land on the board the owner is looking at —
+  // never in the conversation stream, where a settings save used to
+  // arrive as a chat card. `saved <label>` is painted in the same cycle
+  // the write answers.
+  function settingsSay(kind, title, detail) {
+    face.settingsStatus = { kind: kind, title: title, detail: detail || '' };
+    paintSettingsStatus();
+  }
+
+  /// The line itself. Rebuilt from the state on every paint, so a board
+  /// repaint (a read landing) never loses the last answer.
+  function paintSettingsStatus() {
+    var host = el.settingsStatus;
+    if (!host) return;
+    var state = face.settingsStatus;
+    host.textContent = '';
+    host.hidden = !state;
+    host.dataset.state = state ? state.kind : 'idle';
+    if (!state) return;
+    host.appendChild(node('span', 'settings-status-mark',
+      state.kind === 'saved' ? 'saved' : (state.kind === 'saving' ? 'saving' : 'not saved')));
+    host.appendChild(node('span', 'settings-status-title', state.title));
+    if (state.detail) {
+      host.appendChild(node('span', 'settings-status-detail', state.detail));
+    }
+  }
+
+  /// A card's own sentence, routed to the same line: the wording stays
+  /// the card's, the destination is the board's.
+  function settingsNotice(title, text) {
+    var refused = /refus|cannot|not |no reason|unreachable|failed|did not/i.test(String(title));
+    settingsSay(refused ? 'refused' : 'saved', title, text);
+  }
+
+  /// What the write is about, in the owner's words: the object the op
+  /// names, else the op itself.
+  function settingsLabel(op, fields) {
+    var f = fields || {};
+    return String(f.name || f.workload || f.id || f.key || f.tool || op || 'the setting');
+  }
+
   // One write, then the read again: the panel paints what the writer
-  // confirmed, and a refusal names itself the way the writer did.
+  // confirmed, and a refusal names itself the way the writer did. Every
+  // outcome lands on the settings board's own line (U1).
   function writeSettings(op, fields, onDone) {
     var body = Object.assign({ op: op }, fields || {});
+    settingsSay('saving', settingsLabel(op, fields));
     post('/api/settings', body).then(function (reply) {
       if (reply.status !== 200) {
-        notice('the write was refused',
+        settingsSay('refused', 'the write was refused',
           (reply.body && reply.body.error) || 'the surface said no without a reason');
         return;
       }
+      settingsSay('saved', settingsLabel(op, fields));
       return readSettings(true).then(onDone);
-    }).catch(function () { });
+    }).catch(function () {
+      settingsSay('unreachable', 'the settings surface is unreachable',
+        'the write never left this page \u2014 check the face is still running');
+    });
   }
 
   // --------------------------------------------------------- bots rail
@@ -14461,13 +14533,17 @@
   }
 
   /// A labelled control with its save, the shape every scalar card uses.
-  function cfgWriteField(label, note, control, op, fields) {
+  function cfgWriteField(label, note, control, op, fields, guard) {
     var act = node('button', 'replay-button replay-resume', 'save');
     act.type = 'button';
     act.addEventListener('click', function () {
+      // The field's own check runs before the round trip (settings-ux U4):
+      // a value the writer would refuse is answered beside the field, not
+      // by a server's words after a network call.
+      if (guard && !guard()) return;
       var body = typeof fields === 'function' ? fields() : (fields || {});
       writeSettings(op, body, function () {
-        notice('saved', label);
+        settingsNotice('saved', label);
       });
     });
     var wrap = node('span', 'cfg-inline');
@@ -14515,7 +14591,7 @@
 
   // ---------------------------------------------------------- settings
   //
-  // The surface is a rail of eight sections and one section's cards: the
+  // The surface is a rail of seven sections and one section's cards: the
   // work rail's idiom, the shared sectionRail helper, and a route that
   // makes both a section and an item addressable.
 
@@ -14684,14 +14760,14 @@
         ? cfgCardActs([{
             label: 'make this the model', primary: true, run: function () {
               writeSettings('set', { key: 'pin', value: pair }, function () {
-                notice('the model is set', pair);
+                settingsNotice('the model is set', pair);
               });
             }
           }])
         : cfgCardActs([{
             label: 'clear the pin — the walk decides', primary: true, run: function () {
               writeSettings('set', { key: 'pin', value: '' }, function () {
-                notice('the pin is cleared', 'the walk decides');
+                settingsNotice('the pin is cleared', 'the walk decides');
               });
             }
           }]);
@@ -14949,34 +15025,20 @@
               [cfgItem({
                 id: 'vault', kind: 'vault', name: 'the vault',
                 value: ((read.vault && read.vault.names) || []).length + ' sealed',
-                card: function () { return vaultCard('settings-vault-card'); }
+                // The card builder returns sections, like every other
+                // row's: a bare node threw on the press (the drawer's
+                // renderSections walks the list).
+                card: function () {
+                  return [['the vault', vaultCard('settings-vault-card')]];
+                }
               })])
           ];
         }
       },
-      {
-        id: 'money', icon: 'calibration', name: 'money',
-        badge: 0,
-        changed: budgets.some(ownerSet),
-        paint: function () {
-          return [cfgList('the ceilings', 'what a day may spend, per beat',
-            budgets.map(function (key) {
-              var knob = scalars.filter(function (one) { return one.key === key; })[0] || null;
-              // `FLEET_JUDGE_BUDGET_USD_DAY` reads as "the judge's cap": the
-              // key is the mechanism, the label is the thing it bounds.
-              var beat = key.replace(/^FLEET_/, '').replace(/_BUDGET_USD_DAY$/, '')
-                .toLowerCase();
-              return cfgItem({
-                id: 'knob:' + key, kind: 'knob',
-                name: beat === 'delegate' ? 'the delegation cap' : 'the ' + beat + "'s cap",
-                value: knob ? '$' + Number(knob.value || knob.ceiling || 0).toFixed(2) : '\u2014',
-                marks: sourceMark(knob),
-                card: function () { return knobSections(read, key,
-                  (knob && knob.summary) || key, 'the compiled ceiling can only be tightened'); }
-              });
-            }))];
-        }
-      },
+      // The money section is gone (settings-ux U6, the owner's 2026-11-01
+      // ruling): the owner runs on coding and token plans, so a spend
+      // dashboard answers a question they do not ask. The three caps stay
+      // writable from `fleet settings` — the face does not render them.
       {
         id: 'schedule', icon: 'cron', name: 'schedule',
         badge: cron.length, badgeTitle: 'cron jobs',
@@ -15075,9 +15137,14 @@
         run: function () { window.location.hash = '#/router'; }
       }]);
     el.settingsBoard.appendChild(surfaceHead('System', 'Settings',
-      'The router, the providers, the lanes, the roles, the vault, the spend caps, the rules, ' +
+      'The router, the providers, the lanes, the roles, the vault, the rules, ' +
       'the cron jobs, and the identity slot. Every value is picked from what this home already ' +
       'knows; every write rides the writer the CLI rides.', instrument));
+    // The board's own answer line (settings-ux U1): the last write's
+    // outcome, painted here rather than in the conversation stream.
+    el.settingsStatus = node('div', 'settings-status');
+    el.settingsBoard.appendChild(el.settingsStatus);
+    paintSettingsStatus();
     el.settingsBoard.appendChild(surfaceStrip([
       [read.scalars.length, 'knobs'],
       [read.lists.filter(function (e) { return e.kind === 'provider'; }).length,
@@ -15105,11 +15172,43 @@
           var name = (row.querySelector('.cfg-item-name') || {}).textContent || '';
           var value = (row.querySelector('.cfg-item-value') || {}).textContent || '';
           index.push({ section: section.id, sectionName: section.name,
+            item: row.dataset ? row.dataset.item || '' : '',
             name: name, value: value, hay: (name + ' ' + value).toLowerCase() });
         });
       });
     });
     return index;
+  }
+
+  /// The three-part route (settings-ux U3): `#/settings/<section>/<item>`
+  /// opens the section, finds the row, and opens and marks its card. The
+  /// match rows, the filter's Enter, and a pasted link all walk it.
+  function openSettingsItem(section, item) {
+    rememberSection(section);
+    face.settingsFilter = '';
+    window.location.hash = '#/settings/' + section + '/' + encodeURIComponent(item);
+    paintSettings();
+    openSettingsRow(item);
+  }
+
+  /// After the section paints, its row is here: press it so the card is
+  /// the one the pane already knows how to open, and mark it.
+  function openSettingsRow(item) {
+    if (!item) return;
+    var rows = el.settingsBoard.querySelectorAll('.cfg-item');
+    var found = null;
+    Array.prototype.forEach.call(rows, function (row) {
+      if (found || !row.dataset) return;
+      if (row.dataset.item === item) found = row;
+    });
+    if (!found) return;
+    Array.prototype.forEach.call(rows, function (row) {
+      if (row.classList && row.classList.contains('cfg-item-marked')) {
+        row.classList.remove('cfg-item-marked');
+      }
+    });
+    if (found.classList) found.classList.add('cfg-item-marked');
+    found.click();
   }
 
   function settingsMatches(read) {
@@ -15127,6 +15226,27 @@
     box.placeholder = 'find a setting';
     box.value = face.settingsFilter || '';
     box.setAttribute('aria-label', 'find a setting');
+    // U3: arrows and Enter drive the list — the filter is a picker, not
+    // only a search box.
+    box.addEventListener('keydown', function (ev) {
+      var found = el.settingsBoard.querySelectorAll('.settings-matches .cfg-item');
+      if (!found.length) return;
+      var list = Array.prototype.slice.call(found);
+      var active = null;
+      try { active = document.activeElement; } catch (error) { }
+      var at = list.indexOf(active);
+      if (ev.key === 'ArrowDown') {
+        ev.preventDefault();
+        list[Math.min(list.length - 1, at + 1)].focus();
+      } else if (ev.key === 'ArrowUp') {
+        ev.preventDefault();
+        if (at > 0) list[at - 1].focus();
+        else box.focus();
+      } else if (ev.key === 'Enter') {
+        ev.preventDefault();
+        (at >= 0 ? list[at] : list[0]).click();
+      }
+    });
     box.addEventListener('input', function () {
       face.settingsFilter = box.value;
       paintSettingsRail(face.settings);
@@ -15150,7 +15270,33 @@
       el.settingsBoard.querySelectorAll('.settings-matches'),
       function (one) { one.parentNode.removeChild(one); });
     var matches = settingsMatches(face.settings);
-    if (!matches || !matches.length) return;
+    if (!matches) return;
+    if (!matches.length) {
+      // U3: no match finishes the job rather than leaving a blank rail —
+      // the card names what was asked and offers the sections it could
+      // have meant, each of them a press.
+      var none = node('div', 'settings-matches card');
+      var noneHead = node('header', 'card-head');
+      noneHead.appendChild(node('h2', null, 'no match'));
+      none.appendChild(noneHead);
+      none.appendChild(node('p', 'board-empty',
+        'Nothing in this home\u2019s settings is called \u201c' +
+        (face.settingsFilter || '') + '\u201d. The sections are the map \u2014 one of them ' +
+        'probably holds it under another word.'));
+      var suggestions = node('div', 'cfg-list-rows');
+      settingsSections(face.settings).forEach(function (section) {
+        var row = cfgItem({
+          id: 'suggest:' + section.id, kind: 'section', name: section.name,
+          value: section.id === settingsSectionId() ? 'open' : '',
+          card: function () { return [['the section', node('p', 'derivation', 'open it')]]; }
+        });
+        row.addEventListener('click', function () { openSettingsItem(section.id, ''); });
+        suggestions.appendChild(row);
+      });
+      none.appendChild(suggestions);
+      el.settingsBoard.appendChild(none);
+      return;
+    }
     var card = node('div', 'settings-matches card');
     var head = node('header', 'card-head');
     head.appendChild(node('h2', null, matches.length +
@@ -15166,10 +15312,7 @@
       row.appendChild(main);
       row.appendChild(node('span', 'cfg-item-mark', entry.sectionName));
       row.addEventListener('click', function () {
-        rememberSection(entry.section);
-        window.location.hash = '#/settings/' + entry.section;
-        face.settingsFilter = '';
-        paintSettings();
+        openSettingsItem(entry.section, entry.item);
       });
       card.appendChild(row);
     });
@@ -15260,18 +15403,69 @@
       input.value = value;
       input.setAttribute('aria-label', label);
     }
+    // U4: the field validates at blur, beside the field. A numeric knob
+    // (or one with a compiled ceiling) refuses a value that is not a
+    // number and a value past the ceiling, and the save is held until it
+    // passes — the server's refusal still lands if the check misses.
+    var error = node('span', 'cfg-error');
+    error.hidden = true;
+    var numeric = !!(knob && (knob.kind === 'number' || knob.kind === 'usd' ||
+      knob.kind === 'integer'));
+    var check = function () {
+      var text = String(input.value == null ? '' : input.value).trim();
+      var problem = '';
+      if (text !== '' && (numeric || (knob && knob.ceiling != null))) {
+        var number = Number(text);
+        if (!isFinite(number)) {
+          problem = 'that is not a number';
+        } else if (knob && knob.ceiling != null && number > Number(knob.ceiling)) {
+          problem = 'the compiled ceiling is ' + knob.ceiling +
+            '; a write above it is refused';
+        }
+      }
+      error.textContent = problem;
+      error.hidden = !problem;
+      if (problem) settingsSay('refused', 'not saved', problem);
+      return !problem;
+    };
+    if (input.addEventListener) input.addEventListener('blur', check);
     var saved = cfgWriteField(label, note || '', input, 'set', function () {
       return { key: key, value: input.value };
-    });
+    }, check);
+    if (saved.appendChild) saved.appendChild(error);
+    // U2: a file-sourced knob reverts in one press. The override leaves
+    // the file (`unset`), the read answers `default` for the key, and the
+    // row's mark flips on the same re-read every write already runs.
+    var revert = null;
+    if (knob && knob.source === 'file') {
+      var revertAct = node('button', 'replay-button', 'revert to the default');
+      revertAct.type = 'button';
+      revertAct.dataset.act = 'revert-' + key;
+      revertAct.addEventListener('click', function () {
+        writeSettings('unset', { key: key }, function () {
+          settingsNotice('reverted', label);
+        });
+      });
+      revert = node('div', 'cfg-inline');
+      revert.appendChild(revertAct);
+      revert.appendChild(node('span', 'cfg-item-mark',
+        knob.default
+          ? 'the compiled default is ' + knob.default
+          : 'no literal default is declared \u2014 the code\u2019s own fallback applies'));
+    }
     return [
       ['the value', saved],
       ['where it comes from', node('p', 'derivation',
         'source: ' + source + (source === 'file'
           ? ' \u2014 a write here lands in this home\u2019s own config'
-          : ' \u2014 a write here lands in the config; an env var still wins'))],
+          : ' \u2014 a write here lands in the config, and an env var still wins it: ' +
+            'unset the variable (or edit this home\u2019s fleet.env) to let the write take effect'))],
+      ['the revert', revert || node('p', 'derivation',
+        'the value already comes from ' + source + '; there is no override to remove')],
       ['the ceiling', node('p', 'derivation',
         (knob && knob.ceiling != null)
-          ? 'the compiled ceiling is ' + knob.ceiling + '; a value above it is refused'
+          ? 'the compiled ceiling is ' + knob.ceiling + '; a value above it is refused \u2014 ' +
+            'a compiled ceiling can only be tightened, never raised'
           : 'no compiled ceiling on this knob')]
     ];
   }
@@ -15357,7 +15551,7 @@
         writeSettings('workload', {
           workload: tier.workload,
           candidates: ordered
-        }, function () { notice('the workload is saved', tier.workload); });
+        }, function () { settingsNotice('the workload is saved', tier.workload); });
       }
     }]);
     return [
@@ -15495,16 +15689,16 @@
         post('/api/settings', Object.assign({ op: 'provider' }, body)).then(function (reply) {
           var wrote = (reply.body && reply.body.wrote) || {};
           if (reply.status !== 200) {
-            notice('the provider was refused',
+            settingsNotice('the provider was refused',
               (reply.body && reply.body.error) || 'no reason given');
             return;
           }
           if (wrote.discovery && !wrote.discovery.ok && wrote.discovery.error) {
-            notice(wrote.discovery.error, provider.id);
+            settingsNotice(wrote.discovery.error, provider.id);
           } else if (wrote.key_store) {
-            notice('the key landed in ' + wrote.key_store, provider.id);
+            settingsNotice('the key landed in ' + wrote.key_store, provider.id);
           } else {
-            notice('the provider is saved', provider.id);
+            settingsNotice('the provider is saved', provider.id);
           }
           readSettings(true);
         }).catch(function () { });
@@ -15519,14 +15713,14 @@
             models: provider.models || [],
             enabled: !provider.enabled
           })
-        }, function () { notice('the provider is ' +
+        }, function () { settingsNotice('the provider is ' +
           (provider.enabled ? 'disabled' : 'enabled'), provider.id); });
       }
     }, {
       label: override ? 'remove the override' : 'no override', run: function () {
         if (!override) return;
         writeSettings('provider-remove', { id: provider.id }, function () {
-          notice('the override is gone', provider.id);
+          settingsNotice('the override is gone', provider.id);
         });
       }
     }]);
@@ -15538,11 +15732,11 @@
       writeSettings('provider-discover', { id: provider.id }, function (reply) {
         var wrote = reply && reply.wrote;
         if (wrote && wrote.ok) {
-          notice('the catalog is reloaded' +
+          settingsNotice('the catalog is reloaded' +
             (wrote.settings_written ? ' \u00b7 ' + wrote.settings_written + ' models with declared settings' : ''),
             provider.id);
         } else {
-          notice(wrote && wrote.error ? wrote.error : 'the reload did not answer', provider.id);
+          settingsNotice(wrote && wrote.error ? wrote.error : 'the reload did not answer', provider.id);
         }
       });
     });
@@ -15600,13 +15794,13 @@
     var walkRows = node('div', 'cfg-list-rows');
     function saveWalk(order, next) {
       if (!next.length) {
-        notice('a walk cannot be empty', order.workload);
+        settingsNotice('a walk cannot be empty', order.workload);
         return;
       }
       order.chain = next;
       paintWalks();
       writeSettings('workload', { workload: order.workload, candidates: next },
-        function () { notice('the walk is saved', order.workload); });
+        function () { settingsNotice('the walk is saved', order.workload); });
     }
     function paintWalks() {
       walkRows.textContent = '';
@@ -15695,7 +15889,7 @@
         })[0];
         if (!order || !modelPick.value) return;
         if (order.chain.indexOf(modelPick.value) !== -1) {
-          notice('that model is already in the walk', order.workload);
+          settingsNotice('that model is already in the walk', order.workload);
           return;
         }
         saveWalk(order, order.chain.concat([modelPick.value]));
@@ -15762,7 +15956,7 @@
         act.type = 'button';
         act.addEventListener('click', function () {
           serversAction('server-import', { name: row.name, harness: row.harness },
-            function () { notice('imported', row.name + ' \u00b7 from ' + row.harness); });
+            function () { settingsNotice('imported', row.name + ' \u00b7 from ' + row.harness); });
         });
         line.appendChild(act);
         listed.appendChild(line);
@@ -15773,7 +15967,7 @@
         serversAction('server-scan', {}, function (body) {
           var rows = (body.scan && body.scan.rows) || [];
           var skips = (body.scan && body.scan.skips) || [];
-          notice('the scan finished',
+          settingsNotice('the scan finished',
             rows.length + ' entries across the other harnesses' +
               (skips.length ? ' \u00b7 ' + skips.length + ' file(s) skipped' : ''));
         });
@@ -15813,7 +16007,7 @@
             name: server.name,
             config: { program: server.program, args: server.args, env_names: server.env_names,
               enabled: !server.enabled }
-          }, function () { notice('the server is ' +
+          }, function () { settingsNotice('the server is ' +
             (server.enabled ? 'disabled' : 'enabled'), server.name); });
         }
       }])]
@@ -15856,7 +16050,7 @@
               label: 'forget it', primary: true, run: function () {
                 writeSettings('rule-remove',
                   { tool: rule.tool, program: rule.program || null },
-                  function () { notice('the rule is forgotten', rule.label); });
+                  function () { settingsNotice('the rule is forgotten', rule.label); });
               }
             }])]
           ];
@@ -15885,20 +16079,20 @@
             writeSettings('cron', {
               name: job.name, schedule: schedule.value, task: task.value,
               enabled: job.enabled
-            }, function () { notice('the job is saved', job.name); });
+            }, function () { settingsNotice('the job is saved', job.name); });
           });
           var toggle = node('button', 'replay-button', job.enabled ? 'disable' : 'enable');
           toggle.type = 'button';
           toggle.addEventListener('click', function () {
             writeSettings('cron-enabled', { name: job.name, enabled: !job.enabled },
-              function () { notice('the job is ' + (job.enabled ? 'disabled' : 'enabled'),
+              function () { settingsNotice('the job is ' + (job.enabled ? 'disabled' : 'enabled'),
                 job.name); });
           });
           var remove = node('button', 'replay-button', 'remove');
           remove.type = 'button';
           remove.addEventListener('click', function () {
             writeSettings('cron-remove', { name: job.name },
-              function () { notice('the job is gone', job.name); });
+              function () { settingsNotice('the job is gone', job.name); });
           });
           var acts = node('div', 'cfg-card-acts');
           acts.appendChild(save);
@@ -19178,7 +19372,8 @@
       read.exists
         ? 'The sealed credentials. A name is listed; a value is never rendered. The passphrase ' +
           'is held by this process only \u2014 unlock it here without restarting, or launch fleet ' +
-          'with FLEET_VAULT_PASSPHRASE.'
+          'with FLEET_VAULT_PASSPHRASE. To change a sealed value, re-seal it from this panel; ' +
+          'the surface never reads one back.'
         : 'No vault exists yet. Choose a passphrase to create one; it keys the vault and is ' +
           'never stored. There is no recovery, so store it before sealing anything.');
     card.id = cardId || 'settings-vault';
@@ -20028,7 +20223,17 @@
         readWorkspaceCalls(true);
       },
       vault: function () { paintVault(); readSettings(true).then(paintVault); },
-      settings: function () { paintSettings(); readSettings(true).then(paintSettings); }
+      settings: function () {
+        // `#/settings/<section>/<item>` opens the item's card (U3): the
+        // read lands first, then the section paints and the row is
+        // pressed, so a pasted link behaves like the filter's own match.
+        var item = parts[2] ? decodeURIComponent(parts[2]) : '';
+        paintSettings();
+        readSettings(true).then(function () {
+          paintSettings();
+          if (item) openSettingsRow(item);
+        });
+      }
     };
     if (arrive[address]) arrive[address]();
     // The home is a place, not the absence of a conversation: arriving

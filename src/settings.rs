@@ -457,6 +457,84 @@ fn write_env(path: &Path, name: &str, value: &str) -> Result<(), String> {
     write_atomic(path, &text)
 }
 
+/// Remove one line from the env file — the revert's env half (settings-ux
+/// U2): the override goes, the variable's compiled fallback is what a run
+/// reads next. A name that is not there is not an error: the revert asks
+/// for the state, not for a removal.
+fn unset_env(path: &Path, name: &str) -> Result<(), String> {
+    let existing = fs::read_to_string(path).unwrap_or_default();
+    let kept: Vec<&str> = existing
+        .lines()
+        .filter(|line| {
+            let trimmed = line.trim();
+            if trimmed.starts_with('#') || trimmed.is_empty() {
+                return true;
+            }
+            match trimmed.split_once('=') {
+                Some((key, _)) => key.trim() != name,
+                None => true,
+            }
+        })
+        .collect();
+    let mut text = kept.join("\n");
+    if !text.is_empty() {
+        text.push('\n');
+    }
+    write_atomic(path, &text)
+}
+
+/// Revert one setting to its compiled default (settings-ux U2): remove
+/// the override from the file that carries it. The read then answers
+/// `default` for that key and the code's own fallback is what a run
+/// reads — one press, no value invented.
+pub fn unset(home: &Path, key: &str) -> Result<(), String> {
+    let Some(setting) = find(key) else {
+        return Err(format!(
+            "`{key}` is not a setting; `fleet settings` lists the ones that are"
+        ));
+    };
+    let (config_path, routing_path, env_path) = paths(home);
+    if setting.file == File::Env {
+        return unset_env(&env_path, key);
+    }
+    let path = match setting.file {
+        File::Config => config_path,
+        File::Routing => routing_path,
+        File::Env => unreachable!("handled above"),
+    };
+    let mut document = read_json(&path)?;
+    let segments = segments(key);
+    let Some(object) = document.as_object_mut() else {
+        return Ok(());
+    };
+    let mut cursor = object;
+    for (index, segment) in segments.iter().enumerate() {
+        let last = index + 1 == segments.len();
+        if last {
+            cursor.remove(*segment);
+            break;
+        }
+        let Some(next) = cursor.get_mut(*segment).and_then(Value::as_object_mut) else {
+            return Ok(());
+        };
+        cursor = next;
+    }
+    let text = serde_json::to_string_pretty(&document).map_err(|error| error.to_string())?;
+    write_atomic(&path, &format!("{text}\n"))
+}
+
+/// The value a setting falls back to when nothing writes it — what a
+/// revert returns the key to (settings-ux U2). Only settings with a
+/// compiled literal are named; `None` means the code's own fallback
+/// applies and the surface says so rather than inventing a value.
+pub fn compiled_default(key: &str) -> Option<&'static str> {
+    match key {
+        // `approvals::resolve(None, _)` answers `YesGuarded`.
+        "approvals" => Some("yes-guarded"),
+        _ => None,
+    }
+}
+
 /// Write `text` to `path` through a unique temp file and a rename, so a
 /// reader never sees a half-written file and two fleet processes
 /// cannot collide on one temp. Best-effort and silent about the temp's

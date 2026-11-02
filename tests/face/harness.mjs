@@ -368,6 +368,17 @@ function boot(options) {
     }
     if (pathOnly === '/api/settings') {
       if (method === 'POST') {
+        // A case may script the write's answer (U1's three ways: saved,
+        // refused, in-flight failure is `setFailNext`); the default stays
+        // a 200 with the case's reply.
+        if (opts.settingsReply) {
+          const answer = typeof opts.settingsReply === 'function'
+            ? opts.settingsReply(init && init.body)
+            : opts.settingsReply;
+          const status = answer && answer.status ? answer.status : 200;
+          const payload = answer && answer.body ? answer.body : (answer || {});
+          return Promise.resolve({ status, json: () => Promise.resolve(payload) });
+        }
         return Promise.resolve({ status: 200, json: () => Promise.resolve(opts.reply || {}) });
       }
       return Promise.resolve({
@@ -4951,6 +4962,235 @@ async function theDesignWorkStartedElsewhereRoutesTheOwnerToThePage() {
     page.window.location.hash + ' / design hidden: ' + page.IDS['panel-design'].hidden);
 }
 
+// settings-ux U1–U4: the board answers its own writes, a written knob
+// reverts, the field validates before the round trip, and the filter
+// finishes (a no-match card, a match opening the item's card through the
+// three-part route, and a pasted deep link doing the same).
+async function theSettingsBoardAnswersForItself() {
+  const doc = (scalars) => ({
+    type: 'settings', read_at: 'now',
+    scalars,
+    lists: [], rules: [], env: [],
+    cron: [], soul: { present: false, text: '' },
+    router: { pin: '', judged: ['quick'],
+      tiers: [{ workload: 'quick', candidates: ['a/one'], resolved: 'a/one', reverts: false }],
+      min_confidence: 0.5, default_workload: 'quick', allow_api_models: false, roster: [] },
+    catalog: { models: [], providers: [] },
+    roles: { dir: '/tmp', entries: [] },
+    vault: { names: ['X_API_KEY'], exists: true, passphrase: false, plaintext: [] },
+    lanes: { lanes: [] }, servers: { servers: [] },
+    tools: { calls_per_turn: 40, deferred_above: 32, definition_tokens: 9000,
+      disabled: [], native: [] },
+    telegram: { present: false, source: 'unset' }, service: {},
+  });
+  const scalars = [
+    { key: 'runs.max_turns', value: '12', kind: 'number', source: 'file',
+      summary: 'turns', ceiling: 20, default: null },
+    { key: 'approvals', value: 'ask', kind: 'choice', source: 'file',
+      summary: 'whether tool calls ask', choices: ['ask', 'yes', 'yes-guarded'],
+      default: 'yes-guarded' },
+  ];
+  const bootWith = (extra) => boot({
+    width: 1440, hash: '#/settings/environment',
+    documents: { settings: doc(scalars), state: (asked) => emptyState(asked),
+      onboard: onboardDoc({ door: false }) },
+    ...extra,
+  });
+
+  // U1 — saved: the board says so, and the stream did not grow.
+  const saved = bootWith({ settingsReply: { ok: true } });
+  await flush();
+  saved.open();
+  await flush(80);
+  const streamNodes = () => (saved.rows('.stream')[0] || { children: [] }).children.length;
+  const streamBefore = streamNodes();
+  saved.el('settings-board').querySelectorAll('.cfg-item');
+  const knobRow = saved.rows('.cfg-item').find((row) =>
+    row.dataset && row.dataset.item === 'knob:runs.max_turns');
+  check('U1 the knob row is on the environment board', !!knobRow, String(!!knobRow));
+  knobRow.click();
+  await flush(60);
+  const saveAct = saved.rows('.replay-button').find((b) => /^save$/.test(b.textContent));
+  check('U1 the card carries its save', !!saveAct, String(!!saveAct));
+  saveAct.click();
+  await flush(120);
+  const statusOf = (page_) => (page_.rows('.settings-status')[0] || { textContent: '' }).textContent;
+  const status = statusOf(saved);
+  check('U1 a save answers on the board itself',
+    /saved/.test(status) && status.includes('runs.max_turns'), JSON.stringify(status));
+  check('U1 the conversation stream gained nothing',
+    streamNodes() === streamBefore, streamBefore + ' -> ' + streamNodes());
+
+  // U1 — refused: the writer's own words, on the board.
+  const refused = bootWith({ settingsReply: { status: 422, body: { error: 'the ceiling is 0.05' } } });
+  await flush();
+  refused.open();
+  await flush(80);
+  refused.rows('.cfg-item').find((row) => row.dataset.item === 'knob:runs.max_turns').click();
+  await flush(60);
+  refused.rows('.replay-button').find((b) => /^save$/.test(b.textContent)).click();
+  await flush(120);
+  const refusedText = statusOf(refused);
+  check('U1 a refusal names itself on the board',
+    /not saved/.test(refusedText) && /the ceiling is 0\.05/.test(refusedText),
+    JSON.stringify(refusedText));
+
+  // U1 — the surface is unreachable.
+  const dead = bootWith({});
+  await flush();
+  dead.open();
+  await flush(80);
+  dead.setFailNext((url) => String(url) === '/api/settings');
+  dead.rows('.cfg-item').find((row) => row.dataset.item === 'knob:runs.max_turns').click();
+  await flush(60);
+  dead.rows('.replay-button').find((b) => /^save$/.test(b.textContent)).click();
+  await flush(120);
+  const deadText = statusOf(dead);
+  check('U1 a dead fetch says the surface is unreachable',
+    /unreachable/.test(deadText), JSON.stringify(deadText));
+
+  // U4 — the field validates at blur, beside the field, before any write.
+  const invalid = bootWith({});
+  await flush();
+  invalid.open();
+  await flush(80);
+  invalid.rows('.cfg-item').find((row) => row.dataset.item === 'knob:runs.max_turns').click();
+  await flush(60);
+  const field = invalid.rows('.knob-box').find((one) => one.name === 'input');
+  field.value = 'abc';
+  field.fire('blur', {});
+  await flush(40);
+  const error = invalid.rows('.cfg-error').find((one) => !one.hidden);
+  check('U4 a non-number is refused beside the field',
+    !!error && /not a number/.test(error.textContent),
+    error ? error.textContent : 'no error');
+  const writesBefore = invalid.calls.filter((c) => c.method === 'POST' &&
+    c.url === '/api/settings').length;
+  invalid.rows('.replay-button').find((b) => /^save$/.test(b.textContent)).click();
+  await flush(80);
+  const writesAfter = invalid.calls.filter((c) => c.method === 'POST' &&
+    c.url === '/api/settings').length;
+  check('U4 the held save writes nothing', writesAfter === writesBefore,
+    writesBefore + ' -> ' + writesAfter);
+  field.value = '25';
+  field.fire('blur', {});
+  await flush(40);
+  const ceiling = invalid.rows('.cfg-error').find((one) => !one.hidden);
+  check('U4 a value past the ceiling is refused beside the field',
+    !!ceiling && /ceiling/.test(ceiling.textContent),
+    ceiling ? ceiling.textContent : 'no error');
+
+  // U2 — a file-sourced knob reverts in one press, through `unset`.
+  const revert = bootWith({});
+  await flush();
+  revert.open();
+  await flush(80);
+  revert.rows('.cfg-item').find((row) => row.dataset.item === 'knob:runs.max_turns').click();
+  await flush(60);
+  const revertAct = revert.rows('.replay-button')
+    .find((b) => /revert to the default/.test(b.textContent));
+  check('U2 the card offers its revert', !!revertAct, String(!!revertAct));
+  revertAct.click();
+  await flush(120);
+  const unset = revert.calls.filter((c) => c.method === 'POST' &&
+    c.url === '/api/settings' && String(c.body).includes('"op":"unset"') &&
+    String(c.body).includes('"key":"runs.max_turns"'));
+  check('U2 the revert writes the override away', unset.length === 1,
+    JSON.stringify(revert.calls.map((c) => c.body)));
+
+  // U5 — each refusal derivation carries its next step. The env line, the
+  // ceiling line and the vault's own sentence.
+  const envDoc = doc([
+    { key: 'FLEET_TEST_ENV_KNOB', value: 'x', kind: 'text', source: 'env',
+      summary: 'an env knob', ceiling: null, default: null },
+    scalars[0],
+  ]);
+  const steps = boot({
+    width: 1440, hash: '#/settings/environment',
+    documents: { settings: envDoc, state: (asked) => emptyState(asked),
+      onboard: onboardDoc({ door: false }) },
+  });
+  await flush();
+  steps.open();
+  await flush(80);
+  steps.rows('.cfg-item').find((row) => row.dataset.item === 'knob:FLEET_TEST_ENV_KNOB').click();
+  await flush(60);
+  const envBody = steps.text('dock-object-body');
+  check('U5 the env line names its next step',
+    /unset the variable/.test(envBody), envBody.slice(0, 200));
+  steps.fireOn('dock-object-close', 'click');
+  await flush(40);
+  steps.rows('.cfg-item').find((row) => row.dataset.item === 'knob:runs.max_turns').click();
+  await flush(60);
+  const ceilingBody = steps.text('dock-object-body');
+  check('U5 the ceiling line names its next step',
+    /only be tightened, never raised/.test(ceilingBody), ceilingBody.slice(0, 200));
+  steps.fireOn('dock-object-close', 'click');
+  await flush(40);
+  const trustRow = steps.rows('.section-rail-row').find((row) =>
+    /trust/.test(row.textContent));
+  if (trustRow) trustRow.click();
+  await flush(120);
+  const vaultItem = steps.rows('.cfg-item').find((row) =>
+    row.dataset && row.dataset.item === 'vault');
+  check('U5 the vault row is on the trust board', !!vaultItem, String(!!vaultItem));
+  if (vaultItem) vaultItem.click();
+  await flush(80);
+  const vaultBody = steps.text('dock-object-body');
+  check('U5 the vault sentence names its next step',
+    /re-seal it from this panel/.test(vaultBody), vaultBody.slice(0, 200));
+
+  // U3 — no match finishes with a card of suggestions.
+  const filter = bootWith({});
+  await flush();
+  filter.open();
+  await flush(80);
+  filter.el('settings-rail').querySelectorAll('.section-rail-search');
+  const box = filter.rows('.section-rail-search')[0];
+  box.value = 'zzzz';
+  box.fire('input', {});
+  await flush(60);
+  const none = filter.rows('.settings-matches').filter((card) =>
+    /no match/.test(card.textContent));
+  check('U3 a filter with no match shows its card', none.length === 1,
+    String(none.length));
+  check('U3 the card offers the sections it could mean',
+    none.length && none[0].textContent.includes('environment'),
+    none.length ? none[0].textContent.slice(0, 120) : 'none');
+
+  // U3 — a match opens the item's card through the three-part route.
+  box.value = 'max_turns';
+  box.fire('input', {});
+  await flush(80);
+  const matchRow = filter.rows('.settings-matches .cfg-item')[0];
+  check('U3 the match is a row', !!matchRow, String(!!matchRow));
+  matchRow.click();
+  await flush(120);
+  check('U3 the press routes to the section and the item',
+    String(filter.window.location.hash).indexOf('#/settings/environment/') === 0 &&
+      String(filter.window.location.hash).includes('max_turns'),
+    String(filter.window.location.hash));
+  check('U3 the item\u2019s card is the one the pane holds',
+    filter.body.dataset.objectCard === 'open' &&
+      String(filter.text('dock-object-title')).length > 0,
+    String(filter.text('dock-object-title')));
+  const marked = filter.rows('.cfg-item-marked');
+  check('U3 the row is marked', marked.length === 1, String(marked.length));
+
+  // U3 — a pasted deep link does the same.
+  const deep = boot({
+    width: 1440, hash: '#/settings/environment/knob:runs.max_turns',
+    documents: { settings: doc(scalars), state: (asked) => emptyState(asked),
+      onboard: onboardDoc({ door: false }) },
+  });
+  await flush();
+  deep.open();
+  await flush(200);
+  check('U3 a bare deep link opens the item\u2019s card',
+    deep.body.dataset.objectCard === 'open',
+    String(deep.body.dataset.objectCard));
+}
+
 async function theSettingsRailCarriesOneSectionAtATime() {
   const settingsDoc = {
     type: 'settings', read_at: 'now',
@@ -5016,11 +5256,19 @@ async function theSettingsRailCarriesOneSectionAtATime() {
 
   // S1: one section at a time — the rail has eight rows, the body one.
   const railRows = page.rows('.section-rail-row');
-  check('SET the rail declares the eight sections',
-    railRows.length === 8 &&
+  // U6 (settings-ux): the money section is gone — seven sections, and no
+  // cap row anywhere on the face. The three caps stay writable from
+  // `fleet settings`; the surface does not render them.
+  check('SET the rail declares the seven sections',
+    railRows.length === 7 &&
       railRows[0].textContent.includes('models') &&
-      railRows[7].textContent.includes('environment'),
-    String(railRows.length));
+      railRows[6].textContent.includes('environment') &&
+      !railRows.some((row) => row.textContent.includes('money')),
+    railRows.map((row) => row.textContent).join(' | '));
+  const capText = page.rows('.cfg-item').filter((row) =>
+    row.dataset && /BUDGET_USD_DAY/.test(row.dataset.item || ''));
+  check('SET no cap row lands anywhere on the face', capText.length === 0,
+    String(capText.length));
   check('SET one section renders at a time', page.rows('.section-body').length === 1,
     String(page.rows('.section-body').length));
   // S2: the row is the app rail's row, and the current one is marked.
@@ -6594,6 +6842,7 @@ const cases = [
   ['RL the page seals its frames through a relay', thePageSealsItsFramesThroughARelay],
   ['BOTS the bots surface mints the bot card', theBotsSurfaceMintsTheBotCard],
   ['SET the settings rail carries one section at a time', theSettingsRailCarriesOneSectionAtATime],
+  ['SET the settings board answers for itself (U1-U4)', theSettingsBoardAnswersForItself],
   ['PM-D the design canvas carries its frames and writes geometry', theDesignCanvasCarriesItsFramesAndWritesGeometry],
   ['PM-E design work started elsewhere routes the owner to the page', theDesignWorkStartedElsewhereRoutesTheOwnerToThePage],
   ['BOTS the bots rail groups by persona', theBotsRailGroupsByPersona],

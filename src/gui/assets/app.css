@@ -1690,6 +1690,34 @@ body[data-object-card="open"] .dock-object {
 /* A first-run home shows the door and nothing else: the counts, the
    method strip, the lanes, the offers and the footnote are the work
    home's furniture, and a machine that cannot answer has none of it. */
+/* The ladder (settings-ux U10): where a first-run home stands — every
+   step the onboarding read names, its done/now/next mark, and the
+   decision the door is asking. One line per step, quiet until current. */
+.onboard-ladder {
+  display: grid;
+  gap: 2px;
+  margin: 0 0 14px;
+  max-width: 420px;
+}
+.onboard-ladder-step {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--dsw-alias-ink-tertiary);
+}
+.onboard-ladder-step[data-done="true"] { color: var(--dsw-alias-ink-secondary); }
+.onboard-ladder-step[data-current="true"] { color: var(--dsw-alias-ink); }
+.onboard-ladder-mark {
+  flex: 0 0 44px;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--dsw-alias-ink-tertiary);
+}
+.onboard-ladder-step[data-done="true"] .onboard-ladder-mark { color: var(--dsw-alias-ok); }
+.onboard-ladder-step[data-current="true"] .onboard-ladder-mark { color: var(--dsw-alias-accent); }
 .empty[data-onboard="door"] .home-stats,
 .empty[data-onboard="preview"] .home-stats,
 .empty[data-onboard="door"] .recent,
@@ -5008,6 +5036,54 @@ pre.drawer-code {
   padding: 2px 0 4px;
 }
 
+
+/* The settings board's own answer line (settings-ux U1): the last write's
+   outcome — `saved <label>`, the refusal's words, or the unreachable
+   sentence — painted on the board rather than dropped into the
+   conversation stream. A settings save is a surface act, not a turn. */
+.settings-status {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  border: var(--card-hairline);
+  border-radius: 8px;
+  background: var(--dsw-alias-surface);
+  font-size: 12px;
+  color: var(--dsw-alias-ink-secondary);
+}
+.settings-status[hidden] { display: none; }
+.settings-status-mark {
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--dsw-alias-ink-tertiary);
+}
+.settings-status[data-state="saved"] .settings-status-mark { color: var(--dsw-alias-ok); }
+.settings-status[data-state="refused"] .settings-status-mark,
+.settings-status[data-state="unreachable"] .settings-status-mark {
+  color: var(--dsw-alias-down);
+}
+.settings-status-title { color: var(--dsw-alias-ink); }
+/* The row a filter match or a deep link opened (settings-ux U3): marked
+   while its card is the one the pane holds, so the owner can see which
+   row the route chose. */
+.cfg-item-marked {
+  outline: 2px solid var(--dsw-alias-accent);
+  outline-offset: -2px;
+  border-radius: 8px;
+}
+/* A field's own refusal, beside the field (settings-ux U4): the value is
+   answered where it was typed, before any round trip. */
+.cfg-error {
+  color: var(--dsw-alias-down);
+  font-size: 11px;
+  margin-left: 6px;
+}
+.cfg-error[hidden] { display: none; }
+.settings-status-detail { color: var(--dsw-alias-ink-tertiary); }
 .surface-main .page-eyebrow { margin: 0 0 8px; }
 
 .surface-title {

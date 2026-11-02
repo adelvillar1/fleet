@@ -6931,6 +6931,10 @@ fn settings_read(home: &std::path::Path) -> Value {
                 "summary": state.summary,
                 "value": state.rendered(),
                 "source": state.source(),
+                // The value a revert returns the key to (settings-ux U2):
+                // the compiled literal where one is declared, null when
+                // the code's own fallback applies.
+                "default": crate::settings::compiled_default(state.key),
                 "ceiling": match state.kind {
                     crate::settings::Kind::Usd(ceiling) => json!(ceiling),
                     crate::settings::Kind::CountTo(maximum) => json!(maximum),
@@ -8353,6 +8357,13 @@ fn settings_apply(
             let key = text("key")?;
             let value = text("value")?;
             crate::settings::set(home, &key, &value)?;
+            Ok(key)
+        }
+        // U2's revert: the override goes and the compiled fallback is what
+        // a run reads next. The read answers `default` for the key after.
+        "unset" => {
+            let key = text("key")?;
+            crate::settings::unset(home, &key)?;
             Ok(key)
         }
         "provider-remove" => {

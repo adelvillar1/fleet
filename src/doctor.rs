@@ -632,7 +632,11 @@ fn next_ki_id(text: &str) -> String {
     let max = text
         .lines()
         .filter_map(|line| {
-            let cell = line.trim_start().strip_prefix("| KI-")?;
+            // The pipe's own padding is not the id's: a row written with
+            // two spaces after the bar (`|  KI-399 |`) still holds 399,
+            // and skipping it minted a duplicate id (found 2026-11-02).
+            let cell = line.trim_start().strip_prefix('|')?.trim_start();
+            let cell = cell.strip_prefix("KI-")?;
             let digits: String = cell.chars().take_while(|c| c.is_ascii_digit()).collect();
             digits.parse::<u64>().ok()
         })
@@ -1112,6 +1116,15 @@ fn plural(count: usize) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_next_id_counts_a_row_whose_pipe_has_extra_padding() {
+        // A row written as `|  KI-399 |` by a hand edit still holds 399.
+        // Skipping it minted a duplicate id on 2026-11-02, so the
+        // derivation reads past the pipe's own whitespace.
+        let table = "| ID | Severity |\n| KI-398 | gap | x |\n|  KI-399 | gap | y |\n";
+        assert_eq!(next_ki_id(table), "KI-400");
+    }
 
     #[test]
     fn credentials_masks_but_never_hides_presence() {

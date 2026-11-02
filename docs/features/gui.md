@@ -693,6 +693,27 @@ rail's own idiom, one fold in the product rather than two:
 Everything writes through `writeSettings` and the same ops as the CLI;
 the surface is the presentation, not the contract.
 
+### One vocabulary
+
+The face and the CLI say the same thing in different words, and the
+mapping is stated here once so neither surface invents a third
+vocabulary. The CLI's words are the contract; the face's marks are how
+it looks.
+
+| The face shows | The CLI says | Where the value lives |
+|---|---|---|
+| `set` — a row's mark | `fleet settings set <key> <value>` | this home's `config.json`, `routing.json`, or `fleet.env` |
+| `env` — a row's mark | the environment answers first; `fleet settings` prints the source | the process environment, or `fleet.env` loaded into it |
+| `default` — a row's mark | the compiled fallback, with no write | the code |
+| `own` / `built-in` — a list row's mark | `fleet settings workload set` writes one; a built-in reverts | `routing.json` |
+| `revert to the default` — a card's press | it removes the key (`unset`), so the compiled fallback applies | the same file the write would use |
+| `saved <what>` / `not saved` — the board's own line | the command's exit code and its one-line refusal | nowhere: a write's outcome, not a value |
+| `refused` beside a field | the writer's own error, printed | nowhere |
+
+Both surfaces cite this table: the CLI's section in
+`FUNCTIONAL-SPECIFICATIONS.md` points here for the marks, and this page
+points there for the verbs.
+
 ## The face's own tests
 
 `tests/face/harness.mjs` boots the real `src/gui/assets/app.js` against

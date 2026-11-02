@@ -867,6 +867,19 @@ fn span_hours_between(first: &str, last: &str) -> Option<f64> {
     Some((days * 24 + seconds / 3600) as f64 + (seconds % 3600) as f64 / 3600.0)
 }
 
+/// The rule that turns a measured tail into a bound (KI-249): three times
+/// the observed max, floored at ten times the warm median, capped at ten
+/// minutes. The floor keeps a tail with no slow sample from setting a
+/// bound under ordinary jitter; the cap keeps a pathological sample from
+/// holding a call for an hour. The number is the measurement's, so a
+/// bound that moves moves with a new tail rather than a new guess.
+pub fn embed_bound_ms(max_ms: u128, median_ms: f64) -> u128 {
+    const CAP_MS: u128 = 600_000;
+    let floor = (median_ms * 10.0) as u128;
+    let rule = max_ms.saturating_mul(3).max(floor);
+    rule.min(CAP_MS)
+}
+
 /// Every day file under the stream root, at any depth.
 fn collect_day_files(root: &Path, out: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(root) else {
@@ -3571,6 +3584,24 @@ mod tests {
         assert_eq!(load.max_ms, 4_000);
         assert!(load.median_ms > 0.0 && load.p95_ms >= load.median_ms);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_embed_bound_is_the_rules_output_over_the_tail() {
+        // KI-249's C2: three times the measured max, floored at ten times
+        // the warm median, capped at ten minutes. The three branches are
+        // each named, and the first is the real stream's own tail.
+        assert_eq!(embed_bound_ms(9_107, 83.0), 27_321);
+        assert_eq!(
+            embed_bound_ms(1, 100.0),
+            1_000,
+            "the floor holds up a quiet tail"
+        );
+        assert_eq!(
+            embed_bound_ms(500_000, 83.0),
+            600_000,
+            "the cap bounds a pathological sample"
+        );
     }
 
     #[test]
