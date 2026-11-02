@@ -103,11 +103,16 @@ model's primary reading, an image block becomes an artifact named by its
 path, and `structuredContent` is the typed answer beside them — and the
 fallback when there is no text at all. When the server declared an
 `outputSchema` for the tool, that structured answer is **checked against
-it** (its root type, its `required` keys, each declared property's type)
-and a mismatch is named in a `note:` line beside the answer rather than
-dropped: the tool made a promise about its shape, and the model reads
-whether it was kept. A tool that declares no schema is not assumed to
-have one.
+it** — the root and property types, `required`, `enum`, `const`, and an
+array's `items` — and a mismatch is named in a `note:` line beside the
+answer rather than dropped: the tool made a promise about its shape, and
+the model reads whether it was kept. A tool that declares no schema is
+not assumed to have one, and a schema using a construct this check does
+not read (`oneOf`, `$ref`, a pattern, a bound, or a word it has never
+heard of) says **not fully checked** and names the keyword — an
+unchecked answer never reads as a valid one. That third answer is the
+point: a validator silent about what it skips is the same silence the
+check exists to end.
 
 A server's `annotations` are untrusted by the spec, so they select the
 **tier** a call is screened under and never grant it: `destructiveHint`

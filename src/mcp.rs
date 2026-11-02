@@ -948,15 +948,154 @@ fn parse_call(result: Value) -> Result<CallResult, McpError> {
 /// it checked would be the same silence the check exists to end. A
 /// mismatch is named, never dropped: the model keeps the answer and
 /// reads that it did not match the promise.
-pub fn validate_structured(schema: &Value, value: &Value) -> Result<(), String> {
-    let Some(declared) = schema.get("type").and_then(Value::as_str) else {
-        return Ok(());
+pub fn validate_structured(schema: &Value, value: &Value) -> StructuredVerdict {
+    match check_value(schema, value) {
+        Err(reason) => StructuredVerdict::Mismatch(reason),
+        Ok(()) => {
+            let mut unread: Vec<String> = Vec::new();
+            unread_keywords(schema, &mut unread);
+            if unread.is_empty() {
+                StructuredVerdict::Ok
+            } else {
+                StructuredVerdict::Unchecked(unread)
+            }
+        }
+    }
+}
+
+/// What a structured answer's check came to. `Unchecked` is the honest
+/// third answer: the schema declares a construct this check does not
+/// read, so the result was **not** validated — never a silent pass (the
+/// cheap fix this replaces).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StructuredVerdict {
+    Ok,
+    Mismatch(String),
+    /// The keywords the schema declares that this check does not read —
+    /// known ones and unknown ones alike, because an unknown word is not
+    /// a pass either.
+    Unchecked(Vec<String>),
+}
+
+/// The keyword sets: what [`check_value`] reads, and the schema keywords
+/// it knows it does not read. A keyword outside both lists is reported
+/// too — an unknown construct is not a pass.
+const READ_KEYWORDS: &[&str] = &[
+    "type",
+    "required",
+    "properties",
+    "items",
+    "enum",
+    "const",
+    "description",
+    "title",
+    "default",
+    "examples",
+    "deprecated",
+];
+const UNREAD_KEYWORDS: &[&str] = &[
+    "$ref",
+    "oneOf",
+    "anyOf",
+    "allOf",
+    "not",
+    "if",
+    "then",
+    "else",
+    "pattern",
+    "format",
+    "minimum",
+    "maximum",
+    "exclusiveMinimum",
+    "exclusiveMaximum",
+    "minLength",
+    "maxLength",
+    "patternProperties",
+    "additionalProperties",
+    "propertyNames",
+    "dependentRequired",
+    "dependentSchemas",
+    "unevaluatedProperties",
+    "contains",
+    "minItems",
+    "maxItems",
+    "uniqueItems",
+    "minProperties",
+    "maxProperties",
+    "multipleOf",
+];
+
+/// Collect every schema keyword the check does not read, at any depth:
+/// the known-unread set and any word this check has never heard of.
+fn unread_keywords(schema: &Value, out: &mut Vec<String>) {
+    let Some(object) = schema.as_object() else {
+        return;
     };
-    if !type_matches(declared, value) {
-        return Err(format!(
-            "the answer is {}, the schema declares {declared}",
-            json_kind(value)
-        ));
+    for (key, value) in object {
+        if UNREAD_KEYWORDS.contains(&key.as_str()) {
+            if !out.iter().any(|seen| seen == key) {
+                out.push(key.clone());
+            }
+            continue;
+        }
+        if !READ_KEYWORDS.contains(&key.as_str()) {
+            // An unknown word is not a pass either: name it once.
+            if !out.iter().any(|seen| seen == key) {
+                out.push(key.clone());
+            }
+            continue;
+        }
+        match key.as_str() {
+            "properties" | "patternProperties" | "dependentSchemas" => {
+                if let Some(map) = value.as_object() {
+                    for nested in map.values() {
+                        unread_keywords(nested, out);
+                    }
+                }
+            }
+            "items" | "contains" | "additionalProperties" | "propertyNames" | "not" => {
+                unread_keywords(value, out);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// The checks that are made, in the order they read: the root and
+/// property types, `required`, `enum`, `const`, and `items` for an
+/// array's elements. A violation is named with what was found.
+fn check_value(schema: &Value, value: &Value) -> Result<(), String> {
+    if let Some(constant) = schema.get("const") {
+        if constant != value {
+            return Err(format!(
+                "the answer is {}, the schema allows only {constant}",
+                json_kind(value)
+            ));
+        }
+    }
+    if let Some(allowed) = schema.get("enum").and_then(Value::as_array) {
+        if !allowed.contains(value) {
+            return Err(format!(
+                "the answer is {}, which the schema's enum does not list",
+                json_kind(value)
+            ));
+        }
+    }
+    if let Some(declared) = schema.get("type").and_then(Value::as_str) {
+        if !type_matches(declared, value) {
+            return Err(format!(
+                "the answer is {}, the schema declares {declared}",
+                json_kind(value)
+            ));
+        }
+    }
+    if let Some(list) = value.as_array() {
+        if let Some(items) = schema.get("items") {
+            for (index, element) in list.iter().enumerate() {
+                check_value(items, element)
+                    .map_err(|reason| format!("element {index}: {reason}"))?;
+            }
+        }
     }
     if let Some(object) = value.as_object() {
         if let Some(required) = schema.get("required").and_then(Value::as_array) {
@@ -968,17 +1107,10 @@ pub fn validate_structured(schema: &Value, value: &Value) -> Result<(), String> 
         }
         if let Some(properties) = schema.get("properties").and_then(Value::as_object) {
             for (key, property) in properties {
-                let Some(expected) = property.get("type").and_then(Value::as_str) else {
+                let Some(field) = object.get(key) else {
                     continue;
                 };
-                if let Some(field) = object.get(key) {
-                    if !type_matches(expected, field) {
-                        return Err(format!(
-                            "`{key}` is {}, the schema declares {expected}",
-                            json_kind(field)
-                        ));
-                    }
-                }
+                check_value(property, field).map_err(|reason| format!("`{key}`: {reason}"))?;
             }
         }
     }
@@ -1478,29 +1610,101 @@ mod tests {
 
     #[test]
     fn a_structured_result_is_checked_against_the_declared_schema() {
-        // The checks the schema makes: the root type, required keys, and
-        // each declared property's type. A match passes silently; a
-        // mismatch names what it found and what was promised.
+        // The checks the schema makes: the root type, `required`, each
+        // declared property's type, an array's `items`, `enum` and
+        // `const`. A match passes; a mismatch names what it found.
         let schema = json!({
             "type": "object",
             "required": ["dims", "model"],
             "properties": {
                 "dims": { "type": "integer" },
-                "model": { "type": "string" }
+                "model": { "type": "string" },
+                "tags": { "type": "array", "items": { "type": "string" } },
+                "grade": { "enum": ["a", "b"] }
             }
         });
-        assert!(validate_structured(&schema, &json!({ "dims": 768, "model": "bge" })).is_ok());
-        let wrong_type = validate_structured(&schema, &json!({ "dims": "768", "model": "bge" }))
-            .expect_err("a string is not an integer");
-        assert!(wrong_type.contains("`dims` is string"), "{wrong_type}");
-        let missing = validate_structured(&schema, &json!({ "dims": 768 }))
-            .expect_err("the required key is absent");
-        assert!(missing.contains("`model` is required"), "{missing}");
-        let not_an_object =
-            validate_structured(&schema, &json!([1, 2])).expect_err("the root type");
-        assert!(not_an_object.contains("declares object"), "{not_an_object}");
+        assert_eq!(
+            validate_structured(&schema, &json!({ "dims": 768, "model": "bge" })),
+            StructuredVerdict::Ok
+        );
+        let wrong_type = validate_structured(&schema, &json!({ "dims": "768", "model": "bge" }));
+        match wrong_type {
+            StructuredVerdict::Mismatch(reason) => {
+                assert!(
+                    reason.contains("`dims`") && reason.contains("string"),
+                    "{reason}"
+                )
+            }
+            other => panic!("a string is not an integer: {other:?}"),
+        }
+        match validate_structured(&schema, &json!({ "dims": 768 })) {
+            StructuredVerdict::Mismatch(reason) => {
+                assert!(reason.contains("`model` is required"), "{reason}")
+            }
+            other => panic!("the required key is absent: {other:?}"),
+        }
+        // A wrong element in an array: `items` is read now.
+        match validate_structured(
+            &schema,
+            &json!({ "dims": 1, "model": "m", "tags": ["ok", 7] }),
+        ) {
+            StructuredVerdict::Mismatch(reason) => {
+                assert!(
+                    reason.contains("element 1") && reason.contains("string"),
+                    "{reason}"
+                )
+            }
+            other => panic!("the element is not a string: {other:?}"),
+        }
+        // `enum` and `const`.
+        match validate_structured(&schema, &json!({ "dims": 1, "model": "m", "grade": "c" })) {
+            StructuredVerdict::Mismatch(reason) => {
+                assert!(reason.contains("enum"), "{reason}")
+            }
+            other => panic!("grade c is not in the enum: {other:?}"),
+        }
+        let pinned = json!({ "const": { "ok": true } });
+        assert_eq!(
+            validate_structured(&pinned, &json!({ "ok": true })),
+            StructuredVerdict::Ok
+        );
+        assert!(matches!(
+            validate_structured(&pinned, &json!({ "ok": false })),
+            StructuredVerdict::Mismatch(_)
+        ));
         // A schema with no declared type validates nothing it cannot check.
-        assert!(validate_structured(&json!({ "description": "opaque" }), &json!(7)).is_ok());
+        assert_eq!(
+            validate_structured(&json!({ "description": "opaque" }), &json!(7)),
+            StructuredVerdict::Ok
+        );
+    }
+
+    #[test]
+    fn a_schema_the_check_cannot_read_is_not_a_silent_pass() {
+        // The honest third answer (tool-surface C15): a construct this
+        // check does not implement — and a word it has never heard of —
+        // is reported as UNCHECKED, named, instead of reading as valid.
+        let union = json!({ "oneOf": [{ "type": "string" }, { "type": "integer" }] });
+        match validate_structured(&union, &json!("anything")) {
+            StructuredVerdict::Unchecked(keywords) => {
+                assert!(keywords.iter().any(|key| key == "oneOf"), "{keywords:?}")
+            }
+            other => panic!("oneOf is not read: {other:?}"),
+        }
+        // An unknown keyword is named too.
+        let strange = json!({ "type": "object", "x-vendor": { "anything": true } });
+        match validate_structured(&strange, &json!({})) {
+            StructuredVerdict::Unchecked(keywords) => {
+                assert!(keywords.iter().any(|key| key == "x-vendor"), "{keywords:?}")
+            }
+            other => panic!("an unknown word is not a pass: {other:?}"),
+        }
+        // A mismatch outranks "unchecked": the violation found is real.
+        let both = json!({ "type": "object", "oneOf": [] });
+        assert!(matches!(
+            validate_structured(&both, &json!([1])),
+            StructuredVerdict::Mismatch(_)
+        ));
     }
 
     #[test]

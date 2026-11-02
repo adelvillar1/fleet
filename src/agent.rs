@@ -8129,9 +8129,21 @@ fn output_schema_note(
 ) -> Option<String> {
     let (schema, structured) = (schema?, structured?);
     match crate::mcp::validate_structured(schema, structured) {
-        Ok(()) => None,
-        Err(problem) => Some(format!(
+        crate::mcp::StructuredVerdict::Ok => None,
+        crate::mcp::StructuredVerdict::Mismatch(problem) => Some(format!(
             "\nnote: the result does not match the tool's own outputSchema: {problem}"
+        )),
+        // The honest third answer: the schema asks for something this
+        // check does not read, so the result was NOT validated — and the
+        // note says so instead of passing silently.
+        crate::mcp::StructuredVerdict::Unchecked(keywords) => Some(format!(
+            "\nnote: the result was not fully checked against the tool's own outputSchema: \
+             the schema uses {}, which this check does not read",
+            keywords
+                .iter()
+                .map(|keyword| format!("`{keyword}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
         )),
     }
 }
@@ -8625,7 +8637,10 @@ mod tests {
         let note = output_schema_note(Some(&schema), Some(&serde_json::json!({ "dims": "768" })))
             .expect("the mismatch is named");
         assert!(note.contains("outputSchema"), "{note}");
-        assert!(note.contains("`dims` is string"), "{note}");
+        assert!(
+            note.contains("`dims`") && note.contains("string"),
+            "the note names the field and the kind: {note}"
+        );
         assert!(
             output_schema_note(None, Some(&serde_json::json!({ "dims": 768 }))).is_none(),
             "no schema, nothing assumed"
@@ -8634,6 +8649,21 @@ mod tests {
             output_schema_note(Some(&schema), None).is_none(),
             "no structured content, nothing to check"
         );
+        // A schema the check cannot read is named as NOT checked — the
+        // honest third answer, not a silent pass.
+        let unreadable = serde_json::json!({ "oneOf": [{ "type": "string" }] });
+        let unchecked = output_schema_note(Some(&unreadable), Some(&serde_json::json!("x")))
+            .expect("the unchecked note");
+        assert!(unchecked.contains("not fully checked"), "{unchecked}");
+        assert!(unchecked.contains("`oneOf`"), "{unchecked}");
+    }
+
+    #[test]
+    fn a_tool_with_no_output_schema_is_checked_against_none() {
+        // The absence of a schema is not an assumption (tool-surface
+        // C15): a structured result from a tool that declared nothing
+        // earns no note at all.
+        assert!(output_schema_note(None, Some(&serde_json::json!({ "any": 1 }))).is_none());
     }
 
     #[test]
