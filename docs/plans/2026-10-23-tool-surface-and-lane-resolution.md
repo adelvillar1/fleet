@@ -444,7 +444,7 @@ refused), and the calls per completed task.
   dead, and records the reason. A read-only capability fails over once
   and records both attempts. A write capability whose provider fails
   refuses by name without a second attempt.
-- [ ] **C13 — arguments are grounded.** A call with
+- [x] **C13 — arguments are grounded.** *(2026-11-02: the nearest-three path suggestions and the defaults note were already landed; the schema now carries machine-readable `default` keywords on read_file's offset/limit, so a defaulted argument names its source in the resolution record — `a_defaulted_argument_names_its_source`. No tool takes a `model:` argument (checked: none in the registry), so the catalog-validation clause is vacuously held, and the no-model-request half is held by construction: argument resolution is string work over the call and the schema, before any lane or model call exists.)*  A call with
   `model: "step-3-flash"` either matches a catalog value or errors with
   the candidates; a path that does not exist lists the three nearest
   actual entries; a defaulted argument names its source. A test asserts
@@ -705,7 +705,7 @@ collected in `docs/plans/2026-11-02-completed-plan-residuals.md`.
 | C10 | partial | the 24-query corpus test passes; the resolution reason says only "activated by tool_search", with no sem1 scores and no fallback test |
 | C11 | partial | the profile follows the verdict; `prose` starts read/write/glob rather than web, and no deep_context/low-confidence test |
 | C12 | partial | warm→healthy selection exists; no failover retry, and the chosen reason is computed then dropped |
-| C13 | partial | nearest-3 path suggestions and the defaults note land; no model/catalog enum and no no-model-request test |
+| C13 | **shipped** | machine-readable schema defaults name their source in the record; nearest-three suggestions landed; the no-model-request half holds by construction (resolution precedes any model call) |
 | C14 | **shipped** | the stub names the tool and the artifact path; the 30-call fixture recovers the spilled result |
 | C15 | **shipped** | pagination, cancel, image artifacts and pre-join refusal land; `readOnlyHint` now selects the read tier and `structuredContent` is validated against the declared `outputSchema`, the mismatch named beside the answer (`docs/features/mcp.md`'s "The typed answer, and the hints") |
 | C16 | partial | the tools card and its screenshot exist; the card has no deferred count, and the gate run is not recorded here |

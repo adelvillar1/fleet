@@ -1772,11 +1772,12 @@ impl Tool {
                 "properties": {
                     "path": { "type": "string" },
                     "offset": {
-                        "type": "integer", "minimum": 1,
+                        "type": "integer", "minimum": 1, "default": 1,
                         "description": "First line to return, 1-based. Default 1."
                     },
                     "limit": {
                         "type": "integer", "minimum": 1, "maximum": 10000,
+                        "default": 2000,
                         "description": "Lines to return. Default 2000."
                     },
                 },

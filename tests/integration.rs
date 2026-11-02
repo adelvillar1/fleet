@@ -862,6 +862,42 @@ async fn run_completes_a_two_turn_tool_loop() {
 }
 
 #[tokio::test]
+async fn a_defaulted_argument_names_its_source() {
+    // Tool-surface C13: a defaulted argument names its source. A call
+    // without offset/limit gets `default` from the schema keyword, while
+    // the arguments the model carried stay `model`.
+    let home = temp_home("resolution-defaulted");
+    // Tool-surface C13: a defaulted argument names its source. A call
+    // without offset/limit gets `default` from the schema keyword.
+    let home2 = temp_home("resolution-defaulted");
+    let stream2 = stream(vec![
+        tool_call_delta(0, "e1", "read_file", r#"{"path":"anywhere.txt"}"#),
+        finish_frame("tool_calls"),
+        usage_frame(10, 5),
+        "data: [DONE]".to_string(),
+    ]);
+    let mock2 = MockApi::start(vec![stream2, assistant_stream(TOOL_REPORT)]);
+    let mut session2 = Session::create(&home2, "test-model").unwrap();
+    run_on(&mock2, &mut session2, Box::new(ApproveAll), 5, "read it")
+        .await
+        .unwrap();
+    let records2 = session::replay(session2.path()).unwrap();
+    let defaulted = records2.iter().find_map(|record| match record {
+        Record::ToolResolution {
+            requested,
+            argument_sources,
+            ..
+        } if requested == "read_file" => Some(argument_sources.clone()),
+        _ => None,
+    });
+    let sources2 = defaulted.expect("the defaulted read's resolution");
+    assert_eq!(sources2.get("path").map(String::as_str), Some("model"));
+    assert_eq!(sources2.get("offset").map(String::as_str), Some("default"));
+    assert_eq!(sources2.get("limit").map(String::as_str), Some("default"));
+    std::fs::remove_dir_all(&home).ok();
+}
+
+#[tokio::test]
 async fn every_call_writes_one_resolution_and_the_methods_are_named() {
     // One alias (`view` -> read_file), one alias (`search` -> grep), one
     // name nothing answers. The ledger is the log's answer to "what did
@@ -983,6 +1019,7 @@ async fn a_denied_call_still_writes_its_resolution() {
     assert_eq!(method, "refused");
     assert_eq!(sources.get("path").map(String::as_str), Some("model"));
     assert_eq!(sources.get("content").map(String::as_str), Some("model"));
+
     std::fs::remove_dir_all(&home).ok();
 }
 
