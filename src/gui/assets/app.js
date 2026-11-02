@@ -4326,10 +4326,19 @@
     var landing = {
       github: '#/settings/environment',
       trust: '#/settings/trust',
+      vault: '#/settings/trust',
       roster: '#/settings/models',
       money: '#/settings/money'
     };
     window.location.hash = landing[step] || '#/settings/models';
+    // The vault step lands on its own card, not only on the section that
+    // holds it: the passphrase form is the step.
+    if (step === 'vault') {
+      window.setTimeout(function () {
+        var row = document.querySelector('.cfg-item[data-item="vault"]');
+        if (row) row.click();
+      }, 400);
+    }
   }
 
   // The welcome's three readings: the same memory, skills and sessions

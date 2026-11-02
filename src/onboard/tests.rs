@@ -24,6 +24,7 @@ fn the_sequence_is_the_declared_order() {
         &[
             STEP_HOME,
             STEP_LLM,
+            STEP_VAULT,
             STEP_LANES,
             STEP_PROJECTS,
             STEP_GITHUB,
@@ -181,6 +182,47 @@ fn the_home_step_lays_out_what_it_checks() {
     assert!(
         after.step(STEP_HOME).expect("the home step").done,
         "the home step's own proof must hold after its own action"
+    );
+    std::fs::remove_dir_all(&home).ok();
+}
+
+#[test]
+fn the_vault_step_is_done_only_when_nothing_is_left_in_the_clear() {
+    let home = scratch("vault-step");
+    let dotenv = HashMap::new();
+    std::fs::write(home.join(".env"), "ACME_API_KEY=one\nOTHER_API_KEY=two\n").expect("a dotenv");
+    let before = state(&home, &dotenv);
+    let step = before.step(STEP_VAULT).expect("the vault step");
+    assert!(!step.done, "no vault: nothing is sealed");
+    assert!(step.evidence.is_empty(), "{}", step.evidence);
+
+    // The vault's own init seals every credential-shaped line.
+    let sealed = crate::settings::vault_onboard_with(&home, "a-test-passphrase")
+        .expect("the vault is created");
+    assert_eq!(sealed, 2, "both credentials sealed");
+    let after = state(&home, &dotenv);
+    let step = after.step(STEP_VAULT).expect("the vault step");
+    assert!(step.done, "{}", step.evidence);
+    assert!(
+        step.evidence.contains("2 credentials sealed"),
+        "{}",
+        step.evidence
+    );
+
+    // A credential added after the seal is plaintext again, and the step
+    // says so rather than claiming the vault covers it.
+    std::fs::write(
+        home.join(".env"),
+        "ACME_API_KEY=one\nOTHER_API_KEY=two\nLATER_API_KEY=three\n",
+    )
+    .expect("a third line");
+    let later = state(&home, &dotenv);
+    let step = later.step(STEP_VAULT).expect("the vault step");
+    assert!(!step.done, "one name is still plaintext");
+    assert!(
+        step.evidence.contains("1 still plaintext"),
+        "{}",
+        step.evidence
     );
     std::fs::remove_dir_all(&home).ok();
 }

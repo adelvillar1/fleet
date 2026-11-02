@@ -35,6 +35,11 @@ pub const STEP_HOME: &str = "home";
 /// One model key: before the lanes, because every lane composes with a
 /// model, not instead of one.
 pub const STEP_LLM: &str = "first-llm";
+/// The passphrase: the step that makes the keys this home already
+/// holds unreadable to anything else on the machine. It is asked right
+/// after the first account, because that is when there is something
+/// worth sealing.
+pub const STEP_VAULT: &str = "vault";
 /// The lanes, in the registry's own order.
 pub const STEP_LANES: &str = "lanes";
 /// The folder the tower watches.
@@ -48,6 +53,7 @@ pub const STEP_ROSTER: &str = "roster";
 pub const STEPS: &[&str] = &[
     STEP_HOME,
     STEP_LLM,
+    STEP_VAULT,
     STEP_LANES,
     STEP_PROJECTS,
     STEP_GITHUB,
@@ -472,6 +478,23 @@ fn presence(home: &Path, facts: &Facts, id: &str) -> (bool, String) {
                 format!("answers as {}", facts.keyed.join(", "))
             },
         ),
+        STEP_VAULT => {
+            // Done when the vault holds the credentials AND nothing is
+            // left in .env in the clear: a vault that exists while every
+            // key is still plaintext has protected nothing.
+            let state = crate::settings::vault_state(home);
+            let unsealed = state.plaintext.iter().filter(|one| !one.sealed).count();
+            (
+                !state.names.is_empty() && unsealed == 0,
+                if state.names.is_empty() {
+                    String::new()
+                } else if unsealed > 0 {
+                    format!("{} sealed · {unsealed} still plaintext", state.names.len())
+                } else {
+                    format!("{} credentials sealed", state.names.len())
+                },
+            )
+        }
         STEP_LANES => {
             let answering = facts.lanes_answering;
             (
@@ -706,6 +729,23 @@ pub fn narration(id: &str, facts: &Facts) -> Narration {
             },
             skip: String::new(),
             mechanism: facts.chain_words(),
+        },
+        STEP_VAULT => Narration {
+            eyebrow: "fleet · your keys".to_string(),
+            title: "One passphrase seals them.".to_string(),
+            lede: "The account keys this home holds are readable by anything on this machine \
+                   until they are sealed. One passphrase seals them, and each plaintext line \
+                   can go once its name is in."
+                .to_string(),
+            action: "Seal them".to_string(),
+            skip: "Without a vault the keys stay in .env in the clear; fleet still works, and \
+                   so does anything else that can read the file."
+                .to_string(),
+            mechanism: "The vault is encrypted at rest with the passphrase; the face holds it \
+                        in memory while it is open and never writes it to disk. A sealed name \
+                        wins over its .env line, so the plaintext is a leftover, not a copy \
+                        fleet reads first."
+                .to_string(),
         },
         STEP_LANES => {
             let names = facts
