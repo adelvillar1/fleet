@@ -46,6 +46,19 @@ arithmetic over token columns fleet does not record. These two
 increments give fleet the columns, then give the stream a voice about
 what they show.
 
+A third exploration joins them (2026-11-02, recorded in
+`memories/harness-compositional-generalization-paper-vs-fleet.md`): the
+Zhang/Khattab harness paper names **context rot** — appended tool
+outputs bloating history until every call is out of distribution — as
+the failure mode of ReAct-shaped harnesses, and its Figure 8
+instrumented the **trajectory shape** to see it. Fleet's answer to rot
+already exists (delegation with fresh contexts, windowed reads, capped
+outputs, compaction), but whether rot actually bites fleet's own
+traffic is unmeasurable today: the stream has no per-run token curve.
+Increment C is the paper's one adoptable idea, taken as instrumentation
+per KI-249's law — measure before extending — and nothing in it
+changes when or whether compaction fires.
+
 ## Approach
 
 **Increment A — usage rides the rows.** Three optional,
@@ -109,7 +122,44 @@ surface with Increment B, and the functional spec gains the flag
 beside them — C6 pins what these two approaches built, not a docs
 pass afterwards.
 
-The mockups — the voice to approve before a line is built:
+**Increment C — the run's shape rides the stream.** The paper's one
+adoptable idea, taken as measurement and nothing else. The agent
+already computes the growth curve every turn and throws it away:
+`last_prompt_tokens` (`src/agent.rs:2630`) is the turn's context size —
+the provider's own count when it reports one, the estimate otherwise,
+the exact reading `maybe_compact` uses — and it survives only until the
+next turn overwrites it. Increment C keeps it.
+
+The `RunReport` gains the per-turn curve: one snapshot per turn of
+(prompt tokens, completion tokens), captured where the usage event
+already fires, plus the compaction count the run experienced. A new
+`ShapeRow` in the calibration vocabulary — serde-defaulted, the
+`judged_from` pattern — is written once per run beside the route row,
+so a run's trajectory becomes a row and the stream's oldest discipline
+holds: rows written before the field read as absent, and nothing
+pretends a curve existed where none was recorded.
+
+`fleet calib --shape [--day <YYYY-MM-DD>]`: the day's runs as curve
+cards at the genuinely-visual bar — the run's per-turn prompt sizes as
+a one-line sparkline-like sequence, its compactions and outcome named —
+and a day-level closing card: the median per-turn growth ratio, the
+runs whose context doubled mid-run, the compaction counts, the runs
+that ended `max-turns`. A day with no runs prints its one line. The
+reader speaks in numbers and names; it makes no sys1 ask and fires no
+anomaly — Increment B's classes stay the voice, and if the shapes ever
+justify one (a run whose context doubled N times), that class is a
+follow-up ruled on by the data this increment collects.
+
+The mockup — the voice to approve before a line is built:
+
+```
+a shape card
+  14:02 · hard · stepfun/step-5-preview · 6 turns · compactions 1 · ended stop
+  4.1k → 7.8k → 12.4k → 18.9k → 11.2k → 13.0k
+the day's closing card
+  14 runs · median per-turn growth 1.4× · 2 runs doubled mid-run ·
+  3 compactions · 1 run ended max-turns
+```
 
 ```
 the usage columns, on a stream row
@@ -158,14 +208,31 @@ an anomaly card
   carries the flag and the usage columns; the ledger gains a KI row if
   any provider's live answer omits the cache fields (checked, not
   assumed, during verification's live run).
+- [ ] **C7 — the curve is captured, not re-derived.** A run's
+  `RunReport` carries one prompt/completion snapshot per turn — the
+  reported prompt tokens when the provider reports, the estimate
+  otherwise (the `maybe_compact` rule, not a second one) — and the
+  compaction count. Pinned by an agent-loop test over a scripted run.
+- [ ] **C8 — the shape rides the vocabulary.** A `ShapeRow` written
+  once per run beside the route row carries the curve; a row from
+  before the kind reads as absent; the writer emits nothing for a
+  zero-turn run. Pinned by writer tests and a golden old-stream parse.
+- [ ] **C9 — the surface answers the rot question.** `fleet calib
+  --shape` renders the day's curve cards and the day-level closing
+  card (median growth, doubled runs, compactions, max-turn endings);
+  a day with no runs prints its one line; no lane ask, no anomaly
+  fired. Pinned by surface tests over a scripted day and an empty one.
 
 ## Files to be touched
 
 `src/api.rs` (the `Usage` fields, the parse), `src/calib.rs`
-(the `RouteRow` field, the writer), `src/cli.rs` (`CalibOptions.anomalies`,
+(the `RouteRow` field, the writer, the `ShapeRow` kind),
+`src/agent.rs` (the per-turn curve on the `RunReport`),
+`src/cli.rs` (`CalibOptions.anomalies` and `CalibOptions.shape`,
 the parse), the calib surface rendering,
-`src/anomalies.rs` (new), `src/judge.rs` (the session seam reuse, if
-the shape differs from the beats'),
+`src/anomalies.rs` (new — the day's deterministic pass; the lane-ask
+seam is reused from the judgment beats' implementation per
+`2026-10-23-judgment-beats-one-lane.md`, wherever it lives),
 `docs/features/calibration.md`, `FUNCTIONAL-SPECIFICATIONS.md`,
 `docs/known-issues.md` (the live provider-shape check's finding, if
 any).
@@ -181,6 +248,15 @@ the preference table this evidence might eventually justify — the
 evidence lands first. The sys1 batch class (one call, N rows), which
 stays the named follow-up from the beats plan.
 
+And for Increment C specifically: any change to when or whether
+compaction fires (the curve measures; `maybe_compact`'s budget is
+untouched); cross-run trajectory-similarity metrics (the paper's
+Levenshtein/Jaccard apparatus is training-eval tooling); an
+anomaly class built on the shape before the shapes exist to rule on
+(a doubled-context class is the named follow-up, written only if the
+day cards earn it); per-delegation curves inside the run's row (the
+delegation rows already say what the children did).
+
 ## Verification
 
 The tests named per criterion; the gate — all four legs, exit codes
@@ -190,12 +266,17 @@ fields present, confirming the shape the fixture assumed — and
 answering, per provider, how cache-read and prompt tokens relate (the
 `billed_tokens()` semantics). Increment B's live leg: `fleet calib
 --anomalies` over the most recent past day with real rows, findings
-read off the cards.
+read off the cards. Increment C's live leg: one real run on the
+scratch home writes its `ShapeRow`, and `fleet calib --shape` reads
+the curve back off the card — the paper's rot question asked against
+fleet's own traffic for the first time.
 
 ## Linked artifacts
 
 - `memories/super-agent-explorations-for-fleet.md` — the article's
   benchmark, the mapping, and the rejected branches.
+- `memories/harness-compositional-generalization-paper-vs-fleet.md` —
+  the harness paper's mapping; Increment C is its one adoptable idea.
 - `docs/plans/2026-10-23-judgment-beats-one-lane.md` — the lane
   session seam C4 reuses, and the row-vocabulary discipline both
   increments follow.
