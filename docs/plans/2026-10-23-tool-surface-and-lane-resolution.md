@@ -380,7 +380,7 @@ refused), and the calls per completed task.
   (score, ranker, profile, or refusal), catalog size and tier, and
   argument sources. Pinned by tests for the four methods plus a denial;
   the record count equals the call count in a three-call session.
-- [ ] **C2 — the audit prints the rates.** `fleet tools audit <session>`
+- [x] **C2 — the audit prints the rates.** *(2026-11-02: truncation and redundancy print as shares of the calls with the count beside them — `truncated: 25% (1)` — pinned exact by `the_audit_prints_the_shares_with_their_counts`, which also holds the empty session's n/a.)*  `fleet tools audit <session>`
   reads the log and prints schema-valid rate, argument-error classes,
   p95 result bytes, truncation share, redundant-call rate, recovery
   rate, and resolutions by method. A fixture session with injected
@@ -694,7 +694,7 @@ collected in `docs/plans/2026-11-02-completed-plan-residuals.md`.
 |---|---|---|
 | C0 | partial | vision/plan-refusal/supersede/atomic land (`src/agent.rs:1113`, `:1349`); no plan-mode prompt exists (only the refusal), and gui.md does not state the bash exception |
 | C1 | partial | the record carries requested/resolved/method/reason/catalog/tier (`src/agent.rs:3432`); no argument sources, and no test of a denial's resolution |
-| C2 | partial | `fleet tools audit` prints the classes and p95 (`src/tool_audit.rs:48`); truncation and redundancy print as counts, not rates |
+| C2 | **shipped** | truncation and redundancy print as shares with their counts; pinned exact |
 | C3 | partial | windowed reads with continuation land (`src/tools.rs:3830`); no 4,000-line offset test, no empty-file test, and the total-lines scan reads to EOF |
 | C4 | partial | all six behaviours exist (`src/fileops.rs:169`); no `replace_all` test and no capped-diff test |
 | C5 | **shipped** | `src/search.rs:12` caps, `:229` "narrow the query", `:318` glob cap; tests `:612`, `:628` |

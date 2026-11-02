@@ -160,13 +160,35 @@ pub fn render(session: &str, audit: &Audit) -> String {
         .valid_share()
         .map(|share| format!("{:.0}%", share * 100.0))
         .unwrap_or_else(|| "n/a".to_string());
+    // C2: a count is not a rate. Truncation and redundancy print as
+    // shares of the calls — the number the owner compares across
+    // sessions — with the count beside it, because a share without its
+    // denominator reads as precision it does not have.
+    let truncation = if audit.calls == 0 {
+        "n/a".to_string()
+    } else {
+        format!(
+            "{:.0}% ({})",
+            audit.truncated as f64 * 100.0 / audit.calls as f64,
+            audit.truncated
+        )
+    };
+    let redundancy = if audit.calls == 0 {
+        "n/a".to_string()
+    } else {
+        format!(
+            "{:.0}% ({})",
+            audit.redundant as f64 * 100.0 / audit.calls as f64,
+            audit.redundant
+        )
+    };
     out.push_str(&format!(
-        "  schema-valid: {valid} \u{b7} errors: {} \u{b7} truncated: {}\n",
-        audit.errors, audit.truncated
+        "  schema-valid: {valid} \u{b7} errors: {} \u{b7} truncated: {truncation}\n",
+        audit.errors
     ));
     out.push_str(&format!(
-        "  p95 result: {} bytes \u{b7} redundant: {}\n",
-        audit.p95_bytes, audit.redundant
+        "  p95 result: {} bytes \u{b7} redundant calls: {redundancy}\n",
+        audit.p95_bytes
     ));
     match audit.recovery {
         Some(share) => out.push_str(&format!(
@@ -351,5 +373,61 @@ mod tests {
         assert_eq!(audit.methods["retrieved"], 1);
         assert_eq!(audit.methods["refused"], 1);
         assert_eq!(audit.tiers["deferred"], 1);
+    }
+
+    #[test]
+    fn the_audit_prints_the_shares_with_their_counts() {
+        // Tool-surface C2: truncation and redundancy print as shares of
+        // the calls — the number the owner compares across sessions —
+        // with the count beside it. The fixture: 4 calls, 1 truncated,
+        // 1 redundant, so 25% and 25% exactly, not approximations.
+        let home = scratch("rates");
+        let mut session = Session::create(&home, "test-model").unwrap();
+        let calls = vec![
+            call("r1", "read_file", r#"{"path":"a"}"#),
+            call(
+                "r2",
+                "edit",
+                r#"{"path":"a","old_string":"x","new_string":"y"}"#,
+            ),
+            call(
+                "r3",
+                "edit",
+                r#"{"path":"a","old_string":"x","new_string":"y"}"#,
+            ),
+            call("r4", "ghost", "{}"),
+        ];
+        session
+            .record(&Record::Assistant {
+                content: None,
+                tool_calls: calls,
+                persona: None,
+            })
+            .unwrap();
+        for (id, name, output, truncated) in [
+            ("r1", "read_file", "a\n", false),
+            ("r2", "edit", "error: read `a` first", false),
+            ("r3", "edit", "edited a", false),
+            ("r4", "ghost", "error[validation]: unknown tool", true),
+        ] {
+            session
+                .record(&Record::ToolResult {
+                    call_id: id.into(),
+                    name: name.into(),
+                    output: output.into(),
+                    truncated,
+                    approved: true,
+                })
+                .unwrap();
+        }
+        let card = render("rates", &audit(session.path()).unwrap());
+        assert!(card.contains("truncated: 25% (1)"), "{card}");
+        assert!(card.contains("redundant calls: 25% (1)"), "{card}");
+        // An empty session prints n/a, not 0% — a zero of nothing is not
+        // a rate.
+        let empty = Session::create(&scratch("empty"), "test-model").unwrap();
+        let blank = render("empty", &audit(empty.path()).unwrap());
+        assert!(blank.contains("no tool calls"), "{blank}");
+        let _ = std::fs::remove_dir_all(&home);
     }
 }
