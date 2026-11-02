@@ -519,7 +519,7 @@ _VISION_QC = Task(
 # registry for them to name, so the router keeps topology to workload +
 # execution until it does.
 
-ROUTE_WORKLOAD_LABELS = ["quick", "standard_code", "frontend", "hard", "prose", "deep_context"]
+ROUTE_WORKLOAD_LABELS = ["quick", "standard_code", "frontend", "hard", "prose", "deep_context", "composed"]
 ROUTE_EXECUTION_LABELS = ["single", "mixture", "swarm"]
 
 _ROUTE = Task(
@@ -544,6 +544,7 @@ _ROUTE = Task(
                 "hard": "Hard engineering: architecture and design, intricate multi-step reasoning, large refactors, subtle bugs",
                 "prose": "Writing and synthesis: documentation, prose, summaries, explanations, reports",
                 "deep_context": "Broad analysis of large material: connecting many files or working through very long documents",
+                "composed": "Grounded composition: one coherent answer built from retrieved material, cited sources or a long supplied corpus, where fidelity to the sources matters more than the writing",
             },
         ),
         make_choice(

@@ -683,6 +683,11 @@ pub const JUDGED_WORKLOADS: &[&str] = &[
     "hard",
     "prose",
     "deep_context",
+    // The grounded leg (blend1) is a routed workload too: the owner's
+    // 2026-11-02 amendment adds it to the judged set, so a composed
+    // request is answered by the lane that grounds it rather than
+    // falling to the default (C18).
+    "composed",
 ];
 
 /// What a run's own model is when the router has not answered yet: no

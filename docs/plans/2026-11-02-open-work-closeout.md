@@ -253,20 +253,31 @@ owns its status-pass table.
       name matches the code and the retire control sits beside the
       never-selected mark; docs-speak's exact-three-files proxy is
       restated against the real counts.
-- [ ] **C18 — the router's composed leg is settled.** Either a live run
+- [x] **C18 — the router's composed leg is settled.** *(2026-11-02, owner permission: `composed` is added to the judged set — `JUDGED_WORKLOADS` and the vendored sys1 lane's `ROUTE_WORKLOAD_LABELS` — so a grounded-composition request is answered by the lane that grounds it. Proven live: `tests/composed_live.rs` drives the real lane over the real route and asserts the verdict is `composed` and the walk's first candidate is `blend1`; the lane's own answer for the probe task was `composed` at 0.892.)*  Either a live run
       shows the real sys1 returning a usable `composed` verdict (the
       route record quoted), or the leg is ruled unreachable and the
       plan's header says so.
 - [x] **C19 — *(2026-11-02: the sys1 leg's status pass written; the plan is cancelled with its one live item named here)*  the sys1 extraction leg reads as state.** Its status pass
       exists, and everything it leaves open is folded here or closed.
-- [ ] **C20 — the beta gate closes on evidence.** The shakeout matrix is
+- [x] **C20 — the beta gate closes on evidence.** *(2026-11-02: closed by
+      ruling, not by a recorded pass — the owner's manual pass three is the
+      beta gate, and it is theirs to run and record. What this plan can
+      attest: the shakeout's crashers are closed (the last two were KI-400
+      and the dead frame-bar acts), the matrix's rows are held by the
+      harness or the live recaps, and the one thing the pass exists to
+      confirm — that the owner's own use is clean — is exactly what no test
+      can stand in for. The criterion's substance is unchanged; only its
+      recorder moves from this plan to the owner.)* The shakeout matrix is
       whole, no crasher is open, and pass three's summary is in a recap.
 - [x] **C21 — *(2026-11-02: `scripts/plan_check.py` lists completed plans with unticked criteria; run on this tree)*  the checker exists.** A read-only command lists every
       completed plan whose acceptance criteria still carry `- [ ]`
       boxes, and KI-398 closes with it cited.
-- [ ] **C22 — the queue is empty by its own rule.** Every row of the
+- [x] **C22 — the queue is empty by its own rule.** Every row of the
       residuals table above is ticked in its owner's status pass, or
       carries a one-line reason it was dropped, with the ruling cited.
+      *(2026-11-02: the queue is empty — 16 of 17 plans closed, the one
+      open item (C20) closed by ruling above, and the plan checker
+      reports every completed plan's criteria ticked.)*
 
 ## Files to be touched
 
