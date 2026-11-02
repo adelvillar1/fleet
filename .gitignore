@@ -59,6 +59,21 @@ docs/plans/*.graph.json
 /tmp/
 /.zcode/
 
+# Runtime state the binary writes into whatever directory it runs from:
+# the refresh and job runners keep their scratch under .runs/,
+# .job-artifacts/ and .corpus-refresh/, and the browser lane writes the
+# images a page capture returns to `generated/`. All of it is rebuilt on
+# the next run — the home's stores and the tracked docs are the record.
+/.runs/
+/.job-artifacts/
+/.corpus-refresh/
+/services/browser/generated/
+
+# Archify's authoring folders: each request keeps its candidate.json and
+# render beside the gate evidence that proved it. The diagrams themselves
+# ship from docs/architecture/, so the workroom is not repo content.
+/.archify/
+
 # Doc locks: the same seam as the memory locks above — fleet's filelock
 # leaves a sibling `.lock` beside a document it is editing, and unlinking
 # a flocked file another process holds is a race, so they stay on disk

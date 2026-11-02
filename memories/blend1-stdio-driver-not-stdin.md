@@ -8,7 +8,7 @@ tier: durable
 shape: [fail-open]
 phrases: [mcp_server.py < driver.py, JSONDecodeError continue, silent exit 0, Popen spawn pipes, result.content[0].text]
 missing: []
-recall-count: 0
+recall-count: 1
 superseded-by:
 valid-until:
 ---

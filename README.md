@@ -113,8 +113,32 @@ named, not implied — see Sequencing in
 - **Credentials that seal** — a vault that lists names and renders no
   value, with onboarding that migrates the plaintext `.env`.
 
-The console, surface by surface — every destination a user lands on.
-The long pages run one idiom: a rail of sections (what needs you first,
+## How it is built
+
+Two drawings carry the shape: what the binary is made of, and what one
+turn does. Both are [Archify](https://github.com/tt-a1i/archify) diagrams
+— the interactive HTML sits in [docs/architecture](docs/architecture),
+and each image below links to it. The `SRC` badges on the drawings point
+at the `file:line` each claim was read from.
+
+[![Fleet's architecture — one agent core, three faces](docs/images/architecture-fleet.png)](docs/architecture/fleet-architecture.html)
+
+*One Rust binary holds the turn loop, the router, the tool surface and
+the records; the console, the terminal and the headless CLI are three
+faces over it. The face binds loopback only, and the stores beside the
+core are files in the home — memory one file per fact, the session log
+every record, the canvas the boards and their project digests.*
+
+[![A Fleet turn, end to end](docs/images/process-turn.png)](docs/architecture/fleet-turn.html)
+
+*What one turn does: assemble the context (the standing goal, recalled
+facts, disclosed skills, the bound project's design digests), let sys1
+judge the task, walk the declared chain with failover by class, hold the
+destructive class at the approval seat, then stream the answer while the
+session log records it. The router never guesses, and the record names
+the route it took.*
+
+The console, surface by surface — every destination a user lands on.The long pages run one idiom: a rail of sections (what needs you first,
 then the substrate's own categories), one section at a time, one-line
 rows, and the right pane for the item — settings, bots, skills, memory,
 workspace history, and calibration all share it.
