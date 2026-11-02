@@ -189,7 +189,9 @@ class El {
   // pointer for a gesture; the stub has no capture, only the calls.
   setPointerCapture() {}
   releasePointerCapture() {}
-  select() {}
+  // An input's own text-select is a no-op here; a call that names a value
+  // is a picker being chosen, which the flat stub can honour.
+  select(value) { if (value !== undefined) this.value = String(value); }
   click() { this.fire('click', {}); }
   fire(kind, event) {
     const ev = event || {};
@@ -4965,12 +4967,17 @@ async function theSettingsRailCarriesOneSectionAtATime() {
     rules: [{ label: 'bash · pwd', tool: 'bash', program: 'pwd' }],
     env: [{ name: 'FLEET_EMBEDDING_ENDPOINT', present: true, source: 'env' },
       { name: 'FLEET_JUDGE_BUDGET_USD_DAY', present: true, source: 'env' }],
-    cron: [{ name: 'nightly', schedule: '0 3 * * *', task: 'sweep', enabled: true }],
+    cron: [{ name: 'nightly', schedule: '0 3 * * *', task: 'sweep', enabled: true,
+      next_fire: '2026-11-03T03:00Z' }],
     soul: { present: false, text: '' },
     router: { pin: '', judged: ['quick', 'standard_code', 'frontend', 'hard', 'prose',
       'deep_context'],
       tiers: [{ workload: 'quick', candidates: ['a/one', 'b/two'],
       resolved: 'a/one', reverts: false },
+      // U9's fixture: one walk serves the provider whose card is opened
+      // below, so "the walks it serves" has a real order to move.
+      { workload: 'standard_code', candidates: ['alpha/m-one', 'a/one'],
+      resolved: 'alpha/m-one', reverts: true },
       { workload: 'unjudged-shape', candidates: ['a/one'], resolved: 'a/one', reverts: false }],
       min_confidence: 0.5, default_workload: 'quick',
       allow_api_models: false,
@@ -5098,7 +5105,8 @@ async function theSettingsRailCarriesOneSectionAtATime() {
   check('PM the key field is a write-only password input',
     !!keyField && keyField.placeholder.includes('never shown'),
     keyField ? keyField.placeholder : 'no field');
-  const catalogRows = pane.find((one) => one.className === 'cfg-fallback');
+  const catalogRows = pane.find((one) => one.className === 'cfg-fallback')
+    .filter((one) => !(one.dataset && String(one.dataset.role || '').startsWith('walk')));
   check('PM the catalog lists the enabled model and the off one',
     catalogRows.length === 2 &&
       catalogRows[0].textContent.includes('m-one') &&
@@ -5122,6 +5130,48 @@ async function theSettingsRailCarriesOneSectionAtATime() {
     c.url === '/api/settings' && String(c.body).includes('"op":"provider-discover"'));
   check('PM the reload writes through the one writer',
     discoverWrites.length === 1, JSON.stringify(discoverWrites.map((c) => c.body)));
+
+  // U9: the account card completes the chain — the walks this provider
+  // serves are named on the card that owns its models, and the owner
+  // moves the order from there (up, down, stop) or adds a model to a
+  // walk. Each act is the one `workload` writer the tier card uses.
+  const walkRows = pane.find((one) => one.dataset && one.dataset.role === 'walk');
+  check('U9 the account card names the walks it serves',
+    walkRows.length === 1 &&
+      walkRows[0].textContent.includes('standard_code') &&
+      walkRows[0].textContent.includes('alpha/m-one'),
+    walkRows.map((row) => row.textContent).join(' | '));
+  const stopAct = walkRows.length
+    ? walkRows[0].find((one) => one.name === 'button' &&
+      String(one.textContent || '').trim() === 'stop')[0]
+    : null;
+  check('U9 the walk row carries its stop', !!stopAct, String(!!stopAct));
+  if (stopAct) stopAct.click();
+  await flush(80);
+  const stopWrites = providers.calls.filter((c) => c.method === 'POST' &&
+    c.url === '/api/settings' && String(c.body).includes('"op":"workload"') &&
+    String(c.body).includes('"workload":"standard_code"') &&
+    !String(c.body).includes('alpha/m-'));
+  check('U9 stop writes the walk without this provider\u2019s models',
+    stopWrites.length === 1, JSON.stringify(providers.calls.map((c) => c.body)));
+  const picks = pane.find((one) => one.name === 'select');
+  check('U9 the add-to-a-walk picker is on the card', picks.length === 2,
+    String(picks.length));
+  if (picks.length === 2) {
+    picks[0].select('standard_code');
+    picks[1].select('alpha/m-two');
+    const addAct = pane.find((one) => one.name === 'button' &&
+      one.dataset && one.dataset.act === 'walk-add')[0];
+    check('U9 the card carries the add press', !!addAct, String(!!addAct));
+    if (addAct) addAct.click();
+    await flush(80);
+    const addWrites = providers.calls.filter((c) => c.method === 'POST' &&
+      c.url === '/api/settings' && String(c.body).includes('"op":"workload"') &&
+      String(c.body).includes('"workload":"standard_code"') &&
+      String(c.body).includes('alpha/m-two'));
+    check('U9 the add press writes the model into the walk',
+      addWrites.length === 1, JSON.stringify(providers.calls.map((c) => c.body)));
+  }
 
   // The flow the owner asked for: the model list is the section's head,
   // one press is the pin, and the accounts list ends in connect.

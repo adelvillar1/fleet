@@ -15509,6 +15509,130 @@
       catalogRows.appendChild(node('p', 'board-empty',
         'No models yet \u2014 paste the key and reload to discover the provider\u2019s own list.'));
     }
+    // U9: the chain does not stop at the models. The card that names the
+    // account also names the walks this provider serves — one row per
+    // workload whose order carries one of its models — and the owner
+    // moves it there: up and down inside that walk, `stop` takes every
+    // one of its models out, and the picker adds one to any walk. Each
+    // act writes the whole order through `workload`, so the order the
+    // router reads is the one this card just painted.
+    var mine = function (candidate) {
+      return String(candidate || '').split('/')[0] === provider.id;
+    };
+    var orders = ((read.router && read.router.tiers) || []).map(function (tier) {
+      return { workload: tier.workload, chain: (tier.candidates || []).slice() };
+    });
+    var modelValues = (provider.models || []).map(function (model) {
+      return String(model).indexOf('/') === -1 ? provider.id + '/' + model : String(model);
+    });
+    var walkRows = node('div', 'cfg-list-rows');
+    function saveWalk(order, next) {
+      if (!next.length) {
+        notice('a walk cannot be empty', order.workload);
+        return;
+      }
+      order.chain = next;
+      paintWalks();
+      writeSettings('workload', { workload: order.workload, candidates: next },
+        function () { notice('the walk is saved', order.workload); });
+    }
+    function paintWalks() {
+      walkRows.textContent = '';
+      var serving = orders.filter(function (order) {
+        return order.chain.some(mine);
+      });
+      if (!serving.length) {
+        walkRows.appendChild(node('p', 'board-empty',
+          provider.id + ' is in no walk yet \u2014 add it to one below.'));
+        return;
+      }
+      serving.forEach(function (order) {
+        var at = -1;
+        order.chain.forEach(function (candidate, index) {
+          if (at === -1 && mine(candidate)) at = index;
+        });
+        var claim = order.chain[at];
+        // Stacked, not a table row: the workload's name is the row's
+        // subject and takes the full width (a clipped name is a walk you
+        // cannot tell from its neighbour), the order reads beneath it,
+        // and the three acts keep their own column so `stop` never
+        // stacks into two letters.
+        var row = node('div', 'cfg-walk');
+        row.dataset.role = 'walk';
+        row.appendChild(node('span', 'cfg-walk-name', order.workload));
+        row.appendChild(node('span', 'cfg-walk-chain', order.chain.join(' \u2192 ')));
+        var acts = node('div', 'cfg-walk-acts');
+        var raise = node('button', 'replay-button', '\u2191');
+        raise.type = 'button';
+        raise.setAttribute('aria-label', 'raise ' + claim + ' in ' + order.workload);
+        raise.disabled = at <= 0;
+        raise.addEventListener('click', function () {
+          var next = order.chain.slice();
+          next[at - 1] = order.chain[at];
+          next[at] = order.chain[at - 1];
+          saveWalk(order, next);
+        });
+        acts.appendChild(raise);
+        var lower = node('button', 'replay-button', '\u2193');
+        lower.type = 'button';
+        lower.setAttribute('aria-label', 'lower ' + claim + ' in ' + order.workload);
+        lower.disabled = at === order.chain.length - 1;
+        lower.addEventListener('click', function () {
+          var next = order.chain.slice();
+          next[at + 1] = order.chain[at];
+          next[at] = order.chain[at + 1];
+          saveWalk(order, next);
+        });
+        acts.appendChild(lower);
+        var stop = node('button', 'replay-button', 'stop');
+        stop.type = 'button';
+        stop.dataset.act = 'walk-stop-' + order.workload;
+        stop.setAttribute('aria-label', 'stop ' + provider.id + ' in ' + order.workload);
+        stop.addEventListener('click', function () {
+          saveWalk(order, order.chain.filter(function (candidate) {
+            return !mine(candidate);
+          }));
+        });
+        acts.appendChild(stop);
+        row.appendChild(acts);
+        walkRows.appendChild(row);
+      });
+    }
+    paintWalks();
+    var walksSection = node('div', 'cfg-list-rows');
+    walksSection.appendChild(walkRows);
+    if (!orders.length) {
+      walksSection.appendChild(node('p', 'board-empty',
+        'This home declares no walk yet, so there is nothing to add to.'));
+    } else if (!modelValues.length) {
+      walksSection.appendChild(node('p', 'board-empty',
+        'Reload the catalog first \u2014 a walk carries models, and this provider has none listed.'));
+    } else {
+      var addRow = node('div', 'cfg-fallback cfg-walk-add');
+      addRow.dataset.role = 'walk-add';
+      var walkPick = cfgSelect('', orders.map(function (order) { return order.workload; }),
+        'the walk to add this provider to');
+      var modelPick = cfgSelect(modelValues[0], modelValues,
+        'the model of this provider to add');
+      var add = node('button', 'replay-button', 'add to the walk');
+      add.type = 'button';
+      add.dataset.act = 'walk-add';
+      add.addEventListener('click', function () {
+        var order = orders.filter(function (one) {
+          return one.workload === walkPick.value;
+        })[0];
+        if (!order || !modelPick.value) return;
+        if (order.chain.indexOf(modelPick.value) !== -1) {
+          notice('that model is already in the walk', order.workload);
+          return;
+        }
+        saveWalk(order, order.chain.concat([modelPick.value]));
+      });
+      addRow.appendChild(walkPick);
+      addRow.appendChild(modelPick);
+      addRow.appendChild(add);
+      walksSection.appendChild(addRow);
+    }
     return [
       ['the account', node('p', 'derivation',
         provider.id + ' \u00b7 ' + provider.billing + ' \u00b7 ' + provider.kind +
@@ -15516,6 +15640,7 @@
       ['the key', key],
       ['the endpoint', base],
       ['the models this provider serves', catalogRows],
+      ['the walks it serves', walksSection],
       ['what removing it does', node('p', 'derivation',
         override
           ? 'removing this override returns ' + provider.id + ' to its compiled account; ' +
@@ -15710,6 +15835,13 @@
             ['the schedule', schedule],
             ['the task', task],
             ['the write', acts],
+            // The next fire is the read's own computation off this
+            // schedule (settings-ux U9): a disabled job has none, and a
+            // job whose expression matches nothing says so.
+            ['the next fire', node('p', 'derivation',
+              job.enabled
+                ? (job.next_fire || 'the schedule matches nothing ahead')
+                : 'disabled \u2014 no fire is pending')],
             ['the last fire', node('p', 'derivation', job.last_outcome || 'not fired yet')]
           ];
         }

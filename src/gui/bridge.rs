@@ -3290,16 +3290,10 @@ impl Bridge {
         dotenv: &std::collections::HashMap<String, String>,
     ) -> Result<String, String> {
         const TASK: &str = "say hello in five words";
-        let prepared = crate::route::prepare_with_pin(
-            home,
-            dotenv,
-            TASK,
-            &Default::default(),
-            None,
-            None,
-        )
-        .await
-        .map_err(|error| format!("{error}"))?;
+        let prepared =
+            crate::route::prepare_with_pin(home, dotenv, TASK, &Default::default(), None, None)
+                .await
+                .map_err(|error| format!("{error}"))?;
         let client = crate::api::Client::routed(prepared.router.clone());
         let model = prepared.decision.model.clone();
         let handle = tokio::runtime::Handle::current();
@@ -6988,6 +6982,19 @@ fn settings_read(home: &std::path::Path) -> Value {
             .jobs()
             .iter()
             .map(|job| {
+                // The card reads the next fire off the job's own schedule
+                // rather than storing it: an edited cadence moves it, a
+                // disabled job answers nothing, and a hand-edited
+                // expression the parser refuses stays null rather than
+                // becoming a made-up time (settings-ux U9).
+                let next_fire = if job.enabled {
+                    crate::cron::Schedule::parse(&job.schedule)
+                        .ok()
+                        .and_then(|schedule| schedule.next_after(crate::cron::Minute::now()))
+                        .map(|minute| minute.stamp())
+                } else {
+                    None
+                };
                 json!({
                     "name": job.name,
                     "schedule": job.schedule,
@@ -6996,6 +7003,7 @@ fn settings_read(home: &std::path::Path) -> Value {
                     "auto_approve": job.auto_approve,
                     "last_run": job.last_run,
                     "last_outcome": job.last_outcome,
+                    "next_fire": next_fire,
                 })
             })
             .collect::<Vec<_>>(),
