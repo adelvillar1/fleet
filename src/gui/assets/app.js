@@ -14787,6 +14787,61 @@
       ];
     }
 
+    /// Every account, asked again: one press refreshes the catalogs the
+    /// owners' providers publish, and names the ones that did not answer.
+    function reloadAllSections() {
+      var said = node('p', 'derivation');
+      said.setAttribute('role', 'alert');
+      said.hidden = true;
+      var act = node('button', 'replay-button replay-resume', 'reload them all');
+      act.type = 'button';
+      act.dataset.act = 'provider-reload-all';
+      act.addEventListener('click', function () {
+        var ids = ((read.catalog && read.catalog.providers) || [])
+          .filter(function (one) { return one.kind !== 'lane' && one.enabled !== false; })
+          .map(function (one) { return one.id; });
+        var done = [];
+        var failed = [];
+        var step = function (index) {
+          if (index >= ids.length) {
+            said.hidden = false;
+            said.dataset.tone = failed.length ? 'bad' : 'good';
+            said.textContent = 'reloaded ' + done.length + ' of ' + ids.length +
+              (failed.length ? ' — ' + failed.join(', ') + ' did not answer' : '');
+            readSettings(true);
+            return;
+          }
+          post('/api/settings', { op: 'provider-discover', id: ids[index] })
+            .then(function (reply) {
+              var body = reply.body || {};
+              var wrote = body.wrote || body;
+              var ok = reply.status === 200 && wrote.ok !== false && !body.error;
+              (ok ? done : failed).push(ids[index]);
+              step(index + 1);
+            })
+            .catch(function () {
+              failed.push(ids[index]);
+              step(index + 1);
+            });
+        };
+        step(0);
+      });
+      return [
+        ['what it does', node('p', 'derivation',
+          'asks every account for its own catalogue and writes what it answers, with the windows the listing carries.')],
+        ['the write', act],
+        ['what it answered', said]
+      ];
+    }
+
+    function reloadAllRow() {
+      return cfgItem({
+        id: 'provider-reload-all', kind: 'action', name: 'reload every provider',
+        value: 'ask each account for its catalogue again',
+        card: function () { return reloadAllSections(); }
+      });
+    }
+
     function connectRow() {
       return cfgItem({
         id: 'provider-add', kind: 'action', name: 'connect a provider',
@@ -14805,7 +14860,7 @@
             cfgList('the model', 'the one every run talks to — a press changes it',
               modelRows, { limit: 6, label: 'models', key: 'settings-models' }),
             cfgList('the accounts', 'add, change or remove a provider — each row opens its card',
-              [connectRow()].concat(providerRows)),
+              [connectRow(), reloadAllRow()].concat(providerRows)),
             cfgList('the walk', 'when no model is chosen: each workload walks its own order',
               tierRows.concat(gateRows))
           ];

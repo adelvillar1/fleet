@@ -5177,6 +5177,31 @@ async function theSettingsRailCarriesOneSectionAtATime() {
   providers.fireOn('dock-object-close', 'click');
   await flush(40);
 
+  // One press refreshes every account's catalogue: the row, its card,
+  // and one provider-discover write per enabled http provider.
+  providers.fireOn('dock-object-close', 'click');
+  await flush(40);
+  const reloadAll = providers.rows('.cfg-item').find((row) =>
+    row.dataset.item === 'provider-reload-all');
+  check('MODEL the accounts offer one reload for every provider', !!reloadAll,
+    String(!!reloadAll));
+  if (reloadAll) reloadAll.click();
+  await flush(60);
+  const reloadCard = providers.el('dock-object-body');
+  const reloadAct = reloadCard.find((one) => one.name === 'button' &&
+    String(one.textContent || '').includes('reload them all'))[0];
+  check('MODEL the reload-every card carries its press', !!reloadAct,
+    reloadAct ? reloadAct.textContent : 'no act');
+  const reloadsBefore = providers.calls.length;
+  if (reloadAct) reloadAct.click();
+  await flush(120);
+  const allReloads = providers.calls.slice(reloadsBefore).filter((c) => c.method === 'POST' &&
+    c.url === '/api/settings' && String(c.body).includes('"op":"provider-discover"'));
+  check('MODEL the press reloads each http provider once', allReloads.length === 1,
+    JSON.stringify(allReloads.map((c) => c.body)));
+  providers.fireOn('dock-object-close', 'click');
+  await flush(40);
+
   const tierCard = bootSettings('#/settings');
   await flush();
   tierCard.open();
