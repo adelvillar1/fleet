@@ -110,11 +110,15 @@ calibration day-files under
   never print; `fleet doctor` masks to the last four characters. Sealed
   values live in the vault, unlocked per process. A provider's roster
   `headers` ride the same chain: a value's `{env:NAME}` resolves where
-  the key resolves (with `{session}` a stable id per router
-  preparation), a reserved or malformed header is refused at the
-  writer and again at the router's build, and a value never prints —
-  every surface shows the names only (the provider-session-headers
-  plan).
+  the key resolves, and `{session}` resolves to an opaque UUID-shaped
+  id derived from the conversation's id — resume-stable, idempotent
+  under re-preparation, never the raw id. A reserved name, a non-token
+  name character, a control character, or a malformed placeholder is
+  refused at the writer and again at the router's build; a value never
+  prints. A refusal carries the provider's request id from a bounded
+  response-header allowlist (`x-request-id`, `request-id`,
+  `x-opencode-log-id`, `x-litellm-call-id`, `cf-ray`). The provider
+  session-headers and session-header-parity plans hold the details.
 - **The lanes.** Five vendored services under `services/`; heavy
   dependencies (GLiNER, the tabular models, sentence-transformers,
   kokoro, blend1's union) are per-lane venvs under

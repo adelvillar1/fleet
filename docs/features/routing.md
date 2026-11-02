@@ -182,8 +182,9 @@ dev-decisions' own log root — `<user home>/.local/share/dev-decisions/logs/<YY
 
 - `fleet providers` — the roster as cards in chain order, per-provider state
   (configured/unconfigured, key present/absent — never the value), the head
-  marked, any configured headers by name and count (never a value). No
-  network, no spawn.
+  marked, any configured headers by name and count (never a value). A
+  refusal's error line carries the provider's request id when the answer
+  named one. No network, no spawn.
 - The TUI status bar shows the active provider for the current/last run and
   how it was chosen.
 - A headless run prints `route: <provider-id> (<judged|fallback|pinned>)` at
@@ -218,16 +219,35 @@ streamed path (the provider-session-headers plan):
 { "id": "my-gateway", "headers": { "x-opencode-session": "{session}" } }
 ```
 
-A value may compose two placeholders: `{session}` — a stable id per
-router preparation, the caching granularity a session-gated gateway asks
-for — and `{env:NAME}`, resolved from the same dotenv chain the key
-resolves from, so a secret never enters this file. A name that resolves
-to nothing fails the walk at that provider, naming the header and the
-var; a reserved name (`Authorization`, `Content-Type`, `Host`,
-`Content-Length` — case-insensitive), an empty name, or a malformed
-placeholder is refused at the settings writer and again at the router's
-build, each refusal naming the header. A header value is never printed:
-every surface shows the names and the count only.
+A value may compose two placeholders: `{session}` — an opaque,
+UUID-shaped id derived from the conversation's own id, so every
+preparation of the same conversation (turns, a resumed `--session`, the
+face's re-prepare after a pin flip or restart, a mid-run re-route)
+presents the same value and the gateway's affinity bucket survives them
+all; a conversation with no id yet draws a fresh one — and
+`{env:NAME}`, resolved from the same dotenv chain the key resolves
+from, so a secret never enters this file. The raw conversation id never
+rides the wire. A name that resolves to nothing fails the walk at that
+provider, naming the header and the var; a reserved name
+(`Authorization`, `Content-Type`, `Host`, `Content-Length` —
+case-insensitive), an empty name, a non-token name character, or a
+control character in either half of the pair is refused at the settings
+writer and again at the router's build, each refusal naming the header.
+A header value is never printed: every surface shows the names and the
+count only.
+
+**The static-value trap.** A session-named header carrying a constant
+value parses and saves, but it collapses every conversation into one
+affinity bucket — the fork's own migration measured slower calls and
+colder caches for exactly this shape — so the writer prints a warning
+when it sees one. The fix is the `{session}` placeholder.
+
+**The refusal's id.** A non-200 answer keeps the provider's own
+diagnostic id — from `x-request-id`, `request-id`, `x-opencode-log-id`,
+`x-litellm-call-id`, or `cf-ray`, whichever the answer carries — in the
+error's words (`API error 400: … — request id …`), and the log's
+`TurnFailed` row records it, so a refusal is reportable upstream with
+the id the provider asked to see.
 
 The gates live in `<FLEET_HOME>/routing.json` and are all optional:
 `gates.min_confidence`, `gates.default_workload`, and
