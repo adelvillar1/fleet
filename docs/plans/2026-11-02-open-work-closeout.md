@@ -241,7 +241,7 @@ owns its status-pass table.
       stated reason it cannot be pinned), the control-driven fold, the
       unusable pin named, the pause wait driven by a test, and the
       live-turn rewind/stop face test.
-- [ ] **C15 — the gui-revamp residuals are closed or restated.**
+- [x] **C15 — the gui-revamp residuals are closed or restated.** *(2026-11-02: all ten closed or restated — the real-run SSE contract test, the refused-snapshot retention, the recorded four-leg gate, the owner's own openings restated, the boot autofocus, the per-hunk accept, the superseded wordings, and the strip/rules restated with the ruling cited.)* 
       Real-run SSE test, refused-snapshot retention, recorded gate,
       boot autofocus, per-hunk accept, the inline-card and header-rule
       questions settled, and C0/C6 restated with `919416a` cited.
