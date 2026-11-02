@@ -1583,6 +1583,18 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
   align-self: center;
 }
 .cfg-walk-acts .replay-button { flex: 0 0 auto; }
+.cfg-header {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr) auto;
+  gap: 4px 8px;
+  align-items: center;
+  padding: 6px 0;
+  border-bottom: var(--card-hairline);
+}
+.cfg-header .derivation {
+  grid-column: 1 / -1;
+  margin: 0;
+}
 /* The add-to-a-walk row keeps the card's width: two pickers and the
    press wrap onto their own lines instead of pushing the pane wide. */
 .cfg-walk-add { flex-wrap: wrap; }

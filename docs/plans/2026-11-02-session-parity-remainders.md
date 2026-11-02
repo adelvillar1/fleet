@@ -1,5 +1,5 @@
 ---
-status: active
+status: completed
 created: 2026-11-02
 updated: 2026-11-02
 slug: session-parity-remainders
@@ -176,18 +176,23 @@ per-item classification, scoring, or gate fits sys1; nothing delegates.
       `{trace}` value is UUID-shaped, differs from its `{session}`
       value even when both are derived from the same seed, and differs
       across preparations. Pinned. *`a_trace_is_fresh_distinct_and_shaped` — fresh per preparation, distinct from the same seed's session id, UUID-shaped, substituted beside it.*
-- [ ] **C4 — the face's headers row completes the chain on one card.**
+- [x] **C4 — the face's headers row completes the chain on one card.**
       The account card carries the headers editor (names, the config's
       own values, add/edit/remove), never renders a resolved value, and
       shows the constant-value warning inline. Face-harness pinned.
       Lands with settings-ux U9's card or after it.
-      *UNBLOCKED 2026-11-02 — settings-ux U9 has landed: the account card now
-      completes its chain (models, the walks it serves with raise/lower/stop
-      and add, the job card's next fire), so the headers editor has the card
-      this criterion waits for. The cut is the card's: a new row inside
-      `providerSections`, its write riding the provider entry's `headers`
-      object, and its text never a resolved value. The pin list above is still
-      the contract that row will walk.*
+      *LANDED 2026-11-02 — U9's card arrived (`d13ca29`) and the row moved
+      in the same day: the read carries the CONFIG's headers
+      (`RosterEntry.headers` taken from the raw candidate beside the
+      resolved one — `resolve` substitutes `{env:NAME}` in place, so the
+      zip feeds the surfaces the config's own values), the card edits
+      them with add/remove and renders the trap warning live beside a
+      constant session value, and the save writes the entry's
+      `headers` object through the provider write it already makes.
+      Eight face pins (the pre-filled placeholder, the trap's live
+      show-and-silence, add/remove, the save's write, the no-resolved-
+      value rule the server's own credential sweep enforces on every
+      payload). Harness 633/0 across 56 cases.*
 - [x] **C5 — the docs and the gate.** routing.md (the protocol passage,
       the trace placeholder), gui.md (the row), TECHNICAL-DOCUMENTATION.md
       and FUNCTIONAL-SPECIFICATIONS.md (the field rows); fmt, clippy,

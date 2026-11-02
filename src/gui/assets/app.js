@@ -15403,8 +15403,79 @@
     }).concat(disabled);
     var declared = provider.model_settings || {};
     var catalogRows = node('div', 'cfg-list-rows');
+    // W4: the headers this provider's requests carry — the config's own
+    // values (placeholders visible: {session}, {trace}, {env:NAME}),
+    // never a resolved one. A session-named header carrying a constant
+    // is the trap the writer names at save; the card names it inline,
+    // live, before the save lands.
+    var headerPairs = Object.keys(provider.headers || {}).map(function (name) {
+      return { name: name, value: String(provider.headers[name]) };
+    });
+    var headerRows = node('div', 'cfg-list-rows');
+    function sessionTrap(pair) {
+      return pair.name.toLowerCase().indexOf('session') !== -1 &&
+        pair.value.indexOf('{') === -1;
+    }
+    function paintHeaders() {
+      headerRows.textContent = '';
+      if (!headerPairs.length) {
+        headerRows.appendChild(node('p', 'board-empty',
+          'No extra headers \u2014 the request carries the key\u2019s own credential and nothing else.'));
+      }
+      headerPairs.forEach(function (pair, index) {
+        var row = node('div', 'cfg-header');
+        row.dataset.role = 'header';
+        var nameBox = node('input', 'knob-box');
+        nameBox.type = 'text';
+        nameBox.value = pair.name;
+        nameBox.placeholder = 'the header\u2019s name';
+        nameBox.setAttribute('aria-label', 'header ' + (index + 1) + ' name');
+        var valueBox = node('input', 'knob-box');
+        valueBox.type = 'text';
+        valueBox.value = pair.value;
+        valueBox.placeholder = 'the value \u2014 {session}, {trace}, {env:NAME}, or a literal';
+        valueBox.setAttribute('aria-label', 'header ' + (index + 1) + ' value');
+        var warn = node('p', 'derivation',
+          'a constant collapses every conversation into one affinity bucket \u2014 ' +
+          '{session} is what keeps the gateway\u2019s cache per conversation');
+        warn.hidden = !sessionTrap(pair);
+        warn.dataset.role = 'header-warn';
+        var sync = function () {
+          pair.name = nameBox.value.trim();
+          pair.value = valueBox.value;
+          warn.hidden = !sessionTrap(pair);
+        };
+        nameBox.addEventListener('input', sync);
+        valueBox.addEventListener('input', sync);
+        var remove = node('button', 'replay-button', '\u00d7');
+        remove.type = 'button';
+        remove.setAttribute('aria-label', 'remove header ' + (index + 1));
+        remove.addEventListener('click', function () {
+          headerPairs.splice(index, 1);
+          paintHeaders();
+        });
+        row.appendChild(nameBox);
+        row.appendChild(valueBox);
+        row.appendChild(remove);
+        row.appendChild(warn);
+        headerRows.appendChild(row);
+      });
+      var add = node('button', 'replay-button', 'add a header');
+      add.type = 'button';
+      add.dataset.act = 'header-add';
+      add.addEventListener('click', function () {
+        headerPairs.push({ name: '', value: '' });
+        paintHeaders();
+      });
+      headerRows.appendChild(add);
+    }
+    paintHeaders();
     var save = cfgCardActs([{
       label: 'save the provider', primary: true, run: function () {
+        var headers = {};
+        headerPairs.forEach(function (pair) {
+          if (pair.name) headers[pair.name] = pair.value;
+        });
         var body = {
           entry: JSON.stringify({
             id: provider.id,
@@ -15413,6 +15484,7 @@
             models: provider.models || [],
             disabled_models: disabled,
             model_settings: declared,
+            headers: headers,
             enabled: provider.enabled,
             key_required: provider.key_required !== false
           })
@@ -15639,6 +15711,7 @@
         (provider.key_present ? ' \u00b7 a key resolves' : ' \u00b7 no key resolves'))],
       ['the key', key],
       ['the endpoint', base],
+      ['the headers its requests carry', headerRows],
       ['the models this provider serves', catalogRows],
       ['the walks it serves', walksSection],
       ['what removing it does', node('p', 'derivation',

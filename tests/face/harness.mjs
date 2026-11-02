@@ -4992,6 +4992,7 @@ async function theSettingsRailCarriesOneSectionAtATime() {
       providers: [{ id: 'alpha', kind: 'http', billing: 'plan', enabled: true,
       key_present: true, key_env: 'ALPHA_API_KEY', disabled_reason: null,
       models: ['m-one', 'm-two'], disabled_models: ['m-two'],
+      headers: { 'x-opencode-session': '{session}' },
       model_settings: { 'm-one': { context_window: 262144,
         context_window_source: 'provider' } } }] },
     roles: { dir: '/tmp', entries: [{ name: 'tower', description: 'runs it', tools: ['bash'],
@@ -5173,6 +5174,69 @@ async function theSettingsRailCarriesOneSectionAtATime() {
       addWrites.length === 1, JSON.stringify(providers.calls.map((c) => c.body)));
   }
 
+  // W4: the headers row lives on the same card — the config's own
+  // values (placeholders visible), never a resolved one, and the
+  // constant-session trap named inline, live, before the save.
+  const headerRows = pane.find((one) => one.dataset && one.dataset.role === 'header');
+  check('W4 the account card carries the provider\u2019s headers row',
+    headerRows.length === 1, String(headerRows.length));
+  const headerValue = headerRows.length
+    ? headerRows[0].find((one) => one.name === 'input' &&
+      String(one.placeholder || '').includes('{session}'))[0]
+    : null;
+  check('W4 the header\u2019s config value renders as the owner wrote it',
+    !!headerValue && headerValue.value === '{session}',
+    headerValue ? headerValue.value : 'no value box');
+  const headerWarn = headerRows.length
+    ? headerRows[0].find((one) => one.dataset && one.dataset.role === 'header-warn')[0]
+    : null;
+  check('W4 a placeholder value carries no trap warning',
+    !!headerWarn && headerWarn.hidden, headerWarn ? String(headerWarn.hidden) : 'no warn');
+  if (headerValue) {
+    headerValue.value = 'fixed-bucket';
+    headerValue.fire('input', {});
+    await flush(20);
+    const trapNow = pane.find((one) => one.dataset && one.dataset.role === 'header-warn')[0];
+    check('W4 a constant session value names the trap inline', !!trapNow && !trapNow.hidden,
+      trapNow ? 'hidden=' + trapNow.hidden : 'no warn');
+    headerValue.value = '{session}';
+    headerValue.fire('input', {});
+    await flush(20);
+    const trapGone = pane.find((one) => one.dataset && one.dataset.role === 'header-warn')[0];
+    check('W4 the placeholder value silences the trap again', !!trapGone && trapGone.hidden,
+      trapGone ? 'hidden=' + trapGone.hidden : 'no warn');
+  }
+  const headerAdd = pane.find((one) => one.dataset && one.dataset.act === 'header-add')[0];
+  check('W4 the card carries the add-a-header press', !!headerAdd, String(!!headerAdd));
+  if (headerAdd) {
+    headerAdd.click();
+    await flush(20);
+    const twoRows = pane.find((one) => one.dataset && one.dataset.role === 'header');
+    check('W4 the add press opens an empty pair', twoRows.length === 2,
+      String(twoRows.length));
+    const secondRemove = twoRows.length === 2
+      ? twoRows[1].find((one) => one.name === 'button' &&
+        String(one.textContent || '').trim() === '\u00d7')[0]
+      : null;
+    if (secondRemove) secondRemove.click();
+    await flush(20);
+    check('W4 the remove press takes the pair away',
+      pane.find((one) => one.dataset && one.dataset.role === 'header').length === 1,
+      'back to one');
+  }
+  const saveAct = pane.find((one) => one.name === 'button' &&
+    String(one.textContent || '').includes('save the provider'))[0];
+  if (saveAct) saveAct.click();
+  await flush(80);
+  const headerWrites = providers.calls.filter((c) => c.method === 'POST' &&
+    c.url === '/api/settings' && String(c.body).includes('"op":"provider"') &&
+    String(c.body).includes('x-opencode-session') &&
+    String(c.body).includes('{session}'));
+  check('W4 the save writes the entry\u2019s headers object',
+    headerWrites.length === 1, JSON.stringify(providers.calls.map((c) => c.body)));
+  providers.fireOn('dock-object-close', 'click');
+  await flush(40);
+
   // The flow the owner asked for: the model list is the section's head,
   // one press is the pin, and the accounts list ends in connect.
   providers.fireOn('dock-object-close', 'click');
@@ -5220,10 +5284,11 @@ async function theSettingsRailCarriesOneSectionAtATime() {
   if (connectAct) connectAct.click();
   await flush(80);
   const providerWrites = providers.calls.filter((c) => c.method === 'POST' &&
-    c.url === '/api/settings' && String(c.body).includes('"op":"provider"'));
+    c.url === '/api/settings' && String(c.body).includes('"op":"provider"') &&
+    String(c.body).includes('api.acme.dev'));
   check('MODEL the connect press writes a provider entry',
-    providerWrites.length === 1 && String(providerWrites[0].body).includes('api.acme.dev'),
-    JSON.stringify(providerWrites.map((c) => c.body)));
+    providerWrites.length === 1,
+    JSON.stringify(providers.calls.map((c) => c.body)));
   providers.fireOn('dock-object-close', 'click');
   await flush(40);
 

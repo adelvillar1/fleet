@@ -8075,6 +8075,7 @@ fn router_document(config: &crate::settings::RouterConfig) -> Value {
             "disabled_reason": entry.disabled_reason,
             "disabled_models": entry.disabled_models,
             "model_settings": entry.model_settings,
+            "headers": entry.headers,
         })).collect::<Vec<_>>(),
         "refused": config.refused,
     })
@@ -8103,6 +8104,7 @@ fn catalog_document(catalog: &crate::settings::Catalog) -> Value {
             "models": entry.models,
             "disabled_models": entry.disabled_models,
             "model_settings": entry.model_settings,
+            "headers": entry.headers,
         })).collect::<Vec<_>>(),
         "workloads": catalog.workloads,
         "env_names": catalog.env_names.iter().map(|name| json!({

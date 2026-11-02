@@ -2053,6 +2053,10 @@ pub struct RosterEntry {
     /// The per-model settings the provider declared or the owner
     /// overrode, as the editor shows them.
     pub model_settings: std::collections::BTreeMap<String, crate::route::ModelSettings>,
+    /// The provider's configured headers, exactly as the config spells
+    /// them — placeholders visible, env values never substituted. The
+    /// card edits these; a resolved value never reaches a surface.
+    pub headers: std::collections::BTreeMap<String, String>,
 }
 
 /// The router's configuration as the settings surface reads it.
@@ -2096,7 +2100,15 @@ pub fn router_config(home: &Path, dotenv: &HashMap<String, String>) -> RouterCon
     out.min_confidence = roster.gates.min_confidence;
     out.default_workload = roster.gates.default_workload.to_string();
     out.pin = roster.pin.clone();
-    out.roster = resolved.iter().map(roster_entry).collect();
+    // The read carries the CONFIG's headers, never the resolved ones:
+    // `resolve` substitutes `{env:NAME}` in place, and a substituted
+    // value is a secret a surface must never render. The zip is safe —
+    // `resolve` preserves the roster's order one-to-one.
+    out.roster = resolved
+        .iter()
+        .zip(&roster.candidates)
+        .map(|(entry, raw)| roster_entry(entry, &raw.headers))
+        .collect();
     let compiled = compiled_in_workloads();
     out.tiers = roster
         .preferences
@@ -2121,7 +2133,10 @@ pub fn router_config(home: &Path, dotenv: &HashMap<String, String>) -> RouterCon
     out
 }
 
-fn roster_entry(entry: &crate::route::Resolved) -> RosterEntry {
+fn roster_entry(
+    entry: &crate::route::Resolved,
+    raw_headers: &std::collections::BTreeMap<String, String>,
+) -> RosterEntry {
     RosterEntry {
         id: entry.id().to_string(),
         base_url: entry.candidate.base_url.clone(),
@@ -2141,6 +2156,7 @@ fn roster_entry(entry: &crate::route::Resolved) -> RosterEntry {
         disabled_reason: entry.candidate.disabled_reason.clone(),
         disabled_models: entry.candidate.disabled_models.clone(),
         model_settings: entry.candidate.model_settings.clone(),
+        headers: raw_headers.clone(),
     }
 }
 
@@ -2989,11 +3005,9 @@ pub fn set_provider_with_key_with(
 fn session_constant_warning(
     headers: &std::collections::BTreeMap<String, String>,
 ) -> Option<String> {
-    let (name, _) = headers
-        .iter()
-        .find(|(name, value)| {
-            name.to_ascii_lowercase().contains("session") && !value.contains('{')
-        })?;
+    let (name, _) = headers.iter().find(|(name, value)| {
+        name.to_ascii_lowercase().contains("session") && !value.contains('{')
+    })?;
     Some(format!(
         "note: header `{name}` carries a constant value — a `{{session}}` id is what \
          keeps the gateway's cache affinity per conversation; a constant collapses \
