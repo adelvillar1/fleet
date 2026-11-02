@@ -14617,6 +14617,21 @@
       card: function () { return modelSections(null); }
     })];
     var catalogModels = (read.catalog && read.catalog.models) || [];
+    // The declared window, where a provider's listing carries one: the
+    // model row says what the model can hold, not only its name.
+    var windows = {};
+    ((read.catalog && read.catalog.providers) || []).forEach(function (one) {
+      var settings = one.model_settings || {};
+      Object.keys(settings).forEach(function (model) {
+        windows[one.id + '/' + model] = settings[model] || {};
+      });
+    });
+    function tokens(count) {
+      if (!count) return '';
+      if (count >= 1048576) return Math.round(count / 1048576) + 'M';
+      if (count >= 1024) return Math.round(count / 1024) + 'k';
+      return String(count);
+    }
     // The picker's order is the answer's order: the model in use first,
     // then every model a key already reaches, then the rest in the
     // roster's own order. A fresh home's twenty `no key` rows must not
@@ -14639,6 +14654,10 @@
         value: entry.key_present === false ? 'no key' : '',
         marks: [
           current ? ['current', 'own', 'the model every run talks to'] : [],
+          windows[pair] && windows[pair].context_window
+            ? [tokens(windows[pair].context_window) + ' window',
+              '', 'declared by the provider']
+            : [],
           entry.billing === 'payg' ? ['reserve', 'warn'] : [],
           entry.kind === 'lane' ? ['lane', ''] : [],
           entry.enabled === false ? ['off', 'warn'] : []
@@ -14784,9 +14803,9 @@
         paint: function () {
           return [
             cfgList('the model', 'the one every run talks to — a press changes it',
-              modelRows),
-            cfgList('the accounts', 'where the models live, and whether each answers',
-              providerRows.concat([connectRow()])),
+              modelRows, { limit: 6, label: 'models', key: 'settings-models' }),
+            cfgList('the accounts', 'add, change or remove a provider — each row opens its card',
+              [connectRow()].concat(providerRows)),
             cfgList('the walk', 'when no model is chosen: each workload walks its own order',
               tierRows.concat(gateRows))
           ];
@@ -15433,6 +15452,11 @@
       ['the key', key],
       ['the endpoint', base],
       ['the models this provider serves', catalogRows],
+      ['what removing it does', node('p', 'derivation',
+        override
+          ? 'removing this override returns ' + provider.id + ' to its compiled account; ' +
+            'its models stay reachable through the compiled entry, and the key stays in the vault.'
+          : provider.id + ' has no override in this home\u2019s config, so there is nothing of yours to remove.')],
       ['the reload', acts],
       ['the write', save]
     ];

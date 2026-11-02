@@ -2642,14 +2642,12 @@ fn read_listing_number(entry: &serde_json::Value, names: &[&str]) -> Option<u64>
 /// the new word). The key resolved here is the same one the walk
 /// resolves: process env, the vault when the process holds the
 /// passphrase, and `.env`.
-pub fn rediscover_provider(home: &Path, id: &str) -> Result<Discovery, String> {
-    let id = id.trim();
-    if id.is_empty() {
-        return Err("the write names no provider id".to_string());
-    }
+/// The provider entry a reload starts from: the config's own, or the
+/// roster's when the provider is compiled-in and has never been saved.
+fn reload_entry(home: &Path, id: &str) -> Result<serde_json::Value, String> {
     let path = home.join("config.json");
     let document = read_json(&path)?;
-    let entry = document
+    if let Some(entry) = document
         .get("providers")
         .and_then(|providers| providers.as_array())
         .and_then(|providers| {
@@ -2658,7 +2656,77 @@ pub fn rediscover_provider(home: &Path, id: &str) -> Result<Discovery, String> {
                 .find(|entry| entry.get("id").and_then(|id| id.as_str()) == Some(id))
         })
         .cloned()
+    {
+        // An entry saved before the key name was written carries none;
+        // the roster's own name is the one the key was stored under.
+        let mut entry = entry;
+        let blank = |field: &str| {
+            let value = entry
+                .get(field)
+                .and_then(|value| value.as_str())
+                .map(str::trim);
+            value.map(str::is_empty).unwrap_or(true)
+        };
+        let needs_key = blank("key_env");
+        let needs_base = blank("base_url");
+        // The roster answers only what the entry cannot, and a roster the
+        // file has made unloadable is not this reload's refusal: the
+        // entry in hand still names its provider.
+        let known = (needs_key || needs_base)
+            .then(|| crate::route::load_roster(home).ok())
+            .flatten();
+        if let Some(candidate) = known
+            .as_ref()
+            .and_then(|roster| roster.candidates.iter().find(|one| one.id == id))
+        {
+            if let Some(object) = entry.as_object_mut() {
+                if needs_key {
+                    object.insert(
+                        "key_env".to_string(),
+                        serde_json::Value::String(candidate.key_env.clone()),
+                    );
+                }
+                if needs_base {
+                    object.insert(
+                        "base_url".to_string(),
+                        serde_json::Value::String(candidate.base_url.clone()),
+                    );
+                }
+            }
+        }
+        return Ok(entry);
+    }
+    let roster = crate::route::load_roster(home).map_err(|error| error.to_string())?;
+    let candidate = roster
+        .candidates
+        .iter()
+        .find(|candidate| candidate.id == id)
         .ok_or_else(|| format!("`{id}` names no configured provider"))?;
+    if matches!(candidate.kind, crate::route::CandidateKind::Lane) {
+        return Err(format!(
+            "`{id}` is a vendored lane — it has no provider catalog to list"
+        ));
+    }
+    Ok(serde_json::json!({
+        "id": candidate.id,
+        "base_url": candidate.base_url,
+        "key_env": candidate.key_env,
+        "models": candidate.models,
+        "enabled": candidate.enabled,
+        "key_required": candidate.key_required,
+    }))
+}
+
+pub fn rediscover_provider(home: &Path, id: &str) -> Result<Discovery, String> {
+    let id = id.trim();
+    if id.is_empty() {
+        return Err("the write names no provider id".to_string());
+    }
+    // The entry the reload works from: the owner's config when it has
+    // one, else the roster's own (the compiled provider merged with the
+    // file) — a provider nobody has saved yet still has a base URL, a
+    // key name and the models the listing is about to replace.
+    let entry = reload_entry(home, id)?;
     let base_url = entry
         .get("base_url")
         .and_then(|base| base.as_str())

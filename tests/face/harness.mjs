@@ -5154,7 +5154,7 @@ async function theSettingsRailCarriesOneSectionAtATime() {
 
   const connectItem = providers.rows('.cfg-item').find((row) =>
     row.dataset.item === 'provider-add');
-  check('MODEL the accounts list ends in connect a provider', !!connectItem,
+  check('MODEL the accounts list opens with connect a provider', !!connectItem,
     String(!!connectItem));
   connectItem.click();
   await flush(60);
