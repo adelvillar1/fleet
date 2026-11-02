@@ -339,3 +339,15 @@ back.
   KI-332, KI-369 (and the considered-and-deferred KI-249, KI-252)
 - `docs/plans/2026-10-24-embed-bounds-from-measured-tail.md` — the
   window rows' own contract
+
+## Status pass — 2026-11-02
+
+The boxes here were never ticked as the work landed (KI-398), so this
+pass walked every criterion against the tree at HEAD. A ticked box means
+the capability or artifact is there and the badge names where; an open
+box is a residual, and the row says what is missing. The residuals are
+collected in `docs/plans/2026-11-02-completed-plan-residuals.md`.
+
+| Criterion | State | Evidence / what is missing |
+|---|---|---|
+| O | partial | O2–O7 land with their pins; **O1 does not match its ruled mechanism** — ruling (a) was to validate `sid`/`hash` against the relay's minted-session store, and what shipped is a shared join secret (`relay/relay.py:250`), which a secret-holder can use to assert a new sid |

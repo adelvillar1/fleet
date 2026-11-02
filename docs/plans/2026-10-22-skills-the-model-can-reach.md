@@ -64,8 +64,8 @@ this plan's approval request.
 
 ## Acceptance criteria
 
-- [ ] **C0 — the line is trigger-shaped.** The prompt's skills section renders each entry as `` - `name` — use when <trigger> `` with the trigger derived from the description by the stated rule — strip a leading `Use when`/`Use this`/`Use for`, lower-case the first word, and clip at a word boundary near 160 characters (the trigger is the match signal, not the body; the body arrives on the call). Pinned by a unit test over four description shapes: each of the three frames, one with no frame, and one long enough to clip.
-- [ ] **C1 — the list is capped and the cap is honest.** A run declares at most `SKILLS_PROMPT_CAP` (60) skills, ordered by the skill's own mtime (newest first) with the retired filtered out before the cap, and the growth line names how many are held back and where the full list lives. Pinned by a unit test: 70 skills declare 60, the newest 60, and the line's count is 10.
+- [x] **C0 — the line is trigger-shaped.** The prompt's skills section renders each entry as `` - `name` — use when <trigger> `` with the trigger derived from the description by the stated rule — strip a leading `Use when`/`Use this`/`Use for`, lower-case the first word, and clip at a word boundary near 160 characters (the trigger is the match signal, not the body; the body arrives on the call). Pinned by a unit test over four description shapes: each of the three frames, one with no frame, and one long enough to clip.
+- [x] **C1 — the list is capped and the cap is honest.** A run declares at most `SKILLS_PROMPT_CAP` (60) skills, ordered by the skill's own mtime (newest first) with the retired filtered out before the cap, and the growth line names how many are held back and where the full list lives. Pinned by a unit test: 70 skills declare 60, the newest 60, and the line's count is 10.
 - [ ] **C2 — the owner retires, fleet-locally and reversibly.** `POST /api/skills/retire {name}` (and the row's action) writes the name to `<home>/skills-retired.json` through the one writer; the loader then excludes it from every declared list; the library file is byte-identical before and after (pinned by a test that hashes the SKILL.md); the row gains `retire`, a retired section lists them with `unretire`, and the panel's counts move (declared drops, retired rises).
 - [ ] **C3 — the suggestion is the scan's own number.** The skills panel shows the usage scan's never-selected count beside the retire action on those rows (the suggestion is the number already measured), and `docs/features/skills.md`, CLAUDE.md's skills line, and the functional spec's skills section say what changed.
 - [ ] **C4 — it is visible where it counts.** After the retirement, the next run's `skills` record in its session log declares one fewer skill and does not name the retired one; the served `/app.js` carries the row's `retire` action and the retired section; and one prompt line in the record reads `` `name` — use when … ``. The evidence is read from the running face and the log, per the live check in Verification, not from the unit tests alone.
@@ -131,3 +131,19 @@ will say so rather than the claim.
 - `docs/features/skills.md` — the module's own record, updated with the prompt's shape and the retire path.
 - `docs/architecture/surfaces.md` — the Skills surface's row, updated with the retire action.
 - KI-215 — the ruling this plan works inside: the library is cross-harness, so fleet suggests and the owner retires.
+
+## Status pass — 2026-11-02
+
+The boxes here were never ticked as the work landed (KI-398), so this
+pass walked every criterion against the tree at HEAD. A ticked box means
+the capability or artifact is there and the badge names where; an open
+box is a residual, and the row says what is missing. The residuals are
+collected in `docs/plans/2026-11-02-completed-plan-residuals.md`.
+
+| Criterion | State | Evidence / what is missing |
+|---|---|---|
+| C0 | **shipped** | `src/skills.rs:430` (trigger), tests `:1970`, `:1994`; the renderer at `src/agent.rs:1635` |
+| C1 | **shipped** | `src/agent.rs:282` cap, `:289` mtime order, `:302` growth line; test `:8153` (60, newest first, "10 held back") |
+| C2 | partial | route is `POST /api/skill/retire` (`src/gui/server.rs:1022`), not `/api/skills/retire`; retire is a pane button, not a row action |
+| C3 | partial | the never-selected count is a row mark (`app.js:7000`); the retire control sits in the pane, not beside it |
+| C4 | partial | `declared_skills` is recorded (`src/agent.rs:2416`) and the prompt line renders; the live-run log evidence the criterion asks for is not captured |

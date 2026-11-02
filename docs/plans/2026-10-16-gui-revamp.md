@@ -347,7 +347,7 @@ Launch: `fleet gui [--port N] [--no-open] [--host H]`, default
 - [x] C4: the memory and skills panels render the corpus, the recall
   hits, and the library with its skips; a proposal is approved from the
   browser through skills.rs's own function.
-- [ ] C5: the settings surface writes every knob and both lists through
+- [x] C5: the settings surface writes every knob and both lists through
   the one writer; the CLI and the TUI pane see the change; the fleet.env
   defect is closed or disclosed by name.
 - [ ] C6: no credential value reaches any payload, the token gates every
@@ -358,7 +358,7 @@ Launch: `fleet gui [--port N] [--no-open] [--host H]`, default
 - [ ] C9: the app opens on the conversation with the composer focused;
   a message sends with one keystroke and zero prior configuration; the
   first-run screen has no dead end and no required tour.
-- [ ] C10: every surface is reachable from the conversation in at most
+- [x] C10: every surface is reachable from the conversation in at most
   two actions, every panel has a visible way back, and Esc returns to
   the conversation from anywhere — including from a running turn.
 - [ ] C11: the router decision, memory recalls, skill loads, and
@@ -373,10 +373,10 @@ Launch: `fleet gui [--port N] [--no-open] [--host H]`, default
 - [ ] C13: a turn's file state is checkpointed and rewindable; plan mode
   produces an editable plan before execution and Build executes it; a
   diff renders with per-hunk accept and reject.
-- [ ] C14: the session spend and the context meter render in the chat
+- [x] C14: the session spend and the context meter render in the chat
   header from the run's own data — no panel required, no fabricated
   numbers.
-- [ ] C15: the tower renders the console from the boards' own reads —
+- [x] C15: the tower renders the console from the boards' own reads —
   the KPI strip, the two-series activity chart, the harness donut, the
   ranked projects with bars, shares and health dots, the
   claims-vs-evidence rows, the report feed, and the status bar. Every
@@ -774,3 +774,28 @@ count; the feed names its build time; exit 0.
   superseded with its reason stated. All ten increments are landed and
   gated; the plan's remaining criterion is the owner's own open of every
   shipped surface (C8), which is the owner's to make.
+
+## Status pass — 2026-11-02
+
+The boxes here were never ticked as the work landed (KI-398), so this
+pass walked every criterion against the tree at HEAD. A ticked box means
+the capability or artifact is there and the badge names where; an open
+box is a residual, and the row says what is missing. The residuals are
+collected in `docs/plans/2026-11-02-completed-plan-residuals.md`.
+
+| Criterion | State | Evidence / what is missing |
+|---|---|---|
+| C0 | partial | loopback bind + refusal + URL + `--no-open` at `src/gui/mod.rs:120`; the per-launch token was removed by `919416a`, so "prints the URL with a token" is superseded by the loopback-only ruling |
+| C1 | partial | SSE endpoint and heartbeat pinned (`src/gui/server.rs:3220`); no test drives a real run through `/events` — `mock_chat` serves `/btw` only |
+| C2 | partial | chain and decision render (`app.js:5167`); a server-issued `refused` document replaces the last good snapshot instead of keeping it |
+| C5 | **shipped** | `src/gui/server.rs:5372` (a_settings_write_rides_the_writer_and_names_its_refusals); `src/settings.rs:2452` |
+| C6 | partial | `no_payload_carries_a_credential` at `src/gui/server.rs:4543`; the token gate is gone by the same ruling — Host/Origin checks replaced it |
+| C7 | unknown | no recorded fmt/clippy/build/test run at or after the plan landed |
+| C8 | partial | docs landed (`docs/features/gui.md`); only the G5 opening is on record, not every shipped surface |
+| C9 | partial | Enter sends (`app.js:9085`); no boot autofocus, and the onboarding door hides the composer on a fresh home |
+| C10 | **shipped** | `src/gui/assets/app.js:21844` (global Esc → `#/chat`), `:262` (GROUPS); the fleet mark is the way home |
+| C11 | partial | delegation renders as cards; router decisions, memory recalls and skill loads fold into one run-strip line rather than inline cards |
+| C12 | partial | keyboard answer + persistent allowlist land; the active rules live in the trust card, not the conversation header |
+| C13 | partial | checkpoint, rewind and plan→Build land; the diff has per-hunk reject but no per-hunk accept |
+| C14 | **shipped** | `src/gui/assets/index.html:162` (spend), `:244` (context meter), both off `usage` events |
+| C15 | **shipped** | `src/gui/server.rs:4969`, `src/boards.rs:3020` (read_tower), `app.js:10383` |

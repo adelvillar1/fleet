@@ -102,8 +102,8 @@ FUNCTIONAL's `## Run behavior` and TECHNICAL's `## Module reference`
 
 ## Acceptance criteria
 
-- [ ] **C0 — the README is a product document.** It opens with what Fleet is and for whom, states the arc (idea, experiment, solution, tested, here), names what ships today and what is next, and contains no build, command, or crate-layout content before that story is told. Commands and build facts move to a later section or are linked from CLAUDE.md.
-- [ ] **C1 — the functional specification is written in the user's terms.** It covers all eleven surfaces as capabilities (each with what you do and why it exists, citing the surfaces note), the CLI as user verbs, and the error vocabulary as what Fleet tells you when; it ends with the named gaps as a backlog.
+- [x] **C0 — the README is a product document.** It opens with what Fleet is and for whom, states the arc (idea, experiment, solution, tested, here), names what ships today and what is next, and contains no build, command, or crate-layout content before that story is told. Commands and build facts move to a later section or are linked from CLAUDE.md.
+- [x] **C1 — the functional specification is written in the user's terms.** It covers all eleven surfaces as capabilities (each with what you do and why it exists, citing the surfaces note), the CLI as user verbs, and the error vocabulary as what Fleet tells you when; it ends with the named gaps as a backlog.
 - [ ] **C2 — the technical documentation is written for a technical program manager.** Its `##` headings after the rewrite are exactly the section map's "after" column for that file — System overview and boundaries · Interface contracts · Environments and dependencies · Operational runbooks · Verification and release · Risk register · Sequencing · Module reference · Known documentation gaps. The Module reference section's diff against `HEAD` is empty (`git diff HEAD -- TECHNICAL-DOCUMENTATION.md` touches no line under it), and `dev-decisions arch-gate` on a plan written against the new document still reports its modules documented.
 - [ ] **C3 — the loop survives the rewrite.** The section map's two kept rows hold after the rewrite: FUNCTIONAL-SPECIFICATIONS.md carries `## Run behavior` and TECHNICAL-DOCUMENTATION.md carries `## Module reference` with its eight `###` groups unchanged — the two append points the recap step writes into — and `dev-decisions docs-gate` exits 0.
 - [ ] **C4 — nothing is invented.** `grep -rl` for `docs/architecture/surfaces.md` and for `docs/architecture/lanes.md` prints exactly three filenames each — README.md, FUNCTIONAL-SPECIFICATIONS.md, TECHNICAL-DOCUMENTATION.md — and each rewritten section that states a product fact carries its source in a parenthetical (a feature doc, a ledger row, or a plan).
@@ -139,3 +139,19 @@ recap of this work walks C0–C4 against the committed files.
 - `docs/architecture/lanes.md` — will be linked from all three rewritten documents and cited by the README's solution and the functional spec's purpose.
 - `CLAUDE.md` — the "Where to find things" pointer index will name the three documents' new homes.
 - `docs/harness-orientation.md` — the knowledge-seams table's docs row will name the three public documents.
+
+## Status pass — 2026-11-02
+
+The boxes here were never ticked as the work landed (KI-398), so this
+pass walked every criterion against the tree at HEAD. A ticked box means
+the capability or artifact is there and the badge names where; an open
+box is a residual, and the row says what is missing. The residuals are
+collected in `docs/plans/2026-11-02-completed-plan-residuals.md`.
+
+| Criterion | State | Evidence / what is missing |
+|---|---|---|
+| C0 | **shipped** | README opens on what Fleet is, its arc, what ships, what is next (`README.md:1-13`) |
+| C1 | **shipped** | FUNCTIONAL-SPECIFICATIONS.md carries the surfaces, the verbs, the error vocabulary and the gaps (`:28`, `:233`, `:439`, `:460`) |
+| C2 | partial | the headings match the map exactly (`TECHNICAL-DOCUMENTATION.md:16,52,103,148,188,201,215,226,693`); no recorded `arch-gate` run |
+| C3 | partial | `## Run behavior` and the Module reference groups are there; a ninth `###` was added 2026-10-30, and `docs-gate` was not run here |
+| C4 | partial | the exact-three-files proxy no longer holds (18 and 6 cite the two notes); the three docs do link both |

@@ -142,7 +142,7 @@ are the owner's history to keep or rewrite, not this plan's.
 
 ## Acceptance criteria
 
-- [ ] **C0 — the baseline is recorded.** The survey's full table
+- [x] **C0 — the baseline is recorded.** The survey's full table
       (repo, total, .git, artifacts, last commit, churn) lands in this
       plan file as measured 2026-10-27, so every later number has a
       before.
@@ -260,3 +260,15 @@ Precedent: `scripts/daily-maintenance.sh`, `scripts/cache-sweep.sh`,
 the 2026-10-26 fleet garbage taxonomy (`4612e8d`), the
 `generated/`-was-not-garbage lesson. The survey script's output is
 reproduced by `scripts/repo-hygiene.sh --report` once C3 lands.
+
+## Status pass — 2026-11-02
+
+The boxes here were never ticked as the work landed (KI-398), so this
+pass walked every criterion against the tree at HEAD. A ticked box means
+the capability or artifact is there and the badge names where; an open
+box is a residual, and the row says what is missing. The residuals are
+collected in `docs/plans/2026-11-02-completed-plan-residuals.md`.
+
+| Criterion | State | Evidence / what is missing |
+|---|---|---|
+| C0 | **shipped** | the 39-row baseline table is in the plan at HEAD (`docs/plans/2026-10-27-projects-repo-hygiene.md:65`), commit `e5dd080` |

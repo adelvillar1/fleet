@@ -94,16 +94,16 @@ the process card, while a control is in effect
 
 ## Acceptance criteria
 
-- [ ] **C0 — the goal is standing and logged.** `POST /api/goal {text}` sets it (empty clears); `<home>/sessions-goals.json` survives a face restart; each run declares the session's goal from the sidecar and pins a `goal` record in its log; the system prompt carries `## Goal` with the text while set. A unit test pins the prompt with and without a goal, and the first-message early return holds only when no goal is set.
-- [ ] **C1 — steer is the composer's too.** `/steer <text>` posts the control route with the run's session; with no run in flight it is refused by name and writes no control file (bridge test); with a run in flight the text reaches the file the agent reads (the existing `apply_steer` path).
-- [ ] **C2 — btw answers beside the run.** `POST /api/btw {text}` returns the question and the answer from a one-shot, tool-less call through the session's prepared router (preparing one when none); the transcript gains a `btw` row with the cost line; the session's log gains no message or turn from the exchange (a bridge test asserts the record count and the text's absence). It works whether or not a run is in flight.
+- [x] **C0 — the goal is standing and logged.** `POST /api/goal {text}` sets it (empty clears); `<home>/sessions-goals.json` survives a face restart; each run declares the session's goal from the sidecar and pins a `goal` record in its log; the system prompt carries `## Goal` with the text while set. A unit test pins the prompt with and without a goal, and the first-message early return holds only when no goal is set.
+- [x] **C1 — steer is the composer's too.** `/steer <text>` posts the control route with the run's session; with no run in flight it is refused by name and writes no control file (bridge test); with a run in flight the text reaches the file the agent reads (the existing `apply_steer` path).
+- [x] **C2 — btw answers beside the run.** `POST /api/btw {text}` returns the question and the answer from a one-shot, tool-less call through the session's prepared router (preparing one when none); the transcript gains a `btw` row with the cost line; the session's log gains no message or turn from the exchange (a bridge test asserts the record count and the text's absence). It works whether or not a run is in flight.
 - [ ] **C3 — the queue is a list the owner orders.** With a run in flight, Enter appends the text to an ordered queue above the composer; each row renders its text with a drag handle, **send first**, and a cancel. A drag reorders the rows (pointer drag), and **send first** promotes a row to the head. The run's `finished`/`failed` event flushes the head as the next run in the same session, and the next row follows when that run ends. A face test pins the order (append, promote, drag-reorder) and the flush; the chip says a reload drops the queue.
 - [ ] **C4 — fold is real.** `/compact` with a run in flight writes `Control::Fold`; the turn loop reads it and forces the fold at the next boundary (a unit test on the control's parse and the loop's fold call). With no run in flight the command says honestly that there is nothing to fold yet.
 - [ ] **C5 — the pin reaches the running session.** `Control::Pin(text)` re-prepares the route for the running session's next turn — a provider id, a `provider/model` pair, or `auto` — and the swapped route is what the next turn's request crosses (no new run needed). The row's reason names the re-route; an unusable pin is refused by name and the run continues on its route. Pinned by a unit test on the control and an integration test whose second turn serves on the pinned provider.
 - [ ] **C6 — pause freezes and resume continues.** `Control::Pause` blocks the turn loop before the next model call; the face shows `paused by you` with a resume control; resume writes `Control::Resume` and the run continues from the same turn, its log gaining no message from the pause. A unit test pins the parse and the loop's wait.
-- [ ] **C7 — sessions have names.** `/rename <title>` writes `<home>/sessions-titles.json`; the archive rows render the title; a session with none renders its first owner message's first line, clipped (read from the log, no model call). Pinned by a test over a log with and without a title.
+- [x] **C7 — sessions have names.** `/rename <title>` writes `<home>/sessions-titles.json`; the archive rows render the title; a session with none renders its first owner message's first line, clipped (read from the log, no model call). Pinned by a test over a log with and without a title.
 - [ ] **C8 — the two fidelity fixes.** The ↩ rewind renders only on turns of ended runs (a face test on the live-turn row); the stop button's title and the process card's line state the graceful boundary ("ends at the next step").
-- [ ] **C9 — discoverable and documented.** All commands are in `COMMANDS` with descriptions the palette ranks and `help` lists; the functional spec's conversation surface names the commands and the run controls; the graceful-stop boundary is named there too; the gate is green.
+- [x] **C9 — discoverable and documented.** All commands are in `COMMANDS` with descriptions the palette ranks and `help` lists; the functional spec's conversation surface names the commands and the run controls; the graceful-stop boundary is named there too; the gate is green.
 
 ## Files to be touched
 
@@ -139,3 +139,24 @@ turn, and a pause that resumes into the same turn.
 - `src/agent.rs`'s control-file vocabulary — the seam every run control rides.
 - `29d1fed` — the composer's Stop, the sibling this plan completes.
 - The run-control notes' open item: "a side conversation with the orchestrator" — `/btw`.
+
+## Status pass — 2026-11-02
+
+The boxes here were never ticked as the work landed (KI-398), so this
+pass walked every criterion against the tree at HEAD. A ticked box means
+the capability or artifact is there and the badge names where; an open
+box is a residual, and the row says what is missing. The residuals are
+collected in `docs/plans/2026-11-02-completed-plan-residuals.md`.
+
+| Criterion | State | Evidence / what is missing |
+|---|---|---|
+| C0 | **shipped** | `POST /api/goal` at `src/gui/server.rs:994`; the `goal` record and the `## Goal` section; test `a_goal_rides_the_prompt_and_the_compiled_constant_holds_without_one` |
+| C1 | **shipped** | `/steer` posts `/api/steer` (`app.js:410`); refused by name with no run (`bridge.rs:11789`) |
+| C2 | **shipped** | `a_side_ask_answers_and_the_runs_log_gains_nothing` (`bridge.rs:11730`) |
+| C3 | partial | append, send-first, edit and drop are pinned; drag-reorder and the finished/failed flush are not, and the drag is HTML5 DnD rather than pointer events |
+| C4 | partial | parse and the no-run notice are pinned; the forced fold is driven from options, not through `Control::Fold` |
+| C5 | partial | re-route works, but an unusable pin is swallowed without a name, and no integration test serves the second turn on the pinned provider |
+| C6 | partial | the loop waits on pause and the parse is pinned; no test drives the wait |
+| C7 | **shipped** | `sessions-titles.json`, `set_title`, `title_ladder` and its two tests (`bridge.rs:10621`, `:10681`) |
+| C8 | partial | both behaviours exist; the face test on a live-turn row is absent |
+| C9 | **shipped** | every command in `COMMANDS` with its help line; the spec and gui.md name the surface (`FUNCTIONAL-SPECIFICATIONS.md:266`) |

@@ -397,12 +397,12 @@ refused), and the calls per completed task.
   `replace_all`, returns the nearest line on zero matches, returns the
   match count and line numbers on multiple, writes atomically, and
   returns a capped diff. Six tests, one per behavior.
-- [ ] **C5 — search is capped and counted.** `grep` returns files,
+- [x] **C5 — search is capped and counted.** `grep` returns files,
   content, or counts, caps at a declared maximum with "narrow the
   query", honors `.gitignore` in a repo, and reports the match count.
   `glob` sorts by mtime and caps at 100 with a truncation flag. Neither
   returns an iterative next/prev stream.
-- [ ] **C6 — a command can outlive a turn.** `bash` takes `timeout_ms`
+- [x] **C6 — a command can outlive a turn.** `bash` takes `timeout_ms`
   (clamped) and `run_in_background`; a background run returns a handle,
   and its output is retrievable. A timed-out foreground command is
   promoted to background rather than killed silently. Output over the
@@ -681,3 +681,31 @@ task to survive a re-vendor.
   fixture writes may be refused on mandated spellings; the bash write
   path is the documented workaround, and this plan's own files should
   be written through it if the guard fires.
+
+## Status pass — 2026-11-02
+
+The boxes here were never ticked as the work landed (KI-398), so this
+pass walked every criterion against the tree at HEAD. A ticked box means
+the capability or artifact is there and the badge names where; an open
+box is a residual, and the row says what is missing. The residuals are
+collected in `docs/plans/2026-11-02-completed-plan-residuals.md`.
+
+| Criterion | State | Evidence / what is missing |
+|---|---|---|
+| C0 | partial | vision/plan-refusal/supersede/atomic land (`src/agent.rs:1113`, `:1349`); no plan-mode prompt exists (only the refusal), and gui.md does not state the bash exception |
+| C1 | partial | the record carries requested/resolved/method/reason/catalog/tier (`src/agent.rs:3432`); no argument sources, and no test of a denial's resolution |
+| C2 | partial | `fleet tools audit` prints the classes and p95 (`src/tool_audit.rs:48`); truncation and redundancy print as counts, not rates |
+| C3 | partial | windowed reads with continuation land (`src/tools.rs:3830`); no 4,000-line offset test, no empty-file test, and the total-lines scan reads to EOF |
+| C4 | partial | all six behaviours exist (`src/fileops.rs:169`); no `replace_all` test and no capped-diff test |
+| C5 | **shipped** | `src/search.rs:12` caps, `:229` "narrow the query", `:318` glob cap; tests `:612`, `:628` |
+| C6 | **shipped** | `src/tools.rs:2824` clamp, `:2843` background + files, `:3567` promotion; tests `:4141`, `:5461` |
+| C7 | partial | re-injection and status aliases land; no 30-call forced-fold fixture keeping every item and artifact path |
+| C8 | partial | validation refuses with `field `x` expects T; got V`; the required `valid: …` candidate list is absent, and tools are not one module each |
+| C9 | partial | the bounds are 36 tools / 10,000 tokens (the plan asked 28 / 8,000); no byte-identical-declaration test |
+| C10 | partial | the 24-query corpus test passes; the resolution reason says only "activated by tool_search", with no sem1 scores and no fallback test |
+| C11 | partial | the profile follows the verdict; `prose` starts read/write/glob rather than web, and no deep_context/low-confidence test |
+| C12 | partial | warm→healthy selection exists; no failover retry, and the chosen reason is computed then dropped |
+| C13 | partial | nearest-3 path suggestions and the defaults note land; no model/catalog enum and no no-model-request test |
+| C14 | partial | the elision stub says `[tool output elided … N bytes]` — no tool name and no artifact path |
+| C15 | partial | pagination, cancel and image artifacts land; `structuredContent` is never validated against an `outputSchema`, and `readOnlyHint` is unread |
+| C16 | partial | the tools card and its screenshot exist; the card has no deferred count, and the gate run is not recorded here |
