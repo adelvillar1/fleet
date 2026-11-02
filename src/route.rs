@@ -3521,6 +3521,19 @@ fn render_card(entry: &Resolved, is_head: bool) -> String {
             model = entry.candidate.model(),
         ),
     ];
+    // The headers line names the map's keys and never a value: a value
+    // may carry an env-sourced secret, and this card is printed.
+    if !entry.candidate.headers.is_empty() {
+        let names: Vec<&str> = entry.candidate.headers.keys().map(String::as_str).collect();
+        lines.push(format!(
+            "{DIM}\u{2502}{RESET} {TEXT}headers {count} \u{b7} {names}{RESET}",
+            DIM = palette::DIM,
+            RESET = palette::RESET,
+            TEXT = palette::TEXT,
+            count = names.len(),
+            names = names.join(", "),
+        ));
+    }
     if let Some(reason) = &entry.candidate.disabled_reason {
         lines.push(format!(
             "{DIM}\u{2502}{RESET} {DIM}{reason}{RESET}",
@@ -4636,6 +4649,38 @@ mod tests {
         assert!(
             error.contains("x-opencode-session") && error.contains("TOK"),
             "{error}"
+        );
+    }
+
+    #[test]
+    fn the_providers_card_names_headers_and_never_a_value() {
+        // The masking rule is the load-bearing defense: a header value
+        // may carry an env-sourced secret, so the printed card carries
+        // the names and the count and nothing of any value.
+        let mut candidate = default_roster()
+            .into_iter()
+            .find(|c| c.id == "deepseek")
+            .unwrap();
+        candidate.key_required = false;
+        candidate.headers.insert(
+            "x-opencode-session".to_string(),
+            "sekret-value-from-the-env".to_string(),
+        );
+        candidate
+            .headers
+            .insert("x-gateway-route".to_string(), "{env:NO_SUCH}".to_string());
+        let resolved = resolve(std::slice::from_ref(&candidate), &HashMap::new());
+        let card = render_card(&resolved[0], false);
+        assert!(card.contains("headers 2"), "{card}");
+        assert!(card.contains("x-opencode-session"), "{card}");
+        assert!(card.contains("x-gateway-route"), "{card}");
+        assert!(
+            !card.contains("sekret-value-from-the-env"),
+            "the resolved value never prints: {card}"
+        );
+        assert!(
+            !card.contains("NO_SUCH"),
+            "an unresolved placeholder never prints either: {card}"
         );
     }
 
