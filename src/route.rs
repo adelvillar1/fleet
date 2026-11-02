@@ -1496,7 +1496,9 @@ fn wire_headers(
         }
         pairs.push((
             name.clone(),
-            value.replace("{session}", session).replace("{trace}", trace),
+            value
+                .replace("{session}", session)
+                .replace("{trace}", trace),
         ));
     }
     Ok(pairs)
@@ -2795,14 +2797,15 @@ impl Router {
             .iter()
             .map(|entry| match entry.candidate.kind {
                 CandidateKind::Http => Endpoint::Http(
-                    wire_headers(entry.id(), &entry.candidate.headers, session_id, trace_id)
-                        .map(|headers| {
-                        Client::with_headers(
-                            entry.candidate.base_url.as_str(),
-                            entry.key.clone().unwrap_or_default(),
-                            headers,
-                        )
-                    }),
+                    wire_headers(entry.id(), &entry.candidate.headers, session_id, trace_id).map(
+                        |headers| {
+                            Client::with_headers(
+                                entry.candidate.base_url.as_str(),
+                                entry.key.clone().unwrap_or_default(),
+                                headers,
+                            )
+                        },
+                    ),
                 ),
                 CandidateKind::Lane => Endpoint::Lane(
                     lane_specs
@@ -5107,7 +5110,10 @@ mod tests {
             "id": "x", "protocol": "xmpp"
         }))
         .unwrap_err();
-        assert!(error.contains("protocol") || error.contains("variant"), "{error}");
+        assert!(
+            error.contains("protocol") || error.contains("variant"),
+            "{error}"
+        );
         validate_provider_entry(&serde_json::json!({
             "id": "x", "protocol": "responses"
         }))
@@ -6076,8 +6082,15 @@ mod tests {
             spend_usd: 0.0016,
             cost_per_right: None,
         };
-        let router =
-            Router::build(resolved, decision, vec![cell], &HashMap::new(), None, "s", "t");
+        let router = Router::build(
+            resolved,
+            decision,
+            vec![cell],
+            &HashMap::new(),
+            None,
+            "s",
+            "t",
+        );
         // The head is the walk's start, so it is never skipped; zai is
         // skipped, and the clause names the cell that did it.
         assert_eq!(router.calibration_skip(0, 0), None);

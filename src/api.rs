@@ -5,7 +5,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::route::{Protocol, RouteDecision, Router};
+use crate::route::{RouteDecision, Router};
 
 /// Public DeepSeek API base.
 pub const DEFAULT_BASE_URL: &str = "https://api.deepseek.com";
@@ -689,7 +689,7 @@ impl Client {
     pub(crate) async fn chat_stream_plain(
         &self,
         request: &ChatRequest<'_>,
-        mut on_event: impl FnMut(StreamEvent),
+        on_event: impl FnMut(StreamEvent),
     ) -> Result<ChatResponse, ClientError> {
         let url = format!("{}/chat/completions", self.base_url);
         let key = self.api_key.clone();
@@ -704,7 +704,7 @@ impl Client {
         let agent = self.agent.clone();
         let headers = self.headers.clone();
 
-        let (events, mut receiver) = tokio::sync::mpsc::unbounded_channel::<StreamEvent>();
+        let (events, receiver) = tokio::sync::mpsc::unbounded_channel::<StreamEvent>();
         let reader = tokio::task::spawn_blocking(move || {
             let outcome = stream_response(&agent, &url, &key, &body, &headers, &events);
             // Drop the sender inside the blocking task, so a read failure or
@@ -741,40 +741,6 @@ impl Client {
         });
 
         pump_stream(receiver, reader, on_event).await
-    }
-
-    /// One non-streaming exchange over the Responses protocol — the
-    /// mapper's other half, and the shape the doctor-style probes and
-    /// the mapper pins read.
-    pub(crate) fn chat_responses(
-        &self,
-        request: &ChatRequest,
-    ) -> Result<ChatResponse, ClientError> {
-        let url = format!("{}/responses", self.base_url);
-        let mut call = self
-            .agent
-            .post(&url)
-            .set("Authorization", &format!("Bearer {}", self.api_key));
-        for (name, value) in &self.headers {
-            call = call.set(name, value);
-        }
-        let response = call
-            .send_json(responses_request_value(request, false))
-            .map_err(map_send_error)?;
-        let status = response.status();
-        if status != 200 {
-            let request_id = diagnostic_id(&response);
-            let body = response
-                .into_string()
-                .map_err(|error| ClientError::Network(error.to_string()))?;
-            return Err(ClientError::Api(api_error(status, &body, request_id)));
-        }
-        let body = response
-            .into_string()
-            .map_err(|error| ClientError::Network(error.to_string()))?;
-        let document: serde_json::Value =
-            serde_json::from_str(&body).map_err(|error| ClientError::Decode(error.to_string()))?;
-        responses_response_value(&document)
     }
 }
 
@@ -1081,7 +1047,11 @@ fn parse_responses_sse(
         match event.get("type").and_then(|kind| kind.as_str()) {
             Some("response.output_text.delta") => {
                 if let Some(delta) = event.get("delta").and_then(|value| value.as_str()) {
-                    if !delta.is_empty() && events.send(StreamEvent::Content(delta.to_string())).is_err() {
+                    if !delta.is_empty()
+                        && events
+                            .send(StreamEvent::Content(delta.to_string()))
+                            .is_err()
+                    {
                         return Ok(true);
                     }
                 }
@@ -1105,13 +1075,12 @@ fn parse_responses_sse(
                 let document = event.get("response").cloned().unwrap_or(event.clone());
                 let assembled = responses_response_value(&document)?;
                 if let Some(choice) = assembled.choices.first() {
-                    if !choice.message.tool_calls.is_empty() {
-                        if events
+                    if !choice.message.tool_calls.is_empty()
+                        && events
                             .send(StreamEvent::ToolCalls(choice.message.tool_calls.clone()))
                             .is_err()
-                        {
-                            return Ok(true);
-                        }
+                    {
+                        return Ok(true);
                     }
                 }
                 if events.send(StreamEvent::Usage(assembled.usage)).is_err() {
@@ -2175,7 +2144,10 @@ mod tests {
         });
         let answer = responses_response_value(&document).expect("maps");
         let choice = &answer.choices[0];
-        assert_eq!(choice.message.content.as_deref(), Some("here is the listing"));
+        assert_eq!(
+            choice.message.content.as_deref(),
+            Some("here is the listing")
+        );
         assert_eq!(choice.message.tool_calls[0].id, "call-9");
         assert_eq!(choice.message.tool_calls[0].function.name, "bash");
         assert_eq!(choice.finish_reason.as_deref(), Some("tool_calls"));
@@ -2257,9 +2229,10 @@ mod tests {
             .unwrap();
         candidate.base_url = format!("http://127.0.0.1:{port}");
         candidate.key_required = false;
-        candidate
-            .model_protocols
-            .insert("GLM-5.3-Flash".to_string(), Protocol::Responses);
+        candidate.model_protocols.insert(
+            "GLM-5.3-Flash".to_string(),
+            crate::route::Protocol::Responses,
+        );
         let resolved = crate::route::resolve(
             std::slice::from_ref(&candidate),
             &std::collections::HashMap::new(),
@@ -2288,7 +2261,10 @@ mod tests {
             .chat_stream(&request, &mut |_| {})
             .await
             .expect("the responses-marked model serves");
-        assert_eq!(answer.choices[0].message.content.as_deref(), Some("listing"));
+        assert_eq!(
+            answer.choices[0].message.content.as_deref(),
+            Some("listing")
+        );
         let paths = seen.lock().unwrap();
         assert!(
             paths.iter().all(|path| path.ends_with("/responses")),
