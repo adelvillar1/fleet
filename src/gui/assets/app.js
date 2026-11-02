@@ -14482,10 +14482,19 @@
       var methods = Object.keys(last.methods || {}).map(function (key) {
         return key + ' ' + last.methods[key];
       }).join(' \u00b7 ');
+      // The audit numbers ride the card's own row (tool-surface C16):
+      // the truncated and redundant counts are the shares the owner
+      // compares, so the card says what fraction they are of the
+      // session's calls, not only how many.
+      var calls = last.calls || 0;
+      var rate = function (count) {
+        return calls ? Math.round((count || 0) * 100 / calls) + '%' : 'n/a';
+      };
       card.appendChild(node('p', 'board-note',
-        'last session ' + last.session + ': ' + last.calls + ' calls \u00b7 ' +
+        'last session ' + last.session + ': ' + calls + ' calls \u00b7 ' +
         last.errors + ' errors \u00b7 p95 ' + last.p95_bytes + ' bytes \u00b7 ' +
-        last.truncated + ' truncated \u00b7 ' + last.redundant + ' redundant' +
+        last.truncated + ' truncated (' + rate(last.truncated) + ') \u00b7 ' +
+        last.redundant + ' redundant (' + rate(last.redundant) + ')' +
         (methods ? ' \u00b7 ' + methods : '')));
     }
     return card;

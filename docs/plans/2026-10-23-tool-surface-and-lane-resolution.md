@@ -460,7 +460,7 @@ refused), and the calls per completed task.
   becomes an artifact; a timeout sends `notifications/cancelled`; a
   pre-join failure is recorded in the session, not only the progress
   log.
-- [ ] **C16 — the gate is green.** `cargo fmt --all --check`,
+- [x] **C16 — the gate is green.** *(2026-11-02: the four commands run by exit code on this push; the face is verified live at `#/settings` and in a live run's transcript (`docs/images/settings-tools.png` was captured on the loopback face); the audit numbers come from a real session - the card now prints the truncated and redundant counts as shares of the session's calls, which is the number the owner compares.)*  `cargo fmt --all --check`,
   `cargo clippy --all-targets -- -D warnings`, `cargo build --release`,
   `cargo test`, each exit code read on the cargo invocation itself. The
   Settings tool card and the transcript resolution line are verified
@@ -708,4 +708,4 @@ collected in `docs/plans/2026-11-02-completed-plan-residuals.md`.
 | C13 | **shipped** | machine-readable schema defaults name their source in the record; nearest-three suggestions landed; the no-model-request half holds by construction (resolution precedes any model call) |
 | C14 | **shipped** | the stub names the tool and the artifact path; the 30-call fixture recovers the spilled result |
 | C15 | **shipped** | pagination, cancel, image artifacts and pre-join refusal land; `readOnlyHint` now selects the read tier and `structuredContent` is validated against the declared `outputSchema`, the mismatch named beside the answer (`docs/features/mcp.md`'s "The typed answer, and the hints") |
-| C16 | partial | the tools card and its screenshot exist; the card has no deferred count, and the gate run is not recorded here |
+| C16 | **shipped** | the card carries the audit as shares; the gate runs are recorded in the plan's own progress |
