@@ -392,7 +392,7 @@ refused), and the calls per completed task.
   numbers and a continuation line; the test asserts the bytes read are
   bounded by the window, not the file. Empty file, past-EOF, and binary
   files each return a named notice.
-- [ ] **C4 — `edit` replaces one anchored passage.** It requires a
+- [x] **C4 — `edit` replaces one anchored passage.** *(2026-11-02: all six behaviors landed and pinned — the one-passage edit, the ambiguity naming its lines, the closest line on zero matches, `replace_all` with its count, the capped diff (`replace_all_replaces_every_passage_and_the_diff_is_capped`), and the atomic write.)*  It requires a
   prior read of the path this run, requires a unique match unless
   `replace_all`, returns the nearest line on zero matches, returns the
   match count and line numbers on multiple, writes atomically, and

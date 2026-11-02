@@ -471,6 +471,34 @@ mod tests {
     }
 
     #[test]
+    fn replace_all_replaces_every_passage_and_the_diff_is_capped() {
+        // Tool-surface C4's last two behaviors: replace_all replaces
+        // every occurrence (and reports the count), and a long diff is
+        // capped instead of flooding the result.
+        let dir = scratch("replace-all");
+        let path = dir.join("code.rs");
+        fs::write(&path, "x = 1;\nx = 1;\nx = 1;\n").unwrap();
+        let outcome = edit(&path, "x = 1;", "x = 2;", true).unwrap();
+        assert_eq!(outcome.replaced, 3);
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "x = 2;\nx = 2;\nx = 2;\n"
+        );
+        // A capped diff: a 500-line change renders bounded, not whole.
+        let big = dir.join("big.txt");
+        let body: String = (1..=500).map(|n| format!("line {n}\n")).collect();
+        fs::write(&big, &body).unwrap();
+        let changed: String = (1..=500).map(|n| format!("LINE {n}\n")).collect();
+        let outcome = edit(&big, &body, &changed, false).unwrap();
+        assert!(
+            outcome.diff.lines().count() <= 220,
+            "the diff is capped: {} lines",
+            outcome.diff.lines().count()
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn an_atomic_write_leaves_no_temp_behind() {
         let dir = scratch("atomic");
         let path = dir.join("out.txt");
