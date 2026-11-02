@@ -2373,6 +2373,7 @@ impl<'a> Agent<'a> {
             lane: lane.map(str::to_string),
             input_chars: call.function.arguments.chars().count(),
             input_hash: crate::calib::hash16(&call.function.arguments),
+            tier: self.lanes.tier_for(&call.function.name).to_string(),
         }));
     }
 
@@ -7522,6 +7523,13 @@ struct LaneRoster {
     /// Destructive hints from joined servers, by model-visible name.
     /// Untrusted input: used to force a prompt, never to grant.
     hints: std::sync::Mutex<HashMap<String, bool>>,
+    /// Read-only hints from joined servers, by model-visible name. A
+    /// hint selects the tier a call is screened under; it never grants
+    /// (tool-surface C15).
+    readonly: std::sync::Mutex<std::collections::BTreeSet<String>>,
+    /// Each joined tool's declared `outputSchema`, by model-visible name:
+    /// the promise a result's `structuredContent` is checked against.
+    schemas: std::sync::Mutex<HashMap<String, serde_json::Value>>,
     /// The fleet home the run's lane defaults read from, when it has
     /// one. `None` is a run with no home: no defaults, exactly the call
     /// the model made.
@@ -7577,6 +7585,8 @@ impl LaneRoster {
             children: HashMap::new(),
             order: Vec::new(),
             hints: std::sync::Mutex::new(HashMap::new()),
+            readonly: std::sync::Mutex::new(std::collections::BTreeSet::new()),
+            schemas: std::sync::Mutex::new(HashMap::new()),
         }
     }
 
@@ -7588,17 +7598,67 @@ impl LaneRoster {
             Ok(hints) => hints,
             Err(poisoned) => poisoned.into_inner(),
         };
+        let mut readonly = match self.readonly.lock() {
+            Ok(readonly) => readonly,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        let mut schemas = match self.schemas.lock() {
+            Ok(schemas) => schemas,
+            Err(poisoned) => poisoned.into_inner(),
+        };
         for (info, visible) in listed.iter().zip(tools) {
-            let destructive = info
-                .annotations
-                .as_ref()
-                .and_then(|annotations| annotations.get("destructiveHint"))
-                .and_then(|value| value.as_bool())
-                .unwrap_or(false);
-            if destructive {
+            let hint = |name: &str| {
+                info.annotations
+                    .as_ref()
+                    .and_then(|annotations| annotations.get(name))
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(false)
+            };
+            // A destructive hint always wins: a server that says both is
+            // screened as destructive, because the safe reading of two
+            // hints is the stricter one.
+            if hint("destructiveHint") {
                 hints.insert(visible.name.clone(), true);
+                readonly.remove(&visible.name);
+            } else if hint("readOnlyHint") {
+                readonly.insert(visible.name.clone());
+            }
+            if let Some(schema) = &info.output_schema {
+                schemas.insert(visible.name.clone(), schema.clone());
             }
         }
+    }
+
+    /// The tier a call is screened under (tool-surface C15): a
+    /// destructive hint forces the prompt path, a read-only hint places
+    /// the call in the read tier, and everything else is the standard
+    /// tier. The tier says which gate applies, never that one passed.
+    fn tier_for(&self, name: &str) -> &'static str {
+        if self
+            .hints
+            .lock()
+            .map(|hints| hints.contains_key(name))
+            .unwrap_or(false)
+        {
+            "destructive"
+        } else if self
+            .readonly
+            .lock()
+            .map(|readonly| readonly.contains(name))
+            .unwrap_or(false)
+        {
+            "read"
+        } else {
+            "standard"
+        }
+    }
+
+    /// A joined tool's declared output schema, by model-visible name.
+    fn output_schema(&self, name: &str) -> Option<serde_json::Value> {
+        self.schemas
+            .lock()
+            .ok()
+            .and_then(|schemas| schemas.get(name).cloned())
     }
 
     /// The short name this roster's call seam expects for a lane's own
@@ -7821,6 +7881,12 @@ impl LaneRoster {
                 }
             }
         }
+        // The name the model called is already in the run's namespace,
+        // and the schema the tool promised for its answer is read here —
+        // before the child borrow below, because the roster and the
+        // children are two fields of this struct (tool-surface C15).
+        let wanted = tools::lane_tool_name(lane, tool);
+        let declared_schema = self.output_schema(&wanted);
         // The lane's child exists now: live, or dead from an earlier call.
         let Some(child) = self.children.get_mut(lane) else {
             // Unreachable: the branch above inserted this lane's child,
@@ -7856,7 +7922,6 @@ impl LaneRoster {
                 // The model called `mcp__<lane>__<short>`; the declaration
                 // it answered is the one that name maps to, which is the
                 // lane's own tool name for the call itself.
-                let wanted = tools::lane_tool_name(lane, tool);
                 let Some(listed) = tools.iter().find(|listed| listed.name == wanted) else {
                     // The lane is healthy and simply does not carry this
                     // tool: a model-visible correction, not a dead lane.
@@ -7896,8 +7961,8 @@ impl LaneRoster {
                     None => (arguments.clone(), Vec::new()),
                 };
                 match server.call_tool(&lane_tool, arguments).await {
-                    Ok(result) => LaneOutcome {
-                        text: if applied.is_empty() {
+                    Ok(result) => {
+                        let mut text = if applied.is_empty() {
                             lane_call_output(&result)
                         } else {
                             format!(
@@ -7905,11 +7970,25 @@ impl LaneRoster {
                                 applied.join(", "),
                                 lane_call_output(&result)
                             )
-                        },
-                        truncated: false,
-                        joined,
-                        withdrawn: None,
-                    },
+                        };
+                        // The tool's own promise about its answer (C15):
+                        // a structured result is checked against the
+                        // schema the server declared, and a mismatch is
+                        // named beside the answer — the text stays the
+                        // model's reading, and the note says it did not
+                        // match. No schema declared, nothing assumed.
+                        if let Some(note) =
+                            output_schema_note(declared_schema.as_ref(), result.structured.as_ref())
+                        {
+                            text.push_str(&note);
+                        }
+                        LaneOutcome {
+                            text,
+                            truncated: false,
+                            joined,
+                            withdrawn: None,
+                        }
+                    }
                     // The child died under the call. The lane is dead for
                     // the rest of the run; the run itself carries on with
                     // the typed failure in its log and its conversation.
@@ -8026,6 +8105,23 @@ impl LaneRoster {
             }
         }
         self.order.clear();
+    }
+}
+
+/// The note a lane result earns when it does not match the tool's own
+/// declared `outputSchema` (tool-surface C15). Absent schema, absent
+/// structured content, or a match all add nothing: the check exists to
+/// name a broken promise, not to invent one.
+fn output_schema_note(
+    schema: Option<&serde_json::Value>,
+    structured: Option<&serde_json::Value>,
+) -> Option<String> {
+    let (schema, structured) = (schema?, structured?);
+    match crate::mcp::validate_structured(schema, structured) {
+        Ok(()) => None,
+        Err(problem) => Some(format!(
+            "\nnote: the result does not match the tool's own outputSchema: {problem}"
+        )),
     }
 }
 
@@ -8376,6 +8472,69 @@ mod tests {
         let mut approver = approver;
         assert!(!approver.approve(&call("c2", "bash", "{}")));
         ui.join().unwrap();
+    }
+
+    #[test]
+    fn a_result_that_breaks_its_output_schema_is_named_beside_it() {
+        // tool-surface C15: the tool's declared schema is the promise its
+        // structured answer is checked against, and a broken promise is
+        // a note beside the answer — never a dropped result, and never a
+        // check the tool did not ask for.
+        let schema = serde_json::json!({
+            "type": "object",
+            "required": ["dims"],
+            "properties": { "dims": { "type": "integer" } }
+        });
+        assert!(
+            output_schema_note(Some(&schema), Some(&serde_json::json!({ "dims": 768 }))).is_none()
+        );
+        let note = output_schema_note(Some(&schema), Some(&serde_json::json!({ "dims": "768" })))
+            .expect("the mismatch is named");
+        assert!(note.contains("outputSchema"), "{note}");
+        assert!(note.contains("`dims` is string"), "{note}");
+        assert!(
+            output_schema_note(None, Some(&serde_json::json!({ "dims": 768 }))).is_none(),
+            "no schema, nothing assumed"
+        );
+        assert!(
+            output_schema_note(Some(&schema), None).is_none(),
+            "no structured content, nothing to check"
+        );
+    }
+
+    #[test]
+    fn the_screen_tier_follows_the_hints_and_the_stricter_one_wins() {
+        // A hint selects the tier a call is screened under; it never
+        // grants. A server that says both is screened as destructive.
+        let info = |name: &str, hint: Option<(&str, bool)>| ToolInfo {
+            name: name.to_string(),
+            description: String::new(),
+            input_schema: serde_json::json!({ "type": "object" }),
+            output_schema: None,
+            annotations: hint.map(|(key, value)| serde_json::json!({ key: value })),
+        };
+        let listed = vec![
+            info("sem1_probe", Some(("readOnlyHint", true))),
+            info("sem1_drop", Some(("destructiveHint", true))),
+            info("sem1_plain", None),
+            info("sem1_both", Some(("readOnlyHint", true))),
+        ];
+        let mut listed = listed;
+        listed[3].annotations = Some(serde_json::json!({
+            "readOnlyHint": true,
+            "destructiveHint": true
+        }));
+        let tools = tools::namespaced("sem1", &listed);
+        let roster = LaneRoster::new(HashMap::new());
+        roster.record_hints(&listed, &tools);
+        assert_eq!(roster.tier_for("mcp__sem1__probe"), "read");
+        assert_eq!(roster.tier_for("mcp__sem1__drop"), "destructive");
+        assert_eq!(roster.tier_for("mcp__sem1__plain"), "standard");
+        assert_eq!(
+            roster.tier_for("mcp__sem1__both"),
+            "destructive",
+            "the stricter hint wins"
+        );
     }
 
     #[test]

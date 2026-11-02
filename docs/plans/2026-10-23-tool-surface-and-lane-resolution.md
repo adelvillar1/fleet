@@ -453,7 +453,7 @@ refused), and the calls per completed task.
   result is a stub naming tool, bytes, and path; every path in the
   stubs exists. A 30-call fixture compacts and recovers a spilled
   result with `read_file`.
-- [ ] **C15 — MCP results are typed.** `readOnlyHint` and
+- [x] **C15 — MCP results are typed.** *(2026-11-02: `readOnlyHint` is read and selects the read tier, `destructiveHint` the destructive one, the stricter winning; `outputSchema` is parsed and `structuredContent` validated against it with the mismatch named beside the answer. Pins: `a_tool_declares_its_output_schema_or_none_is_assumed`, `a_structured_result_is_checked_against_the_declared_schema`, `the_screen_tier_follows_the_hints_and_the_stricter_one_wins`, `a_result_that_breaks_its_output_schema_is_named_beside_it`.)*  `readOnlyHint` and
   `destructiveHint` select an approval tier but never grant; pagination
   follows `nextCursor`; `structuredContent` is validated when an
   `outputSchema` exists and text is the fallback; an image result
@@ -707,5 +707,5 @@ collected in `docs/plans/2026-11-02-completed-plan-residuals.md`.
 | C12 | partial | warm→healthy selection exists; no failover retry, and the chosen reason is computed then dropped |
 | C13 | partial | nearest-3 path suggestions and the defaults note land; no model/catalog enum and no no-model-request test |
 | C14 | partial | the elision stub says `[tool output elided … N bytes]` — no tool name and no artifact path |
-| C15 | partial | pagination, cancel and image artifacts land; `structuredContent` is never validated against an `outputSchema`, and `readOnlyHint` is unread |
+| C15 | **shipped** | pagination, cancel, image artifacts and pre-join refusal land; `readOnlyHint` now selects the read tier and `structuredContent` is validated against the declared `outputSchema`, the mismatch named beside the answer (`docs/features/mcp.md`'s "The typed answer, and the hints") |
 | C16 | partial | the tools card and its screenshot exist; the card has no deferred count, and the gate run is not recorded here |

@@ -4755,12 +4755,14 @@ mod tests {
                 name: "sem1_embed".to_string(),
                 description: "embed".to_string(),
                 input_schema: serde_json::json!({ "type": "object" }),
+                output_schema: None,
                 annotations: None,
             },
             ToolInfo {
                 name: "sem1_probe".to_string(),
                 description: "probe".to_string(),
                 input_schema: serde_json::json!({ "type": "object" }),
+                output_schema: None,
                 annotations: None,
             },
         ];
@@ -4788,6 +4790,7 @@ mod tests {
             name: "classify".to_string(),
             description: "classify".to_string(),
             input_schema: serde_json::json!({ "type": "object" }),
+            output_schema: None,
             annotations: None,
         }];
         let tools = namespaced("sys1", &listed);
@@ -4805,12 +4808,14 @@ mod tests {
                 name: "probe".to_string(),
                 description: "short".to_string(),
                 input_schema: serde_json::json!({ "type": "object" }),
+                output_schema: None,
                 annotations: None,
             },
             ToolInfo {
                 name: "sem1_probe".to_string(),
                 description: "long".to_string(),
                 input_schema: serde_json::json!({ "type": "object" }),
+                output_schema: None,
                 annotations: None,
             },
         ];
@@ -4828,6 +4833,7 @@ mod tests {
             name: name.to_string(),
             description: String::new(),
             input_schema: serde_json::json!({ "type": "object" }),
+            output_schema: None,
             annotations: None,
         }
     }

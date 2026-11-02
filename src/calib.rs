@@ -112,6 +112,10 @@ pub struct ToolScreenRow {
     /// A hash of the call's arguments, for joining to the session log's
     /// `tool_result` record — never the arguments themselves.
     pub input_hash: String,
+    /// The approval tier the call was screened under (tool-surface C15):
+    /// `read`, `standard`, or `destructive`. The server's hints select
+    /// it; the gate still decides, and a hint never grants.
+    pub tier: String,
 }
 
 /// One run's ending: the outcome grade and the stop reason named.
@@ -3708,6 +3712,7 @@ mod tests {
             lane: None,
             input_chars: 2,
             input_hash: hash16("{}"),
+            tier: "standard".to_string(),
         })
     }
 

@@ -241,6 +241,11 @@ pub struct ToolInfo {
     pub description: String,
     /// The tool's JSON Schema for its arguments, verbatim.
     pub input_schema: Value,
+    /// The tool's JSON Schema for its structured answer, when the server
+    /// declares one. A result's `structuredContent` is checked against
+    /// it (tool-surface C15) — the declaration is the tool's own promise
+    /// about the shape it returns.
+    pub output_schema: Option<Value>,
     /// The tool's `annotations` object, when it sent one. The hints are
     /// untrusted by the spec: they can route a call to a prompt, never
     /// grant it.
@@ -860,6 +865,10 @@ fn parse_tools(result: Value) -> Result<Vec<ToolInfo>, McpError> {
                 .unwrap_or_default()
                 .to_string(),
             input_schema: tool.get("inputSchema").cloned().unwrap_or(Value::Null),
+            output_schema: tool
+                .get("outputSchema")
+                .cloned()
+                .filter(|value| !value.is_null()),
             annotations: tool
                 .get("annotations")
                 .cloned()
@@ -930,6 +939,82 @@ fn parse_call(result: Value) -> Result<CallResult, McpError> {
             .cloned()
             .filter(|value| !value.is_null()),
     })
+}
+
+/// Check a result's `structuredContent` against the tool's own
+/// `outputSchema` (tool-surface C15). The subset a tool schema uses in
+/// practice — the root type, `required` keys, and each declared
+/// property's type — because a validator that quietly accepted more than
+/// it checked would be the same silence the check exists to end. A
+/// mismatch is named, never dropped: the model keeps the answer and
+/// reads that it did not match the promise.
+pub fn validate_structured(schema: &Value, value: &Value) -> Result<(), String> {
+    let Some(declared) = schema.get("type").and_then(Value::as_str) else {
+        return Ok(());
+    };
+    if !type_matches(declared, value) {
+        return Err(format!(
+            "the answer is {}, the schema declares {declared}",
+            json_kind(value)
+        ));
+    }
+    if let Some(object) = value.as_object() {
+        if let Some(required) = schema.get("required").and_then(Value::as_array) {
+            for key in required.iter().filter_map(Value::as_str) {
+                if !object.contains_key(key) {
+                    return Err(format!("`{key}` is required and absent"));
+                }
+            }
+        }
+        if let Some(properties) = schema.get("properties").and_then(Value::as_object) {
+            for (key, property) in properties {
+                let Some(expected) = property.get("type").and_then(Value::as_str) else {
+                    continue;
+                };
+                if let Some(field) = object.get(key) {
+                    if !type_matches(expected, field) {
+                        return Err(format!(
+                            "`{key}` is {}, the schema declares {expected}",
+                            json_kind(field)
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Whether a JSON value matches a schema's `type` word.
+fn type_matches(kind: &str, value: &Value) -> bool {
+    match kind {
+        "object" => value.is_object(),
+        "array" => value.is_array(),
+        "string" => value.is_string(),
+        "number" => value.is_number(),
+        "integer" => value.as_i64().is_some() || value.as_u64().is_some(),
+        "boolean" => value.is_boolean(),
+        "null" => value.is_null(),
+        _ => true,
+    }
+}
+
+/// The value's own kind, for a mismatch's words.
+fn json_kind(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "boolean",
+        Value::Number(number) => {
+            if number.is_i64() || number.is_u64() {
+                "integer"
+            } else {
+                "number"
+            }
+        }
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+    }
 }
 
 /// The stderr drain: read the child's stderr to the end of its life,
@@ -1370,6 +1455,52 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(both.text(), "ok");
+    }
+
+    #[test]
+    fn a_tool_declares_its_output_schema_or_none_is_assumed() {
+        // tool-surface C15: `outputSchema` is the tool's promise about its
+        // structured answer. A tool without one is absent, not defaulted.
+        let roster = parse_tools(json!({
+            "tools": [
+                { "name": "embed", "inputSchema": { "type": "object" },
+                  "outputSchema": { "type": "object", "required": ["dims"] } },
+                { "name": "probe", "inputSchema": { "type": "object" } }
+            ]
+        }))
+        .expect("the roster parses");
+        assert_eq!(
+            roster[0].output_schema,
+            Some(json!({ "type": "object", "required": ["dims"] }))
+        );
+        assert!(roster[1].output_schema.is_none());
+    }
+
+    #[test]
+    fn a_structured_result_is_checked_against_the_declared_schema() {
+        // The checks the schema makes: the root type, required keys, and
+        // each declared property's type. A match passes silently; a
+        // mismatch names what it found and what was promised.
+        let schema = json!({
+            "type": "object",
+            "required": ["dims", "model"],
+            "properties": {
+                "dims": { "type": "integer" },
+                "model": { "type": "string" }
+            }
+        });
+        assert!(validate_structured(&schema, &json!({ "dims": 768, "model": "bge" })).is_ok());
+        let wrong_type = validate_structured(&schema, &json!({ "dims": "768", "model": "bge" }))
+            .expect_err("a string is not an integer");
+        assert!(wrong_type.contains("`dims` is string"), "{wrong_type}");
+        let missing = validate_structured(&schema, &json!({ "dims": 768 }))
+            .expect_err("the required key is absent");
+        assert!(missing.contains("`model` is required"), "{missing}");
+        let not_an_object =
+            validate_structured(&schema, &json!([1, 2])).expect_err("the root type");
+        assert!(not_an_object.contains("declares object"), "{not_an_object}");
+        // A schema with no declared type validates nothing it cannot check.
+        assert!(validate_structured(&json!({ "description": "opaque" }), &json!(7)).is_ok());
     }
 
     #[test]

@@ -234,7 +234,7 @@ owns its status-pass table.
 - [x] **C12 — *(2026-11-02: the elision stub names the tool and the artifact; the 30-call fixture reads the artifact back)*  a fold keeps its artifacts.** A 30-call forced fold
       retains every todo item and every artifact path, and an elided
       result names its tool and the artifact that holds it.
-- [ ] **C13 — MCP results are typed.** `structuredContent` is validated
+- [x] **C13 — MCP results are typed.** *(2026-11-02: `outputSchema` parsed on `tools/list`, `structuredContent` validated (root type, `required`, property types) with a named note on mismatch; `readOnlyHint` read and selecting the read tier, `destructiveHint` the destructive one, the stricter winning; the tier recorded on the `tool_screen` row. Four pins; `docs/features/mcp.md` carries the passage.)*  `structuredContent` is validated
       against an `outputSchema` where one is declared, `readOnlyHint` is
       read, and the absence of a schema is recorded rather than assumed.
 - [ ] **C14 — the conversation-control pins land.** Drag-reorder (or a

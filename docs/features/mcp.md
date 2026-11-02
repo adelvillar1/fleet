@@ -96,6 +96,27 @@ run and a scheduled job do not pre-join: the child sees nothing of the
 owner's servers, and an unattended job neither needs them nor pays
 their spawn cost.
 
+### The typed answer, and the hints
+
+A `tools/call` result is read for what it is: text blocks are the
+model's primary reading, an image block becomes an artifact named by its
+path, and `structuredContent` is the typed answer beside them — and the
+fallback when there is no text at all. When the server declared an
+`outputSchema` for the tool, that structured answer is **checked against
+it** (its root type, its `required` keys, each declared property's type)
+and a mismatch is named in a `note:` line beside the answer rather than
+dropped: the tool made a promise about its shape, and the model reads
+whether it was kept. A tool that declares no schema is not assumed to
+have one.
+
+A server's `annotations` are untrusted by the spec, so they select the
+**tier** a call is screened under and never grant it: `destructiveHint`
+forces the prompt path, `readOnlyHint` places the call in the read tier,
+and a server that declares both is screened as the stricter one. The
+tier is recorded on the calibration stream's `tool_screen` row, so which
+gate applied is a fact in the log; whether it passed is still the
+approver's decision.
+
 ## The card
 
 The settings board carries the servers card beneath the lanes card: the
