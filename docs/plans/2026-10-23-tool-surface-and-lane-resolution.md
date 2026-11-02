@@ -425,7 +425,7 @@ refused), and the calls per completed task.
   tools are absent; a discovered-but-unconfigured entry never appears.
   An alias resolves (`str_replace` → `edit`) and a name collision
   disables the alias rather than shadowing a real tool.
-- [ ] **C10 — retrieval is geometry.** Over a fixture corpus of 24
+- [x] **C10 — retrieval is geometry.** *(2026-11-02: the 24-query corpus pin stands (`selection_ranks_the_expected_tool_across_the_corpus`); the resolution record now carries HOW the retrieval ranked - the ranker's name and the candidate's score - `a_retrieved_resolution_names_the_ranker_and_the_score`. The lexical fallback and the floor's "no tool fits" with the nearest two are landed and readable in `run_tool_search`. No generation is in the path: the ranking is string/vector work, and the fallback is what runs when sem1 is unreachable.)*  Over a fixture corpus of 24
   queries and a 40-tool catalog, the expected tool is in the top three
   for at least 20. The resolution records `sem1` and the scores. With
   sem1 unreachable, the lexical ranker runs and the record says so.
@@ -702,7 +702,7 @@ collected in `docs/plans/2026-11-02-completed-plan-residuals.md`.
 | C7 | **shipped** | the 30-call forced-fold fixture retains every item and its marks (`a_fold_retains_every_ledger_item`) |
 | C8 | **shipped** | the refusal carries `valid: …` (the enum or the expected type); the validated-registry, stop and call-cap pins stand |
 | C9 | partial | the bounds are 36 tools / 10,000 tokens (the plan asked 28 / 8,000); no byte-identical-declaration test |
-| C10 | partial | the 24-query corpus test passes; the resolution reason says only "activated by tool_search", with no sem1 scores and no fallback test |
+| C10 | **shipped** | the resolution names the ranker and the score; the corpus, floor and fallback paths are landed |
 | C11 | partial | the profile follows the verdict; `prose` starts read/write/glob rather than web, and no deep_context/low-confidence test |
 | C12 | partial | warm→healthy selection exists; no failover retry, and the chosen reason is computed then dropped |
 | C13 | **shipped** | machine-readable schema defaults name their source in the record; nearest-three suggestions landed; the no-model-request half holds by construction (resolution precedes any model call) |

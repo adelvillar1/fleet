@@ -1214,6 +1214,11 @@ pub struct Agent<'a> {
     activated: std::collections::BTreeMap<String, u64>,
     /// Cached card vectors, keyed by the catalog hash that produced them.
     tool_vectors: Option<(u64, Vec<Vec<f32>>)>,
+    /// What the last `tool_search` ranked with (the ranker's name and
+    /// each candidate's score), so a retrieved call's resolution record
+    /// says HOW the tool was found - the ranker and the score - not just
+    /// that it was (tool-surface C10).
+    last_search: std::sync::Mutex<Option<(String, std::collections::BTreeMap<String, f64>)>>,
     /// The files this run has successfully read. `edit` refuses a path
     /// that is not here: an anchored replacement needs the text the
     /// model actually saw.
@@ -1483,6 +1488,7 @@ impl<'a> Agent<'a> {
             lanes,
             activated: std::collections::BTreeMap::new(),
             tool_vectors: None,
+            last_search: std::sync::Mutex::new(None),
             reads: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
             resolutions: std::collections::BTreeMap::new(),
             disabled,
@@ -4787,6 +4793,16 @@ impl<'a> Agent<'a> {
         } else {
             crate::tool_router::LEXICAL_FLOOR
         };
+        // C10: the resolution record says how the retrieval ranked -
+        // the ranker's name and each candidate's score - so a retrieved
+        // tool's record is the search's own evidence.
+        let scores: std::collections::BTreeMap<String, f64> = ranked
+            .iter()
+            .map(|rank| (rank.name.clone(), rank.score))
+            .collect();
+        if let Ok(mut last) = self.last_search.lock() {
+            *last = Some((ranker.to_string(), scores));
+        }
         let selection = crate::tool_router::select(ranked, floor);
         let descriptions: std::collections::BTreeMap<&str, &str> = candidates
             .iter()
@@ -6039,7 +6055,7 @@ fn render_todo_block(items: &[(String, String)]) -> String {
 
 /// One call's resolution, before it is written to the log.
 #[derive(Debug, Clone)]
-struct Resolution {
+pub(crate) struct Resolution {
     requested: String,
     resolved: String,
     method: String,
@@ -6091,7 +6107,7 @@ impl Agent<'_> {
         sources
     }
 
-    fn resolution_for(&self, call: &ToolCall) -> Resolution {
+    pub(crate) fn resolution_for(&self, call: &ToolCall) -> Resolution {
         let declared = self.declarations();
         let catalog = declared.len();
         let tiered = declared
@@ -6111,22 +6127,35 @@ impl Agent<'_> {
             },
             Some((tool, false)) => {
                 let retrieved = self.activated.contains_key(name);
+                let reason = if retrieved {
+                    // C10: the ranker and the score are the search's own
+                    // evidence, read from the last search this run made.
+                    let search = self.last_search.lock().ok().and_then(|mut last| {
+                        last.take().and_then(|(ranker, scores)| {
+                            scores.get(name).map(|score| (ranker, *score))
+                        })
+                    });
+                    match search {
+                        Some((ranker, score)) => {
+                            format!("retrieved by tool_search: {ranker} ranked it {score:.2}")
+                        }
+                        None => "retrieved by an earlier tool_search".to_string(),
+                    }
+                } else {
+                    match self
+                        .client
+                        .route_decision()
+                        .and_then(|decision| decision.workload)
+                    {
+                        Some(workload) => format!("declared \u{b7} profile: {workload}"),
+                        None => "declared".to_string(),
+                    }
+                };
                 Resolution {
                     requested: name.to_string(),
                     resolved: tool.name().to_string(),
                     method: if retrieved { "retrieved" } else { "exact" }.to_string(),
-                    reason: if retrieved {
-                        "activated by tool_search".to_string()
-                    } else {
-                        match self
-                            .client
-                            .route_decision()
-                            .and_then(|decision| decision.workload)
-                        {
-                            Some(workload) => format!("declared \u{b7} profile: {workload}"),
-                            None => "declared".to_string(),
-                        }
-                    },
+                    reason,
                     catalog,
                     tier,
                 }
@@ -8549,6 +8578,73 @@ mod tests {
     /// Plan mode's floor: the write-class tools are refused by name and
     /// the read tools are not. The shell rides through, because planning
     /// reads through it — the gate is the floor, the prompt is the intent.
+    #[test]
+    fn a_retrieved_resolution_names_the_ranker_and_the_score() {
+        // Tool-surface C10: a tool found by tool_search records HOW it
+        // was found — the ranker that ran and the score it earned —
+        // not just that it was found. The agent keeps the last search's
+        // ranker and scores; the resolution reads them.
+        let home = scratch("retrieved-resolution");
+        let mut session = crate::session::Session::create(&home, "m").unwrap();
+        let client = Client::new("http://127.0.0.1:9", "k");
+        let options = AgentOptions {
+            session_id: None,
+            goal: None,
+            model: "m".to_string(),
+            identity: None,
+            max_turns: 1,
+            ui_tx: None,
+            lane_specs: None,
+            calib: None,
+            skills: Vec::new(),
+            role_overlay: None,
+            memory: None,
+            scope: None,
+            improve_home: None,
+            route_home: None,
+            gui_prompt: None,
+            compact_now: false,
+            checkpoints: None,
+            file_access: FileAccess::Unrestricted,
+            plan_mode: false,
+        };
+        let mut progress = Vec::new();
+        let mut agent = Agent::new(
+            &client,
+            options,
+            &mut session,
+            Box::new(ApproveAll),
+            &mut progress,
+        )
+        .unwrap();
+        // Seed the run's own last search: sem1 ranked `grep` 0.87.
+        if let Ok(mut last) = agent.last_search.lock() {
+            *last = Some((
+                "sem1".to_string(),
+                std::collections::BTreeMap::from([("grep".to_string(), 0.87)]),
+            ));
+        }
+        agent.activated.insert("grep".to_string(), 1);
+        let record = agent.resolution_for(&call("c1", "grep", "{}"));
+        assert_eq!(record.method, "retrieved");
+        assert_eq!(
+            record.reason, "retrieved by tool_search: sem1 ranked it 0.87",
+            "{}",
+            record.reason
+        );
+        // And with no search in hand, the record still says what it was.
+        if let Ok(mut last) = agent.last_search.lock() {
+            *last = None;
+        }
+        let record = agent.resolution_for(&call("c2", "grep", "{}"));
+        assert_eq!(
+            record.reason, "retrieved by an earlier tool_search",
+            "{}",
+            record.reason
+        );
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
     #[test]
     fn the_plan_mode_prompt_states_the_boundary_and_the_bash_exception() {
         // Tool-surface C0: the refusal at the gate is half the contract;
