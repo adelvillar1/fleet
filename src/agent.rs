@@ -8216,6 +8216,224 @@ mod tests {
         dir
     }
 
+    /// The mock chat-completions binary, cross-process for the same
+    /// ureq reason the integration tests give (a client and an in-process
+    /// loopback server share one process on this machine and misbehave).
+    /// `cargo test` builds the bins, so the path exists whenever the
+    /// tests run.
+    struct FoldMock {
+        child: std::process::Child,
+        port: u16,
+        requests: std::path::PathBuf,
+        scratch: std::path::PathBuf,
+    }
+
+    impl Drop for FoldMock {
+        fn drop(&mut self) {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+            let _ = std::fs::remove_dir_all(&self.scratch);
+        }
+    }
+
+    fn fold_mock(summary: &str) -> FoldMock {
+        let scratch = std::env::temp_dir().join(format!(
+            "fleet-fold-mock-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&scratch).expect("the scratch");
+        let frame = serde_json::json!({
+            "status": "200 OK",
+            "sse": [
+                format!("data: {{\"id\":\"1\",\"choices\":[{{\"delta\":{{\"content\":\"{summary}\"}}}}],\"model\":\"m\"}}"),
+                "data: [DONE]",
+            ],
+        })
+        .to_string();
+        std::fs::write(scratch.join("script.jsonl"), format!("{frame}\n")).unwrap();
+        let stderr_file = std::fs::File::create(scratch.join("mock-stderr.log")).unwrap();
+        let mut child = std::process::Command::new(
+            std::env::var("CARGO_BIN_EXE_mock-server").unwrap_or_else(|_| {
+                format!(
+                    "{}",
+                    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                        .join("target/debug/mock-server")
+                        .display()
+                )
+            }),
+        )
+        .arg(scratch.join("script.jsonl"))
+        .arg(scratch.join("requests.jsonl"))
+        .arg(scratch.join("port"))
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::from(stderr_file))
+        .spawn()
+        .expect("spawn the mock-server child");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let port = loop {
+            if let Ok(text) = std::fs::read_to_string(scratch.join("port")) {
+                if let Ok(port) = text.trim().parse::<u16>() {
+                    break port;
+                }
+            }
+            if child.try_wait().unwrap().is_some() {
+                let said =
+                    std::fs::read_to_string(scratch.join("mock-stderr.log")).unwrap_or_default();
+                panic!("the mock died before its port; stderr: {said}");
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the mock port never arrived"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        };
+        FoldMock {
+            child,
+            port,
+            requests: scratch.join("requests.jsonl"),
+            scratch,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_fold_retains_every_ledger_item() {
+        // Tool-surface C7: the fold replaces the conversation with the
+        // summary, and the ledger is the one piece of state it must not
+        // lose — every item, and the step in progress, re-injected into
+        // the summary the next turn reads. The fixture is the 30-call
+        // shape: thirty asked calls to put the tail past the ledger, a
+        // fold served by the mock, and the compaction record carrying
+        // all five items with their marks.
+        let m = fold_mock("the summary of the folded work");
+        let home = scratch("fold-ledger");
+        let mut session = crate::session::Session::create(&home, "m").unwrap();
+        let client = Client::new(format!("http://127.0.0.1:{}", m.port), "test-key");
+        let options = AgentOptions {
+            session_id: None,
+            goal: None,
+            model: "m".to_string(),
+            identity: None,
+            max_turns: 1,
+            ui_tx: None,
+            lane_specs: None,
+            calib: None,
+            skills: Vec::new(),
+            role_overlay: None,
+            memory: None,
+            scope: None,
+            improve_home: None,
+            route_home: None,
+            gui_prompt: None,
+            compact_now: true,
+            checkpoints: None,
+            file_access: FileAccess::Unrestricted,
+            plan_mode: false,
+        };
+        let mut progress = Vec::new();
+        let mut agent = Agent::new(
+            &client,
+            options,
+            &mut session,
+            Box::new(ApproveAll),
+            &mut progress,
+        )
+        .unwrap();
+        agent
+            .push_message(Message::text(Role::User, "work the ledger"))
+            .unwrap();
+        // The ledger: five items, one doing.
+        agent
+            .execute_call(&call(
+                "c0",
+                "todo",
+                r#"{"items":[
+                    {"step":"read the plan","status":"done"},
+                    {"step":"write the pin","status":"doing"},
+                    {"step":"run the harness"},
+                    {"step":"gate"},
+                    {"step":"push"}
+                ]}"#,
+            ))
+            .await
+            .unwrap();
+        // Thirty calls to put the ledger before the verbatim tail.
+        for index in 0..30 {
+            agent
+                .push_message(Message {
+                    role: Role::Assistant,
+                    content: None,
+                    tool_calls: vec![call(
+                        &format!("f{index}"),
+                        "read_file",
+                        r#"{"path":"plan.md"}"#,
+                    )],
+                    tool_call_id: None,
+                    images: Vec::new(),
+                })
+                .unwrap();
+            agent
+                .push_message(Message::tool_result(
+                    format!("f{index}"),
+                    format!("output {index}"),
+                ))
+                .unwrap();
+        }
+        agent.maybe_compact("system").await.unwrap();
+        let records = crate::session::replay(&session_path_of(&home)).unwrap();
+        let compaction = records
+            .iter()
+            .find_map(|record| match record {
+                Record::Compaction { summary, .. } => Some(summary.clone()),
+                _ => None,
+            })
+            .expect("the fold compacted");
+        for step in [
+            "read the plan",
+            "write the pin",
+            "run the harness",
+            "gate",
+            "push",
+        ] {
+            assert!(
+                compaction.contains(step),
+                "the ledger item `{step}` survived the fold: {compaction}"
+            );
+        }
+        assert!(
+            compaction.contains("[~] write the pin"),
+            "the step in progress keeps its mark: {compaction}"
+        );
+        // And the fold was a real model call served by the mock.
+        let logged = std::fs::read_to_string(&m.requests).unwrap_or_default();
+        assert_eq!(logged.lines().count(), 1, "{logged}");
+    }
+
+    #[test]
+    fn the_ledger_replaces_the_list_and_marks_statuses() {
+        let todos = std::sync::Mutex::new(Vec::new());
+        store_todo(
+            &todos,
+            &serde_json::json!({"items": [
+                {"step": "read", "status": "done"},
+                {"step": "edit", "status": "doing"},
+                {"step": "test"}
+            ]}),
+        );
+        let block = render_todo_block(&todos.lock().unwrap());
+        assert!(block.contains("[x] read"), "{block}");
+        assert!(block.contains("[~] edit"), "{block}");
+        assert!(block.contains("[ ] test"), "{block}");
+        // A second call replaces, never appends.
+        store_todo(&todos, &serde_json::json!({"items": [{"step": "ship"}]}));
+        let items = todos.lock().unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].0, "ship");
+    }
+
     /// K6 (designs-are-project-knowledge): the assembled block carries
     /// the workspace project's design section — bounded, digest-read —
     /// beside the memory block, and the `memory` record carries it too
@@ -13050,32 +13268,5 @@ mod tier_tests {
              {withheld_len} withheld",
             withheld_len = withheld.len()
         );
-    }
-}
-
-#[cfg(test)]
-mod todo_ledger_tests {
-    use super::*;
-
-    #[test]
-    fn the_ledger_replaces_the_list_and_marks_statuses() {
-        let todos = std::sync::Mutex::new(Vec::new());
-        store_todo(
-            &todos,
-            &serde_json::json!({"items": [
-                {"step": "read", "status": "done"},
-                {"step": "edit", "status": "doing"},
-                {"step": "test"}
-            ]}),
-        );
-        let block = render_todo_block(&todos.lock().unwrap());
-        assert!(block.contains("[x] read"), "{block}");
-        assert!(block.contains("[~] edit"), "{block}");
-        assert!(block.contains("[ ] test"), "{block}");
-        // A second call replaces, never appends.
-        store_todo(&todos, &serde_json::json!({"items": [{"step": "ship"}]}));
-        let items = todos.lock().unwrap();
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0].0, "ship");
     }
 }

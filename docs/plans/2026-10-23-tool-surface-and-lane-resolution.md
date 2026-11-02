@@ -407,7 +407,7 @@ refused), and the calls per completed task.
   and its output is retrievable. A timed-out foreground command is
   promoted to background rather than killed silently. Output over the
   budget spills to an artifact path that the result names.
-- [ ] **C7 — a ledger survives a fold.** `todo` replaces the full list,
+- [x] **C7 — a ledger survives a fold.** *(2026-11-02: `a_fold_retains_every_ledger_item` — the 30-call fixture, a fold served by the mock, and the compaction record carrying all five items with the doing mark; the earlier pins hold the replace and status-alias halves.)*  `todo` replaces the full list,
   accepts status aliases, and its items are re-injected after a
   compaction. A fixture with 30 calls and a forced fold retains every
   item and every artifact path.
@@ -699,7 +699,7 @@ collected in `docs/plans/2026-11-02-completed-plan-residuals.md`.
 | C4 | partial | all six behaviours exist (`src/fileops.rs:169`); no `replace_all` test and no capped-diff test |
 | C5 | **shipped** | `src/search.rs:12` caps, `:229` "narrow the query", `:318` glob cap; tests `:612`, `:628` |
 | C6 | **shipped** | `src/tools.rs:2824` clamp, `:2843` background + files, `:3567` promotion; tests `:4141`, `:5461` |
-| C7 | partial | re-injection and status aliases land; no 30-call forced-fold fixture keeping every item and artifact path |
+| C7 | **shipped** | the 30-call forced-fold fixture retains every item and its marks (`a_fold_retains_every_ledger_item`) |
 | C8 | partial | validation refuses with `field `x` expects T; got V`; the required `valid: …` candidate list is absent, and tools are not one module each |
 | C9 | partial | the bounds are 36 tools / 10,000 tokens (the plan asked 28 / 8,000); no byte-identical-declaration test |
 | C10 | partial | the 24-query corpus test passes; the resolution reason says only "activated by tool_search", with no sem1 scores and no fallback test |
