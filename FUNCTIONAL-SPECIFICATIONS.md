@@ -239,7 +239,8 @@ store and its diff, and a command palette over every pane and panel
 | why a verdict stood | `fleet explain` |
 | the harness's own performance | `fleet eval` (`--last` for the last run) |
 | the knobs | `fleet settings` (`set <key> <value>` writes one; `provider add`/`remove`, `workload set` edit the roster and the tiers) |
-| a provider's extra request headers set | `fleet settings provider add '<json>'` with a `headers` object — `{session}` (an opaque, resume-stable id derived from the conversation's own) and `{env:NAME}` (the dotenv chain) compose into a value; a reserved name, a non-token name, a control character, or a malformed placeholder is refused naming the header; a constant session value warns (one affinity bucket for every conversation); every surface shows header names, never values, and a refusal carries the provider's request id |
+| a provider's extra request headers set | `fleet settings provider add '<json>'` with a `headers` object — `{session}` (an opaque, resume-stable id derived from the conversation's own), `{trace}` (fresh per preparation), and `{env:NAME}` (the dotenv chain) compose into a value; a reserved name, a non-token name, a control character, or a malformed placeholder is refused naming the header; a constant session value warns (one affinity bucket for every conversation); every surface shows header names, never values, and a refusal carries the provider's request id |
+| a provider's wire dialect set | the same op with `protocol: "chat"` or `"responses"` per entry, `model_protocols` per model for the mixed gateways — the Responses reading is dialect-only (`store: false`, the full history every turn; the conversation's state stays in Fleet's log), and an unknown value is refused by name |
 | the skills | `fleet skills` (`--proposed` for drafts awaiting the gate) |
 | a fact remembered | `fleet remember` |
 | the scheduled jobs | `fleet cron` (add/enable/disable/remove by name) |

@@ -219,12 +219,14 @@ streamed path (the provider-session-headers plan):
 { "id": "my-gateway", "headers": { "x-opencode-session": "{session}" } }
 ```
 
-A value may compose two placeholders: `{session}` — an opaque,
+A value may compose three placeholders: `{session}` — an opaque,
 UUID-shaped id derived from the conversation's own id, so every
 preparation of the same conversation (turns, a resumed `--session`, the
 face's re-prepare after a pin flip or restart, a mid-run re-route)
 presents the same value and the gateway's affinity bucket survives them
-all; a conversation with no id yet draws a fresh one — and
+all; a conversation with no id yet draws a fresh one — `{trace}`, a
+fresh UUID-shaped id per preparation, distinct from `{session}` even
+when both are derived, because a trace is not a session — and
 `{env:NAME}`, resolved from the same dotenv chain the key resolves
 from, so a secret never enters this file. The raw conversation id never
 rides the wire. A name that resolves to nothing fails the walk at that
@@ -235,6 +237,17 @@ control character in either half of the pair is refused at the settings
 writer and again at the router's build, each refusal naming the header.
 A header value is never printed: every surface shows the names and the
 count only.
+
+**The wire dialect.** An entry carries `protocol` — `chat` (the
+default) or `responses` — and a mixed gateway overrides per model with
+`model_protocols` (the OpenCode shape: most models over
+`/chat/completions`, the Luna class over `/responses`). The walk reads
+the dialect per request from the model it is standing on, and one run
+serves both. The Responses reading is a wire dialect only: every
+request carries the full history as typed input items with
+`store: false` and never a `previous_response_id` — the conversation's
+state lives in Fleet's own session log (hard rule 5), never on the
+server. An unknown protocol value is refused by name at the writer.
 
 **The static-value trap.** A session-named header carrying a constant
 value parses and saves, but it collapses every conversation into one

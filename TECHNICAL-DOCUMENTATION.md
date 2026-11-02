@@ -117,8 +117,14 @@ calibration day-files under
   refused at the writer and again at the router's build; a value never
   prints. A refusal carries the provider's request id from a bounded
   response-header allowlist (`x-request-id`, `request-id`,
-  `x-opencode-log-id`, `x-litellm-call-id`, `cf-ray`). The provider
-  session-headers and session-header-parity plans hold the details.
+  `x-opencode-log-id`, `x-litellm-call-id`, `cf-ray`). The roster also
+  carries each model's wire dialect (`protocol` per entry,
+  `model_protocols` per model for the mixed gateways): the Responses
+  reading is dialect-only — `store: false`, no `previous_response_id`,
+  the full history every turn — because the conversation's state lives
+  in Fleet's log, never on the server. The provider session-headers,
+  session-header-parity, and session-parity-remainders plans hold the
+  details.
 - **The lanes.** Five vendored services under `services/`; heavy
   dependencies (GLiNER, the tabular models, sentence-transformers,
   kokoro, blend1's union) are per-lane venvs under
