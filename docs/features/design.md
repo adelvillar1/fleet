@@ -8,6 +8,23 @@ canvas surface and its contract, and what stayed behind is that app's
 SaaS shell (billing, accounts, publishing, collaboration). The reasoning
 lives in `docs/plans/2026-10-31-design-canvas-native.md`.
 
+## In pictures
+
+| | |
+|---|---|
+| ![the design canvas](../images/surface-design.jpg) | ![a page in focus](../images/design-focus-page.jpg) |
+| ![the designer's review](../images/design-review.jpg) | ![the export card](../images/design-export.jpg) |
+| ![the model fan-out](../images/design-fanout.jpg) | ![the local host](../images/design-site.jpg) |
+
+Shots at 1440×900 from a scratch home (the owner's canvas is never the
+fixture). Top-left: the board with the rail grouped by project, the save
+chip, and the composer floating at the canvas's center. Top-right: a
+page selected — the focus chip reads `page · Landing` and the mode
+follows to *refine*. Middle: the designer's review with the
+deterministic scan above the model's eight scores and **the ask**; the
+export card's downloads with the site kind; a second model pressed for
+the **fan-out**; and the board served as a site at `/site/<slug>/`.
+
 ## The surface
 
 The canvas sits directly under the conversation in the rail's work

@@ -72,9 +72,21 @@ named, not implied — see Sequencing in
 - **A design canvas** — the console's `design` board: pages from a brief
   by a Fleet run, side by side on a pan/zoom canvas, with live token
   tweaks, comment pins, versions, measured accessibility checks and
-  exports (HTML, tokens, a hand-off packet, a PNG). A frame is a complete
-  self-contained page, so the board holds what the deck renders and the
-  document preview reads — and any run can put one there.
+  exports (HTML, tokens, a hand-off packet, a PNG). The composer sits in
+  the canvas's center frame like a conversation's, and its **focus is the
+  request's subject**: no page selected is a board-wide ask, a selected
+  page is the page's ask (the chip says which). Boards and pages are full
+  CRUD; each page carries its own settings (viewport presets, set
+  membership, name); a board binds to a project folder and feeds that
+  project's knowledge — its digest rides every save, its lifecycle facts
+  the memory substrate, and the corpus refresh picks the digests up. Send
+  composes over whichever models the owner presses — a **fan-out**, one
+  run per model, because different models carry different strengths. And
+  every board can be **saved, exported, or hosted locally** at
+  `/site/<slug>/` — a network-dead site built from the frames themselves.
+  A frame is a complete self-contained page, so the board holds what the
+  deck renders and the document preview reads — and any run can put one
+  there.
 - **A router that owns its decisions** — the owner's declared chain,
   sys1-judged per task, failover by failure class, and deepseek-flash as
   the tail every walk closes on. Work is judged into tiers — quick,
@@ -115,6 +127,9 @@ workspace history, and calibration all share it.
 | ![second brain](docs/images/surface-second-brain.jpg) | ![bots](docs/images/surface-bots.jpg) |
 | ![workspace history](docs/images/surface-workspace-history.jpg) | ![vault](docs/images/surface-vault.jpg) |
 | ![settings](docs/images/surface-settings.jpg) | ![calibration](docs/images/surface-calibration.jpg) |
+| ![the design canvas](docs/images/surface-design.jpg) | ![a page in focus](docs/images/design-focus-page.jpg) |
+| ![the designer's review](docs/images/design-review.jpg) | ![the export card](docs/images/design-export.jpg) |
+| ![the model fan-out](docs/images/design-fanout.jpg) | ![the local host](docs/images/design-site.jpg) |
 
 - **Collision-free delegation, on LayerFS** — each delegated child works
   in its own writable workspace over one shared committed history, so
