@@ -9,7 +9,7 @@ shape: [change, deps]
 phrases: [super agent, router and worker sessions, delegation-first prompt, dsh-superagent, offloop article, scheduling experiment]
 missing: [owner ruling on which exploration (if any) becomes a plan, provider-by-provider confirmation of which usage fields each of the five lanes actually returns (only DeepSeek's format confirmed so far)]
 recall-count: 0
-superseded-by:
+superseded-by: usage-and-anomalies-plan-exists
 valid-until:
 ---
 

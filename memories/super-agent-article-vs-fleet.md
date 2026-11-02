@@ -9,7 +9,7 @@ shape: [docs]
 phrases: [super agent, router and worker sessions, delegation-first prompt, dsh-superagent, offloop article, scheduling experiment]
 missing: []
 recall-count: 0
-superseded-by: super-agent-explorations-for-fleet
+superseded-by: usage-and-anomalies-plan-exists
 valid-until:
 ---
 
@@ -20,3 +20,4 @@ Its scheduling benchmark (~300 messages, ~20 work requests, coding replaced by a
 The article itself concedes it measures coordination under concurrent requests, not code quality, and is not a comparison against Claude Code/Codex.
 
 Fleet mapping (2026-10-30): Fleet is deliberately the single-session-with-subagents column — in-process router (model routing, not task routing), orchestrator + bounded delegation (n+2 depth, capability-as-scope, owner steer/stop), no event entry points, knowledge-persistent (memories/plans/recaps/logs) instead of process-persistent. The owner's quota rulings (spend other plans first, DeepSeek in reserve) rule out a 4x cache-read multiple for concurrency a solo operator doesn't have. Adoptable idea, unbuilt: a watchdog as continuous sys1 judging over the calibration stream (fleet calib/judge already has the data).
+Retired 2026-11-02: folded into `usage-and-anomalies-plan-exists` — The fact's first missing companion — the owner's ruling on which exploration becomes a plan — arrived this session: the owner said "create a plan to implement them", and the plan is written, plan-gated PASS (7/7 coverage, 1/1 scope, jev), and committed. The fact should now point at the plan's state rather than the open ruling.
