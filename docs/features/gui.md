@@ -667,6 +667,19 @@ rail's own idiom, one fold in the product rather than two:
   ceiling, the revert where the document offers one, and the save
   through the writer the CLI uses. Closing returns the tabs; an edited
   card that is closed without saving asks first.
+- **A chained setting completes on one card** (settings-ux U9): where a
+  setting is a chain — a provider to its models to the walks it serves,
+  a lane to its tools, a job to its task and cadence — the card that
+  names the first link carries the rest. A provider's card holds the
+  account, the key, the catalog with its toggles and windows, **the
+  walks it serves** (one row per workload carrying one of its models,
+  the order moved right there: raise, lower, stop), the add-to-a-walk
+  picker, and what removing it does. Each act writes the whole order
+  through the same `workload` op the tier card uses, and the row paints
+  the order it just wrote. A job's card adds **the next fire**: the read
+  computes it from the job's own schedule, so an edited cadence moves it,
+  a disabled job answers none, and an expression that matches nothing
+  says so rather than inventing a time.
 - **Long lists take a budget**: the first ten or twelve rows and one
   press for the rest, the count named ("24 rules · 14 rules"). No stored
   state, and the number is honest about what is behind the press.

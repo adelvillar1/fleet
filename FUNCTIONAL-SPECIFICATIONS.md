@@ -185,13 +185,19 @@ on-off toggle and the context window and output ceiling the provider
 declared; **reload models** re-lists on demand, and a workload's card
 names its **primary** and its **secondaries** in walk order, addable
 from the enabled models only (a workload name the judgment cannot answer
-is marked as serving only by pin or default) — the lanes, the MCP
+is marked as serving only by pin or default) — and the same provider
+card completes the chain: **the walks it serves**, one row per workload
+carrying one of its models, the order moved from that card (raise,
+lower, stop) or one added through its own picker, each act the same
+`workload` write the tier card uses — the lanes, the MCP
 servers
 (`docs/features/mcp.md`: the registry's rows with their probe dots and
 enable/probe/remove, the machine scan's discovery rows with their
 advisorial badges and one import each — the registry carries env NAMES
 only), the roles, the vault, the spend caps, the remembered rules, the
-cron jobs, and the identity slot. Every value is picked from what this
+cron jobs (each job's card names its task, its cadence, **the next
+fire** computed from that cadence, and its last fire's outcome), and the
+identity slot. Every value is picked from what this
 home already knows; every write rides the one writer the CLI rides.
 
 **System — calibration.** The work rail's idiom: **the gate** first —

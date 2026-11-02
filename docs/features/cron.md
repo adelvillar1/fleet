@@ -332,6 +332,13 @@ contract this slice froze. The join is the frame itself — a scheduled
 run's log is marked `kind: scheduled` and its first message names its
 job — and only each log's head is read.
 
+The face's settings read carries the same fact: each job's row in
+`/api/settings` has a `next_fire` computed by `Schedule::next_after` at
+read time (settings-ux U9), so the schedule card names it beside the
+task and the cadence without a stored timestamp to go stale. A disabled
+job answers `null`, and an expression the parser refuses stays `null`
+rather than becoming a made-up time.
+
 `fleet cron add --name <name> --schedule "<expr>" --task "<goal>"
 [--auto-approve]` creates one; `enable`, `disable`, and `remove` mutate
 by name, every one of them through the same validator and the same

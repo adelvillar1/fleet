@@ -1,7 +1,7 @@
 ---
 status: active
 created: 2026-11-01
-updated: 2026-11-01
+updated: 2026-11-02
 slug: settings-ux
 ---
 
@@ -293,12 +293,20 @@ after the home works, never before.
       chip, the accounts carry no billing class, and the walk's
       door is closed by default and opens on a filter hit. Harness
       on each.
-- [ ] **U9 — a chained setting completes on one surface.** A
+- [x] **U9 — a chained setting completes on one surface.** A
       provider opens one card carrying its key, its models and their
       settings, its walks with order and add, and its removal; adding
       is the same card empty; a lane's card carries the lane; a job's
       card carries task, cadence and next fire; a scan adds a server.
       Harness: each flow's round trip, and the pane standing down.
+      *(Built 2026-11-02: the provider card's **walks it serves** —
+      raise/lower/stop writing the same `workload` op, plus the
+      add-to-a-walk picker — and the job card's **next fire** computed
+      by `Schedule::next_after` on the read. Pinned by the SET/U9 checks
+      in `tests/face/harness.mjs` and proven live on a scratch home:
+      stop removed the provider from `routing.json`'s walk, add put it
+      back. The lane card, the scan's import and the connect card were
+      already there.)*
 - [ ] **U10 — a fresh home opens on the ladder.** With no key the
       board shows the three steps; adding an account unlocks the
       model step; no counts, chip or pane before the home works.
@@ -350,3 +358,29 @@ revamp's contract.
 - `docs/plans/2026-10-31-provider-models-settings.md` — the
   providers catalog this plan's models section renders
 - `docs/features/gui.md` — the surface doc the U7 passage lands in
+
+## Status pass — 2026-11-02
+
+The boxes above were never ticked as the work landed, so they could not
+be read as state. This pass walked them against the code, and the audit
+found the plan both further along and less along than its own list said.
+What the pass established, with the evidence it read:
+
+| Criterion | State | Evidence |
+|---|---|---|
+| U1 the confirmation is on-surface | **open** | no settings-level confirmation card exists; writes answer through the shared notice only |
+| U2 a written knob reverts | **open** | no revert act on a written knob (the only `revert` controls are the deck card's and the workload's override removal) |
+| U3 the filter finishes the job | **open** | the rail's filter searches across sections; no no-results card and no per-hit landing |
+| U4 the field validates | **open** | no client-side numeric check before the round trip |
+| U5 every refusal names the door | **open, unmeasured** | the shared refusal notice prints the bridge's own error; whether each of the three doors is named was not re-measured |
+| U6 the money section is gone | **open** | `app.js` still builds the `money` section, and the harness still pins **eight** rail sections |
+| U7 one vocabulary | **open, unverified** | not re-read in this pass |
+| U8 the model is the section | **built** | roster rows (`provider/model`), the one-press pin, the walk's door closed by default — MODEL pins in the harness |
+| U9 a chained setting completes on one surface | **built** | this pass: the account card's walks (raise/lower/stop + add) and the job card's next fire; SET/U9 pins and a live scratch-home round trip |
+| U10 a fresh home opens on the ladder | **built, not re-measured** | the onboarding ladder and its fixtures are in the harness; U10's three-step unlock was not re-walked this pass |
+| U11 the gate | **green for this pass** | fmt, clippy, build and the suite by exit code; the face harness 624 checks across 56 cases |
+
+U9 was the load-bearing one: `2026-11-02-provider-session-headers.md`
+deferred the GUI headers row to this card, and
+`2026-11-02-session-parity-remainders.md` holds its W4 open waiting on
+it. With the card's chain complete, that row has a home.
