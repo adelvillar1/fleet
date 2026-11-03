@@ -4246,6 +4246,22 @@ async function theStrategyStepShowsItsPreview() {
   async function thePluginsSurfaceManagesTheChains() {
     const page = boot({
       documents: {
+        // The lane press lands on the settings page: the minimal
+        // settings document the specialists section paints from.
+        settings: {
+          type: 'settings', read_at: 'now',
+          scalars: [], lists: [], rules: [], env: [], cron: [],
+          soul: { present: false, text: '' },
+          router: { pin: '', judged: ['quick'],
+            tiers: [{ workload: 'quick', candidates: ['a/one'], resolved: 'a/one', reverts: false }],
+            min_confidence: 0.5, default_workload: 'quick', allow_api_models: false, roster: [] },
+          catalog: { models: [], providers: [] },
+          lanes: { document: {}, lanes: [], refused: [] },
+          servers: { servers: [], refused: [] },
+          roles: { dir: '/tmp', entries: [] },
+          vault: { names: [], exists: true, passphrase: false, plaintext: [] },
+          tools: { calls_per_turn: 0, definition_tokens: 0, disabled: [], last_sweep: '', window: 0 },
+        },
         state: {
           plugins: [
             { name: 'stats', tier: 'untrusted', enabled: true, group: 'work', label: 'conversation statistics', version: '0.1.0', provenance: 'creator:conv-9' },
@@ -4255,8 +4271,11 @@ async function theStrategyStepShowsItsPreview() {
             { name: 'fresh-draft', path: '/tmp/fleet-plugins/proposals/fresh-draft' }
           ],
           built_ins: [
-            { name: 'second-brain', kind: 'tool plugin', state: 'installed \u00b7 http://127.0.0.1:4175', manages: 'the second-brain panel' },
-            { name: 'sys1', kind: 'lane', state: 'resolved', detail: 'judgment \u00b7 at /home/lanes/sys1', manages: "the settings page's lane cards" }
+            { name: 'second-brain', kind: 'tool plugin', dot: 'ok', state: 'running at http://127.0.0.1:4175', manages: 'the second-brain panel' },
+            { name: 'sys1', kind: 'lane', dot: 'ok', state: 'judgment lane · resolved', manages: "the settings page's lane cards" },
+            { name: 'documents', kind: 'lane', dot: 'off', state: 'documents lane · not configured — its venv is unbuilt', manages: "the settings page's lane cards" },
+            { name: 'cloudflare', kind: 'mcp server', dot: 'ok', state: 'enabled — spawned on demand', manages: "the settings page's MCP servers card" },
+            { name: 'github', kind: 'mcp server', dot: 'off', state: 'disabled — its tools are not declared this run', manages: "the settings page's MCP servers card" }
           ]
         }
       },
@@ -4268,63 +4287,107 @@ async function theStrategyStepShowsItsPreview() {
     check('PLUGINS the plugins panel is the one showing',
       !!page.IDS['panel-plugins'] && !page.IDS['panel-plugins'].hidden,
       'panel-plugins hidden=' + (page.IDS['panel-plugins'] || {}).hidden);
-
-    const rows = page.rows('.cfg-item').filter((row) => row.dataset.kind === 'plugin');
-    check('PLUGINS the management surface carries one card per plugin',
-      rows.length === 2, 'rows=' + rows.length);
-    const stats = rows.filter((row) => row.dataset.item === 'plugin:stats')[0];
-    check('PLUGINS the untrusted tier is marked on its card',
-      !!stats && String(stats.textContent).includes('untrusted'),
-      stats ? String(stats.textContent) : 'no stats card');
-    const owner = rows.filter((row) => row.dataset.item === 'plugin:owner-panel')[0];
-    check('PLUGINS the privileged tier is marked and the disabled state says so',
-      !!owner && String(owner.textContent).includes('privileged') &&
-        String(owner.textContent).includes('off'),
-      owner ? String(owner.textContent) : 'no owner card');
-    // The enabled plugin's rail entry joined its declared group.
-    const rail = page.IDS['rail-tree'];
-    const link = rail.find((el) => el.dataset && el.dataset.address === 'stats')[0];
-    check('PLUGINS the enabled plugin mounts its rail entry',
-      !!link && String((link.attrs && link.attrs['aria-label']) || '') ===
-        'conversation statistics',
-      link ? String(link.attrs && link.attrs['aria-label']) : 'no rail entry');
-    // The built-in plugins: the plugin-shaped capabilities Fleet ships
-    // with, each naming where it is managed.
-    const builtRows = page.IDS['plugins-board'].find((one) =>
-      one.dataset && one.dataset.role === 'builtin');
-    check('PLUGINS the built-in plugins are listed',
-      builtRows.length === 2 &&
-        String(builtRows[0].textContent).includes('second-brain') &&
-        String(builtRows[0].textContent).includes('tool plugin'),
-      'built-ins=' + builtRows.length);
-    // Creator mode's drafts: the proposal ground, never self-applied —
-    // the install act is the owner's (the plan's C5).
-    const draftBoard = page.IDS['plugins-board'];
-    const drafts = draftBoard.find((one) => one.dataset && one.dataset.role === 'proposal');
-    check('PLUGINS the drafts awaiting review are listed',
-      drafts.length === 1 && String(drafts[0].textContent).includes('fresh-draft'),
-      'drafts=' + drafts.length);
-    const draftInstall = drafts.length
-      ? drafts[0].find((one) => one.dataset && one.dataset.act === 'proposal-install')[0]
-      : null;
-    check('PLUGINS a draft carries its install press', !!draftInstall, String(!!draftInstall));
-    // The untrusted card: a sandboxed frame.
-    page.hash('#/plugins/stats');
-    for (let i = 0; i < 8; i++) await flush();
     const board = page.IDS['plugins-board'];
-    const frame = board.find((el) => el.dataset && el.dataset.role === 'plugin-frame')[0];
-    check('PLUGINS the untrusted card is a sandboxed frame',
-      !!frame && frame.dataset && frame.dataset.sandbox === 'allow-scripts',
-      frame ? 'ctor=' + (frame.constructor && frame.constructor.name) + ' name=' + frame.name +
-        ' sandbox=' + (frame.dataset && frame.dataset.sandbox) : 'no frame');
-    // The privileged card: a plain frame — the owner's vouching is the
-    // boundary, not the sandbox.
-    page.hash('#/plugins/owner-panel');
+    const sections = board.find((one) => one.dataset && one.dataset.role === 'plugin-section');
+    check('PLUGINS the built-ins render as three grouped sections',
+      sections.length === 4 &&
+        String(sections[0].textContent).includes('second-brain') &&
+        String(sections[1].textContent).includes('sys1') &&
+        String(sections[2].textContent).includes('cloudflare') &&
+        String(sections[3].textContent).includes('Installed bundles'),
+      'sections=' + sections.length);
+    // The status dots lead the rows: the ok dot on second-brain, the
+    // off dot on the not-configured lane.
+    const secondBrainRow = board.find((one) => one.dataset && one.dataset.plugin === 'second-brain')[0];
+    check('PLUGINS the tool plugin\u2019s row carries its ok dot',
+      !!secondBrainRow && !!secondBrainRow.children &&
+        secondBrainRow.children.some((child) => child.className === 'plugins-dot ok'),
+      secondBrainRow ? 'children=' + secondBrainRow.children.length : 'no row');
+    const documentsRow = board.find((one) => one.dataset && one.dataset.plugin === 'documents')[0];
+    check('PLUGINS the not-configured lane\u2019s dot is off, not a failure',
+      !!documentsRow && !!documentsRow.children &&
+        documentsRow.children.some((child) => child.className === 'plugins-dot off'),
+      documentsRow ? 'found' : 'no row');
+    // C2: every row carries its press — the tool plugin's opens the
+    // second-brain panel.
+    if (secondBrainRow) secondBrainRow.click();
+    await flush();
+    check('PLUGINS the tool plugin\u2019s press opens the second-brain panel',
+      !page.IDS['panel-second-brain'].hidden,
+      'panel-second-brain hidden=' + page.IDS['panel-second-brain'].hidden);
+    // A lane's press lands on the settings page's specialists section.
+    page.hash('#/plugins');
     for (let i = 0; i < 8; i++) await flush();
-    const priv = board.find((el) => el.dataset && el.dataset.role === 'plugin-frame')[0];
-    check('PLUGINS the privileged card is a plain frame',
-      !!priv && !priv.dataset.sandbox,
-      priv ? 'sandbox=' + priv.dataset.sandbox : 'no frame');
+    const sys1Row = board.find((one) => one.dataset && one.dataset.plugin === 'sys1')[0];
+    if (sys1Row) sys1Row.click();
+    await flush();
+    check('PLUGINS a lane\u2019s press lands on the settings page\u2019s specialists',
+      !page.IDS['panel-settings'].hidden,
+      'panel-settings hidden=' + page.IDS['panel-settings'].hidden);
+    // C4: the trust disclosure.
+    page.hash('#/plugins');
+    for (let i = 0; i < 8; i++) await flush();
+    const trustToggle = board.find((one) => one.className === 'plugins-disclosure')[0];
+    if (trustToggle) trustToggle.click();
+    await flush();
+    const disclosure = board.find((one) => one.dataset && one.dataset.role === 'trust-disclosure');
+    check('PLUGINS how trust works opens the tiers and the ladder',
+      disclosure.length === 1 &&
+        String(disclosure[0].textContent).includes('you vouched for it') &&
+        String(disclosure[0].textContent).includes('the whole suite + your elevation act'),
+      'disclosures=' + disclosure.length);
+    // C3: the install door — the press opens it, the empty path's
+    // refusal renders beside the field, the cancel closes it.
+    const doorPress = board.find((one) => one.className === 'press' &&
+      String(one.textContent) === '+ install a bundle')[0];
+    if (doorPress) doorPress.click();
+    await flush();
+    const door = board.find((one) => one.dataset && one.dataset.role === 'install-door');
+    check('PLUGINS the install door opens', door.length === 1, 'doors=' + door.length);
+    const doorInstall = door.length
+      ? door[0].find((one) => one.className === 'press plugins-install')[0]
+      : null;
+    if (doorInstall) doorInstall.click();
+    await flush();
+    const freshDoor = board.find((one) => one.dataset && one.dataset.role === 'install-door');
+    const refusal = freshDoor.length
+      ? freshDoor[0].find((one) => one.className === 'plugins-refusal')
+      : [];
+    check('PLUGINS an empty path\u2019s refusal renders beside the field',
+      refusal.length === 1, 'refusals=' + refusal.length);
+    const doorCancel = door.length
+      ? door[0].find((one) => one.className === 'press' &&
+        String(one.textContent) === 'cancel')[0]
+      : null;
+    if (doorCancel) doorCancel.click();
+    await flush();
+    check('PLUGINS the cancel closes the door',
+      board.find((one) => one.dataset && one.dataset.role === 'install-door').length === 0,
+      'door closed');
+    // The bundles: the tier chips and the press opening the bundle's
+    // card in the drawer.
+    const bundleRows = board.find((one) => one.dataset && one.dataset.role === 'bundle');
+    check('PLUGINS the installed bundles carry their tier chips',
+      bundleRows.length === 2 &&
+        String(bundleRows[0].textContent).includes('untrusted') &&
+        String(bundleRows[1].textContent).includes('privileged'),
+      'bundles=' + bundleRows.length);
+    if (bundleRows.length) bundleRows[0].click();
+    await flush();
+    const drawer = page.IDS['dock-object-body'];
+    check('PLUGINS the bundle\u2019s press opens its card in the drawer',
+      !!drawer && String(drawer.textContent).includes('untrusted \u2014 sandboxed'),
+      drawer ? String(drawer.textContent).slice(0, 80) : 'no drawer');
+    // C5: the drafts and the rail badge.
+    const proposals = board.find((one) => one.dataset && one.dataset.role === 'proposal');
+    check('PLUGINS the drafts awaiting review are listed',
+      proposals.length === 1 && String(proposals[0].textContent).includes('fresh-draft'),
+      'drafts=' + proposals.length);
+    const badge = page.IDS['rail-tree'].find((one) =>
+      one.dataset && one.dataset.count === 'plugins')[0];
+    check('PLUGINS the rail entry counts a waiting draft',
+      !!badge && !badge.hidden && badge.textContent === '1',
+      badge ? 'hidden=' + badge.hidden + ' text=' + badge.textContent : 'no badge');
   }
 
   async function theBotsSurfaceMintsTheBotCard() {

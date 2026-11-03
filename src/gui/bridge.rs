@@ -7164,9 +7164,24 @@ fn built_ins_value(home: &std::path::Path) -> Value {
         None => "no home resolves (SECOND_BRAIN_HOME, ~/.second-brain, ~/Projects/second-brain)"
             .to_string(),
     };
+    let brain_dot = match &brain_home {
+        Some(path) => {
+            let tool = crate::plugins::second_brain::SecondBrain::new(
+                path.clone(),
+                crate::plugins::second_brain::DEFAULT_PORT,
+            );
+            if tool.has_tool() {
+                "ok"
+            } else {
+                "warn"
+            }
+        }
+        None => "off",
+    };
     built_ins.push(serde_json::json!({
         "name": "second-brain",
         "kind": "tool plugin",
+        "dot": brain_dot,
         "state": brain_state,
         "manages": "the second-brain panel",
     }));
@@ -7193,6 +7208,7 @@ fn built_ins_value(home: &std::path::Path) -> Value {
             built_ins.push(serde_json::json!({
                 "name": name,
                 "kind": "lane",
+                "dot": if state == "resolved" { "ok" } else { "off" },
                 "state": state,
                 "detail": format!("{role} \u{b7} {detail}"),
                 "manages": "the settings page's lane cards",
@@ -7218,6 +7234,7 @@ fn built_ins_value(home: &std::path::Path) -> Value {
             built_ins.push(serde_json::json!({
                 "name": name,
                 "kind": "mcp server",
+                "dot": if enabled { "ok" } else { "off" },
                 "state": if enabled { "enabled" } else { "disabled" },
                 "detail": program,
                 "manages": "the settings page's MCP servers card",

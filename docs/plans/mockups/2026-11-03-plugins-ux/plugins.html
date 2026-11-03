@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>fleet — plugins (the rethink)</title>
+<link rel="stylesheet" href="mockup.css">
+</head>
+<body>
+<div class="screen">
+  <p class="eyebrow">System</p>
+  <h1>Plugins</h1>
+  <p class="headline">
+    <span class="counts"><b>9</b> built-in · <b>2</b> installed · <b>1</b> draft awaits review</span>
+    <button class="disclosure">how trust works <span class="chev">▾</span></button>
+  </p>
+
+  <!-- The tool plugin: one row, one press to its panel. -->
+  <div class="section">
+    <div class="section-head">
+      <h2>Tool plugin</h2><span class="count">1</span>
+      <span class="why">a program fleet attaches to, never reimplements</span>
+    </div>
+    <div class="row">
+      <span class="dot ok"></span>
+      <span class="name">second-brain</span>
+      <span class="state">running at <span class="dim">http://127.0.0.1:4175</span> · the last build finished 09:12</span>
+      <span class="kind">tool plugin</span>
+      <span class="go">open the panel →</span>
+    </div>
+  </div>
+
+  <!-- The lanes: the model services fleet launches, one row each. -->
+  <div class="section">
+    <div class="section-head">
+      <h2>Lanes</h2><span class="count">7</span>
+      <span class="why">the model services fleet launches and probes</span>
+    </div>
+    <div class="row">
+      <span class="dot ok"></span>
+      <span class="name">sys1</span>
+      <span class="state">judgment lane · resolved</span>
+      <span class="kind">lane</span>
+      <span class="go">open the lane card →</span>
+    </div>
+    <div class="row">
+      <span class="dot ok"></span>
+      <span class="name">sdm1</span>
+      <span class="state">tabular lane · resolved</span>
+      <span class="kind">lane</span>
+      <span class="go">open the lane card →</span>
+    </div>
+    <div class="row">
+      <span class="dot ok"></span>
+      <span class="name">sem1</span>
+      <span class="state">embeddings lane · resolved</span>
+      <span class="kind">lane</span>
+      <span class="go">open the lane card →</span>
+    </div>
+    <div class="row">
+      <span class="dot ok"></span>
+      <span class="name">gen1</span>
+      <span class="state">media lane · resolved</span>
+      <span class="kind">lane</span>
+      <span class="go">open the lane card →</span>
+    </div>
+    <div class="row">
+      <span class="dot ok"></span>
+      <span class="name">browser</span>
+      <span class="state">browser lane · resolved</span>
+      <span class="kind">lane</span>
+      <span class="go">open the lane card →</span>
+    </div>
+    <div class="row">
+      <span class="dot ok"></span>
+      <span class="name">blend1</span>
+      <span class="state">composed lane · resolved</span>
+      <span class="kind">lane</span>
+      <span class="go">open the lane card →</span>
+    </div>
+    <div class="row">
+      <span class="dot off"></span>
+      <span class="name">documents</span>
+      <span class="state">documents lane · <span class="dim">not configured — its venv is unbuilt</span></span>
+      <span class="kind">lane</span>
+      <span class="go">open the lane card →</span>
+    </div>
+  </div>
+
+  <!-- The MCP servers: the registry's entries, enabled and disabled
+       read as different states, not one list of names. -->
+  <div class="section">
+    <div class="section-head">
+      <h2>MCP servers</h2><span class="count">8</span>
+      <span class="why">the registered servers the agent's tools come from</span>
+    </div>
+    <div class="row">
+      <span class="dot ok"></span>
+      <span class="name">cloudflare</span>
+      <span class="state">enabled — spawned on demand</span>
+      <span class="kind">mcp server</span>
+      <span class="go">open the server card →</span>
+    </div>
+    <div class="row">
+      <span class="dot ok"></span>
+      <span class="name">computer-use</span>
+      <span class="state">enabled — spawned on demand</span>
+      <span class="kind">mcp server</span>
+      <span class="go">open the server card →</span>
+    </div>
+    <div class="row">
+      <span class="dot ok"></span>
+      <span class="name">filesystem</span>
+      <span class="state">enabled — spawned on demand</span>
+      <span class="kind">mcp server</span>
+      <span class="go">open the server card →</span>
+    </div>
+    <div class="row">
+      <span class="dot off"></span>
+      <span class="name">github</span>
+      <span class="state">disabled — <span class="dim">its tools are not declared this run</span></span>
+      <span class="kind">mcp server</span>
+      <span class="go">open the server card →</span>
+    </div>
+    <div class="row">
+      <span class="dot off"></span>
+      <span class="name">openweather</span>
+      <span class="state">disabled — <span class="dim">its tools are not declared this run</span></span>
+      <span class="kind">mcp server</span>
+      <span class="go">open the server card →</span>
+    </div>
+  </div>
+
+  <!-- The installed bundles: the tier as a chip, the chain behind the
+       row's press. -->
+  <div class="section">
+    <div class="section-head">
+      <h2>Installed bundles</h2><span class="count">2</span>
+      <span class="why">the face's own extensions</span>
+    </div>
+    <div class="row">
+      <span class="dot ok"></span>
+      <span class="name">conversation statistics</span>
+      <span class="state">sandboxed to its declared queries · <span class="dim">creator:conv-9</span></span>
+      <span class="chip sandboxed">untrusted</span>
+      <span class="go">open the bundle card →</span>
+    </div>
+    <div class="row">
+      <span class="dot ok"></span>
+      <span class="name">owner panel</span>
+      <span class="state">the face's own API reach · <span class="dim">/home/owner/panel</span></span>
+      <span class="chip vouched">privileged</span>
+      <span class="go">open the bundle card →</span>
+    </div>
+  </div>
+
+  <!-- The drafts: the creator flow's ground, visible from the page and
+       counted on the rail. -->
+  <div class="section">
+    <div class="section-head">
+      <h2>Drafts awaiting review</h2><span class="count">1</span>
+      <span class="why">creator mode's output — never applied without you</span>
+    </div>
+    <div class="row">
+      <span class="dot warn"></span>
+      <span class="name">fresh-draft</span>
+      <span class="state">unreviewed · <span class="dim">creator:conv-12</span></span>
+      <span class="go">review the draft →</span>
+    </div>
+  </div>
+
+  <p style="margin: 22px 0 0;">
+    <button class="press">+ install a bundle</button>
+  </p>
+</div>
+</body>
+</html>

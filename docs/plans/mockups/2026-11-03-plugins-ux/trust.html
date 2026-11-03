@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>fleet — plugins, how trust works</title>
+<link rel="stylesheet" href="mockup.css">
+</head>
+<body>
+<div class="screen">
+  <p class="eyebrow">System</p>
+  <h1>Plugins</h1>
+  <p class="headline">
+    <span class="counts"><b>9</b> built-in · <b>2</b> installed · <b>1</b> draft awaits review</span>
+    <button class="disclosure" style="color: var(--accent);">how trust works <span class="chev">▴</span></button>
+  </p>
+
+  <!-- The disclosure, open: the two tiers as the visual boundary they
+       are, and the ladder with its gates. -->
+  <div class="section" style="padding: 18px 22px 22px;">
+    <h2 style="font: 400 20px/1.2 var(--serif); margin: 0 0 4px;">How trust works</h2>
+    <p style="margin: 0; color: var(--ink-2); font-size: 13px;">
+      Everything on this page is a plugin. The tiers differ in what the
+      bundle may reach — and who is answerable for it.
+    </p>
+
+    <div class="tiers">
+      <div class="tier-card vouched">
+        <h3><span class="chip vouched">privileged</span></h3>
+        <p><b>You vouched for it.</b> A bundle you wrote or reviewed — it
+        mounts as a first-class surface with every route the face can,
+        writes included. Installing one is an act that names the grant;
+        the registry records it.</p>
+      </div>
+      <div class="tier-card sandboxed">
+        <h3><span class="chip sandboxed">untrusted</span></h3>
+        <p><b>Generated, sandboxed.</b> Creator mode's output — its card is
+        a frame on the network-dead route, its data only the read-only
+        queries its manifest declares, enforced by the bridge. It never
+        writes, and it never elevates itself.</p>
+      </div>
+    </div>
+
+    <div class="ladder">
+      <span class="stage">draft</span>
+      <span class="gate">the static suite must pass</span>
+      <span class="stage">installed · untrusted</span>
+      <span class="gate">the whole suite + your elevation act</span>
+      <span class="stage">privileged</span>
+    </div>
+    <p style="margin: 12px 0 0; font-size: 12px; color: var(--ink-3);">
+      The suite grades; your act moves. A failing evaluation refuses the
+      promotion by name, and the registry records every step with its
+      verdict.
+    </p>
+  </div>
+
+  <!-- The page below the disclosure: the built-ins as grouped
+       sections, so the open disclosure reads as one page, not a
+       second one. -->
+  <div class="section" style="opacity: 0.75;">
+    <div class="section-head">
+      <h2>Tool plugin</h2><span class="count">1</span>
+    </div>
+    <div class="row" style="cursor: default;">
+      <span class="dot ok"></span>
+      <span class="name">second-brain</span>
+      <span class="state">running at <span class="dim">http://127.0.0.1:4175</span></span>
+      <span class="go">open the panel →</span>
+    </div>
+  </div>
+  <div class="section" style="opacity: 0.75;">
+    <div class="section-head">
+      <h2>Lanes</h2><span class="count">7</span>
+    </div>
+    <div class="row" style="cursor: default;">
+      <span class="dot ok"></span>
+      <span class="name">sys1</span>
+      <span class="state">judgment lane · resolved</span>
+      <span class="go">open the lane card →</span>
+    </div>
+    <div class="row" style="cursor: default;">
+      <span class="dot ok"></span>
+      <span class="name">blend1</span>
+      <span class="state">composed lane · resolved</span>
+      <span class="go">open the lane card →</span>
+    </div>
+  </div>
+</div>
+</body>
+</html>

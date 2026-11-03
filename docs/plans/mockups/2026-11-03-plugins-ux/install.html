@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>fleet — plugins, the install door</title>
+<link rel="stylesheet" href="mockup.css">
+</head>
+<body>
+<div class="screen" style="filter: saturate(0.9);">
+  <p class="eyebrow">System</p>
+  <h1>Plugins</h1>
+  <p class="headline">
+    <span class="counts"><b>9</b> built-in · <b>2</b> installed · <b>1</b> draft awaits review</span>
+  </p>
+  <div class="section" style="opacity: 0.5;">
+    <div class="section-head"><h2>Tool plugin</h2><span class="count">1</span></div>
+    <div class="row" style="cursor: default;">
+      <span class="dot ok"></span>
+      <span class="name">second-brain</span>
+      <span class="state">running at <span class="dim">http://127.0.0.1:4175</span></span>
+      <span class="go">open the panel →</span>
+    </div>
+  </div>
+</div>
+
+<!-- The door: the form carries its feedback beside the field and the
+     elevation's grant inline before the press. -->
+<div class="door">
+  <div class="form">
+    <h2>Install a bundle</h2>
+    <p class="sub">A bundle is a directory with a <b>manifest.json</b> and its
+    static asset. It installs untrusted — sandboxed to the read-only
+    queries its manifest declares — unless you elevate it here.</p>
+
+    <div class="field">
+      <label for="path">the bundle's path</label>
+      <input id="path" type="text" value="/Users/owner/bundles/metrics" aria-invalid="true">
+      <p class="refusal">✕ that directory carries no manifest.json — a bundle is a directory with one</p>
+    </div>
+
+    <div class="field">
+      <label for="elevate">trust</label>
+      <div class="elevation">
+        <input id="elevate" type="checkbox">
+        <label class="grant" for="elevate" style="all: unset; cursor: pointer;">
+          <b>Install as privileged.</b>
+          <span class="small">Every route the face can, writes included — you are vouching for
+          this bundle. Unchecked, it installs untrusted: sandboxed to its declared
+          read-only queries, never self-elevating.</span>
+        </label>
+      </div>
+    </div>
+
+    <button class="press primary" style="opacity: 0.55;">install it</button>
+    <button class="press" style="margin-left: 8px;">cancel</button>
+  </div>
+</div>
+</body>
+</html>

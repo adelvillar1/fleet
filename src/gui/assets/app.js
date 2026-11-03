@@ -8063,6 +8063,7 @@
     }).join(',');
     if (pluginsBefore !== pluginsAfter) buildRail();
     if (face.panel === 'plugins') paintPlugins();
+    paintRailCounts();
     face.feedback = state.feedback || {};
     face.seat = state.approval || null;
     if (face.seat) face.seatSince = face.seat.since || Date.now();
@@ -13796,14 +13797,50 @@
   }
 
   // ------------------------------------------------- the plugins surface
-  // The face plugin host's management surface (the plugin host plan's
-  // P1): every installed plugin a one-card chain — the tier as a mark,
-  // the entry, the provenance, the enable/disable toggle, the remove
-  // with its blast radius, and install-from-path with the elevation
-  // confirmation. `#/plugins/<name>` opens the plugin's own card: its
-  // bundle in a frame — sandboxed for the untrusted tier (no
-  // same-origin, no network beyond the declared queries), plain for
-  // the privileged tier the owner vouches for.
+  // The approved mockup (docs/plans/mockups/2026-11-03-plugins-ux/):
+  // the page opens on the answer — the built-ins as three grouped,
+  // status-first sections, every row carrying its press — and the
+  // machinery sits behind doors that name themselves: the install form,
+  // the trust disclosure, the drafts' install acts.
+
+  function pluginDot(one) {
+    var dot = one.dot || 'off';
+    return { cls: 'plugins-dot ' + dot, title: one.state || '' };
+  }
+
+  function pluginSection(board, title, count, why, rows) {
+    var section = node('div', 'plugins-section');
+    section.dataset.role = 'plugin-section';
+    var head = node('div', 'plugins-section-head');
+    head.appendChild(node('span', 'plugins-section-title', title));
+    head.appendChild(node('span', 'plugins-section-count', String(count)));
+    head.appendChild(node('span', 'plugins-section-why', why));
+    section.appendChild(head);
+    rows.forEach(function (row) { section.appendChild(row); });
+    board.appendChild(section);
+    return section;
+  }
+
+  function pluginRow(one, press) {
+    var row = node('button', 'plugins-row');
+    row.type = 'button';
+    row.dataset.role = 'builtin';
+    row.dataset.plugin = one.name;
+    var dot = pluginDot(one);
+    var dotEl = node('span', dot.cls);
+    dotEl.title = dot.title;
+    row.appendChild(dotEl);
+    row.appendChild(node('span', 'plugins-row-name', one.name));
+    row.appendChild(node('span', 'plugins-row-state',
+      one.state + (one.detail ? ' \u00b7 ' + one.detail : '')));
+    if (press) {
+      row.appendChild(node('span', 'plugins-row-kind', one.kind || ''));
+      row.appendChild(node('span', 'plugins-row-go', press.label + ' \u2192'));
+      row.addEventListener('click', press.run);
+    }
+    return row;
+  }
+
   function paintPlugins() {
     var board = el.pluginsBoard;
     board.textContent = '';
@@ -13812,111 +13849,257 @@
       ? (face.plugins || []).filter(function (one) { return one.name === focus; })[0]
       : null;
     if (focus && plugin) { paintPluginCard(board, plugin); return; }
-    board.appendChild(pageHead('System', 'Plugins',
-      'The face\u2019s own extensions: a bundle under <home>/plugins with a manifest, ' +
-      'mounted by the host. Privileged plugins — ones you wrote or vouched for — carry the ' +
-      'face\u2019s own API reach; untrusted plugins — generated ones — are sandboxed to the ' +
-      'read-only queries their manifest declares, enforced bridge-side.',
-      null));
-    // The built-in plugins: the plugin-shaped capabilities Fleet ships
-    // with — the tool plugin, the lanes, the MCP servers — each with
-    // where it is managed. The compiled-in core is not a plugin and
-    // does not pretend to be.
     var builtIns = face.pluginBuiltIns || [];
-    if (builtIns.length) {
-      var builtSection = node('div', 'cfg-card');
-      builtSection.dataset.role = 'plugin-builtins';
-      builtSection.appendChild(node('h3', null, 'built-in plugins'));
-      builtIns.forEach(function (one) {
-        var row = node('div', 'cfg-fallback');
-        row.dataset.role = 'builtin';
-        row.appendChild(node('span', 'cfg-item-name', one.name));
-        row.appendChild(node('span', 'cfg-item-value',
-          one.state + (one.detail ? ' \u00b7 ' + one.detail : '')));
-        row.appendChild(node('span', 'cfg-item-mark', one.kind + ' \u2014 ' + one.manages));
-        builtSection.appendChild(row);
-      });
-      board.appendChild(builtSection);
-    }
     var plugins = face.plugins || [];
+    var proposals = face.pluginProposals || [];
+    board.appendChild(pageHead('System', 'Plugins', null, null));
+
+    // The head's one line: the counts and the trust disclosure.
+    var headline = node('p', 'plugins-headline');
+    headline.appendChild(node('span', 'plugins-counts',
+      builtIns.length + ' built-in \u00b7 ' + plugins.length + ' installed \u00b7 ' +
+      proposals.length + (proposals.length === 1 ? ' draft awaits review' : ' drafts await review')));
+    var trust = node('button', 'plugins-disclosure');
+    trust.type = 'button';
+    trust.textContent = (face.pluginsTrust ? '\u25b4 hide' : '\u25be how trust works');
+    trust.addEventListener('click', function () {
+      face.pluginsTrust = !face.pluginsTrust;
+      paintPlugins();
+    });
+    headline.appendChild(trust);
+    board.appendChild(headline);
+    if (face.pluginsTrust) board.appendChild(trustDisclosure());
+    if (proposals.length) board.appendChild(draftsSection(proposals));
+
+    // The tool plugin: one row, one press to its panel.
+    var tool = builtIns.filter(function (one) { return one.kind === 'tool plugin'; });
+    pluginSection(board, 'Tool plugin', tool.length,
+      'a program fleet attaches to, never reimplements',
+      tool.map(function (one) {
+        return pluginRow(one, {
+          label: 'open the panel',
+          run: function () { window.location.hash = '#/second-brain'; }
+        });
+      }));
+
+    // The lanes: one section, one press to the lane's card in settings.
+    var lanes = builtIns.filter(function (one) { return one.kind === 'lane'; });
+    pluginSection(board, 'Lanes', lanes.length,
+      'the model services fleet launches and probes',
+      lanes.map(function (one) {
+        return pluginRow(one, {
+          label: 'open the lane card',
+          run: function () {
+            window.location.hash = '#/settings/specialists/' +
+              encodeURIComponent('lane:' + one.name);
+          }
+        });
+      }));
+
+    // The MCP servers: one press to the server's card in settings.
+    var servers = builtIns.filter(function (one) { return one.kind === 'mcp server'; });
+    pluginSection(board, 'MCP servers', servers.length,
+      'the registered servers the agent\u2019s tools come from',
+      servers.map(function (one) {
+        return pluginRow(one, {
+          label: 'open the server card',
+          run: function () {
+            window.location.hash = '#/settings/specialists/' +
+              encodeURIComponent('server:' + one.name);
+          }
+        });
+      }));
+
+    // The installed bundles: the tier as a chip, the press opening the
+    // bundle's card in the drawer.
+    var bundleRows = plugins.map(function (one) {
+      var row = node('button', 'plugins-row');
+      row.type = 'button';
+      row.dataset.role = 'bundle';
+      row.dataset.plugin = one.name;
+      var dot = pluginDot(one);
+      row.appendChild(node('span', 'plugins-dot ' + (one.enabled ? 'ok' : 'off')));
+      row.appendChild(node('span', 'plugins-row-name', one.label || one.name));
+      row.appendChild(node('span', 'plugins-row-state',
+        (one.tier === 'privileged'
+          ? 'the face\u2019s own API reach'
+          : 'sandboxed to its declared queries') +
+        (one.provenance ? ' \u00b7 ' + one.provenance : '')));
+      var chip = node('span', 'plugins-chip ' +
+        (one.tier === 'privileged' ? 'vouched' : 'sandboxed'));
+      chip.textContent = one.tier === 'privileged' ? 'privileged' : 'untrusted';
+      if (!one.enabled) {
+        var off = node('span', 'plugins-chip off');
+        off.textContent = 'off';
+        row.appendChild(off);
+      }
+      row.appendChild(chip);
+      row.appendChild(node('span', 'plugins-row-go', 'open the bundle card \u2192'));
+      row.addEventListener('click', function () {
+        openSettingCard({ name: one.name, card: function () { return pluginSections(one); } }, row);
+      });
+      return row;
+    });
+    pluginSection(board, 'Installed bundles', bundleRows.length,
+      'the face\u2019s own extensions', bundleRows);
     if (!plugins.length) {
       board.appendChild(node('p', 'board-empty',
-        'No bundles installed. A bundle is a directory with a manifest.json; the install form ' +
-        'below carries one in.'));
+        'No bundles installed yet \u2014 press \u201cinstall a bundle\u201d below, or read how trust works.'));
     }
-    plugins.forEach(function (one) {
-      var row = cfgItem({
-        id: 'plugin:' + one.name, kind: 'plugin', name: one.name,
-        value: (one.group ? one.group + ' \u00b7 ' : '') + (one.label || ''),
-        marks: [
-          one.tier === 'privileged'
-            ? ['privileged', 'warn', 'the face\u2019s own API reach']
-            : ['untrusted', 'ok', 'sandboxed to its declared queries'],
-          one.enabled ? [] : ['off', 'warn', 'disabled']
-        ].filter(function (mark) { return mark.length; }),
-        card: function () { return pluginSections(one); }
-      });
-      board.appendChild(row);
-    });
-    // Creator mode's drafts: the proposal ground, never self-applied —
-    // the owner reviews and installs from here (the plan's C5).
-    var proposals = (face.pluginProposals || []);
-    if (proposals.length) {
-      var draftSection = node('div', 'cfg-card');
-      draftSection.dataset.role = 'plugin-proposals';
-      draftSection.appendChild(node('h3', null, 'drafts awaiting review'));
-      proposals.forEach(function (draft) {
-        var row = node('div', 'cfg-fallback');
-        row.dataset.role = 'proposal';
-        row.appendChild(node('span', 'cfg-item-name', draft.name));
-        row.appendChild(node('span', 'cfg-item-value', draft.path || ''));
-        var install = node('button', 'replay-button', 'install it');
-        install.type = 'button';
-        install.dataset.act = 'proposal-install';
-        install.addEventListener('click', function () {
-          writeSettings('plugin-install',
-            { path: draft.path, privileged: false }, function () {
-              notice('the draft is installed — untrusted, sandboxed to its declared queries',
-                draft.name);
-            });
-        });
-        row.appendChild(install);
-        draftSection.appendChild(row);
-      });
-      board.appendChild(draftSection);
-    }
-    // The install form: a path, the elevation checkbox, the press.
-    var install = node('div', 'cfg-card');
-    install.dataset.role = 'plugin-install';
-    install.appendChild(node('h3', null, 'install a bundle'));
-    var pathBox = node('input', 'knob-box');
-    pathBox.type = 'text';
-    pathBox.placeholder = 'the bundle\u2019s path — a directory with a manifest.json';
-    pathBox.setAttribute('aria-label', 'the bundle path');
-    install.appendChild(pathBox);
-    var priv = cfgSwitch('privileged', false, function () { }, 'elevate to privileged');
-    install.appendChild(priv);
-    var confirm = node('p', 'derivation');
-    confirm.dataset.role = 'plugin-elevate-note';
-    confirm.hidden = true;
-    confirm.textContent = 'privileged: every route the face can, writes included — you are ' +
-      'vouching for this bundle';
-    install.appendChild(confirm);
-    var press = node('button', 'replay-button', 'install it');
+
+    // The install door's press.
+    var press = node('button', 'press');
     press.type = 'button';
-    press.dataset.act = 'plugin-install';
+    press.textContent = '+ install a bundle';
     press.addEventListener('click', function () {
-      var path = pathBox.value.trim();
-      if (!path) { notice('a bundle path is required', 'plugins'); return; }
-      writeSettings('plugin-install', { path: path, privileged: priv.querySelector('input').checked },
-        function (reply) {
-          var wrote = reply && reply.wrote;
-          if (wrote && wrote.refused) { notice(wrote.refused, 'plugins'); return; }
-          notice('the plugin is installed', wrote && wrote.name ? wrote.name : 'plugins');
-        });
+      face.pluginsDoor = { refusal: null };
+      paintPlugins();
     });
-    install.appendChild(press);
-    board.appendChild(install);
+    board.appendChild(press);
+    if (face.pluginsDoor) board.appendChild(installDoor());
+  }
+
+  function trustDisclosure() {
+    var card = node('div', 'plugins-trust');
+    card.dataset.role = 'trust-disclosure';
+    card.appendChild(node('h2', null, 'How trust works'));
+    card.appendChild(node('p', 'plugins-trust-sub',
+      'Everything on this page is a plugin. The tiers differ in what the bundle may reach \u2014 ' +
+      'and who is answerable for it.'));
+    var tiers = node('div', 'plugins-tiers');
+    var vouched = node('div', 'plugins-tier vouched');
+    vouched.appendChild(node('h3', null, 'privileged \u2014 you vouched for it'));
+    vouched.appendChild(node('p', null,
+      'A bundle you wrote or reviewed \u2014 it mounts as a first-class surface with every ' +
+      'route the face can, writes included. Installing one is an act that names the grant; ' +
+      'the registry records it.'));
+    tiers.appendChild(vouched);
+    var sandboxed = node('div', 'plugins-tier sandboxed');
+    sandboxed.appendChild(node('h3', null, 'untrusted \u2014 generated, sandboxed'));
+    sandboxed.appendChild(node('p', null,
+      'Creator mode\u2019s output \u2014 its card is a frame on the network-dead route, its data ' +
+      'only the read-only queries its manifest declares, enforced by the bridge. It never ' +
+      'writes, and it never elevates itself.'));
+    tiers.appendChild(sandboxed);
+    card.appendChild(tiers);
+    var ladder = node('div', 'plugins-ladder');
+    ladder.appendChild(node('span', 'plugins-stage', 'draft'));
+    ladder.appendChild(node('span', 'plugins-gate', 'the static suite must pass'));
+    ladder.appendChild(node('span', 'plugins-stage', 'installed \u00b7 untrusted'));
+    ladder.appendChild(node('span', 'plugins-gate', 'the whole suite + your elevation act'));
+    ladder.appendChild(node('span', 'plugins-stage', 'privileged'));
+    card.appendChild(ladder);
+    card.appendChild(node('p', 'plugins-trust-note',
+      'The suite grades; your act moves. A failing evaluation refuses the promotion by name, ' +
+      'and the registry records every step with its verdict.'));
+    return card;
+  }
+
+  function draftsSection(proposals) {
+    var section = node('div', 'plugins-section');
+    section.dataset.role = 'plugin-proposals';
+    var head = node('div', 'plugins-section-head');
+    head.appendChild(node('span', 'plugins-section-title', 'Drafts awaiting review'));
+    head.appendChild(node('span', 'plugins-section-count', String(proposals.length)));
+    head.appendChild(node('span', 'plugins-section-why',
+      'creator mode\u2019s output \u2014 never applied without you'));
+    section.appendChild(head);
+    proposals.forEach(function (draft) {
+      var row = node('button', 'plugins-row');
+      row.type = 'button';
+      row.dataset.role = 'proposal';
+      row.dataset.plugin = draft.name;
+      row.appendChild(node('span', 'plugins-dot warn'));
+      row.appendChild(node('span', 'plugins-row-name', draft.name));
+      row.appendChild(node('span', 'plugins-row-state', 'unreviewed \u00b7 untrusted by construction'));
+      row.appendChild(node('span', 'plugins-row-go', 'review the draft \u2192'));
+      row.addEventListener('click', function () {
+        writeSettings('plugin-install',
+          { path: draft.path, privileged: false }, function () {
+            notice('the draft is installed \u2014 untrusted, sandboxed to its declared queries',
+              draft.name);
+          });
+      });
+      section.appendChild(row);
+    });
+    return section;
+  }
+
+  function installDoor() {
+    var door = node('div', 'plugins-door');
+    door.dataset.role = 'install-door';
+    var form = node('div', 'plugins-door-form');
+    form.appendChild(node('h2', null, 'Install a bundle'));
+    form.appendChild(node('p', 'plugins-door-sub',
+      'A bundle is a directory with a manifest.json and its static asset. It installs ' +
+      'untrusted \u2014 sandboxed to the read-only queries its manifest declares \u2014 unless ' +
+      'you elevate it here.'));
+    var field = node('div', 'plugins-field');
+    field.appendChild(node('label', null, 'the bundle\u2019s path'));
+    var pathBox = node('input', 'plugins-path');
+    pathBox.type = 'text';
+    pathBox.id = 'plugins-path';
+    pathBox.placeholder = 'the bundle\u2019s path \u2014 a directory with a manifest.json';
+    pathBox.value = face.pluginsDoor.path || '';
+    field.appendChild(pathBox);
+    if (face.pluginsDoor.refusal) {
+      var refusal = node('p', 'plugins-refusal');
+      refusal.textContent = '\u2717 ' + face.pluginsDoor.refusal;
+      field.appendChild(refusal);
+    }
+    form.appendChild(field);
+    var elevation = node('div', 'plugins-elevation');
+    var elevate = node('input');
+    elevate.type = 'checkbox';
+    elevate.id = 'plugins-elevate';
+    elevate.checked = !!face.pluginsDoor.privileged;
+    elevation.appendChild(elevate);
+    var grant = node('label', 'plugins-grant');
+    grant.setAttribute('for', 'plugins-elevate');
+    grant.appendChild(node('b', null, 'Install as privileged.'));
+    grant.appendChild(node('span', 'plugins-grant-small',
+      ' Every route the face can, writes included \u2014 you are vouching for this bundle. ' +
+      'Unchecked, it installs untrusted: sandboxed to its declared read-only queries, ' +
+      'never self-elevating.'));
+    elevation.appendChild(grant);
+    form.appendChild(elevation);
+    var install = node('button', 'press plugins-install');
+    install.type = 'button';
+    install.textContent = 'install it';
+    install.addEventListener('click', function () {
+      var path = pathBox.value.trim();
+      if (!path) {
+        face.pluginsDoor.refusal = 'name the bundle\u2019s path \u2014 a directory with a manifest.json';
+        paintPlugins();
+        return;
+      }
+      var privileged = elevate.checked;
+      writeSettings('plugin-install', { path: path, privileged: privileged }, function (reply) {
+        var wrote = reply && reply.wrote;
+        if (wrote && wrote.refused) {
+          face.pluginsDoor.refusal = wrote.refused;
+          face.pluginsDoor.path = path;
+          face.pluginsDoor.privileged = privileged;
+          paintPlugins();
+          return;
+        }
+        face.pluginsDoor = null;
+        notice('the plugin is installed' +
+          (privileged ? ' \u2014 privileged: every route the face can, writes included' : ''),
+          wrote && wrote.name ? wrote.name : 'plugins');
+      });
+    });
+    form.appendChild(install);
+    var cancel = node('button', 'press');
+    cancel.type = 'button';
+    cancel.textContent = 'cancel';
+    cancel.addEventListener('click', function () {
+      face.pluginsDoor = null;
+      paintPlugins();
+    });
+    form.appendChild(cancel);
+    door.appendChild(form);
+    return door;
   }
 
   function pluginSections(plugin) {
@@ -13929,7 +14112,8 @@
       ['the entry', node('p', 'derivation',
         (plugin.group || 'no manifest') + ' \u00b7 ' + (plugin.label || ''))],
       ['the provenance', node('p', 'derivation', plugin.provenance || 'unknown')],
-      ['the state', node('p', 'derivation', plugin.enabled ? 'enabled \u2014 it mounts' : 'disabled \u2014 it mounts nothing')],
+      ['the state', node('p', 'derivation',
+        plugin.enabled ? 'enabled \u2014 it mounts' : 'disabled \u2014 it mounts nothing')],
       ['what removing it does', node('p', 'derivation',
         'removing deletes the registry entry and the bundle directory; the rail entry and its ' +
         'card go with them')],
@@ -13947,14 +14131,7 @@
           });
         }
       }].concat(plugin.tier === 'untrusted' ? [{
-        // The ladder's second gate: the suite must pass, and the
-        // elevation line names the grant and the verdict (C9).
         label: 'promote to privileged', run: function () {
-          if (!window.confirm(
-            'promote `' + plugin.name + '` to privileged?\n\n' +
-            'privileged: every route the face can, writes included — you are vouching for ' +
-            'this bundle.\n\nthe evaluation suite must pass; the elevation names the verdict.'
-          )) return;
           writeSettings('plugin-promote', { id: plugin.name }, function (reply) {
             var wrote = reply && reply.wrote;
             if (wrote && wrote.refused) { notice(wrote.refused, plugin.name); return; }
@@ -13964,45 +14141,6 @@
         }
       }] : []))]
     ];
-  }
-
-  function paintPluginCard(board, plugin) {
-    board.appendChild(pageHead('System', plugin.name,
-      (plugin.tier === 'privileged' ? 'A privileged plugin' : 'An untrusted plugin') +
-      ' \u2014 its bundle, served on the network-dead route' +
-      (plugin.tier === 'untrusted' ? ' and sandboxed to its declared queries' : '') + '.',
-      null));
-    var frame = node('iframe', 'plugin-frame');
-    frame.dataset.role = 'plugin-frame';
-    frame.src = '/plugins/' + encodeURIComponent(plugin.name) + '/index.html';
-    // The sandbox is the trust boundary: the untrusted tier gets no
-    // same-origin and no network beyond the declared queries (its data
-    // arrives through the postMessage relay below); the privileged tier
-    // is the owner\u2019s own vouching.
-    if (plugin.tier !== 'privileged') frame.dataset.sandbox = 'allow-scripts';
-    board.appendChild(frame);
-    if (plugin.tier !== 'privileged') {
-      // The declared-query relay: the bundle asks, the face's own
-      // origin answers through the bridge\u2019s enforced set.
-      window.addEventListener('message', function (event) {
-        var data = event.data || {};
-        if (data.fleetPlugin !== plugin.name || !data.query) return;
-        post('/api/plugins/query', {
-          name: plugin.name, query: data.query
-        }).then(function (reply) {
-          var source = frame.contentWindow;
-          if (!source) return;
-          if (reply.status === 200) {
-            source.postMessage({ fleetPlugin: plugin.name, ok: true, answer: reply.body }, '*');
-          } else {
-            source.postMessage({
-              fleetPlugin: plugin.name, ok: false,
-              refused: (reply.body && reply.body.refused) || ['the query was refused']
-            }, '*');
-          }
-        }).catch(function () { });
-      });
-    }
   }
 
   function paintBots() {
@@ -21955,7 +22093,16 @@
     var needs = counts ? counts.needs || 0 : 0;
     var working = counts ? counts.working || 0 : 0;
     var waiting = needs + working;
+    // The plugins entry counts its drafts: a proposal awaiting review
+    // is invisible from the rail otherwise (the plugins-ux plan's C5).
+    var drafts = (face.pluginProposals || []).length;
     Array.prototype.forEach.call(el.railTree.querySelectorAll('.surfaces-count'), function (span) {
+      if (span.dataset.count === 'plugins') {
+        span.hidden = !drafts;
+        span.textContent = drafts ? String(drafts) : '';
+        span.title = drafts ? drafts + (drafts === 1 ? ' draft awaits review' : ' drafts await review') : '';
+        return;
+      }
       if (span.dataset.count !== 'sessions') return;
       span.hidden = !waiting;
       span.textContent = waiting ? String(waiting) : '';
