@@ -44,6 +44,14 @@ compaction count is the real measure of a conversation freshness."*
   fatal. Everything else stays fatal-on-committed.
 2. **2026-10-31 — the freshness measure.** Turn count retires from the
   surfaces that used it as size; compaction count replaces it.
+3. **2026-11-03 — the composer's turns-left retires too.** The owner's
+  ruling, quoted: *"turn count is meaningless to users, if anything
+  compaction count or an indication of context degradation is the only
+  thing that a user would care for."* The carve-out that kept `runTurns`
+  ("turns left") as a budget display is reversed: the composer's field is
+  removed, the head's context gauge is the one degradation signal a user
+  sees, and the turn count stays internal — the machinery's own loop
+  state, never a user-facing number.
 
 ## Approach
 

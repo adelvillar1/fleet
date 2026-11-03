@@ -7308,6 +7308,12 @@ async function theRunScopedControlsSayTheirScope() {
   check('C4 /compact names the turn boundary it folds at',
     SRC.includes('fold the conversation at the next turn boundary'),
     'the command\u2019s own words');
+  // The 2026-11-03 ruling: turn count is meaningless to end users — the
+  // composer carries no turns-left field, and the context gauge is the
+  // one degradation signal a user sees. The turn count stays internal.
+  check('CA-C3 the composer carries no turns-left field',
+    HTML.includes('run-turns') === false && SRC.includes('run-turns') === false,
+    'the field is gone from the composer and the paint');
 }
 
 // C3 of the provider-connect plan: the connect card answers where the

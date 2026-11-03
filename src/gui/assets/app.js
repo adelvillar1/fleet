@@ -759,7 +759,6 @@
     runPerms: document.getElementById('run-perms'),
     runMode: document.getElementById('run-mode'),
     runProvider: document.getElementById('run-provider'),
-    runTurns: document.getElementById('run-turns'),
     runFolder: document.getElementById('run-folder'),
     docOpen: document.getElementById('doc-open'),
     docPop: document.getElementById('doc-pop'),
@@ -8523,15 +8522,6 @@
     // against the budget the state document named (D4). Nothing renders
     // when there is no budget or no live run - the field is run
     // telemetry, not decoration.
-    if (el.runTurns) {
-      var live = face.running && face.turn > 0 && face.turnBudget > 0;
-      el.runTurns.hidden = !live;
-      if (live) {
-        var left = Math.max(0, face.turnBudget - face.turn);
-        el.runTurns.textContent = left + ' turns left';
-        el.runTurns.dataset.low = left <= 10 ? 'true' : 'false';
-      }
-    }
     paintFolder();
     paintGoal();
   }
