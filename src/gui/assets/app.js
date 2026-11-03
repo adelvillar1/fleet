@@ -1985,8 +1985,43 @@
     return row(el0, event);
   }
 
+  // A member's proposal to convene a role the room does not hold (the
+  // huddles plan's C5/C8). One dashed card: the role, the reason, and the
+  // single convene press — the owner decides, never the address.
+  function suggestRow(event) {
+    var role = event.role || '';
+    var why = event.reason || '';
+    var card = node('div', 'suggest');
+    card.appendChild(node('div', 'suggest-label', 'capability gap'));
+    var text = node('p', 'suggest-why');
+    text.appendChild(document.createTextNode(
+      why ? (role + ' \u2014 ' + why) : ('this room does not hold ' + role)));
+    card.appendChild(text);
+    var acts = node('div', 'suggest-acts');
+    var convene = node('button', 'press primary', 'convene ' + role);
+    convene.type = 'button';
+    convene.addEventListener('click', function () {
+      convene.disabled = true;
+      convene.textContent = 'convening\u2026';
+      post('/api/session/join', { session: face.session, persona: role })
+        .then(function (reply) {
+          if (reply.status === 401) throw new Error('token');
+          convene.textContent = 'convoked';
+          load();
+        })
+        .catch(function () {
+          convene.disabled = false;
+          convene.textContent = 'convene ' + role;
+          notice('the role was not added', 'the room could not be read');
+        });
+    });
+    acts.appendChild(convene);
+    card.appendChild(acts);
+    return row(card, event);
+  }
+
   // One file handed to the owner. The card is the delivery: the name and
-  // size are on it, and opening it puts the file in the pane the way any
+  // the size are on it, and opening it puts the file in the pane the way any
   // other path does.
   function artifactRow(event) {
     var el0 = card('artifact', '\u25c7', event.path,
@@ -2640,6 +2675,13 @@
       case 'artifact':
         closeAssistant();
         artifactRow(event);
+        break;
+      case 'recommend':
+      case 'recommended':
+        // A member proposed convening a role the room lacks: one
+        // suggestion card with the reason and the single convene press.
+        // The address proposed; nothing joins on the model's say-so.
+        suggestRow(event);
         break;
       case 'delegation':
         applyDelegation(event);

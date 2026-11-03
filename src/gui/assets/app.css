@@ -8745,3 +8745,27 @@ body[data-work="collapsed"] .work-list { display: none; }
   text-transform: uppercase;
   color: var(--dsw-alias-ink-tertiary);
 }
+
+/* A member's proposal to convene a role the room lacks (the huddles plan's
+   C5). Dashed so it reads as a suggestion, never as work already done. */
+.suggest {
+  border: 1px dashed var(--dsw-alias-hairline-strong);
+  border-radius: 10px;
+  background: var(--dsw-alias-surface);
+  padding: 12px 14px;
+  margin: 0 0 8px;
+}
+.suggest-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--dsw-alias-ink-tertiary);
+  margin: 0 0 4px;
+}
+.suggest-why {
+  margin: 0 0 10px;
+  font-size: 13px;
+  color: var(--dsw-alias-ink-secondary);
+}
+.suggest-acts { display: flex; gap: 10px; align-items: center; }

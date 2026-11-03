@@ -4702,6 +4702,48 @@ async function theStrategyStepShowsItsPreview() {
       JSON.stringify(headImg.map((i) => i.src)));
   }
 
+  // A member's capability-gap proposal (the huddles plan's C5/C8): one
+  // dashed suggestion card in the transcript, carrying the role, the
+  // reason, and a single convene press that names exactly that role.
+  async function aRecommendationRendersOneConvenePress() {
+    const page = boot({
+      documents: {
+        state: (asked) => ({
+          ...emptyState(asked), session: asked,
+          members: [{ name: 'designer', voice: 'makes pages' }],
+          events: [
+            { type: 'message', role: 'owner', text: 'the brief' },
+            { type: 'recommend', role: 'auditor',
+              reason: 'the contrast pairs need an accessibility pass',
+              from: 'designer' }
+          ]
+        })
+      }
+    });
+    await flush();
+    page.open();
+    await flush();
+    const cards = page.rows('.suggest');
+    check('C5 the proposal renders as one suggestion card',
+      cards.length === 1, String(cards.length));
+    check('C5 the card names the role and the reason',
+      cards.length === 1 &&
+        String(cards[0].textContent).includes('auditor') &&
+        String(cards[0].textContent).includes('the contrast pairs need an accessibility pass'),
+      cards.length ? String(cards[0].textContent) : 'none');
+    const convene = cards.length
+      ? cards[0].find((one) => one.className === 'press primary')[0]
+      : null;
+    check('C5 the card carries one convene press', !!convene, 'no press');
+    if (convene) convene.click();
+    await flush(40);
+    const joins = page.calls.filter((c) =>
+      c.url.startsWith('/api/session/join') &&
+      String(c.body || '').indexOf('"persona":"auditor"') !== -1);
+    check('C5 the press convenes exactly that role',
+      joins.length === 1, JSON.stringify(page.calls.map((c) => c.method + ' ' + c.url)));
+  }
+
   async function theBotsSurfaceMintsTheBotCard() {
     const page = boot({
       reply: {
@@ -7787,6 +7829,7 @@ const cases = [
   ['C8 the @ picker offers the room’s members first', theRoomsAtPickerOffersItsMembers],
   ['C8 a room bylines its members’ turns', aRoomBylineNamesItsAuthor],
   ['C11 an owner-supplied avatar replaces the initial', anOwnerSuppliedAvatarReplacesTheInitial],
+  ['C5 a recommendation renders one convene press', aRecommendationRendersOneConvenePress],
   ['KI-380 the zombie tab cannot hide a seat or lose the reads', theZombieTabCannotHideASeatOrLoseTheReads],
   ['C1/C8 the list groups by attention and counts what the server counted', theListGroupsByAttentionAndCountsWhatTheServerCounted],
   ['C2 every state opens through one verb', everyStateOpensThroughOneVerb],
