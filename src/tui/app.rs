@@ -3810,6 +3810,9 @@ mod tests {
             prompt_tokens: 40,
             completion_tokens: 12,
             total_tokens: 52,
+            cache_read_tokens: None,
+            cache_creation_tokens: None,
+            reasoning_tokens: None,
             finish_reason: None,
         }));
         app.seed(&[Record::User {
@@ -3822,6 +3825,9 @@ mod tests {
             prompt_tokens: 7,
             completion_tokens: 3,
             total_tokens: 10,
+            cache_read_tokens: None,
+            cache_creation_tokens: None,
+            reasoning_tokens: None,
             finish_reason: None,
         }));
         assert_eq!(app.status.prompt_tokens, 7);
@@ -4209,12 +4215,18 @@ mod tests {
             completion_tokens: 5,
             finish_reason: None,
             total_tokens: 15,
+            cache_read_tokens: None,
+            cache_creation_tokens: None,
+            reasoning_tokens: None,
         }));
         app.apply_status(StatusUpdate::Usage(Usage {
             prompt_tokens: 20,
             completion_tokens: 7,
             finish_reason: None,
             total_tokens: 27,
+            cache_read_tokens: None,
+            cache_creation_tokens: None,
+            reasoning_tokens: None,
         }));
         assert_eq!(app.status.prompt_tokens, 30);
         assert_eq!(app.status.completion_tokens, 12);

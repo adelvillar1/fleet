@@ -495,6 +495,12 @@ pub struct Choice {
 }
 
 /// Token accounting for one request. Absent fields read as zero.
+///
+/// The cache and reasoning fields are `Option`s, not zeros: a provider
+/// that does not report them has said nothing, and a recorded row must
+/// not pretend a zero it was never given (the usage-in-calibration
+/// plan's C0). They serialize as omitted, so an old reader sees no
+/// difference.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Usage {
     #[serde(default)]
@@ -503,8 +509,45 @@ pub struct Usage {
     pub completion_tokens: u64,
     #[serde(default)]
     pub total_tokens: u64,
+    /// Tokens the provider served from its prompt cache. The
+    /// provider's own accounting — a subset of `prompt_tokens` on
+    /// every format confirmed so far, never an addition to it (the
+    /// live leg of the usage plan confirms per provider; the reading
+    /// lives here, at the definition, so no call site re-derives it).
+    /// The wire names are the providers' own (`cache_read_input_tokens`
+    /// and `cache_creation_input_tokens`, the usage-in-calibration
+    /// plan's C0).
+    #[serde(
+        default,
+        rename = "cache_read_input_tokens",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub cache_read_tokens: Option<u64>,
+    /// Tokens the provider wrote into its cache this request.
+    #[serde(
+        default,
+        rename = "cache_creation_input_tokens",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub cache_creation_tokens: Option<u64>,
+    /// Tokens the model spent reasoning, when the provider reports
+    /// them separately (DeepSeek's `reasoning_tokens` shape).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_tokens: Option<u64>,
     #[serde(default)]
     pub finish_reason: Option<String>,
+}
+
+impl Usage {
+    /// The tokens this request is billed on: prompt plus completion.
+    /// The cache fields are the provider's breakdown of `prompt_tokens`
+    /// (reads cached, writes created), not a second charge — the
+    /// provider-by-provider confirmation rides the usage plan's live
+    /// leg, and any provider whose accounting contradicts this gets
+    /// its reading named here.
+    pub fn billed_tokens(&self) -> u64 {
+        self.prompt_tokens.saturating_add(self.completion_tokens)
+    }
 }
 
 /// A non-2xx API answer.
@@ -983,6 +1026,10 @@ fn responses_response_value(document: &serde_json::Value) -> Result<ChatResponse
         completion_tokens: token("output_tokens"),
         total_tokens: token("total_tokens"),
         finish_reason: Some(finish.to_string()),
+
+        cache_read_tokens: None,
+        cache_creation_tokens: None,
+        reasoning_tokens: None,
     };
     Ok(ChatResponse {
         choices: vec![Choice {
@@ -1590,6 +1637,10 @@ mod tests {
                     completion_tokens: 2,
                     total_tokens: 12,
                     finish_reason: None,
+
+                    cache_read_tokens: None,
+                    cache_creation_tokens: None,
+                    reasoning_tokens: None,
                 }),
             ]
         );
@@ -1660,6 +1711,10 @@ mod tests {
             completion_tokens: 4,
             total_tokens: 7,
             finish_reason: None,
+
+            cache_read_tokens: None,
+            cache_creation_tokens: None,
+            reasoning_tokens: None,
         })));
     }
 
@@ -2050,6 +2105,32 @@ mod tests {
             .chat(&request)
             .expect("the 200 parses");
         assert_eq!(answer.choices[0].message.content.as_deref(), Some("ok"));
+    }
+
+    #[test]
+    fn usage_reads_the_providers_cache_fields_and_their_absence() {
+        // An answer carrying the providers' own wire names records
+        // them; one without records nothing, not zeros.
+        let with: Usage = serde_json::from_str(
+            r#"{"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120,
+                "cache_read_input_tokens": 80, "cache_creation_input_tokens": 5}"#,
+        )
+        .expect("parses");
+        assert_eq!(with.cache_read_tokens, Some(80));
+        assert_eq!(with.cache_creation_tokens, Some(5));
+        assert_eq!(with.reasoning_tokens, None);
+        assert_eq!(with.billed_tokens(), 120);
+        let without: Usage = serde_json::from_str(
+            r#"{"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120}"#,
+        )
+        .expect("parses");
+        assert_eq!(without.cache_read_tokens, None);
+        assert_eq!(without.cache_creation_tokens, None);
+        // The absence serializes as omitted, under both names — an old
+        // reader sees no difference.
+        let json = serde_json::to_value(&without).expect("serializes");
+        assert!(json.get("cache_read_input_tokens").is_none(), "{json}");
+        assert!(json.get("cache_read_tokens").is_none(), "{json}");
     }
 
     #[test]

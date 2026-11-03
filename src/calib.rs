@@ -94,6 +94,14 @@ pub struct RouteRow {
     /// existed, which read as empty.
     #[serde(default)]
     pub judged_from: String,
+    /// The serving attempt's token accounting (the
+    /// usage-in-calibration plan's C1): present when an attempt
+    /// served, absent when the walk failed and on rows written
+    /// before the field existed. The cache fields inside are the
+    /// provider's own accounting; [`Usage::billed_tokens`] is the
+    /// one place the reading of them is defined.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage: Option<crate::api::Usage>,
 }
 
 /// One tool-call screening decision: the approval gate's verdict for one
@@ -1769,6 +1777,12 @@ pub struct ReadRow {
     /// rather than an assumption.
     #[serde(default)]
     pub judged_from: String,
+    /// The route row's serving usage, when an attempt served. Absent
+    /// on rows that failed, on rows written before the field existed,
+    /// and for every other op — a surface renders the columns only
+    /// when this is present (the usage-in-calibration plan's C2).
+    #[serde(default)]
+    pub usage: Option<crate::api::Usage>,
     /// The route row's model, the served candidate's own. Empty for every
     /// other op.
     #[serde(default)]
@@ -2770,6 +2784,7 @@ pub fn render(root: &Path, day: &str) -> String {
         }
     }
     out.push_str(&stream_card(root, &rows));
+    out.push_str(&spend_card(&rows));
     out.push_str(&recent_rows(&rows));
     out.push_str(&format!(
         "\n{DIM}{} row{} \u{b7} {}{RESET}\n",
@@ -2856,7 +2871,7 @@ fn route_detail(rows: &[&ReadRow]) -> Vec<String> {
         .iter()
         .filter(|row| row.judged_from == "cached")
         .count();
-    vec![
+    let mut detail = vec![
         format!(
             "{served} served \u{b7} {failed} failed \u{b7} {} skipped",
             skipped(rows)
@@ -2867,7 +2882,73 @@ fn route_detail(rows: &[&ReadRow]) -> Vec<String> {
             last.attempts.len()
         ),
         format!("judgment: {fresh} fresh \u{b7} {cached} from the record"),
-    ]
+    ];
+    // The usage columns ride only when the rows carry them — a day of
+    // old rows renders exactly as before (the usage-in-calibration
+    // plan's C2).
+    let with_usage = rows.iter().filter(|row| row.usage.is_some()).count();
+    if with_usage > 0 {
+        let billed: u64 = rows
+            .iter()
+            .filter_map(|row| row.usage.as_ref().map(|usage| usage.billed_tokens()))
+            .sum();
+        let cache_read: u64 = rows
+            .iter()
+            .filter_map(|row| row.usage.as_ref().and_then(|usage| usage.cache_read_tokens))
+            .sum();
+        detail.push(format!(
+            "tokens: {billed} billed \u{b7} {cache_read} from cache \u{b7} {with_usage} rows with usage"
+        ));
+    }
+    detail
+}
+
+/// The surface's closing card: the day's spend by provider, from the
+/// rows that carry usage. Absent entirely when no row has it — a day
+/// of old rows closes as it always did. The cache-read figure is the
+/// provider's own accounting (`Usage::billed_tokens` reads the cache
+/// fields as a subset of prompt, never an addition).
+fn spend_card(rows: &[ReadRow]) -> String {
+    // The route rows' serving usage only — the turn rows carry their
+    // own run totals, and the spend card is the route's accounting.
+    let with_usage: Vec<(&String, &crate::api::Usage)> = rows
+        .iter()
+        .filter(|row| row.op == OP_ROUTE)
+        .filter_map(|row| row.usage.as_ref().map(|usage| (&row.provider, usage)))
+        .collect();
+    if with_usage.is_empty() {
+        return String::new();
+    }
+    let mut providers: Vec<&String> = Vec::new();
+    for (provider, _) in &with_usage {
+        if !providers.contains(provider) {
+            providers.push(provider);
+        }
+    }
+    let mut card =
+        format!("{DIM}\u{250c}\u{2500}{RESET} {BOLD}{ACCENT}spend{RESET} {DIM}\u{2510}{RESET}\n");
+    for provider in providers {
+        let billed: u64 = with_usage
+            .iter()
+            .filter(|(one, _)| *one == provider)
+            .map(|(_, usage)| usage.billed_tokens())
+            .sum();
+        let cache_read: u64 = with_usage
+            .iter()
+            .filter(|(one, _)| *one == provider)
+            .filter_map(|(_, usage)| usage.cache_read_tokens)
+            .sum();
+        let count = with_usage
+            .iter()
+            .filter(|(one, _)| *one == provider)
+            .count();
+        card.push_str(&format!(
+            "{DIM}\u{2502}{RESET} {TEXT}{provider}{RESET} {DIM}{billed} billed \u{b7} {cache_read} from cache \u{b7} {count} row{}\n",
+            plural(count)
+        ));
+    }
+    card.push_str(&format!("{DIM}\u{2514}\u{2500}\u{2518}{RESET}\n"));
+    card
 }
 
 fn skipped(rows: &[&ReadRow]) -> usize {
@@ -3650,6 +3731,7 @@ mod tests {
     fn route_row(attempts: &[(&'static str, &'static str)]) -> Row {
         Row::Route(RouteRow {
             ts: "2026-10-13T12:00:00Z".to_string(),
+            usage: None,
             provider: attempts
                 .first()
                 .map(|(id, _)| id.to_string())
@@ -3697,6 +3779,10 @@ mod tests {
                 completion_tokens: 5,
                 total_tokens: 15,
                 finish_reason: None,
+
+                cache_read_tokens: None,
+                cache_creation_tokens: None,
+                reasoning_tokens: None,
             },
             input_chars: 4,
             input_hash: hash16("task"),
@@ -4523,6 +4609,33 @@ mod tests {
     // --- the state file's temp name and the drain-budget expiry ---
 
     #[test]
+    fn the_surface_names_the_usage_columns_only_when_they_ride() {
+        // One new-shape route row and one old-shape row: the tokens
+        // line and the spend card render for the first and stay absent
+        // for the second (the usage-in-calibration plan's C2).
+        let root = std::env::temp_dir().join(format!("fleet-calib-usage-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let day = "2026-11-02";
+        let path = day_path(&root, day);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        // The day file is line-delimited JSON: one row per line.
+        let new_row = r#"{"ts":"2026-11-02T12:00:00Z","op":"route","provider":"stepfun","model":"step-5-preview","how":"judged","workload":"hard","reason":"test","providers_used":["stepfun"],"attempts":[{"provider":"stepfun","outcome":"served","class":null}],"input_chars":4,"input_hash":"abc","latency_ms":100,"judged_from":"fresh","usage":{"prompt_tokens":100,"completion_tokens":20,"total_tokens":120,"cache_read_input_tokens":80,"finish_reason":"stop"}}"#;
+        let old_row = r#"{"ts":"2026-11-02T12:01:00Z","op":"route","provider":"deepseek","model":"deepseek-flash","how":"fallback","reason":"test","providers_used":["deepseek"],"attempts":[{"provider":"deepseek","outcome":"served","class":null}],"input_chars":4,"input_hash":"def","latency_ms":100,"judged_from":"fresh"}"#;
+        std::fs::write(&path, format!("{new_row}\n{old_row}\n")).unwrap();
+        let rendered = render(&root, day);
+        assert!(rendered.contains("tokens: 120 billed"), "{rendered}");
+        assert!(rendered.contains("spend"), "{rendered}");
+        assert!(rendered.contains("stepfun"), "{rendered}");
+        // An old-shape-only day renders exactly as before: no tokens
+        // line, no spend card.
+        std::fs::write(&path, format!("{old_row}\n")).unwrap();
+        let old_rendered = render(&root, day);
+        assert!(!old_rendered.contains("tokens:"), "{old_rendered}");
+        assert!(!old_rendered.contains("spend"), "{old_rendered}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     fn the_state_temp_name_is_unique_per_write_and_the_final_name_is_stable() {
         let root = scratch("state-temp");
         // Two writes to one root: each takes a distinct temp name and

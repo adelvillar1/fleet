@@ -2697,6 +2697,10 @@ struct RouterState {
     committed: bool,
     /// The index that served, when one did.
     served: Option<usize>,
+    /// The serving attempt's token accounting (the
+    /// usage-in-calibration plan's C1). `None` on a walk that never
+    /// served — a failed walk writes the row with usage absent.
+    usage: Option<crate::api::Usage>,
     /// Every attempt across every turn, in order.
     attempts: Vec<Attempt>,
     /// The calibration clauses the walk collected, in the order the
@@ -2859,6 +2863,7 @@ impl Router {
                 index,
                 committed: false,
                 served: None,
+                usage: None,
                 attempts: Vec::new(),
                 calibration_clauses: Vec::new(),
                 lane_note: None,
@@ -2988,6 +2993,7 @@ impl Router {
             input_hash: calib::hash16(task),
             latency_ms,
             judged_from: self.decision.judged_from.label().to_string(),
+            usage: state.usage.clone(),
         }
     }
 
@@ -3140,6 +3146,11 @@ impl Router {
                     state.index = position;
                     state.committed = true;
                     state.served = Some(position);
+                    // The serving attempt's token accounting rides the
+                    // row (the usage-in-calibration plan's C1): the
+                    // usage of what actually served, absent when the
+                    // walk never served.
+                    state.usage = Some(response.usage.clone());
                     return Ok(response);
                 }
                 Err((error, streamed)) => {
@@ -5405,6 +5416,43 @@ mod tests {
     }
 
     // --- the decision row ---
+
+    #[test]
+    fn the_decision_row_carries_the_serving_usage() {
+        // A row written after a served walk carries the serving
+        // attempt's usage; a walk that never served writes it absent
+        // (the usage-in-calibration plan's C1).
+        let resolved = resolve(&default_roster(), &HashMap::new());
+        let decision = RouteDecision {
+            provider: "zai-coding-plan".to_string(),
+            model: "GLM-5.3-Flash".to_string(),
+            how: How::Judged,
+            workload: Some("hard".to_string()),
+            verdict: None,
+            execution: None,
+            reason: "test".to_string(),
+            judged_from: crate::route::JudgedFrom::Fresh,
+            start_index: 0,
+            order: vec![("zai-coding-plan".to_string(), "GLM-5.3-Flash".to_string())],
+        };
+        let router = Router::new(resolved, decision);
+        assert!(router.row("route the row", 5).usage.is_none());
+        lock(&router.state).usage = Some(crate::api::Usage {
+            prompt_tokens: 11,
+            completion_tokens: 7,
+            total_tokens: 18,
+            cache_read_tokens: Some(9),
+            cache_creation_tokens: None,
+            reasoning_tokens: None,
+            finish_reason: Some("stop".to_string()),
+        });
+        let usage = router
+            .row("route the row", 5)
+            .usage
+            .expect("the serving usage rides the row");
+        assert_eq!(usage.billed_tokens(), 18);
+        assert_eq!(usage.cache_read_tokens, Some(9));
+    }
 
     #[test]
     fn the_decision_row_carries_the_devdec_vocabulary() {

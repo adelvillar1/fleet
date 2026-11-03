@@ -293,6 +293,7 @@ fn route_row_value(row: ReadRow) -> Row {
         input_hash: row.input_hash,
         latency_ms: row.latency_ms as u128,
         judged_from: "fresh".to_string(),
+        usage: None,
     })
 }
 

@@ -763,6 +763,9 @@ async fn client_chat_stream_assembles_the_same_response_chat_returns() {
         prompt_tokens: 10,
         completion_tokens: 5,
         total_tokens: 15,
+        cache_read_tokens: None,
+        cache_creation_tokens: None,
+        reasoning_tokens: None,
         finish_reason: None,
     })));
 }
