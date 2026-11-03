@@ -2773,6 +2773,23 @@ impl Bridge {
             .map_err(|_| "the settings write did not land".to_string())??;
             return Ok(json!({ "type": "settings_write", "op": op_for_reply, "wrote": wrote }));
         }
+        // The face plugin ops: the install copies a bundle directory
+        // (blocking), the lifecycle flips registry state, so they run
+        // on the blocking worker like the provider ops.
+        if op == "plugin-install"
+            || op == "plugin-enable"
+            || op == "plugin-disable"
+            || op == "plugin-remove"
+        {
+            let op_for_reply = op.clone();
+            let home = home.clone();
+            let wrote = tokio::task::spawn_blocking(move || {
+                settings_plugin_write(&home, &op, &arguments)
+            })
+            .await
+            .map_err(|_| "the settings write did not land".to_string())??;
+            return Ok(json!({ "type": "settings_write", "op": op_for_reply, "wrote": wrote }));
+        }
         // The write runs off the async worker: every one of these is a
         // file write, and a page request must not hold the runtime
         // while the disk answers.
@@ -8435,6 +8452,54 @@ fn scan_document(home: &std::path::Path) -> Value {
 /// its key and discovery folded in, and the reload. The value never
 /// rides a reply — `key_store` names where it landed, `discovery`
 /// names what listing said.
+fn settings_plugin_write(
+    home: &std::path::Path,
+    op: &str,
+    arguments: &serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let text = |key: &str| {
+        arguments
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+            .ok_or_else(|| format!("the write names its {key}"))
+    };
+    match op {
+        "plugin-install" => {
+            let path = text("path")?;
+            let tier = if arguments
+                .get("privileged")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false)
+            {
+                Some(crate::plugins::face::FaceTier::Privileged)
+            } else {
+                None
+            };
+            match crate::plugins::face::install(home, std::path::Path::new(&path), tier) {
+                Ok(name) => Ok(json!({ "name": name })),
+                Err(message) => Ok(json!({ "refused": [message] })),
+            }
+        }
+        "plugin-enable" | "plugin-disable" => {
+            let name = text("id")?;
+            let enabled = op == "plugin-enable";
+            match crate::plugins::face::set_enabled(home, &name, enabled) {
+                Ok(()) => Ok(json!({ "name": name, "enabled": enabled })),
+                Err(message) => Ok(json!({ "refused": [message] })),
+            }
+        }
+        "plugin-remove" => {
+            let name = text("id")?;
+            match crate::plugins::face::remove(home, &name) {
+                Ok(()) => Ok(json!({ "name": name, "removed": true })),
+                Err(message) => Ok(json!({ "refused": [message] })),
+            }
+        }
+        other => Err(format!("`{other}` is not a plugin op")),
+    }
+}
+
 fn settings_provider_write(
     home: &std::path::Path,
     op: &str,

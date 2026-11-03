@@ -248,7 +248,8 @@
     ['settings', 'settings'],
     ['second-brain', 'second brain'],
     ['workspace-history', 'workspace history'],
-    ['bots', 'bots']
+    ['bots', 'bots'],
+    ['plugins', 'plugins']
   ];
 
   // The same surfaces, grouped by what the owner came to do rather
@@ -283,7 +284,8 @@
       ['bots', 'bots'],
       ['vault', 'vault'],
       ['settings', 'settings'],
-      ['calibration', 'calibration']
+      ['calibration', 'calibration'],
+      ['plugins', 'plugins']
     ]]
   ];
 
@@ -550,7 +552,9 @@
     repo: [
       ['path', { d: 'M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z' }]
     ],
-    dot: [['circle', { cx: 12, cy: 12, r: 6 }]]
+    dot: [['circle', { cx: 12, cy: 12, r: 6 }]],
+    plugin: [['rect', { x: 4, y: 4, width: 16, height: 16, rx: 3 }],
+      ['path', { d: 'M9 9h6v6H9z' }]]
   };
 
   // Which group an address belongs to, and its label in that group —
@@ -643,6 +647,8 @@
     panelBots: document.getElementById('panel-bots'),
     panelVault: document.getElementById('panel-vault'),
     panelSettings: document.getElementById('panel-settings'),
+    panelPlugins: document.getElementById('panel-plugins'),
+    pluginsBoard: document.getElementById('plugins-board'),
     panelDesign: document.getElementById('panel-design'),
     designRail: document.getElementById('design-rail'),
     designWorld: document.getElementById('design-world'),
@@ -8029,6 +8035,19 @@
     face.driving = state.driving || '';
     face.dropped = Number(state.dropped) || 0;
     face.rules = state.rules || [];
+    // The face plugins' own list — the rail's dynamic rows and the
+    // management surface read this one list (the plugin host plan).
+    var pluginsBefore = (face.plugins || []).map(function (one) {
+      return one.name + ':' + one.enabled;
+    }).join(',');
+    face.plugins = state.plugins || [];
+    // The rail's dynamic rows read the same assignment — a changed
+    // list rebuilds it; the plugins page repaints with it.
+    var pluginsAfter = face.plugins.map(function (one) {
+      return one.name + ':' + one.enabled;
+    }).join(',');
+    if (pluginsBefore !== pluginsAfter) buildRail();
+    if (face.panel === 'plugins') paintPlugins();
     face.feedback = state.feedback || {};
     face.seat = state.approval || null;
     if (face.seat) face.seatSince = face.seat.since || Date.now();
@@ -13750,6 +13769,153 @@
 
   function capabilityWord(value) {
     return value === 'observe' ? 'may only listen' : 'may act';
+  }
+
+  // ------------------------------------------------- the plugins surface
+  // The face plugin host's management surface (the plugin host plan's
+  // P1): every installed plugin a one-card chain — the tier as a mark,
+  // the entry, the provenance, the enable/disable toggle, the remove
+  // with its blast radius, and install-from-path with the elevation
+  // confirmation. `#/plugins/<name>` opens the plugin's own card: its
+  // bundle in a frame — sandboxed for the untrusted tier (no
+  // same-origin, no network beyond the declared queries), plain for
+  // the privileged tier the owner vouches for.
+  function paintPlugins() {
+    var board = el.pluginsBoard;
+    board.textContent = '';
+    var focus = face.focus && face.focus.panel === 'plugins' ? face.focus.id : '';
+    var plugin = focus
+      ? (face.plugins || []).filter(function (one) { return one.name === focus; })[0]
+      : null;
+    if (focus && plugin) { paintPluginCard(board, plugin); return; }
+    board.appendChild(pageHead('System', 'Plugins',
+      'The face\u2019s own extensions: a bundle under <home>/plugins with a manifest, ' +
+      'mounted by the host. Privileged plugins — ones you wrote or vouched for — carry the ' +
+      'face\u2019s own API reach; untrusted plugins — generated ones — are sandboxed to the ' +
+      'read-only queries their manifest declares, enforced bridge-side.',
+      null));
+    var plugins = face.plugins || [];
+    if (!plugins.length) {
+      board.appendChild(node('p', 'board-empty',
+        'No plugins installed. A bundle is a directory with a manifest.json; the install form ' +
+        'below carries one in.'));
+    }
+    plugins.forEach(function (one) {
+      var row = cfgItem({
+        id: 'plugin:' + one.name, kind: 'plugin', name: one.name,
+        value: (one.group ? one.group + ' \u00b7 ' : '') + (one.label || ''),
+        marks: [
+          one.tier === 'privileged'
+            ? ['privileged', 'warn', 'the face\u2019s own API reach']
+            : ['untrusted', 'ok', 'sandboxed to its declared queries'],
+          one.enabled ? [] : ['off', 'warn', 'disabled']
+        ].filter(function (mark) { return mark.length; }),
+        card: function () { return pluginSections(one); }
+      });
+      board.appendChild(row);
+    });
+    // The install form: a path, the elevation checkbox, the press.
+    var install = node('div', 'cfg-card');
+    install.dataset.role = 'plugin-install';
+    install.appendChild(node('h3', null, 'install a bundle'));
+    var pathBox = node('input', 'knob-box');
+    pathBox.type = 'text';
+    pathBox.placeholder = 'the bundle\u2019s path — a directory with a manifest.json';
+    pathBox.setAttribute('aria-label', 'the bundle path');
+    install.appendChild(pathBox);
+    var priv = cfgSwitch('privileged', false, function () { }, 'elevate to privileged');
+    install.appendChild(priv);
+    var confirm = node('p', 'derivation');
+    confirm.dataset.role = 'plugin-elevate-note';
+    confirm.hidden = true;
+    confirm.textContent = 'privileged: every route the face can, writes included — you are ' +
+      'vouching for this bundle';
+    install.appendChild(confirm);
+    var press = node('button', 'replay-button', 'install it');
+    press.type = 'button';
+    press.dataset.act = 'plugin-install';
+    press.addEventListener('click', function () {
+      var path = pathBox.value.trim();
+      if (!path) { notice('a bundle path is required', 'plugins'); return; }
+      writeSettings('plugin-install', { path: path, privileged: priv.querySelector('input').checked },
+        function (reply) {
+          var wrote = reply && reply.wrote;
+          if (wrote && wrote.refused) { notice(wrote.refused, 'plugins'); return; }
+          notice('the plugin is installed', wrote && wrote.name ? wrote.name : 'plugins');
+        });
+    });
+    install.appendChild(press);
+    board.appendChild(install);
+  }
+
+  function pluginSections(plugin) {
+    return [
+      ['the tier', node('p', 'derivation',
+        (plugin.tier === 'privileged' ? 'privileged' : 'untrusted') +
+        (plugin.tier === 'privileged'
+          ? ' \u2014 the face\u2019s own API reach; you vouched for this bundle'
+          : ' \u2014 sandboxed to the read-only queries its manifest declares'))],
+      ['the entry', node('p', 'derivation',
+        (plugin.group || 'no manifest') + ' \u00b7 ' + (plugin.label || ''))],
+      ['the provenance', node('p', 'derivation', plugin.provenance || 'unknown')],
+      ['the state', node('p', 'derivation', plugin.enabled ? 'enabled \u2014 it mounts' : 'disabled \u2014 it mounts nothing')],
+      ['what removing it does', node('p', 'derivation',
+        'removing deletes the registry entry and the bundle directory; the rail entry and its ' +
+        'card go with them')],
+      ['the write', cfgCardActs([{
+        label: plugin.enabled ? 'disable it' : 'enable it', primary: true, run: function () {
+          writeSettings(plugin.enabled ? 'plugin-disable' : 'plugin-enable',
+            { id: plugin.name }, function () {
+              notice(plugin.enabled ? 'the plugin is disabled' : 'the plugin is enabled', plugin.name);
+            });
+        }
+      }, {
+        label: 'remove it', run: function () {
+          writeSettings('plugin-remove', { id: plugin.name }, function () {
+            notice('the plugin is removed', plugin.name);
+          });
+        }
+      }])]
+    ];
+  }
+
+  function paintPluginCard(board, plugin) {
+    board.appendChild(pageHead('System', plugin.name,
+      (plugin.tier === 'privileged' ? 'A privileged plugin' : 'An untrusted plugin') +
+      ' \u2014 its bundle, served on the network-dead route' +
+      (plugin.tier === 'untrusted' ? ' and sandboxed to its declared queries' : '') + '.',
+      null));
+    var frame = node('iframe', 'plugin-frame');
+    frame.dataset.role = 'plugin-frame';
+    frame.src = '/plugins/' + encodeURIComponent(plugin.name) + '/index.html';
+    // The sandbox is the trust boundary: the untrusted tier gets no
+    // same-origin and no network beyond the declared queries (its data
+    // arrives through the postMessage relay below); the privileged tier
+    // is the owner\u2019s own vouching.
+    if (plugin.tier !== 'privileged') frame.dataset.sandbox = 'allow-scripts';
+    board.appendChild(frame);
+    if (plugin.tier !== 'privileged') {
+      // The declared-query relay: the bundle asks, the face's own
+      // origin answers through the bridge\u2019s enforced set.
+      window.addEventListener('message', function (event) {
+        var data = event.data || {};
+        if (data.fleetPlugin !== plugin.name || !data.query) return;
+        post('/api/plugins/query', {
+          name: plugin.name, query: data.query
+        }).then(function (reply) {
+          var source = frame.contentWindow;
+          if (!source) return;
+          if (reply.status === 200) {
+            source.postMessage({ fleetPlugin: plugin.name, ok: true, answer: reply.body }, '*');
+          } else {
+            source.postMessage({
+              fleetPlugin: plugin.name, ok: false,
+              refused: (reply.body && reply.body.refused) || ['the query was refused']
+            }, '*');
+          }
+        }).catch(function () { });
+      });
+    }
   }
 
   function paintBots() {
@@ -20193,7 +20359,8 @@
     'workspace-history': el.panelWorkspaceHistory,
     bots: el.panelBots,
     vault: el.panelVault,
-    settings: el.panelSettings
+    settings: el.panelSettings,
+    plugins: el.panelPlugins
   };
 
   function showRoute() {
@@ -20261,6 +20428,12 @@
         paintBots();
         readBots(true).then(paintBots);
         readAccess(true).then(paintBots);
+      },
+      plugins: function () {
+        paintPlugins();
+        // The plugin list rides the state document — the repaint after
+        // the read lands is the one with the plugins in hand.
+        load().then(function () { paintPlugins(); });
       },
       sessions: function () {
         paintWork();
@@ -21596,7 +21769,14 @@
   function buildRail() {
     el.railTree.textContent = '';
     GROUPS.forEach(function (group) {
-      var id = group[0], label = group[1], items = group[2];
+      var id = group[0], label = group[1], items = group[2].slice();
+      // The face plugins' entries join their declared group — the
+      // state read's enabled plugins, mounted where the manifest says
+      // (the plugin host plan's P1). A disabled plugin mounts nothing.
+      (face.plugins || []).forEach(function (plugin) {
+        if (!plugin.enabled || plugin.group !== id) return;
+        items.push([plugin.name, plugin.label]);
+      });
       var section = node('div', 'surfaces-section');
       section.dataset.group = id;
       section.appendChild(node('span', 'surfaces-group', label));
@@ -21607,7 +21787,10 @@
         link.dataset.address = address;
         link.setAttribute('aria-label', name);
         link.title = name;
-        link.appendChild(icon(address, 'surfaces-icon'));
+        var isPlugin = (face.plugins || []).some(function (one) {
+          return one.enabled && one.name === address;
+        });
+        link.appendChild(icon(isPlugin ? 'plugin' : address, 'surfaces-icon'));
         link.appendChild(node('span', 'surfaces-label', name));
         // A surface that has something waiting says so on the rail, and
         // says nothing when it does not — an empty counter is decoration.
@@ -21628,7 +21811,7 @@
   // Which surfaces are live today, and which are a later increment — the
   // rail says so rather than pretending every destination is built.
   var BUILT = ['chat', 'router', 'delegation', 'memory', 'skills', 'sessions', 'calibration',
-    'tower', 'second-brain', 'workspace-history', 'bots', 'vault', 'settings'];
+    'tower', 'second-brain', 'workspace-history', 'bots', 'vault', 'settings', 'plugins'];
 
   // The rail's badge: the surface that has something waiting says so,
   // and says nothing when it does not — an empty counter is decoration.

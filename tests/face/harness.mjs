@@ -4231,6 +4231,68 @@ async function theStrategyStepShowsItsPreview() {
   // real one), the row is found by class (the fake querySelectorAll
   // speaks classes), and the fixture is a whole channels document —
   // an empty object starves the board's later cards.
+  // The face plugin host's management surface and cards (the plugin
+  // host plan's P1): the one-card chain per plugin with the tier
+  // marks, the enabled plugin's rail entry in its declared group, and
+  // the two tiers' frames — sandboxed for the untrusted, plain for
+  // the owner-vouched privileged.
+  async function thePluginsSurfaceManagesTheChains() {
+    const page = boot({
+      documents: {
+        state: {
+          plugins: [
+            { name: 'stats', tier: 'untrusted', enabled: true, group: 'work', label: 'conversation statistics', version: '0.1.0', provenance: 'creator:conv-9' },
+            { name: 'owner-panel', tier: 'privileged', enabled: false, group: 'system', label: 'owner panel', version: '1.0.0', provenance: '/home/owner/panel' }
+          ]
+        }
+      },
+    });
+    page.open();
+    await flush();
+    page.hash('#/plugins');
+    for (let i = 0; i < 8; i++) await flush();
+    check('PLUGINS the plugins panel is the one showing',
+      !!page.IDS['panel-plugins'] && !page.IDS['panel-plugins'].hidden,
+      'panel-plugins hidden=' + (page.IDS['panel-plugins'] || {}).hidden);
+
+    const rows = page.rows('.cfg-item').filter((row) => row.dataset.kind === 'plugin');
+    check('PLUGINS the management surface carries one card per plugin',
+      rows.length === 2, 'rows=' + rows.length);
+    const stats = rows.filter((row) => row.dataset.item === 'plugin:stats')[0];
+    check('PLUGINS the untrusted tier is marked on its card',
+      !!stats && String(stats.textContent).includes('untrusted'),
+      stats ? String(stats.textContent) : 'no stats card');
+    const owner = rows.filter((row) => row.dataset.item === 'plugin:owner-panel')[0];
+    check('PLUGINS the privileged tier is marked and the disabled state says so',
+      !!owner && String(owner.textContent).includes('privileged') &&
+        String(owner.textContent).includes('off'),
+      owner ? String(owner.textContent) : 'no owner card');
+    // The enabled plugin's rail entry joined its declared group.
+    const rail = page.IDS['rail-tree'];
+    const link = rail.find((el) => el.dataset && el.dataset.address === 'stats')[0];
+    check('PLUGINS the enabled plugin mounts its rail entry',
+      !!link && String((link.attrs && link.attrs['aria-label']) || '') ===
+        'conversation statistics',
+      link ? String(link.attrs && link.attrs['aria-label']) : 'no rail entry');
+    // The untrusted card: a sandboxed frame.
+    page.hash('#/plugins/stats');
+    for (let i = 0; i < 8; i++) await flush();
+    const board = page.IDS['plugins-board'];
+    const frame = board.find((el) => el.dataset && el.dataset.role === 'plugin-frame')[0];
+    check('PLUGINS the untrusted card is a sandboxed frame',
+      !!frame && frame.dataset && frame.dataset.sandbox === 'allow-scripts',
+      frame ? 'ctor=' + (frame.constructor && frame.constructor.name) + ' name=' + frame.name +
+        ' sandbox=' + (frame.dataset && frame.dataset.sandbox) : 'no frame');
+    // The privileged card: a plain frame — the owner's vouching is the
+    // boundary, not the sandbox.
+    page.hash('#/plugins/owner-panel');
+    for (let i = 0; i < 8; i++) await flush();
+    const priv = board.find((el) => el.dataset && el.dataset.role === 'plugin-frame')[0];
+    check('PLUGINS the privileged card is a plain frame',
+      !!priv && !priv.dataset.sandbox,
+      priv ? 'sandbox=' + priv.dataset.sandbox : 'no frame');
+  }
+
   async function theBotsSurfaceMintsTheBotCard() {
     const page = boot({
       reply: {
@@ -7066,6 +7128,7 @@ async function theConversationDensityHolds() {
 }
 
 const cases = [
+  ['PLUGINS the management surface and the two tiers\' frames', thePluginsSurfaceManagesTheChains],
   ['KI-380 the zombie tab cannot hide a seat or lose the reads', theZombieTabCannotHideASeatOrLoseTheReads],
   ['C1/C8 the list groups by attention and counts what the server counted', theListGroupsByAttentionAndCountsWhatTheServerCounted],
   ['C2 every state opens through one verb', everyStateOpensThroughOneVerb],

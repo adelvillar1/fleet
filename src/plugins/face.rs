@@ -461,6 +461,22 @@ mod tests {
         let _ = std::fs::remove_dir_all(&home);
     }
 
+    #[tokio::test]
+    async fn the_declared_query_set_is_the_sandboxes_whole_data_path() {
+        // The C3 enforcement lives bridge-side, but the manifest's own
+        // validation is the first gate: an untrusted manifest's queries
+        // resolve to known read-only routes, and the set is what the
+        // bridge enforces.
+        let manifest = FaceManifest::parse(MANIFEST).expect("parses");
+        assert_eq!(manifest.queries, vec!["state", "sessions"]);
+        for query in &manifest.queries {
+            assert!(READ_ONLY_QUERIES.contains(&query.as_str()), "{query}");
+        }
+        let bad = MANIFEST.replace("\"state\"", "\"settings\"");
+        let error = FaceManifest::parse(&bad).expect_err("refuses");
+        assert!(error.contains("settings") && error.contains("read-only"), "{error}");
+    }
+
     #[test]
     fn the_privileged_install_is_the_elevation_act() {
         let home = scratch("privileged");
