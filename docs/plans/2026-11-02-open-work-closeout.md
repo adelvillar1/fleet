@@ -1,5 +1,5 @@
 ---
-status: active
+status: completed
 created: 2026-11-02
 updated: 2026-11-02
 slug: open-work-closeout

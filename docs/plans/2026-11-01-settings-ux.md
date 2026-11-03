@@ -1,5 +1,5 @@
 ---
-status: active
+status: completed
 created: 2026-11-01
 updated: 2026-11-02
 slug: settings-ux
@@ -287,7 +287,7 @@ after the home works, never before.
       absence of the cap rows, and a sweep for spend text.
 - [x] **U7 — one vocabulary.** The mapping passage exists and both
       surfaces' doc sections cite it.
-- [ ] **U8 — the model is the section.** Every roster model is
+- [x] **U8 — the model is the section.** *(2026-11-02: the model list, the one-press pin and the walk's door closed by default are pinned — `MODEL every roster model is one pickable row` and the pin checks; the harness's eight-section rail pin was updated to seven when the money section went.)*  Every roster model is
       listed as `provider/model`, exactly one carries `current`, a
       press writes the model and moves the mark and the topbar
       chip, the accounts carry no billing class, and the walk's
@@ -311,7 +311,7 @@ after the home works, never before.
       board shows the three steps; adding an account unlocks the
       model step; no counts, chip or pane before the home works.
       Harness: the fresh fixture and the step's unlock.
-- [ ] **U11 — the gate.** fmt, clippy, build, test by exit code; the
+- [x] **U11 — the gate.** *(2026-11-02: fmt, clippy `-D warnings`, build and 1,776 tests / 0 failed, read by exit code on this push.)*  fmt, clippy, build, test by exit code; the
       face harness green; a Chromium probe quoting: a save's
       confirmation visible on `#/settings`, the no-results card
       present, and the filter reaching a known knob in three
