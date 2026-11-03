@@ -19,7 +19,12 @@ boundary by path (`src/gui/mod.rs:142-225`).
 The owner wants a *proper native app*, distributed as installable
 packages on GitHub, non-commercial. And the requirement that shapes this
 plan: **every Fleet component is accounted for in the install — no loose
-ends.**
+ends.** That requirement is now **hard rule 12** (the owner's 2026-11-02
+ruling): anything added that becomes a dependency for Fleet must meet the
+self-containment contract — it ships, is built, or is fetched by the app,
+never supplied by the owner's shell profile, a checkout, or a foreign
+runtime, and its absence is a named degradation rather than a silent
+failure. The inventory below is that rule applied to Fleet as it stands.
 
 **The history, corrected.** The PWA was not a permanent ruling against a
 shell. `2026-10-20-pwa-shell.md` refused an Android WebView shell so the
