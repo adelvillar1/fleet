@@ -120,6 +120,9 @@ pub enum Command {
     Devices {
         revoke: Option<String>,
     },
+    /// The face plugins: the installed bundles as cards, or one
+    /// installed, enabled, disabled, or removed by name.
+    Plugins(PluginsOptions),
     /// Print the version.
     Version,
     /// Print help.
@@ -941,6 +944,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "gui" => parse_gui(rest),
         "pair" => no_flags(rest, Command::Pair),
         "channels" => parse_channels(rest),
+        "plugins" => parse_plugins(rest),
         "devices" => parse_devices(rest),
         "version" | "--version" | "-V" => no_flags(rest, Command::Version),
         "help" | "--help" | "-h" => Ok(Command::Help),
@@ -2484,6 +2488,62 @@ pub struct ChannelsOptions {
 /// ignored, which is a flag that lies: the port belongs to the process
 /// that binds it, and `fleet channels` is not that process. It moves to
 /// the `channels.webhook_port` setting the service reads.
+/// Options for `fleet plugins`. The subcommand is the first word:
+/// `list` (the default), `install <path>`, `enable <name>`,
+/// `disable <name>`, `remove <name>`. `--privileged` on install is
+/// the elevation act — it names the grant in the CLI's own words.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct PluginsOptions {
+    pub action: String,
+    pub target: Option<String>,
+    pub privileged: bool,
+}
+
+fn parse_plugins(args: &[String]) -> Result<Command, String> {
+    let mut options = PluginsOptions {
+        action: "list".to_string(),
+        ..Default::default()
+    };
+    let mut words: Vec<String> = Vec::new();
+    let mut index = 0;
+    while index < args.len() {
+        let arg = args[index].as_str();
+        match arg {
+            "--help" | "-h" => return Ok(Command::Help),
+            "--privileged" => options.privileged = true,
+            _ if arg.starts_with('-') && arg != "-" => {
+                return Err(format!("unknown plugins option `{arg}`"))
+            }
+            _ => words.push(arg.to_string()),
+        }
+        index += 1;
+    }
+    if let Some(action) = words.first() {
+        options.action = action.clone();
+        options.target = words.get(1).cloned();
+    }
+    match options.action.as_str() {
+        "list" | "install" | "enable" | "disable" | "remove" => {}
+        other => {
+            return Err(format!(
+                "`{other}` is not a plugins action; list, install, enable, disable, remove"
+            ))
+        }
+    }
+    if options.action != "list" && options.target.is_none() {
+        return Err(format!(
+            "`plugins {}` names no plugin — the second word is its name",
+            options.action
+        ));
+    }
+    if options.action == "install" && options.target.is_none() {
+        return Err(
+            "`plugins install` names no bundle path — the second word is the path".to_string(),
+        );
+    }
+    Ok(Command::Plugins(options))
+}
+
 fn parse_channels(args: &[String]) -> Result<Command, String> {
     let mut options = ChannelsOptions::default();
     let mut capability: Option<Capability> = None;
@@ -3508,6 +3568,42 @@ mod tests {
     }
 
     #[test]
+    fn plugins_parses_its_actions_and_the_elevation_flag() {
+        assert_eq!(
+            parse(&args(&["plugins"])).unwrap(),
+            Command::Plugins(PluginsOptions {
+                action: "list".to_string(),
+                ..Default::default()
+            })
+        );
+        assert_eq!(
+            parse(&args(&[
+                "plugins",
+                "install",
+                "/tmp/bundle",
+                "--privileged"
+            ]))
+            .unwrap(),
+            Command::Plugins(PluginsOptions {
+                action: "install".to_string(),
+                target: Some("/tmp/bundle".to_string()),
+                privileged: true,
+            })
+        );
+        assert_eq!(
+            parse(&args(&["plugins", "disable", "stats"])).unwrap(),
+            Command::Plugins(PluginsOptions {
+                action: "disable".to_string(),
+                target: Some("stats".to_string()),
+                ..Default::default()
+            })
+        );
+        assert!(parse(&args(&["plugins", "install"])).is_err());
+        assert!(parse(&args(&["plugins", "enable"])).is_err());
+        assert!(parse(&args(&["plugins", "frobnicate"])).is_err());
+    }
+
+    #[test]
     fn calib_parses_an_optional_day_and_rejects_junk() {
         assert_eq!(
             parse(&args(&["calib"])).unwrap(),
@@ -3516,9 +3612,9 @@ mod tests {
                 calibration: false,
                 delegation: false,
                 anomalies: false,
-                dry_run: false
-            ,
-                shape: false})
+                dry_run: false,
+                shape: false
+            })
         );
         assert_eq!(
             parse(&args(&["calib", "--day", "2026-10-01"])).unwrap(),
@@ -3527,9 +3623,9 @@ mod tests {
                 calibration: false,
                 delegation: false,
                 anomalies: false,
-                dry_run: false
-            ,
-                shape: false})
+                dry_run: false,
+                shape: false
+            })
         );
         // The calibration surface is `calib --calibration`, with or
         // without a day.
@@ -3540,9 +3636,9 @@ mod tests {
                 calibration: true,
                 delegation: false,
                 anomalies: false,
-                dry_run: false
-            ,
-                shape: false})
+                dry_run: false,
+                shape: false
+            })
         );
         assert_eq!(
             parse(&args(&["calib", "--calibration", "--day", "2026-10-01"])).unwrap(),
@@ -3551,9 +3647,9 @@ mod tests {
                 calibration: true,
                 delegation: false,
                 anomalies: false,
-                dry_run: false
-            ,
-                shape: false})
+                dry_run: false,
+                shape: false
+            })
         );
         assert!(parse(&args(&["calib", "--day", "yesterday"])).is_err());
         assert!(parse(&args(&["calib", "--day", "2026-1-1"])).is_err());
@@ -3570,9 +3666,9 @@ mod tests {
                 calibration: false,
                 delegation: false,
                 anomalies: false,
-                dry_run: false
-            ,
-                shape: false})
+                dry_run: false,
+                shape: false
+            })
         ); // 2024 is a leap year
         assert_eq!(
             parse(&args(&["calib", "--day", "2026-12-31"])).unwrap(),
@@ -3581,9 +3677,9 @@ mod tests {
                 calibration: false,
                 delegation: false,
                 anomalies: false,
-                dry_run: false
-            ,
-                shape: false})
+                dry_run: false,
+                shape: false
+            })
         );
         assert!(parse(&args(&["calib", "--day"])).is_err());
         assert!(parse(&args(&["calib", "--json"])).is_err());
@@ -3598,9 +3694,9 @@ mod tests {
                 calibration: false,
                 delegation: true,
                 anomalies: false,
-                dry_run: false
-            ,
-                shape: false})
+                dry_run: false,
+                shape: false
+            })
         );
         assert_eq!(
             parse(&args(&["calib", "--delegation", "--day", "2026-10-01"])).unwrap(),
@@ -3609,9 +3705,9 @@ mod tests {
                 calibration: false,
                 delegation: true,
                 anomalies: false,
-                dry_run: false
-            ,
-                shape: false})
+                dry_run: false,
+                shape: false
+            })
         );
         assert!(parse(&args(&["calib", "--calibration", "--delegation"])).is_err());
     }

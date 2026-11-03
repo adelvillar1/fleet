@@ -158,6 +158,7 @@ fn dispatch_sync(args: &[String]) -> ExitCode {
         Ok(Command::Pair) => pair_command(),
         Ok(Command::Devices { revoke }) => devices_command(revoke.as_deref()),
         Ok(Command::Channels(options)) => channels_command(&options),
+        Ok(Command::Plugins(options)) => plugins_command(&options),
         Ok(Command::Settings { set }) => settings_command(
             set.as_ref()
                 .map(|(key, value)| (key.as_str(), value.as_str())),
@@ -540,6 +541,101 @@ async fn chat_command(options: &ChatOptions) -> ExitCode {
 /// pairing mints a peer token printed once, exactly as a device's is;
 /// a revoke forgets one. The store holds digests, so this surface names
 /// who may act and never what would let them.
+/// `fleet plugins`: the installed face plugins as cards, or one
+/// installed, enabled, disabled, or removed by name. The elevation
+/// line on a privileged install names the grant (the plan's C1/C2).
+fn plugins_command(options: &cli::PluginsOptions) -> ExitCode {
+    let home = match fleet_home() {
+        Ok(home) => home,
+        Err(message) => {
+            eprintln!("fleet: {message}");
+            return ExitCode::from(2);
+        }
+    };
+    let outcome = match options.action.as_str() {
+        "list" => match fleet::plugins::face::list(&home) {
+            Ok(listings) => {
+                if listings.is_empty() {
+                    println!("fleet plugins — none installed. A bundle is a directory with a manifest.json; `plugins install <path>` carries one in.");
+                    return ExitCode::SUCCESS;
+                }
+                for listing in listings {
+                    let state = if listing.enabled {
+                        "enabled"
+                    } else {
+                        "disabled"
+                    };
+                    println!(
+                        "{} · {} · {} · {} · {}",
+                        listing.name,
+                        match listing.tier {
+                            fleet::plugins::face::FaceTier::Privileged => "privileged",
+                            fleet::plugins::face::FaceTier::Untrusted => "untrusted",
+                        },
+                        state,
+                        if listing.group.is_empty() {
+                            "no manifest — the bundle is not readable".to_string()
+                        } else {
+                            format!("{} · {}", listing.group, listing.label)
+                        },
+                        listing.provenance,
+                    );
+                }
+                return ExitCode::SUCCESS;
+            }
+            Err(error) => error,
+        },
+        "install" => {
+            let path = options.target.clone().unwrap_or_default();
+            let tier = options
+                .privileged
+                .then_some(fleet::plugins::face::FaceTier::Privileged);
+            match fleet::plugins::face::install(&home, std::path::Path::new(&path), tier) {
+                Ok(name) => {
+                    if options.privileged {
+                        println!(
+                            "installed `{name}` — privileged: every route the face can, writes                              included. You are vouching for this bundle; the registry records the                              elevation."
+                        );
+                    } else {
+                        println!(
+                            "installed `{name}` — untrusted: sandboxed to its declared read-only                              queries, never self-elevating."
+                        );
+                    }
+                    return ExitCode::SUCCESS;
+                }
+                Err(error) => error,
+            }
+        }
+        "enable" | "disable" => {
+            let name = options.target.clone().unwrap_or_default();
+            let enabled = options.action == "enable";
+            match fleet::plugins::face::set_enabled(&home, &name, enabled) {
+                Ok(()) => {
+                    println!(
+                        "`{name}` is {}",
+                        if enabled { "enabled" } else { "disabled" }
+                    );
+                    return ExitCode::SUCCESS;
+                }
+                Err(error) => error,
+            }
+        }
+        "remove" => {
+            let name = options.target.clone().unwrap_or_default();
+            match fleet::plugins::face::remove(&home, &name) {
+                Ok(()) => {
+                    println!("`{name}` is removed — its registry entry and bundle are gone.");
+                    return ExitCode::SUCCESS;
+                }
+                Err(error) => error,
+            }
+        }
+        other => format!("`{other}` is not a plugins action"),
+    };
+    eprintln!("fleet: {outcome}");
+    ExitCode::from(2)
+}
+
 fn channels_command(options: &cli::ChannelsOptions) -> ExitCode {
     let home = match fleet_home() {
         Ok(home) => home,
