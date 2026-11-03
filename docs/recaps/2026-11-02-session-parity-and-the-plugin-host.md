@@ -2,15 +2,17 @@
 
 ## Summary
 
-Four plans were implemented whole and landed: the provider-session-headers
+Five plans were implemented whole and landed: the provider-session-headers
 and session-parity-remainders plans (Fleet's session-id machinery, from
 the opencode `MissingSessionID` check through the resume-stable opaque
 ids, the injection rules, the request-id capture, and the Responses
 adapter), the usage-in-calibration plan (the usage columns, the anomaly
-pass, the trajectory shape), and the face-plugin-host plan (the bundle
+pass, the trajectory shape), the face-plugin-host plan (the bundle
 format, the two trust tiers, the management surface, the evaluation
-suite, and the promotion ladder). The session closed with the Rust
-1.99.1 toolchain alignment verified green.
+suite, and the promotion ladder), and the plugins-ux rethink (the
+owner's "atrocious" verdict answered by three approved mockups
+translated 1:1). The session spanned the Rust 1.99.1 toolchain move,
+the Tauri app's first rebuild, and the repo going public.
 
 ## Plans worked on
 
@@ -31,6 +33,20 @@ rules at both gates, the request-id allowlist capture on refusals, the
 writer's static-value trap warning; then the Responses protocol adapter
 (dialect-only — `store: false`, no `previous_response_id`, the full
 history every turn, per hard rule 5), `{trace}`, and the W0 probe.
+
+### `docs/plans/2026-11-03-plugins-ux.md` — the plugins surface rethought
+
+Status after this session: **completed** (all seven criteria ticked).
+
+The owner's "atrocious" verdict answered by three approved mockups
+(`docs/plans/mockups/2026-11-03-plugins-ux/`) translated 1:1: the
+built-ins as three grouped status-first sections (the tool plugin, the
+lanes, the MCP servers — each row a status dot beside the name and the
+one-line human state, each press opening the thing it names), the
+install behind a door (the refusal beside the field, the elevation's
+grant inline before the press), how trust works as a disclosure (the
+two tier cards and the ladder), and the rail badge counting a waiting
+draft.
 
 ### `docs/plans/2026-11-02-usage-in-calibration-and-stream-anomalies.md` — usage, anomalies, shape
 
@@ -78,6 +94,10 @@ each elevation.
 | `eabe031` | Rust 1.99.1, and the plugin host's parked work |
 | `07bb991` | the drafts awaiting review ride the C5 pin |
 | `c8dde93` | the plugin host's ten criteria tick — completed |
+| `6aa368f` | the plugins surface lists the built-in plugins (the owner's finding) |
+| `2a8d0f6` | the state's plugin keys are flat, not nested (the live-face seam fix) |
+| `7813311` | the plugins surface rethought — the answer first (plugins-ux) |
+| `5f56b86` | the plugins-ux plan's seven criteria tick — completed |
 
 ## What was added
 
@@ -141,8 +161,9 @@ each elevation.
 
 **Docs:** `docs/features/routing.md`, `docs/features/calibration.md`,
 `docs/features/plugins.md`, `docs/features/gui.md`,
-`FUNCTIONAL-SPECIFICATIONS.md`, `TECHNICAL-DOCUMENTATION.md`, the four
-plan files, and this recap.
+`FUNCTIONAL-SPECIFICATIONS.md`, `TECHNICAL-DOCUMENTATION.md`, the five
+plan files, `docs/plans/mockups/2026-11-03-plugins-ux/` (three screens
++ the renders), and this recap.
 
 ## Doc updates applied
 
@@ -173,32 +194,63 @@ None this session.
 
 ## Open questions / next steps
 
-- **The live legs**: `scripts/responses-probe.sh` runs the moment a
-  `/responses` provider and key are at hand; the demo's scratch-home
-  creator run and the eval's rendered pass are the plugin host's.
+Things left for future sessions:
+
+- **The live legs**, each the named pending verification half of its
+  plan: `scripts/responses-probe.sh` runs the moment a `/responses`
+  provider and key are at hand; the plugin demo's scratch-home creator
+  run and the eval suite's rendered browser-lane pass are the plugin
+  host's; one real provider call reading the cache fields back is the
+  usage plan's.
 - **The beta shakeout** (`docs/plans/2026-10-30-beta-shakeout.md`) is
   the only active plan left; its B5 (pass three after the owner's own
   use) closes the beta gate.
+- **The plugins-ux plan's own out-of-scope carry**: the second-brain
+  panel, the lane cards, and the MCP servers card are the destinations
+  the rows open — their own shapes are theirs, unchanged.
 - **The stashes**: `stash@{0}`/`stash@{1}` hold the parallel session's
   in-flight churn from the investigation — their work, preserved.
-- The settings-ux plan is completed (a061ae8); its surfaces are live.
 
 ## The session's second half (2026-11-03)
 
-- **The plugins-ux plan** (`docs/plans/2026-11-03-plugins-ux.md`,
-  completed at `5f56b86`): the owner's "the plugin UI is atrocious"
-  verdict, three approved mockups
-  (`docs/plans/mockups/2026-11-03-plugins-ux/`), and the translation —
-  the built-ins as three grouped status-first sections, every row
-  carrying its press, the install behind a door, the trust disclosure,
-  the rail badge. The live face's `built_ins` read surfaced the
-  flat-shape seam fix (`2a8d0f6`) and the built-ins themselves
-  (`6aa368f`).
+- **The plugins-ux rethink** (`docs/plans/2026-11-03-plugins-ux.md`,
+  completed at `5f56b86`): the owner's "the plugin UI is atrocious,
+  we need to rethink this" verdict, answered the settings-verdict way —
+  the live capture grounded six gaps (the sixteen-row wall, the states
+  as prose paths, no action where the state is, the machinery leading,
+  the developer's install form, the tiers as prose), and the plan was
+  **mockups-first by the owner's ruling**: three screens in the face's
+  own idiom (`docs/plans/mockups/2026-11-03-plugins-ux/` — the grouped
+  surface, the install door, the trust disclosure) approved before a
+  line of implementation. The build translated the approved screens 1:1.
+- **Two live-face findings the harness could not see**:
+  - **The flat-shape seam** (`2a8d0f6`) — the bridge returned a nested
+    `{built_ins, plugins, proposals}` wrapper the face read as one
+    empty list; the harness's flat fixture matched the face, not the
+    bridge, so the case passed at 679/0 while the live face showed
+    nothing. The state document now carries the three keys flat.
+  - **The built-ins themselves** (`6aa368f`) — the surface showed only
+    installed bundles; the built-ins (the second-brain tool plugin, the
+    lanes, the MCP servers) never rode the read. They now compose from
+    the same documents the lane cards and the MCP card read.
 - **The face's binary path moved**: the LaunchAgent now runs
   `~/.fleet/bin/fleet` (the installed copy), not the worktree's — a
   worktree rebuild alone no longer reloads the face; the fresh binary
   copies to `~/.fleet/bin/fleet` first. The served `/app.js` is the
   verification.
+- **The Tauri app's first rebuild** (`cargo tauri build`, the owner's
+  own command): `fleet-desktop` verified carrying the new face (the
+  plugins surfaces embedded), the dmg at
+  `fleet/target/release/bundle/dmg/` (9.41 MiB). The shell is the thin
+  kind — its window navigates to the fleet binary's served face, so
+  asset changes flow through the binary, and the shell rebuild matters
+  for its own code.
+- **The repo went public** (the parallel session's `5d4ee6e`, merged):
+  the stale private claims and the version corrected.
+- **The verification numbers at the close**: the gate 2,012/0; the face
+  harness 703/0 across 67 cases (the plugins case rewritten to the new
+  DOM — the sections, the dots, the presses navigating, the door, the
+  disclosure, the badge).
 
 ## Notes
 
@@ -217,3 +269,18 @@ None this session.
   session's); the daily-maintenance LaunchAgent covers it.
 - **The memories**: the harness-paper comparison is saved; the
   offloop verdict predates this session in memory.
+- **The mockups-first workflow is a pattern worth keeping**: the owner
+  ruled "I want to see some mockups first" — three static HTML screens
+  in the face's own palette (no build step, Chrome renders them
+  directly) approved before the implementation. The build was a
+  translation of the approved screens, and the design ruling happened
+  where it is cheap.
+- **The capture trap, recorded**: Chrome's `--screenshot` fires at the
+  load event, before the state read's repaint — the pre-data paint
+  reads as a bare page and is NOT the surface. `--dump-dom` with a
+  timeout window quotes the loaded render; the harness's own VM case
+  pins the handlers.
+- **The El.find lesson, twice in one case**: the harness's `find`
+  returns the matches array — `[0]` reads the element. Two of the
+  plugins case's checks failed on the unindexed form before the third
+  was written correctly.
