@@ -245,7 +245,9 @@ store and its diff, and a command palette over every pane and panel
 | what the lanes are doing | `fleet lanes` |
 | the routing roster | `fleet providers` |
 | a designed page | the console's **design** (`#/design`) — or any run, through the `frame` tool |
-| the day's calibration stream | `fleet calib` (then `fleet judge`, `fleet delegate` for the grading beats) |
+| the day's calibration stream | `fleet calib` — the stream's cards with the usage columns and the spend card when rows carry them (then `fleet judge`, `fleet delegate` for the grading beats) |
+| the day's anomalies | `fleet calib --anomalies` — the six deterministic classes as cards, with the lane's severity and narration when a class fired (`--dry-run` rehearses with no lane ask) |
+| the day's trajectory shapes | `fleet calib --shape` — the runs' per-turn token curves and the closing rot question (median growth, doubled runs, folds, capped endings) |
 | why a verdict stood | `fleet explain` |
 | the harness's own performance | `fleet eval` (`--last` for the last run) |
 | the knobs | `fleet settings` (`set <key> <value>` writes one; `provider add`/`remove`, `workload set` edit the roster and the tiers) |

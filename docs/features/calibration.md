@@ -169,6 +169,38 @@ TUI's lane and provider surfaces already carry the live state a user
 watches, and a per-row stream view belongs with the dashboards that
 consume it, not with the agent's own pane.
 
+**The usage columns (2026-11-02).** The serving attempt's token
+accounting rides the route rows — the providers' own cache-read and
+cache-creation fields among them — and the stream surface names them
+when they are present: the route card's `tokens: N billed · M from
+cache` line, and the closing **spend** card's per-provider totals. A
+day of rows written before the fields renders exactly as before;
+`Usage::billed_tokens()` is the one place the reading of the cache
+fields is defined (a subset of prompt, never an addition).
+
+**The anomaly pass (2026-11-02).** `fleet calib --anomalies` reads the
+day's rows with six deterministic detectors, each threshold a named
+constant: `fallback-walk` (three consecutive walks ending the same
+fallback), `tool-failure-loop` (one tool screened three times with the
+same input), `lanes-down` (lane calls denied while the embed path
+degrades), `delegation-maxed` (two children eating their turn cap),
+`run-failure-cluster` (three failed turns inside fifteen minutes),
+and `cache-collapse` (a provider's cache-read share falling to zero
+across a day that had hits). Only when a class fired may the pass ask
+the lanes — one `triage` for the cluster's severity, one `explain` for
+the narration, at most two asks, and zero on `--dry-run`. Detection
+never blocks, delays, or fails a run; a quiet day prints its one line.
+
+**The trajectory shape (2026-11-02).** `fleet calib --shape` renders
+the day's runs as curve cards — the per-turn prompt sizes as a
+sequence, the folds and the ending named — and a closing card answering
+the context-rot question on this machine's own traffic: the median
+per-turn growth, the runs whose context doubled mid-run, the folds,
+the capped endings. One `shape` row per run rides the turn write; the
+curve's prompt is the reported count when the provider reports one and
+the estimate otherwise (the `maybe_compact` reading). No lane ask, no
+anomaly fired — numbers and names only.
+
 ## Reading it with devdec
 
 The rows are in devdec's file, in devdec's vocabulary, so the external CLI

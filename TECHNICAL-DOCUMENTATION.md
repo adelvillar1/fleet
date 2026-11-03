@@ -46,8 +46,10 @@ else is standard library. Five subsystems, each with a boundary:
   spawn_blocking off the async worker, and every write rides the module
   the CLI rides — the browser has no second truth.
 - **The evidence spine** (`calib.rs`, `eval.rs`, `judge.rs`,
-  `delegate.rs`, `explain.rs`) — recording, grading, and the gates that
-  decide whether evidence may change behavior.
+  `delegate.rs`, `explain.rs`, `anomalies.rs`) — recording, grading,
+  the stream's own anomaly pass (six deterministic classes, at most
+  two lane asks), and the gates that decide whether evidence may
+  change behavior.
 
 ## Interface contracts
 
