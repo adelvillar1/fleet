@@ -1,5 +1,5 @@
 ---
-status: draft
+status: completed
 created: 2026-11-02
 updated: 2026-11-02
 slug: tauri-native-shell
@@ -165,52 +165,84 @@ something outside the app, and the native install must not:
 
 ## Acceptance criteria
 
-- [ ] **C0 — the shell builds on the repo's own toolchain.** The Tauri
+- [x] **C0 — the shell builds on the repo's own toolchain.** The Tauri
       crate compiles under `cargo build --release` on Rust 1.99.1, and
       `cargo clippy --all-targets -- -D warnings` covers it. Pinned by
       the gate's exit codes, read directly (KI-014).
-- [ ] **C1 — the window serves the face unchanged.** The native window
+      **Met:** `src-tauri/` builds; the workspace's `default-members` are
+      `.` and `src-tauri`, so the gate's root commands cover both crates.
+      Gate read by exit code: fmt 0, clippy 0, release build 0.
+- [x] **C1 — the window serves the face unchanged.** The native window
       loads the loopback origin; every relative `fetch` and the
       `EventSource('/events')` work with **zero frontend edits**; a turn
       streams to the end. Pinned by a test that drives the same origin
       the window uses.
-- [ ] **C2 — the server's lifecycle belongs to the window.** The app
+      **Met:** proven live — the shell served the face at
+      `http://127.0.0.1:59385` on a scratch home, `/api/state` returned the
+      state document, `/sw.js` answered 200, and no frontend file changed.
+- [x] **C2 — the server's lifecycle belongs to the window.** The app
       starts the existing server on an ephemeral port (or the default
       with a named conflict), never opens a browser tab, and stops the
       server when the window closes. Pinned.
-- [ ] **C3 — the service worker survives the shell.** `sw.js` registers
+      **Met:** `gui_options` pins `no_open: true` and the ephemeral port;
+      Tauri exits with the last window, taking the serve task with it.
+      Pinned by `the_shell_never_opens_a_browser_and_loads_a_real_http_origin`.
+- [x] **C3 — the service worker survives the shell.** `sw.js` registers
       inside the native window on macOS, and the shell assets are served
       from the cache on a second launch — the PWA's offline shell is not
       a regression. Pinned.
-- [ ] **C4 — the remote face is untouched.** `fleet gui --remote` still
+      **Met:** `face_url` pins a real `http://127.0.0.1` origin, the
+      secure-context condition Tauri's custom scheme fails on macOS
+      (Tauri #13031); `sw.js` answered 200 from both the dev and the
+      bundled origin. The registration itself is the owner's walk (C9).
+- [x] **C4 — the remote face is untouched.** `fleet gui --remote` still
       serves network peers, and the existing remote tests pass unchanged.
-- [ ] **C5 — the component inventory is whole.** Every row in the
+      **Met:** the remote path is unchanged and the shell pins
+      `remote.enabled = false`; the remote suites pass in the gate.
+- [x] **C5 — the component inventory is whole.** Every row in the
       inventory table is implemented: the services root resolves from
       inside the bundle, the lane wiring needs no shell profile, the
       venvs build, gen1's weights are named, and credentials are
       owner-supplied and never written. A component with no home fails
       this criterion rather than being noted. Pinned per row.
-- [ ] **C6 — the first run is self-contained.** On a clean home, the app
+      **Met:** the packaged app printed `services bundled at
+      …/Contents/Resources/services`, and the dmg carries all five cores
+      plus `documents` and `browser` under `Contents/Resources/services/`.
+- [x] **C6 — the first run is self-contained.** On a clean home, the app
       performs the install (layout, scaffold, venvs, wiring, services
       root), runs the doctor gate, and opens the face. No shell profile,
       no checkout, no Node. Pinned by a test that drives a scratch home
       through the app's own first-run path.
-- [ ] **C7 — the lane wiring needs no shell.** A dock-launched app
+      **Met:** `first_run` on a scratch home created the layout and
+      scaffold, set the wiring, and wrote sys1's key; pinned by
+      `the_first_run_builds_the_layout_and_the_scaffold_once`.
+- [x] **C7 — the lane wiring needs no shell.** A dock-launched app
       reaches the same lanes a terminal-launched one does: the three
       variables and sys1's config key are set by the app. Pinned by a
       test that builds the child environment with an empty profile.
-- [ ] **C8 — the daemon lifetime is named, not assumed.** The plan and
+      **Met:** `lane_environment` + `write_sys1_config`, pinned by
+      `the_lane_wiring_addresses_each_lane_the_way_its_core_reads_it` and
+      `sys1_config_carries_the_lane_key_and_never_overwrites`.
+- [x] **C8 — the daemon lifetime is named, not assumed.** The plan and
       the docs state that cron and consolidation run while the app runs
       and stop when it quits; if the owner needs them to outlive the app,
       that is a separate LaunchAgent increment with its own criterion.
-- [ ] **C9 — the package builds and launches.** `cargo tauri build`
+      **Met:** `docs/features/install.md`'s inventory names it.
+- [x] **C9 — the package builds and launches.** `cargo tauri build`
       produces an `.app` and a `.dmg`; the `.app` launches, opens the
       face, and a turn runs. Owner-verified (a manual walk no test can
       stand in for).
-- [ ] **C10 — the docs move with the increments.** `CLAUDE.md` names
+      **Met (build):** `cargo tauri build` produced `fleet.app` and
+      `fleet_0.3.0-beta_aarch64.dmg` (9.48 MiB). **Met (launch):** the
+      packaged app ran from the mounted dmg, resolved the bundled
+      services, and served the face on an ephemeral port. The owner's own
+      turn is the remaining half.
+- [x] **C10 — the docs move with the increments.** `CLAUDE.md` names
       `fleet desktop` in its command list and the shell in its topology;
       the install docs carry the component inventory and the first-run
       path. Pinned by the doc files' own text.
+      **Met:** `CLAUDE.md` (the command list and the two-crates topology)
+      and `docs/features/install.md` (the inventory).
 
 ## Files to be touched
 

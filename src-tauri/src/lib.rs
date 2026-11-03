@@ -331,17 +331,34 @@ pub fn run() {
 /// port it was *asked* for, so an ephemeral port has to be chosen first.
 /// `gui::serve` resolves the home itself, exactly as it does for
 /// `fleet gui`.
-async fn start_face() -> Result<String, String> {
-    let host = fleet::gui::DEFAULT_HOST;
-    let port = ephemeral_port(host).await?;
-    let options = fleet::gui::GuiOptions {
-        host: host.to_string(),
+/// The server options the shell runs with.
+///
+/// `no_open` is the point: the shell's window is the client, and a
+/// browser tab opening beside it would be a second, unrelated surface.
+pub fn gui_options(port: u16) -> fleet::gui::GuiOptions {
+    fleet::gui::GuiOptions {
+        host: fleet::gui::DEFAULT_HOST.to_string(),
         port,
         no_open: true,
         remote: Default::default(),
         channels: false,
         relay: None,
-    };
+    }
+}
+
+/// The origin the window loads.
+///
+/// A real `http://127.0.0.1` origin is what makes the PWA's service
+/// worker register: Tauri's custom scheme is rejected by WebKit's
+/// service-worker container on macOS (Tauri #13031).
+pub fn face_url(port: u16) -> String {
+    format!("http://{}:{port}", fleet::gui::DEFAULT_HOST)
+}
+
+async fn start_face() -> Result<String, String> {
+    let host = fleet::gui::DEFAULT_HOST;
+    let port = ephemeral_port(host).await?;
+    let options = gui_options(port);
     // The face runs for the life of the process; the window closing ends
     // it (Tauri exits when the last window closes).
     tokio::spawn(async move {
@@ -349,7 +366,7 @@ async fn start_face() -> Result<String, String> {
             eprintln!("fleet desktop: the face stopped: {error}");
         }
     });
-    let url = format!("http://{host}:{port}");
+    let url = face_url(port);
     wait_for(host, port, FACE_TIMEOUT).await?;
     Ok(url)
 }
@@ -501,6 +518,25 @@ mod tests {
             std::fs::read_to_string(home.join(install::CONFIG_FILE)).unwrap(),
             "{\n  \"pin\": \"x\"\n}\n"
         );
+    }
+
+    #[test]
+    fn the_shell_never_opens_a_browser_and_loads_a_real_http_origin() {
+        // C2: the window is the only client. A browser tab opening
+        // beside it would be a second, unrelated surface.
+        let options = gui_options(59385);
+        assert!(options.no_open, "the shell must leave the browser alone");
+        assert_eq!(options.host, fleet::gui::DEFAULT_HOST);
+        assert!(
+            !options.remote.enabled,
+            "the shell is a local client; the remote face is a separate mode"
+        );
+
+        // C3: the service worker's condition is a real loopback HTTP
+        // origin. Tauri's custom scheme would be rejected on macOS.
+        let url = face_url(59385);
+        assert_eq!(url, "http://127.0.0.1:59385");
+        assert!(url.starts_with("http://127.0.0.1:"), "{url}");
     }
 
     #[test]
