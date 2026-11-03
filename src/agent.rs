@@ -810,6 +810,11 @@ pub struct RunReport {
     /// out, so a run's spend could not be decomposed into the turns and
     /// the folds. The count is the fold side of that decomposition.
     pub compactions: u64,
+    /// The run's per-turn token curve — one (prompt, completion) pair
+    /// per turn, the prompt the reported-or-estimated reading
+    /// `maybe_compact` uses. The trajectory-shape row rides this (the
+    /// usage-in-calibration plan's Increment C).
+    pub turn_curve: Vec<(u64, u64)>,
 }
 
 /// The loop's fatal failures. Tool failures are not fatal: they are recorded
@@ -1295,6 +1300,13 @@ pub struct Agent<'a> {
     /// when it reported none — in which case the window check falls back
     /// to the chars/4 estimate of the assembled messages.
     last_prompt_tokens: Option<u64>,
+    /// The run's per-turn curve (the usage-in-calibration plan's
+    /// Increment C): one (prompt, completion) snapshot per turn, the
+    /// prompt being the provider's own count when it reported one and
+    /// the estimate otherwise — the same reading `maybe_compact` uses,
+    /// not a second one. The curve is the trajectory-shape data the
+    /// `ShapeRow` rides; `RunReport` carries it out.
+    turn_curve: Vec<(u64, u64)>,
     /// The recall hits this run's assembly surfaced, held from assembly
     /// until the model's first answer lands. KI-068's fix: the bump and
     /// the `recall_hit` rows mean the model saw the fact, so they fire
@@ -1509,6 +1521,7 @@ impl<'a> Agent<'a> {
             lead_persona,
             plan_mode,
             last_prompt_tokens: None,
+            turn_curve: Vec::new(),
             pending_hits: None,
             curate_base: None,
             curate_text: None,
@@ -2375,6 +2388,21 @@ impl<'a> Agent<'a> {
             input_hash: crate::calib::hash16(task),
             reason,
         }));
+        // The run's trajectory shape rides the same write (the
+        // usage-in-calibration plan's Increment C): the per-turn curve
+        // and the fold count, one row per run.
+        let (curve, compactions) = match outcome {
+            Ok(report) => (report.turn_curve.clone(), report.compactions),
+            Err(_) => (self.turn_curve.clone(), self.compactions),
+        };
+        stream.record(crate::calib::Row::Shape(crate::calib::ShapeRow {
+            ts: crate::calib::stamp(),
+            turn_curve: curve,
+            compactions,
+            outcome: stop.outcome().to_string(),
+            stop_reason: stop.label().to_string(),
+            input_hash: crate::calib::hash16(task),
+        }));
     }
 
     /// Record the screening verdict for one tool call — after the
@@ -2648,12 +2676,15 @@ impl<'a> Agent<'a> {
             // `maybe_compact` checks one line of code later: the
             // reported prompt when there is one, the estimate when
             // there is not.
+            let curve_prompt = self
+                .last_prompt_tokens
+                .unwrap_or_else(|| compaction::estimate_tokens(&self.messages));
             self.emit(UiEvent::Usage {
-                prompt_tokens: self
-                    .last_prompt_tokens
-                    .unwrap_or_else(|| compaction::estimate_tokens(&self.messages)),
+                prompt_tokens: curve_prompt,
                 completion_tokens: response.usage.completion_tokens,
             });
+            self.turn_curve
+                .push((curve_prompt, response.usage.completion_tokens));
             let choice = match response.choices.into_iter().next() {
                 Some(choice) => choice,
                 None => {
@@ -2755,6 +2786,7 @@ impl<'a> Agent<'a> {
                     usage: self.usage.clone(),
                     final_message: Some(content),
                     compactions: self.compactions,
+                    turn_curve: self.turn_curve.clone(),
                 });
             }
 
@@ -2799,6 +2831,7 @@ impl<'a> Agent<'a> {
             usage: self.usage.clone(),
             final_message: None,
             compactions: self.compactions,
+            turn_curve: self.turn_curve.clone(),
         })
     }
 
@@ -8343,6 +8376,54 @@ mod tests {
             requests: scratch.join("requests.jsonl"),
             scratch,
         }
+    }
+
+    #[tokio::test]
+    async fn the_run_report_carries_the_per_turn_curve() {
+        // The usage-in-calibration plan's C7: one (prompt, completion)
+        // snapshot per turn, the prompt the reported-or-estimated
+        // reading `maybe_compact` uses — the mock reports no usage, so
+        // the estimate carries, and a one-turn run yields one entry.
+        let m = fold_mock("the run is complete");
+        let home = scratch("curve-report");
+        let mut session = crate::session::Session::create(&home, "m").unwrap();
+        let client = Client::new(format!("http://127.0.0.1:{}", m.port), "test-key");
+        let options = AgentOptions {
+            session_id: None,
+            goal: None,
+            model: "m".to_string(),
+            identity: None,
+            max_turns: 3,
+            ui_tx: None,
+            lane_specs: None,
+            calib: None,
+            skills: Vec::new(),
+            role_overlay: None,
+            memory: None,
+            scope: None,
+            improve_home: None,
+            route_home: None,
+            gui_prompt: None,
+            compact_now: false,
+            checkpoints: None,
+            file_access: FileAccess::Unrestricted,
+            plan_mode: false,
+        };
+        let progress: &'static mut Vec<u8> = Box::leak(Box::new(Vec::new()));
+        let mut agent = Agent::new(
+            &client,
+            options,
+            &mut session,
+            Box::new(ApproveAll),
+            &mut *progress,
+        )
+        .unwrap();
+        let report = agent.run("finish the task").await.expect("the run completes");
+        assert_eq!(report.turn_curve.len(), 1, "{:?}", report.turn_curve);
+        let (prompt, _completion) = report.turn_curve[0];
+        assert!(prompt > 0, "the estimate carries when the provider reports nothing");
+        drop(agent);
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     #[tokio::test]

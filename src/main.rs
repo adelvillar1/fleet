@@ -2194,6 +2194,12 @@ fn calib_command(options: &cli::CalibOptions) -> ExitCode {
         print!("{}", fleet::delegate::render_calibration(&root, &day, gate));
         return ExitCode::SUCCESS;
     }
+    if options.shape {
+        // The trajectory-shape surface: numbers and names only, no
+        // lane ask (the usage-in-calibration plan's Increment C).
+        print!("{}", fleet::calib::render_shape(&root, &day));
+        return ExitCode::SUCCESS;
+    }
     if options.anomalies {
         // The anomaly pass: the deterministic detection, then at most
         // two lane asks when a class fired (zero on a dry run). The

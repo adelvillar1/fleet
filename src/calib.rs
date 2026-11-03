@@ -145,6 +145,30 @@ pub struct TurnRow {
     pub reason: Option<String>,
 }
 
+/// One run's trajectory shape (the usage-in-calibration plan's
+/// Increment C): the per-turn token curve and the run's folds — the
+/// paper's Figure-8 data, on Fleet's own traffic. Written once per
+/// run beside the turn row; a stream without it reads as absent.
+#[derive(Debug, Clone, Serialize)]
+pub struct ShapeRow {
+    pub ts: String,
+    /// One (prompt, completion) pair per turn — the reported prompt
+    /// when the provider reported one, the estimate otherwise (the
+    /// `maybe_compact` rule).
+    pub turn_curve: Vec<(u64, u64)>,
+    /// The run's compaction count, the fold side of the decomposition.
+    pub compactions: u64,
+    /// The run's outcome, in the turn vocabulary (`ok`/`failed`).
+    pub outcome: String,
+    /// The run's ending in the session log's own vocabulary
+    /// (`completed`, `max-turns`, …) — the shape surface's closing
+    /// card counts the capped endings.
+    pub stop_reason: String,
+    /// A hash of the task, for joining to the route and turn rows —
+    /// never the text.
+    pub input_hash: String,
+}
+
 /// One recall hit: a fact the retrieval surfaced, the shape the
 /// instruction routed under, and the score it ranked at. The feedback
 /// rung's audit row — recall's effect is measurable in the stream
@@ -625,6 +649,7 @@ pub enum Row {
     Delegation(DelegatedRunRow),
     EmbedTiming(EmbedTimingRow),
     Curate(CurateRow),
+    Shape(ShapeRow),
 }
 
 impl Row {
@@ -635,6 +660,7 @@ impl Row {
             Row::Lifecycle(_) => OP_LIFECYCLE,
             Row::ToolScreen(_) => OP_TOOL_SCREEN,
             Row::Turn(_) => OP_TURN,
+            Row::Shape(_) => OP_SHAPE,
             Row::RecallHit(_) => OP_RECALL_HIT,
             Row::Verify(_) => OP_VERIFY,
             Row::Consolidate(_) => OP_CONSOLIDATE,
@@ -643,6 +669,7 @@ impl Row {
             Row::Explain(_) => OP_EXPLAIN,
             Row::RouteJudged(_) => OP_ROUTE_JUDGED,
             Row::Curate(_) => OP_CURATE,
+            Row::Shape(_) => OP_SHAPE,
             Row::Delegation(_) => OP_DELEGATION,
             Row::EmbedTiming(_) => OP_EMBED_TIMING,
         }
@@ -665,6 +692,7 @@ impl Row {
             Row::Curate(row) => &row.ts,
             Row::Delegation(row) => &row.ts,
             Row::EmbedTiming(row) => &row.ts,
+            Row::Shape(row) => &row.ts,
         }
     }
 }
@@ -913,6 +941,9 @@ pub const OP_ROUTE: &str = "route";
 pub const OP_TOOL_SCREEN: &str = "tool_screen";
 /// The run-ending op.
 pub const OP_TURN: &str = "turn";
+/// The trajectory-shape row (the usage-in-calibration plan's
+/// Increment C): one run's per-turn token curve.
+pub const OP_SHAPE: &str = "shape";
 /// The memory-recall op: one hit per fact a recall surfaced.
 pub const OP_RECALL_HIT: &str = "recall_hit";
 
@@ -958,7 +989,7 @@ pub const OP_DELEGATION: &str = "delegation";
 /// calib` groups them. The three the reads used to drop — `verify`,
 /// `embed_timing`, `lifecycle` — ride their own row shapes; the face's
 /// rail carries them beside the rest (the calibration revamp, 2026-10-30).
-pub const OPS: [&str; 13] = [
+pub const OPS: [&str; 14] = [
     OP_ROUTE,
     OP_TOOL_SCREEN,
     OP_TURN,
@@ -972,6 +1003,7 @@ pub const OPS: [&str; 13] = [
     OP_VERIFY,
     OP_EMBED_TIMING,
     OP_LIFECYCLE,
+    OP_SHAPE,
 ];
 
 /// The verdict a `propose` row carries when the change landed: the gate
@@ -1783,6 +1815,12 @@ pub struct ReadRow {
     /// when this is present (the usage-in-calibration plan's C2).
     #[serde(default)]
     pub usage: Option<crate::api::Usage>,
+    /// The shape row's per-turn curve, and its fold count. Empty on
+    /// every other op (the usage-in-calibration plan's Increment C).
+    #[serde(default)]
+    pub turn_curve: Vec<(u64, u64)>,
+    #[serde(default)]
+    pub compactions: u64,
     /// The route row's model, the served candidate's own. Empty for every
     /// other op.
     #[serde(default)]
@@ -2844,6 +2882,78 @@ pub fn render_anomalies(day: &str, report: &crate::anomalies::AnomalyReport) -> 
             )
         }
     ));
+    out
+}
+
+/// The trajectory-shape surface (the usage-in-calibration plan's
+/// Increment C): the day's runs as curve cards — the per-turn prompt
+/// sizes as a sequence, the folds and the ending named — and a
+/// closing card answering the paper's rot question on Fleet's own
+/// traffic: the median per-turn growth, the runs whose context
+/// doubled, the folds, the capped endings. A day with no shape rows
+/// prints its one line; no lane ask, no anomaly fired.
+pub fn render_shape(root: &Path, day: &str) -> String {
+    let rows = read_day(root, day, READ_CAP);
+    let shapes: Vec<&ReadRow> = rows.iter().filter(|row| row.op == OP_SHAPE).collect();
+    if shapes.is_empty() {
+        return format!(
+            "{BOLD}fleet calib \u{2014} shape, {day} (UTC){RESET}\n\n{DIM}no shape rows for {day} yet \u{b7} a run appends one per session{RESET}\n"
+        );
+    }
+    let mut out = format!(
+        "{BOLD}fleet calib \u{2014} shape, {day} (UTC){RESET}\n\n"
+    );
+    let mut growths: Vec<f64> = Vec::new();
+    let mut doubled = 0usize;
+    let mut folds = 0u64;
+    let mut capped = 0usize;
+    for shape in &shapes {
+        let curve: Vec<String> = shape
+            .turn_curve
+            .iter()
+            .map(|(prompt, _)| format!("{}k", prompt / 1000))
+            .collect();
+        let turns = shape.turn_curve.len();
+        out.push_str(&format!(
+            "{DIM}\u{250c}\u{2500}{RESET} {BOLD}{ACCENT}{} \u{b7} {} turns \u{b7} {} folds \u{b7} ended {}{RESET} {DIM}\u{2510}{RESET}\n",
+            shape.ts,
+            turns,
+            shape.compactions,
+            shape.stop_reason
+        ));
+        out.push_str(&format!(
+            "{DIM}\u{2502}{RESET} {TEXT}{}{RESET}\n",
+            curve.join(" \u{2192} ")
+        ));
+        out.push_str(&format!("{DIM}\u{2514}\u{2500}\u{2518}{RESET}\n"));
+        if let (Some(first), Some(last)) = (shape.turn_curve.first(), shape.turn_curve.last()) {
+            if first.0 > 0 {
+                let growth = last.0 as f64 / first.0 as f64;
+                growths.push(growth);
+                if growth >= 2.0 {
+                    doubled += 1;
+                }
+            }
+        }
+        folds += shape.compactions;
+        if shape.stop_reason == "max-turns" {
+            capped += 1;
+        }
+    }
+    growths.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let median = growths
+        .get(growths.len() / 2)
+        .map(|value| format!("{value:.1}\u{d7}"))
+        .unwrap_or_else(|| "no curve".to_string());
+    out.push_str(&format!(
+        "{DIM}\u{250c}\u{2500}{RESET} {BOLD}{ACCENT}the day{RESET} {DIM}\u{2510}{RESET}\n"
+    ));
+    out.push_str(&format!(
+        "{DIM}\u{2502}{RESET} {TEXT}{} runs \u{b7} median per-turn growth {} \u{b7} {doubled} runs doubled mid-run \u{b7} {folds} folds \u{b7} {capped} runs ended max-turns{RESET}\n",
+        shapes.len(),
+        median
+    ));
+    out.push_str(&format!("{DIM}\u{2514}\u{2500}\u{2518}{RESET}\n"));
     out
 }
 
@@ -4493,7 +4603,8 @@ mod tests {
                 "delegation",
                 "verify",
                 "embed_timing",
-                "lifecycle"
+                "lifecycle",
+                "shape"
             ]
         );
     }
@@ -4688,6 +4799,67 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    #[test]
+    fn the_shape_row_round_trips_and_old_rows_read_as_absent() {
+        // The usage-in-calibration plan's C8: the shape row's own round
+        // trip, and a row written before the kind reads its fields as
+        // absent — the reader's defaults, not a second schema.
+        let row = Row::Shape(ShapeRow {
+            ts: "2026-11-02T12:00:00Z".to_string(),
+            turn_curve: vec![(4100, 120), (7800, 300)],
+            compactions: 1,
+            outcome: "ok".to_string(),
+            stop_reason: "completed".to_string(),
+            input_hash: "abc".to_string(),
+        });
+        let line = serde_json::to_string(&row).expect("serializes");
+        let back: ReadRow = serde_json::from_str(&line).expect("the reader parses it");
+        assert_eq!(back.op, "shape");
+        assert_eq!(back.turn_curve, vec![(4100, 120), (7800, 300)]);
+        assert_eq!(back.compactions, 1);
+        // An old route row: the shape fields default to empty.
+        let old: ReadRow = serde_json::from_str(
+            r#"{"ts":"2026-11-02T12:00:00Z","op":"route","provider":"p","reason":"t"}"#,
+        )
+        .expect("parses");
+        assert!(old.turn_curve.is_empty());
+        assert_eq!(old.compactions, 0);
+    }
+
+    #[test]
+    fn the_shape_surface_answers_the_rot_question() {
+        // The usage-in-calibration plan's C9: the day's curve cards and
+        // the closing aggregate; an empty day prints its one line.
+        let root = scratch("shape");
+        let day = "2026-11-02";
+        let path = day_path(&root, day);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            concat!(
+                r#"{"ts":"2026-11-02T12:00:00Z","op":"shape","turn_curve":[[4100,120],[7800,300],[12400,200]],"#,
+                r#""compactions":1,"outcome":"ok","stop_reason":"completed","input_hash":"a"}"#,
+                "\n",
+                r#"{"ts":"2026-11-02T13:00:00Z","op":"shape","turn_curve":[[9000,100],[18000,200]],"#,
+                r#""compactions":0,"outcome":"failed","stop_reason":"max-turns","input_hash":"b"}"#,
+                "\n",
+            ),
+        )
+        .unwrap();
+        let rendered = render_shape(&root, day);
+        assert!(rendered.contains("4k \u{2192} 7k \u{2192} 12k"), "{rendered}");
+        assert!(rendered.contains("ended completed"), "{rendered}");
+        assert!(rendered.contains("2 runs"), "{rendered}");
+        assert!(rendered.contains("2 runs doubled mid-run"), "{rendered}");
+        assert!(rendered.contains("1 folds"), "{rendered}");
+        assert!(rendered.contains("1 runs ended max-turns"), "{rendered}");
+        // An empty day: the one line.
+        let empty = render_shape(&root, "2026-11-01");
+        assert!(empty.contains("no shape rows"), "{empty}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn the_state_temp_name_is_unique_per_write_and_the_final_name_is_stable() {
         let root = scratch("state-temp");
         // Two writes to one root: each takes a distinct temp name and

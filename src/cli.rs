@@ -230,6 +230,10 @@ pub struct CalibOptions {
     /// Rehearse the anomaly pass: the findings render, the lane asks do
     /// not happen (the judge's dry-run shape).
     pub dry_run: bool,
+    /// The trajectory-shape surface: the day's per-run token curves
+    /// and the closing rot question (the usage-in-calibration plan's
+    /// Increment C).
+    pub shape: bool,
 }
 
 /// Options for `fleet judge`. The bare command judges a day's route rows;
@@ -1216,6 +1220,7 @@ fn parse_calib(args: &[String]) -> Result<Command, String> {
     let mut delegation = false;
     let mut anomalies = false;
     let mut dry_run = false;
+    let mut shape = false;
     let mut index = 0;
     while index < args.len() {
         let arg = args[index].as_str();
@@ -1226,6 +1231,7 @@ fn parse_calib(args: &[String]) -> Result<Command, String> {
             "--delegation" => delegation = true,
             "--anomalies" => anomalies = true,
             "--dry-run" => dry_run = true,
+            "--shape" => shape = true,
             _ if arg.starts_with('-') && arg != "-" => {
                 return Err(format!("unknown calib option `{arg}`"));
             }
@@ -1269,6 +1275,7 @@ fn parse_calib(args: &[String]) -> Result<Command, String> {
         delegation,
         anomalies,
         dry_run,
+        shape,
     }))
 }
 
@@ -3510,7 +3517,8 @@ mod tests {
                 delegation: false,
                 anomalies: false,
                 dry_run: false
-            })
+            ,
+                shape: false})
         );
         assert_eq!(
             parse(&args(&["calib", "--day", "2026-10-01"])).unwrap(),
@@ -3520,7 +3528,8 @@ mod tests {
                 delegation: false,
                 anomalies: false,
                 dry_run: false
-            })
+            ,
+                shape: false})
         );
         // The calibration surface is `calib --calibration`, with or
         // without a day.
@@ -3532,7 +3541,8 @@ mod tests {
                 delegation: false,
                 anomalies: false,
                 dry_run: false
-            })
+            ,
+                shape: false})
         );
         assert_eq!(
             parse(&args(&["calib", "--calibration", "--day", "2026-10-01"])).unwrap(),
@@ -3542,7 +3552,8 @@ mod tests {
                 delegation: false,
                 anomalies: false,
                 dry_run: false
-            })
+            ,
+                shape: false})
         );
         assert!(parse(&args(&["calib", "--day", "yesterday"])).is_err());
         assert!(parse(&args(&["calib", "--day", "2026-1-1"])).is_err());
@@ -3560,7 +3571,8 @@ mod tests {
                 delegation: false,
                 anomalies: false,
                 dry_run: false
-            })
+            ,
+                shape: false})
         ); // 2024 is a leap year
         assert_eq!(
             parse(&args(&["calib", "--day", "2026-12-31"])).unwrap(),
@@ -3570,7 +3582,8 @@ mod tests {
                 delegation: false,
                 anomalies: false,
                 dry_run: false
-            })
+            ,
+                shape: false})
         );
         assert!(parse(&args(&["calib", "--day"])).is_err());
         assert!(parse(&args(&["calib", "--json"])).is_err());
@@ -3586,7 +3599,8 @@ mod tests {
                 delegation: true,
                 anomalies: false,
                 dry_run: false
-            })
+            ,
+                shape: false})
         );
         assert_eq!(
             parse(&args(&["calib", "--delegation", "--day", "2026-10-01"])).unwrap(),
@@ -3596,7 +3610,8 @@ mod tests {
                 delegation: true,
                 anomalies: false,
                 dry_run: false
-            })
+            ,
+                shape: false})
         );
         assert!(parse(&args(&["calib", "--calibration", "--delegation"])).is_err());
     }
