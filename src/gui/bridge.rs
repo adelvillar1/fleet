@@ -5841,6 +5841,23 @@ fn cards_from_records(records: &[session::Record]) -> (Vec<Value>, usize) {
             // A persona joining the conversation is a row the owner
             // reads — the 2026-10-28 ruling's own words — so the
             // replay surfaces it the way it surfaces a channel.
+            // A recommendation is the one staffing fact the transcript
+            // does grow a row for: the proposal names a role the room
+            // lacks, and the surface's card carries the single convene
+            // press (the huddles plan's C5).
+            session::Record::Recommend {
+                role, reason, from, ..
+            } => {
+                cards.push(json!({
+                    "type": "recommend",
+                    "role": role,
+                    "reason": reason,
+                    "from": from,
+                }));
+            }
+            // A persona joining the conversation is a row the owner
+            // reads — the 2026-10-28 ruling's own words — so the
+            // replay surfaces it the way it surfaces a channel.
             session::Record::Join { persona, role, .. } => {
                 cards.push(json!({
                     "type": "join",
@@ -9854,6 +9871,14 @@ pub(crate) fn describe(event: &UiEvent) -> Value {
             "path": path,
             "size": size,
             "note": note,
+        }),
+        // A member proposed convening a role the room lacks: one
+        // suggestion card with the reason and a single convene press
+        // (the huddles plan's C5).
+        UiEvent::Recommended { role, reason } => json!({
+            "type": "recommended",
+            "role": role,
+            "reason": reason,
         }),
         UiEvent::Routed {
             provider,

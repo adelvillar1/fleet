@@ -1445,6 +1445,15 @@ impl App {
                 self.entries
                     .push(Entry::Artifact(ArtifactCard { path, size, note }));
             }
+            UiEvent::Recommended { role, reason } => {
+                // A terminal has no convene press, so the proposal names
+                // itself on the status line rather than growing a card the
+                // owner cannot act on. The browser face is the huddle's
+                // surface; this keeps the fact from passing silently.
+                self.flush_streaming();
+                self.run.stage = Stage::Act;
+                self.run.last = format!("recommend {role} \u{b7} {reason}");
+            }
             UiEvent::LaneJoined { lane, tool_count } => {
                 // A lane joining the run is a fact about the run, not
                 // something the model said: it flushes the streaming tail
@@ -3086,7 +3095,8 @@ fn entry_of(record: &Record) -> Option<Entry> {
         Record::Channel { .. }
         | Record::Join { .. }
         | Record::Leave { .. }
-        | Record::Mention { .. } => None,
+        | Record::Mention { .. }
+        | Record::Recommend { .. } => None,
         // The mid-run curation is the memory block's own bookkeeping,
         // one seam later: the note rode one request's tail, and the
         // run's memory line already told the owner. Not a conversation

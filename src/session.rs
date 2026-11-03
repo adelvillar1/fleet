@@ -356,6 +356,21 @@ pub enum Record {
         from: Option<String>,
         at: String,
     },
+    /// A member proposed convening another — the huddle's capability-gap
+    /// recommendation (the huddles plan's C5). `@role` where the role is
+    /// not in the room: the address proposes rather than routes, and the
+    /// words beside it are the reason. Bookkeeping, like a mention: it
+    /// replays to no message, and the surface draws the suggestion card.
+    Recommend {
+        /// The role proposed, which resolved on this home.
+        role: String,
+        /// Why the room needs it — the words beside the address.
+        reason: String,
+        /// Who proposed it: a persona, or absent when the owner did.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        from: Option<String>,
+        at: String,
+    },
     /// The memory one run's turn context carried, recorded once at run
     /// start. The assembled block is dynamic two ways over — the
     /// corpus's files change between runs and the block depends on the
@@ -1230,11 +1245,13 @@ pub fn conversation(records: &[Record]) -> Conversation {
             // no message. A persona's join and leave are the same kind
             // of fact about the conversation's staffing, not its content,
             // and a mention is the routing fact behind an address the
-            // message itself already carries.
+            // message itself already carries. A recommendation is the same
+            // kind of fact: the proposal rides its own surface card.
             Record::Channel { .. }
             | Record::Join { .. }
             | Record::Leave { .. }
-            | Record::Mention { .. } => {}
+            | Record::Mention { .. }
+            | Record::Recommend { .. } => {}
             Record::User { content } => {
                 messages.push(Message::text(Role::User, content.clone()));
                 turns.push(next_turn);
@@ -1547,6 +1564,56 @@ mod tests {
         assert!(!records
             .iter()
             .any(|record| matches!(record, Record::Mention { .. })));
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    /// C5: a recommendation is bookkeeping exactly like a mention — it adds
+    /// no message and does not move the membership — and its role and
+    /// reason survive a replay, since the surface's card reads them.
+    #[test]
+    fn a_recommendation_is_bookkeeping_and_keeps_its_role() {
+        let home = temp_home("recommend");
+        let mut session =
+            Session::create_with_persona(&home, "m", Some(vec!["designer".to_string()])).unwrap();
+        let path = session.path().to_path_buf();
+        session
+            .record(&Record::Assistant {
+                content: Some("@auditor the contrast pairs fail AA".to_string()),
+                tool_calls: Vec::new(),
+                persona: Some("designer".to_string()),
+            })
+            .unwrap();
+        session
+            .record(&Record::Recommend {
+                role: "auditor".to_string(),
+                reason: "the contrast pairs fail AA".to_string(),
+                from: Some("designer".to_string()),
+                at: "2026-11-03T14:05:00Z".to_string(),
+            })
+            .unwrap();
+        let records = crate::session::replay(&path).expect("the log replays");
+        let conversation = conversation(&records);
+        assert_eq!(
+            conversation.messages.len(),
+            1,
+            "a proposal adds no message of its own"
+        );
+        let summary = summarize(&path).expect("the log summarizes");
+        assert_eq!(summary.personas, vec!["designer".to_string()]);
+        let recommendations: Vec<(String, String)> = records
+            .iter()
+            .filter_map(|record| match record {
+                Record::Recommend { role, reason, .. } => Some((role.clone(), reason.clone())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            recommendations,
+            vec![(
+                "auditor".to_string(),
+                "the contrast pairs fail AA".to_string()
+            )]
+        );
         let _ = fs::remove_dir_all(&home);
     }
 

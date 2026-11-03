@@ -610,6 +610,11 @@ pub enum UiEvent {
         size: u64,
         note: Option<String>,
     },
+    /// A member proposed convening a role the room does not hold. The face
+    /// draws one suggestion card with the role and the reason, and a single
+    /// convene press; nothing joins on the model's say-so (the huddles
+    /// plan's C5). Beside the `recommend` record in the log.
+    Recommended { role: String, reason: String },
     /// The route this run takes, in full: the active provider and how it
     /// was chosen (`judged`/`fallback`/`pinned`), the model it will
     /// actually call, sys1's workload and verdict when there was a
@@ -1216,6 +1221,8 @@ fn vision_roster(client: &crate::api::Client) -> Vec<crate::route::Resolved> {
 /// no skills adds nothing to the room's library.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct PersonaBrief {
+    /// The role's own one-line contract, for the prompt's room line.
+    pub description: String,
     pub tools: Vec<String>,
     pub skills: Vec<String>,
 }
@@ -1340,6 +1347,10 @@ pub struct Agent<'a> {
     /// The skill names every member's role assigned, in join order (C4).
     /// They lead the run's declaration so the prompt cap keeps them in.
     priority_skills: Vec<String>,
+    /// The roles this home keeps that the room does not hold, as
+    /// `(name, description)` (C5). The prompt names them, and a bot's
+    /// address to one proposes convening it.
+    available_roles: Vec<(String, String)>,
     /// The names the last `Declarations` record wrote. A speaker switch
     /// re-declares only when the admitted set actually moved, so the log's
     /// snapshot stays the prompt's truth rather than accumulating noise.
@@ -1530,6 +1541,7 @@ impl<'a> Agent<'a> {
                     persona_briefs.insert(
                         name.clone(),
                         PersonaBrief {
+                            description: role.description.clone(),
                             tools: role.tools.clone(),
                             skills: role.skills.clone(),
                         },
@@ -1537,6 +1549,17 @@ impl<'a> Agent<'a> {
                 }
             }
         }
+        // The roles the home keeps that the room does not hold: the names
+        // a capability-gap recommendation can propose (C5). Empty on an
+        // ordinary conversation, where there is no room to grow.
+        let available_roles: Vec<(String, String)> = match options.improve_home.as_ref() {
+            Some(home) => crate::roles::load_all(home)
+                .into_iter()
+                .filter(|role| !personas.contains(&role.name))
+                .map(|role| (role.name, role.description))
+                .collect(),
+            None => Vec::new(),
+        };
         // The room's assigned skills (C4): each member's role names the
         // skills its turns can reach, and together they lead the run's
         // declaration, so the prompt's cap never pushes a member's own
@@ -1637,6 +1660,7 @@ impl<'a> Agent<'a> {
             await_owner: false,
             persona_briefs,
             priority_skills,
+            available_roles,
             declared_names: Vec::new(),
             plan_mode,
             last_prompt_tokens: None,
@@ -1754,12 +1778,67 @@ impl<'a> Agent<'a> {
             &refs,
             memory_block,
             role_overlay,
-            self.options.gui_prompt.as_deref(),
+            self.surface_line().as_deref(),
             self.options.goal.as_deref(),
             &self.options.file_access,
             execution.as_ref(),
             self.options.plan_mode,
         )
+    }
+
+    /// The surface line a huddle's prompt carries: the face's own line,
+    /// then the room's — who is here, how an address routes, and which
+    /// roles the home keeps beside the room. An ordinary conversation has
+    /// no room and gets the face's line exactly as before.
+    fn surface_line(&self) -> Option<String> {
+        let room = self.room_line();
+        match (self.options.gui_prompt.as_deref(), room) {
+            (Some(line), Some(room)) => Some(format!("{line}\n\n{room}")),
+            (Some(line), None) => Some(line.to_string()),
+            (None, Some(room)) => Some(room),
+            (None, None) => None,
+        }
+    }
+
+    /// The huddle's own prompt section (C3/C5). It is written for the
+    /// model rather than the owner: it names the members by their roles,
+    /// states what an address does, and lists the roles a recommendation
+    /// may propose — without that, a bot cannot know the convention or
+    /// the roster.
+    fn room_line(&self) -> Option<String> {
+        if self.personas.is_empty() {
+            return None;
+        }
+        let members: Vec<String> = self
+            .personas
+            .iter()
+            .map(|name| match self.persona_briefs.get(name) {
+                Some(brief) if !brief.description.is_empty() => {
+                    format!("`{name}` ({})", brief.description)
+                }
+                _ => format!("`{name}`"),
+            })
+            .collect();
+        let mut line = format!(
+            "## The room\n\nYou share this huddle with {}. Address another member with `@name` \
+             and the next turn belongs to them; address `you` with `@you` and the owner is \
+             asked, never run.",
+            members.join(", ")
+        );
+        if !self.available_roles.is_empty() {
+            let others: Vec<String> = self
+                .available_roles
+                .iter()
+                .map(|(name, _)| format!("`{name}`"))
+                .collect();
+            line.push_str(&format!(
+                " When the work needs a capability the room does not hold, address one of the \
+                 roles this home keeps — `@role <why>` — and the owner is asked to convene it; \
+                 the address does not bring them in itself. Kept beside the room: {}.",
+                others.join(", ")
+            ));
+        }
+        Some(line)
     }
 
     /// The one compiled-in line an execution verdict adds to the prompt
@@ -5130,9 +5209,9 @@ impl<'a> Agent<'a> {
         self.record(&record)?;
         // The owner's own address routes the turn exactly as a bot's does
         // (C3): the mention lands beside the message it came in, typed,
-        // and the next turn belongs to that member. A name the room does
-        // not hold is the surface's refusal before the run; `@you` from a
-        // person is not a routing.
+        // and the next turn belongs to that member. A role the room lacks
+        // proposes convening instead (C5), and a name that resolves nowhere
+        // is left to the surface's refusal.
         if role == Role::User {
             if let Some(content) = message.content.as_deref() {
                 if let Some((member, following)) = crate::session::last_mention(content) {
@@ -5145,6 +5224,8 @@ impl<'a> Agent<'a> {
                             at: crate::boards::now_stamp(),
                         })?;
                         self.apply_speaker(member)?;
+                    } else if member != crate::session::MENTION_OWNER {
+                        self.recommend(member, following)?;
                     }
                 }
             }
@@ -5177,8 +5258,12 @@ impl<'a> Agent<'a> {
             return Ok(());
         };
         let mentions_owner = member == crate::session::MENTION_OWNER;
-        if !mentions_owner && !self.personas.iter().any(|name| name == member) {
-            return Ok(());
+        let in_room = self.personas.iter().any(|name| name == member);
+        if !mentions_owner && !in_room {
+            // A role the home keeps but the room does not hold: the address
+            // proposes convening it rather than routing (C5). A name that
+            // resolves nowhere is left to the surface's refusal.
+            return self.recommend(member, following);
         }
         let kind = crate::session::classify_mention(member, following);
         self.record(&Record::Mention {
@@ -5192,6 +5277,36 @@ impl<'a> Agent<'a> {
         } else {
             self.apply_speaker(member)?;
         }
+        Ok(())
+    }
+
+    /// Propose convening a role the room lacks (C5): the reason is the
+    /// words beside the address, and the proposal lands as one suggestion
+    /// card the owner may press. The role must resolve on this home — a
+    /// name that names nothing is not a recommendation anyone can act on.
+    fn recommend(&mut self, role: &str, reason: &str) -> Result<(), AgentError> {
+        let reason = reason.trim();
+        if reason.is_empty() {
+            return Ok(());
+        }
+        let resolves = self
+            .improve_home
+            .as_ref()
+            .map(|home| crate::roles::load(home, role).is_ok())
+            .unwrap_or(false);
+        if !resolves {
+            return Ok(());
+        }
+        self.record(&Record::Recommend {
+            role: role.to_string(),
+            reason: reason.to_string(),
+            from: self.active_speaker.clone(),
+            at: crate::boards::now_stamp(),
+        })?;
+        self.emit(UiEvent::Recommended {
+            role: role.to_string(),
+            reason: reason.to_string(),
+        });
         Ok(())
     }
 
@@ -9390,6 +9505,108 @@ mod tests {
         // Without a room the newest leads, exactly as it always has.
         let plain = declared_skills_priority(&skills, &[]);
         assert_eq!(plain[0].name, "skill-69");
+    }
+
+    #[tokio::test]
+    async fn a_room_role_address_proposes_convening() {
+        // C5: a bot that addresses a role the home keeps but the room does
+        // not hold posts one recommendation naming the role and the reason,
+        // and the speaker does not move — the owner presses convene.
+        let m = fold_mock("done");
+        let home = scratch("recommend");
+        std::fs::create_dir_all(home.join("roles")).unwrap();
+        std::fs::write(
+            home.join("roles/designer.md"),
+            "---\nname: designer\ndescription: makes pages\n---\nThe designer's voice.\n",
+        )
+        .unwrap();
+        std::fs::write(
+            home.join("roles/auditor.md"),
+            "---\nname: auditor\ndescription: checks what changed\n---\nThe auditor's voice.\n",
+        )
+        .unwrap();
+        let mut session = crate::session::Session::create_with_persona(
+            &home,
+            "m",
+            Some(vec!["designer".to_string()]),
+        )
+        .unwrap();
+        let path = session.path().to_path_buf();
+        let client = Client::new(format!("http://127.0.0.1:{}", m.port), "test-key");
+        let mut options = routing_options("m");
+        options.improve_home = Some(home.clone());
+        let progress: &'static mut Vec<u8> = Box::leak(Box::new(Vec::new()));
+        let mut agent = Agent::new(
+            &client,
+            options,
+            &mut session,
+            Box::new(ApproveAll),
+            &mut *progress,
+        )
+        .unwrap();
+        assert_eq!(agent.active_speaker.as_deref(), Some("designer"));
+        agent
+            .route_mention("@auditor the contrast pairs need an accessibility pass")
+            .expect("the address proposes");
+        assert_eq!(
+            agent.active_speaker.as_deref(),
+            Some("designer"),
+            "a proposal does not move the speaker"
+        );
+        // A name that resolves nowhere is nobody's to convene.
+        agent.route_mention("@stranger a look").expect("ignored");
+        drop(agent);
+        let records = crate::session::replay(&path).expect("the log replays");
+        let recommendations: Vec<(String, String)> = records
+            .iter()
+            .filter_map(|record| match record {
+                Record::Recommend {
+                    role, reason, from, ..
+                } => Some((role.clone(), format!("{reason}|{from:?}"))),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            recommendations,
+            vec![(
+                "auditor".to_string(),
+                "the contrast pairs need an accessibility pass|Some(\"designer\")".to_string()
+            )],
+            "one proposal, typed; a stranger writes no row"
+        );
+        // The prompt tells the model the convention and the roster, or the
+        // tool is a discovery the room cannot make.
+        let room = agent_room_line(&home);
+        assert!(room.contains("## The room"), "{room}");
+        assert!(room.contains("`designer` (makes pages)"), "{room}");
+        assert!(room.contains("`@name`"), "{room}");
+        assert!(room.contains("Kept beside the room: `auditor`"), "{room}");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// The room line a huddle's prompt carries, read from a fresh agent
+    /// over the given home — the same assembly the run uses.
+    fn agent_room_line(home: &std::path::Path) -> String {
+        let m = fold_mock("done");
+        let mut session = crate::session::Session::create_with_persona(
+            home,
+            "m",
+            Some(vec!["designer".to_string()]),
+        )
+        .unwrap();
+        let client = Client::new(format!("http://127.0.0.1:{}", m.port), "test-key");
+        let mut options = routing_options("m");
+        options.improve_home = Some(home.to_path_buf());
+        let progress: &'static mut Vec<u8> = Box::leak(Box::new(Vec::new()));
+        let agent = Agent::new(
+            &client,
+            options,
+            &mut session,
+            Box::new(ApproveAll),
+            &mut *progress,
+        )
+        .unwrap();
+        agent.room_line().unwrap_or_default()
     }
 
     #[tokio::test]
