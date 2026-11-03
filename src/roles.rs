@@ -170,6 +170,21 @@ pub fn load(home: &Path, name: &str) -> Result<Role, String> {
     Role::parse(name, &text, path)
 }
 
+/// One role's owner-supplied image, when the home keeps one beside its
+/// file (the huddles plan's C11). The convention is the filename rather
+/// than a frontmatter key, so an avatar costs the roles editor no new
+/// field: `<roles_dir>/<name>.png|jpg|jpeg|webp|svg`, first match wins.
+/// Absent one, the derived serif initial stands.
+pub fn avatar_path(home: &Path, name: &str) -> Option<std::path::PathBuf> {
+    let dir = roles_dir(home);
+    ["png", "jpg", "jpeg", "webp", "svg"]
+        .iter()
+        .find_map(|ext| {
+            let path = dir.join(format!("{name}.{ext}"));
+            path.is_file().then_some(path)
+        })
+}
+
 /// Every role in the home, sorted by name. A broken file is named on
 /// one line and skipped — a broken role is never silent and never
 /// sinks the surface that lists the others.
@@ -719,6 +734,33 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// An owner-supplied avatar is a convention, not a schema: the image
+    /// lives beside the role under the home, named for it. C11 of the
+    /// huddles plan — pinned here, where a filename mistake would
+    /// otherwise ship as a mark that silently falls back to an initial.
+    #[test]
+    fn an_avatar_is_found_beside_its_role() {
+        let home = scratch("avatar");
+        std::fs::create_dir_all(roles_dir(&home)).unwrap();
+        std::fs::write(
+            roles_dir(&home).join("designer.md"),
+            "---\nname: designer\ndescription: makes pages\n---\nvoice\n",
+        )
+        .unwrap();
+        // No image yet: the derived initial stands.
+        assert!(avatar_path(&home, "designer").is_none());
+        // Any of the five types the face can inline; first match wins.
+        std::fs::write(roles_dir(&home).join("designer.png"), b"png").unwrap();
+        let found = avatar_path(&home, "designer").expect("the png is found");
+        assert_eq!(found, roles_dir(&home).join("designer.png"));
+        // A role with no file is nobody's image.
+        assert!(avatar_path(&home, "scholar").is_none());
+        // And a name that is not a role name cannot reach outside the dir:
+        // `avatar_path` joins only a validated name, and this pins it.
+        assert!(avatar_path(&home, "../escape").is_none());
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     /// The owner's home — the same resolution `crate::home` uses, so the

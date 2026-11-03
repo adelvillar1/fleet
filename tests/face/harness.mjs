@@ -4652,6 +4652,56 @@ async function theStrategyStepShowsItsPreview() {
       bylines[2].length === 0, 'bylines=' + bylines[2].length);
   }
 
+  // An owner-supplied avatar (the huddles plan's C11): where the role
+  // keeps an image, the mark carries it instead of the derived initial —
+  // in the rail row and in the room head alike, and never beside a
+  // message.
+  async function anOwnerSuppliedAvatarReplacesTheInitial() {
+    const url = '/api/avatar?name=designer';
+    const page = boot({
+      documents: {
+        huddles: {
+          type: 'huddles',
+          active: [{
+            id: 'a1', title: 'the-q3-board', goal: 'thrift’s landing page',
+            personas: ['designer'], avatars: { designer: url },
+            state: 'working', last_write: 'x', current: false, deliverables: 0
+          }],
+          inactive: [], ended: [], counts: { active: 1, inactive: 0, ended: 0 }
+        },
+        state: (asked) => ({
+          ...emptyState(asked), session: asked, goal: 'thrift’s landing page',
+          members: [{ name: 'designer', voice: 'makes pages', avatar: url }]
+        })
+      }
+    });
+    await flush();
+    page.open();
+    await flush();
+    page.hash('#/huddles');
+    for (let i = 0; i < 8; i++) await flush();
+    const board = page.IDS['huddles-board'];
+    const rowMark = board.find((one) =>
+      String(one.className || '').split(/\s+/).includes('pmark') &&
+      one.getAttribute && one.getAttribute('data-p') === 'designer')[0];
+    const img = rowMark ? rowMark.find((one) => one.name === 'img') : [];
+    check('C11 the rail row’s mark carries the owner’s image',
+      img.length === 1 && img[0].src === url, JSON.stringify(img.map((i) => i.src)));
+    check('C11 the image replaces the derived initial',
+      String(rowMark.textContent) === '', String(rowMark.textContent));
+
+    // The room head reads the same document's members.
+    page.hash('#/chat/a1');
+    for (let i = 0; i < 6; i++) await flush();
+    const headMark = page.IDS['hh-stack'].find((one) =>
+      String(one.className || '').split(/\s+/).includes('pmark') &&
+      one.getAttribute && one.getAttribute('data-p') === 'designer')[0];
+    const headImg = headMark ? headMark.find((one) => one.name === 'img') : [];
+    check('C11 the room head’s mark carries the same image',
+      headImg.length === 1 && headImg[0].src === url,
+      JSON.stringify(headImg.map((i) => i.src)));
+  }
+
   async function theBotsSurfaceMintsTheBotCard() {
     const page = boot({
       reply: {
@@ -7736,6 +7786,7 @@ const cases = [
   ['C8 the room head names its members and their voices', theRoomHeadNamesItsMembers],
   ['C8 the @ picker offers the room’s members first', theRoomsAtPickerOffersItsMembers],
   ['C8 a room bylines its members’ turns', aRoomBylineNamesItsAuthor],
+  ['C11 an owner-supplied avatar replaces the initial', anOwnerSuppliedAvatarReplacesTheInitial],
   ['KI-380 the zombie tab cannot hide a seat or lose the reads', theZombieTabCannotHideASeatOrLoseTheReads],
   ['C1/C8 the list groups by attention and counts what the server counted', theListGroupsByAttentionAndCountsWhatTheServerCounted],
   ['C2 every state opens through one verb', everyStateOpensThroughOneVerb],

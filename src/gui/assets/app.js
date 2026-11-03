@@ -9427,20 +9427,30 @@
   // A member's mark: the serif initial on an opaque disc tinted from its
   // lane. An owner-supplied image replaces the initial when the role
   // carries one (C11); absent that, this is the whole identity.
-  function huddleMark(name, size) {
+  function huddleMark(name, size, avatar) {
     var disc = node('span', 'pmark' + (size ? ' ' + size : ''));
     disc.style.setProperty('--tint', HUDDLE_TINTS[name] || 'var(--accent)');
     disc.setAttribute('data-p', name || '');
-    disc.appendChild(document.createTextNode((name || '?').charAt(0)));
+    // An owner-supplied image replaces the initial where the role keeps
+    // one (C11); the image is the mark's whole surface, so the disc stays
+    // opaque and the glyph underneath never shows through.
+    if (avatar) {
+      var img = node('img');
+      img.alt = '';
+      img.src = avatar;
+      disc.appendChild(img);
+    } else {
+      disc.appendChild(document.createTextNode((name || '?').charAt(0)));
+    }
     return disc;
   }
 
   // The room's members: the owner first, then each bot in join order.
-  function huddleStack(personas) {
+  function huddleStack(personas, avatars) {
     var stack = node('span', 'pstack');
     stack.appendChild(node('span', 'pmark pmark-you sm', 'you'));
     (personas || []).forEach(function (name) {
-      stack.appendChild(huddleMark(name, 'sm'));
+      stack.appendChild(huddleMark(name, 'sm', avatars && avatars[name]));
     });
     return stack;
   }
@@ -9488,7 +9498,7 @@
     button.type = 'button';
     button.appendChild(node('span', 'dot ' + derived.dot));
     var name = node('span', 'hrow-name');
-    name.appendChild(huddleStack(row.personas));
+    name.appendChild(huddleStack(row.personas, row.avatars));
     name.appendChild(document.createTextNode(row.title || row.id));
     button.appendChild(name);
     var goal = row.goal || '';
@@ -9894,7 +9904,7 @@
     el.hhStack.textContent = '';
     el.hhStack.appendChild(node('span', 'pmark pmark-you sm', 'you'));
     members.forEach(function (one) {
-      el.hhStack.appendChild(huddleMark(one.name, 'sm'));
+      el.hhStack.appendChild(huddleMark(one.name, 'sm', one.avatar));
     });
     el.hhVoices.textContent = members
       .map(function (one) { return one.voice ? one.name + ' \u2014 ' + one.voice : one.name; })

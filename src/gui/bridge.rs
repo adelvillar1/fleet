@@ -1978,6 +1978,31 @@ impl Bridge {
         }
     }
 
+    /// One role's owner-supplied image, as bytes and a MIME type (the
+    /// huddles plan's C11). The file lives beside the role under the home,
+    /// so nothing leaves the machine; a role with no image is refused by
+    /// name rather than served a placeholder.
+    pub fn avatar(&self, name: &str) -> Result<(Vec<u8>, &'static str), String> {
+        let path = crate::roles::avatar_path(&self.home, name)
+            .ok_or_else(|| format!("`{name}` carries no image"))?;
+        let bytes = std::fs::read(&path)
+            .map_err(|error| format!("the image could not be read: {error}"))?;
+        let mime = match path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "png" => "image/png",
+            "jpg" | "jpeg" => "image/jpeg",
+            "webp" => "image/webp",
+            "svg" => "image/svg+xml",
+            _ => "application/octet-stream",
+        };
+        Ok((bytes, mime))
+    }
+
     /// The bot inbox (B2): the archive's newest rows, in the bot's four
     /// words, each with the last line its log carries.
     ///
@@ -5421,7 +5446,11 @@ pub fn session_members(home: &std::path::Path, session: &str) -> Vec<Value> {
             let voice = crate::roles::load(home, &name)
                 .map(|role| role.description)
                 .unwrap_or_default();
-            json!({ "name": name, "voice": voice })
+            // An owner-supplied image rides the same convention as its
+            // role file (C11); absent one, null and the derived initial.
+            let avatar =
+                crate::roles::avatar_path(home, &name).map(|_| format!("/api/avatar?name={name}"));
+            json!({ "name": name, "voice": voice, "avatar": avatar })
         })
         .collect()
 }
@@ -7028,11 +7057,23 @@ fn huddles_read(home: &std::path::Path, current: &str, live: &LiveFace) -> Value
             entry.last_plan.clone(),
             entry.first_text.clone(),
         );
+        // Which members carry an owner-supplied image (C11): only those,
+        // so the face renders the derived initial everywhere else.
+        let mut avatars = serde_json::Map::new();
+        for persona in &entry.personas {
+            if crate::roles::avatar_path(home, persona).is_some() {
+                avatars.insert(
+                    persona.clone(),
+                    json!(format!("/api/avatar?name={persona}")),
+                );
+            }
+        }
         let row = json!({
             "id": entry.id,
             "title": title,
             "goal": goal,
             "personas": entry.personas,
+            "avatars": avatars,
             "state": state,
             "stop_reason": entry.stop_reason,
             "last_write": entry.last_write,

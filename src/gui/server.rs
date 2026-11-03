@@ -1136,6 +1136,32 @@ async fn serve_connection(
             let session = asked_session(bridge, &request);
             write_reply(&mut stream, api(200, bridge.huddles(&session).await)).await
         }
+        // One role's owner-supplied image, served from the home it lives
+        // in (the huddles plan's C11). A role with no image is a named
+        // 404, never a placeholder.
+        ("GET", "/api/avatar") => {
+            let name = decode_query(&request.query, "name");
+            match bridge.avatar(&name) {
+                Ok((bytes, mime)) => {
+                    let head = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: {mime}\r\nContent-Length: {}\r\n\
+                         Connection: close\r\nCache-Control: no-store\r\n\
+                         X-Content-Type-Options: nosniff\r\n\r\n",
+                        bytes.len()
+                    );
+                    stream
+                        .write_all(head.as_bytes())
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    stream.write_all(&bytes).await.map_err(|e| e.to_string())?;
+                    stream.flush().await.map_err(|e| e.to_string())?;
+                    Ok(())
+                }
+                Err(message) => {
+                    write_reply(&mut stream, api(404, json!({ "refused": [message] }))).await
+                }
+            }
+        }
         // The bot inbox (B2): the archive's newest rows in the bot's
         // four words, each with its last line. One polling read; the
         // conversation itself still rides /events.
