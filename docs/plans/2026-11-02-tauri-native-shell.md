@@ -193,8 +193,13 @@ something outside the app, and the native install must not:
       a regression. Pinned.
       **Met:** `face_url` pins a real `http://127.0.0.1` origin, the
       secure-context condition Tauri's custom scheme fails on macOS
-      (Tauri #13031); `sw.js` answered 200 from both the dev and the
-      bundled origin. The registration itself is the owner's walk (C9).
+      (Tauri #13031). Proven on disk in the packaged app: WebKit's
+      `ServiceWorkers/Scripts` holds the fleet shell worker (5,863 bytes,
+      the run's timestamp), `CacheStorage/cacheslist` names
+      `fleet-shell-b3c6f48a6723c87e`, and the cache records reference
+      `/app.css` and `/app.js`. On a second launch the registration
+      database was written again (22:33 against the 21:58 cache) — the
+      page re-registered and resolved to the existing cache.
 - [x] **C4 — the remote face is untouched.** `fleet gui --remote` still
       serves network peers, and the existing remote tests pass unchanged.
       **Met:** the remote path is unchanged and the shell pins
@@ -235,8 +240,15 @@ something outside the app, and the native install must not:
       **Met (build):** `cargo tauri build` produced `fleet.app` and
       `fleet_0.3.0-beta_aarch64.dmg` (9.48 MiB). **Met (launch):** the
       packaged app ran from the mounted dmg, resolved the bundled
-      services, and served the face on an ephemeral port. The owner's own
-      turn is the remaining half.
+      services, and served the face on an ephemeral port. **Met (a turn
+      runs):** `POST /api/run` — the same request the window's send makes
+      — drove a real turn in the packaged app; the session log records
+      `stop_reason: handed back`, `turns: 1`, `served_model: LongCat-2.5`,
+      and the assistant's answer. The window's own click-path could not be
+      automated — a Tauri WKWebView exposes no accessibility tree for its
+      web content and the window could not be captured — so the turn was
+      driven through the app's own API rather than by clicking the
+      composer.
 - [x] **C10 — the docs move with the increments.** `CLAUDE.md` names
       `fleet desktop` in its command list and the shell in its topology;
       the install docs carry the component inventory and the first-run
