@@ -792,6 +792,15 @@
     <div class="board" id="settings-board"></div>
   </main>
 
+  <!-- The huddles. The owner's rooms with their bots, in the three states
+       a room has: active (something live), inactive (parked), ended (put
+       away). One session per room; every member sees every message. The
+       row carries its members' marks, its goal and its deliverables. -->
+  <main class="stage stage-board stage-split" id="panel-huddles" hidden>
+    <nav class="section-rail" id="huddles-rail" aria-label="huddle states"></nav>
+    <div class="board" id="huddles-board"></div>
+  </main>
+
   <!-- The vault. A first-class settings surface of its own: onboarding
        (choose the passphrase, create, migrate the plaintext .env
        entries), the sealed names, the plaintext ledger, seal/drop, and

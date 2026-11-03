@@ -322,6 +322,9 @@ function boot(options) {
     if (pathOnly === '/api/sessions') {
       return Promise.resolve({ status: 200, json: () => Promise.resolve(documents.sessions || emptySessions()) });
     }
+    if (pathOnly === '/api/huddles') {
+      return Promise.resolve({ status: 200, json: () => Promise.resolve(documents.huddles || emptyHuddles()) });
+    }
     if (pathOnly === '/api/session') {
       return Promise.resolve({ status: 200, json: () => Promise.resolve(documents.branch || {}) });
     }
@@ -914,6 +917,11 @@ const emptySessions = () => ({
   type: 'sessions', read_at: 'now', current: '',
   counts: { needs: 0, working: 0, background: 0, earlier: 0, total: 0 },
   sessions: [],
+});
+
+const emptyHuddles = () => ({
+  type: 'huddles', active: [], inactive: [], ended: [],
+  counts: { active: 0, inactive: 0, ended: 0 },
 });
 
 // A row in the bridge's shape, with only the fields a case cares about.
@@ -4390,6 +4398,82 @@ async function theStrategyStepShowsItsPreview() {
       badge ? 'hidden=' + badge.hidden + ' text=' + badge.textContent : 'no badge');
   }
 
+  // The huddle rail (the huddles plan's C7): the owner's rooms in the
+  // three states, each row carrying its members' marks, its goal and its
+  // deliverables. The grouping and the counts are the server's own
+  // derivation; the page renders what it is handed and decides nothing.
+  async function theHuddleRailCarriesTheThreeStates() {
+    const page = boot({
+      documents: {
+        huddles: {
+          type: 'huddles',
+          active: [
+            { id: 'a1', title: 'the-q3-board',
+              goal: 'thrift’s landing page, ready for the launch review',
+              personas: ['designer', 'scholar'], state: 'working',
+              last_write: '2026-11-03T14:02:00Z', current: true, deliverables: 2 },
+            { id: 'a2', title: 'deck-for-nace', goal: 'the Nace brief, six slides',
+              personas: ['presenter'], state: 'needs-approval',
+              last_write: '2026-11-03T14:01:00Z', current: false, deliverables: 1 }
+          ],
+          inactive: [
+            { id: 'i1', title: 'pricing-rewrite', goal: 'the pricing page’s rewrite',
+              personas: ['designer'], state: 'completed',
+              last_write: '2026-11-01T09:00:00Z', current: false, deliverables: 0 }
+          ],
+          ended: [
+            { id: 'e1', title: 'brand-audit', goal: 'the brand audit',
+              personas: ['auditor'], state: 'archived',
+              last_write: '2026-10-28T09:00:00Z', current: false, deliverables: 4 }
+          ],
+          counts: { active: 2, inactive: 1, ended: 1 }
+        }
+      }
+    });
+    page.open();
+    await flush();
+    page.hash('#/huddles');
+    for (let i = 0; i < 8; i++) await flush();
+    check('HUDDLES the huddles panel is the one showing',
+      !!page.IDS['panel-huddles'] && !page.IDS['panel-huddles'].hidden,
+      'panel-huddles hidden=' + (page.IDS['panel-huddles'] || {}).hidden);
+    const board = page.IDS['huddles-board'];
+    const sections = board.find((one) =>
+      String(one.className || '').split(/\s+/).includes('hsection'));
+    check('HUDDLES the rooms render as three state sections in order',
+      sections.length === 3 &&
+        String(sections[0].textContent).includes('Active') &&
+        String(sections[1].textContent).includes('Inactive') &&
+        String(sections[2].textContent).includes('Ended'),
+      'sections=' + sections.length);
+    const rows = board.find((one) =>
+      String(one.className || '').split(/\s+/).includes('hrow'));
+    check('HUDDLES each room is one row carrying its state word',
+      rows.length === 4 &&
+        String(rows[0].textContent).includes('active') &&
+        String(rows[1].textContent).includes('active') &&
+        String(rows[2].textContent).includes('inactive') &&
+        String(rows[3].textContent).includes('ended'),
+      'rows=' + rows.length);
+    const botMarks = (one, name) => one.find((kid) =>
+      String(kid.className || '').split(/\s+/).includes('pmark') &&
+      kid.getAttribute && kid.getAttribute('data-p') === name);
+    check('HUDDLES every row carries the owner’s own mark',
+      rows.every((one) => one.find((kid) =>
+        String(kid.className || '').split(/\s+/).includes('pmark-you')).length === 1),
+      'owner mark on each row');
+    check('HUDDLES the first room names its bots and its deliverables',
+      botMarks(rows[0], 'designer').length === 1 &&
+        botMarks(rows[0], 'scholar').length === 1 &&
+        String(rows[0].textContent).includes('2 files') &&
+        String(rows[0].textContent).includes('thrift’s landing page'),
+      'marks=' + botMarks(rows[0], 'designer').length +
+        '/' + botMarks(rows[0], 'scholar').length);
+    check('HUDDLES the open room is marked',
+      String(rows[0].className).split(/\s+/).includes('open'),
+      rows[0].className);
+  }
+
   async function theBotsSurfaceMintsTheBotCard() {
     const page = boot({
       reply: {
@@ -7469,6 +7553,7 @@ async function theConnectCardSaysWhatHappened() {
 
 const cases = [
   ['PLUGINS the management surface and the two tiers\' frames', thePluginsSurfaceManagesTheChains],
+  ['HUDDLES the rail carries the three states, member marks and deliverables', theHuddleRailCarriesTheThreeStates],
   ['KI-380 the zombie tab cannot hide a seat or lose the reads', theZombieTabCannotHideASeatOrLoseTheReads],
   ['C1/C8 the list groups by attention and counts what the server counted', theListGroupsByAttentionAndCountsWhatTheServerCounted],
   ['C2 every state opens through one verb', everyStateOpensThroughOneVerb],

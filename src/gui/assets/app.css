@@ -8572,3 +8572,116 @@ body[data-work="collapsed"] .work-list { display: none; }
   font-size: 12px;
   margin-top: 3px;
 }
+
+/* ---------------------------------------------------------------
+   The huddles. The room's member marks, and the rail's rows.
+   --------------------------------------------------------------- */
+
+/* A member's mark: the serif initial on an opaque disc tinted from its
+   lane of the house palette, with its own ink so the glyph clears AA in
+   every theme (bot-app.md's ruling). An owner-supplied image replaces the
+   initial when the role carries one. */
+.pmark {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--tint, var(--accent)) 16%, transparent);
+  color: var(--dsw-alias-ink);
+  font-family: var(--font-display);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+}
+.pmark.sm { width: 22px; height: 22px; font-size: 12px; }
+.pmark.md { width: 30px; height: 30px; font-size: 15px; }
+.pmark.lg { width: 44px; height: 44px; font-size: 22px; }
+.pmark img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+/* The owner's own mark reads as a word, not an initial — they are the
+   constant in every room. */
+.pmark-you {
+  background: var(--dsw-alias-surface-2, rgba(0, 0, 0, 0.04));
+  color: var(--dsw-alias-ink-secondary);
+  font-family: var(--font-ui, inherit);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.pstack { display: inline-flex; align-items: center; }
+.pstack .pmark { margin-left: -7px; box-shadow: 0 0 0 2px var(--dsw-alias-surface); }
+.pstack .pmark:first-child { margin-left: 0; }
+
+/* The rail's sections and rows, on the work rail's idiom: a header with a
+   count and a why, then one row per room. */
+.hsection { margin: 0 0 18px; }
+.hsection-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 0 2px 8px;
+}
+.hsection-head h2 {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--dsw-alias-ink-secondary);
+  margin: 0;
+}
+.hsection-head .count {
+  font-size: 11px;
+  color: var(--dsw-alias-ink-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+.hsection-head .why {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--dsw-alias-ink-tertiary);
+}
+
+.hrow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 48px;
+  padding: 10px 14px;
+  margin: 0 0 6px;
+  border: 1px solid var(--dsw-alias-hairline);
+  border-radius: 10px;
+  background: var(--dsw-alias-surface);
+  color: var(--dsw-alias-ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.hrow:hover { border-color: var(--dsw-alias-accent); }
+.hrow.open { border-left: 3px solid var(--dsw-alias-accent); padding-left: 12px; }
+.hrow-name {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 210px;
+  font-weight: 600;
+}
+.hrow-state {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--dsw-alias-ink-secondary);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hrow-meta {
+  flex: 0 0 auto;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--dsw-alias-ink-tertiary);
+}
+.hrow-meta .files { color: var(--dsw-alias-ink-secondary); }

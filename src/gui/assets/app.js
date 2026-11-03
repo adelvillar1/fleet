@@ -242,6 +242,7 @@
     ['memory', 'memory'],
     ['skills', 'skills'],
     ['sessions', 'sessions'],
+    ['huddles', 'huddles'],
     ['calibration', 'calibration'],
     ['design', 'design'],
     ['vault', 'vault'],
@@ -268,7 +269,10 @@
       // the owner opens the way they open a chat, not a listing to
       // browse after one.
       ['design', 'design'],
-      ['sessions', 'sessions']
+      ['sessions', 'sessions'],
+      // A huddle is work the owner opens the way they open a chat: a room
+      // with one or more bots, not an inventory to browse after one.
+      ['huddles', 'huddles']
     ]],
     ['intelligence', 'intelligence', [
       ['router', 'router'],
@@ -649,6 +653,9 @@
     panelSettings: document.getElementById('panel-settings'),
     panelPlugins: document.getElementById('panel-plugins'),
     pluginsBoard: document.getElementById('plugins-board'),
+    panelHuddles: document.getElementById('panel-huddles'),
+    huddlesRail: document.getElementById('huddles-rail'),
+    huddlesBoard: document.getElementById('huddles-board'),
     panelDesign: document.getElementById('panel-design'),
     designRail: document.getElementById('design-rail'),
     designWorld: document.getElementById('design-world'),
@@ -9379,6 +9386,153 @@
 
   function workRows() {
     return (face.sessions && face.sessions.sessions) || [];
+  }
+
+  // ---------------------------------------------------------------
+  // The huddles. The owner's rooms with their bots, in the three states
+  // a room has. Every fact on the row comes from `/api/huddles`, which
+  // derives the grouping once — the browser renders, it never decides.
+  // ---------------------------------------------------------------
+
+  // One lane of the house palette per role (bot-app.md's ruling: the mark
+  // draws from the console's own lane scale), the lead on the accent.
+  var HUDDLE_TINTS = {
+    tower: 'var(--accent)',
+    scholar: 'var(--lane-0)',
+    clerk: 'var(--lane-1)',
+    auditor: 'var(--lane-2)',
+    presenter: 'var(--lane-3)',
+    designer: 'var(--lane-4)',
+    advocate: 'var(--lane-5)'
+  };
+
+  // A member's mark: the serif initial on an opaque disc tinted from its
+  // lane. An owner-supplied image replaces the initial when the role
+  // carries one (C11); absent that, this is the whole identity.
+  function huddleMark(name, size) {
+    var disc = node('span', 'pmark' + (size ? ' ' + size : ''));
+    disc.style.setProperty('--tint', HUDDLE_TINTS[name] || 'var(--accent)');
+    disc.setAttribute('data-p', name || '');
+    disc.appendChild(document.createTextNode((name || '?').charAt(0)));
+    return disc;
+  }
+
+  // The room's members: the owner first, then each bot in join order.
+  function huddleStack(personas) {
+    var stack = node('span', 'pstack');
+    stack.appendChild(node('span', 'pmark pmark-you sm', 'you'));
+    (personas || []).forEach(function (name) {
+      stack.appendChild(huddleMark(name, 'sm'));
+    });
+    return stack;
+  }
+
+  function readHuddles(force) {
+    var now = Date.now();
+    if (!force && face.huddles && now - face.huddlesAt < 4000) return Promise.resolve();
+    face.huddlesAt = now;
+    return fetch('/api/huddles', { headers: { accept: 'application/json' } })
+      .then(function (reply) {
+        if (reply.status === 401) throw new Error('token');
+        return reply.json();
+      })
+      .then(function (doc) {
+        face.huddles = doc;
+        if (face.panel === 'huddles') paintHuddles();
+        paintRailCounts();
+      })
+      .catch(function () {
+        connectionDown('the huddle read');
+        window.setTimeout(function () { readHuddles(true); }, 5000);
+      });
+  }
+
+  function huddleRows(name) {
+    return ((face.huddles && face.huddles[name]) || []);
+  }
+
+  // One room's state word and dot, from the document's own session state:
+  // put away is ended, something live is active, everything else parked.
+  function huddleState(row) {
+    var state = row.state || '';
+    if (state === 'archived') return { word: 'ended', dot: 'off', chip: 'ended' };
+    if (state === 'needs-approval' || state === 'paused' || state === 'working' ||
+        state === 'resumed' || state === 'new' || state === 'active' ||
+        state === 'interrupted') {
+      return { word: 'active', dot: state === 'needs-approval' ? 'warn' : 'ok', chip: 'work' };
+    }
+    return { word: 'inactive', dot: 'idle', chip: 'idle' };
+  }
+
+  function huddleRow(row) {
+    var derived = huddleState(row);
+    var button = node('button', 'hrow' + (row.current ? ' open' : ''));
+    button.type = 'button';
+    button.appendChild(node('span', 'dot ' + derived.dot));
+    var name = node('span', 'hrow-name');
+    name.appendChild(huddleStack(row.personas));
+    name.appendChild(document.createTextNode(row.title || row.id));
+    button.appendChild(name);
+    var goal = row.goal || '';
+    var state = node('span', 'hrow-state');
+    state.appendChild(document.createTextNode(goal || 'a room with its bots'));
+    button.appendChild(state);
+    if (row.deliverables) {
+      var meta = node('span', 'hrow-meta');
+      meta.appendChild(node('span', 'files',
+        row.deliverables + (row.deliverables === 1 ? ' file' : ' files')));
+      button.appendChild(meta);
+    }
+    button.appendChild(node('span', 'chip ' + derived.chip, derived.word));
+    button.addEventListener('click', function () {
+      // Opening a room lands in the conversation on that session; the
+      // room itself is C8's surface, and until it exists the row does the
+      // one thing every session row can do.
+      face.focus = { panel: 'huddles', id: row.id };
+      window.location.hash = '#/chat/' + row.id;
+    });
+    return button;
+  }
+
+  function paintHuddles() {
+    var board = el.huddlesBoard;
+    board.textContent = '';
+    var counts = (face.huddles && face.huddles.counts) || {};
+    board.appendChild(pageHead('Work', 'Huddles',
+      (counts.active || 0) + ' active · ' + (counts.inactive || 0) +
+      ' inactive · ' + (counts.ended || 0) + ' ended', null));
+    if (face.huddles && face.huddles.refused) {
+      board.appendChild(node('p', 'page-note', face.huddles.refused[0]));
+      return;
+    }
+    var sections = [
+      ['active', 'Active', 'a room someone is working in'],
+      ['inactive', 'Inactive', 'parked — nothing running, nothing waiting'],
+      ['ended', 'Ended', 'closed — put away, not done']
+    ];
+    var any = false;
+    sections.forEach(function (one) {
+      var rows = huddleRows(one[0]);
+      if (!rows.length) return;
+      any = true;
+      board.appendChild(huddleSection(one[1], rows.length, one[2],
+        rows.map(huddleRow)));
+    });
+    if (!any) {
+      board.appendChild(node('p', 'page-note',
+        'no huddles yet — a huddle is a session with one or more bots, made from the conversation’s New with a persona convoked'));
+    }
+  }
+
+  function huddleSection(title, count, why, rows) {
+    var section = node('div', 'hsection');
+    var head = node('div', 'hsection-head');
+    head.appendChild(node('h2', null, title));
+    head.appendChild(node('span', 'count', String(count)));
+    head.appendChild(node('span', 'why', why));
+    section.appendChild(head);
+    rows.forEach(function (row) { section.appendChild(row); });
+    return section;
   }
 
   // A shell is a log with no words and no kind — a New the owner
@@ -20628,7 +20782,8 @@
     bots: el.panelBots,
     vault: el.panelVault,
     settings: el.panelSettings,
-    plugins: el.panelPlugins
+    plugins: el.panelPlugins,
+    huddles: el.panelHuddles
   };
 
   function showRoute() {
@@ -20702,6 +20857,10 @@
         // The plugin list rides the state document — the repaint after
         // the read lands is the one with the plugins in hand.
         load().then(function () { paintPlugins(); });
+      },
+      huddles: function () {
+        paintHuddles();
+        readHuddles(true).then(paintHuddles);
       },
       sessions: function () {
         paintWork();

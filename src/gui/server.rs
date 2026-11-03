@@ -1130,6 +1130,12 @@ async fn serve_connection(
             )
             .await
         }
+        // The huddle rail: the owner's rooms in three groups, off the same
+        // live facts and state words the work list reads.
+        ("GET", "/api/huddles") => {
+            let session = asked_session(bridge, &request);
+            write_reply(&mut stream, api(200, bridge.huddles(&session).await)).await
+        }
         // The bot inbox (B2): the archive's newest rows in the bot's
         // four words, each with its last line. One polling read; the
         // conversation itself still rides /events.

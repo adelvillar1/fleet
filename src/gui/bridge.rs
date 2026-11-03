@@ -1945,6 +1945,33 @@ impl Bridge {
         }
     }
 
+    /// The huddle rail's document: the owner's rooms in three groups, off
+    /// the same live facts and the same state words the work list reads —
+    /// no second state machine (KI-300).
+    pub async fn huddles(&self, current: &str) -> Value {
+        let home = self.home.clone();
+        let current = current.to_string();
+        let live = {
+            let state = lock(&self.state);
+            LiveFace {
+                driving: state.driving.clone(),
+                seats: state
+                    .sessions
+                    .iter()
+                    .filter(|(_, attached)| attached.seat.is_some())
+                    .map(|(id, _)| id.clone())
+                    .collect(),
+            }
+        };
+        match tokio::task::spawn_blocking(move || huddles_read(&home, &current, &live)).await {
+            Ok(document) => document,
+            Err(_) => json!({
+                "type": "huddles",
+                "refused": ["the archive read did not land"],
+            }),
+        }
+    }
+
     /// The bot inbox (B2): the archive's newest rows, in the bot's four
     /// words, each with the last line its log carries.
     ///
@@ -6932,6 +6959,101 @@ fn sessions_read(home: &std::path::Path, current: &str, live: &LiveFace, query: 
         },
         "sessions": sessions,
     })
+}
+
+/// The huddle rail's document: the owner's rooms in three groups —
+/// **active** (a run or a recent write), **inactive** (parked), **ended**
+/// (put away) — each row carrying what the rail reads: the room's name,
+/// its standing goal, its members in join order, the state word, its
+/// deliverables and its last write.
+///
+/// One derivation, like the work list's own (KI-300): the grouping and
+/// the counts are computed here rather than in the browser, so a head
+/// cannot disagree with the rows it counts. Only sessions carrying
+/// personas are huddles — an ordinary conversation is not a room, and a
+/// room with no members is not invented.
+fn huddles_read(home: &std::path::Path, current: &str, live: &LiveFace) -> Value {
+    let titles = load_titles(home);
+    let archived = load_archived(home);
+    let entries = match session::list(home) {
+        Ok(entries) => entries,
+        Err(error) => {
+            return json!({
+                "type": "huddles",
+                "refused": [format!("the archive could not be read: {error}")],
+            })
+        }
+    };
+    let mut active: Vec<Value> = Vec::new();
+    let mut inactive: Vec<Value> = Vec::new();
+    let mut ended: Vec<Value> = Vec::new();
+    for entry in entries.iter() {
+        if entry.personas.is_empty() {
+            continue;
+        }
+        let paused = paused_by_owner(home, &entry.id);
+        let is_archived = archived.contains_key(&entry.id);
+        let state = work_state(entry, live, paused, is_archived);
+        let goal = session_goal(home, &entry.id);
+        let (title, _) = title_ladder(
+            titles.get(&entry.id).cloned(),
+            goal.clone(),
+            entry.last_plan.clone(),
+            entry.first_text.clone(),
+        );
+        let row = json!({
+            "id": entry.id,
+            "title": title,
+            "goal": goal,
+            "personas": entry.personas,
+            "state": state,
+            "stop_reason": entry.stop_reason,
+            "last_write": entry.last_write,
+            "current": entry.id == current,
+            "deliverables": huddle_deliverables(home, &entry.id),
+        });
+        match state {
+            // Put away, not done: ending is the owner's act.
+            "archived" => ended.push(row),
+            // Something is live, waiting, or freshly written.
+            "needs-approval" | "paused" | "working" | "resumed" | "new" | "active"
+            | "interrupted" => active.push(row),
+            // Ran and stopped, and was never put away: parked, not gone.
+            _ => inactive.push(row),
+        }
+    }
+    let counts = json!({
+        "active": active.len(),
+        "inactive": inactive.len(),
+        "ended": ended.len(),
+    });
+    json!({
+        "type": "huddles",
+        "active": active,
+        "inactive": inactive,
+        "ended": ended,
+        "counts": counts,
+    })
+}
+
+/// A room's deliverables: the files handed to the owner inside it, counted
+/// from the log's own approved `send_file` results, so a reload reads the
+/// same number the rail first showed. A log that cannot be read counts
+/// zero — the row still renders, and the transcript names the file.
+fn huddle_deliverables(home: &std::path::Path, id: &str) -> usize {
+    match session::replay(&session::session_path(home, id)) {
+        Ok(records) => records
+            .iter()
+            .filter(|record| {
+                matches!(
+                    record,
+                    session::Record::ToolResult { name, approved, .. }
+                        if name == crate::tools::SEND_FILE_TOOL && *approved
+                )
+            })
+            .count(),
+        Err(_) => 0,
+    }
 }
 
 /// The calibration panel's document. The rows come through the reader's
