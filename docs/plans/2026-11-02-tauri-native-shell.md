@@ -105,7 +105,7 @@ note.**
 |---|---|---|---|
 | 1 | The `fleet` binary | `target/release/fleet` | bundled at `Contents/MacOS/fleet` |
 | 2 | Face assets: `index.html`, `app.js`, `app.css`, `vendor/`, icons, `manifest.webmanifest`, `sw.js` | `include_str!` into the binary | travels with the binary — nothing to do |
-| 3 | The five lane cores (`services/`) | beside the executable, or `FLEET_SERVICES_ROOT`; a 12-ancestor walk (`src/lanes.rs:31`) | **the app sets `FLEET_SERVICES_ROOT`** to the bundled `Contents/Resources/services`, computed from `current_exe()` — the walk cannot find a bundle path |
+| 3 | The five lane cores (`services/`) | `FLEET_SERVICES_ROOT`, else a 12-ancestor walk that requires a **`Cargo.toml` sibling** (`src/lanes.rs:985`), else the compile-time manifest dir (`:991`) | **the app sets `FLEET_SERVICES_ROOT`** to the bundled `Contents/Resources/services`, computed from `current_exe()` — neither fallback can resolve inside a bundle |
 | 4 | The lane venvs (~1.6 GB of Python) | `<home>/venvs/<lane>/`, built by `fleet install --lanes` | built by the app's first-run install, reusing the existing receipt discipline |
 | 5 | The lane wiring | `SEM1_ST_VENV`, `SDM1_MODELS_VENV`, `GEN1_KOKORO_PYTHON`; sys1's `~/.config/sys1/config.toml` `[providers] local_venv` | **the app sets them** — in the child environment at spawn, and writes sys1's key. Today they are *printed* for the owner's shell profile, which a dock-launched app does not have |
 | 6 | blend1 | wired at spawn via `BLEND1_*_PYTHONPATH` (the code sets it) | already in-process — nothing to do |
@@ -123,9 +123,11 @@ note.**
 **The loose ends this closes** — each is a place the PWA era leaned on
 something outside the app, and the native install must not:
 
-1. **The services root.** The 12-ancestor walk from
-   `Contents/MacOS/fleet` reaches `/` without finding a sibling
-   `services/`. The app sets `FLEET_SERVICES_ROOT` explicitly.
+1. **The services root.** The walk requires a `Cargo.toml` beside
+   `services/` — a source checkout — and its fallback is the compile-time
+   manifest dir (`src/lanes.rs:985,991`). Neither exists in a bundle, so
+   the app must set `FLEET_SERVICES_ROOT` to the bundled
+   `Contents/Resources/services`.
 2. **The lane wiring.** Today `fleet install` prints
    `export SEM1_ST_VENV=…` and a sys1 config note for the owner to put
    in a shell profile. A dock-launched app sources no profile, so the
