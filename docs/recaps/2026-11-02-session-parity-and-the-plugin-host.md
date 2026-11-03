@@ -183,6 +183,23 @@ None this session.
   in-flight churn from the investigation — their work, preserved.
 - The settings-ux plan is completed (a061ae8); its surfaces are live.
 
+## The session's second half (2026-11-03)
+
+- **The plugins-ux plan** (`docs/plans/2026-11-03-plugins-ux.md`,
+  completed at `5f56b86`): the owner's "the plugin UI is atrocious"
+  verdict, three approved mockups
+  (`docs/plans/mockups/2026-11-03-plugins-ux/`), and the translation —
+  the built-ins as three grouped status-first sections, every row
+  carrying its press, the install behind a door, the trust disclosure,
+  the rail badge. The live face's `built_ins` read surfaced the
+  flat-shape seam fix (`2a8d0f6`) and the built-ins themselves
+  (`6aa368f`).
+- **The face's binary path moved**: the LaunchAgent now runs
+  `~/.fleet/bin/fleet` (the installed copy), not the worktree's — a
+  worktree rebuild alone no longer reloads the face; the fresh binary
+  copies to `~/.fleet/bin/fleet` first. The served `/app.js` is the
+  verification.
+
 ## Notes
 
 - **The parallel-session interleave was constant**: the shared worktree
