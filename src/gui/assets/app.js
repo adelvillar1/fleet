@@ -2556,6 +2556,15 @@
         // questions with the answers missing between them.
         if (!face.assistant && event.text) {
           var said = node('div', 'assistant md-rendered');
+          // The room's byline (the huddles plan's C8): the replay carries
+          // each turn's author, so a room can tell its members apart. A
+          // pre-P2 log carries none and shows no line rather than
+          // inventing a name.
+          if (event.persona) {
+            var byline = node('div', 'byline');
+            byline.appendChild(node('span', 'byline-who', event.persona));
+            said.appendChild(byline);
+          }
           said.appendChild(markdown(event.text));
           said.appendChild(assistantFooter(function () { return event.text; }, exchanges()));
           row(said, event);
@@ -22008,6 +22017,15 @@
           insert: '@' + (one.title || one.id), follow: 'session', value: one.id });
       }
     });
+    // The room's members lead the list (the huddles plan's C8): in a
+    // huddle an address is what routes the next turn, so the bots are the
+    // references the owner most often means. Each carries its own name on
+    // the chip, because the kind alone would read "@member".
+    var members = (face.members || []).map(function (one) {
+      return { kind: 'member', chip: one.name,
+        // The chip already carries the name; the label carries its voice.
+        label: one.voice || one.name, insert: '@' + one.name, follow: null };
+    });
     ((face.skills && face.skills.skills) || []).forEach(function (skill) {
       rows.push({ kind: 'skill', label: skill.name,
         insert: 'use the skill "' + skill.name + '"', follow: null });
@@ -22018,13 +22036,18 @@
           insert: 'recall the fact "' + fact.name + '"', follow: null });
       }
     });
+    // The token filters every family alike, members included: an address
+    // the owner is typing down to one name must not still list them all.
     if (query) {
-      rows = rows.filter(function (one) {
+      var keep = function (one) {
         return one.label.toLowerCase().indexOf(query) !== -1 ||
+          (one.chip || '').toLowerCase().indexOf(query) !== -1 ||
           one.kind.indexOf(query) === 0;
-      });
+      };
+      members = members.filter(keep);
+      rows = rows.filter(keep);
     }
-    return rows.slice(0, 12);
+    return members.concat(rows).slice(0, 12);
   }
 
   function openReferences(asked) {
@@ -22070,7 +22093,8 @@
       row.setAttribute('role', 'option');
       row.dataset.kind = one.kind;
       if (at === face.referenceAt) row.setAttribute('aria-selected', 'true');
-      row.appendChild(node('span', 'command-name', '@' + one.kind));
+      row.appendChild(node('span', 'command-name',
+        '@' + (one.chip || one.kind)));
       row.appendChild(node('span', 'command-said', one.label));
       row.addEventListener('click', function () { insertReference(at); });
       el.commands.appendChild(row);

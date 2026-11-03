@@ -4565,6 +4565,93 @@ async function theStrategyStepShowsItsPreview() {
       !!plainHead && plainHead.hidden, 'hidden=' + (plainHead || {}).hidden);
   }
 
+  // The room's @ picker (the huddles plan's C8): typing an address offers
+  // the room's members first, each with its own name and voice, and a
+  // press inserts the address that routes the next turn.
+  async function theRoomsAtPickerOffersItsMembers() {
+    const page = boot({
+      documents: {
+        state: (asked) => ({
+          ...emptyState(asked), session: asked,
+          goal: 'thrift’s landing page',
+          members: [
+            { name: 'designer', voice: 'makes pages' },
+            { name: 'scholar', voice: 'grounds every claim' }
+          ]
+        })
+      }
+    });
+    await flush();
+    page.open();
+    await flush();
+    page.IDS['task'].value = '@des';
+    page.fireOn('task', 'input');
+    await flush(40);
+    const rows = [...page.IDS['commands'].children];
+    const member = rows.filter((one) => one.dataset.kind === 'member');
+    check('C8 the room’s members lead the @ list',
+      member.length === 1 && rows.indexOf(member[0]) === 0,
+      rows.map((one) => one.dataset.kind).join(','));
+    check('C8 a member row carries its own name and voice',
+      member.length === 1 &&
+        String(member[0].textContent).includes('@designer') &&
+        String(member[0].textContent).includes('makes pages'),
+      member.length ? String(member[0].textContent) : 'none');
+    if (member.length) member[0].click();
+    check('C8 pressing a member inserts its address',
+      page.IDS['task'].value.includes('@designer '),
+      JSON.stringify(page.IDS['task'].value));
+
+    // A memberless conversation offers no members: the picker is the
+    // room's, not a list bolted onto every composer.
+    const plain = boot({
+      documents: { state: (asked) => ({ ...emptyState(asked), session: asked }) }
+    });
+    await flush();
+    plain.open();
+    await flush();
+    plain.IDS['task'].value = '@des';
+    plain.fireOn('task', 'input');
+    await flush(40);
+    const plainRows = [...plain.IDS['commands'].children];
+    check('C8 an ordinary conversation offers no members',
+      !plainRows.some((one) => one.dataset.kind === 'member'),
+      plainRows.map((one) => one.dataset.kind).join(','));
+  }
+
+  // The room's byline (the huddles plan's C8): the replay carries each
+  // turn's author, so a room tells its members apart; a log with no author
+  // shows no line rather than an invented name.
+  async function aRoomBylineNamesItsAuthor() {
+    const page = boot({
+      documents: {
+        state: (asked) => ({
+          ...emptyState(asked), session: asked,
+          events: [
+            { type: 'message', role: 'owner', text: 'the brief' },
+            { type: 'message', role: 'assistant', text: 'Landed the first page.', persona: 'designer' },
+            { type: 'message', role: 'assistant', text: 'The hero reads thin.', persona: 'scholar' },
+            { type: 'message', role: 'assistant', text: 'A pre-P2 log, with no author.' }
+          ]
+        })
+      }
+    });
+    await flush();
+    page.open();
+    await flush();
+    const blocks = page.rows('.assistant.md-rendered');
+    check('C8 each replayed answer renders as one block',
+      blocks.length === 3, String(blocks.length));
+    const bylines = blocks.map((one) => one.find((kid) =>
+      String(kid.className || '').split(/\s+/).includes('byline')));
+    check('C8 the members’ turns carry their names',
+      bylines[0].length === 1 && String(bylines[0][0].textContent).includes('designer') &&
+        bylines[1].length === 1 && String(bylines[1][0].textContent).includes('scholar'),
+      bylines.map((b) => b.length + ':' + (b[0] ? b[0].textContent : '')).join('|'));
+    check('C8 an answer with no author shows no invented name',
+      bylines[2].length === 0, 'bylines=' + bylines[2].length);
+  }
+
   async function theBotsSurfaceMintsTheBotCard() {
     const page = boot({
       reply: {
@@ -7647,6 +7734,8 @@ const cases = [
   ['HUDDLES the rail carries the three states, member marks and deliverables', theHuddleRailCarriesTheThreeStates],
   ['C6 a deliverable posts in-line and opens the pane preview', anArtifactPostOpensThePanePreview],
   ['C8 the room head names its members and their voices', theRoomHeadNamesItsMembers],
+  ['C8 the @ picker offers the room’s members first', theRoomsAtPickerOffersItsMembers],
+  ['C8 a room bylines its members’ turns', aRoomBylineNamesItsAuthor],
   ['KI-380 the zombie tab cannot hide a seat or lose the reads', theZombieTabCannotHideASeatOrLoseTheReads],
   ['C1/C8 the list groups by attention and counts what the server counted', theListGroupsByAttentionAndCountsWhatTheServerCounted],
   ['C2 every state opens through one verb', everyStateOpensThroughOneVerb],

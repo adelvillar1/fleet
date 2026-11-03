@@ -8729,3 +8729,19 @@ body[data-work="collapsed"] .work-list { display: none; }
   text-transform: uppercase;
   color: var(--dsw-alias-ink-tertiary);
 }
+
+/* The room's byline: which member authored a turn (the huddles plan's C8).
+   Only rendered where the replay carries an author. */
+.byline {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0 0 4px;
+}
+.byline-who {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--dsw-alias-ink-tertiary);
+}
