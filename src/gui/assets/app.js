@@ -302,7 +302,7 @@
       function () { if (el.pane.hidden) openPane(); else closePane(); }],
     ['go', ['jump', 'open'], 'jump to a surface by name',
       function (rest) { if (rest) window.location.hash = '#/' + rest.trim().split(/\s+/)[0]; }],
-    ['compact', ['fold', 'summarise'], 'fold the conversation now, without waiting for the budget',
+    ['compact', ['fold', 'summarise'], 'fold the conversation at the next turn boundary, without waiting for the budget',
       function () {
         if (face.running || face.seat) {
           controlRun({ fold: true }, 'the fold is armed',
@@ -808,6 +808,10 @@
     // The messages typed while a run executes, in the owner's order:
     // one flushes per run, the head first.
     queued: [],
+    // The queued rows' rebuild guard: what the rows last said, in order.
+    // `paintQueue` runs on every event, and a rebuild between the
+    // owner's mousedown and mouseup eats the click on send, edit or drop.
+    queueKey: '',
     // The conversation's text size, as an index into CHAT_SCALES. The
     // owner's own, and remembered; only the transcript reads it.
     chatStep: CHAT_SCALE_DEFAULT,
@@ -3048,6 +3052,7 @@
     if (!items.length) {
       // An empty queue leaves no rows behind: the chip hides and the
       // list empties, so a stale row never survives its own removal.
+      face.queueKey = '';
       el.queueList.textContent = '';
       return;
     }
@@ -3058,6 +3063,15 @@
           ' \u00b7 this sends when it ends \u00b7 a reload drops it'
         : 'sends when the run ends \u00b7 a reload drops it';
     }
+    // The rebuild guard: these rows are destroyed and rebuilt here, and
+    // this paint runs on every event — during a run, that is many times
+    // a second, and a rebuild between the owner's mousedown and mouseup
+    // eats the click (the seat's own paint keys the same way). The key
+    // is what the rows say, in order; a new queue, and only a new queue,
+    // rebuilds.
+    var key = items.join('\u0000');
+    if (key === face.queueKey) return;
+    face.queueKey = key;
     el.queueList.textContent = '';
     items.forEach(function (text, index) {
       var row = node('div', 'queue-row');
@@ -8488,9 +8502,13 @@
       auto: 'everything runs except the destructive class, which still asks',
       full: 'nothing asks except the always-ask class \u2014 a standing risk'
     };
+    // The scope is the owner's to know: these choices ride the next run,
+    // and a run in flight keeps the mode it started with. Silence here
+    // read as the control being ignored.
+    var scope = ' \u00b7 applies to the next run';
     if (el.runPerms) {
       el.runPerms.dataset.mode = face.permissions;
-      el.runPerms.title = modes[face.permissions] || 'how much runs before asking';
+      el.runPerms.title = (modes[face.permissions] || 'how much runs before asking') + scope;
       if (!face.folder) el.runPerms.title += '; full access needs a working folder';
     }
     if (el.runProvider) {
@@ -9799,6 +9817,20 @@
     }
     return post('/api/resume', { session: id }).then(function (reply) {
       if (reply.status !== 200) {
+        // Opening a conversation whose run is in flight is a view, not a
+        // restart: the state read carries that run's own log and its
+        // seat, which is exactly what the owner opened it to see.
+        // Refusing the read here is what stranded a run — the seat was
+        // on the wire and the page showed nothing, so a stop could not
+        // reach it (the composer-actions plan's F2).
+        if (/run is in flight/.test((reply.body && reply.body.error) || '')) {
+          return Promise.resolve(load(true)).then(function () {
+            face.stick = true;
+            settle();
+            paintWork();
+            paintConvHead();
+          });
+        }
         notice('that conversation would not open',
           (reply.body && reply.body.error) || 'the face said no without a reason');
         return;

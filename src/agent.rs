@@ -6733,6 +6733,25 @@ fn parse_control(value: &serde_json::Value) -> Option<Control> {
     Some(Control::Steer(text.to_string()))
 }
 
+/// Whether the control file, read **without consuming it**, carries a
+/// stop.
+///
+/// The approval wait checks this while it waits for an answer: a stop the
+/// owner wrote is not an answer to the call the seat is asking about, it
+/// is a decision about the run. The wait ends and the call is refused —
+/// and the file is deliberately left in place, because the loop's own
+/// control read is what stops the run. Consuming it here would eat the
+/// stop and leave a run that refuses one call and carries on.
+pub fn control_file_stops(path: &std::path::Path) -> bool {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return false;
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return false;
+    };
+    matches!(parse_control(&value), Some(Control::Stop))
+}
+
 /// How long one steer reads before it is cut. A steer is an
 /// instruction, not a document; a novel belongs in the task, and an
 /// unbounded owner message is an unbounded context cost on every turn

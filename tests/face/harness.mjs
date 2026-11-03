@@ -538,6 +538,13 @@ function boot(options) {
       });
     }
     if (pathOnly === '/api/resume') {
+      // A case can stage the refusal the real bridge sends for a run in
+      // flight, and the face's answer — load the view anyway — is the
+      // thing under test.
+      const given = documents.resume;
+      if (given) {
+        return Promise.resolve({ status: given.status || 200, json: () => Promise.resolve(given.body || {}) });
+      }
       return Promise.resolve({ status: 200, json: () => Promise.resolve({ type: 'resume', agent: true, session: 'x' }) });
     }
     if (pathOnly === '/api/session/new') {
@@ -7154,6 +7161,155 @@ async function theConversationDensityHolds() {
     String(past.IDS['working-live'].hidden));
 }
 
+// C5 of the composer-actions plan: the queue's rows are rebuilt by every
+// paint, and `paint` runs on every event — during a run, many times a
+// second. A rebuild between the owner's mousedown and mouseup eats the
+// click, so send, edit and drop read as dead buttons. The rows rebuild
+// only when the queue actually changed.
+async function theQueueButtonsSurviveARepaint() {
+  const page = boot({
+    documents: {
+      state: { ...emptyState('q'), session: 'q', running: true },
+    },
+  });
+  page.open();
+  await flush(80);
+  // Two messages typed while the run is in flight: both queue.
+  page.IDS.task.value = 'first queued message';
+  page.fireOn('composer', 'submit', {});
+  await flush(40);
+  page.IDS.task.value = 'second queued message';
+  page.fireOn('composer', 'submit', {});
+  await flush(40);
+  check('C5 two messages queue while a run is in flight',
+    page.rows('.queue-row').length === 2,
+    String(page.rows('.queue-row').length));
+  // Events arrive — each one a repaint the rows used to be lost to.
+  page.push({ type: 'heartbeat' });
+  page.push({ type: 'turn', turn: 2 });
+  page.push({ type: 'heartbeat' });
+  await flush(60);
+  check('C5 the rows survive the run\u2019s own repaints',
+    page.rows('.queue-row').length === 2,
+    String(page.rows('.queue-row').length));
+  // Edit returns the words to the composer and takes the row out.
+  page.rows('.queue-edit')[0].fire('click');
+  await flush(60);
+  check('C5 edit returns the words to the composer',
+    page.IDS.task.value === 'first queued message' &&
+      page.rows('.queue-row').length === 1,
+    page.IDS.task.value);
+  // C3: the mode names its scope where it paints — the owner reads
+  // "applies to the next run" at the control itself.
+  check('C3 the mode names its scope where it paints',
+    (page.el('run-perms').title || '').includes('applies to the next run'),
+    page.el('run-perms') && page.el('run-perms').title);
+  // Drop removes a row.
+  page.rows('.queue-drop')[0].fire('click');
+  await flush(60);
+  check('C5 drop removes the row',
+    page.rows('.queue-row').length === 0,
+    String(page.rows('.queue-row').length));
+  // Send moves a row to the head of what is left.
+  page.IDS.task.value = 'third queued message';
+  page.fireOn('composer', 'submit', {});
+  page.IDS.task.value = 'fourth queued message';
+  page.fireOn('composer', 'submit', {});
+  await flush(40);
+  page.rows('.queue-send')[1].fire('click');
+  await flush(60);
+  check('C5 send moves the row to the head',
+    page.rows('.queue-row')[0].textContent.includes('fourth'),
+    page.rows('.queue-row')[0] && page.rows('.queue-row')[0].textContent);
+}
+
+// C2 of the composer-actions plan: a fresh load paints what the state
+// document carries — the transcript and a standing seat. A reload that
+// hid either would strand a run whose seat can no longer be answered
+// (the stop that cannot reach it).
+async function theReplayPaintsTheStateTheReadCarried() {
+  const page = boot({
+    documents: {
+      state: {
+        session: 'replay-1', running: true, driving: 'replay-1',
+        events: [
+          { type: 'skills', loaded: 2, skipped: [] },
+          { type: 'message', role: 'owner', text: 'list the directory' },
+          { type: 'turn', turn: 1 },
+          { type: 'tool_call', tool: 'list_dir', id: 'c1',
+            summary: 'list the directory' },
+        ],
+        approval: {
+          session: 'replay-1', since: 1, tool: 'list_dir', label: 'list_dir',
+          summary: 'list the directory', destructive: false, allowlistable: true,
+        },
+      },
+    },
+  });
+  page.open();
+  await flush(120);
+  const log = page.IDS['log'];
+  check('C2 the transcript paints the state\u2019s events',
+    log && log.textContent.includes('list the directory'),
+    log ? 'rows=' + log.children.length : 'no log');
+  check('C2 the seat renders its decisions',
+    page.IDS['seat'].hidden === false &&
+      page.rows('#seat-actions .decision').length >= 3,
+    'hidden=' + page.IDS['seat'].hidden);
+  check('C2 the face knows a run is in flight',
+    page.text('state-pill') !== 'idle', page.text('state-pill'));
+}
+
+// F2's second half, the live path: opening a conversation whose run is in
+// flight was refused by the resume, and the refusal skipped the state
+// read — an empty log, no seat, a composer that did not know to queue.
+// The refusal is the face's cue to load the view anyway.
+async function openingARunInFlightLoadsItsView() {
+  const page = boot({
+    documents: {
+      resume: {
+        status: 409,
+        body: { error: 'a run is in flight in that session; let it finish before resuming' },
+      },
+      state: (asked) => ({
+        ...emptyState(asked), session: asked, running: true, driving: asked,
+        events: [
+          { type: 'message', role: 'owner', text: 'the run in flight' },
+          { type: 'tool_call', tool: 'list_dir', id: 'c1', summary: 'list' },
+        ],
+        approval: {
+          session: asked, since: 1, tool: 'list_dir', label: 'list_dir',
+          summary: 'list', destructive: false, allowlistable: true,
+        },
+      }),
+    },
+  });
+  page.hash('#/sessions/run-in-flight');
+  page.open();
+  await flush(120);
+  check('CA2b the run in flight opens to its own log',
+    page.IDS['log'].textContent.includes('the run in flight'),
+    'rows=' + page.IDS['log'].children.length);
+  check('CA2b the seat it carries renders',
+    page.IDS['seat'].hidden === false &&
+      page.rows('#seat-actions .decision').length >= 3,
+    'hidden=' + page.IDS['seat'].hidden);
+  check('CA2b the composer knows to queue, not to run',
+    page.text('state-pill') !== 'idle', page.text('state-pill'));
+}
+
+// C3/C4 of the composer-actions plan: a control that cannot act now says
+// when it will. The mode and the provider pin ride the next run — the
+// titles carry it — and /compact folds at the turn boundary, not "now".
+async function theRunScopedControlsSayTheirScope() {
+  check('C3 the mode and the pin name their scope',
+    HTML.includes('applies to the next run') && SRC.includes('applies to the next run'),
+    'the titles and the paint carry it');
+  check('C4 /compact names the turn boundary it folds at',
+    SRC.includes('fold the conversation at the next turn boundary'),
+    'the command\u2019s own words');
+}
+
 const cases = [
   ['PLUGINS the management surface and the two tiers\' frames', thePluginsSurfaceManagesTheChains],
   ['KI-380 the zombie tab cannot hide a seat or lose the reads', theZombieTabCannotHideASeatOrLoseTheReads],
@@ -7217,6 +7373,10 @@ const cases = [
   ['NAME the conversation names themselves by their work', theConversationNamesThemselvesByTheirWork],
   ['FOLD the freshness surfaces read the fold count', theFreshnessSurfacesReadTheFoldCount],
   ['D1 the conversation density holds', theConversationDensityHolds],
+  ['CA5 the queue\u2019s buttons survive a repaint', theQueueButtonsSurviveARepaint],
+  ['CA2 a fresh load paints the state\u2019s transcript and seat', theReplayPaintsTheStateTheReadCarried],
+  ['CA2b opening a run in flight loads its view', openingARunInFlightLoadsItsView],
+  ['CA3/CA4 the run-scoped controls say their scope', theRunScopedControlsSayTheirScope],
 ];
 
 for (const [name, run] of cases) {

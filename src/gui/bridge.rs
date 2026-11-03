@@ -4183,6 +4183,20 @@ impl Bridge {
             driving
         };
         crate::delegate::write_control(&self.home, &session, steer)?;
+        // A stop resolves the seat it finds waiting: the owner has
+        // replaced the answer with a decision about the run. The wait ends
+        // through the control file the approver checks, and the broadcast
+        // closes the seat on every surface, naming the stop as the reason —
+        // a stop is not the owner declining the call.
+        let resolved = if steer.is_none() {
+            let mut state = lock(&self.state);
+            let attached = state.attached(&session);
+            let seat = attached.seat.take();
+            attached.seat_at = 0;
+            seat
+        } else {
+            None
+        };
         let kind = if steer.is_some() { "steer" } else { "stop" };
         let value = json!({
             "type": "control",
@@ -4191,6 +4205,20 @@ impl Bridge {
             "steer": steer,
         });
         record(&self.state, &self.events, &session, value.clone());
+        if let Some(seat) = resolved {
+            // The responder is dropped, not answered: the approver's own
+            // control check refuses the call, and the denial the model
+            // reads names the stop rather than a user who was never asked.
+            let _ = self.events.send(json!({
+                "type": "answered",
+                "session": session,
+                "decision": "deny",
+                "by": "the stop you pressed",
+                "reason": "closed by the stop — the run ends at its next step",
+                "tool": seat.call.function.name,
+                "summary": seat.summary,
+            }));
+        }
         Ok(value)
     }
 
@@ -10063,22 +10091,38 @@ pub struct GuiApprover {
     /// The run-scoped "allow everything" latch, reported through
     /// [`Approver::latched`] exactly as the console's and the TUI's are.
     always: bool,
+    /// The session's control file, checked **without consuming it** while
+    /// a seat waits: a stop the owner wrote mid-wait is a decision about
+    /// the run, not an answer to the call, and it ends the wait.
+    control_path: std::path::PathBuf,
+    /// Set when a refusal came from that control file rather than the
+    /// owner's answer, so the denial the model reads names the stop.
+    stop_seen: bool,
 }
 
 impl GuiApprover {
-    /// An approver in `mode` that prompts `requests` and consults
-    /// `rules` first.
+    /// An approver in `mode` that prompts `requests`, consults `rules`
+    /// first, and ends its wait when the control file carries a stop.
     pub fn new(
         requests: UnboundedSender<ApprovalRequest>,
         rules: Arc<Mutex<approvals::Rules>>,
         mode: approvals::Mode,
+        control_path: std::path::PathBuf,
     ) -> GuiApprover {
         GuiApprover {
             requests,
             rules,
             gate: approvals::Gate::new(mode),
             always: false,
+            control_path,
+            stop_seen: false,
         }
+    }
+
+    /// Whether the run's control file now carries a stop — read without
+    /// consuming, so the loop's own control read is what stops the run.
+    fn stop_pending(&self) -> bool {
+        crate::agent::control_file_stops(&self.control_path)
     }
 }
 
@@ -10086,6 +10130,14 @@ impl Approver for GuiApprover {
     fn approve(&mut self, call: &ToolCall) -> bool {
         if self.always {
             return true;
+        }
+        // A stop written while this call waited is a decision about the
+        // run, not an answer to the call: the wait ends, the call is
+        // refused, and the file is left for the loop's own control read,
+        // which stops the run before another token is spent.
+        if self.stop_pending() {
+            self.stop_seen = true;
+            return false;
         }
         // The lock is taken, read, and dropped before the prompt: the
         // seat's `remember` swaps this same mutex, and holding it across
@@ -10110,15 +10162,37 @@ impl Approver for GuiApprover {
         if self.requests.send(request).is_err() {
             return false;
         }
-        match decision.recv() {
-            Ok(Approval::Always) => {
-                self.always = true;
-                true
+        // The wait polls rather than blocking on one recv, so a control
+        // the owner writes mid-wait is seen: the stop ends the wait (the
+        // bridge's own resolution closes the seat and names it), and the
+        // file is left for the loop's read.
+        loop {
+            if self.stop_pending() {
+                self.stop_seen = true;
+                return false;
             }
-            Ok(Approval::Once) => true,
-            // A dropped responder or an explicit denial.
-            _ => false,
+            match decision.try_recv() {
+                Ok(Approval::Always) => {
+                    self.always = true;
+                    return true;
+                }
+                Ok(Approval::Once) => return true,
+                Ok(Approval::Denied) => return false,
+                // A dropped responder is an explicit denial: the seat was
+                // resolved by its owner.
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => return false,
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    std::thread::sleep(std::time::Duration::from_millis(120));
+                }
+            }
         }
+    }
+
+    fn denial_reason(&self) -> Option<String> {
+        if self.stop_seen {
+            return Some("denied: the run was stopped by the owner.".to_string());
+        }
+        None
     }
 
     fn latched(&self) -> bool {
@@ -10485,10 +10559,15 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
                             plan_mode,
                         };
                         let mode = lock(&state).permissions;
+                        // The seat's wait watches this run's control file,
+                        // so a stop the owner writes mid-wait ends it.
+                        let control_path =
+                            session::session_path(&home, &driving).with_extension("control");
                         let approver: Box<dyn Approver> = Box::new(GuiApprover::new(
                             approval_tx.clone(),
                             Arc::clone(&rules),
                             mode,
+                            control_path,
                         ));
                         // Progress text has a sink here: the page renders
                         // the events, and the log records exactly what
@@ -11742,6 +11821,114 @@ mod tests {
                 .contains("no session log yet"),
             "a faceless run refuses a control"
         );
+    }
+
+    /// C0 of the composer-actions plan: a stop written while a seat waits
+    /// ends the wait. The owner has replaced the answer with a decision
+    /// about the run, so the seat is resolved — named as the stop, not as
+    /// the owner declining the call — and the control file is left for
+    /// the loop's own read, which is what stops the run.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_stop_resolves_a_waiting_seat_and_names_itself_the_reason() {
+        let (bridge, sources, _door) = bridge().await;
+        let log = Session::create(&bridge.home, "deepseek-flash").expect("the log");
+        let id = log.id().to_string();
+        drop(log);
+        bridge.drive(&id);
+        lock(&bridge.state).attached(&id).running = true;
+
+        // A seat is waiting: the agent's approve sent it through the
+        // fan-out, and it stands until it is answered.
+        let shell = call("bash", r#"{"command":"cargo test"}"#);
+        let (responder, reply) = std::sync::mpsc::channel();
+        sources
+            .seat
+            .send(ApprovalRequest {
+                call: shell.clone(),
+                summary: "run cargo test".to_string(),
+                responder,
+            })
+            .expect("the seat arrives");
+        for _ in 0..50 {
+            if bridge.state(&id)["approval"].is_object() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(
+            bridge.state(&id)["approval"].is_object(),
+            "the seat is waiting"
+        );
+
+        let stop = bridge.stop(None).expect("the stop lands");
+        assert_eq!(stop["kind"], "stop");
+        // The seat clears, and the wait ends in a refusal: the responder
+        // is dropped rather than answered, so the approver's own control
+        // check is what the denial names.
+        assert!(bridge.state(&id)["approval"].is_null(), "the seat clears");
+        assert!(
+            reply.recv().is_err(),
+            "the wait ends without a decision on the call"
+        );
+        // The control file is left for the loop's own read — consuming it
+        // here would eat the stop and leave a run that refuses one call
+        // and carries on.
+        let control = crate::home::sessions_dir(&bridge.home).join(format!("{id}.control"));
+        assert_eq!(
+            std::fs::read_to_string(&control)
+                .expect("the standing control")
+                .trim(),
+            r#"{"stop":true}"#
+        );
+    }
+
+    /// C1 of the same plan: the controls that mean the run should
+    /// continue — a pause, a fold, a pin, a steer — are written while a
+    /// seat waits, and the seat stays standing for the answer the owner
+    /// still owes. Only a stop resolves the seat.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_controls_that_continue_are_not_lost_while_a_seat_waits() {
+        let (bridge, sources, _door) = bridge().await;
+        let log = Session::create(&bridge.home, "deepseek-flash").expect("the log");
+        let id = log.id().to_string();
+        drop(log);
+        bridge.drive(&id);
+        lock(&bridge.state).attached(&id).running = true;
+        let shell = call("bash", r#"{"command":"cargo test"}"#);
+        let (responder, reply) = std::sync::mpsc::channel();
+        sources
+            .seat
+            .send(ApprovalRequest {
+                call: shell.clone(),
+                summary: "run cargo test".to_string(),
+                responder,
+            })
+            .expect("the seat arrives");
+        for _ in 0..50 {
+            if bridge.state(&id)["approval"].is_object() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        let control = crate::home::sessions_dir(&bridge.home).join(format!("{id}.control"));
+        for body in [
+            serde_json::json!({"pause": true}),
+            serde_json::json!({"fold": true}),
+            serde_json::json!({"pin": "zai-coding-plan"}),
+            serde_json::json!({"steer": "read the gate first"}),
+        ] {
+            bridge.control(&body).expect("the control lands");
+            let written = std::fs::read_to_string(&control).expect("the control file");
+            assert_eq!(written.trim(), body.to_string(), "{body}");
+            assert!(
+                bridge.state(&id)["approval"].is_object(),
+                "the seat stays standing: the owner still owes the answer"
+            );
+            assert!(
+                reply.try_recv().is_err(),
+                "the wait is not ended by a control that means continue"
+            );
+        }
     }
 
     /// A control written while the route is being judged is never read

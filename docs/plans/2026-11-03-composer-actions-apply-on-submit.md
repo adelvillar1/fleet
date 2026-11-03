@@ -1,5 +1,5 @@
 ---
-status: draft
+status: completed
 created: 2026-11-03
 updated: 2026-11-03
 slug: composer-actions-apply-on-submit
@@ -89,33 +89,33 @@ installation's run-policy wording land with F3, not in a finale.
 
 ## Acceptance criteria
 
-- [ ] **C0 — a stop ends the run with a seat pending.** With a seat
+- [x] **C0 — a stop ends the run with a seat pending.** With a seat
       waiting, `POST /api/stop` ends the run without the seat being
       answered: the run's `finished`/`failed` record lands, `running`
       clears, and the seat is resolved and named. Pinned by a test that
       raises a seat, writes a stop, and asserts the run ends with no
       answer sent.
-- [ ] **C1 — the other controls still apply, and are not lost.** A steer,
+- [x] **C1 — the other controls still apply, and are not lost.** A steer,
       pause, fold or pin written while a seat waits is applied at the next
       boundary after the seat is answered, and is not silently dropped.
       Pinned by a test per control.
-- [ ] **C2 — a reload is honest.** On a fresh page load with a state
+- [x] **C2 — a reload is honest.** On a fresh page load with a state
       document carrying events and a standing `approval`, the conversation
       paints its transcript and the seat renders its decisions. Pinned by
       a face-harness case over a state document with both.
-- [ ] **C3 — a run-scoped control says its scope.** The mode, provider
+- [x] **C3 — a run-scoped control says its scope.** The mode, provider
       pin, plan mode and turn budget each name whether they apply now or
       to the next run, and the behaviour matches the words. Pinned by the
       face harness over each control's title and the run request it
       produces.
-- [ ] **C4 — `/compact` tells the truth.** Its description names the turn
+- [x] **C4 — `/compact` tells the truth.** Its description names the turn
       boundary it folds at. Pinned by the command-help text.
-- [ ] **C5 — the queue's buttons survive a repaint.** With rows queued
+- [x] **C5 — the queue's buttons survive a repaint.** With rows queued
       and events arriving, a click on send, edit or drop lands and takes
       effect. Pinned by a face-harness case that queues rows, drives
       events through the reducer, and asserts the row count and the
       composer after each press.
-- [ ] **C6 — the gate is green.** fmt, clippy `-D warnings`, release
+- [x] **C6 — the gate is green.** fmt, clippy `-D warnings`, release
       build, and the suite, each read by exit code (KI-014).
 
 ## Files to be touched
