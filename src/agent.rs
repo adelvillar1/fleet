@@ -286,16 +286,33 @@ pub const SKILLS_PROMPT_CAP: usize = 60;
 /// recent work is the likely match — and the cap keeps the prompt's
 /// cost bounded. The prompt and the `skills` record read the same list,
 /// so the log pins what the model saw.
-fn declared_skills(skills: &[crate::skills::Skill]) -> Vec<&crate::skills::Skill> {
-    let mut skills: Vec<&crate::skills::Skill> = skills.iter().collect();
-    skills.sort_by(|left, right| {
+/// The declaration with a room's own skills leading (the huddles plan's
+/// C4): the members' assigned names first, in the order their roles named
+/// them, then the rest newest-first under the same cap. Without a room the
+/// list is exactly what it has always been.
+fn declared_skills_priority<'a>(
+    skills: &'a [crate::skills::Skill],
+    priority: &[String],
+) -> Vec<&'a crate::skills::Skill> {
+    let mut ordered: Vec<&crate::skills::Skill> = Vec::with_capacity(skills.len());
+    for name in priority {
+        if let Some(skill) = skills.iter().find(|skill| &skill.name == name) {
+            ordered.push(skill);
+        }
+    }
+    let mut rest: Vec<&crate::skills::Skill> = skills
+        .iter()
+        .filter(|skill| !priority.contains(&skill.name))
+        .collect();
+    rest.sort_by(|left, right| {
         right
             .modified
             .cmp(&left.modified)
             .then_with(|| left.name.cmp(&right.name))
     });
-    skills.truncate(SKILLS_PROMPT_CAP);
-    skills
+    ordered.extend(rest);
+    ordered.truncate(SKILLS_PROMPT_CAP);
+    ordered
 }
 
 /// The one logged line when the library is bigger than the cap, naming
@@ -1192,6 +1209,17 @@ fn vision_roster(client: &crate::api::Client) -> Vec<crate::route::Resolved> {
         .unwrap_or_default()
 }
 
+/// One member's contract, resolved from its role at run start (the
+/// huddles plan's C4): the tools its turns admit and the skills its turns
+/// can load. An empty field means the role narrows nothing — a role that
+/// names no tools leaves the huddle's own standing, and a role that names
+/// no skills adds nothing to the room's library.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct PersonaBrief {
+    pub tools: Vec<String>,
+    pub skills: Vec<String>,
+}
+
 /// Runs tasks against the API with the built-in tools.
 pub struct Agent<'a> {
     client: &'a Client,
@@ -1306,6 +1334,16 @@ pub struct Agent<'a> {
     /// A bot addressed `@you`; the run ends after this turn rather than
     /// continuing autonomously past a question only the owner can answer.
     await_owner: bool,
+    /// Each member's contract (C4), keyed by persona name. Resolved once at
+    /// run start beside the overlays.
+    persona_briefs: std::collections::HashMap<String, PersonaBrief>,
+    /// The skill names every member's role assigned, in join order (C4).
+    /// They lead the run's declaration so the prompt cap keeps them in.
+    priority_skills: Vec<String>,
+    /// The names the last `Declarations` record wrote. A speaker switch
+    /// re-declares only when the admitted set actually moved, so the log's
+    /// snapshot stays the prompt's truth rather than accumulating noise.
+    declared_names: Vec<String>,
     /// Plan mode: the write-class tools are refused at the gate.
     plan_mode: bool,
     /// The API-reported `prompt_tokens` of the last response, or `None`
@@ -1424,7 +1462,6 @@ impl<'a> Agent<'a> {
         let ui_tx = options.ui_tx.clone();
         let skills = options.skills.clone();
         let memory = options.memory.clone();
-        let scope = options.scope.clone();
         let improve_home = options.improve_home.clone();
         // Read before the options are consumed by the roster below: the
         // forced-fold flag is a copy, not a move.
@@ -1478,10 +1515,11 @@ impl<'a> Agent<'a> {
             .filter(|member| *member != crate::session::MENTION_OWNER && personas.contains(member))
             .cloned()
             .or_else(|| lead_persona.clone());
-        // Each member's voice, resolved once here rather than per turn: a
-        // role that does not resolve simply has no entry, and the prompt
-        // falls back to the bridge-resolved lead overlay.
+        // Each member's voice and contract, resolved once here rather than
+        // per turn: a role that does not resolve simply has no entry, and
+        // the prompt falls back to the bridge-resolved lead overlay.
         let mut persona_overlays = std::collections::HashMap::new();
+        let mut persona_briefs = std::collections::HashMap::new();
         if let Some(home) = options.improve_home.as_ref() {
             for name in &personas {
                 if let Ok(role) = crate::roles::load(home, name) {
@@ -1489,9 +1527,43 @@ impl<'a> Agent<'a> {
                     if !frame.is_empty() {
                         persona_overlays.insert(name.clone(), frame);
                     }
+                    persona_briefs.insert(
+                        name.clone(),
+                        PersonaBrief {
+                            tools: role.tools.clone(),
+                            skills: role.skills.clone(),
+                        },
+                    );
                 }
             }
         }
+        // The room's assigned skills (C4): each member's role names the
+        // skills its turns can reach, and together they lead the run's
+        // declaration, so the prompt's cap never pushes a member's own
+        // skill out of sight. The library itself is unchanged — this is an
+        // ordering, not an addition.
+        let mut priority_skills: Vec<String> = Vec::new();
+        for name in &personas {
+            if let Some(brief) = persona_briefs.get(name) {
+                for skill in &brief.skills {
+                    if !priority_skills.contains(skill) {
+                        priority_skills.push(skill.clone());
+                    }
+                }
+            }
+        }
+        // The opening speaker's tool scope: a role that names tools
+        // narrows its turns; a role that names none leaves the huddle's
+        // own standing, and an ordinary conversation keeps its own scope.
+        let speaker_scope = match active_speaker
+            .as_deref()
+            .and_then(|name| persona_briefs.get(name))
+        {
+            Some(brief) if !brief.tools.is_empty() => {
+                Some(crate::subagents::Scope::child(Some(brief.tools.clone()), 0))
+            }
+            _ => options.scope.clone(),
+        };
         // An injected spec map wins for the lanes it names; every other
         // lane resolves through the vendored registry at call time, with
         // its named reason when it cannot launch.
@@ -1550,7 +1622,7 @@ impl<'a> Agent<'a> {
             processes: std::sync::Arc::new(crate::processes::Registry::new()),
             skills,
             memory,
-            scope,
+            scope: speaker_scope,
             calib,
             message_turns: turns,
             next_turn,
@@ -1563,6 +1635,9 @@ impl<'a> Agent<'a> {
             active_speaker,
             persona_overlays,
             await_owner: false,
+            persona_briefs,
+            priority_skills,
+            declared_names: Vec::new(),
             plan_mode,
             last_prompt_tokens: None,
             turn_curve: Vec::new(),
@@ -1604,7 +1679,7 @@ impl<'a> Agent<'a> {
         // Once per run, which is why this wrapper keeps the side effect
         // and the per-turn builder below stays pure.
         if self.options.ui_tx.is_none() {
-            let declared = declared_skills(&self.skills).len();
+            let declared = self.declared().len();
             if let Some(line) = skills_prompt_growth_line(self.skills.len(), declared) {
                 eprintln!("{line}");
             }
@@ -1634,6 +1709,13 @@ impl<'a> Agent<'a> {
         }
     }
 
+    /// The skills this run declares: the room's assigned skills first
+    /// (C4), then the newest of the rest, capped. Both the prompt and the
+    /// `skills` record read this list, so the log pins what the model saw.
+    fn declared(&self) -> Vec<&crate::skills::Skill> {
+        declared_skills_priority(&self.skills, &self.priority_skills)
+    }
+
     /// The prompt a turn's request — and the compaction estimate — reads:
     /// the active speaker's assembly for a huddle, whose overlay can move
     /// mid-run, and the run's single build otherwise, byte for byte what
@@ -1654,7 +1736,8 @@ impl<'a> Agent<'a> {
         memory_block: Option<&str>,
         role_overlay: Option<&str>,
     ) -> String {
-        let refs: Vec<crate::skills::SkillRef> = declared_skills(&self.skills)
+        let refs: Vec<crate::skills::SkillRef> = self
+            .declared()
             .into_iter()
             .map(|skill| skill.into())
             .collect();
@@ -2556,7 +2639,8 @@ impl<'a> Agent<'a> {
         if let Some(goal) = &self.options.goal {
             self.record(&Record::Goal { text: goal.clone() })?;
         }
-        let declared_refs: Vec<crate::skills::SkillRef> = declared_skills(&self.skills)
+        let declared_refs: Vec<crate::skills::SkillRef> = self
+            .declared()
             .into_iter()
             .map(crate::skills::SkillRef::from)
             .collect();
@@ -2600,17 +2684,8 @@ impl<'a> Agent<'a> {
         // list is computed from the same declarations() the request
         // reads, so the log and the wire cannot disagree.
         {
-            let (specs, withheld) = self.declaration_set();
-            let names: Vec<String> = specs.iter().map(|spec| spec.name().to_string()).collect();
-            let tier = if !withheld.is_empty() {
-                // The core's own tail was withheld: the record names both
-                // sides — what the model saw and what it did not.
-                "curated"
-            } else if names.iter().any(|name| name == tools::TOOL_SEARCH_TOOL) {
-                "deferred"
-            } else {
-                "core"
-            };
+            let (names, withheld, tier) = self.declaration_snapshot();
+            self.declared_names = names.clone();
             self.record(&Record::Declarations {
                 names,
                 tier: tier.to_string(),
@@ -2892,7 +2967,6 @@ impl<'a> Agent<'a> {
             let assistant_text = message.content.clone().unwrap_or_default();
             self.tool_calls_run += tool_calls.len() as u64;
             self.push_message(message)?;
-            self.route_mention(&assistant_text)?;
             // The batch: the gate one call at a time, the approved calls
             // under the plan, every result recorded in the batch's own
             // order. The recursion this loop carries — a delegation runs
@@ -2901,6 +2975,11 @@ impl<'a> Agent<'a> {
             // `execute_calls`, the same indirection `api::chat_stream`
             // needed when the router called back into it.
             self.execute_calls(&tool_calls).await?;
+            // Routed after the batch, not before it: the calls on the wire
+            // were requested under the speaker's own scope, and gating them
+            // against the next speaker's would refuse work already asked
+            // for.
+            self.route_mention(&assistant_text)?;
             // A bot that addressed the owner has asked something only they
             // can answer; continuing would spend turns past the question.
             if self.await_owner {
@@ -5065,7 +5144,7 @@ impl<'a> Agent<'a> {
                             from: None,
                             at: crate::boards::now_stamp(),
                         })?;
-                        self.active_speaker = Some(member.to_string());
+                        self.apply_speaker(member)?;
                     }
                 }
             }
@@ -5111,9 +5190,52 @@ impl<'a> Agent<'a> {
         if mentions_owner {
             self.await_owner = true;
         } else {
-            self.active_speaker = Some(member.to_string());
+            self.apply_speaker(member)?;
         }
         Ok(())
+    }
+
+    /// Apply the speaker's contract for the turns ahead (C4): their role's
+    /// tools narrow the admitted set, and the declaration snapshot is
+    /// re-recorded only when the admitted names actually moved, so the
+    /// log stays the prompt's truth rather than accumulating noise. The
+    /// skill list needs no per-turn change — the room's union already
+    /// carries every member's skills.
+    fn apply_speaker(&mut self, member: &str) -> Result<(), AgentError> {
+        self.active_speaker = Some(member.to_string());
+        let brief = self.persona_briefs.get(member).cloned().unwrap_or_default();
+        self.scope = if brief.tools.is_empty() {
+            // A role that narrows nothing leaves the huddle's own standing.
+            None
+        } else {
+            Some(crate::subagents::Scope::child(Some(brief.tools), 0))
+        };
+        let (names, withheld, tier) = self.declaration_snapshot();
+        if names != self.declared_names {
+            self.declared_names = names.clone();
+            self.record(&Record::Declarations {
+                names,
+                tier: tier.to_string(),
+                withheld,
+            })?;
+        }
+        Ok(())
+    }
+
+    /// The declaration snapshot and its tier word, read off the current
+    /// scope: the names the model sees, the core tail it does not, and
+    /// whether the surface was curated, deferred, or plain core.
+    fn declaration_snapshot(&self) -> (Vec<String>, Vec<String>, &'static str) {
+        let (specs, withheld) = self.declaration_set();
+        let names: Vec<String> = specs.iter().map(|spec| spec.name().to_string()).collect();
+        let tier = if !withheld.is_empty() {
+            "curated"
+        } else if names.iter().any(|name| name == tools::TOOL_SEARCH_TOOL) {
+            "deferred"
+        } else {
+            "core"
+        };
+        (names, withheld, tier)
     }
 }
 
@@ -9237,6 +9359,112 @@ mod tests {
     }
 
     #[test]
+    fn a_rooms_assigned_skills_lead_the_declaration() {
+        // C4: a member's role-assigned skills lead the run's declaration,
+        // so the prompt's cap never pushes a member's own skill out of
+        // sight — the oldest of them still makes the cut ahead of the
+        // newest the room did not name.
+        let skills: Vec<crate::skills::Skill> = (0..70)
+            .map(|index| crate::skills::Skill {
+                name: format!("skill-{index:02}"),
+                description: "a description".to_string(),
+                body: "body".to_string(),
+                path: std::path::PathBuf::from("/x/SKILL.md"),
+                modified: Some(
+                    std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(index),
+                ),
+            })
+            .collect();
+        let declared = declared_skills_priority(&skills, &["skill-00".to_string()]);
+        assert_eq!(declared.len(), SKILLS_PROMPT_CAP);
+        assert_eq!(
+            declared[0].name, "skill-00",
+            "the room's own skill leads, whatever its age"
+        );
+        // One held-back slot returns to the room: the tail shifts by one,
+        // so the next-oldest unnamed skill is what waits outside now.
+        assert!(
+            !declared.iter().any(|skill| skill.name == "skill-01"),
+            "the room's own skill took one slot from the tail"
+        );
+        // Without a room the newest leads, exactly as it always has.
+        let plain = declared_skills_priority(&skills, &[]);
+        assert_eq!(plain[0].name, "skill-69");
+    }
+
+    #[tokio::test]
+    async fn a_members_tools_narrow_their_turns() {
+        // C4: a role that names tools admits exactly those for its turns;
+        // a role that names none leaves the huddle's own standing, and the
+        // declaration record follows the change so the log stays the
+        // prompt's truth.
+        let m = fold_mock("done");
+        let home = scratch("speaker-scope");
+        std::fs::create_dir_all(home.join("roles")).unwrap();
+        std::fs::write(
+            home.join("roles/designer.md"),
+            "---\nname: designer\ndescription: makes pages\ntools: read_file, write_file\n---\nThe designer's voice.\n",
+        )
+        .unwrap();
+        let mut session = crate::session::Session::create_with_persona(
+            &home,
+            "m",
+            Some(vec!["tower".to_string()]),
+        )
+        .unwrap();
+        session
+            .record(&Record::Join {
+                persona: "designer".to_string(),
+                role: None,
+                at: "2026-11-03T14:00:00Z".to_string(),
+            })
+            .unwrap();
+        let path = session.path().to_path_buf();
+        let client = Client::new(format!("http://127.0.0.1:{}", m.port), "test-key");
+        let mut options = routing_options("m");
+        options.improve_home = Some(home.clone());
+        let progress: &'static mut Vec<u8> = Box::leak(Box::new(Vec::new()));
+        let mut agent = Agent::new(
+            &client,
+            options,
+            &mut session,
+            Box::new(ApproveAll),
+            &mut *progress,
+        )
+        .unwrap();
+        // The lead has no role file, so the huddle's standing holds.
+        assert!(agent.scope.is_none(), "no brief, no narrowing");
+        assert!(
+            agent
+                .declarations()
+                .iter()
+                .any(|spec| spec.name() == "bash"),
+            "the whole set is admitted"
+        );
+        // The designer's turns carry exactly what the role names.
+        agent.apply_speaker("designer").expect("the brief applies");
+        let specs = agent.declarations();
+        let names: Vec<&str> = specs.iter().map(|spec| spec.name()).collect();
+        assert!(names.contains(&"read_file"));
+        assert!(names.contains(&"write_file"));
+        assert!(!names.contains(&"bash"), "the role narrows the set");
+        drop(agent);
+        // The declaration record followed the switch, naming what the
+        // model saw under the new speaker.
+        let records = crate::session::replay(&path).expect("the log replays");
+        let declarations: Vec<_> = records
+            .iter()
+            .filter_map(|record| match record {
+                Record::Declarations { names, .. } => Some(names.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(declarations.len(), 1, "one switch, one snapshot");
+        assert!(!declarations[0].iter().any(|name| name == "bash"));
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
     fn the_declared_list_is_the_newest_under_the_cap_and_the_line_names_the_rest() {
         // C1: 70 skills in the library declare the newest 60 — the
         // prompt is not the library — and the growth line names how many
@@ -9253,7 +9481,7 @@ mod tests {
                 ),
             })
             .collect();
-        let declared = declared_skills(&skills);
+        let declared = declared_skills_priority(&skills, &[]);
         assert_eq!(declared.len(), SKILLS_PROMPT_CAP);
         assert_eq!(declared[0].name, "skill-69", "the newest is first");
         assert!(
