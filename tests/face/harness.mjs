@@ -4474,6 +4474,45 @@ async function theStrategyStepShowsItsPreview() {
       rows[0].className);
   }
 
+  // The deliverable post (the huddles plan's C6): a file handed over renders
+  // as one in-line card where it landed, and its press opens the pane's
+  // preview for that exact path — the same delivery every session makes,
+  // pinned here for the room.
+  async function anArtifactPostOpensThePanePreview() {
+    const page = boot({
+      documents: {
+        state: (asked) => ({
+          ...emptyState(asked), session: asked,
+          events: [
+            { type: 'message', role: 'owner', text: 'the brief' },
+            { type: 'artifact', path: '/tmp/landing.html', size: 12697, note: 'the page itself' },
+            { type: 'message', role: 'assistant', text: 'Landed the first page.' }
+          ]
+        })
+      }
+    });
+    await flush();
+    page.open();
+    await flush();
+    const cards = page.rows('.card-row').filter((one) =>
+      one.dataset && one.dataset.kind === 'artifact');
+    check('C6 the deliverable renders as one in-line card',
+      cards.length === 1, 'cards=' + cards.length);
+    check('C6 the card names the file it delivered',
+      cards.length === 1 && String(cards[0].textContent).includes('/tmp/landing.html'),
+      cards.length ? String(cards[0].textContent) : 'no card');
+    if (!cards.length) return;
+    const open = cards[0].find((one) => one.className === 'card-open')[0];
+    check('C6 the card carries one open press', !!open, 'no press');
+    if (open) open.click();
+    await flush();
+    const opened = page.calls.filter((c) =>
+      c.url.indexOf('/api/file?path=') === 0 &&
+      decodeURIComponent(c.url.split('path=')[1] || '') === '/tmp/landing.html');
+    check('C6 the press opens the pane on that exact file',
+      opened.length === 1, JSON.stringify(page.calls.map((c) => c.url)));
+  }
+
   async function theBotsSurfaceMintsTheBotCard() {
     const page = boot({
       reply: {
@@ -7554,6 +7593,7 @@ async function theConnectCardSaysWhatHappened() {
 const cases = [
   ['PLUGINS the management surface and the two tiers\' frames', thePluginsSurfaceManagesTheChains],
   ['HUDDLES the rail carries the three states, member marks and deliverables', theHuddleRailCarriesTheThreeStates],
+  ['C6 a deliverable posts in-line and opens the pane preview', anArtifactPostOpensThePanePreview],
   ['KI-380 the zombie tab cannot hide a seat or lose the reads', theZombieTabCannotHideASeatOrLoseTheReads],
   ['C1/C8 the list groups by attention and counts what the server counted', theListGroupsByAttentionAndCountsWhatTheServerCounted],
   ['C2 every state opens through one verb', everyStateOpensThroughOneVerb],
