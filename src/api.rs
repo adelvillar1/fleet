@@ -638,7 +638,11 @@ impl Client {
         api_key: impl Into<String>,
         headers: Vec<(String, String)>,
     ) -> Client {
-        let base_url = base_url.into().trim_end_matches('/').to_string();
+        // A pasted endpoint (`…/v1/chat/completions`) is normalized to the
+        // base it names: the request paths are built as `{base}/…`, so an
+        // unnormalized paste would ask `…/chat/completions/chat/completions`.
+        let base_url: String = base_url.into();
+        let base_url = crate::settings::normalize_base_url(&base_url);
         Client {
             base_url,
             api_key: api_key.into(),

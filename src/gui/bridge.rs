@@ -7147,8 +7147,14 @@ fn built_ins_value(home: &std::path::Path) -> Value {
     let lanes = lanes_document(home);
     if let Some(rows) = lanes.get("lanes").and_then(|lanes| lanes.as_array()) {
         for lane in rows {
-            let name = lane.get("name").and_then(|n| n.as_str()).unwrap_or_default();
-            let role = lane.get("role").and_then(|n| n.as_str()).unwrap_or_default();
+            let name = lane
+                .get("name")
+                .and_then(|n| n.as_str())
+                .unwrap_or_default();
+            let role = lane
+                .get("role")
+                .and_then(|n| n.as_str())
+                .unwrap_or_default();
             let (state, detail) = match lane.get("unavailable").and_then(|u| u.as_str()) {
                 Some(reason) => ("unavailable".to_string(), reason.to_string()),
                 None => match lane.get("resolved_home").and_then(|h| h.as_str()) {
@@ -7169,7 +7175,10 @@ fn built_ins_value(home: &std::path::Path) -> Value {
     let servers = servers_document(home);
     if let Some(rows) = servers.get("servers").and_then(|s| s.as_array()) {
         for server in rows {
-            let name = server.get("name").and_then(|n| n.as_str()).unwrap_or_default();
+            let name = server
+                .get("name")
+                .and_then(|n| n.as_str())
+                .unwrap_or_default();
             let enabled = server
                 .get("enabled")
                 .and_then(|e| e.as_bool())
@@ -8658,6 +8667,10 @@ fn settings_provider_write(
                 "discovery": discovery.map(|discovered| json!({
                     "ok": discovered.ok,
                     "error": discovered.error,
+                    // What the listing actually answered, so the card can
+                    // say how many models landed rather than asserting it.
+                    "models": discovered.models,
+                    "settings_written": discovered.settings_written,
                 })),
             }))
         }

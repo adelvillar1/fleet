@@ -1837,7 +1837,7 @@ mod router_tests {
         ]}"#;
         let (addr, seen) = listing_stub("discovery", "200 OK", body);
         let (models, settings) =
-            discover_provider_models(&format!("http://{addr}/v1"), Some("the-key")).unwrap();
+            discover_provider_models(&format!("http://{addr}/v1"), None, Some("the-key")).unwrap();
         assert_eq!(models, vec!["model-a", "model-b"]);
         let a = settings.get("model-a").expect("the declared model");
         assert_eq!(a.context_window, Some(262_144));
@@ -1857,9 +1857,78 @@ mod router_tests {
     #[test]
     fn a_refused_key_is_named_by_the_discovery() {
         let (addr, _) = listing_stub("refused", "401 Unauthorized", r#"{"error":"bad key"}"#);
-        let error =
-            discover_provider_models(&format!("http://{addr}/v1"), Some("wrong")).unwrap_err();
+        let error = discover_provider_models(&format!("http://{addr}/v1"), None, Some("wrong"))
+            .unwrap_err();
         assert!(error.contains("the key was refused (401)"), "{error}");
+    }
+
+    /// A pasted endpoint is the endpoint, not the base: the chat URL is
+    /// built as `{base}/chat/completions`, so an unnormalized paste asks
+    /// `…/chat/completions/chat/completions` and the listing asks
+    /// `…/chat/completions/models`.
+    #[test]
+    fn a_pasted_endpoint_normalizes_to_its_base() {
+        assert_eq!(
+            normalize_base_url("https://opencode.ai/inference/openai/v1/chat/completions"),
+            "https://opencode.ai/inference/openai/v1"
+        );
+        assert_eq!(
+            normalize_base_url("https://host/v1/chat/completions/"),
+            "https://host/v1"
+        );
+        assert_eq!(normalize_base_url("https://host/v1"), "https://host/v1");
+        assert_eq!(
+            normalize_base_url("https://host/v1/models"),
+            "https://host/v1"
+        );
+    }
+
+    /// A provider whose listing lives elsewhere is asked there: OpenCode's
+    /// chat is `…/inference/openai/v1/chat/completions` while its listing
+    /// is `…/inference/v1/models`, and the listing is public while the
+    /// chat needs a key.
+    #[test]
+    fn a_provider_with_its_own_listing_is_asked_there() {
+        use std::io::{BufRead, BufReader, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut lines = BufReader::new(stream.try_clone().unwrap())
+                    .lines()
+                    .map_while(Result::ok);
+                let _request = lines.next().unwrap_or_default();
+                for line in lines {
+                    if line.is_empty() {
+                        break;
+                    }
+                }
+                let body = r#"{"data":[{"id":"listed-1"},{"id":"listed-2"}]}"#;
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+            }
+        });
+        let (models, _) = discover_provider_models(
+            &format!("http://{addr}/inference/openai/v1"),
+            Some(&format!("http://{addr}/inference/v1/models")),
+            None,
+        )
+        .unwrap();
+        assert_eq!(models, vec!["listed-1", "listed-2"]);
+    }
+
+    /// A listing that answers 404 is named as a provider that publishes
+    /// no listing, not as a bare status code — the owner's route forward
+    /// is to name the models endpoint.
+    #[test]
+    fn a_missing_listing_is_named_as_no_listing() {
+        let (addr, _) = listing_stub("no-listing", "404 Not Found", "");
+        let error = discover_provider_models(&format!("http://{addr}/v1"), None, None).unwrap_err();
+        assert!(error.contains("publishes no listing"), "{error}");
     }
 
     /// KI-407's core: a provider is added by the entry the owner supplied,
@@ -1895,7 +1964,9 @@ mod router_tests {
         let saved = &document["providers"][0];
         assert_eq!(saved["id"], "myprovider");
         assert!(
-            saved.get("models").is_none_or(|models| models.as_array().is_none_or(Vec::is_empty)),
+            saved
+                .get("models")
+                .is_none_or(|models| models.as_array().is_none_or(Vec::is_empty)),
             "no catalog was merged: {saved}"
         );
         assert_eq!(saved["key_env"], "MYPROVIDER_API_KEY");
@@ -2872,8 +2943,30 @@ impl Discovery {
 /// for the same fact, the source the compiled windows table's own
 /// comment names. Never stores a key; never reads one but the one
 /// handed in.
+/// The base URL a provider entry carries, with a pasted endpoint path
+/// removed.
+///
+/// Owners paste what the provider's own docs print, and that is often the
+/// full endpoint — `…/v1/chat/completions` — rather than the base. The
+/// chat URL is built as `{base}/chat/completions` (`src/api.rs`), so an
+/// unnormalized paste asks `…/chat/completions/chat/completions`, and the
+/// listing asks `…/chat/completions/models`; both 404 and the provider
+/// looks broken with a valid key. The suffixes stripped are endpoint
+/// paths, never version segments: a base ending in one of them is an
+/// endpoint by construction.
+pub fn normalize_base_url(base: &str) -> String {
+    let trimmed = base.trim().trim_end_matches('/');
+    for suffix in ["/chat/completions", "/responses", "/completions", "/models"] {
+        if let Some(stripped) = trimmed.strip_suffix(suffix) {
+            return stripped.trim_end_matches('/').to_string();
+        }
+    }
+    trimmed.to_string()
+}
+
 pub fn discover_provider_models(
     base_url: &str,
+    models_url: Option<&str>,
     key: Option<&str>,
 ) -> Result<
     (
@@ -2882,20 +2975,34 @@ pub fn discover_provider_models(
     ),
     String,
 > {
-    let base = base_url.trim().trim_end_matches('/');
+    let base = normalize_base_url(base_url);
     if base.is_empty() {
         return Err("the provider names no base URL".to_string());
     }
+    // The listing lives beside the base unless the entry names another
+    // place: OpenCode's chat is `…/inference/openai/v1/chat/completions`
+    // while its listing is `…/inference/v1/models`, and the listing is
+    // public while the chat needs a key.
+    let listing = models_url
+        .map(str::trim)
+        .filter(|url| !url.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("{base}/models"));
     let agent = ureq::AgentBuilder::new()
         .timeout(std::time::Duration::from_secs(15))
         .build();
-    let mut request = agent.get(&format!("{base}/models"));
+    let mut request = agent.get(&listing);
     if let Some(key) = key.filter(|key| !key.trim().is_empty()) {
         request = request.set("Authorization", &format!("Bearer {}", key.trim()));
     }
     let response = request.call().map_err(|error| match error {
         ureq::Error::Status(401, _) | ureq::Error::Status(403, _) => {
             "the key was refused (401)".to_string()
+        }
+        ureq::Error::Status(404, _) => {
+            "this provider publishes no listing at that address (HTTP 404) — \
+             name its models endpoint, or add the models by hand"
+                .to_string()
         }
         ureq::Error::Status(status, _) => {
             format!("the listing answered HTTP {status}")
@@ -3078,10 +3185,15 @@ pub fn rediscover_provider(home: &Path, id: &str) -> Result<Discovery, String> {
             "`{key_env}` is unset — paste the key on the provider's card"
         )));
     }
-    let (models, discovered) = match discover_provider_models(&base_url, key.as_deref()) {
-        Ok(discovered) => discovered,
-        Err(error) => return Ok(Discovery::failed(error)),
-    };
+    let models_url = entry
+        .get("models_url")
+        .and_then(|url| url.as_str())
+        .map(str::to_string);
+    let (models, discovered) =
+        match discover_provider_models(&base_url, models_url.as_deref(), key.as_deref()) {
+            Ok(discovered) => discovered,
+            Err(error) => return Ok(Discovery::failed(error)),
+        };
     let settings_written = discovered.len();
     // Merge the discovered settings into the entry's existing map, so a
     // hand override survives the re-list.
@@ -3105,7 +3217,13 @@ pub fn rediscover_provider(home: &Path, id: &str) -> Result<Discovery, String> {
         .ok_or_else(|| format!("`{id}`'s config entry is not an object"))?;
     object.insert(
         "models".to_string(),
-        serde_json::Value::Array(models.into_iter().map(serde_json::Value::String).collect()),
+        serde_json::Value::Array(
+            models
+                .iter()
+                .cloned()
+                .map(serde_json::Value::String)
+                .collect(),
+        ),
     );
     object.insert(
         "model_settings".to_string(),
@@ -3117,7 +3235,7 @@ pub fn rediscover_provider(home: &Path, id: &str) -> Result<Discovery, String> {
     )?;
     Ok(Discovery {
         ok: true,
-        models: Vec::new(),
+        models,
         settings_written,
         error: None,
     })
@@ -3190,6 +3308,26 @@ pub fn set_provider_with_key_with(
         .to_string();
     let mut discovery = None;
     let mut amended = value.clone();
+    // A pasted endpoint is normalized into the base it names, and the
+    // normalized form is what gets stored: the chat URL is built as
+    // `{base}/chat/completions`, so storing the endpoint would ask
+    // `…/chat/completions/chat/completions`, and the listing would ask
+    // `…/chat/completions/models`.
+    let normalized_base = normalize_base_url(&base_url);
+    if !normalized_base.is_empty() && normalized_base != base_url {
+        if let Some(object) = amended.as_object_mut() {
+            object.insert(
+                "base_url".to_string(),
+                serde_json::Value::String(normalized_base),
+            );
+        }
+    }
+    // The listing lives beside the base unless the entry names another
+    // place — OpenCode's listing is at a different prefix from its chat.
+    let models_url = value
+        .get("models_url")
+        .and_then(|url| url.as_str())
+        .map(str::to_string);
     // A new entry that names no key variable is unfundable AND
     // unloadable: the roster refuses an unknown provider with no
     // key_env, which would empty every list that reads it. The same
@@ -3208,7 +3346,7 @@ pub fn set_provider_with_key_with(
         }
     }
     if !base_url.is_empty() {
-        match discover_provider_models(&base_url, key_value.as_deref()) {
+        match discover_provider_models(&base_url, models_url.as_deref(), key_value.as_deref()) {
             Ok((models, discovered)) => {
                 let mut merged: std::collections::BTreeMap<String, crate::route::ModelSettings> =
                     serde_json::from_value(
@@ -3229,19 +3367,22 @@ pub fn set_provider_with_key_with(
                     object.insert(
                         "models".to_string(),
                         serde_json::Value::Array(
-                            models.into_iter().map(serde_json::Value::String).collect(),
+                            models
+                                .iter()
+                                .cloned()
+                                .map(serde_json::Value::String)
+                                .collect(),
                         ),
                     );
                     object.insert(
                         "model_settings".to_string(),
                         serde_json::to_value(&merged).unwrap_or_default(),
                     );
-                    let _ = settings_written;
                 }
                 discovery = Some(Discovery {
                     ok: true,
-                    models: Vec::new(),
-                    settings_written: 0,
+                    models,
+                    settings_written,
                     error: None,
                 });
             }

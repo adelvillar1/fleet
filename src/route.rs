@@ -843,6 +843,16 @@ pub struct ProviderEntry {
     pub id: String,
     #[serde(default)]
     pub base_url: Option<String>,
+    /// Where the model listing lives, when it is not `{base_url}/models`.
+    ///
+    /// Most OpenAI-compatible providers serve both from one base. Some do
+    /// not: OpenCode's chat endpoint is
+    /// `…/inference/openai/v1/chat/completions` while its listing is
+    /// `…/inference/v1/models` — a different prefix, and the listing is
+    /// public while the chat needs a key. A provider whose listing lives
+    /// elsewhere names it here; absent, `{base_url}/models` is asked.
+    #[serde(default)]
+    pub models_url: Option<String>,
     #[serde(default)]
     pub key_env: Option<String>,
     #[serde(default)]

@@ -15074,6 +15074,16 @@
       key.type = 'password';
       key.placeholder = 'paste the key — it is stored, never shown';
       key.setAttribute('aria-label', 'the key');
+      // The listing's own address, derived from the endpoint and editable:
+      // most providers serve it beside the base, and a few do not —
+      // OpenCode's chat is `…/inference/openai/v1/chat/completions` while
+      // its listing is `…/inference/v1/models`, and the listing is public
+      // while the chat needs a key. A provider whose listing lives elsewhere
+      // names it here instead of dead-ending on a 404.
+      var modelsEndpoint = node('input', 'knob-box');
+      modelsEndpoint.type = 'text';
+      modelsEndpoint.placeholder = 'https://the-provider/v1/models';
+      modelsEndpoint.setAttribute('aria-label', 'the models endpoint');
       // The name the roster will use, filled from the endpoint and
       // editable: `provider/model` is what the model list shows, so the
       // owner sees the id before it is written.
@@ -15085,6 +15095,11 @@
         var next = endpoint.value.trim() ? providerIdFromUrl(endpoint.value) : '';
         if (name.value === derived) name.value = next;
         derived = next;
+        // The listing rides the endpoint: an endpoint pasted whole
+        // (`…/v1/chat/completions`) still names the base it belongs to.
+        var base = endpoint.value.trim().replace(/\/+$/, '')
+          .replace(/\/(chat\/completions|responses|completions|models)$/, '');
+        modelsEndpoint.value = base ? base + '/models' : '';
       });
       // The card answers itself: a refusal or a discovery failure lands
       // here, on the surface the press was made, never only in the
@@ -15110,6 +15125,7 @@
         var entry = {
           id: id,
           base_url: base,
+          models_url: modelsEndpoint.value.trim() || undefined,
           key_env: id.toUpperCase().replace(/[^A-Z0-9]+/g, '_') + '_API_KEY',
           models: [],
           enabled: true,
@@ -15125,10 +15141,14 @@
             return;
           }
           var wrote = (reply.body && reply.body.wrote) || {};
-          if (wrote.discovery && wrote.discovery.ok === false && wrote.discovery.error) {
-            answer('saved, but the catalog did not answer: ' + wrote.discovery.error, true);
+          var discovery = wrote.discovery || {};
+          if (discovery.ok === false && discovery.error) {
+            answer('saved, but the catalog did not answer: ' + discovery.error +
+              ' — name its models endpoint above and connect again', true);
           } else {
-            answer(id + ' is connected — its models are in the list' +
+            var found = discovery.models || [];
+            answer(id + ' is connected — ' + found.length + ' model' +
+              (found.length === 1 ? '' : 's') + ' discovered' +
               (wrote.key_store ? '; the key landed in ' + wrote.key_store : ''), false);
           }
           readSettings(true);
@@ -15141,6 +15161,8 @@
           'the provider’s OpenAI-compatible base URL')],
         ['the key', cfgField('the key', key,
           'it is stored in the vault, never shown again')],
+        ['the models endpoint', cfgField('the models endpoint', modelsEndpoint,
+          'where the catalog lives — derived from the endpoint, editable when a provider serves it elsewhere')],
         ['the name', cfgField('the name', name,
           'the id this home uses for it — the model list says provider/model')],
         ['what happens', node('p', 'derivation',
