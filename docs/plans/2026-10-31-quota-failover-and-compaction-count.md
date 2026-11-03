@@ -53,6 +53,16 @@ compaction count is the real measure of a conversation freshness."*
   sees, and the turn count stays internal — the machinery's own loop
   state, never a user-facing number.
 
+  **Deferred, the owner's own framing:** whether the turn *budget* itself
+  makes sense is a future discussion. A turn is not a unit of anything a
+  user would measure — 50 turns of 2,000 tokens each is a whole different
+  case from 20 turns, or from 50,000 tokens — so a turn cap is a crude
+  proxy for what actually matters, which is context degradation. The
+  question the discussion owes an answer to: should the run's cap stay
+  turn-driven, or move to a token/context budget that degrades the way
+  the gauge already measures? The machinery stays as it is until that is
+  decided.
+
 ## Approach
 
 **The quota unlock, at the one place it belongs.** In the committed
