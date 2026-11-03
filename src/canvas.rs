@@ -537,7 +537,7 @@ pub fn design_context_section(home: &Path, key: &str) -> Option<String> {
     if boards.is_empty() {
         return None;
     }
-    boards.sort_by(|a, b| b.0.cmp(&a.0));
+    boards.sort_by_key(|board| std::cmp::Reverse(board.0));
     boards.truncate(8);
     let mut out = format!(
         "Design boards bound to `{key}` (from their digests; the board file is the truth):\n"
@@ -634,7 +634,7 @@ pub fn brands(home: &Path) -> Vec<Brand> {
             serde_json::from_str(&text).ok()
         })
         .collect();
-    out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    out.sort_by_key(|one| one.name.to_lowercase());
     out
 }
 

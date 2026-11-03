@@ -1360,7 +1360,7 @@ fn discover_bundle() -> Option<std::path::PathBuf> {
             }
         }
     }
-    found.sort_by(|a, b| b.0.cmp(&a.0));
+    found.sort_by_key(|one| std::cmp::Reverse(one.0));
     found.into_iter().next().map(|(_, path)| path)
 }
 

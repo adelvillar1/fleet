@@ -630,6 +630,19 @@ fn plugins_command(options: &cli::PluginsOptions) -> ExitCode {
                 Err(error) => error,
             }
         }
+        "eval" => {
+            // The deterministic layer, always; the declared and
+            // rendered passes ride the face's promotion (the bridge
+            // enforces the query set there).
+            let name = options.target.clone().unwrap_or_default();
+            let report = fleet::plugins::eval::static_pass(&home, &name);
+            print!("{}", fleet::plugins::eval::render(&report));
+            return if report.passed() {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::from(2)
+            };
+        }
         other => format!("`{other}` is not a plugins action"),
     };
     eprintln!("fleet: {outcome}");

@@ -8,7 +8,7 @@ tier: durable
 shape: [deps]
 phrases: [FLEET_EMBEDDING_ENDPOINT overrides the 8901 default; a model swap invalidates the index whole; absence degrades to keyword with one named line]
 missing: []
-recall-count: 410
+recall-count: 412
 superseded-by:
 valid-until:
 ---

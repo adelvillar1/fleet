@@ -632,7 +632,7 @@ pub fn promote(
             clusters.push((task.clone(), 1, vec![session.clone()]));
         }
     }
-    clusters.sort_by(|left, right| right.1.cmp(&left.1));
+    clusters.sort_by_key(|one| std::cmp::Reverse(one.1));
     let mut promotions = Vec::new();
     for (task, count, members) in clusters {
         if promotions.len() >= cap || count < min_sessions {

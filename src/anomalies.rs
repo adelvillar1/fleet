@@ -96,7 +96,7 @@ fn fallback_walk(rows: &[ReadRow]) -> Vec<Finding> {
     let routes = op_rows(rows, OP_ROUTE);
     let mut findings = Vec::new();
     let mut run: Vec<&ReadRow> = Vec::new();
-    let mut flush = |run: &mut Vec<&ReadRow>, findings: &mut Vec<Finding>| {
+    let flush = |run: &mut Vec<&ReadRow>, findings: &mut Vec<Finding>| {
         if run.len() >= FALLBACK_WALK_MIN {
             let first = run.first().expect("a non-empty run");
             let last = run.last().expect("a non-empty run");

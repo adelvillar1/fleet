@@ -8041,6 +8041,7 @@
       return one.name + ':' + one.enabled;
     }).join(',');
     face.plugins = state.plugins || [];
+    face.pluginProposals = state.proposals || [];
     // The rail's dynamic rows read the same assignment — a changed
     // list rebuilds it; the plugins page repaints with it.
     var pluginsAfter = face.plugins.map(function (one) {
@@ -13814,6 +13815,33 @@
       });
       board.appendChild(row);
     });
+    // Creator mode's drafts: the proposal ground, never self-applied —
+    // the owner reviews and installs from here (the plan's C5).
+    var proposals = (face.pluginProposals || []);
+    if (proposals.length) {
+      var draftSection = node('div', 'cfg-card');
+      draftSection.dataset.role = 'plugin-proposals';
+      draftSection.appendChild(node('h3', null, 'drafts awaiting review'));
+      proposals.forEach(function (draft) {
+        var row = node('div', 'cfg-fallback');
+        row.dataset.role = 'proposal';
+        row.appendChild(node('span', 'cfg-item-name', draft.name));
+        row.appendChild(node('span', 'cfg-item-value', draft.path || ''));
+        var install = node('button', 'replay-button', 'install it');
+        install.type = 'button';
+        install.dataset.act = 'proposal-install';
+        install.addEventListener('click', function () {
+          writeSettings('plugin-install',
+            { path: draft.path, privileged: false }, function () {
+              notice('the draft is installed — untrusted, sandboxed to its declared queries',
+                draft.name);
+            });
+        });
+        row.appendChild(install);
+        draftSection.appendChild(row);
+      });
+      board.appendChild(draftSection);
+    }
     // The install form: a path, the elevation checkbox, the press.
     var install = node('div', 'cfg-card');
     install.dataset.role = 'plugin-install';
@@ -13875,7 +13903,23 @@
             notice('the plugin is removed', plugin.name);
           });
         }
-      }])]
+      }].concat(plugin.tier === 'untrusted' ? [{
+        // The ladder's second gate: the suite must pass, and the
+        // elevation line names the grant and the verdict (C9).
+        label: 'promote to privileged', run: function () {
+          if (!window.confirm(
+            'promote `' + plugin.name + '` to privileged?\n\n' +
+            'privileged: every route the face can, writes included — you are vouching for ' +
+            'this bundle.\n\nthe evaluation suite must pass; the elevation names the verdict.'
+          )) return;
+          writeSettings('plugin-promote', { id: plugin.name }, function (reply) {
+            var wrote = reply && reply.wrote;
+            if (wrote && wrote.refused) { notice(wrote.refused, plugin.name); return; }
+            notice(wrote && wrote.elevation ? wrote.elevation : 'the plugin is privileged',
+              plugin.name);
+          });
+        }
+      }] : []))]
     ];
   }
 

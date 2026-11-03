@@ -1,0 +1,54 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>conversation statistics</title>
+<style>
+  body { font: 13px/1.5 system-ui, sans-serif; margin: 16px; color: #1c1c1e; }
+  h1 { font-size: 15px; margin: 0 0 12px; }
+  .row { display: flex; justify-content: space-between; border-bottom: 1px solid #e5e5ea;
+         padding: 4px 0; }
+  .row span:last-child { font-variant-numeric: tabular-nums; }
+</style></head>
+<body>
+  <h1>conversation statistics</h1>
+  <div id="out">asking the face…</div>
+  <script>
+    // The untrusted bundle's whole data path: the manifest's declared
+    // queries through the face's postMessage relay. No fetch, no
+    // same-origin, no network — the frame's sandbox.
+    var QUERIES = ['state', 'sessions', 'usage'];
+    function ask(query) {
+      return new Promise(function (resolve) {
+        function onMessage(event) {
+          var data = event.data || {};
+          if (data.fleetPlugin !== 'stats' || data.query !== query) return;
+          window.removeEventListener('message', onMessage);
+          resolve(data);
+        }
+        window.addEventListener('message', onMessage);
+        parent.postMessage({ fleetPlugin: 'stats', query: query }, '*');
+      });
+    }
+    function render(rows) {
+      document.getElementById('out').innerHTML = rows.map(function (row) {
+        return '<div class="row"><span>' + row[0] + '</span><span>' + row[1] + '</span></div>';
+      }).join('');
+    }
+    Promise.all(QUERIES.map(ask)).then(function (replies) {
+      var out = [];
+      replies.forEach(function (reply, index) {
+        if (!reply.ok) { out.push([QUERIES[index], 'refused']); return; }
+        var answer = reply.answer || {};
+        if (QUERIES[index] === 'sessions') {
+          var counts = answer.counts || {};
+          out.push(['conversations', String(counts.total || 0)]);
+        } else if (QUERIES[index] === 'usage') {
+          out.push(['billed tokens', String(answer.billed_tokens || 0)]);
+        } else {
+          out.push(['session', String(answer.session || '—')]);
+        }
+      });
+      render(out);
+    }).catch(function () { render([['the face did not answer', '—']]); });
+  </script>
+</body>
+</html>

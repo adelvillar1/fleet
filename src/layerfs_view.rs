@@ -782,7 +782,7 @@ pub fn workspace_projects() -> serde_json::Value {
             })),
         }
     }
-    projects.sort_by(|left, right| right.0.cmp(&left.0));
+    projects.sort_by_key(|one| std::cmp::Reverse(one.0));
     json!({
         "type": "workspace-history-rail",
         "window_days": ACTIVITY_WINDOW_DAYS,

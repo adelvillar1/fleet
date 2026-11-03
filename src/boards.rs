@@ -2824,8 +2824,8 @@ pub fn attention_queue(tower: &TowerDataRead, reports: Option<&ReportsRead>) -> 
         }
     }
 
-    drifting.sort_by(|left, right| right.0.cmp(&left.0));
-    stale.sort_by(|left, right| right.0.cmp(&left.0));
+    drifting.sort_by_key(|(when, _)| std::cmp::Reverse(*when));
+    stale.sort_by_key(|(when, _)| std::cmp::Reverse(*when));
     handoffs.sort_by(|left, right| right.when.cmp(&left.when));
     conflicts.sort_by(|left, right| right.0.cmp(&left.0).then(right.1.when.cmp(&left.1.when)));
 
@@ -3457,7 +3457,7 @@ pub fn grouped(value: u64) -> String {
     let digits = value.to_string();
     let mut out = String::with_capacity(digits.len() + digits.len() / 3);
     for (index, character) in digits.chars().enumerate() {
-        if index > 0 && (digits.len() - index) % 3 == 0 {
+        if index > 0 && (digits.len() - index).is_multiple_of(3) {
             out.push(',');
         }
         out.push(character);

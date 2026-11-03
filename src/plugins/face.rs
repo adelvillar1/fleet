@@ -336,6 +336,50 @@ pub fn list(home: &Path) -> Result<Vec<FaceListing>, String> {
     Ok(listings)
 }
 
+/// Promote an installed untrusted plugin to privileged — the ladder's
+/// second gate: the whole suite must pass, and the elevation act names
+/// the grant and the verdict it stands on. The tier rides into the
+/// installed manifest, and the registry records the promotion's event,
+/// verdict, and when.
+pub fn promote(home: &Path, name: &str, verdict: &str) -> Result<String, String> {
+    let report = crate::plugins::eval::static_pass(home, name);
+    if !report.passed() {
+        let (passed, ran) = report.tally();
+        return Err(format!(
+            "the evaluation refused the promotion: {passed}/{ran} checks pass — a failing              suite refuses the promotion naming the failed check"
+        ));
+    }
+    let dir = plugin_dir(home, name);
+    let manifest_path = FaceManifest::path(&dir);
+    let text = std::fs::read_to_string(&manifest_path)
+        .map_err(|error| format!("the manifest cannot be read: {error}"))?;
+    let mut manifest = FaceManifest::parse(&text)?;
+    manifest.tier = FaceTier::Privileged;
+    std::fs::write(
+        &manifest_path,
+        serde_json::to_string_pretty(&manifest)
+            .map_err(|error| format!("the manifest does not serialize: {error}"))?,
+    )
+    .map_err(|error| format!("the manifest cannot be written: {error}"))?;
+    record_promotion(home, name, "promote-to-privileged", verdict)?;
+    Ok(name.to_string())
+}
+
+/// The proposal ground: creator mode's drafts, never self-applied.
+/// Each subdirectory with a manifest is a draft the plugins surface
+/// lists for review; installing one is the owner's act.
+pub fn proposals(home: &Path) -> Vec<String> {
+    let ground = home.join("plugins").join("proposals");
+    let Ok(entries) = std::fs::read_dir(&ground) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter(|entry| FaceManifest::path(&entry.path()).exists())
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .collect()
+}
+
 /// Record a promotion on a plugin's registry state (the ladder's
 /// gated step, C9).
 pub fn record_promotion(home: &Path, name: &str, event: &str, verdict: &str) -> Result<(), String> {
@@ -461,6 +505,35 @@ mod tests {
         let _ = std::fs::remove_dir_all(&home);
     }
 
+    #[test]
+    fn promotion_is_gated_on_the_suite_and_records_the_ladder() {
+        // C9: a failing suite refuses the promotion by name; a passing
+        // one flips the tier and records the promotion's event, verdict,
+        // and when in the registry.
+        let home = scratch("promote");
+        let clean_manifest = MANIFEST.replace("\"stats\"", "\"clean\"");
+        let leaky_manifest = MANIFEST.replace("\"stats\"", "\"leaky\"");
+        install(&home, &bundle("promote-clean", &clean_manifest), None).expect("installs");
+        let leaky = bundle("promote-leaky", &leaky_manifest);
+        std::fs::write(leaky.join("index.html"), "<html>sk-live</html>").unwrap();
+        install(&home, &leaky, None).expect("installs the leaky one");
+        let refused = promote(&home, "leaky", "0/3 checks pass").expect_err("the sweep refuses");
+        assert!(refused.contains("refused"), "{refused}");
+        let report = crate::plugins::eval::static_pass(&home, "clean");
+        let (passed, ran) = report.tally();
+        promote(&home, "clean", &format!("{passed}/{ran} checks pass")).expect("promotes");
+        let manifest = FaceManifest::parse(
+            &std::fs::read_to_string(FaceManifest::path(&plugin_dir(&home, "clean"))).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(manifest.tier, FaceTier::Privileged);
+        let registry = load_registry(&home).unwrap();
+        let promotions = &registry.plugins.get("clean").unwrap().promotions;
+        assert_eq!(promotions.len(), 1);
+        assert_eq!(promotions[0].event, "promote-to-privileged");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
     #[tokio::test]
     async fn the_declared_query_set_is_the_sandboxes_whole_data_path() {
         // The C3 enforcement lives bridge-side, but the manifest's own
@@ -474,7 +547,10 @@ mod tests {
         }
         let bad = MANIFEST.replace("\"state\"", "\"settings\"");
         let error = FaceManifest::parse(&bad).expect_err("refuses");
-        assert!(error.contains("settings") && error.contains("read-only"), "{error}");
+        assert!(
+            error.contains("settings") && error.contains("read-only"),
+            "{error}"
+        );
     }
 
     #[test]

@@ -2523,10 +2523,10 @@ fn parse_plugins(args: &[String]) -> Result<Command, String> {
         options.target = words.get(1).cloned();
     }
     match options.action.as_str() {
-        "list" | "install" | "enable" | "disable" | "remove" => {}
+        "list" | "install" | "enable" | "disable" | "remove" | "eval" => {}
         other => {
             return Err(format!(
-                "`{other}` is not a plugins action; list, install, enable, disable, remove"
+                "`{other}` is not a plugins action; list, install, enable, disable, remove, eval"
             ))
         }
     }

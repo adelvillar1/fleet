@@ -339,7 +339,7 @@ pub fn run_glob(pattern: &str, path: &Path, base: &Path) -> Result<SearchOutcome
             found.push((mtime, relative.to_path_buf()));
         }
     });
-    found.sort_by(|left, right| right.0.cmp(&left.0));
+    found.sort_by_key(|one| std::cmp::Reverse(one.0));
     let total = found.len();
     let shown = total.min(GLOB_CAP);
     let mut text = String::new();

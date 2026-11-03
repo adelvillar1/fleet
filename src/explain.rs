@@ -41,6 +41,7 @@
 //! MCP client, with no CLI call and no checkout dependency.
 
 use std::path::{Path, PathBuf};
+#[cfg(test)]
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 

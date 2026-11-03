@@ -1,0 +1,8 @@
+{
+  "name": "stats",
+  "tier": "untrusted",
+  "version": "0.1.0",
+  "entry": { "group": "work", "label": "conversation statistics" },
+  "queries": ["state", "sessions", "usage"],
+  "provenance": "creator:demo"
+}

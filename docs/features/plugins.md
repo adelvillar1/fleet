@@ -86,3 +86,69 @@ The face was verified in Chromium against a mock tool: the refresh
 button posts the chosen job with the guard header, the button enters
 `running…`, the steps move to done with their milliseconds, and the
 state stamp reloads when the run finishes.
+
+
+# Face plugins
+
+Fleet's fourth plugin shape. A **channel** carries work from outside; a
+**lane** is a model service fleet launches and probes; a **tool
+plugin** is a program the owner already runs; a **face plugin** is a
+bundle that extends the face's own surfaces — a rail entry, a panel, a
+workbench — the thing the DeepSeek Harness demos in creator mode. The
+host is the `fleet plugins` lifecycle plus the face's mounting (the
+face-plugin-host plan).
+
+## The format
+
+A plugin is a directory in `<FLEET_HOME>/plugins/<name>/`: a
+`manifest.json` (the name, the tier, the version, the entry point —
+the rail group and label — the untrusted tier's declared read-only
+queries, and the provenance) and the static asset. The registry —
+`<FLEET_HOME>/plugins.json` — carries each plugin's enable/disable
+state and its promotion history, written through the settings writer's
+atomic seam. The lifecycle is config, not code: `fleet plugins
+list/install/enable/disable/remove`, and the face's plugins surface
+(the one-card chain per plugin).
+
+## The two tiers
+
+- **Privileged** — the owner created or vouches for the bundle. Its
+  rail entry opens its card as a first-class surface with the face's
+  own API reach. Installing one is the elevation act: the install
+  names the grant, and the tier rides into the installed manifest.
+- **Untrusted** — creator mode's output, never trusted regardless of
+  quality. Its card is its bundle in a **sandboxed frame** on the
+  network-dead route (`/plugins/<name>/`, the canvas's CSP) — no
+  same-origin, no network. Its data arrives only through the
+  manifest's declared read-only queries, enforced bridge-side: an
+  undeclared query is refused by name, and the bridge's
+  `/api/plugins/query` is the sandbox's whole data path.
+
+The ladder: **draft → installed** runs the static pass (a bundle that
+does not conform does not install); **installed → privileged** runs
+the whole suite and requires the owner's elevation act, which names
+the grant *and* the verdict. The registry records each promotion's
+event, verdict, and when. A generated draft is untrusted by
+construction, and nothing promotes anything by itself — the suite
+grades, the owner's act moves.
+
+## The evaluation suite
+
+`fleet plugins eval <name>` runs the deterministic layer: the
+manifest's conformance, the credential sweep over the bundle's text
+(a bundle naming a key shape is refused — the face's own payload sweep
+class), and the asset's sanity. The declared pass drives each of the
+manifest's queries once through the bridge's enforcement, so the
+sandbox's data path is exercised, not asserted. The suite grades; it
+never installs.
+
+## Creator mode
+
+A creator-mode task's product is a draft in
+`<FLEET_HOME>/plugins/proposals/<name>/` — the model writes the
+manifest and the asset through its own tools, and nothing applies it:
+the plugins surface lists the drafts with their install acts, and
+installing one is the owner's act (untrusted, sandboxed). The
+`tests/fixtures/plugin-demo/` bundle — conversation statistics — is
+the acceptance demo's shape: a generated draft's static asset,
+rendering the face's real numbers through its declared queries.

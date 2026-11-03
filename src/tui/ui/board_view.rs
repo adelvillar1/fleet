@@ -79,7 +79,7 @@ pub(super) fn render_router(frame: &mut Frame<'_>, snapshot: &RouterSnapshot, ar
 /// same comparison without pretending the axis is readable.
 fn render_busy_hours(frame: &mut Frame<'_>, snapshot: &RouterSnapshot, area: Rect) {
     let mut hours: Vec<&boards::HourColumn> = snapshot.hours.iter().collect();
-    hours.sort_by(|left, right| right.calls.cmp(&left.calls));
+    hours.sort_by_key(|one| std::cmp::Reverse(one.calls));
     let bars: Vec<Bar> = hours
         .into_iter()
         .take(area.height as usize)
@@ -259,7 +259,7 @@ fn render_commits(frame: &mut Frame<'_>, series: &Series, area: Rect) {
 /// the tower's cards use, as horizontal bars.
 fn render_project_bars(frame: &mut Frame<'_>, snapshot: &TowerSnapshot, area: Rect) {
     let mut ranked: Vec<&boards::ProjectFacts> = snapshot.projects.iter().collect();
-    ranked.sort_by(|left, right| right.commits_30d.cmp(&left.commits_30d));
+    ranked.sort_by_key(|one| std::cmp::Reverse(one.commits_30d));
     let top = ranked
         .iter()
         .take(area.height as usize)

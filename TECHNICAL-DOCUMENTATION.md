@@ -45,6 +45,7 @@ else is standard library. Five subsystems, each with a boundary:
   core. Their boundary promise: every read the browser performs is
   spawn_blocking off the async worker, and every write rides the module
   the CLI rides — the browser has no second truth.
+- **The plugin host** (`plugins/face.rs`, `plugins/eval.rs`) — the face-plugin format, registry, and two-tier lifecycle; the untrusted tier's sandbox (the network-dead frame plus the bridge-enforced declared-query set). The tool-plugin seam (`plugins/second_brain.rs`) sits beside it.
 - **The evidence spine** (`calib.rs`, `eval.rs`, `judge.rs`,
   `delegate.rs`, `explain.rs`, `anomalies.rs`) — recording, grading,
   the stream's own anomaly pass (six deterministic classes, at most

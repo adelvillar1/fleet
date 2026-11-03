@@ -460,10 +460,8 @@ pub fn scan_skills(home: &Path, window: usize) -> Vec<SkillUse> {
                     output,
                     approved: ok,
                     ..
-                } => {
-                    if *ok {
-                        approved.insert(call_id.clone(), output.clone());
-                    }
+                } if *ok => {
+                    approved.insert(call_id.clone(), output.clone());
                 }
                 _ => {}
             }
@@ -537,16 +535,15 @@ pub fn render_scan(scan: &ToolScan) -> String {
     }
     out.push_str("\n  state      runs  calls  errs  tok/call  tool\n");
     let mut rows: Vec<(&String, &ToolStat)> = scan.per_tool.iter().collect();
-    rows.sort_by(|left, right| right.1.calls.cmp(&left.1.calls));
+    rows.sort_by_key(|one| std::cmp::Reverse(one.1.calls));
     for (name, stat) in rows {
         let declared = scan.declared_runs.get(name).copied().unwrap_or(0);
         let arguments = scan.argument_chars.get(name).copied().unwrap_or(0);
         let results = scan.result_bytes.get(name).copied().unwrap_or(0);
-        let tokens_per_call = if stat.calls > 0 {
-            (arguments + results) / 4 / stat.calls
-        } else {
-            0
-        };
+        let tokens_per_call = (arguments + results)
+            .checked_div(4)
+            .and_then(|quarter| quarter.checked_div(stat.calls))
+            .unwrap_or(0);
         out.push_str(&format!(
             "  {:>9}  {:>4}  {:>5}  {:>4}  {:>8}  {}{}\n",
             "measured",

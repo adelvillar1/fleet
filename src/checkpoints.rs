@@ -198,7 +198,7 @@ pub fn list(store: &Path, session: &str) -> Vec<Snapshot> {
             unread: manifest.unread,
         })
         .collect();
-    out.sort_by(|left, right| right.turn.cmp(&left.turn));
+    out.sort_by_key(|one| std::cmp::Reverse(one.turn));
     out
 }
 

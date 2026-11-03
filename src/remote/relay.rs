@@ -350,6 +350,11 @@ impl Client {
     /// Register this device session with the relay, presenting the
     /// deployment's join proof. Idempotent: joining twice is the same
     /// session, which is what a reconnect wants.
+    // `ureq::Error` is a large `Err`, and the join has to match on it: a
+    // `Status` refusal is an answer, not a transport wobble. The error
+    // never escapes as a `Result::Err` — it is converted to a `String` in
+    // this function — so the size lint is a false positive here.
+    #[allow(clippy::result_large_err)]
     pub fn join(&self) -> Result<(), String> {
         let url = format!("{}/join", self.base_url);
         let once = || -> Result<(), ureq::Error> {
@@ -399,6 +404,9 @@ impl Client {
     }
 
     /// Post one answer back against its frame's id.
+    // The same large `ureq::Error` as the join: the closure's error is
+    // formatted into a `String` at the call site, never propagated.
+    #[allow(clippy::result_large_err)]
     pub fn answer(&self, answer: &Answer) -> Result<(), String> {
         let url = format!("{}/frame?sid={}", self.base_url, self.sid);
         // One retry, for the same reason as the join: an answer is keyed

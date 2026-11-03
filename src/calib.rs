@@ -669,7 +669,6 @@ impl Row {
             Row::Explain(_) => OP_EXPLAIN,
             Row::RouteJudged(_) => OP_ROUTE_JUDGED,
             Row::Curate(_) => OP_CURATE,
-            Row::Shape(_) => OP_SHAPE,
             Row::Delegation(_) => OP_DELEGATION,
             Row::EmbedTiming(_) => OP_EMBED_TIMING,
         }
@@ -1296,10 +1295,10 @@ mod sha256 {
         }
         message.extend_from_slice(&bit_length.to_be_bytes());
 
-        for block in message.chunks_exact(64) {
+        for block in message.as_chunks::<64>().0 {
             let mut w = [0u32; 64];
-            for (index, word) in block.chunks_exact(4).enumerate() {
-                w[index] = u32::from_be_bytes([word[0], word[1], word[2], word[3]]);
+            for (index, word) in block.as_chunks::<4>().0.iter().enumerate() {
+                w[index] = u32::from_be_bytes(*word);
             }
             for index in 16..64 {
                 let s0 = w[index - 15].rotate_right(7)
@@ -2900,9 +2899,7 @@ pub fn render_shape(root: &Path, day: &str) -> String {
             "{BOLD}fleet calib \u{2014} shape, {day} (UTC){RESET}\n\n{DIM}no shape rows for {day} yet \u{b7} a run appends one per session{RESET}\n"
         );
     }
-    let mut out = format!(
-        "{BOLD}fleet calib \u{2014} shape, {day} (UTC){RESET}\n\n"
-    );
+    let mut out = format!("{BOLD}fleet calib \u{2014} shape, {day} (UTC){RESET}\n\n");
     let mut growths: Vec<f64> = Vec::new();
     let mut doubled = 0usize;
     let mut folds = 0u64;
@@ -4384,7 +4381,7 @@ mod tests {
             write_rows(
                 &root,
                 day,
-                &vec![route_row(&[("a", "failed")]), route_row(&[("a", "failed")])],
+                &[route_row(&[("a", "failed")]), route_row(&[("a", "failed")])],
             );
         }
         write_rows(&root, d3, &[route_row(&[("a", "failed")])]);
@@ -4396,7 +4393,7 @@ mod tests {
         write_rows(
             &root,
             stale,
-            &vec![
+            &[
                 route_row(&[("b", "failed")]),
                 route_row(&[("b", "failed")]),
                 route_row(&[("b", "failed")]),
@@ -4847,7 +4844,10 @@ mod tests {
         )
         .unwrap();
         let rendered = render_shape(&root, day);
-        assert!(rendered.contains("4k \u{2192} 7k \u{2192} 12k"), "{rendered}");
+        assert!(
+            rendered.contains("4k \u{2192} 7k \u{2192} 12k"),
+            "{rendered}"
+        );
         assert!(rendered.contains("ended completed"), "{rendered}");
         assert!(rendered.contains("2 runs"), "{rendered}");
         assert!(rendered.contains("2 runs doubled mid-run"), "{rendered}");

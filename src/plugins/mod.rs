@@ -14,5 +14,6 @@
 //! there is a second tool; a trait written now would be a guess with a
 //! name.
 
+pub mod eval;
 pub mod face;
 pub mod second_brain;

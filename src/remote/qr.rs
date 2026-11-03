@@ -622,7 +622,7 @@ fn build_codewords(spec: &VersionSpec, bits: &BitBuffer) -> Vec<u8> {
     for _ in 0..(bit_limit - bits.len()).min(4) {
         bits.put_bit(false);
     }
-    while bits.len() % 8 != 0 {
+    while !bits.len().is_multiple_of(8) {
         bits.put_bit(false);
     }
     let mut pad = false;
@@ -1075,14 +1075,14 @@ fn finder_like(at: impl Fn(usize) -> bool) -> bool {
 /// The eight mask predicates, exactly as the standard numbers them.
 fn mask_holds(mask: usize, row: usize, column: usize) -> bool {
     match mask {
-        0 => (row + column) % 2 == 0,
-        1 => row % 2 == 0,
-        2 => column % 3 == 0,
-        3 => (row + column) % 3 == 0,
-        4 => (row / 2 + column / 3) % 2 == 0,
+        0 => (row + column).is_multiple_of(2),
+        1 => row.is_multiple_of(2),
+        2 => column.is_multiple_of(3),
+        3 => (row + column).is_multiple_of(3),
+        4 => (row / 2 + column / 3).is_multiple_of(2),
         5 => (row * column) % 2 + (row * column) % 3 == 0,
-        6 => ((row * column) % 2 + (row * column) % 3) % 2 == 0,
-        7 => ((row * column) % 3 + (row + column) % 2) % 2 == 0,
+        6 => ((row * column) % 2 + (row * column) % 3).is_multiple_of(2),
+        7 => ((row * column) % 3 + (row + column) % 2).is_multiple_of(2),
         _ => false,
     }
 }
@@ -1427,8 +1427,13 @@ mod tests {
         // And the quiet zone is light on all four sides — a dark margin
         // is not a quiet zone, and a scanner reads the margin before it
         // reads the finders.
-        for column in 0..code.size() + quiet * 2 {
-            assert!(!rows[0][column] && !rows[1][column], "no light top margin");
+        let width = code.size() + quiet * 2;
+        assert!(
+            rows[0].len() >= width && rows[1].len() >= width,
+            "the glyph is narrower than its quiet zone"
+        );
+        for (top, second) in rows[0].iter().zip(rows[1].iter()).take(width) {
+            assert!(!*top && !*second, "no light top margin");
         }
         for row in 0..code.size() {
             assert!(

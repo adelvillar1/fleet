@@ -332,8 +332,7 @@ pub fn judged_keys(rows: &[ReadRow]) -> Vec<String> {
 /// whose run is still going, or whose turn row has not landed.
 pub fn joined_turn_outcome<'a>(rows: &'a [ReadRow], route: &ReadRow) -> Option<&'a ReadRow> {
     rows.iter()
-        .filter(|row| row.op == OP_TURN && row.input_hash == route.input_hash)
-        .next_back()
+        .rfind(|row| row.op == OP_TURN && row.input_hash == route.input_hash)
 }
 
 /// The ask's prompt: the route row's redacted outcome evidence, composed

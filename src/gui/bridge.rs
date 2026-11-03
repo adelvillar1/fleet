@@ -856,21 +856,40 @@ impl Bridge {
     pub fn plugins_value(&self) -> Value {
         let home = self.home.clone();
         let listings = crate::plugins::face::list(&home).unwrap_or_default();
-        serde_json::json!(listings
-            .iter()
-            .map(|listing| serde_json::json!({
-                "name": listing.name,
-                "tier": match listing.tier {
-                    crate::plugins::face::FaceTier::Privileged => "privileged",
-                    crate::plugins::face::FaceTier::Untrusted => "untrusted",
-                },
-                "enabled": listing.enabled,
-                "group": listing.group,
-                "label": listing.label,
-                "version": listing.version,
-                "provenance": listing.provenance,
-            }))
-            .collect::<Vec<_>>())
+        let proposals = crate::plugins::face::proposals(&home);
+        // The creator flow's drafts ride the same read: never
+        // self-applied, installed from the surface (the plan's C5).
+        let home_for_proposals = self.home.clone();
+        let value = serde_json::json!({
+            "plugins": listings
+                .iter()
+                .map(|listing| serde_json::json!({
+                    "name": listing.name,
+                    "tier": match listing.tier {
+                        crate::plugins::face::FaceTier::Privileged => "privileged",
+                        crate::plugins::face::FaceTier::Untrusted => "untrusted",
+                    },
+                    "enabled": listing.enabled,
+                    "group": listing.group,
+                    "label": listing.label,
+                    "version": listing.version,
+                    "provenance": listing.provenance,
+                }))
+                .collect::<Vec<_>>(),
+            "proposals": proposals
+                .iter()
+                .map(|name| serde_json::json!({
+                    "name": name,
+                    "path": home_for_proposals
+                        .join("plugins")
+                        .join("proposals")
+                        .join(name)
+                        .display()
+                        .to_string(),
+                }))
+                .collect::<Vec<_>>(),
+        });
+        value
     }
 
     pub async fn home(&self) -> Value {
@@ -2780,14 +2799,14 @@ impl Bridge {
             || op == "plugin-enable"
             || op == "plugin-disable"
             || op == "plugin-remove"
+            || op == "plugin-promote"
         {
             let op_for_reply = op.clone();
             let home = home.clone();
-            let wrote = tokio::task::spawn_blocking(move || {
-                settings_plugin_write(&home, &op, &arguments)
-            })
-            .await
-            .map_err(|_| "the settings write did not land".to_string())??;
+            let wrote =
+                tokio::task::spawn_blocking(move || settings_plugin_write(&home, &op, &arguments))
+                    .await
+                    .map_err(|_| "the settings write did not land".to_string())??;
             return Ok(json!({ "type": "settings_write", "op": op_for_reply, "wrote": wrote }));
         }
         // The write runs off the async worker: every one of these is a
@@ -6400,11 +6419,9 @@ fn last_line(tail: &[String]) -> (Option<String>, Option<String>) {
                     }
                 }
             }
-            Some("user") => {
-                if newest_user.is_none() {
-                    if let Some(said) = value.get("content").and_then(|c| c.as_str()) {
-                        newest_user = Some(said.chars().take(200).collect());
-                    }
+            Some("user") if newest_user.is_none() => {
+                if let Some(said) = value.get("content").and_then(|c| c.as_str()) {
+                    newest_user = Some(said.chars().take(200).collect());
                 }
             }
             _ => {}
@@ -8493,6 +8510,24 @@ fn settings_plugin_write(
             let name = text("id")?;
             match crate::plugins::face::remove(home, &name) {
                 Ok(()) => Ok(json!({ "name": name, "removed": true })),
+                Err(message) => Ok(json!({ "refused": [message] })),
+            }
+        }
+        "plugin-promote" => {
+            // The ladder's second gate: the suite must pass, and the
+            // elevation line names the grant and the verdict.
+            let name = text("id")?;
+            let report = crate::plugins::eval::static_pass(home, &name);
+            let (passed, ran) = report.tally();
+            let verdict = format!("{passed}/{ran} checks pass");
+            match crate::plugins::face::promote(home, &name, &verdict) {
+                Ok(name) => Ok(json!({
+                    "name": name,
+                    "tier": "privileged",
+                    "elevation": format!(
+                        "privileged: every route the face can, writes included — evaluation:                          {verdict}. You are vouching for this bundle; the registry records the                          elevation."
+                    )
+                })),
                 Err(message) => Ok(json!({ "refused": [message] })),
             }
         }

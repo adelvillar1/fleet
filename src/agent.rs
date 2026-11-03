@@ -8418,10 +8418,16 @@ mod tests {
             &mut *progress,
         )
         .unwrap();
-        let report = agent.run("finish the task").await.expect("the run completes");
+        let report = agent
+            .run("finish the task")
+            .await
+            .expect("the run completes");
         assert_eq!(report.turn_curve.len(), 1, "{:?}", report.turn_curve);
         let (prompt, _completion) = report.turn_curve[0];
-        assert!(prompt > 0, "the estimate carries when the provider reports nothing");
+        assert!(
+            prompt > 0,
+            "the estimate carries when the provider reports nothing"
+        );
         drop(agent);
         let _ = std::fs::remove_dir_all(&home);
     }

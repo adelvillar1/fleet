@@ -8365,8 +8365,7 @@ mod tests {
         let rows = calib::read_day(&stream_root, &calib::today(), 64);
         let unclassified = rows
             .iter()
-            .filter(|row| row.op == calib::OP_RECALL_HIT)
-            .next_back()
+            .rfind(|row| row.op == calib::OP_RECALL_HIT)
             .expect("the second recall_hit row");
         assert_eq!(unclassified.shape, "");
         let _ = fs::remove_dir_all(&root);
