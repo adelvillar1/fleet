@@ -9,8 +9,8 @@ could an agent be self-contained — one binary, no runtime, no harness
 checkout, credentials from its own home and nothing else? The answer
 that holds is a harness whose router it owns, whose memory it can read
 and edit, whose self-changes are proposals that never apply silently,
-and whose autonomy is graded on evidence. MIT-licensed; the repo is
-private.
+and whose autonomy is graded on evidence. MIT-licensed and open source —
+the code is the argument, so it ships.
 
 ## The arc
 
@@ -57,7 +57,7 @@ fast, and reliable beside it. The case, with the evidence, is
 
 **Tested.** The verification is one logic at three scales. The gate at the change: `cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings`, `cargo build --release`, `cargo test` with exit codes read directly, beside the fixed eval corpus graded headless and the plan, evidence, and arch gates over the plans. The judge at the day: the calibration stream grades every route it recorded, per provider-and-workload-shape cell, from redacted evidence only, and the owner's agree-or-disagree rides the same append-only row as ground truth. The same pattern runs at project scale: one-line tower reports reconciled against git. Nothing ships green by assertion; each claim has a gate, and the gates grade themselves.
 
-**Here.** Alpha, version 0.2.0, past the agent core: routing, memory
+**Here.** Beta, version 0.3.0-beta, past the agent core: routing, memory
 recall, delegation, scheduling, self-calibration, a browser face, a
 terminal face, and the harness maintaining itself. What is next is
 named, not implied — see Sequencing in
