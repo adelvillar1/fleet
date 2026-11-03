@@ -4243,6 +4243,9 @@ async function theStrategyStepShowsItsPreview() {
           plugins: [
             { name: 'stats', tier: 'untrusted', enabled: true, group: 'work', label: 'conversation statistics', version: '0.1.0', provenance: 'creator:conv-9' },
             { name: 'owner-panel', tier: 'privileged', enabled: false, group: 'system', label: 'owner panel', version: '1.0.0', provenance: '/home/owner/panel' }
+          ],
+          proposals: [
+            { name: 'fresh-draft', path: '/tmp/fleet-plugins/proposals/fresh-draft' }
           ]
         }
       },
@@ -4274,6 +4277,17 @@ async function theStrategyStepShowsItsPreview() {
       !!link && String((link.attrs && link.attrs['aria-label']) || '') ===
         'conversation statistics',
       link ? String(link.attrs && link.attrs['aria-label']) : 'no rail entry');
+    // Creator mode's drafts: the proposal ground, never self-applied —
+    // the install act is the owner's (the plan's C5).
+    const draftBoard = page.IDS['plugins-board'];
+    const drafts = draftBoard.find((one) => one.dataset && one.dataset.role === 'proposal');
+    check('PLUGINS the drafts awaiting review are listed',
+      drafts.length === 1 && String(drafts[0].textContent).includes('fresh-draft'),
+      'drafts=' + drafts.length);
+    const draftInstall = drafts.length
+      ? drafts[0].find((one) => one.dataset && one.dataset.act === 'proposal-install')[0]
+      : null;
+    check('PLUGINS a draft carries its install press', !!draftInstall, String(!!draftInstall));
     // The untrusted card: a sandboxed frame.
     page.hash('#/plugins/stats');
     for (let i = 0; i < 8; i++) await flush();
