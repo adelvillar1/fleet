@@ -129,7 +129,10 @@ const MAX_BODY_BYTES: usize = 64 * 1024;
 /// value instead.
 pub struct Server {
     base_url: String,
-    heartbeat: Duration,
+    /// The heartbeat interval the SSE connections are served with.
+    /// Public for the gui_sse test's fast interval (the parallel
+    /// session's in-flight test seam, folded with credit).
+    pub heartbeat: Duration,
     listener: tokio::net::TcpListener,
     bridge: Arc<Bridge>,
 }

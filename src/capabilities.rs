@@ -153,7 +153,11 @@ pub fn validate(capability: &str, arguments: &Value) -> Result<(), String> {
                 .and_then(|table| table.as_array())
                 .is_none()
             {
-                return Err("field `table` expects an array; got a non-array".to_string());
+                // The C8 refusal carries its candidates (7c1f7ec): the
+                // expected type when no enum declares values.
+                return Err(
+                    "field `table` expects an array; got a non-array; valid: array".to_string(),
+                );
             }
             if arguments
                 .get("target")
