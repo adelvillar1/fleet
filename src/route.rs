@@ -1276,12 +1276,19 @@ fn merge(
                 .models
                 .clone()
                 .or_else(|| entry.model.clone().map(|model| vec![model]));
-            match (&entry.base_url, &entry.key_env, &models) {
-                (Some(base_url), Some(key_env), Some(models)) => candidates.push(Candidate {
+            // KI-407: a provider the roster does not carry is added by the
+            // entry alone, and `models` is not required — a provider may be
+            // declared before its catalog can be read. The roster load
+            // carries it as a candidate that serves nothing until a listing
+            // fills the list. `base_url` and `key_env` stay required: a
+            // candidate with neither endpoint nor key name is not a provider
+            // anyone could reach.
+            match (&entry.base_url, &entry.key_env) {
+                (Some(base_url), Some(key_env)) => candidates.push(Candidate {
                     id: entry.id.clone(),
                     base_url: base_url.clone(),
                     key_env: key_env.clone(),
-                    models: models.clone(),
+                    models: models.clone().unwrap_or_default(),
                     billing: entry.billing.unwrap_or(Billing::Plan),
                     kind: entry.kind.unwrap_or(CandidateKind::Http),
                     enabled: entry.enabled.unwrap_or(true),
@@ -1296,8 +1303,7 @@ fn merge(
                 _ => {
                     return Err(ConfigError::BadEntry(format!(
                         "provider `{}` is not a built-in roster entry and does not name \
-                         base_url, key_env, and a model (or models), so there is nothing to \
-                         merge it onto",
+                         base_url and key_env, so there is nothing to merge it onto",
                         entry.id
                     )))
                 }

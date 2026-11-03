@@ -1183,10 +1183,12 @@ mod list_tests {
             error.contains("unknown field") || error.contains("keyenv"),
             "{error}"
         );
-        // An empty model list is a provider nothing can serve.
+        // An empty model list is a declaration, not an error (KI-407): the
+        // save lands and the roster carries a candidate that serves nothing
+        // until a listing fills it.
         let empty = set_provider(&home, r#"{"id":"stepfun","models":[]}"#)
-            .expect_err("an empty models list must refuse");
-        assert!(empty.contains("empty models"), "{empty}");
+            .expect("an empty models list saves");
+        assert_eq!(empty, "stepfun");
         // The headers arm rides the same gate: a reserved name is refused
         // naming the header, before anything is written, and a
         // well-formed map lands (the provider-session-headers plan's C1).
@@ -1850,14 +1852,130 @@ mod router_tests {
         assert!(wire.contains("Bearer the-key"), "{wire}");
     }
 
-    /// A refused key is named, not swallowed: the discovery's failure is
-    /// the form's own sentence.
+    /// The listing read names its refusal in the discovery's own words
+    /// (KI-407: the read's failure is reported, never swallowed).
     #[test]
     fn a_refused_key_is_named_by_the_discovery() {
         let (addr, _) = listing_stub("refused", "401 Unauthorized", r#"{"error":"bad key"}"#);
         let error =
             discover_provider_models(&format!("http://{addr}/v1"), Some("wrong")).unwrap_err();
         assert!(error.contains("the key was refused (401)"), "{error}");
+    }
+
+    /// KI-407's core: a provider is added by the entry the owner supplied,
+    /// so a listing the account cannot read does not refuse the save. The
+    /// key is stored, the entry is written, and the failure rides the reply
+    /// in the discovery's own words — the state the owner met with a valid
+    /// key and no provider is impossible now.
+    #[test]
+    fn a_provider_saves_when_its_listing_cannot_be_read() {
+        let home = scratch("provider-listing-refused");
+        let (addr, _) = listing_stub("save-refused", "403 Forbidden", r#"{"error":"no plan"}"#);
+        let entry = serde_json::json!({
+            "id": "myprovider",
+            "base_url": format!("http://{addr}/v1"),
+        })
+        .to_string();
+        let (id, store, discovery) =
+            set_provider_with_key_with(&home, &entry, Some("the-key-value"), None)
+                .expect("a listing refusal must not refuse the save");
+        assert_eq!(id, "myprovider");
+        assert_eq!(store.as_deref(), Some(".env"), "the key still lands");
+        let discovery = discovery.expect("the read ran");
+        assert!(!discovery.ok, "the failure is not swallowed");
+        let reason = discovery.error.expect("the failure is named");
+        assert!(
+            reason.contains("refused (401)"),
+            "the listing's own words ride the reply: {reason}"
+        );
+        // The provider exists, carrying the entry as supplied: no models
+        // key when none was supplied, and none merged from a read that
+        // failed.
+        let document = read_json(&home.join("config.json")).unwrap();
+        let saved = &document["providers"][0];
+        assert_eq!(saved["id"], "myprovider");
+        assert!(
+            saved.get("models").is_none_or(|models| models.as_array().is_none_or(Vec::is_empty)),
+            "no catalog was merged: {saved}"
+        );
+        assert_eq!(saved["key_env"], "MYPROVIDER_API_KEY");
+        // And the roster load carries it: added, and serving nothing.
+        let roster = crate::route::load_roster(&home).expect("the roster loads");
+        let candidate = roster
+            .candidates
+            .iter()
+            .find(|candidate| candidate.id == "myprovider")
+            .expect("the provider is on the roster");
+        assert!(
+            candidate.models.is_empty(),
+            "a provider with no catalog serves nothing"
+        );
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    /// A provider may be declared before its catalog can be read: an entry
+    /// with no `models` key at all saves, and the roster carries it.
+    #[test]
+    fn a_provider_with_no_models_saves_and_is_carried() {
+        let home = scratch("provider-no-models");
+        let id = set_provider(
+            &home,
+            r#"{"id":"earlyprovider","base_url":"http://127.0.0.1:1/v1","key_env":"EARLY_API_KEY"}"#,
+        )
+        .expect("a model-less provider saves");
+        assert_eq!(id, "earlyprovider");
+        let document = read_json(&home.join("config.json")).unwrap();
+        let saved = &document["providers"][0];
+        assert!(
+            saved.get("models").is_none(),
+            "the entry is written as supplied"
+        );
+        let roster = crate::route::load_roster(&home).expect("the roster loads");
+        let candidate = roster
+            .candidates
+            .iter()
+            .find(|candidate| candidate.id == "earlyprovider")
+            .expect("the provider is on the roster");
+        assert!(candidate.models.is_empty());
+        // Its default model is the empty string, the shape the roster's
+        // own `Candidate::model` already returns for an empty list — no
+        // panic and no invented model.
+        assert_eq!(candidate.model(), "");
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    /// A provider declared with no models is not silently usable: the
+    /// discovery that later succeeds fills the list, and the same entry is
+    /// carried through without a second write.
+    #[test]
+    fn a_later_listing_fills_the_models_of_a_provider_added_empty() {
+        let home = scratch("provider-filled-later");
+        set_provider(
+            &home,
+            r#"{"id":"laterprovider","base_url":"http://127.0.0.1:1/v1","key_env":"LATER_API_KEY"}"#,
+        )
+        .unwrap();
+        let body = r#"{"data":[{"id":"later-a"},{"id":"later-b"}]}"#;
+        let (addr, _) = listing_stub("later", "200 OK", body);
+        // Point the saved entry at the stub and re-list it.
+        set_provider(
+            &home,
+            &serde_json::json!({
+                "id": "laterprovider",
+                "base_url": format!("http://{addr}/v1"),
+                "key_env": "LATER_API_KEY",
+            })
+            .to_string(),
+        )
+        .unwrap();
+        set_secret_with(&home, "LATER_API_KEY", "the-key-value", None).unwrap();
+        let discovery = rediscover_provider(&home, "laterprovider").unwrap();
+        assert!(discovery.ok, "{:?}", discovery.error);
+        let document = read_json(&home.join("config.json")).unwrap();
+        let models = document["providers"][0]["models"].as_array().unwrap();
+        let models: Vec<&str> = models.iter().map(|m| m.as_str().unwrap()).collect();
+        assert_eq!(models, vec!["later-a", "later-b"]);
+        let _ = fs::remove_dir_all(&home);
     }
 
     /// The full save with a key: the secret lands (the vault seam's own
@@ -3128,26 +3246,15 @@ pub fn set_provider_with_key_with(
                 });
             }
             Err(error) => {
-                // An entry with no models yet cannot be saved: the
-                // provider write refuses an empty list, and the reason
-                // the owner needs is the discovery's own. An entry that
-                // already carries models saves anyway — a provider may
-                // be added before it is funded — and the failure rides
-                // the reply, never swallowed.
-                let empty = amended
-                    .get("models")
-                    .and_then(|models| models.as_array())
-                    .map(|models| {
-                        models.iter().all(|model| {
-                            model.as_str().map(str::trim).unwrap_or_default().is_empty()
-                        })
-                    })
-                    .unwrap_or(true);
-                if empty {
-                    return Err(format!(
-                        "the provider's models could not be discovered: {error}"
-                    ));
-                }
+                // KI-407: the listing read is not a precondition of the
+                // write. A provider is added by the entry the owner
+                // supplied; whether its catalog can be read at this moment
+                // is a separate fact, and it rides the reply. The key was
+                // already stored above, so refusing here would leave a
+                // stored secret and no provider — the state the owner met
+                // when a valid key was refused by a listing the account
+                // could not read. A failure is never swallowed: it is named
+                // in the discovery's own words, and the face shows it.
                 discovery = Some(Discovery::failed(error));
             }
         }
@@ -3187,10 +3294,16 @@ pub fn set_provider(home: &Path, entry: &str) -> Result<String, String> {
     if id.is_empty() {
         return Err("the entry names no provider id".to_string());
     }
+    // A provider with no models is a declaration, not an error: KI-407's
+    // ruling is that adding a provider is independent of its catalog, so
+    // the save lands and the advisory names what the owner still owes.
+    // The roster load carries it as a candidate that serves nothing until
+    // a listing fills the list — the same fail-open the walk already has.
     if parsed.models.as_ref().is_some_and(Vec::is_empty) {
-        return Err(format!(
-            "`{id}` names an empty models list; a provider needs at least one model"
-        ));
+        eprintln!(
+            "fleet: `{id}` names no models — the provider is saved and serves nothing until \
+             its catalog is read"
+        );
     }
     // The static-value trap, named where it is set: a session-named
     // header carrying a constant value collapses every conversation into
