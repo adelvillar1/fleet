@@ -661,6 +661,11 @@
     panelHuddles: document.getElementById('panel-huddles'),
     huddlesRail: document.getElementById('huddles-rail'),
     huddlesBoard: document.getElementById('huddles-board'),
+    huddleDoor: document.getElementById('huddle-door'),
+    huddleGoal: document.getElementById('huddle-goal'),
+    huddleConvenor: document.getElementById('huddle-convenor'),
+    huddleCreate: document.getElementById('huddle-create'),
+    huddleCancel: document.getElementById('huddle-cancel'),
     panelDesign: document.getElementById('panel-design'),
     designRail: document.getElementById('design-rail'),
     designWorld: document.getElementById('design-world'),
@@ -9326,6 +9331,8 @@
 
   el.drawerClose.addEventListener('click', closeDrawer);
   el.scrim.addEventListener('click', closeDrawer);
+  if (el.huddleCreate) el.huddleCreate.addEventListener('click', createHuddle);
+  if (el.huddleCancel) el.huddleCancel.addEventListener('click', closeHuddleDoor);
   el.inspectFace.addEventListener('click', function () { inspect(null); });
   document.addEventListener('click', function (event) {
     var line = event.target.closest ? event.target.closest('.stream-line') : null;
@@ -9590,8 +9597,71 @@
     });
     if (!any) {
       board.appendChild(node('p', 'page-note',
-        'no huddles yet — a huddle is a session with one or more bots, made from the conversation’s New with a persona convoked'));
+        'no huddles yet — a room is one session with you and one or more bots'));
     }
+    var make = node('button', 'press primary', '+ new huddle');
+    make.type = 'button';
+    make.addEventListener('click', openHuddleDoor);
+    board.appendChild(make);
+  }
+
+  // The new-room door (the huddles plan's C2): the goal, then the home's
+  // roles as chips — the first one named leads the room. A role that does
+  // not resolve is the server's refusal, named on press rather than
+  // discovered when the room comes back short.
+  function openHuddleDoor() {
+    if (!el.huddleDoor) return;
+    el.huddleGoal.value = '';
+    el.huddleConvenor.textContent = '';
+    var roles = ((face.settings && face.settings.roles) || {}).entries || [];
+    if (!roles.length) {
+      el.huddleConvenor.appendChild(node('p', 'hint',
+        'this home declares no roles yet — a bot is a role file under <home>/roles/'));
+    }
+    roles.forEach(function (one) {
+      if (one.broken) return;
+      var chip = node('button', 'pick');
+      chip.type = 'button';
+      chip.dataset.name = one.name;
+      chip.appendChild(huddleMark(one.name, 'sm'));
+      chip.appendChild(node('span', null, one.name));
+      if (one.description) chip.appendChild(node('span', 'voice', one.description));
+      chip.addEventListener('click', function () { chip.classList.toggle('on'); });
+      el.huddleConvenor.appendChild(chip);
+    });
+    el.huddleDoor.hidden = false;
+    el.huddleGoal.focus();
+  }
+
+  function closeHuddleDoor() {
+    if (el.huddleDoor) el.huddleDoor.hidden = true;
+  }
+
+  function createHuddle() {
+    var goal = el.huddleGoal ? el.huddleGoal.value.trim() : '';
+    var personas = (el.huddleConvenor
+      ? [...el.huddleConvenor.querySelectorAll('.pick.on')]
+      : []).map((one) => one.dataset.name);
+    var create = el.huddleCreate;
+    create.disabled = true;
+    create.textContent = 'opening…';
+    post('/api/huddles', { goal: goal, personas: personas })
+      .then(function (reply) {
+        create.disabled = false;
+        create.textContent = 'open the room';
+        if (!reply.body || !reply.body.id) {
+          notice('the room was not created',
+            (reply.body && reply.body.error) || 'the home refused it');
+          return;
+        }
+        closeHuddleDoor();
+        window.location.hash = '#/chat/' + reply.body.id;
+      })
+      .catch(function () {
+        create.disabled = false;
+        create.textContent = 'open the room';
+        notice('the room was not created', 'the home could not be read');
+      });
   }
 
   function huddleSection(title, count, why, rows) {
@@ -20957,6 +21027,9 @@
       huddles: function () {
         paintHuddles();
         readHuddles(true).then(paintHuddles);
+        // The new-room door offers the home's roles; read them once so a
+        // press never opens an empty picker.
+        readSettings(true);
       },
       sessions: function () {
         paintWork();

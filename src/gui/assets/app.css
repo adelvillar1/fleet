@@ -8769,3 +8769,79 @@ body[data-work="collapsed"] .work-list { display: none; }
   color: var(--dsw-alias-ink-secondary);
 }
 .suggest-acts { display: flex; gap: 10px; align-items: center; }
+
+/* The new-room door (the huddles plan's C2): the goal and the bots. */
+.door {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgb(24 26 29 / 35%);
+  z-index: 40;
+}
+.door .form {
+  width: 560px;
+  max-width: calc(100vw - 48px);
+  background: var(--dsw-alias-surface);
+  border: 1px solid var(--dsw-alias-hairline);
+  border-radius: 12px;
+  padding: 22px 24px;
+  box-shadow: 0 18px 50px rgb(24 26 29 / 18%);
+}
+.door .form h2 {
+  font-size: 22px;
+  margin: 0 0 6px;
+}
+.door .sub {
+  font-size: 13px;
+  color: var(--dsw-alias-ink-secondary);
+  margin: 0 0 16px;
+}
+.field { margin: 0 0 14px; }
+.field label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--dsw-alias-ink-secondary);
+  margin: 0 0 6px;
+}
+.field input[type="text"] {
+  width: 100%;
+  font-size: 13px;
+  padding: 10px 12px;
+  border: 1px solid var(--dsw-alias-hairline-strong);
+  border-radius: 8px;
+  background: var(--dsw-alias-surface);
+  color: var(--dsw-alias-ink);
+}
+.field .hint {
+  font-size: 12px;
+  color: var(--dsw-alias-ink-tertiary);
+  margin: 6px 0 0;
+}
+.convener { display: flex; flex-wrap: wrap; gap: 8px; }
+.convener .pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 44px;
+  padding: 5px 12px 5px 6px;
+  border: 1px solid var(--dsw-alias-hairline-strong);
+  border-radius: 999px;
+  background: var(--dsw-alias-surface);
+  color: var(--dsw-alias-ink);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.convener .pick.on {
+  border-color: var(--dsw-alias-accent);
+  background: rgb(37 78 176 / 8%);
+}
+.convener .pick .voice {
+  font-size: 11.5px;
+  color: var(--dsw-alias-ink-tertiary);
+}
+.acts { display: flex; gap: 10px; align-items: center; }

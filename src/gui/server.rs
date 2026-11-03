@@ -866,6 +866,47 @@ async fn serve_connection(
                 Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
             }
         }
+        // Create a room (the huddles plan's C2): one session carrying the
+        // owner's goal and the bots they convoked. A role that does not
+        // resolve, or an empty set, is refused by name rather than creating
+        // a room missing someone.
+        ("POST", "/api/huddles") => {
+            let body = match read_body(&mut stream, &request, rest).await {
+                Ok(body) if body.trim().is_empty() => serde_json::Value::Null,
+                Ok(body) => match serde_json::from_str(&body) {
+                    Ok(value) => value,
+                    Err(_) => {
+                        return write_reply(
+                            &mut stream,
+                            bad_request("the creation body is not JSON"),
+                        )
+                        .await
+                    }
+                },
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            let goal = body.get("goal").and_then(serde_json::Value::as_str);
+            let personas: Vec<String> = body
+                .get("personas")
+                .and_then(serde_json::Value::as_array)
+                .map(|list| {
+                    list.iter()
+                        .filter_map(serde_json::Value::as_str)
+                        .map(String::from)
+                        .collect()
+                })
+                .unwrap_or_default();
+            match bridge.huddle(goal, &personas) {
+                Ok(id) => {
+                    write_reply(
+                        &mut stream,
+                        api(200, json!({"type": "huddle", "id": id, "created": true})),
+                    )
+                    .await
+                }
+                Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
+            }
+        }
         // One persona joins the conversation (P2): a row in the log,
         // refused by name when the persona does not resolve or is
         // already here.

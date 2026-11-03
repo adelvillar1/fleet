@@ -814,6 +814,29 @@
     <div class="board" id="huddles-board"></div>
   </main>
 
+  <!-- New room (the huddles plan's C2): the goal and the bots in it. The
+       first bot named leads; a role that does not resolve is refused by
+       name before anything is created. -->
+  <div class="door" id="huddle-door" hidden>
+    <div class="form">
+      <h2>New huddle</h2>
+      <p class="sub">A room with you and one or more bots. The goal is its standing objective.</p>
+      <div class="field">
+        <label for="huddle-goal">goal</label>
+        <input type="text" id="huddle-goal" placeholder="what this room is for">
+      </div>
+      <div class="field">
+        <label>bots in the room</label>
+        <div class="convener" id="huddle-convenor"></div>
+        <p class="hint">the first one named leads the room</p>
+      </div>
+      <div class="acts">
+        <button class="press primary" id="huddle-create" type="button">open the room</button>
+        <button class="press quiet" id="huddle-cancel" type="button">cancel</button>
+      </div>
+    </div>
+  </div>
+
   <!-- The vault. A first-class settings surface of its own: onboarding
        (choose the passphrase, create, migrate the plaintext .env
        entries), the sealed names, the plaintext ledger, seal/drop, and

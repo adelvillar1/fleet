@@ -322,7 +322,9 @@ function boot(options) {
     if (pathOnly === '/api/sessions') {
       return Promise.resolve({ status: 200, json: () => Promise.resolve(documents.sessions || emptySessions()) });
     }
-    if (pathOnly === '/api/huddles') {
+    // The rail's read only: the creation POST falls through to the
+    // default reply, exactly as it would reach the server's own route.
+    if (pathOnly === '/api/huddles' && method === 'GET') {
       return Promise.resolve({ status: 200, json: () => Promise.resolve(documents.huddles || emptyHuddles()) });
     }
     if (pathOnly === '/api/session') {
@@ -4744,6 +4746,62 @@ async function theStrategyStepShowsItsPreview() {
       joins.length === 1, JSON.stringify(page.calls.map((c) => c.method + ' ' + c.url)));
   }
 
+  // The new-room door (the huddles plan's C2): the goal and the home's
+  // roles, a press that creates exactly those bots in one session, and a
+  // landing on the room it made.
+  async function theNewRoomDoorCreatesAndOpens() {
+    const page = boot({
+      reply: { type: 'huddle', id: 'new-1', created: true },
+      documents: {
+        settings: {
+          roles: {
+            dir: '/tmp',
+            entries: [
+              { name: 'designer', description: 'makes pages', tools: [], skills: [], shapes: [], overlay: 'voice' },
+              { name: 'scholar', description: 'grounds every claim', tools: [], skills: [], shapes: [], overlay: 'voice' }
+            ]
+          }
+        }
+      }
+    });
+    await flush();
+    page.open();
+    await flush();
+    page.hash('#/huddles');
+    for (let i = 0; i < 8; i++) await flush();
+    const trigger = page.IDS['huddles-board'].find((one) =>
+      String(one.className || '').split(/\s+/).includes('press') &&
+      String(one.textContent).indexOf('new huddle') !== -1)[0];
+    check('C2 the rail carries a new-huddle press', !!trigger, 'no press');
+    if (!trigger) return;
+    trigger.click();
+    await flush();
+    check('C2 the door opens', !page.IDS['huddle-door'].hidden, 'still hidden');
+    const chips = page.IDS['huddle-convenor'].find((one) =>
+      String(one.className || '').split(/\s+/).includes('pick'));
+    check('C2 the home’s roles are offered as bots',
+      chips.length === 2, String(chips.length));
+    if (chips.length !== 2) return;
+    chips[0].click();
+    chips[1].click();
+    page.IDS['huddle-goal'].value = 'thrift’s landing page';
+    page.IDS['huddle-create'].click();
+    await flush(40);
+    // Only the creation POST counts; the rail's own GET rides the same path.
+    const made = page.calls.filter((c) =>
+      c.method === 'POST' && c.url.indexOf('/api/huddles') === 0);
+    const body = made.length ? String(made[0].body) : '';
+    check('C2 the room is created with its goal and its bots',
+      made.length === 1 &&
+        body.indexOf('"goal":"thrift’s landing page"') !== -1 &&
+        body.indexOf('"personas":["designer","scholar"]') !== -1,
+      body || 'no call');
+
+    check('C2 the new room opens',
+      page.window.location.hash.indexOf('#/chat/new-1') === 0,
+      page.window.location.hash);
+  }
+
   async function theBotsSurfaceMintsTheBotCard() {
     const page = boot({
       reply: {
@@ -7830,6 +7888,7 @@ const cases = [
   ['C8 a room bylines its members’ turns', aRoomBylineNamesItsAuthor],
   ['C11 an owner-supplied avatar replaces the initial', anOwnerSuppliedAvatarReplacesTheInitial],
   ['C5 a recommendation renders one convene press', aRecommendationRendersOneConvenePress],
+  ['C2 the new-room door creates and opens', theNewRoomDoorCreatesAndOpens],
   ['KI-380 the zombie tab cannot hide a seat or lose the reads', theZombieTabCannotHideASeatOrLoseTheReads],
   ['C1/C8 the list groups by attention and counts what the server counted', theListGroupsByAttentionAndCountsWhatTheServerCounted],
   ['C2 every state opens through one verb', everyStateOpensThroughOneVerb],

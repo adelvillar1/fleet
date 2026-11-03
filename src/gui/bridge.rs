@@ -615,6 +615,38 @@ impl Bridge {
         Ok(id)
     }
 
+    /// Create a room: one session carrying the owner's goal and the bots
+    /// they convoked (the huddles plan's C2). The first named role leads;
+    /// a role that does not resolve refuses by name rather than creating a
+    /// room missing someone, and an empty set is refused too — a room with
+    /// no bots is just a conversation.
+    pub fn huddle(&self, goal: Option<&str>, personas: &[String]) -> Result<String, String> {
+        let mut names: Vec<String> = Vec::new();
+        for asked in personas {
+            let asked = asked.trim();
+            if asked.is_empty() {
+                continue;
+            }
+            let role = crate::roles::load(&self.home, asked)
+                .map_err(|error| format!("the persona `{asked}` does not resolve: {error}"))?;
+            if !names.contains(&role.name) {
+                names.push(role.name);
+            }
+        }
+        if names.is_empty() {
+            return Err("a huddle needs at least one bot — pick who is in the room".to_string());
+        }
+        let created = session::Session::create_with_persona(&self.home, &self.model, Some(names))
+            .map_err(|error| format!("could not create a room: {error}"))?;
+        let id = created.id().to_string();
+        if let Some(text) = goal.map(str::trim).filter(|text| !text.is_empty()) {
+            let mut goals = load_goals(&self.home);
+            goals.insert(id.clone(), text.to_string());
+            save_goals(&self.home, &goals);
+        }
+        Ok(id)
+    }
+
     /// One persona joins this conversation — the 2026-10-28 ruling that
     /// a conversation may hold more than one persona, recorded as a row
     /// in the log (`join`), never a silent change of voice. The role's
