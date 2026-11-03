@@ -4671,6 +4671,17 @@ async function theStrategyStepShowsItsPreview() {
           }],
           inactive: [], ended: [], counts: { active: 1, inactive: 0, ended: 0 }
         },
+        settings: {
+          roles: {
+            dir: '/tmp',
+            entries: [
+              { name: 'designer', description: 'makes pages', tools: [], skills: [], shapes: [],
+                overlay: 'voice', avatar: url },
+              { name: 'scholar', description: 'grounds every claim', tools: [], skills: [], shapes: [],
+                overlay: 'voice' }
+            ]
+          }
+        },
         state: (asked) => ({
           ...emptyState(asked), session: asked, goal: 'thrift’s landing page',
           members: [{ name: 'designer', voice: 'makes pages', avatar: url }]
@@ -4702,6 +4713,28 @@ async function theStrategyStepShowsItsPreview() {
     check('C11 the room head’s mark carries the same image',
       headImg.length === 1 && headImg[0].src === url,
       JSON.stringify(headImg.map((i) => i.src)));
+
+    // And the new-room picker offers the bot with its face, while the
+    // bot without an image keeps its initial.
+    const trigger = board.find((one) =>
+      String(one.className || '').split(/\s+/).includes('press') &&
+      String(one.textContent).indexOf('new huddle') !== -1)[0];
+    if (trigger) trigger.click();
+    await flush();
+    const chips = page.IDS['huddle-convenor'].find((one) =>
+      String(one.className || '').split(/\s+/).includes('pick'));
+    const withFace = chips.filter((one) =>
+      one.getAttribute && one.getAttribute('data-name') === 'designer')[0];
+    const without = chips.filter((one) =>
+      one.getAttribute && one.getAttribute('data-name') === 'scholar')[0];
+    const faceImg = withFace ? withFace.find((one) => one.name === 'img') : [];
+    check('C11 the picker offers the bot with its face',
+      faceImg.length === 1 && faceImg[0].src === url,
+      JSON.stringify(faceImg.map((i) => i.src)));
+    check('C11 a bot without an image keeps its initial',
+      without && String(without.textContent).indexOf('s') !== -1 &&
+        (!without.find((one) => one.name === 'img').length),
+      without ? String(without.textContent) : 'none');
   }
 
   // A member's capability-gap proposal (the huddles plan's C5/C8): one

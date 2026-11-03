@@ -9623,7 +9623,7 @@
       var chip = node('button', 'pick');
       chip.type = 'button';
       chip.dataset.name = one.name;
-      chip.appendChild(huddleMark(one.name, 'sm'));
+      chip.appendChild(huddleMark(one.name, 'sm', one.avatar));
       chip.appendChild(node('span', null, one.name));
       if (one.description) chip.appendChild(node('span', 'voice', one.description));
       chip.addEventListener('click', function () { chip.classList.toggle('on'); });
@@ -20029,6 +20029,9 @@
   function roleBlock(entry) {
     var details = node('details', 'cfg-details');
     var summary = node('summary', 'cfg-summary');
+    // The role's own mark: the owner-supplied image where it keeps one,
+    // the derived initial otherwise (the huddles plan's C11).
+    summary.appendChild(huddleMark(entry.name, 'sm', entry.avatar));
     summary.appendChild(node('span', 'cfg-lane-name', entry.name));
     if (entry.broken) {
       summary.appendChild(badge('broken', 'down'));

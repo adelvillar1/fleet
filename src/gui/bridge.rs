@@ -7710,6 +7710,10 @@ fn roles_document(home: &std::path::Path) -> Value {
                 "skills": role.skills,
                 "shapes": role.shapes,
                 "overlay": role.overlay,
+                // An owner-supplied image beside the role file (C11);
+                // null when the derived initial stands.
+                "avatar": crate::roles::avatar_path(home, &role.name)
+                    .map(|_| format!("/api/avatar?name={}", role.name)),
                 "path": role.path.display().to_string(),
                 "modified": role.modified.and_then(|at| crate::session::iso_utc_stamp(at).ok()),
                 "broken": Value::Null,
@@ -7721,6 +7725,7 @@ fn roles_document(home: &std::path::Path) -> Value {
                 "skills": [],
                 "shapes": [],
                 "overlay": "",
+                "avatar": Value::Null,
                 "path": "",
                 "modified": Value::Null,
                 "broken": entry.broken,
