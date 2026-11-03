@@ -66,6 +66,12 @@ The increments, each independently valuable:
    folder already does — or become live, if the owner rules they should.
 4. **F4 — `/compact`'s description matches its behaviour.** It promises
    "now"; it means the next turn boundary.
+5. **F5 — the queue rows survive a repaint.** `paintQueue` rebuilds every
+   row from `textContent = ''` on each call, and `paint()` calls it on
+   every event. During a run the rows are destroyed and recreated under
+   the cursor, so a click that spans a rebuild never fires — the send,
+   edit and drop buttons do nothing. The rows must rebuild only when the
+   queue actually changed, the way `paintSeat` already keys its buttons.
 
 The docs move with the increments: `docs/features/gui.md` and the
 installation's run-policy wording land with F3, not in a finale.
@@ -104,7 +110,12 @@ installation's run-policy wording land with F3, not in a finale.
       produces.
 - [ ] **C4 — `/compact` tells the truth.** Its description names the turn
       boundary it folds at. Pinned by the command-help text.
-- [ ] **C5 — the gate is green.** fmt, clippy `-D warnings`, release
+- [ ] **C5 — the queue's buttons survive a repaint.** With rows queued
+      and events arriving, a click on send, edit or drop lands and takes
+      effect. Pinned by a face-harness case that queues rows, drives
+      events through the reducer, and asserts the row count and the
+      composer after each press.
+- [ ] **C6 — the gate is green.** fmt, clippy `-D warnings`, release
       build, and the suite, each read by exit code (KI-014).
 
 ## Files to be touched
@@ -114,7 +125,7 @@ installation's run-policy wording land with F3, not in a finale.
 | `src/gui/bridge.rs` | F1: resolve a pending seat when a control is written for the driving session; F3: the mode's scope, if it goes live |
 | `src/agent.rs` | F1: the seat-resolution path names the control that ended the wait |
 | `src/gui/assets/app.js` | F2: the replay path paints the seat; F3: each run-scoped control names its scope; F4: `/compact`'s description |
-| `tests/face/harness.mjs` | C2/C3's pins |
+| `tests/face/harness.mjs` | C2/C3/C5's pins |
 | `tests/gui_sse.rs` or `tests/integration.rs` | C0/C1's pins over the real bridge |
 | `docs/features/gui.md` | F3's wording, with the increment |
 
