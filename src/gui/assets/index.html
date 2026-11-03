@@ -248,6 +248,19 @@
   <main class="stage" id="panel-chat">
     <section class="column">
 
+      <!-- The room's own head: who is here and why. Rendered only when
+           the session carries members — an ordinary conversation has no
+           room, and shows no strip. The goal is chrome; the members are
+           the people in the room; the voices are their contracts. -->
+      <div class="huddle-head" id="huddle-head" hidden>
+        <p class="hh-goal"><b>goal</b><span id="hh-goal-text"></span></p>
+        <div class="hh-members">
+          <span class="pstack" id="hh-stack"></span>
+          <span class="hh-voices" id="hh-voices"></span>
+          <span class="hh-state" id="hh-state" data-state=""></span>
+        </div>
+      </div>
+
       <!-- The conversation's own head: back to the work list (or open it,
            where the column is not a column), the title with its switcher,
            the state in words, and New. A conversation is a place with a

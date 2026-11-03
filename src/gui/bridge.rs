@@ -713,6 +713,9 @@ impl Bridge {
                 "workspace": self.cwd.display().to_string(),
                 "folder": folder_value(state.effective_folder(session).as_deref(), &self.cwd),
             "goal": session_goal(&self.home, &key),
+            // The room's members, when it is a room: an empty list on
+            // an ordinary conversation keeps the head from rendering.
+            "members": session_members(&self.home, &key),
                 "feedback": feedback_for(&self.home, &key),
                 "budget": crate::compaction::COMPACTION_TOKEN_BUDGET,
                 "turn_budget": crate::route::run_config(&self.home).max_turns,
@@ -742,6 +745,9 @@ impl Bridge {
             "workspace": self.cwd.display().to_string(),
             "folder": folder_value(state.effective_folder(session).as_deref(), &self.cwd),
             "goal": session_goal(&self.home, &key),
+            // The room's members, when it is a room: an empty list on
+            // an ordinary conversation keeps the head from rendering.
+            "members": session_members(&self.home, &key),
             "feedback": feedback_for(&self.home, &key),
             "budget": crate::compaction::COMPACTION_TOKEN_BUDGET,
             "turn_budget": crate::route::run_config(&self.home).max_turns,
@@ -5397,6 +5403,27 @@ fn save_goals(home: &std::path::Path, goals: &std::collections::HashMap<String, 
 /// One session's standing objective, when it has one.
 pub fn session_goal(home: &std::path::Path, session: &str) -> Option<String> {
     load_goals(home).remove(session)
+}
+
+/// One room's members as the head reads them — `(name, voice)` in join
+/// order, the lead first (the huddles plan's C8). The voice is the role's
+/// own one-line contract, resolved at read time so a room can say who it
+/// convoked without the face loading every role itself. An ordinary
+/// conversation yields an empty list, which is what keeps the head from
+/// rendering where there is no room.
+pub fn session_members(home: &std::path::Path, session: &str) -> Vec<Value> {
+    let personas = session::summarize(&session::session_path(home, session))
+        .map(|summary| summary.personas)
+        .unwrap_or_default();
+    personas
+        .into_iter()
+        .map(|name| {
+            let voice = crate::roles::load(home, &name)
+                .map(|role| role.description)
+                .unwrap_or_default();
+            json!({ "name": name, "voice": voice })
+        })
+        .collect()
 }
 
 /// The thread named the launch session: a goal set before the first run

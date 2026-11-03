@@ -645,6 +645,11 @@
     convNew: document.getElementById('conv-new'),
     convRename: document.getElementById('conv-rename'),
     convArchive: document.getElementById('conv-archive'),
+    huddleHead: document.getElementById('huddle-head'),
+    hhGoalText: document.getElementById('hh-goal-text'),
+    hhStack: document.getElementById('hh-stack'),
+    hhVoices: document.getElementById('hh-voices'),
+    hhState: document.getElementById('hh-state'),
     panelCalibration: document.getElementById('panel-calibration'),
     panelSecondBrain: document.getElementById('panel-second-brain'),
     panelWorkspaceHistory: document.getElementById('panel-workspace-history'),
@@ -8054,6 +8059,10 @@
     // reason to disable this composer.
     face.driving = state.driving || '';
     face.dropped = Number(state.dropped) || 0;
+    // The room's standing goal and its members, from the same document:
+    // a resumed room shows who is here without waiting for an event.
+    face.goal = state.goal || null;
+    face.members = state.members || [];
     face.rules = state.rules || [];
     // The face plugins' own list — the rail's dynamic rows and the
     // management surface read this one list (the plugin host plan).
@@ -9863,6 +9872,31 @@
     return button;
   }
 
+  // The room's head (the huddles plan's C8): the goal as chrome, the
+  // members' marks, and each role's own voice. Rendered only where the
+  // session carries members — an ordinary conversation has no room and
+  // shows no strip, so nothing about the usual surface moves.
+  function paintHuddleHead() {
+    if (!el.huddleHead) return;
+    var members = face.members || [];
+    el.huddleHead.hidden = members.length === 0;
+    if (!members.length) return;
+    el.hhGoalText.textContent = face.goal || 'a room with its bots';
+    el.hhStack.textContent = '';
+    el.hhStack.appendChild(node('span', 'pmark pmark-you sm', 'you'));
+    members.forEach(function (one) {
+      el.hhStack.appendChild(huddleMark(one.name, 'sm'));
+    });
+    el.hhVoices.textContent = members
+      .map(function (one) { return one.voice ? one.name + ' \u2014 ' + one.voice : one.name; })
+      .join(' \u00b7 ');
+    // The state word rides the archive's own row; without one the strip
+    // says nothing rather than guessing.
+    var row = workSelected();
+    el.hhState.textContent = row ? huddleState(row).word : '';
+    el.hhState.dataset.state = (row || {}).state || '';
+  }
+
   // The conversation's head: the way out, the way to another, the state
   // in words, and New. Shown whenever a conversation is loaded, so the
   // face never reads as a one-way door.
@@ -9870,6 +9904,7 @@
     if (!el.convHead) return;
     var row = workSelected();
     el.convHead.hidden = !face.session;
+    paintHuddleHead();
     if (!face.session) return;
     el.convName.textContent = (row && row.title) || sessionLabel(face.session);
     // The name's rung rides the tooltip: a derived name says what

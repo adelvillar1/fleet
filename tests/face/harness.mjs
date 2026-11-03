@@ -4513,6 +4513,58 @@ async function theStrategyStepShowsItsPreview() {
       opened.length === 1, JSON.stringify(page.calls.map((c) => c.url)));
   }
 
+  // The room's head (the huddles plan's C8): where the session carries
+  // members, the conversation gains a strip with the goal as chrome, the
+  // members' marks and each role's own voice; an ordinary conversation
+  // shows none of it.
+  async function theRoomHeadNamesItsMembers() {
+    const page = boot({
+      documents: {
+        state: (asked) => ({
+          ...emptyState(asked), session: asked,
+          goal: 'thrift’s landing page',
+          members: [
+            { name: 'designer', voice: 'makes pages' },
+            { name: 'scholar', voice: 'grounds every claim' }
+          ]
+        })
+      }
+    });
+    await flush();
+    page.open();
+    await flush();
+    const head = page.IDS['huddle-head'];
+    check('C8 the room head renders where there are members',
+      !!head && !head.hidden, 'hidden=' + (head || {}).hidden);
+    const stack = page.IDS['hh-stack'];
+    const marks = stack.find((one) =>
+      String(one.className || '').split(/\s+/).includes('pmark'));
+    check('C8 the owner and both bots carry marks',
+      marks.length === 3 &&
+        marks.some((one) => one.getAttribute && one.getAttribute('data-p') === 'designer') &&
+        marks.some((one) => one.getAttribute && one.getAttribute('data-p') === 'scholar'),
+      'marks=' + marks.length);
+    check('C8 each role’s own voice is named',
+      String(page.IDS['hh-voices'].textContent).includes('designer — makes pages') &&
+        String(page.IDS['hh-voices'].textContent).includes('scholar — grounds every claim'),
+      String(page.IDS['hh-voices'].textContent));
+    check('C8 the goal is chrome on the strip',
+      String(page.IDS['hh-goal-text'].textContent).includes('thrift’s landing page'),
+      String(page.IDS['hh-goal-text'].textContent));
+
+    const plain = boot({
+      documents: {
+        state: (asked) => ({ ...emptyState(asked), session: asked, members: [] })
+      }
+    });
+    await flush();
+    plain.open();
+    await flush();
+    const plainHead = plain.IDS['huddle-head'];
+    check('C8 an ordinary conversation shows no room head',
+      !!plainHead && plainHead.hidden, 'hidden=' + (plainHead || {}).hidden);
+  }
+
   async function theBotsSurfaceMintsTheBotCard() {
     const page = boot({
       reply: {
@@ -7594,6 +7646,7 @@ const cases = [
   ['PLUGINS the management surface and the two tiers\' frames', thePluginsSurfaceManagesTheChains],
   ['HUDDLES the rail carries the three states, member marks and deliverables', theHuddleRailCarriesTheThreeStates],
   ['C6 a deliverable posts in-line and opens the pane preview', anArtifactPostOpensThePanePreview],
+  ['C8 the room head names its members and their voices', theRoomHeadNamesItsMembers],
   ['KI-380 the zombie tab cannot hide a seat or lose the reads', theZombieTabCannotHideASeatOrLoseTheReads],
   ['C1/C8 the list groups by attention and counts what the server counted', theListGroupsByAttentionAndCountsWhatTheServerCounted],
   ['C2 every state opens through one verb', everyStateOpensThroughOneVerb],

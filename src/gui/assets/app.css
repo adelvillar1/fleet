@@ -8685,3 +8685,47 @@ body[data-work="collapsed"] .work-list { display: none; }
   color: var(--dsw-alias-ink-tertiary);
 }
 .hrow-meta .files { color: var(--dsw-alias-ink-secondary); }
+
+/* The room's own head: the goal as chrome, then who is here and their
+   voices. Rendered only where the session carries members, so an ordinary
+   conversation shows no strip at all. */
+.huddle-head {
+  padding: 10px 14px 12px;
+  border-bottom: 1px solid var(--dsw-alias-hairline);
+  background: var(--dsw-alias-surface);
+}
+.hh-goal {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--dsw-alias-ink-secondary);
+}
+.hh-goal b {
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--dsw-alias-ink-tertiary);
+  flex: 0 0 auto;
+}
+.hh-members {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.hh-voices {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--dsw-alias-ink-tertiary);
+}
+.hh-state {
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--dsw-alias-ink-tertiary);
+}
