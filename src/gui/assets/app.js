@@ -8042,6 +8042,7 @@
     }).join(',');
     face.plugins = state.plugins || [];
     face.pluginProposals = state.proposals || [];
+    face.pluginBuiltIns = state.built_ins || [];
     // The rail's dynamic rows read the same assignment — a changed
     // list rebuilds it; the plugins page repaints with it.
     var pluginsAfter = face.plugins.map(function (one) {
@@ -13795,10 +13796,30 @@
       'face\u2019s own API reach; untrusted plugins — generated ones — are sandboxed to the ' +
       'read-only queries their manifest declares, enforced bridge-side.',
       null));
+    // The built-in plugins: the plugin-shaped capabilities Fleet ships
+    // with — the tool plugin, the lanes, the MCP servers — each with
+    // where it is managed. The compiled-in core is not a plugin and
+    // does not pretend to be.
+    var builtIns = face.pluginBuiltIns || [];
+    if (builtIns.length) {
+      var builtSection = node('div', 'cfg-card');
+      builtSection.dataset.role = 'plugin-builtins';
+      builtSection.appendChild(node('h3', null, 'built-in plugins'));
+      builtIns.forEach(function (one) {
+        var row = node('div', 'cfg-fallback');
+        row.dataset.role = 'builtin';
+        row.appendChild(node('span', 'cfg-item-name', one.name));
+        row.appendChild(node('span', 'cfg-item-value',
+          one.state + (one.detail ? ' \u00b7 ' + one.detail : '')));
+        row.appendChild(node('span', 'cfg-item-mark', one.kind + ' \u2014 ' + one.manages));
+        builtSection.appendChild(row);
+      });
+      board.appendChild(builtSection);
+    }
     var plugins = face.plugins || [];
     if (!plugins.length) {
       board.appendChild(node('p', 'board-empty',
-        'No plugins installed. A bundle is a directory with a manifest.json; the install form ' +
+        'No bundles installed. A bundle is a directory with a manifest.json; the install form ' +
         'below carries one in.'));
     }
     plugins.forEach(function (one) {

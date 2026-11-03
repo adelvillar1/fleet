@@ -4246,6 +4246,10 @@ async function theStrategyStepShowsItsPreview() {
           ],
           proposals: [
             { name: 'fresh-draft', path: '/tmp/fleet-plugins/proposals/fresh-draft' }
+          ],
+          built_ins: [
+            { name: 'second-brain', kind: 'tool plugin', state: 'installed \u00b7 http://127.0.0.1:4175', manages: 'the second-brain panel' },
+            { name: 'sys1', kind: 'lane', state: 'resolved', detail: 'judgment \u00b7 at /home/lanes/sys1', manages: "the settings page's lane cards" }
           ]
         }
       },
@@ -4277,6 +4281,15 @@ async function theStrategyStepShowsItsPreview() {
       !!link && String((link.attrs && link.attrs['aria-label']) || '') ===
         'conversation statistics',
       link ? String(link.attrs && link.attrs['aria-label']) : 'no rail entry');
+    // The built-in plugins: the plugin-shaped capabilities Fleet ships
+    // with, each naming where it is managed.
+    const builtRows = page.IDS['plugins-board'].find((one) =>
+      one.dataset && one.dataset.role === 'builtin');
+    check('PLUGINS the built-in plugins are listed',
+      builtRows.length === 2 &&
+        String(builtRows[0].textContent).includes('second-brain') &&
+        String(builtRows[0].textContent).includes('tool plugin'),
+      'built-ins=' + builtRows.length);
     // Creator mode's drafts: the proposal ground, never self-applied —
     // the install act is the owner's (the plan's C5).
     const draftBoard = page.IDS['plugins-board'];

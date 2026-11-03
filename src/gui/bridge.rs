@@ -855,12 +855,14 @@ impl Bridge {
     /// dynamic rows and the management surface read this one list.
     pub fn plugins_value(&self) -> Value {
         let home = self.home.clone();
+        let built_ins = built_ins_value(&home);
         let listings = crate::plugins::face::list(&home).unwrap_or_default();
         let proposals = crate::plugins::face::proposals(&home);
         // The creator flow's drafts ride the same read: never
         // self-applied, installed from the surface (the plan's C5).
         let home_for_proposals = self.home.clone();
         let value = serde_json::json!({
+            "built_ins": built_ins,
             "plugins": listings
                 .iter()
                 .map(|listing| serde_json::json!({
@@ -7094,6 +7096,91 @@ fn cell_json(cell: &crate::calib::CalibrationCell) -> Value {
 /// env names, the jobs, and the SOUL slot — each read through the
 /// surface's own reader, so this document is the CLI's answer in JSON
 /// rather than a parallel truth.
+/// The built-in plugins (the face-plugin-host plan, the owner's
+/// correction): the plugin-shaped capabilities Fleet ships with — the
+/// second-brain tool plugin, the vendored lanes, the MCP registry's
+/// servers — on the plugins surface beside the installed bundles.
+/// Each carries where it is managed. The compiled-in core (the router,
+/// the memory, the agent) is not a plugin and does not pretend to be.
+fn built_ins_value(home: &std::path::Path) -> Value {
+    let mut built_ins: Vec<Value> = Vec::new();
+    // The second-brain tool plugin: the boards' own resolution, so the
+    // plugin and the state read cannot disagree about which tool this
+    // machine has.
+    let setting = |name: &str| std::env::var(name).ok();
+    let brain_home = crate::boards::brain_home(&setting);
+    let brain_state = match &brain_home {
+        Some(path) => {
+            let tool = crate::plugins::second_brain::SecondBrain::new(
+                path.clone(),
+                crate::plugins::second_brain::DEFAULT_PORT,
+            );
+            if tool.has_tool() {
+                format!("installed \u{b7} {}", tool.address())
+            } else {
+                format!(
+                    "the home resolves at {} but carries no control_tower.py \u{2014} a                      misconfiguration, not an outage",
+                    path.display()
+                )
+            }
+        }
+        None => "no home resolves (SECOND_BRAIN_HOME, ~/.second-brain, ~/Projects/second-brain)"
+            .to_string(),
+    };
+    built_ins.push(serde_json::json!({
+        "name": "second-brain",
+        "kind": "tool plugin",
+        "state": brain_state,
+        "manages": "the second-brain panel",
+    }));
+    // The vendored lanes: the settings read's own lanes document, so
+    // the surface cannot disagree with the lane cards.
+    let lanes = lanes_document(home);
+    if let Some(rows) = lanes.get("lanes").and_then(|lanes| lanes.as_array()) {
+        for lane in rows {
+            let name = lane.get("name").and_then(|n| n.as_str()).unwrap_or_default();
+            let role = lane.get("role").and_then(|n| n.as_str()).unwrap_or_default();
+            let (state, detail) = match lane.get("unavailable").and_then(|u| u.as_str()) {
+                Some(reason) => ("unavailable".to_string(), reason.to_string()),
+                None => match lane.get("resolved_home").and_then(|h| h.as_str()) {
+                    Some(resolved) => ("resolved".to_string(), format!("at {resolved}")),
+                    None => ("not resolved".to_string(), String::new()),
+                },
+            };
+            built_ins.push(serde_json::json!({
+                "name": name,
+                "kind": "lane",
+                "state": state,
+                "detail": format!("{role} \u{b7} {detail}"),
+                "manages": "the settings page's lane cards",
+            }));
+        }
+    }
+    // The MCP registry's servers.
+    let servers = servers_document(home);
+    if let Some(rows) = servers.get("servers").and_then(|s| s.as_array()) {
+        for server in rows {
+            let name = server.get("name").and_then(|n| n.as_str()).unwrap_or_default();
+            let enabled = server
+                .get("enabled")
+                .and_then(|e| e.as_bool())
+                .unwrap_or(false);
+            let program = server
+                .get("program")
+                .and_then(|p| p.as_str())
+                .unwrap_or_default();
+            built_ins.push(serde_json::json!({
+                "name": name,
+                "kind": "mcp server",
+                "state": if enabled { "enabled" } else { "disabled" },
+                "detail": program,
+                "manages": "the settings page's MCP servers card",
+            }));
+        }
+    }
+    serde_json::json!(built_ins)
+}
+
 fn settings_read(home: &std::path::Path) -> Value {
     let scalars = crate::settings::states(home)
         .into_iter()

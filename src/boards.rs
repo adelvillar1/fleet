@@ -370,7 +370,7 @@ fn router_state(home: &Path, dotenv: &HashMap<String, String>) -> RouterState {
 /// The second-brain home holding the six derived state files. The fork's
 /// default is `~/.second-brain`; the repo itself is the fallback when
 /// that link is absent, and `SECOND_BRAIN_HOME` overrides both.
-fn brain_home(setting: &impl Fn(&str) -> Option<String>) -> Option<PathBuf> {
+pub(crate) fn brain_home(setting: &impl Fn(&str) -> Option<String>) -> Option<PathBuf> {
     if let Some(home) = setting("SECOND_BRAIN_HOME") {
         return Some(PathBuf::from(home));
     }
