@@ -8845,3 +8845,38 @@ body[data-work="collapsed"] .work-list { display: none; }
   color: var(--dsw-alias-ink-tertiary);
 }
 .acts { display: flex; gap: 10px; align-items: center; }
+
+/* An address inside a message (the huddles plan's C8): `@name` stands out
+   among prose without breaking the line. */
+.at {
+  font-weight: 600;
+  color: var(--dsw-alias-accent);
+}
+
+/* The mention's own row: who was asked, and what for. A review request
+   reads differently from a directive, because the asker wants a verdict
+   rather than work. */
+.mention {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  margin: 0 0 8px;
+  border-left: 3px solid var(--dsw-alias-hairline-strong);
+  background: var(--dsw-alias-surface);
+  font-size: 12px;
+}
+.mention.review {
+  border-left-color: var(--dsw-alias-warn-on-light, rgb(122, 82, 8));
+}
+.mention-kind {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--dsw-alias-ink-tertiary);
+}
+.mention.review .mention-kind { color: var(--dsw-alias-warn-on-light, rgb(122, 82, 8)); }
+.mention-who { font-weight: 600; color: var(--dsw-alias-ink); }
+.mention-from { color: var(--dsw-alias-ink-tertiary); }

@@ -1574,6 +1574,9 @@
     } else {
       el0.appendChild(node('span', 'owner-text', text));
     }
+    // The owner's own addresses highlight too — but only their words, not
+    // the session-reference links, which carry an @ of their own.
+    el0.querySelectorAll('.owner-text').forEach(highlightMentions);
     var edit = node('button', 'row-rewind owner-edit', '\u270e edit');
     edit.type = 'button';
     edit.title = 'edit this message and re-run from before its run';
@@ -1821,7 +1824,13 @@
     el0.classList.remove('streaming');
     el0.classList.add('md-rendered');
     el0.textContent = '';
-    if (text) el0.appendChild(markdown(text));
+    if (text) {
+      // The live turn closes into the same rendered shape a replayed one
+      // carries, addresses included (the huddles plan's C8).
+      var body = markdown(text);
+      highlightMentions(body);
+      el0.appendChild(body);
+    }
     el0.appendChild(assistantFooter(function () { return text; }, exchanges()));
   }
 
@@ -1988,6 +1997,21 @@
       inspectDeck(event);
     });
     return row(el0, event);
+  }
+
+  // An address between members (the huddles plan's C3/C8). A review
+  // request reads differently from an ordinary directive, because the
+  // asker wants a verdict rather than work.
+  function mentionRow(event) {
+    var review = event.kind === 'review';
+    var card = node('div', 'mention' + (review ? ' review' : ''));
+    card.appendChild(node('span', 'mention-kind',
+      review ? 'review requested' : (event.kind === 'ask' ? 'asked' : 'addressed')));
+    card.appendChild(node('span', 'mention-who', '@' + event.member));
+    if (event.from && event.from !== event.member) {
+      card.appendChild(node('span', 'mention-from', 'by ' + event.from));
+    }
+    return row(card, event);
   }
 
   // A member's proposal to convene a role the room does not hold (the
@@ -2605,7 +2629,9 @@
             byline.appendChild(node('span', 'byline-who', event.persona));
             said.appendChild(byline);
           }
-          said.appendChild(markdown(event.text));
+          var answer = markdown(event.text);
+          highlightMentions(answer);
+          said.appendChild(answer);
           said.appendChild(assistantFooter(function () { return event.text; }, exchanges()));
           row(said, event);
         }
@@ -2680,6 +2706,11 @@
       case 'artifact':
         closeAssistant();
         artifactRow(event);
+        break;
+      case 'mention':
+        // An address between members: its own row, so who was asked and
+        // what they were asked for is never buried in prose (C8).
+        mentionRow(event);
         break;
       case 'recommend':
       case 'recommended':
@@ -21946,6 +21977,32 @@
       return clean;
     }
     return out;
+  }
+
+  // An address inside a message (the huddles plan's C8): `@name` is
+  // wrapped so the eye finds it among prose. Only leaves are walked and
+  // code never is — a mention inside a fence is code, not an address.
+  // The same code serves a real DOM (where the text is a child node) and
+  // the harness's stub (where it lives on the element), so what the gate
+  // pins is what ships.
+  function highlightMentions(root) {
+    var skip = { PRE: 1, CODE: 1, KBD: 1, SAMP: 1 };
+    if (skip[root.nodeName]) return;
+    var kids = Array.prototype.slice.call(root.children || []);
+    if (kids.length) {
+      kids.forEach(highlightMentions);
+      return;
+    }
+    var text = root.textContent == null ? '' : String(root.textContent);
+    if (text.indexOf('@') === -1) return;
+    var pieces = text.split(/(@[A-Za-z0-9_-]+)/g);
+    if (pieces.length === 1) return;
+    root.textContent = pieces[0];
+    pieces.slice(1).forEach(function (piece) {
+      if (!piece) return;
+      if (piece.charAt(0) === '@') root.appendChild(node('span', 'at', piece));
+      else root.appendChild(document.createTextNode(piece));
+    });
   }
 
   function markdownTable(header, rows) {

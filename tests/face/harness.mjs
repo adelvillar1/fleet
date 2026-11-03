@@ -4835,6 +4835,70 @@ async function theStrategyStepShowsItsPreview() {
       page.window.location.hash);
   }
 
+  // The address's two surfaces (the huddles plan's C8): `@name` stands out
+  // inside the prose that carried it, and the routing fact becomes a row
+  // of its own — a review request reading differently from a directive.
+  async function addressesHighlightInlineAndStandAsRows() {
+    const bootPage = (events) => boot({
+      documents: {
+        state: (asked) => ({
+          ...emptyState(asked), session: asked,
+          members: [{ name: 'designer', voice: 'makes pages' }],
+          events
+        })
+      }
+    });
+    const page = bootPage([
+      { type: 'message', role: 'owner', text: 'the brief: a landing page' },
+      { type: 'message', role: 'assistant', text: '@scholar the hero reads thin', persona: 'designer' },
+      { type: 'mention', member: 'scholar', kind: 'directive', from: 'designer' },
+      { type: 'message', role: 'assistant', text: 'The hierarchy is inverted.', persona: 'scholar' }
+    ]);
+    await flush();
+    page.open();
+    await flush();
+    const blocks = page.rows('.assistant.md-rendered');
+    const inline = blocks[0].find((one) =>
+      String(one.className || '').split(/\s+/).includes('at'));
+    check('C8 the address stands out inside the prose that carried it',
+      inline.length === 1 && String(inline[0].textContent) === '@scholar',
+      JSON.stringify(inline.map((one) => one.textContent)));
+    const rows = page.rows('.mention');
+    check('C8 the routing fact is a row of its own',
+      rows.length === 1 &&
+        String(rows[0].textContent).indexOf('@scholar') !== -1 &&
+        String(rows[0].textContent).indexOf('addressed') !== -1,
+      rows.length ? String(rows[0].textContent) : 'none');
+    // The log groups its rows into exchanges, so the order is read down
+    // the tree rather than across its top level.
+    const order = [];
+    const readOrder = (one) => {
+      const held = String(one.className || '').split(/\s+/);
+      if (held.includes('mention')) order.push('mention');
+      else if (held.includes('owner')) order.push('owner');
+      else if (held.includes('assistant')) order.push('assistant');
+      (one.children || []).forEach(readOrder);
+    };
+    readOrder(page.IDS['log']);
+    check('C8 the row lands where the answer that made it landed',
+      order.join(',') === 'owner,assistant,mention,assistant', order.join(','));
+
+    // A review request reads differently: a verdict wanted, not work.
+    const review = bootPage([
+      { type: 'message', role: 'owner', text: 'the brief' },
+      { type: 'mention', member: 'auditor', kind: 'review', from: 'designer' }
+    ]);
+    await flush();
+    review.open();
+    await flush();
+    const reviewRows = review.rows('.mention');
+    check('C8 a review request reads as a review',
+      reviewRows.length === 1 &&
+        String(reviewRows[0].className).split(/\s+/).includes('review') &&
+        String(reviewRows[0].textContent).indexOf('review requested') !== -1,
+      reviewRows.length ? String(reviewRows[0].textContent) : 'none');
+  }
+
   async function theBotsSurfaceMintsTheBotCard() {
     const page = boot({
       reply: {
@@ -7922,6 +7986,7 @@ const cases = [
   ['C11 an owner-supplied avatar replaces the initial', anOwnerSuppliedAvatarReplacesTheInitial],
   ['C5 a recommendation renders one convene press', aRecommendationRendersOneConvenePress],
   ['C2 the new-room door creates and opens', theNewRoomDoorCreatesAndOpens],
+  ['C8 addresses highlight inline and stand as rows', addressesHighlightInlineAndStandAsRows],
   ['KI-380 the zombie tab cannot hide a seat or lose the reads', theZombieTabCannotHideASeatOrLoseTheReads],
   ['C1/C8 the list groups by attention and counts what the server counted', theListGroupsByAttentionAndCountsWhatTheServerCounted],
   ['C2 every state opens through one verb', everyStateOpensThroughOneVerb],
