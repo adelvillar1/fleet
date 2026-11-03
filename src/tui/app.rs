@@ -3081,8 +3081,12 @@ fn entry_of(record: &Record) -> Option<Entry> {
         // Bookkeeping: the channel a peer arrived on is not a
         // conversation block. A persona's join and leave are the same
         // kind of staffing fact; the TUI's transcript grows the join
-        // row with the bot face, not here.
-        Record::Channel { .. } | Record::Join { .. } | Record::Leave { .. } => None,
+        // row with the bot face, not here. A mention is the routing
+        // fact behind an address its own message already carries.
+        Record::Channel { .. }
+        | Record::Join { .. }
+        | Record::Leave { .. }
+        | Record::Mention { .. } => None,
         // The mid-run curation is the memory block's own bookkeeping,
         // one seam later: the note rode one request's tail, and the
         // run's memory line already told the owner. Not a conversation

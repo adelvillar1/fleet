@@ -1289,11 +1289,23 @@ pub struct Agent<'a> {
     checkpoints: Option<std::path::PathBuf>,
     /// The session id the checkpoint store keys on, the log's own stem.
     session_id: String,
-    /// The persona authoring this run's turns — the lead of the
-    /// session's persona set, resolved once from the log's own records
-    /// (the bot plan's P2 stream half). `None` on a pre-P2 log, a
-    /// subagent, and a scheduled run, whose records stamp no author.
-    lead_persona: Option<String>,
+    /// The huddle's whole membership in join order (the huddles plan's
+    /// C2/C3). Empty on a conversation with no personas, where the
+    /// ordinary lead-only path stands untouched.
+    personas: Vec<String>,
+    /// The member who authors the NEXT turn — the speaker switch (C3).
+    /// The last mention in the log opens the run, and a bot's own `@name`
+    /// moves it mid-run; absent a mention the lead speaks. `None` on an
+    /// ordinary conversation, where `lead_persona` authors every turn.
+    active_speaker: Option<String>,
+    /// Each member's role overlay, resolved once at run start so a
+    /// mid-run switch changes the voice without a second role read. A
+    /// member whose role does not resolve has no entry, and the prompt
+    /// falls back to the bridge-resolved lead overlay.
+    persona_overlays: std::collections::HashMap<String, String>,
+    /// A bot addressed `@you`; the run ends after this turn rather than
+    /// continuing autonomously past a question only the owner can answer.
+    await_owner: bool,
     /// Plan mode: the write-class tools are refused at the gate.
     plan_mode: bool,
     /// The API-reported `prompt_tokens` of the last response, or `None`
@@ -1451,6 +1463,35 @@ impl<'a> Agent<'a> {
             }
         }
         let lead_persona = personas.first().cloned();
+        // The huddle's speaker switch (C3): the log's last mention opens
+        // the run, and a bot's own `@name` moves it mid-run. A mention of
+        // the owner never takes the turn — it asks — and a mention of a
+        // name the room does not hold is not an address this run can
+        // serve, so the lead stands instead.
+        let active_speaker = records
+            .iter()
+            .rev()
+            .find_map(|record| match record {
+                Record::Mention { member, .. } => Some(member),
+                _ => None,
+            })
+            .filter(|member| *member != crate::session::MENTION_OWNER && personas.contains(member))
+            .cloned()
+            .or_else(|| lead_persona.clone());
+        // Each member's voice, resolved once here rather than per turn: a
+        // role that does not resolve simply has no entry, and the prompt
+        // falls back to the bridge-resolved lead overlay.
+        let mut persona_overlays = std::collections::HashMap::new();
+        if let Some(home) = options.improve_home.as_ref() {
+            for name in &personas {
+                if let Ok(role) = crate::roles::load(home, name) {
+                    let frame = crate::roles::overlay_prompt(&role);
+                    if !frame.is_empty() {
+                        persona_overlays.insert(name.clone(), frame);
+                    }
+                }
+            }
+        }
         // An injected spec map wins for the lanes it names; every other
         // lane resolves through the vendored registry at call time, with
         // its named reason when it cannot launch.
@@ -1518,7 +1559,10 @@ impl<'a> Agent<'a> {
             compact_now,
             checkpoints,
             session_id,
-            lead_persona,
+            personas,
+            active_speaker,
+            persona_overlays,
+            await_owner: false,
             plan_mode,
             last_prompt_tokens: None,
             turn_curve: Vec::new(),
@@ -1557,12 +1601,59 @@ impl<'a> Agent<'a> {
     fn system_prompt(&self, memory_block: Option<&str>) -> String {
         // The headless growth line (KI-216's split): the live surface
         // owns its pane, the headless path prints the held-back count.
+        // Once per run, which is why this wrapper keeps the side effect
+        // and the per-turn builder below stays pure.
         if self.options.ui_tx.is_none() {
             let declared = declared_skills(&self.skills).len();
             if let Some(line) = skills_prompt_growth_line(self.skills.len(), declared) {
                 eprintln!("{line}");
             }
         }
+        self.compose_system_prompt(memory_block, self.options.role_overlay.as_deref())
+    }
+
+    /// The prompt this turn's request carries, with the active speaker's
+    /// overlay. Byte-stable within a turn — the provider's prefix cache
+    /// still holds — and it changes only when a mention switches the
+    /// speaker, because the overlay is the one field that follows them.
+    fn turn_system_prompt(&self, memory_block: Option<&str>) -> String {
+        self.compose_system_prompt(memory_block, self.active_overlay())
+    }
+
+    /// The overlay the active speaker's turns carry: their own role's
+    /// frame when it resolved, the bridge-resolved lead overlay otherwise,
+    /// and no overlay at all on an ordinary conversation.
+    fn active_overlay(&self) -> Option<&str> {
+        match self.active_speaker.as_deref() {
+            Some(speaker) => self
+                .persona_overlays
+                .get(speaker)
+                .map(String::as_str)
+                .or(self.options.role_overlay.as_deref()),
+            None => self.options.role_overlay.as_deref(),
+        }
+    }
+
+    /// The prompt a turn's request — and the compaction estimate — reads:
+    /// the active speaker's assembly for a huddle, whose overlay can move
+    /// mid-run, and the run's single build otherwise, byte for byte what
+    /// the loop has always carried.
+    fn prompt_for_turn(&self, memory_block: Option<&str>, base: &str) -> String {
+        match self.active_speaker {
+            Some(_) => self.turn_system_prompt(memory_block),
+            None => base.to_string(),
+        }
+    }
+
+    /// The assembled prompt for one overlay: the compiled-in constant
+    /// plus this run's skills list, memory block, identity, role overlay,
+    /// surface line and folder. Pure — the caller decides when to build
+    /// it, and `system_prompt` owns the once-per-run growth line.
+    fn compose_system_prompt(
+        &self,
+        memory_block: Option<&str>,
+        role_overlay: Option<&str>,
+    ) -> String {
         let refs: Vec<crate::skills::SkillRef> = declared_skills(&self.skills)
             .into_iter()
             .map(|skill| skill.into())
@@ -1579,7 +1670,7 @@ impl<'a> Agent<'a> {
             self.options.identity.as_deref(),
             &refs,
             memory_block,
-            self.options.role_overlay.as_deref(),
+            role_overlay,
             self.options.gui_prompt.as_deref(),
             self.options.goal.as_deref(),
             &self.options.file_access,
@@ -2558,11 +2649,15 @@ impl<'a> Agent<'a> {
             // run's skills list, which the `skills` record above carries:
             // model-visible and reconstructable, like the tool
             // declarations. The repair ask rides one request only.
+            // A huddle rebuilds its prompt each turn because a mention may
+            // have switched the speaker; an ordinary conversation keeps
+            // the one build.
+            let turn_prompt = self.prompt_for_turn(memory_block.as_deref(), &system_prompt);
             let request_system = if repair_next {
                 repair_next = false;
-                format!("{system_prompt}\n\n{REPORT_INSTRUCTION}")
+                format!("{turn_prompt}\n\n{REPORT_INSTRUCTION}")
             } else {
-                system_prompt.clone()
+                turn_prompt
             };
             let mut request_messages = Vec::with_capacity(self.messages.len() + 1);
             request_messages.push(Message::text(Role::System, &request_system));
@@ -2751,6 +2846,9 @@ impl<'a> Agent<'a> {
                     continue;
                 }
                 self.push_message(message)?;
+                // The bot's own address rides its text; the routing fact
+                // lands beside it, and `@you` ends the run after this turn.
+                self.route_mention(&content)?;
                 let turns = self.turns;
                 // A stop that still said nothing usable is named as such:
                 // the log's end record and the finished card must not
@@ -2791,8 +2889,10 @@ impl<'a> Agent<'a> {
             }
 
             let tool_calls = message.tool_calls.clone();
+            let assistant_text = message.content.clone().unwrap_or_default();
             self.tool_calls_run += tool_calls.len() as u64;
             self.push_message(message)?;
+            self.route_mention(&assistant_text)?;
             // The batch: the gate one call at a time, the approved calls
             // under the plan, every result recorded in the batch's own
             // order. The recursion this loop carries — a delegation runs
@@ -2801,6 +2901,28 @@ impl<'a> Agent<'a> {
             // `execute_calls`, the same indirection `api::chat_stream`
             // needed when the router called back into it.
             self.execute_calls(&tool_calls).await?;
+            // A bot that addressed the owner has asked something only they
+            // can answer; continuing would spend turns past the question.
+            if self.await_owner {
+                let turns = self.turns;
+                let stop_reason = end_stop_word(self.session.kind(), false).to_string();
+                self.record(&Record::End {
+                    stop_reason: stop_reason.clone(),
+                    turns,
+                    served_model: self.served_model(),
+                })?;
+                self.emit(UiEvent::Finished {
+                    stop_reason: stop_reason.clone(),
+                });
+                return Ok(RunReport {
+                    stop_reason: StopReason::Completed,
+                    turns,
+                    usage: self.usage.clone(),
+                    final_message: None,
+                    compactions: self.compactions,
+                    turn_curve: self.turn_curve.clone(),
+                });
+            }
             // The turn's file state, captured before the next request:
             // the checkpoint is the tree as this turn left it, so a
             // rewind to this turn restores what the turn produced. A
@@ -2813,7 +2935,8 @@ impl<'a> Agent<'a> {
             // the message list it measures is the one the next request
             // would carry — and a compaction it performs is already in
             // place by the time that request is assembled.
-            self.maybe_compact(&system_prompt).await?;
+            let boundary = self.prompt_for_turn(memory_block.as_deref(), &system_prompt);
+            self.maybe_compact(&boundary).await?;
         }
 
         let turns = self.turns;
@@ -4911,7 +5034,10 @@ impl<'a> Agent<'a> {
             Role::Assistant => Record::Assistant {
                 content: message.content.clone(),
                 tool_calls: message.tool_calls.clone(),
-                persona: self.lead_persona.clone(),
+                // The active speaker, not the lead: a huddle's mention may
+                // have moved the turn to another member (C3), and the
+                // byline is what makes that visible in the transcript.
+                persona: self.active_speaker.clone(),
             },
             Role::Tool => Record::ToolResult {
                 call_id: message.tool_call_id.clone().unwrap_or_default(),
@@ -4923,6 +5049,27 @@ impl<'a> Agent<'a> {
             Role::System => return Ok(()),
         };
         self.record(&record)?;
+        // The owner's own address routes the turn exactly as a bot's does
+        // (C3): the mention lands beside the message it came in, typed,
+        // and the next turn belongs to that member. A name the room does
+        // not hold is the surface's refusal before the run; `@you` from a
+        // person is not a routing.
+        if role == Role::User {
+            if let Some(content) = message.content.as_deref() {
+                if let Some((member, following)) = crate::session::last_mention(content) {
+                    if self.personas.iter().any(|name| name == member) {
+                        let kind = crate::session::classify_mention(member, following);
+                        self.record(&Record::Mention {
+                            member: member.to_string(),
+                            kind: kind.to_string(),
+                            from: None,
+                            at: crate::boards::now_stamp(),
+                        })?;
+                        self.active_speaker = Some(member.to_string());
+                    }
+                }
+            }
+        }
         // The turn rule, the same one `session::conversation` applies when
         // it replays a log: a user message and the assistant answer that
         // follows it share a turn, a tool result belongs to the turn whose
@@ -4937,6 +5084,36 @@ impl<'a> Agent<'a> {
 
     fn record(&mut self, record: &Record) -> Result<(), AgentError> {
         self.session.record(record).map_err(AgentError::Io)
+    }
+
+    /// Route a mention in an assistant's text to its member (the huddles
+    /// plan's C3). The address rides the message's own content, so this
+    /// writes only the routing record — the transcript needs no second
+    /// row for it. A mention of the owner asks and ends the run rather
+    /// than continuing past a question only they can answer; a mention of
+    /// a name this room does not hold is left alone, and the speaker
+    /// stands.
+    fn route_mention(&mut self, content: &str) -> Result<(), AgentError> {
+        let Some((member, following)) = crate::session::last_mention(content) else {
+            return Ok(());
+        };
+        let mentions_owner = member == crate::session::MENTION_OWNER;
+        if !mentions_owner && !self.personas.iter().any(|name| name == member) {
+            return Ok(());
+        }
+        let kind = crate::session::classify_mention(member, following);
+        self.record(&Record::Mention {
+            member: member.to_string(),
+            kind: kind.to_string(),
+            from: self.active_speaker.clone(),
+            at: crate::boards::now_stamp(),
+        })?;
+        if mentions_owner {
+            self.await_owner = true;
+        } else {
+            self.active_speaker = Some(member.to_string());
+        }
+        Ok(())
     }
 }
 
@@ -8448,6 +8625,250 @@ mod tests {
             "the estimate carries when the provider reports nothing"
         );
         drop(agent);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// The options a routing test needs: no identity, no lanes, no
+    /// surface line, a short turn cap, and an unrestricted folder.
+    fn routing_options(model: &str) -> AgentOptions {
+        AgentOptions {
+            session_id: None,
+            goal: None,
+            model: model.to_string(),
+            identity: None,
+            max_turns: 3,
+            ui_tx: None,
+            lane_specs: None,
+            calib: None,
+            skills: Vec::new(),
+            role_overlay: None,
+            memory: None,
+            scope: None,
+            improve_home: None,
+            route_home: None,
+            gui_prompt: None,
+            compact_now: false,
+            checkpoints: None,
+            file_access: FileAccess::Unrestricted,
+            plan_mode: false,
+        }
+    }
+
+    /// Build an agent over a prepared session without running it, so a
+    /// test can inspect what the run's assembly derived.
+    fn assembled_agent<'a>(
+        client: &'a Client,
+        session: &'a mut crate::session::Session,
+    ) -> Agent<'a> {
+        let progress: &'static mut Vec<u8> = Box::leak(Box::new(Vec::new()));
+        Agent::new(
+            client,
+            routing_options("m"),
+            session,
+            Box::new(ApproveAll),
+            &mut *progress,
+        )
+        .expect("the agent assembles")
+    }
+
+    #[tokio::test]
+    async fn a_mentions_last_address_opens_the_run() {
+        // C3's other half: the owner posts `@auditor`, the bridge writes
+        // the mention, and the next run opens with that member rather than
+        // the lead. A room with no mention still opens on its lead.
+        let m = fold_mock("the run is complete");
+        let home = scratch("mention-open");
+        let mut session = crate::session::Session::create_with_persona(
+            &home,
+            "m",
+            Some(vec!["tower".to_string()]),
+        )
+        .unwrap();
+        session
+            .record(&crate::session::Record::Join {
+                persona: "auditor".to_string(),
+                role: None,
+                at: "2026-11-03T14:00:00Z".to_string(),
+            })
+            .unwrap();
+        let client = Client::new(format!("http://127.0.0.1:{}", m.port), "test-key");
+
+        let agent = assembled_agent(&client, &mut session);
+        assert_eq!(agent.active_speaker.as_deref(), Some("tower"));
+        drop(agent);
+
+        session
+            .record(&crate::session::Record::Mention {
+                member: "auditor".to_string(),
+                kind: crate::session::MENTION_DIRECTIVE.to_string(),
+                from: Some("tower".to_string()),
+                at: "2026-11-03T14:05:00Z".to_string(),
+            })
+            .unwrap();
+        let agent = assembled_agent(&client, &mut session);
+        assert_eq!(
+            agent.active_speaker.as_deref(),
+            Some("auditor"),
+            "the room's last address opens the run"
+        );
+        drop(agent);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[tokio::test]
+    async fn the_owners_address_routes_the_turn_it_starts() {
+        // C3: posting `@auditor` in the composer writes the mention beside
+        // the message, and the turn that follows belongs to auditor — its
+        // byline and its routing row both say so.
+        let m = fold_mock("the page reads clean");
+        let home = scratch("owner-mention");
+        let mut session = crate::session::Session::create_with_persona(
+            &home,
+            "m",
+            Some(vec!["tower".to_string()]),
+        )
+        .unwrap();
+        session
+            .record(&crate::session::Record::Join {
+                persona: "auditor".to_string(),
+                role: None,
+                at: "2026-11-03T14:00:00Z".to_string(),
+            })
+            .unwrap();
+        let path = session.path().to_path_buf();
+        let client = Client::new(format!("http://127.0.0.1:{}", m.port), "test-key");
+        let progress: &'static mut Vec<u8> = Box::leak(Box::new(Vec::new()));
+        let mut agent = Agent::new(
+            &client,
+            routing_options("m"),
+            &mut session,
+            Box::new(ApproveAll),
+            &mut *progress,
+        )
+        .unwrap();
+        agent
+            .run("@auditor review the page")
+            .await
+            .expect("the run completes");
+        assert_eq!(agent.active_speaker.as_deref(), Some("auditor"));
+        drop(agent);
+        let records = crate::session::replay(&path).expect("the log replays");
+        let mut mentions = 0;
+        let mut authors = Vec::new();
+        for record in &records {
+            match record {
+                Record::Mention {
+                    member, kind, from, ..
+                } => {
+                    mentions += 1;
+                    assert_eq!(member, "auditor");
+                    assert_eq!(*kind, crate::session::MENTION_REVIEW);
+                    assert!(from.is_none(), "the owner wrote it");
+                }
+                Record::Assistant { persona, .. } => authors.push(persona.clone()),
+                _ => {}
+            }
+        }
+        assert_eq!(mentions, 1, "one address, one routing row");
+        assert_eq!(authors, vec![Some("auditor".to_string())]);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[tokio::test]
+    async fn a_bot_mention_moves_the_speaker_and_is_logged() {
+        // C3: a bot's `@name` routes the next turn to that member, and the
+        // routing fact lands in the log beside the message carrying it.
+        // The owner's address asks and ends the run; a name the room does
+        // not hold leaves the speaker where they were.
+        let m = fold_mock("the run is complete");
+        let home = scratch("mention-route");
+        let mut session = crate::session::Session::create_with_persona(
+            &home,
+            "m",
+            Some(vec!["tower".to_string()]),
+        )
+        .unwrap();
+        session
+            .record(&crate::session::Record::Join {
+                persona: "auditor".to_string(),
+                role: None,
+                at: "2026-11-03T14:00:00Z".to_string(),
+            })
+            .unwrap();
+        let client = Client::new(format!("http://127.0.0.1:{}", m.port), "test-key");
+        let options = AgentOptions {
+            session_id: None,
+            goal: None,
+            model: "m".to_string(),
+            identity: None,
+            max_turns: 3,
+            ui_tx: None,
+            lane_specs: None,
+            calib: None,
+            skills: Vec::new(),
+            role_overlay: None,
+            memory: None,
+            scope: None,
+            improve_home: None,
+            route_home: None,
+            gui_prompt: None,
+            compact_now: false,
+            checkpoints: None,
+            file_access: FileAccess::Unrestricted,
+            plan_mode: false,
+        };
+        let progress: &'static mut Vec<u8> = Box::leak(Box::new(Vec::new()));
+        let path = session.path().to_path_buf();
+        let mut agent = Agent::new(
+            &client,
+            options,
+            &mut session,
+            Box::new(ApproveAll),
+            &mut *progress,
+        )
+        .unwrap();
+        // No mention yet: the lead opens the run.
+        assert_eq!(agent.active_speaker.as_deref(), Some("tower"));
+        agent
+            .route_mention("@auditor please review the page")
+            .expect("the mention routes");
+        assert_eq!(agent.active_speaker.as_deref(), Some("auditor"));
+        // `@you` asks and stops; it never becomes the speaker.
+        agent
+            .route_mention("@you worth a look")
+            .expect("the ask routes");
+        assert!(agent.await_owner, "the owner's address ends the run");
+        assert_eq!(
+            agent.active_speaker.as_deref(),
+            Some("auditor"),
+            "an ask does not move the speaker"
+        );
+        // A name this room does not hold is not an address it can serve.
+        agent
+            .route_mention("@nobody here")
+            .expect("a stranger is ignored");
+        assert_eq!(agent.active_speaker.as_deref(), Some("auditor"));
+        drop(agent);
+        // The log carries every mention, typed and in order.
+        let records = crate::session::replay(&path).expect("the log replays");
+        let mentions: Vec<(String, String)> = records
+            .iter()
+            .filter_map(|record| match record {
+                Record::Mention { member, kind, .. } => Some((member.clone(), kind.clone())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            mentions,
+            vec![
+                (
+                    "auditor".to_string(),
+                    crate::session::MENTION_REVIEW.to_string()
+                ),
+                ("you".to_string(), crate::session::MENTION_ASK.to_string()),
+            ],
+            "a stranger writes no row"
+        );
         let _ = std::fs::remove_dir_all(&home);
     }
 

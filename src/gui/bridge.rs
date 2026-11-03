@@ -5832,8 +5832,12 @@ fn cards_from_records(records: &[session::Record]) -> (Vec<Value>, usize) {
             // event, the transcript does not grow a block for it.
             | session::Record::TurnFailed { .. }
             // A leave only ends a participation the join row opened;
-            // the join row itself is what the transcript shows.
-            | session::Record::Leave { .. } => {}
+            // the join row itself is what the transcript shows. A
+            // mention is the routing fact behind an address its own
+            // message already carries, so the transcript needs no
+            // second row for it (the huddles plan's C3).
+            | session::Record::Leave { .. }
+            | session::Record::Mention { .. } => {}
             // A persona joining the conversation is a row the owner
             // reads — the 2026-10-28 ruling's own words — so the
             // replay surfaces it the way it surfaces a channel.

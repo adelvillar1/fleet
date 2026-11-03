@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>fleet — the seat (sys1’s verdict)</title>
+<link rel="stylesheet" href="mockup.css">
+</head>
+<body>
+<div class="screen">
+
+  <!-- The room behind, dimmed: the seat interrupts, it does not replace. -->
+  <div style="opacity:.45; filter:saturate(.7);">
+    <p class="eyebrow">Work · huddle</p>
+    <h1># the-q3-board</h1>
+    <div class="section" style="margin-top:14px;">
+      <div class="row"><span class="mark sm you">you</span><span class="name">you</span>
+        <span class="state">The brief: a landing page for thrift’s launch…</span></div>
+      <div class="row"><span class="mark sm" data-p="designer">d</span><span class="name">designer</span>
+        <span class="state">Landed the first page…</span></div>
+      <div class="row"><span class="mark sm" data-p="scholar">s</span><span class="name">scholar</span>
+        <span class="state">You’re right. The hierarchy is inverted…</span></div>
+      <div class="row"><span class="mark sm" data-p="auditor">a</span><span class="name">auditor</span>
+        <span class="state">Two contrast pairs fail AA — I’ll post the fixes…</span></div>
+    </div>
+  </div>
+
+  <!-- The seat itself. -->
+  <div class="door" style="background:rgba(28,26,23,0.55);">
+    <div class="form" style="width:680px;">
+
+      <div class="seat" style="border:0; background:none; padding:0; margin:0 0 14px;">
+        <div class="seat-head">⚠ the seat · auditor is holding for you</div>
+        <p style="margin:0 0 10px; font-size:13.5px; color:var(--ink);">
+          <b>write_file</b> would overwrite the page as it stands.
+        </p>
+        <div style="font:12px/1.5 var(--mono); color:var(--ink-2); background:var(--page);
+                    border:1px solid var(--hairline); border-radius:6px; padding:9px 11px;">
+          canvas/the-q3-board/frames/landing.html
+        </div>
+      </div>
+
+      <!-- sys1's verdict: data, not the client's guess. -->
+      <div class="verdict">
+        <span class="stamp yes">destructive</span>
+        <div>
+          <div class="why"><b>An overwrite discards what is there.</b> The file exists and the
+          call carries no diff — a restore means a version snapshot, not a merge.</div>
+          <div class="lane">judged by sys1 · judgment · 84 ms · confidence 0.91 ·
+          verdict <code>destructive-overwrite</code></div>
+        </div>
+      </div>
+
+      <div class="seat" style="border:0; background:none; padding:0; margin:12px 0 0;">
+        <div class="seat-head" style="color:var(--ok);">the contrast · why this one asked</div>
+        <div class="verdict" style="border-style:dashed;">
+          <span class="stamp no">not destructive</span>
+          <div>
+            <div class="why">The same member’s <b>read_file</b> a moment earlier passed
+            without a seat — sys1 judged it read-only and it ran under the mode.</div>
+            <div class="lane">the judgment is per action, not per member or per huddle</div>
+          </div>
+        </div>
+      </div>
+
+      <p class="note" style="margin:14px 0 0;">
+        The mode is <b>autonomous</b>, and it still asks: a destructive act takes the
+        seat whatever the mode says — the bot face’s own ruling. Were the judgment lane
+        down, the gate would fall back to the standing destructive class and say so here.
+      </p>
+
+      <div class="acts" style="display:flex; gap:10px; margin-top:16px;">
+        <button class="press primary">allow once</button>
+        <button class="press">always allow · this file</button>
+        <button class="press quiet">deny</button>
+      </div>
+
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

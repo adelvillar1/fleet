@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>fleet — the-q3-board (the open huddle)</title>
+<link rel="stylesheet" href="mockup.css">
+</head>
+<body>
+<div class="screen wide">
+  <div class="room">
+
+    <!-- ------------------------------------------------------------ *
+         The room
+     * ------------------------------------------------------------ -->
+    <div class="panel">
+      <div class="room-head">
+        <h2># the-q3-board</h2>
+        <p class="goal"><b>Goal</b> — thrift’s landing page, ready for the launch review.</p>
+        <div class="members">
+          <span class="stack">
+            <span class="mark md you">you</span>
+            <span class="mark md" data-p="designer">d</span>
+            <span class="mark md" data-p="scholar">s</span>
+          </span>
+          <span class="who"><b>designer</b> <span class="voice">— makes pages, keeps their identity</span></span>
+          <span class="who"><b>scholar</b> <span class="voice">— grounds every claim</span></span>
+          <button class="convene">+ convene</button>
+        </div>
+      </div>
+
+      <div class="modebar">
+        <span>mode</span>
+        <span class="chip mode">ask</span>
+        <span class="chip mode">autonomous</span>
+        <span class="chip mode">full access</span>
+        <span class="spacer"></span>
+        <span class="guardrail">guardrail · your SOUL</span>
+      </div>
+
+      <div class="transcript">
+
+        <div class="msg">
+          <span class="mark md you">you</span>
+          <div class="body">
+            <div class="byline"><span class="who">you</span><span>14:01</span></div>
+            <p class="text">The brief: a landing page for thrift’s launch. One hero,
+            three proofs, a pricing block. Keep the brand’s own palette.</p>
+          </div>
+        </div>
+
+        <div class="msg">
+          <span class="mark md" data-p="designer">d</span>
+          <div class="body">
+            <div class="byline"><span class="who">designer</span><span>14:02</span></div>
+            <p class="text">Landed the first page. The tokens come from the brand —
+            accent <code>#254eb0</code>, the editorial serif for the hero.</p>
+            <button class="posted">
+              <span class="glyph">▣</span>
+              <span>
+                <span class="fname">landing.html</span><br>
+                <span class="fmeta">12.4 KB · the page itself</span>
+              </span>
+              <span class="open">open in the pane →</span>
+            </button>
+            <p class="text" style="margin-top:8px;"><span class="at">@scholar</span> the hero reads
+            thin to me — the proof points are doing the work the headline should.</p>
+          </div>
+        </div>
+
+        <div class="msg">
+          <span class="mark md" data-p="scholar">s</span>
+          <div class="body">
+            <div class="byline"><span class="who">scholar</span><span>14:04</span></div>
+            <p class="text">You’re right. The hierarchy is inverted: the headline names the
+            audience, not the outcome. I’ve rewritten it and kept the citations beside
+            each claim.</p>
+            <button class="posted">
+              <span class="glyph">▣</span>
+              <span>
+                <span class="fname">hero-copy.md</span><br>
+                <span class="fmeta">2.1 KB · the copy and its sources</span>
+              </span>
+              <span class="open">open in the pane →</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- The capability-gap recommendation: the bot proposes, you press. -->
+        <div class="msg">
+          <span class="mark md" data-p="designer">d</span>
+          <div class="body">
+            <div class="byline"><span class="who">designer</span><span>14:05</span></div>
+            <div class="suggest">
+              <div class="label">capability gap</div>
+              <p class="why">This brief needs an accessibility pass against the contrast
+              pairs, and no member here carries <code>a11y-scan</code>. Auditor does.</p>
+              <div class="acts">
+                <button class="press primary" style="padding:7px 14px;">convene auditor</button>
+                <button class="press quiet">not yet</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- A review request between members: no owner relay. -->
+        <div class="msg">
+          <span class="mark md" data-p="auditor">a</span>
+          <div class="body">
+            <div class="byline"><span class="who">auditor</span><span>14:09</span></div>
+            <p class="text"><span class="at">@designer</span> I’m reviewing the page against the
+            brand tokens. Two contrast pairs fail AA on the pricing block — I’ll post the
+            fixes rather than edit the page under you.</p>
+          </div>
+        </div>
+
+        <!-- @you: a question, never a run. -->
+        <div class="msg">
+          <span class="mark md" data-p="auditor">a</span>
+          <div class="body">
+            <div class="byline"><span class="who">auditor</span><span>14:11</span></div>
+            <p class="text"><span class="at">@you</span> the hero needs a decision only you own:
+            thrift’s own photography, or the placeholder marks for now?</p>
+          </div>
+        </div>
+
+      </div>
+
+      <div class="composer">
+        <div class="line">
+          <button class="atpick">@ scholar ▾</button>
+          <span class="hint">a mention routes the turn — <b>@you</b> asks, never runs</span>
+        </div>
+        <textarea rows="2" placeholder="The message…"></textarea>
+        <div class="trail">
+          <button class="press primary">send</button>
+          <span class="hint">mode · autonomous · bounded by the huddle’s turn budget</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ------------------------------------------------------------ *
+         The pane
+     * ------------------------------------------------------------ -->
+    <div class="panel pane">
+      <div class="tabs">
+        <button class="tab">files</button>
+        <button class="tab">code</button>
+        <button class="tab on">preview</button>
+        <button class="tab">explore</button>
+      </div>
+      <div class="pane-body">
+        <div class="file-head">
+          ▣ landing.html
+          <span class="fmeta">· 12.4 KB · designer · 14:02</span>
+        </div>
+        <div class="preview">the page, rendered</div>
+        <div class="facts">
+          <div><span>members</span><span>3</span></div>
+          <div><span>deliverables</span><span>2</span></div>
+          <div><span>breakouts</span><span>1 · pricing</span></div>
+          <div><span>guardrail</span><span>your SOUL</span></div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <p class="note">
+    Everything a member sees is in the room’s log — hard rule 5. The deliverables
+    are the files posted in-line; the pane previews whichever one is in focus.
+    No member has a portrait beside a message; the mark lives in the rows, the
+    head and the member stack.
+  </p>
+</div>
+</body>
+</html>

@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>fleet — huddles (the rail)</title>
+<link rel="stylesheet" href="mockup.css">
+</head>
+<body>
+<div class="screen">
+  <p class="eyebrow">Work</p>
+  <h1>Huddles</h1>
+  <p class="headline">
+    <span class="counts"><b>3</b> active · <b>2</b> idle · <b>4</b> ended</span>
+    <button class="disclosure">how a huddle works <span class="chev">▾</span></button>
+  </p>
+
+  <!-- Active: a run in flight or a write inside the live window. -->
+  <div class="section">
+    <div class="section-head">
+      <h2>Active</h2><span class="count">3</span>
+      <span class="why">a room someone is working in</span>
+    </div>
+
+    <div class="row open">
+      <span class="dot ok"></span>
+      <span class="name">the-q3-board</span>
+      <span class="stack">
+        <span class="mark sm you">you</span>
+        <span class="mark sm" data-p="designer">d</span>
+        <span class="mark sm" data-p="scholar">s</span>
+      </span>
+      <span class="state">thrift’s landing page, launch review · <span class="dim">designer is writing</span></span>
+      <span class="meta"><span class="files"><b>2</b> files</span></span>
+      <span class="go">open →</span>
+    </div>
+
+    <div class="row">
+      <span class="dot ok"></span>
+      <span class="name">deck-for-nace</span>
+      <span class="stack">
+        <span class="mark sm you">you</span>
+        <span class="mark sm" data-p="presenter">p</span>
+      </span>
+      <span class="state">the Nace brief, six slides · <span class="dim">awaiting your reply</span></span>
+      <span class="meta"><span class="files"><b>1</b> file</span></span>
+      <span class="go">open →</span>
+    </div>
+
+    <div class="row">
+      <span class="dot warn"></span>
+      <span class="name">onboard-copy</span>
+      <span class="stack">
+        <span class="mark sm you">you</span>
+        <span class="mark sm" data-p="clerk">c</span>
+        <span class="mark sm" data-p="scholar">s</span>
+      </span>
+      <span class="state">the onboarding page’s copy · <span class="dim">a seat waits for you</span></span>
+      <span class="meta"><span class="files"><b>1</b> file</span></span>
+      <span class="go">open →</span>
+    </div>
+  </div>
+
+  <!-- Inactive: no run, no recent write. Parked, not finished. -->
+  <div class="section">
+    <div class="section-head">
+      <h2>Inactive</h2><span class="count">2</span>
+      <span class="why">parked — nothing is running, nothing is waiting</span>
+    </div>
+
+    <div class="row">
+      <span class="dot idle"></span>
+      <span class="name">pricing-rewrite</span>
+      <span class="stack">
+        <span class="mark sm you">you</span>
+        <span class="mark sm" data-p="designer">d</span>
+      </span>
+      <span class="state">the pricing page’s rewrite · <span class="dim">idle 2 days</span></span>
+      <span class="meta"><span class="files"><b>0</b> files</span></span>
+      <span class="go">open →</span>
+    </div>
+
+    <div class="row">
+      <span class="dot idle"></span>
+      <span class="name">handbook-v1</span>
+      <span class="stack">
+        <span class="mark sm you">you</span>
+        <span class="mark sm" data-p="advocate">a</span>
+        <span class="mark sm" data-p="clerk">c</span>
+      </span>
+      <span class="state">the contractor handbook · <span class="dim">idle 5 days</span></span>
+      <span class="meta"><span class="files"><b>3</b> files</span></span>
+      <span class="go">open →</span>
+    </div>
+  </div>
+
+  <!-- Ended: closed by the owner. Read-only; its deliverables persist. -->
+  <div class="section">
+    <div class="section-head">
+      <h2>Ended</h2><span class="count">4</span>
+      <span class="why">closed — put away, not done</span>
+    </div>
+
+    <div class="row">
+      <span class="dot off"></span>
+      <span class="name">brand-audit</span>
+      <span class="stack">
+        <span class="mark sm you">you</span>
+        <span class="mark sm" data-p="auditor">a</span>
+      </span>
+      <span class="state">the brand audit · <span class="dim">ended 3 days ago</span></span>
+      <span class="meta"><span class="files"><b>4</b> files</span></span>
+      <span class="go">open →</span>
+    </div>
+
+    <div class="row">
+      <span class="dot off"></span>
+      <span class="name">launch-email</span>
+      <span class="stack">
+        <span class="mark sm you">you</span>
+        <span class="mark sm" data-p="advocate">a</span>
+      </span>
+      <span class="state">the launch email · <span class="dim">ended 1 week ago</span></span>
+      <span class="meta"><span class="files"><b>2</b> files</span></span>
+      <span class="go">open →</span>
+    </div>
+
+    <div class="row">
+      <span class="dot off"></span>
+      <span class="name">site-map</span>
+      <span class="stack">
+        <span class="mark sm you">you</span>
+        <span class="mark sm" data-p="scholar">s</span>
+      </span>
+      <span class="state">the site map · <span class="dim">ended 2 weeks ago</span></span>
+      <span class="meta"><span class="files"><b>1</b> file</span></span>
+      <span class="go">open →</span>
+    </div>
+
+    <div class="row">
+      <span class="dot off"></span>
+      <span class="name">rate-card</span>
+      <span class="stack">
+        <span class="mark sm you">you</span>
+        <span class="mark sm" data-p="clerk">c</span>
+      </span>
+      <span class="state">the rate card · <span class="dim">ended 3 weeks ago</span></span>
+      <span class="meta"><span class="files"><b>2</b> files</span></span>
+      <span class="go">open →</span>
+    </div>
+  </div>
+
+  <p style="margin: 22px 0 0;">
+    <button class="press primary">+ new huddle</button>
+  </p>
+
+  <p class="note">
+    A huddle is one session with members: you and one or more bots. Every
+    member sees every message. Deliverables are the files posted in the
+    room — the count is theirs. A huddle ends only when you end it; ending
+    closes the room and keeps what it produced.
+  </p>
+</div>
+</body>
+</html>

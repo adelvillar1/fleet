@@ -44,6 +44,71 @@ pub const SCHEDULED_KIND: &str = "scheduled";
 /// place.
 pub const PROBE_KIND: &str = "probe";
 
+/// The mention kinds a huddle's routing reads (the huddles plan's C3). A
+/// mention is `@name` in a message; the kind says what the address asks
+/// for, so the loop can route the turn without re-reading the prose.
+pub const MENTION_DIRECTIVE: &str = "directive";
+/// A question — the addressed member answers, and `@you` waits.
+pub const MENTION_ASK: &str = "ask";
+/// A review request — the addressed member returns a review, not a change.
+pub const MENTION_REVIEW: &str = "review";
+/// The owner's mention name. `@you` asks a person, so it never starts a
+/// run: it raises a needs-you on the huddle's row and the rail.
+pub const MENTION_OWNER: &str = "you";
+
+/// Find the last `@name` address in a message's text, as `(name, the words
+/// that follow it)`. An address is an `@` at a word boundary — preceded by
+/// the start of the text or a non-name byte, so `foo@bar` is not one — and
+/// a name of `[A-Za-z0-9_-]+`. The last address wins: a relay's most recent
+/// direction is the one the next turn serves.
+pub fn last_mention(text: &str) -> Option<(&str, &str)> {
+    let bytes = text.as_bytes();
+    let mut found = None;
+    for index in 0..bytes.len() {
+        if bytes[index] != b'@' || (index > 0 && is_name_byte(bytes[index - 1])) {
+            continue;
+        }
+        let start = index + 1;
+        let mut end = start;
+        while end < bytes.len() && is_name_byte(bytes[end]) {
+            end += 1;
+        }
+        if end == start {
+            continue;
+        }
+        // Both halves borrow `text`: `trim_start` and an ASCII prefix keep
+        // their boundaries on char edges, so the slices stay valid UTF-8.
+        let name = &text[start..end];
+        let following = text[end..].trim_start();
+        found = Some((name, following));
+    }
+    found
+}
+
+/// The kind of a mention, from the closed vocabulary. The owner's own
+/// address asks; a member's address directs; and a request whose first
+/// words name the act — review, critique, audit — asks for a review rather
+/// than a change. The `@` idiom is prose, so the kind is read off the
+/// words beside the address, not invented by the surface.
+pub fn classify_mention(member: &str, following: &str) -> &'static str {
+    if member == MENTION_OWNER {
+        return MENTION_ASK;
+    }
+    let head = following.to_ascii_lowercase();
+    if head
+        .split_whitespace()
+        .take(3)
+        .any(|word| matches!(word, "review" | "reviews" | "critique" | "audit"))
+    {
+        return MENTION_REVIEW;
+    }
+    MENTION_DIRECTIVE
+}
+
+fn is_name_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-'
+}
+
 /// One line of a session log.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -270,6 +335,25 @@ pub enum Record {
     /// Bookkeeping: it replays to no message.
     Leave {
         persona: String,
+        at: String,
+    },
+    /// One member addressing another — the huddle's directive, ask, or
+    /// review request (the huddles plan's C3). `@name` in a message, so
+    /// the address itself rides that message's own content; this record is
+    /// the routing fact that makes the turn's direction reconstructable
+    /// from the log (hard rule 5), the `join`/`leave` precedent for a
+    /// staffing decision. Bookkeeping: it replays to no message.
+    Mention {
+        /// Who is addressed — a persona name, or [`MENTION_OWNER`] for the
+        /// owner, which asks and never starts a run.
+        member: String,
+        /// What the address asks for: [`MENTION_DIRECTIVE`],
+        /// [`MENTION_ASK`], or [`MENTION_REVIEW`].
+        kind: String,
+        /// The persona that wrote the address, when a bot did; absent
+        /// when the owner wrote it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        from: Option<String>,
         at: String,
     },
     /// The memory one run's turn context carried, recorded once at run
@@ -1144,8 +1228,13 @@ pub fn conversation(records: &[Record]) -> Conversation {
             | Record::Resume { .. } => {}
             // Bookkeeping: which channel the peer arrived on replays to
             // no message. A persona's join and leave are the same kind
-            // of fact about the conversation's staffing, not its content.
-            Record::Channel { .. } | Record::Join { .. } | Record::Leave { .. } => {}
+            // of fact about the conversation's staffing, not its content,
+            // and a mention is the routing fact behind an address the
+            // message itself already carries.
+            Record::Channel { .. }
+            | Record::Join { .. }
+            | Record::Leave { .. }
+            | Record::Mention { .. } => {}
             Record::User { content } => {
                 messages.push(Message::text(Role::User, content.clone()));
                 turns.push(next_turn);
@@ -1373,6 +1462,143 @@ mod tests {
         let summary = summarize(bare.path()).expect("the plain log summarizes");
         assert!(summary.personas.is_empty());
         let _ = fs::remove_dir_all(&home);
+    }
+
+    /// C3 of the huddles plan: a mention is a routing fact written beside
+    /// the message that carried it. It must not grow a message of its own
+    /// (the address is already in the text), must not move the persona set
+    /// (a mention is not a join), and its kind must survive a replay so the
+    /// loop can route without re-reading the prose.
+    #[test]
+    fn a_mention_is_bookkeeping_and_keeps_its_kind() {
+        let home = temp_home("mention");
+        let mut session =
+            Session::create_with_persona(&home, "m", Some(vec!["tower".to_string()])).unwrap();
+        let path = session.path().to_path_buf();
+        session
+            .record(&Record::Join {
+                persona: "scholar".to_string(),
+                role: Some("grounds every claim".to_string()),
+                at: "2026-11-03T14:00:00Z".to_string(),
+            })
+            .unwrap();
+        session
+            .record(&Record::User {
+                content: "the brief: a landing page".to_string(),
+            })
+            .unwrap();
+        session
+            .record(&Record::Assistant {
+                content: Some("@scholar the hero reads thin".to_string()),
+                tool_calls: Vec::new(),
+                persona: Some("designer".to_string()),
+            })
+            .unwrap();
+        session
+            .record(&Record::Mention {
+                member: "scholar".to_string(),
+                kind: MENTION_ASK.to_string(),
+                from: Some("designer".to_string()),
+                at: "2026-11-03T14:02:00Z".to_string(),
+            })
+            .unwrap();
+        // An owner's address to the owner asks; it never starts a run.
+        session
+            .record(&Record::Mention {
+                member: MENTION_OWNER.to_string(),
+                kind: MENTION_REVIEW.to_string(),
+                from: Some("auditor".to_string()),
+                at: "2026-11-03T14:09:00Z".to_string(),
+            })
+            .unwrap();
+
+        // The mention adds no message: the address rides its own text.
+        let records = crate::session::replay(&path).expect("the log replays");
+        let conversation = conversation(&records);
+        assert_eq!(conversation.messages.len(), 2);
+        // And it does not touch the membership — only joins and leaves do.
+        let summary = summarize(&path).expect("the log summarizes");
+        assert_eq!(
+            summary.personas,
+            vec!["tower".to_string(), "scholar".to_string()]
+        );
+        // The kinds ride the log verbatim, so a later reader routes by
+        // data rather than by guessing at the prose.
+        let mentions: Vec<_> = records
+            .iter()
+            .filter_map(|record| match record {
+                Record::Mention {
+                    member, kind, from, ..
+                } => Some((member.as_str(), kind.as_str(), from.clone())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            mentions,
+            vec![
+                ("scholar", MENTION_ASK, Some("designer".to_string())),
+                ("you", MENTION_REVIEW, Some("auditor".to_string())),
+            ]
+        );
+        // A log written before mentions existed still reads: absent
+        // mentions are simply none, never a parse failure.
+        let bare = Session::create(&home, "m").unwrap();
+        let records = crate::session::replay(bare.path()).expect("the plain log replays");
+        assert!(!records
+            .iter()
+            .any(|record| matches!(record, Record::Mention { .. })));
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    /// The mention scanner and classifier: an address is `@` at a word
+    /// boundary, the last one wins, and the kind comes from the words
+    /// beside it rather than from a guess about intent.
+    #[test]
+    fn a_mention_is_scanned_and_its_kind_classified() {
+        assert_eq!(last_mention("the brief"), None);
+        // An `@` inside a word is not an address.
+        assert_eq!(last_mention("write to foo@bar about it"), None);
+        assert_eq!(
+            last_mention("@scholar the hero reads thin"),
+            Some(("scholar", "the hero reads thin"))
+        );
+        // The last address wins — a relay's most recent direction.
+        assert_eq!(
+            last_mention("@scholar a, then @auditor b"),
+            Some(("auditor", "b"))
+        );
+        // An address at the start of the text, and one after punctuation.
+        assert_eq!(
+            last_mention("@you worth a look"),
+            Some(("you", "worth a look"))
+        );
+        assert_eq!(
+            last_mention("thanks, @clerk — file it"),
+            Some(("clerk", "— file it"))
+        );
+        // Classification: the owner asks; a review act names a review.
+        assert_eq!(classify_mention(MENTION_OWNER, "worth a look"), MENTION_ASK);
+        assert_eq!(
+            classify_mention("auditor", "please review the page"),
+            MENTION_REVIEW
+        );
+        assert_eq!(
+            classify_mention("designer", "review the hero"),
+            MENTION_REVIEW
+        );
+        assert_eq!(
+            classify_mention("auditor", "critique the spacing"),
+            MENTION_REVIEW
+        );
+        // The member's own name is not the act: this one directs.
+        assert_eq!(
+            classify_mention("scholar", "the hero reads thin"),
+            MENTION_DIRECTIVE
+        );
+        assert_eq!(
+            classify_mention("auditor", "check the contrast"),
+            MENTION_DIRECTIVE
+        );
     }
 
     /// P2's stream half: the agent stamps each Assistant record with
