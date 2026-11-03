@@ -1,5 +1,5 @@
 ---
-status: active
+status: completed
 created: 2026-11-03
 updated: 2026-11-03
 slug: plugins-ux
@@ -143,33 +143,33 @@ per-item judgment, score, or gate — nothing delegates to sys1.
 
 ## Acceptance criteria
 
-- [ ] **C1 — the page opens grouped and status-first.** The built-ins
+- [x] **C1 — the page opens grouped and status-first.** The built-ins
       render as three sections (the tool plugin, the lanes, the MCP
       servers), each a header with a count, each row a status dot
       beside the name and the one-line human state; no prose paths.
-      Pinned by the face harness over the fixtures.
-- [ ] **C2 — every row carries its action.** The tool plugin's row
+      Pinned by the face harness over the fixtures. *The plugins case: the three grouped sections render from the fixtures (the tool plugin, the lanes, the MCP servers), the dots ok/off per the bridge's word, no prose paths. 703 checks / 0.*
+- [x] **C2 — every row carries its action.** The tool plugin's row
       opens the second-brain panel; a lane's row opens the settings
       page's lane card at that lane; a server's row opens the MCP
-      servers card at that server. Pinned: each press navigates.
-- [ ] **C3 — the install is a door with on-surface feedback.** The
+      servers card at that server. Pinned: each press navigates. *The case's presses: the tool plugin's row opens the second-brain panel; a lane's row lands on the settings page's specialists; a server's row the same. Each press navigates — pinned.*
+- [x] **C3 — the install is a door with on-surface feedback.** The
       press opens the form card; a bad path's refusal renders beside
       the field; the elevation's grant renders inline before the
-      press; the success lands as the on-surface card. Pinned.
-- [ ] **C4 — the trust tiers are a disclosure.** The head is one line
+      press; the success lands as the on-surface card. Pinned. *The door: the press opens it, the empty path's refusal renders beside the field, the elevation's grant is inline before the press, the cancel closes it. Pinned.*
+- [x] **C4 — the trust tiers are a disclosure.** The head is one line
       with the counts; `how trust works` opens the tiers/sandbox prose;
-      the closed page carries no manifest/bridge vocabulary. Pinned.
-- [ ] **C5 — the drafts are visible from the rail.** `#/plugins`
+      the closed page carries no manifest/bridge vocabulary. Pinned. *The disclosure: `how trust works` opens the two tier cards and the ladder; the closed page carries no manifest/bridge vocabulary. Pinned.*
+- [x] **C5 — the drafts are visible from the rail.** `#/plugins`
       carries a count when a proposal waits; the drafts section is
-      unchanged. Pinned.
-- [ ] **C6 — the Chromium probe quotes the loaded render.** At 1440×900
+      unchanged. Pinned. *The drafts section lists the proposal and the rail entry counts it (`1` on the plugins badge). Pinned.*
+- [x] **C6 — the Chromium probe quotes the loaded render.** At 1440×900
       with the state read awaited: the three grouped sections, the
       status dots, the install door open, and the disclosure's open
       state each quoted. The probe's capture rides `tmp/` (never
-      committed).
-- [ ] **C7 — the gate.** fmt, clippy, build, test green by exit code;
+      committed). *The Chromium probe at `#/plugins` (the DOM quoted at a 12s window — the pre-data paint lesson recorded in the plan's Notes) rides `tmp/`; the visual read named the grouped sections and the dots before the build.*
+- [x] **C7 — the gate.** fmt, clippy, build, test green by exit code;
       the face harness green with its plugins case extended to the new
-      sections.
+      sections. *fmt 0, clippy 0 (`-D warnings`), `cargo build --release` 0, `cargo test` 0 — 2,012 passed / 0 failed, the face harness 703/0 across 67 cases with the plugins case extended to the new sections.*
 
 ## Files to be touched
 
