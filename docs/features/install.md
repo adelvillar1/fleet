@@ -250,6 +250,32 @@ and the lanes resolve from the `services/` tree beside the executable
 (or `FLEET_SERVICES_ROOT`), with a missing tree degrading to named
 dead lanes rather than a failed boot.
 
+## The native shell's inventory
+
+`fleet-desktop` (`src-tauri/`) is the same face in a Tauri window: it
+starts the same server `fleet gui` starts, on an ephemeral loopback port,
+and opens a window on it. The frontend is unchanged, the remote face is
+untouched, and the service worker keeps working because the window talks
+to a real `http://127.0.0.1` origin rather than Tauri's custom scheme.
+What the shell adds is the **self-containment** the PWA era left to the
+owner's shell — hard rule 12.
+
+| Component | Where it lives | How the shell carries it |
+|---|---|---|
+| The `fleet` binary | `target/release/fleet` | the normal release build |
+| Face assets | `include_str!` into the binary | travels with the binary — nothing to do |
+| The five lane cores | `FLEET_SERVICES_ROOT`, else a checkout walk (`src/lanes.rs:985,991`) | the shell sets `FLEET_SERVICES_ROOT` to the bundled `Contents/Resources/services`; neither fallback resolves inside a bundle |
+| The lane venvs | `<home>/venvs/<lane>/` | built in the background on the first run; the receipts make a second run read Present without rebuilding |
+| The lane wiring | `SEM1_ST_VENV`, `SDM1_MODELS_VENV`, `GEN1_KOKORO_PYTHON`, sys1's `~/.config/sys1/config.toml` | **set by the app** — the install's printed `export` lines are for a shell profile a dock-launched app does not have |
+| gen1's ONNX weights | `~/.cache/gen1/tts/` | machine-owner downloads; the shell names them and never fetches |
+| The home layout | `<home>` (`sessions`, `memories`, `skills`, `cron`, `proposals`, `config.json`, `.env`) | the first run creates it, idempotently |
+| Credentials | `DEEPSEEK_API_KEY` env → `<home>/.env` | owner-supplied; the app never writes a key |
+| The consolidator + cron | spawned by the GUI bridge | run while the app runs; that they stop when it quits is named, not assumed (a LaunchAgent would be a separate increment) |
+
+A component with no home is a failed criterion, not a note. The first run
+prints what it did, and a lane that cannot build is skipped by name — the
+install's degrade-without discipline, never a silent gap.
+
 ## Tests
 
 `tests/install.rs` drives the real binary against a scratch

@@ -135,12 +135,15 @@ cargo run --bin fleet -- convention # what this project already calls a concept
 cargo run --bin fleet -- graph      # the declared dependency graph as cards
 cargo run --bin fleet -- install    # the home layout and lane venvs
 DEEPSEEK_API_KEY=sk-... cargo test --test integration -- --ignored   # live e2e; #[ignore]d by default, runs on demand
+cargo run --bin fleet-desktop           # the native shell: the face in its own window (the Tauri app; `src-tauri/`)
 scripts/cache-sweep.sh [--all] [--dry-run]   # the recap step's sweep: stale debug artifacts pruned by age, 15 GiB backstop
 ```
 
 ## Branch and environment topology
 
 Trunk is `master` → `origin/master`, the branch that ships. A working branch (named for the plan it carries, e.g. `design-parity`) forks master when a body of work needs a lane of its own — a parallel session holding master, or a plan whose landing should be reviewable whole — and merges back when its plan lands. No staging/production split: solo tool, no hosted surface. If a deploy surface ever appears, add a topology table here.
+
+**Two crates, one workspace.** `fleet` (the static binary: the TUI, the face's server, the agent) and `fleet-desktop` (`src-tauri/`, the native shell — a Tauri window on the same server). The workspace's default members are both, so the gate's commands at the repo root cover the shell too. The shell depends on `fleet` by path and reuses its bridge, server, and home; it adds no frontend and no second transport. Hard rule 12 governs both: anything added that becomes a dependency must ship, be built, or be fetched by the app.
 
 ## Housekeeping protocol
 

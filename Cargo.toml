@@ -40,3 +40,15 @@ rand = "0.8"
 [profile.release]
 strip = true
 lto = true
+
+# The native shell is its own crate so the main binary stays
+# dependency-light. The workspace makes the gate cover both crates:
+# `src-tauri` depends on this crate by path and reuses the same bridge,
+# the same server, and the same home (hard rule 12).
+[workspace]
+members = ["src-tauri"]
+# The gate's commands run at the repo root, so the default members are
+# what make `cargo clippy --all-targets` and `cargo test` cover the shell
+# too (the native shell plan's C0). Without this they would build only
+# the `fleet` package.
+default-members = [".", "src-tauri"]
