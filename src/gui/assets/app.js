@@ -15116,6 +15116,14 @@
       modelsEndpoint.type = 'text';
       modelsEndpoint.placeholder = 'https://the-provider/v1/models';
       modelsEndpoint.setAttribute('aria-label', 'the models endpoint');
+      // The models the owner supplies, one per line: a provider that
+      // publishes no listing (OpenCode's inference API answers 404 on
+      // every /models path) is still connectable — the entry carries what
+      // the owner named, and the discovery's failure never overwrites it.
+      var modelsList = node('textarea', 'knob-box');
+      modelsList.rows = 3;
+      modelsList.placeholder = 'one model per line — for a provider that publishes no listing';
+      modelsList.setAttribute('aria-label', 'the models');
       // The name the roster will use, filled from the endpoint and
       // editable: `provider/model` is what the model list shows, so the
       // owner sees the id before it is written.
@@ -15154,12 +15162,19 @@
           return;
         }
         var id = name.value.trim() || providerIdFromUrl(base);
+        // The owner's own models: one per line, commas tolerated. A
+        // successful discovery replaces them with the listing's answer; a
+        // failed one leaves them standing, so the provider is usable
+        // without a listing at all.
+        var hand = modelsList.value.split(/[\n,]+/).map(function (one) {
+          return one.trim();
+        }).filter(function (one) { return one.length > 0; });
         var entry = {
           id: id,
           base_url: base,
           models_url: modelsEndpoint.value.trim() || undefined,
           key_env: id.toUpperCase().replace(/[^A-Z0-9]+/g, '_') + '_API_KEY',
-          models: [],
+          models: hand,
           enabled: true,
           key_required: true
         };
@@ -15175,8 +15190,12 @@
           var wrote = (reply.body && reply.body.wrote) || {};
           var discovery = wrote.discovery || {};
           if (discovery.ok === false && discovery.error) {
-            answer('saved, but the catalog did not answer: ' + discovery.error +
-              ' — name its models endpoint above and connect again', true);
+            answer(hand.length
+              ? 'saved — the ' + hand.length + ' model' +
+                (hand.length === 1 ? '' : 's') + ' you listed are on the provider' +
+                ' (the catalog did not answer: ' + discovery.error + ')'
+              : 'saved, but the catalog did not answer: ' + discovery.error +
+                ' — name its models endpoint above, or add the models by hand', true);
           } else {
             var found = discovery.models || [];
             answer(id + ' is connected — ' + found.length + ' model' +
@@ -15195,6 +15214,8 @@
           'it is stored in the vault, never shown again')],
         ['the models endpoint', cfgField('the models endpoint', modelsEndpoint,
           'where the catalog lives — derived from the endpoint, editable when a provider serves it elsewhere')],
+        ['the models', cfgField('the models', modelsList,
+          'one per line — what the provider serves when it publishes no listing')],
         ['the name', cfgField('the name', name,
           'the id this home uses for it — the model list says provider/model')],
         ['what happens', node('p', 'derivation',

@@ -1,5 +1,5 @@
 ---
-status: draft
+status: completed
 created: 2026-11-03
 updated: 2026-11-03
 slug: provider-connect-honesty
@@ -74,22 +74,22 @@ with F2.
 
 ## Acceptance criteria
 
-- [ ] **C0 — a pasted endpoint normalizes.** An entry whose `base_url`
+- [x] **C0 — a pasted endpoint normalizes.** An entry whose `base_url`
       ends in `/chat/completions` is stored as the base, and both the
       chat URL and the listing URL are built from it. Pinned by a test
       over the normalizer and the stored entry.
-- [ ] **C1 — a provider with no listing is connectable.** With the
+- [x] **C1 — a provider with no listing is connectable.** With the
       listing answering 404, the connect card offers a models field; the
       entry the owner submits carries their models, and the provider
       appears in the roster and the model picker. Pinned by a test over
       the settings write and the catalog.
-- [ ] **C2 — the reply is honest.** A successful discovery reports the
+- [x] **C2 — the reply is honest.** A successful discovery reports the
       models found and the settings written; a 404 reports that the
       provider publishes no listing. Pinned by tests over both paths.
-- [ ] **C3 — the connect card says what happened.** On a failed
+- [x] **C3 — the connect card says what happened.** On a failed
       discovery the card names the reason and shows the models field; on
       a success it names the models. Pinned by a face-harness case.
-- [ ] **C4 — the gate is green.** fmt, clippy `-D warnings`, release
+- [x] **C4 — the gate is green.** fmt, clippy `-D warnings`, release
       build, and the suite, each read by exit code (KI-014).
 
 ## Files to be touched

@@ -1931,6 +1931,104 @@ mod router_tests {
         assert!(error.contains("publishes no listing"), "{error}");
     }
 
+    /// C0 of the provider-connect plan: an entry whose `base_url` is the
+    /// pasted **endpoint** is stored as the base it names. The chat URL is
+    /// built as `{base}/chat/completions`, so storing the endpoint would
+    /// ask it twice — and the listing would ask
+    /// `{endpoint}/models`, which is the 404 the owner met.
+    #[test]
+    fn a_pasted_endpoint_is_stored_as_the_base_it_names() {
+        let (addr, seen) = listing_stub("pasted", "200 OK", r#"{"data":[{"id":"model-a"}]}"#);
+        let home = scratch("pasted-home");
+        let entry = serde_json::json!({
+            "id": "pasted",
+            "base_url": format!("http://{addr}/v1/chat/completions"),
+            "key_env": "PASTED_API_KEY",
+            "models": [],
+        });
+        let (id, _store, discovery) =
+            set_provider_with_key(&home, &entry.to_string(), Some("the-key")).unwrap();
+        assert_eq!(id, "pasted");
+        let disc = discovery.expect("the discovery rides the reply");
+        assert!(disc.ok, "{disc:?}");
+        // The discovery asked the base, not the pasted endpoint.
+        let wire = seen.lock().unwrap().join(" | ");
+        assert!(wire.contains("GET /v1/models"), "{wire}");
+        // The stored entry carries the base.
+        let config: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(home.join("config.json")).expect("the config"),
+        )
+        .unwrap();
+        let saved = config["providers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|provider| provider["id"] == "pasted")
+            .expect("the provider")
+            .clone();
+        assert_eq!(
+            saved["base_url"],
+            serde_json::Value::String(format!("http://{addr}/v1")),
+            "{saved}"
+        );
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    /// C1 of the provider-connect plan: a provider that publishes no
+    /// listing is connectable. The discovery's 404 rides the reply, the
+    /// entry carries the models its owner named -- the failed listing
+    /// never overwrites them -- and the catalog, the model picker's
+    /// source, lists them.
+    #[test]
+    fn a_provider_with_no_listing_carries_the_models_its_owner_named() {
+        let (addr, _) = listing_stub("no-listing-2", "404 Not Found", "");
+        let home = scratch("no-listing-home");
+        let entry = serde_json::json!({
+            "id": "opencode",
+            "base_url": format!("http://{addr}/v1"),
+            "key_env": "OPENCODE_API_KEY",
+            "models": ["big-pickle", "flint-40b"],
+        });
+        let (_id, _store, discovery) =
+            set_provider_with_key(&home, &entry.to_string(), Some("the-key")).unwrap();
+        let disc = discovery.expect("the discovery rides the reply");
+        assert!(!disc.ok, "{disc:?}");
+        assert!(
+            disc.error
+                .as_deref()
+                .unwrap_or_default()
+                .contains("publishes no listing"),
+            "{disc:?}"
+        );
+        // The entry carries the owner's models, not the failed listing's.
+        let config: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(home.join("config.json")).expect("the config"),
+        )
+        .unwrap();
+        let saved = config["providers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|provider| provider["id"] == "opencode")
+            .expect("the provider")
+            .clone();
+        assert_eq!(
+            saved["models"],
+            serde_json::json!(["big-pickle", "flint-40b"]),
+            "{saved}"
+        );
+        // The catalog is the picker's source, and it names them.
+        let list = catalog(&home, &dotenv(&home));
+        let named: Vec<String> = list
+            .models
+            .iter()
+            .filter(|model| model.provider == "opencode")
+            .map(|model| model.model.clone())
+            .collect();
+        assert_eq!(named, vec!["big-pickle", "flint-40b"], "{:?}", list.models);
+        let _ = fs::remove_dir_all(&home);
+    }
+
     /// KI-407's core: a provider is added by the entry the owner supplied,
     /// so a listing the account cannot read does not refuse the save. The
     /// key is stored, the entry is written, and the failure rides the reply

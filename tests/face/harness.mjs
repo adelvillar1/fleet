@@ -7310,6 +7310,94 @@ async function theRunScopedControlsSayTheirScope() {
     'the command\u2019s own words');
 }
 
+// C3 of the provider-connect plan: the connect card answers where the
+// press was made. A failed discovery names the reason and the route
+// forward; a success names the models that landed. The owner's own model
+// list rides the entry either way — a provider that publishes no listing
+// is connectable with the models the owner names.
+async function theConnectCardSaysWhatHappened() {
+  const settingsDoc = {
+    type: 'settings', read_at: 'now',
+    scalars: [
+      { key: 'pin', value: '', kind: 'text', source: 'default', summary: 'the pin' },
+      { key: 'approvals', value: 'ask', kind: 'choice', source: 'file',
+        summary: 'whether tool calls ask', choices: ['ask', 'yes', 'yes-guarded'] },
+      { key: 'runs.max_turns', value: 12, kind: 'number', source: 'default', summary: 'turns' },
+    ],
+    lists: [], rules: [], env: [], cron: [], soul: { present: false, text: '' },
+    router: { pin: '', judged: [], tiers: [], min_confidence: 0.5,
+      default_workload: 'quick', allow_api_models: false, roster: [] },
+    catalog: { models: [], providers: [] },
+    roles: { dir: '/tmp', entries: [] }, vault: { names: [] },
+    lanes: { lanes: [] }, servers: { servers: [] },
+    tools: { calls_per_turn: 40, deferred_above: 32, definition_tokens: 9000, disabled: [] },
+    telegram: { present: false, source: 'unset' }, service: {},
+  };
+  // The staged reply: first the discovery fails (the 404 the owner met),
+  // then it succeeds and names what landed.
+  let discovery = {
+    ok: false,
+    error: 'this provider publishes no listing at that address (HTTP 404) — ' +
+      'name its models endpoint, or add the models by hand',
+  };
+  const page = boot({
+    width: 1440, hash: '#/settings/models',
+    settingsReply: () => ({
+      status: 200,
+      body: { type: 'settings_write', wrote: {
+        id: 'acme', key_store: '.env', discovery,
+      } },
+    }),
+    documents: {
+      settings: settingsDoc,
+      state: (asked) => emptyState(asked),
+      onboard: onboardDoc({ door: false }),
+    },
+  });
+  page.open();
+  await flush(80);
+  const connectItem = page.rows('.cfg-item').find((row) =>
+    row.dataset.item === 'provider-add');
+  check('CA-C3 the connect card opens', !!connectItem, String(!!connectItem));
+  connectItem.click();
+  await flush(60);
+  const card = page.el('dock-object-body');
+  const endpoint = card.find((one) => one.name === 'input' &&
+    String(one.placeholder || '').includes('https://'))[0];
+  endpoint.value = 'https://api.acme.dev/v1/chat/completions';
+  const listed = card.find((one) => one.name === 'textarea')[0];
+  check('CA-C3 the card carries the models field', !!listed,
+    String(!!listed));
+  listed.value = 'alpha-1\nbeta-2';
+  const act = card.find((one) => one.name === 'button' &&
+    String(one.textContent || '').includes('connect it'))[0];
+  act.click();
+  await flush(80);
+  // The write carries the owner's models, not an empty list.
+  const write = page.calls.filter((c) => c.method === 'POST' &&
+    c.url === '/api/settings' && String(c.body).includes('"op":"provider"'))[0];
+  check('CA-C3 the write carries the owner\u2019s models',
+    write && String(write.body).includes('alpha-1') &&
+      String(write.body).includes('beta-2'),
+    write ? write.body : 'no write');
+  const said = card.find((one) => one.name === 'p' && one.dataset &&
+    one.dataset.tone)[0];
+  check('CA-C3 a failed discovery names the reason',
+    said && said.textContent.includes('publishes no listing') &&
+      said.dataset.tone === 'bad',
+    said && said.textContent);
+  // A success names the models that landed.
+  discovery = { ok: true, models: ['alpha-1', 'beta-2'], settings_written: 0, error: null };
+  act.click();
+  await flush(80);
+  const good = card.find((one) => one.name === 'p' && one.dataset &&
+    one.dataset.tone)[0];
+  check('CA-C3 a success names the models',
+    good && good.textContent.includes('2 models discovered') &&
+      good.dataset.tone === 'good',
+    good && good.textContent);
+}
+
 const cases = [
   ['PLUGINS the management surface and the two tiers\' frames', thePluginsSurfaceManagesTheChains],
   ['KI-380 the zombie tab cannot hide a seat or lose the reads', theZombieTabCannotHideASeatOrLoseTheReads],
@@ -7377,6 +7465,7 @@ const cases = [
   ['CA2 a fresh load paints the state\u2019s transcript and seat', theReplayPaintsTheStateTheReadCarried],
   ['CA2b opening a run in flight loads its view', openingARunInFlightLoadsItsView],
   ['CA3/CA4 the run-scoped controls say their scope', theRunScopedControlsSayTheirScope],
+  ['CA-C3 the connect card says what happened', theConnectCardSaysWhatHappened],
 ];
 
 for (const [name, run] of cases) {
