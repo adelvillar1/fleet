@@ -250,6 +250,23 @@ and the lanes resolve from the `services/` tree beside the executable
 (or `FLEET_SERVICES_ROOT`), with a missing tree degrading to named
 dead lanes rather than a failed boot.
 
+**The serving binary has one home.** The LaunchAgent that keeps the face
+up (`com.fleet.gui`) runs `~/.fleet/bin/fleet` — never a worktree's own
+`target/`, which goes stale the moment a session works elsewhere and the
+served face lags the pushed one (KI-408). The reload is two commands and
+a restart of the agent:
+
+```sh
+cargo build --release && cp target/release/fleet ~/.fleet/bin/fleet
+launchctl bootout gui/$(id -u)/com.fleet.gui
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.fleet.gui.plist
+```
+
+Killing the agent's PID works too — `KeepAlive` re-execs the installed
+binary. Verify by diffing the served `/app.js` against
+`src/gui/assets/app.js`: the face and every viewer of it (a phone's PWA,
+the native shell) serve one build.
+
 ## The native shell's inventory
 
 `fleet-desktop` (`src-tauri/`) is the same face in a Tauri window: it
