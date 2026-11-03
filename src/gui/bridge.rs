@@ -730,6 +730,7 @@ impl Bridge {
                 "events": [],
                 "approval": null,
                 "rules": rules.list().iter().map(rule_value).collect::<Vec<_>>(),
+                "plugins": self.plugins_value(),
                 "attached": false,
             });
         };
@@ -770,6 +771,7 @@ impl Bridge {
                 })
             }),
             "rules": rules.list().iter().map(rule_value).collect::<Vec<_>>(),
+            "plugins": self.plugins_value(),
             "attached": true,
         })
     }
@@ -784,6 +786,93 @@ impl Bridge {
     /// library, and the graph are the reads they claim to be; a read that
     /// refused rides its reason in `refused` and the client keeps the
     /// last good value beside it.
+    /// One face plugin's bundle page, served on the network-dead
+    /// route. The name and page are single segments the caller
+    /// validated; a path that escapes the bundle's directory is
+    /// refused by name.
+    pub fn plugin_page(&self, name: &str, page: &str) -> Result<Vec<u8>, String> {
+        let home = self.home.clone();
+        let base = crate::plugins::face::plugin_dir(&home, name);
+        let manifest = base.join("manifest.json");
+        if !manifest.exists() {
+            return Err(format!("`{name}` is not installed — no bundle answers"));
+        }
+        let target = base.join(page);
+        let resolved = target
+            .canonicalize()
+            .map_err(|error| format!("`{page}` cannot be read: {error}"))?;
+        let base = base
+            .canonicalize()
+            .map_err(|error| format!("the bundle cannot be read: {error}"))?;
+        if !resolved.starts_with(&base) {
+            return Err(format!(
+                "`{page}` escapes the bundle's directory — a plugin page stays inside its bundle"
+            ));
+        }
+        std::fs::read(&resolved).map_err(|error| format!("`{page}` cannot be read: {error}"))
+    }
+
+    /// One declared read-only query, enforced bridge-side: the
+    /// manifest's declared set is the sandbox's whole data path, and
+    /// an undeclared query is refused by name (the plan's C3). The
+    /// queries the bridge cannot answer yet refuse the same way —
+    /// the declared set is the boundary, not a promise of breadth.
+    pub async fn plugin_query(&self, name: &str, query: &str) -> Result<Value, String> {
+        let home = self.home.clone();
+        let manifest_path = crate::plugins::face::FaceManifest::path(
+            &crate::plugins::face::plugin_dir(&home, name),
+        );
+        let text = std::fs::read_to_string(&manifest_path)
+            .map_err(|_| format!("`{name}` is not installed — no bundle answers"))?;
+        let manifest = crate::plugins::face::FaceManifest::parse(&text)
+            .map_err(|error| format!("`{name}`'s manifest does not parse: {error}"))?;
+        if !manifest.queries.iter().any(|one| one == query) {
+            return Err(format!(
+                "`{query}` is not among `{name}`'s declared queries ({}) — the sandbox's data                  arrives only through the manifest's set",
+                manifest.queries.join(", ")
+            ));
+        }
+        match query {
+            "state" => Ok(self.state("")),
+            "home" => Ok(self.home().await),
+            "router" => Ok(self.router().await),
+            "delegation" => Ok(self.delegation("").await),
+            "memory" => Ok(self.memory().await),
+            "skills" => Ok(self.skills().await),
+            "sessions" => Ok(self.sessions("", "").await),
+            "usage" => Ok(self.usage()),
+            "related" => Ok(self.related("", "", 20).await),
+            "tree" => Ok(self.tree("").await),
+            "workspace-history" => Ok(self.related("workspace-history", "", 20).await),
+            other => Err(format!(
+                "`{other}` is declared but the bridge does not answer it yet — the declared                  set is the boundary, not a promise of breadth"
+            )),
+        }
+    }
+
+    /// The face plugin list for the state read: every installed
+    /// plugin's name, tier, state, entry, and provenance — the rail's
+    /// dynamic rows and the management surface read this one list.
+    pub fn plugins_value(&self) -> Value {
+        let home = self.home.clone();
+        let listings = crate::plugins::face::list(&home).unwrap_or_default();
+        serde_json::json!(listings
+            .iter()
+            .map(|listing| serde_json::json!({
+                "name": listing.name,
+                "tier": match listing.tier {
+                    crate::plugins::face::FaceTier::Privileged => "privileged",
+                    crate::plugins::face::FaceTier::Untrusted => "untrusted",
+                },
+                "enabled": listing.enabled,
+                "group": listing.group,
+                "label": listing.label,
+                "version": listing.version,
+                "provenance": listing.provenance,
+            }))
+            .collect::<Vec<_>>())
+    }
+
     pub async fn home(&self) -> Value {
         const HOME_TTL: std::time::Duration = std::time::Duration::from_secs(30);
         {

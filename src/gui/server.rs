@@ -1433,6 +1433,84 @@ async fn serve_connection(
                 }
             }
         }
+        // A face plugin's bundle page, on the same network-dead CSP
+        // the canvas's local host serves with: generated code runs
+        // here, never on the face's origin (the plugin host plan's
+        // C3). The bridge validated the name and the page stays
+        // inside the bundle's directory.
+        ("GET", path) if path.starts_with("/plugins/") => {
+            let rest = path.trim_start_matches("/plugins/");
+            let mut parts = rest.splitn(2, '/');
+            let name = parts.next().unwrap_or_default();
+            let page = parts.next().unwrap_or("index.html");
+            let page = if page.is_empty() { "index.html" } else { page };
+            match bridge.plugin_page(name, page) {
+                Ok(bytes) => {
+                    let content_type = if page.ends_with(".html") {
+                        "text/html; charset=utf-8"
+                    } else if page.ends_with(".js") {
+                        "text/javascript; charset=utf-8"
+                    } else if page.ends_with(".css") {
+                        "text/css; charset=utf-8"
+                    } else {
+                        "application/octet-stream"
+                    };
+                    let head = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\n\
+                         Connection: close\r\nCache-Control: no-store\r\n\
+                         X-Content-Type-Options: nosniff\r\n\
+                         Content-Security-Policy: {}; frame-ancestors 'none'; base-uri 'none'\r\n\r\n",
+                        bytes.len(),
+                        crate::canvas::SITE_CSP
+                    );
+                    stream
+                        .write_all(head.as_bytes())
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    stream.write_all(&bytes).await.map_err(|e| e.to_string())?;
+                    stream.flush().await.map_err(|e| e.to_string())?;
+                    Ok(())
+                }
+                Err(message) => {
+                    write_reply(&mut stream, api(404, json!({"refused": [message]}))).await
+                }
+            }
+        }
+        // One declared read-only query from a plugin's page, enforced
+        // bridge-side: the manifest's declared set is the sandbox's
+        // whole data path.
+        ("POST", "/api/plugins/query") => {
+            let body = match read_body(&mut stream, &request, rest).await {
+                Ok(body) => body,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            let value: serde_json::Value = match serde_json::from_str(&body) {
+                Ok(value) => value,
+                Err(error) => {
+                    return write_reply(
+                        &mut stream,
+                        bad_request(&format!("the query is not JSON: {error}")),
+                    )
+                    .await
+                }
+            };
+            let name = value
+                .get("name")
+                .and_then(|one| one.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let query = value
+                .get("query")
+                .and_then(|one| one.as_str())
+                .unwrap_or_default()
+                .to_string();
+            match bridge.plugin_query(&name, &query).await {
+                Ok(answer) => write_reply(&mut stream, api(200, answer)).await,
+                Err(message) => {
+                    write_reply(&mut stream, api(403, json!({"refused": [message]}))).await
+                }
+            }
+        }
         // P4 (design-parity C12): an export's file, as a download. The
         // name is one segment (the writer refuses the rest), so this
         // route cannot walk out of the board's own directories.
