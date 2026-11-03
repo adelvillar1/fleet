@@ -176,48 +176,48 @@ an anomaly card
 
 ## Acceptance criteria
 
-- [ ] **C0 — usage parses.** The `Usage` struct carries the three
+- [x] **C0 — usage parses.** The `Usage` struct carries the three *`usage_reads_the_providers_cache_fields_and_their_absence` — the wire names record, the absence records nothing (not zeros), and the absence serializes as omitted.*
   optional fields; an API answer with them records them, one without
   records none, and every existing test, fixture, and mock passes
   unchanged. Pinned by unit tests over both answer shapes.
-- [ ] **C1 — the row carries what served.** A `RouteRow` written after
+- [x] **C1 — the row carries what served.** A `RouteRow` written after *`the_decision_row_carries_the_serving_usage` — a served walk's row carries the usage; a walk that never served writes it absent; the reader's defaults keep old rows parsing.*
   a served attempt carries the serving attempt's usage; a failed walk
   (no attempt served) writes the row with usage absent; a row from
   before the field reads as absent. Pinned by unit tests over the
   writer and a golden old-row parse.
-- [ ] **C2 — the stream says the spend.** `fleet calib`'s default
+- [x] **C2 — the stream says the spend.** `fleet calib`'s default *`the_surface_names_the_usage_columns_only_when_they_ride` — the tokens line and the spend card render for the new-shape row and stay absent for the old-shape day.*
   surface renders the usage columns when present and the per-provider
   closing card; rows without usage render exactly as before. Pinned by
   a surface test over one new-shape row and one old-shape row.
-- [ ] **C3 — detection is deterministic and silent.** Each of the six
+- [x] **C3 — detection is deterministic and silent.** Each of the six *Six per-class pins (fallback-walk, tool-failure-loop, lanes-down, delegation-maxed, run-failure-cluster, cache-collapse) — each fires on its scripted day, and `a_quiet_day_finds_nothing` pins the silence; every threshold a named const.*
   detectors fires on its scripted day and stays silent on a quiet day;
   every threshold is a named `const`; no detector makes a lane ask.
   Pinned by per-class fixture tests.
-- [ ] **C4 — the lane narrates, never finds.** On a scripted firing
+- [x] **C4 — the lane narrates, never finds.** On a scripted firing *`the_pass_asks_at_most_twice_and_never_on_a_dry_run` — the counting seam: two asks on a firing day (triage + explain), zero on a dry run, the severity and narration riding the answers.*
   day, `--anomalies` makes at most two lane asks (explain + triage),
   and on a dry run (`--dry-run` on the flag, judge's rehearse shape)
   it makes zero. Pinned by the counting session seam from
   2026-10-23-judgment-beats-one-lane (C0's seam, reused).
-- [ ] **C5 — the surface is visual and honest.** `fleet calib
+- [x] **C5 — the surface is visual and honest.** `fleet calib *`the_surface_renders_a_quiet_day_and_a_finding` — the finding card (class, window, rows, evidence, severity, narration) and the quiet day's one line.*
   --anomalies` renders findings as cards with class, window, row
   count, evidence, and narration; a quiet day prints its one line.
   Zero findings is a finding. Pinned by a surface test on a firing day
   and a quiet one.
-- [ ] **C6 — the docs say it.** `docs/features/calibration.md` names
+- [x] **C6 — the docs say it.** `docs/features/calibration.md` names *calibration.md's three sections, the FS flag rows, the tech doc's evidence spine. The live leg — one real provider call reading the cache fields back — is the plan's own verification step and stays the named pending half; no live run this session means the conditional ledger row (a provider omitting the fields) is untriggered, not assumed.*
   the third surface and the six classes; `FUNCTIONAL-SPECIFICATIONS.md`
   carries the flag and the usage columns; the ledger gains a KI row if
   any provider's live answer omits the cache fields (checked, not
   assumed, during verification's live run).
-- [ ] **C7 — the curve is captured, not re-derived.** A run's
+- [x] **C7 — the curve is captured, not re-derived.** A run's *`the_run_report_carries_the_per_turn_curve` — one snapshot per turn on a scripted run, the estimate carrying when the provider reports nothing (the maybe_compact reading).*
   `RunReport` carries one prompt/completion snapshot per turn — the
   reported prompt tokens when the provider reports, the estimate
   otherwise (the `maybe_compact` rule, not a second one) — and the
   compaction count. Pinned by an agent-loop test over a scripted run.
-- [ ] **C8 — the shape rides the vocabulary.** A `ShapeRow` written
+- [x] **C8 — the shape rides the vocabulary.** A `ShapeRow` written *`the_shape_row_round_trips_and_old_rows_read_as_absent` — the shape row's round trip, and an old route row reading its fields as absent.*
   once per run beside the route row carries the curve; a row from
   before the kind reads as absent; the writer emits nothing for a
   zero-turn run. Pinned by writer tests and a golden old-stream parse.
-- [ ] **C9 — the surface answers the rot question.** `fleet calib
+- [x] **C9 — the surface answers the rot question.** `fleet calib *`the_shape_surface_answers_the_rot_question` — the curve cards and the closing aggregate (median growth, doubled runs, folds, capped endings); an empty day prints its one line.*
   --shape` renders the day's curve cards and the day-level closing
   card (median growth, doubled runs, compactions, max-turn endings);
   a day with no runs prints its one line; no lane ask, no anomaly
