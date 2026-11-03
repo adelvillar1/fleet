@@ -731,6 +731,8 @@ impl Bridge {
                 "approval": null,
                 "rules": rules.list().iter().map(rule_value).collect::<Vec<_>>(),
                 "plugins": self.plugins_value(),
+                "proposals": self.proposals_value(),
+                "built_ins": built_ins_value(&self.home),
                 "attached": false,
             });
         };
@@ -772,6 +774,8 @@ impl Bridge {
             }),
             "rules": rules.list().iter().map(rule_value).collect::<Vec<_>>(),
             "plugins": self.plugins_value(),
+            "proposals": self.proposals_value(),
+            "built_ins": built_ins_value(&self.home),
             "attached": true,
         })
     }
@@ -853,45 +857,50 @@ impl Bridge {
     /// The face plugin list for the state read: every installed
     /// plugin's name, tier, state, entry, and provenance — the rail's
     /// dynamic rows and the management surface read this one list.
+    /// The installed bundles, as the state document's `plugins` key —
+    /// the face reads the three plugin keys FLAT (`plugins`,
+    /// `proposals`, `built_ins`), so the value is the array itself,
+    /// never a wrapper object (the live-face seam lesson: the nested
+    /// shape made every card vanish behind an object the face read as
+    /// an empty list).
     pub fn plugins_value(&self) -> Value {
         let home = self.home.clone();
-        let built_ins = built_ins_value(&home);
         let listings = crate::plugins::face::list(&home).unwrap_or_default();
+        serde_json::json!(listings
+            .iter()
+            .map(|listing| serde_json::json!({
+                "name": listing.name,
+                "tier": match listing.tier {
+                    crate::plugins::face::FaceTier::Privileged => "privileged",
+                    crate::plugins::face::FaceTier::Untrusted => "untrusted",
+                },
+                "enabled": listing.enabled,
+                "group": listing.group,
+                "label": listing.label,
+                "version": listing.version,
+                "provenance": listing.provenance,
+            }))
+            .collect::<Vec<_>>())
+    }
+
+    /// The creator flow's drafts, as the state document's `proposals`
+    /// key — never self-applied, installed from the surface (the
+    /// plan's C5).
+    pub fn proposals_value(&self) -> Value {
+        let home = self.home.clone();
         let proposals = crate::plugins::face::proposals(&home);
-        // The creator flow's drafts ride the same read: never
-        // self-applied, installed from the surface (the plan's C5).
-        let home_for_proposals = self.home.clone();
-        let value = serde_json::json!({
-            "built_ins": built_ins,
-            "plugins": listings
-                .iter()
-                .map(|listing| serde_json::json!({
-                    "name": listing.name,
-                    "tier": match listing.tier {
-                        crate::plugins::face::FaceTier::Privileged => "privileged",
-                        crate::plugins::face::FaceTier::Untrusted => "untrusted",
-                    },
-                    "enabled": listing.enabled,
-                    "group": listing.group,
-                    "label": listing.label,
-                    "version": listing.version,
-                    "provenance": listing.provenance,
-                }))
-                .collect::<Vec<_>>(),
-            "proposals": proposals
-                .iter()
-                .map(|name| serde_json::json!({
-                    "name": name,
-                    "path": home_for_proposals
-                        .join("plugins")
-                        .join("proposals")
-                        .join(name)
-                        .display()
-                        .to_string(),
-                }))
-                .collect::<Vec<_>>(),
-        });
-        value
+        serde_json::json!(proposals
+            .iter()
+            .map(|name| serde_json::json!({
+                "name": name,
+                "path": home
+                    .join("plugins")
+                    .join("proposals")
+                    .join(name)
+                    .display()
+                    .to_string(),
+            }))
+            .collect::<Vec<_>>())
     }
 
     pub async fn home(&self) -> Value {
