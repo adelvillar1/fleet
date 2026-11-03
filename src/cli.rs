@@ -224,6 +224,12 @@ pub struct CalibOptions {
     /// brief-shape) judged quality as cards, instead of the stream's own
     /// rows. The two surfaces read different rows and do not combine.
     pub delegation: bool,
+    /// The anomaly surface: the day's deterministic findings as cards,
+    /// with the lane's severity and narration when a class fired.
+    pub anomalies: bool,
+    /// Rehearse the anomaly pass: the findings render, the lane asks do
+    /// not happen (the judge's dry-run shape).
+    pub dry_run: bool,
 }
 
 /// Options for `fleet judge`. The bare command judges a day's route rows;
@@ -1208,6 +1214,8 @@ fn parse_calib(args: &[String]) -> Result<Command, String> {
     let mut day: Option<String> = None;
     let mut calibration = false;
     let mut delegation = false;
+    let mut anomalies = false;
+    let mut dry_run = false;
     let mut index = 0;
     while index < args.len() {
         let arg = args[index].as_str();
@@ -1216,6 +1224,8 @@ fn parse_calib(args: &[String]) -> Result<Command, String> {
             "--day" => day = Some(take_value(args, &mut index, arg)?),
             "--calibration" => calibration = true,
             "--delegation" => delegation = true,
+            "--anomalies" => anomalies = true,
+            "--dry-run" => dry_run = true,
             _ if arg.starts_with('-') && arg != "-" => {
                 return Err(format!("unknown calib option `{arg}`"));
             }
@@ -1257,6 +1267,8 @@ fn parse_calib(args: &[String]) -> Result<Command, String> {
         day,
         calibration,
         delegation,
+        anomalies,
+        dry_run,
     }))
 }
 
@@ -3495,7 +3507,9 @@ mod tests {
             Command::Calib(CalibOptions {
                 day: None,
                 calibration: false,
-                delegation: false
+                delegation: false,
+                anomalies: false,
+                dry_run: false
             })
         );
         assert_eq!(
@@ -3503,7 +3517,9 @@ mod tests {
             Command::Calib(CalibOptions {
                 day: Some("2026-10-01".to_string()),
                 calibration: false,
-                delegation: false
+                delegation: false,
+                anomalies: false,
+                dry_run: false
             })
         );
         // The calibration surface is `calib --calibration`, with or
@@ -3513,7 +3529,9 @@ mod tests {
             Command::Calib(CalibOptions {
                 day: None,
                 calibration: true,
-                delegation: false
+                delegation: false,
+                anomalies: false,
+                dry_run: false
             })
         );
         assert_eq!(
@@ -3521,7 +3539,9 @@ mod tests {
             Command::Calib(CalibOptions {
                 day: Some("2026-10-01".to_string()),
                 calibration: true,
-                delegation: false
+                delegation: false,
+                anomalies: false,
+                dry_run: false
             })
         );
         assert!(parse(&args(&["calib", "--day", "yesterday"])).is_err());
@@ -3537,7 +3557,9 @@ mod tests {
             Command::Calib(CalibOptions {
                 day: Some("2024-02-29".to_string()),
                 calibration: false,
-                delegation: false
+                delegation: false,
+                anomalies: false,
+                dry_run: false
             })
         ); // 2024 is a leap year
         assert_eq!(
@@ -3545,7 +3567,9 @@ mod tests {
             Command::Calib(CalibOptions {
                 day: Some("2026-12-31".to_string()),
                 calibration: false,
-                delegation: false
+                delegation: false,
+                anomalies: false,
+                dry_run: false
             })
         );
         assert!(parse(&args(&["calib", "--day"])).is_err());
@@ -3559,7 +3583,9 @@ mod tests {
             Command::Calib(CalibOptions {
                 day: None,
                 calibration: false,
-                delegation: true
+                delegation: true,
+                anomalies: false,
+                dry_run: false
             })
         );
         assert_eq!(
@@ -3567,7 +3593,9 @@ mod tests {
             Command::Calib(CalibOptions {
                 day: Some("2026-10-01".to_string()),
                 calibration: false,
-                delegation: true
+                delegation: true,
+                anomalies: false,
+                dry_run: false
             })
         );
         assert!(parse(&args(&["calib", "--calibration", "--delegation"])).is_err());

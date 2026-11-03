@@ -2795,6 +2795,58 @@ pub fn render(root: &Path, day: &str) -> String {
     out
 }
 
+/// The anomaly surface (the usage-in-calibration plan's Increment B):
+/// the day's findings as cards, or the one line a quiet day prints —
+/// zero findings is a finding. The severity and narration ride when
+/// the lane answered; a dry run shows the evidence alone, which is the
+/// point of rehearsing.
+pub fn render_anomalies(day: &str, report: &crate::anomalies::AnomalyReport) -> String {
+    let mut out = format!("{BOLD}fleet calib \u{2014} anomalies, {day} (UTC){RESET}\n\n");
+    if report.findings.is_empty() {
+        out.push_str(&format!(
+            "{DIM}the day is quiet \u{b7} no anomaly class fired \u{b7} the stream's own reading{RESET}\n"
+        ));
+        return out;
+    }
+    for finding in &report.findings {
+        let header = format!(
+            "{} \u{b7} {} \u{b7} {} rows",
+            finding.class, finding.window, finding.rows
+        );
+        out.push_str(&format!(
+            "{DIM}\u{250c}\u{2500}{RESET} {BOLD}{ACCENT}{header}{RESET} {DIM}\u{2510}{RESET}\n"
+        ));
+        out.push_str(&format!(
+            "{DIM}\u{2502}{RESET} {TEXT}{}{RESET}\n",
+            finding.evidence
+        ));
+        if let Some(severity) = &finding.severity {
+            out.push_str(&format!(
+                "{DIM}\u{2502}{RESET} severity: {TEXT}{severity}{RESET}\n"
+            ));
+        }
+        if let Some(narration) = &finding.narration {
+            out.push_str(&format!("{DIM}\u{2502}{RESET} {DIM}{narration}{RESET}\n"));
+        }
+        out.push_str(&format!("{DIM}\u{2514}\u{2500}\u{2518}{RESET}\n"));
+    }
+    out.push_str(&format!(
+        "\n{DIM}{} finding{} \u{b7} {}{RESET}\n",
+        report.findings.len(),
+        if report.findings.len() == 1 { "" } else { "s" },
+        if report.lane_asks == 0 {
+            "a dry run \u{b7} no lane asked".to_string()
+        } else {
+            format!(
+                "{} lane ask{}",
+                report.lane_asks,
+                if report.lane_asks == 1 { "" } else { "s" }
+            )
+        }
+    ));
+    out
+}
+
 /// One op's card, or `None` when the day holds no rows for it.
 fn op_card(op: &str, rows: &[ReadRow]) -> Option<String> {
     let op_rows: Vec<&ReadRow> = rows.iter().filter(|row| row.op == op).collect();

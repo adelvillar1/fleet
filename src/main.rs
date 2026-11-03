@@ -2194,6 +2194,25 @@ fn calib_command(options: &cli::CalibOptions) -> ExitCode {
         print!("{}", fleet::delegate::render_calibration(&root, &day, gate));
         return ExitCode::SUCCESS;
     }
+    if options.anomalies {
+        // The anomaly pass: the deterministic detection, then at most
+        // two lane asks when a class fired (zero on a dry run). The
+        // command is sync, so the pass runs on its own current-thread
+        // runtime — the same shape the face's side asks use.
+        let report = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("a runtime for the anomaly pass")
+            .block_on(fleet::anomalies::pass(
+                &root,
+                &day,
+                &fleet::judge::LaneSource::Vendored,
+                &fleet::explain::LaneSource::Vendored,
+                options.dry_run,
+            ));
+        print!("{}", fleet::calib::render_anomalies(&day, &report));
+        return ExitCode::SUCCESS;
+    }
     print!("{}", fleet::calib::render(&root, &day));
     ExitCode::SUCCESS
 }
@@ -3032,14 +3051,8 @@ async fn compact_command(session_id: Option<&str>, force: bool) -> ExitCode {
     let passphrase = home::vault_passphrase();
     let dotenv = fleet::home::read_dotenv_with_vault(&home, passphrase.as_deref());
     let prepared =
-        match fleet::route::prepare(
-            &home,
-            &dotenv,
-            "compact a session",
-            &HashMap::new(),
-            None,
-        )
-        .await
+        match fleet::route::prepare(&home, &dotenv, "compact a session", &HashMap::new(), None)
+            .await
         {
             Ok(prepared) => prepared,
             Err(error) => {

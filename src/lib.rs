@@ -8,6 +8,7 @@
 //! identifier vocabulary, the TUI, and the doctor's checks.
 
 pub mod agent;
+pub mod anomalies;
 pub mod api;
 pub mod apply_patch;
 pub mod approvals;

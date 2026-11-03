@@ -41,6 +41,7 @@
 //! MCP client, with no CLI call and no checkout dependency.
 
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use serde_json::{json, Value};
@@ -162,6 +163,11 @@ pub enum LaneSource {
     /// A scripted lane: the spec a caller built, so no paid call and no
     /// live service stands between the beat and its grade.
     Scripted(ServerSpec),
+    /// The counting session: records the ask instead of spawning a
+    /// process, so a test can pin the anomaly pass's lane asks
+    /// (the usage plan's C4, the judge's seam shape). Test-only.
+    #[cfg(test)]
+    Counting(Arc<Mutex<crate::judge::CountingLog>>),
 }
 
 /// One explanation request.
@@ -568,6 +574,10 @@ fn lane_spec(source: &LaneSource) -> Result<ServerSpec, String> {
     match source {
         LaneSource::Vendored => crate::lanes::spec_for(EXPLAIN_LANE),
         LaneSource::Scripted(spec) => Ok(spec.clone()),
+        // The counting seam never reaches here: ask_lane answers it
+        // before the spawn.
+        #[cfg(test)]
+        LaneSource::Counting(_) => Err("the counting session spawns nothing".to_string()),
     }
 }
 
@@ -578,7 +588,15 @@ fn lane_spec(source: &LaneSource) -> Result<ServerSpec, String> {
 /// lane, a child that will not spawn, a handshake that times out, a
 /// tool the lane does not declare, a call the lane refused, an answer
 /// with no text.
-async fn ask_lane(source: &LaneSource, prompt: &str) -> Result<BlendReply, String> {
+pub(crate) async fn ask_lane(source: &LaneSource, prompt: &str) -> Result<BlendReply, String> {
+    #[cfg(test)]
+    if let LaneSource::Counting(counting) = source {
+        counting.lock().unwrap().events.push("ask");
+        return Ok(BlendReply {
+            final_answer: "the counting session's scripted narration".to_string(),
+            ..Default::default()
+        });
+    }
     let spec = lane_spec(source)?;
     let server =
         McpServer::spawn(&spec).map_err(|error| format!("the lane could not start: {error}"))?;
