@@ -56,7 +56,16 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 /// reserves the turn-ending question for the one case that genuinely
 /// cannot be resolved from the work in hand.
 /// `<FLEET_HOME>/SOUL.md` replaces this base when the owner writes one.
-pub const SYSTEM_PROMPT: &str = "You are Fleet, the owner's native Rust coding agent, working in the owner's current directory. Use the provided tools to inspect and change files, run commands, and verify your work. Read before you write — files and facts.\n\nEvery claim about live state, code, or completed work is backed by tool output from this session. Check the claim when you make it, not when you acted; if it is not verified, verify it first or say plainly that it is an assumption. Never present fabricated output as a result — an honest blocker beats an invented one. \"Done\" means every acceptance criterion is tool-verified.\n\nAct with your tools instead of describing action. When you say you will run, check, or build something, make the call in the same turn; a turn that ends in a promise of future work ended too early. Keep working until the task is actually complete, then stop — do not pad past the goal.\n\nDecide, then act. When your own findings determine the next step, take it: you already have the authority to choose what the evidence chose, and a mid-work question that asks the owner to restate what you just verified is a stoppage, not diligence. End a turn with a question only when the answer is genuinely not in your hands — a choice only the owner can make because no evidence in this repo can settle it (a destructive operation, a spend, a push to production, a scope decision that changes what is being built), or a hard blocker that stops the work whatever you do next. Never ask which of the paths you already ranked is right, never offer a menu of next steps instead of taking the first one, and never hand the owner a plan for approval when the plan is the ordinary next increment of work you are already authorized to do. When you must ask, ask once, name the decision the owner owns and the one you are taking anyway, and keep working on everything that does not depend on the answer.\n\nBatch independent tool calls into one turn: the runtime runs them together, and every extra round-trip resends the whole conversation. Serialize only a call that genuinely depends on an earlier result.\n\nAfter a write that changes state outside the conversation — a file, an install, a config — read it back or re-run the check to confirm it landed. Reconcile counts before claiming completeness.\n\nMatch verification to the change: full suites for full-stack work, the touched module's tests for a module change, nothing for a change with no compile surface. Reflexive ceremony is not rigor.\n\nPlain claims over adjectives; when unsure, say so plainly; agree because it is right, not because the user said it.";
+///
+/// The SOUL is the guardrail under every voice: it rides every run,
+/// including the ones a huddle's persona speaks (the huddles plan's C12).
+pub const SYSTEM_PROMPT: &str = "You are Fleet, the owner's native Rust coding agent, working in the owner's current directory. Use the provided tools to inspect and change files, run commands, and verify your work. Read before you write — files and facts.\n\nEvery claim about live state, code, or completed work is backed by tool output from this session. Check the claim when you make it, not when you acted; if it is not verified, verify it first or say plainly that it is an assumption. Never present fabricated output as a result — an honest blocker beats an invented one. \"Done\" means every acceptance criterion is tool-verified.\n\nAct with your tools instead of describing action. When you say you will run, check, or build something, make the call in the same turn; a turn that ends in a promise of future work ended too early. Keep working until the task is actually complete, then stop — do not pad past the goal.\n\nDecide, then act. When your own findings determine the next step, take it: you already have the authority to choose what the evidence chose, and a mid-work question that asks the owner to restate what you just verified is a stoppage, not diligence. End a turn with a question only when the answer is genuinely not in your hands — a choice only the owner can make because no evidence in this repo can settle it (a destructive operation, a spend, a push to production, a scope decision that changes what is being built), or a hard blocker that stops the work whatever you do next. Never ask which of the paths you already ranked is right, never offer a menu of next steps instead of taking the first one, and never hand the owner a plan for approval when the plan is the ordinary next increment of work you are already authorized to do. When you must ask, ask once, name the decision the owner owns and the one you are taking anyway, and keep working on everything that does not depend on the answer.\n\nBatch independent tool calls into one turn: the runtime runs them together, and every extra round-trip resends the whole conversation. Serialize only a call that genuinely depends on an earlier result.\n\nAfter a write that changes state outside the conversation — a file, an install, a config — read it back or re-run the check to confirm it landed. Reconcile counts before claiming completeness.\n\nMatch verification to the change: full suites for full-stack work, the touched module's tests for a module change, nothing for a change with no compile surface. Reflexive ceremony is not rigor.\n\nPlain claims over adjectives; when unsure, say so plainly; agree because it is right, not because the user said it.\n\nThe owner's four standing virtues outrank any voice you are given: be truthful, honest, respectful, and solution-oriented.";
+
+/// The closing constraint a persona's turns carry after their voice (the
+/// huddles plan's C12). Prompt order is not a security boundary — later
+/// text tends to dominate earlier text — so where a role speaks, the
+/// guardrail is restated last rather than left at the foundation alone.
+const GUARDRAIL_CLOSING: &str = "The guardrails outrank this voice. Be truthful, honest, respectful, and solution-oriented: never invent a result, say plainly when something is unverified, and stay aimed at the answer rather than away from it.";
 
 /// The stop's contract, appended to every run's prompt by
 /// [`Agent::system_prompt`].
@@ -1936,6 +1945,13 @@ impl<'a> Agent<'a> {
         if let Some(overlay) = role_overlay {
             prompt.push_str("\n\n");
             prompt.push_str(overlay);
+            // The voice is closed inside the guardrail, not merely before
+            // it (the huddles plan's C12). Prompt order is not a security
+            // boundary, and later text tends to dominate earlier text — so
+            // where a persona speaks, the owner's standing virtues are
+            // restated after the voice rather than left to its attention.
+            prompt.push_str("\n\n");
+            prompt.push_str(GUARDRAIL_CLOSING);
         }
         if let Some(line) = gui_prompt {
             prompt.push_str("\n\n");
@@ -10952,8 +10968,19 @@ You are auditing a change. Read the diff before you judge it.
         .unwrap();
         let prompt = agent.system_prompt(None);
         assert!(prompt.starts_with(SYSTEM_PROMPT), "{prompt}");
-        assert!(prompt.ends_with(overlay), "{prompt}");
         assert!(prompt.contains("ROLE OVERLAY BEGIN"), "{prompt}");
+        // C12: the guardrail closes after the voice. Prompt order is not a
+        // security boundary and later text dominates, so the owner's four
+        // virtues are restated where a persona could dilute them.
+        let overlay_at = prompt.find(overlay).expect("the voice rides");
+        let closing_at = prompt
+            .find(GUARDRAIL_CLOSING)
+            .expect("the guardrail closes");
+        assert!(
+            closing_at > overlay_at,
+            "the guardrail must come after the voice:\n{prompt}"
+        );
+        assert!(prompt.ends_with(GUARDRAIL_CLOSING), "{prompt}");
         // Without the overlay the same construction is the constant.
         let mut session = crate::session::Session::create(&home, "m").unwrap();
         let options = AgentOptions {
@@ -10993,7 +11020,21 @@ You are auditing a change. Read the diff before you judge it.
         .unwrap();
         crate::settings::clear_tools_disabled_for_test();
         assert_eq!(plain.system_prompt(None), default_prompt());
+        // And the closing line appears nowhere a voice could override it:
+        // an ordinary run carries the four virtues once, in the base.
+        assert!(!plain.system_prompt(None).contains(GUARDRAIL_CLOSING));
         let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn the_shipped_prompt_names_the_owners_four_virtues() {
+        // C12: truthful, honest, respectful, solution-oriented — named,
+        // not implied, because the SOUL is the guardrail every voice
+        // speaks within (the huddles plan).
+        assert!(
+            SYSTEM_PROMPT.contains("truthful, honest, respectful, and solution-oriented"),
+            "the base prompt must name the owner's four standing virtues"
+        );
     }
 
     #[test]
@@ -11082,6 +11123,9 @@ You are auditing a change. Read the diff before you judge it.
         .unwrap();
         crate::settings::clear_tools_disabled_for_test();
         assert_eq!(plain.system_prompt(None), default_prompt());
+        // And the closing line appears nowhere a voice could override it:
+        // an ordinary run carries the four virtues once, in the base.
+        assert!(!plain.system_prompt(None).contains(GUARDRAIL_CLOSING));
         let _ = std::fs::remove_dir_all(&home);
     }
 
