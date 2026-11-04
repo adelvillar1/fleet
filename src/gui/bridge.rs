@@ -706,10 +706,6 @@ impl Bridge {
     /// ignores it. Only a room is checked — an ordinary conversation has
     /// no members to address — and a role the home keeps is a
     /// recommendation (C5), never a refusal.
-    pub fn refused_mention(&self, session: &str, task: &str) -> Option<String> {
-        refused_mention(&self.home, session, task)
-    }
-
     /// One persona joins this conversation — the 2026-10-28 ruling that
     /// a conversation may hold more than one persona, recorded as a row
     /// in the log (`join`), never a silent change of voice. The role's
@@ -5595,30 +5591,6 @@ fn session_children(home: &std::path::Path, session: &str, live: &LiveFace) -> V
     out
 }
 
-/// A room's task addressed to someone the room cannot receive (the
-/// huddles plan's C3): an address nobody can answer is a mistake the owner
-/// should hear about, not a run that quietly ignores it. Only a room is
-/// checked — an ordinary conversation has no members to address — and a
-/// role the home keeps is a recommendation (C5), never a refusal.
-pub fn refused_mention(home: &std::path::Path, session: &str, task: &str) -> Option<String> {
-    let (member, _) = crate::session::last_mention(task)?;
-    if member == crate::session::MENTION_OWNER {
-        return None;
-    }
-    let personas = crate::session::summarize(&crate::session::session_path(home, session))
-        .map(|summary| summary.personas)
-        .unwrap_or_default();
-    if personas.is_empty() || personas.iter().any(|name| name == member) {
-        return None;
-    }
-    if crate::roles::load(home, member).is_ok() {
-        return None;
-    }
-    Some(format!(
-        "`{member}` is neither in this room nor a role this home keeps"
-    ))
-}
-
 /// One room's members as the head reads them — `(name, voice)` in join
 /// order, the lead first (the huddles plan's C8). The voice is the role's
 /// own one-line contract, resolved at read time so a room can say who it
@@ -6128,11 +6100,12 @@ fn cards_from_records(records: &[session::Record]) -> (Vec<Value>, usize) {
             // lacks, and the surface's card carries the single convene
             // press (the huddles plan's C5).
             session::Record::Recommend {
-                role, reason, from, ..
+                name, kind, reason, from, ..
             } => {
                 cards.push(json!({
                     "type": "recommend",
-                    "role": role,
+                    "name": name,
+                    "kind": kind,
                     "reason": reason,
                     "from": from,
                 }));
@@ -10351,9 +10324,10 @@ pub(crate) fn describe(event: &UiEvent) -> Value {
         // A member proposed convening a role the room lacks: one
         // suggestion card with the reason and a single convene press
         // (the huddles plan's C5).
-        UiEvent::Recommended { role, reason } => json!({
+        UiEvent::Recommended { name, kind, reason } => json!({
             "type": "recommended",
-            "role": role,
+            "name": name,
+            "kind": kind,
             "reason": reason,
         }),
         UiEvent::Routed {
@@ -15039,57 +15013,5 @@ mod tests {
         // the face watching the parent filters the card away.
         assert_eq!(streamed["session"], "child-1", "{streamed}");
         assert_eq!(streamed["parent"], "s", "{streamed}");
-    }
-
-    /// An address the room cannot receive is refused by name (the huddles
-    /// plan's C3), while a role the home keeps stays a recommendation and
-    /// an ordinary conversation has no members to address at all.
-    #[test]
-    fn an_unaddressable_name_is_refused_but_a_kept_role_is_not() {
-        let home = std::env::temp_dir().join(format!(
-            "fleet-huddle-refuse-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|at| at.as_nanos())
-                .unwrap_or_default()
-        ));
-        std::fs::create_dir_all(home.join("roles")).unwrap();
-        std::fs::write(
-            home.join("roles/designer.md"),
-            "---\nname: designer\ndescription: makes pages\n---\nvoice\n",
-        )
-        .unwrap();
-        std::fs::write(
-            home.join("roles/auditor.md"),
-            "---\nname: auditor\ndescription: checks what changed\n---\nvoice\n",
-        )
-        .unwrap();
-        let room = crate::session::Session::create_with_persona(
-            &home,
-            "m",
-            Some(vec!["designer".to_string()]),
-        )
-        .unwrap();
-        let id = room.id().to_string();
-        assert_eq!(
-            refused_mention(&home, &id, "@stranger can you look"),
-            Some("`stranger` is neither in this room nor a role this home keeps".to_string())
-        );
-        // A role the home keeps is a recommendation (C5), never a refusal.
-        assert_eq!(
-            refused_mention(&home, &id, "@auditor the contrast pairs fail"),
-            None
-        );
-        // A member routes; `@you` asks; neither is a routing problem.
-        assert_eq!(
-            refused_mention(&home, &id, "@designer the hero reads thin"),
-            None
-        );
-        assert_eq!(refused_mention(&home, &id, "@you worth a look"), None);
-        // An ordinary conversation has no members: nothing is refused.
-        let plain = crate::session::Session::create(&home, "m").unwrap();
-        assert_eq!(refused_mention(&home, plain.id(), "@stranger hello"), None);
-        let _ = std::fs::remove_dir_all(&home);
     }
 }

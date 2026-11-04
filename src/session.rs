@@ -356,14 +356,21 @@ pub enum Record {
         from: Option<String>,
         at: String,
     },
-    /// A member proposed convening another — the huddle's capability-gap
-    /// recommendation (the huddles plan's C5). `@role` where the role is
-    /// not in the room: the address proposes rather than routes, and the
-    /// words beside it are the reason. Bookkeeping, like a mention: it
-    /// replays to no message, and the surface draws the suggestion card.
+    /// A member named a capability the room lacks — the huddle's gap
+    /// (the huddles plan's C5). `@name` where no member holds it: the
+    /// address proposes rather than routes. `kind` says what the name is
+    /// — a role the home keeps, a tool, a skill, or an unnamed capability
+    /// — because that decides what the owner can do about it: convene the
+    /// role, or hire for the gap by authoring a persona that carries it.
+    /// Bookkeeping, like a mention: it replays to no message, and the
+    /// surface draws the suggestion card.
     Recommend {
-        /// The role proposed, which resolved on this home.
-        role: String,
+        /// What the room lacks: a role name, a tool, a skill, or a
+        /// capability the model described rather than named.
+        name: String,
+        /// What kind of thing `name` is: `role`, `tool`, `skill`, or
+        /// `capability`.
+        kind: String,
         /// Why the room needs it — the words beside the address.
         reason: String,
         /// Who proposed it: a persona, or absent when the owner did.
@@ -1627,7 +1634,8 @@ mod tests {
             .unwrap();
         session
             .record(&Record::Recommend {
-                role: "auditor".to_string(),
+                name: "auditor".to_string(),
+                kind: "role".to_string(),
                 reason: "the contrast pairs fail AA".to_string(),
                 from: Some("designer".to_string()),
                 at: "2026-11-03T14:05:00Z".to_string(),
@@ -1645,14 +1653,16 @@ mod tests {
         let recommendations: Vec<(String, String)> = records
             .iter()
             .filter_map(|record| match record {
-                Record::Recommend { role, reason, .. } => Some((role.clone(), reason.clone())),
+                Record::Recommend {
+                    name, kind, reason, ..
+                } => Some((format!("{name}|{kind}"), reason.clone())),
                 _ => None,
             })
             .collect();
         assert_eq!(
             recommendations,
             vec![(
-                "auditor".to_string(),
+                "auditor|role".to_string(),
                 "the contrast pairs fail AA".to_string()
             )]
         );

@@ -4748,7 +4748,7 @@ async function theStrategyStepShowsItsPreview() {
           members: [{ name: 'designer', voice: 'makes pages' }],
           events: [
             { type: 'message', role: 'owner', text: 'the brief' },
-            { type: 'recommend', role: 'auditor',
+            { type: 'recommend', name: 'auditor', kind: 'role',
               reason: 'the contrast pairs need an accessibility pass',
               from: 'designer' }
           ]
@@ -5118,6 +5118,86 @@ async function theStrategyStepShowsItsPreview() {
     check('C10 a seat with no verdict shows no line',
       plain.IDS['seat-verdict'].hidden,
       String(plain.IDS['seat-verdict'].hidden));
+  }
+
+  // A capability gap is a hiring decision, not a blocker (the huddles
+  // plan's C5): a name the home cannot convene — a tool, a skill, or an
+  // unnamed capability — offers to author a persona for it, and that persona
+  // persists in the home for every later huddle.
+  async function aGapOffersToHireAPersona() {
+    const page = boot({
+      // The authoring door offers the tool and skill catalogs, so the
+      // settings read lands before the room is opened.
+      hash: '#/settings',
+      reply: { type: 'join', persona: 'a11y-reviewer' },
+      documents: {
+        settings: {
+          type: 'settings', read_at: 'now',
+          scalars: [], lists: [], rules: [], env: [], cron: [],
+          soul: { present: false, text: '' },
+          router: { pin: '', judged: ['quick'],
+            tiers: [{ workload: 'quick', candidates: ['a/one'], resolved: 'a/one', reverts: false }],
+            min_confidence: 0.5, default_workload: 'quick', allow_api_models: false, roster: [] },
+          catalog: {
+            models: [], providers: [],
+            tools: ['read_file', 'list_dir', 'search'],
+            skills: ['a11y-scan', 'grounded-citations']
+          },
+          lanes: { document: {}, lanes: [], refused: [] },
+          servers: { servers: [], refused: [] },
+          tools: { calls_per_turn: 0, definition_tokens: 0, disabled: [], last_sweep: '', window: 0 },
+          vault: { names: [], exists: true, passphrase: false, plaintext: [] },
+          roles: { dir: '/tmp', entries: [{ name: 'scholar', description: 'grounds every claim',
+            tools: [], skills: [], shapes: [], overlay: 'voice' }] }
+        },
+        state: (asked) => ({
+          ...emptyState(asked), session: asked,
+          members: [{ name: 'scholar', voice: 'grounds every claim' }],
+          events: [
+            { type: 'message', role: 'owner', text: 'the launch brief' },
+            { type: 'recommend', name: 'a11y-scan', kind: 'skill',
+              reason: 'the contrast pairs need an accessibility pass', from: 'scholar' }
+          ]
+        })
+      }
+    });
+    await flush();
+    page.open();
+    await flush();
+    page.hash('#/chat');
+    await flush(40);
+    const cards = page.rows('.suggest');
+    check('C5 the gap is a suggestion card', cards.length === 1, String(cards.length));
+    check('C5 the gap says it is a skill, not a role',
+      String(cards[0].textContent).indexOf('skill') !== -1,
+      String(cards[0].textContent));
+    const hire = cards[0].find((one) => one.className === 'press primary')[0];
+    check('C5 a non-role gap offers to hire', !!hire &&
+      String(hire.textContent).indexOf('create a persona') !== -1,
+      hire ? String(hire.textContent) : 'no press');
+    if (!hire) return;
+    hire.click();
+    await flush(20);
+    check('C5 the authoring door opens', !page.IDS['persona-door'].hidden, 'hidden');
+    check('C5 the gap pre-fills the name',
+      String(page.IDS['persona-name'].value).indexOf('a11y-scan') !== -1,
+      JSON.stringify(page.IDS['persona-name'].value));
+    const tools = page.IDS['persona-tools'].find((one) =>
+      String(one.className).split(/\s+/).includes('pick'));
+    check('C5 the tools catalog is offered', tools.length >= 2, String(tools.length));
+    page.IDS['persona-create'].click();
+    await flush(40);
+    const writes = page.calls.filter((c) => c.url === '/api/settings' &&
+      String(c.body || '').indexOf('"op":"role"') !== -1);
+    check('C5 the persona is written through the role writer',
+      writes.length === 1 &&
+        String(writes[0].body).indexOf('"name":"a11y-scan"') !== -1,
+      writes.length ? String(writes[0].body) : 'no write');
+    const joins = page.calls.filter((c) => c.url.indexOf('/api/session/join') === 0);
+    check('C5 the new persona is convened into the room',
+      joins.length === 1 &&
+        String(joins[0].body).indexOf('"persona":"a11y-scan"') !== -1,
+      joins.length ? String(joins[0].body) : 'no join');
   }
 
   async function theBotsSurfaceMintsTheBotCard() {
@@ -8212,6 +8292,7 @@ const cases = [
   ['C9 a phase rides beneath its room', aPhaseRidesBeneathItsRoom],
   ['C11 the persona card shows the owner’s image', thePersonaCardShowsTheOwnersImage],
   ['C10 the seat carries sys1’s verdict', theSeatCarriesSys1sVerdict],
+  ['C5 a gap offers to hire a persona', aGapOffersToHireAPersona],
   ['KI-380 the zombie tab cannot hide a seat or lose the reads', theZombieTabCannotHideASeatOrLoseTheReads],
   ['C1/C8 the list groups by attention and counts what the server counted', theListGroupsByAttentionAndCountsWhatTheServerCounted],
   ['C2 every state opens through one verb', everyStateOpensThroughOneVerb],

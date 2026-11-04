@@ -578,12 +578,6 @@ async fn serve_connection(
                 }
             }
             let session = asked_session(bridge, &request);
-            // A room's task addressed to someone the room cannot receive is
-            // refused by name before anything is stored or dispatched (the
-            // huddles plan's C3).
-            if let Some(message) = bridge.refused_mention(&session, &task) {
-                return write_reply(&mut stream, bad_request(&message)).await;
-            }
             match bridge.run_with_budget(&session, &task, mode, pin, folder.as_deref(), budget) {
                 Ok(()) => {
                     write_reply(

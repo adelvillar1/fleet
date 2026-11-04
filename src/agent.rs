@@ -290,6 +290,47 @@ fn clamp_concurrency(ceiling: usize, requested: Option<&str>) -> usize {
 /// reads. The cap curates the prompt's list, never the library.
 pub const SKILLS_PROMPT_CAP: usize = 60;
 
+/// What a gap's name is, which decides what the owner can do about it: a
+/// role this home keeps can be convened; a tool or a skill can be carried
+/// by a persona the owner authors; anything else is a capability the room
+/// must hire for, described rather than named.
+fn gap_kind(home: Option<&std::path::Path>, name: &str) -> &'static str {
+    if let Some(home) = home {
+        if crate::roles::load(home, name).is_ok() {
+            return "role";
+        }
+    }
+    if crate::tools::ALL_TOOLS
+        .iter()
+        .any(|tool| tool.name() == name)
+    {
+        return "tool";
+    }
+    for tool in [
+        crate::tools::USE_SKILL_TOOL,
+        crate::tools::RECALL_TOOL,
+        crate::tools::REMEMBER_TOOL,
+        crate::tools::SUPERSEDE_TOOL,
+        crate::tools::SUBAGENT_TOOL,
+        crate::tools::READ_DOCUMENT_TOOL,
+        crate::tools::SEND_FILE_TOOL,
+    ] {
+        if tool == name {
+            return "tool";
+        }
+    }
+    if let Some(dir) = crate::skills::resolve_skills_dir(
+        std::env::var("FLEET_SKILLS_DIR").ok().as_deref(),
+        std::env::var("HOME").ok().as_deref(),
+    ) {
+        let (skills, _) = crate::skills::load_reported(&dir);
+        if skills.iter().any(|skill| skill.name == name) {
+            return "skill";
+        }
+    }
+    "capability"
+}
+
 /// The skills a run declares: the retired are already filtered by the
 /// loader, the newest by the skill's own mtime float up — the owner's
 /// recent work is the likely match — and the cap keeps the prompt's
@@ -623,7 +664,11 @@ pub enum UiEvent {
     /// draws one suggestion card with the role and the reason, and a single
     /// convene press; nothing joins on the model's say-so (the huddles
     /// plan's C5). Beside the `recommend` record in the log.
-    Recommended { role: String, reason: String },
+    Recommended {
+        name: String,
+        kind: String,
+        reason: String,
+    },
     /// The route this run takes, in full: the active provider and how it
     /// was chosen (`judged`/`fallback`/`pinned`), the model it will
     /// actually call, sys1's workload and verdict when there was a
@@ -5301,31 +5346,29 @@ impl<'a> Agent<'a> {
         Ok(())
     }
 
-    /// Propose convening a role the room lacks (C5): the reason is the
-    /// words beside the address, and the proposal lands as one suggestion
-    /// card the owner may press. The role must resolve on this home — a
-    /// name that names nothing is not a recommendation anyone can act on.
-    fn recommend(&mut self, role: &str, reason: &str) -> Result<(), AgentError> {
+    /// Name a capability the room lacks (C5): the reason is the words
+    /// beside the address, and the gap lands as one suggestion card. What
+    /// the owner can do about it depends on what the name IS — a role the
+    /// home keeps can be convened; a tool or skill can be carried by a
+    /// persona the owner authors; anything else is a capability the room
+    /// must hire for. Nothing is dropped: an unresolvable name is still a
+    /// gap worth showing, just not one with a convene press.
+    fn recommend(&mut self, name: &str, reason: &str) -> Result<(), AgentError> {
         let reason = reason.trim();
         if reason.is_empty() {
             return Ok(());
         }
-        let resolves = self
-            .improve_home
-            .as_ref()
-            .map(|home| crate::roles::load(home, role).is_ok())
-            .unwrap_or(false);
-        if !resolves {
-            return Ok(());
-        }
+        let kind = gap_kind(self.improve_home.as_deref(), name);
         self.record(&Record::Recommend {
-            role: role.to_string(),
+            name: name.to_string(),
+            kind: kind.to_string(),
             reason: reason.to_string(),
             from: self.active_speaker.clone(),
             at: crate::boards::now_stamp(),
         })?;
         self.emit(UiEvent::Recommended {
-            role: role.to_string(),
+            name: name.to_string(),
+            kind: kind.to_string(),
             reason: reason.to_string(),
         });
         Ok(())
@@ -9574,26 +9617,39 @@ mod tests {
             Some("designer"),
             "a proposal does not move the speaker"
         );
-        // A name that resolves nowhere is nobody's to convene.
-        agent.route_mention("@stranger a look").expect("ignored");
+        // A name that resolves nowhere is not a convene — it is a capability
+        // the room must hire for, and the gap still names it.
+        agent
+            .route_mention("@stranger a look")
+            .expect("the gap records");
         drop(agent);
         let records = crate::session::replay(&path).expect("the log replays");
         let recommendations: Vec<(String, String)> = records
             .iter()
             .filter_map(|record| match record {
                 Record::Recommend {
-                    role, reason, from, ..
-                } => Some((role.clone(), format!("{reason}|{from:?}"))),
+                    name,
+                    kind,
+                    reason,
+                    from,
+                    ..
+                } => Some((format!("{name}|{kind}"), format!("{reason}|{from:?}"))),
                 _ => None,
             })
             .collect();
         assert_eq!(
             recommendations,
-            vec![(
-                "auditor".to_string(),
-                "the contrast pairs need an accessibility pass|Some(\"designer\")".to_string()
-            )],
-            "one proposal, typed; a stranger writes no row"
+            vec![
+                (
+                    "auditor|role".to_string(),
+                    "the contrast pairs need an accessibility pass|Some(\"designer\")".to_string()
+                ),
+                (
+                    "stranger|capability".to_string(),
+                    "a look|Some(\"designer\")".to_string()
+                ),
+            ],
+            "a role convenes; a capability is a gap worth showing"
         );
         // The prompt tells the model the convention and the roster, or the
         // tool is a discovery the room cannot make.

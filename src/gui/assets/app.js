@@ -668,6 +668,14 @@
     huddleConvenor: document.getElementById('huddle-convenor'),
     huddleCreate: document.getElementById('huddle-create'),
     huddleCancel: document.getElementById('huddle-cancel'),
+    personaDoor: document.getElementById('persona-door'),
+    personaName: document.getElementById('persona-name'),
+    personaDescription: document.getElementById('persona-description'),
+    personaTools: document.getElementById('persona-tools'),
+    personaSkills: document.getElementById('persona-skills'),
+    personaOverlay: document.getElementById('persona-overlay'),
+    personaCreate: document.getElementById('persona-create'),
+    personaCancel: document.getElementById('persona-cancel'),
     panelDesign: document.getElementById('panel-design'),
     designRail: document.getElementById('design-rail'),
     designWorld: document.getElementById('design-world'),
@@ -2021,33 +2029,45 @@
   // huddles plan's C5/C8). One dashed card: the role, the reason, and the
   // single convene press — the owner decides, never the address.
   function suggestRow(event) {
-    var role = event.role || '';
+    var name = event.name || '';
+    var kind = event.kind || 'capability';
     var why = event.reason || '';
     var card = node('div', 'suggest');
-    card.appendChild(node('div', 'suggest-label', 'capability gap'));
+    card.appendChild(node('div', 'suggest-label',
+      kind === 'role' ? 'capability gap' : ('capability gap \u00b7 ' + kind)));
     var text = node('p', 'suggest-why');
     text.appendChild(document.createTextNode(
-      why ? (role + ' \u2014 ' + why) : ('this room does not hold ' + role)));
+      why ? (name + ' \u2014 ' + why) : ('this room does not hold ' + name)));
     card.appendChild(text);
     var acts = node('div', 'suggest-acts');
-    var convene = node('button', 'press primary', 'convene ' + role);
-    convene.type = 'button';
-    convene.addEventListener('click', function () {
-      convene.disabled = true;
-      convene.textContent = 'convening\u2026';
-      post('/api/session/join', { session: face.session, persona: role })
-        .then(function (reply) {
-          if (reply.status === 401) throw new Error('token');
-          convene.textContent = 'convoked';
-          load();
-        })
-        .catch(function () {
-          convene.disabled = false;
-          convene.textContent = 'convene ' + role;
-          notice('the role was not added', 'the room could not be read');
-        });
-    });
-    acts.appendChild(convene);
+    if (kind === 'role') {
+      // A role the home keeps can be convened at once.
+      var convene = node('button', 'press primary', 'convene ' + name);
+      convene.type = 'button';
+      convene.addEventListener('click', function () {
+        convene.disabled = true;
+        convene.textContent = 'convening\u2026';
+        post('/api/session/join', { session: face.session, persona: name })
+          .then(function (reply) {
+            if (reply.status === 401) throw new Error('token');
+            convene.textContent = 'convoked';
+            load();
+          })
+          .catch(function () {
+            convene.disabled = false;
+            convene.textContent = 'convene ' + name;
+            notice('the role was not added', 'the room could not be read');
+          });
+      });
+      acts.appendChild(convene);
+    } else {
+      // A tool, a skill, or an unnamed capability: hire for it. The persona
+      // is authored here and stays in the home for every later huddle.
+      var hire = node('button', 'press primary', 'create a persona for this');
+      hire.type = 'button';
+      hire.addEventListener('click', function () { openPersonaDoor(event); });
+      acts.appendChild(hire);
+    }
     card.appendChild(acts);
     return row(card, event);
   }
@@ -9385,6 +9405,12 @@
   if (el.huddleCreate) el.huddleCreate.addEventListener('click', createHuddle);
   if (el.huddleCancel) el.huddleCancel.addEventListener('click', closeHuddleDoor);
   if (el.hhBreakout) el.hhBreakout.addEventListener('click', breakOutPhase);
+  if (el.personaCreate) el.personaCreate.addEventListener('click', createPersona);
+  if (el.personaCancel) {
+    el.personaCancel.addEventListener('click', function () {
+      if (el.personaDoor) el.personaDoor.hidden = true;
+    });
+  }
   el.inspectFace.addEventListener('click', function () { inspect(null); });
   document.addEventListener('click', function (event) {
     var line = event.target.closest ? event.target.closest('.stream-line') : null;
@@ -9706,6 +9732,91 @@
 
   function closeHuddleDoor() {
     if (el.huddleDoor) el.huddleDoor.hidden = true;
+  }
+
+  // Author a persona for a gap the room hit (the huddles plan's C5): the
+  // name is suggested from the gap, and the contract — purpose, tools,
+  // skills, voice — is written through the same writer the settings page
+  // rides. It stays in the home, so the consultant is on the payroll for
+  // every later huddle.
+  function openPersonaDoor(gap) {
+    if (!el.personaDoor) return;
+    var suggested = gap && gap.name ? gap.name : '';
+    el.personaName.value = suggested;
+    el.personaDescription.value = gap && gap.reason ? gap.reason : '';
+    el.personaOverlay.value = '';
+    el.personaTools.textContent = '';
+    el.personaSkills.textContent = '';
+    var catalog = cfgCatalog();
+    (catalog.tools || []).forEach(function (tool) {
+      if (suggested && tool.indexOf(suggested) === 0) return;
+      el.personaTools.appendChild(pickChip('tool', tool));
+    });
+    (catalog.skills || []).forEach(function (skill) {
+      el.personaSkills.appendChild(pickChip('skill', skill));
+    });
+    // The gap's own name pre-selects itself when the catalog carries it.
+    if (suggested) {
+      Array.prototype.forEach.call(el.personaSkills.querySelectorAll('.pick'), function (one) {
+        if (one.dataset.value === suggested) one.classList.add('on');
+      });
+      Array.prototype.forEach.call(el.personaTools.querySelectorAll('.pick'), function (one) {
+        if (one.dataset.value === suggested) one.classList.add('on');
+      });
+    }
+    el.personaDoor.hidden = false;
+    el.personaName.focus();
+  }
+
+  function pickChip(kind, value) {
+    var chip = node('button', 'pick');
+    chip.type = 'button';
+    chip.dataset.value = value;
+    chip.appendChild(document.createTextNode(value));
+    chip.addEventListener('click', function () { chip.classList.toggle('on'); });
+    return chip;
+  }
+
+  function createPersona() {
+    var name = (el.personaName.value || '').trim();
+    var create = el.personaCreate;
+    if (!name) {
+      notice('the persona was not created', 'a persona needs a name');
+      return;
+    }
+    var picked = function (host) {
+      return Array.prototype.slice.call(host.querySelectorAll('.pick.on'))
+        .map(function (one) { return one.dataset.value; });
+    };
+    var fields = {
+      name: name,
+      description: (el.personaDescription.value || '').trim(),
+      tools: picked(el.personaTools),
+      skills: picked(el.personaSkills),
+      shapes: [],
+      overlay: el.personaOverlay.value || ''
+    };
+    create.disabled = true;
+    create.textContent = 'creating\u2026';
+    post('/api/settings', Object.assign({ op: 'role' }, fields))
+      .then(function (reply) {
+        if (reply.status !== 200 || !reply.body) {
+          throw new Error((reply.body && reply.body.error) || 'the writer refused it');
+        }
+        return post('/api/session/join', { session: face.session, persona: name });
+      })
+      .then(function (reply) {
+        create.disabled = false;
+        create.textContent = 'create & convene';
+        if (reply.status === 401) throw new Error('token');
+        el.personaDoor.hidden = true;
+        load();
+      })
+      .catch(function () {
+        create.disabled = false;
+        create.textContent = 'create & convene';
+        notice('the persona was not created', 'the writer refused it');
+      });
   }
 
   function createHuddle() {
