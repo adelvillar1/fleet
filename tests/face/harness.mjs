@@ -628,6 +628,18 @@ function boot(options) {
         }),
       });
     }
+    if (pathOnly === '/api/router') {
+      return Promise.resolve({
+        status: 200,
+        json: () => Promise.resolve(documents.router || {
+          type: 'router', read_at: 'now', refused: [],
+          cache: { entries: 0, keyed: false, workloads: [] }, guidance: [],
+          hours: [], judge: { default_workload: 'quick', lane: 'sys1' },
+          judged: { cached: 0, errors: 0, fresh: 0 }, models: [], payg: { allowed: true, providers: [] },
+          pin: null, recent: [], tiers: [], totals: { calls: 0 }, workloads: [],
+        }),
+      });
+    }
     if (pathOnly === '/api/calibration') {
       const askedDay = new URL('http://x' + url).searchParams.get('day') || '';
       const doc = askedDay
@@ -4327,8 +4339,64 @@ async function theStrategyStepShowsItsPreview() {
   }
 
 
-  // The Robots surface mints the bot's pairing card the way the topbar
-  // mints the console's: one press, the same scrim, the same card —
+  // KI-422: a successful read carries `refused: []`, and an empty array is
+  // truthy in JS — so a reader that tests the key calls every good document
+  // a refusal. The router board did exactly that and never left its
+  // loading card, and the folder browser refused to list a directory it had
+  // just read. The stub answers `/api/router` now (it answered nothing
+  // before, which is how the board's read went untested); the same
+  // predicate covers the folder documents.
+  async function anEmptyRefusalListIsNotARefusal() {
+    const routerDoc = {
+      type: 'router', read_at: 'now', refused: [], pin: null,
+      cache: { entries: 0, keyed: true, workloads: [] }, guidance: [],
+      hours: [{ calls: 4, errors: 0, hour: 9 }],
+      judge: { default_workload: 'standard_code', lane: 'sys1' },
+      judged: { cached: 0, errors: 1, fresh: 14 },
+      models: [{ calls: 14, errors: 1, key: 'glm-5', model: 'glm-5', provider: 'glm-5', total_tokens: 0 }],
+      payg: { allowed: true, providers: ['deepseek'] },
+      recent: [], tiers: [], totals: { calls: 14, errors: 1, ok: 13, success_rate: 0.93 },
+      workloads: [{ count: 14, workload: 'standard_code' }],
+    };
+    const page = boot({
+      hash: '#/router',
+      documents: {
+        router: routerDoc,
+        state: (asked) => emptyState(asked),
+        onboard: onboardDoc({ door: false }),
+      },
+    });
+    page.open();
+    await flush(120);
+    const board = page.IDS['router-board'];
+    const text = String(board.textContent);
+    check('KI-422 a good router read paints the board',
+      text.indexOf('has not landed yet') === -1 && text.indexOf('14') !== -1,
+      text.slice(0, 160));
+    // The document's rate is a percentage already; the strip printed 100x it
+    // ("10000% SUCCESS" on the live console, beside a 100% ledger tile).
+    check('KI-422 the served rate is the document\'s own percentage',
+      text.indexOf('10000%') === -1 && text.indexOf('93%') !== -1,
+      text.slice(0, 160));
+
+    // The refusal path still names the read that failed, beside the board.
+    const refusedPage = boot({
+      hash: '#/router',
+      documents: {
+        router: { ...routerDoc, refused: ['the day\u2019s stream could not be read'] },
+        state: (asked) => emptyState(asked),
+        onboard: onboardDoc({ door: false }),
+      },
+    });
+    refusedPage.open();
+    await flush(120);
+    const refusedText = String(refusedPage.IDS['router-board'].textContent);
+    check('KI-422 a refused router read is named',
+      refusedText.indexOf('could not be read') !== -1,
+      refusedText.slice(0, 160));
+  }
+
+
   // and the mint names the face so the server builds the bot origin.
   // The panel arrives by hashchange (the fake window fires it like a
   // real one), the row is found by class (the fake querySelectorAll
@@ -8919,6 +8987,7 @@ const cases = [
   ['ICONS the bots rail wears its initials', theBotsRailWearsItsInitials],
   ['PALETTE the palette agrees with the rail', thePaletteAgreesWithTheRail],
   ['PLUGINS the management surface and the two tiers\' frames', thePluginsSurfaceManagesTheChains],
+  ['KI-422 an empty refused list is not a refusal', anEmptyRefusalListIsNotARefusal],
   ['HUDDLES the rooms column carries the three states and its rows', theHuddleRailCarriesTheThreeStates],
   ['C6 the shelf opens a deliverable in the pane', theShelfOpensThePanePreview],
   ['C8 the composer names who hears the draft', theComposerNamesWhoHearsIt],

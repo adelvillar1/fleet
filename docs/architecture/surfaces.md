@@ -442,6 +442,51 @@ evidence rather than assumed.
 **State.** Complete; the stream reads all thirteen ops and the judging
 beats exist, with no judged cells for the day until a review runs.
 
+### Plugins — *system*
+
+**What it is.** The face plugin host, grouped status-first: the **tool
+plugin** (the program Fleet attaches to rather than reimplements), the
+**lanes** with their resolved-now state, the **MCP servers** the tools
+come from, the **installed bundles** with their tier mark and
+provenance, and the drafts awaiting review. One press opens the item's
+own card; the head carries the counts and a *how trust works*
+disclosure that says what each tier may do.
+
+**What you do.** See what is mounted and what answered; enable or
+disable a bundle; install one from a path; open a lane's or a server's
+card in settings; review a creator draft.
+
+**Why.** A face that can be extended must also be able to say what is
+extending it — a bundle's tier, its entry, the queries it may ask and
+where it came from are the whole of the trust decision, so they are on
+the surface rather than in a log. `docs/features/plugins.md` is the
+contract.
+
+**State.** Complete: the two tiers (untrusted sandboxed, privileged in
+the face's window), install and remove with their blast radius, and the
+registry's persistence.
+
+### A bundle's mount — *system*
+
+**What it is.** `#/<name>` for an installed bundle is not a rail
+destination: the face resolves the name to `panel-bundle` and plays the
+bundle's own page there, relaying only the queries the manifest declares
+and counting the asks (`n asked · n answered · n refused`). The page
+arrives as bytes and rides a `srcdoc` frame, because the bundle's own
+route answers under `frame-ancestors 'none'`.
+
+**What you do.** Open the bundle, read its picture, press its controls;
+a refused query is named inside the bundle's own frame rather than
+rendered as a zero.
+
+**Why.** The host decides what a bundle may reach, never the bundle: the
+bridge enforces the declared set, and the frame's own window gates which
+asks it answers. That is what makes a third-party bundle safe to play.
+
+**State.** Complete, with the shipped example **Telemetry**: eight
+strata of the real pipeline — door, recall, skills, route, model, tools,
+rooms, write-back — drawn from live counts.
+
 ## What a first-time user meets today
 
 The surfaces are built; what they show is a home mid-development. The

@@ -72,7 +72,13 @@ named, not implied — see Sequencing in
 - **A design canvas** — the console's `design` board: pages from a brief
   by a Fleet run, side by side on a pan/zoom canvas, with live token
   tweaks, comment pins, versions, measured accessibility checks and
-  exports (HTML, tokens, a hand-off packet, a PNG). The composer sits in
+  exports (HTML, tokens, a hand-off packet, a PNG). It is the native
+  descendant of the owner's **design-canvas** project: the canvas, its
+  contract and its frame model came over, and the SaaS shell around it —
+  billing, accounts, collaboration, publishing — stayed behind, so a
+  board is one file in the home and every panel reads it. The reasoning
+  is [docs/plans/2026-10-31-design-canvas-native.md](docs/plans/2026-10-31-design-canvas-native.md);
+  the surface is [docs/features/design.md](docs/features/design.md). The composer sits in
   the canvas's center frame like a conversation's, and its **focus is the
   request's subject**: no page selected is a board-wide ask, a selected
   page is the page's ask (the chip says which). Boards and pages are full
@@ -87,6 +93,17 @@ named, not implied — see Sequencing in
   A frame is a complete self-contained page, so the board holds what the
   deck renders and the document preview reads — and any run can put one
   there.
+- **Plugins — a face you can extend** — a bundle is one folder with a
+  manifest and one self-contained page; installing it adds a rail entry
+  and a mount, and the face plays it in a frame that may ask only the
+  queries the manifest declares. Two tiers: **untrusted** runs sandboxed
+  with no origin and no reach past its declared set, **privileged** is the
+  owner's own and runs in the face's window. **Telemetry** ships as the
+  worked example: eight strata of Fleet's real pipeline — door, recall,
+  skills, route, model, tools, rooms, write-back — drawn from live
+  counts, every figure a query answer, and a refused query rendered as a
+  named refusal rather than a zero. See
+  [docs/features/plugins.md](docs/features/plugins.md).
 - **A router that owns its decisions** — the owner's declared chain,
   sys1-judged per task, failover by failure class, and deepseek-flash as
   the tail every walk closes on. Work is judged into tiers — quick,
@@ -151,22 +168,29 @@ destructive class at the approval seat, then stream the answer while the
 session log records it. The router never guesses, and the record names
 the route it took.*
 
-The console, surface by surface — every destination a user lands on.The long pages run one idiom: a rail of sections (what needs you first,
-then the substrate's own categories), one section at a time, one-line
-rows, and the right pane for the item — settings, bots, skills, memory,
-workspace history, and calibration all share it.
+The console, surface by surface — every destination a user lands on. The
+long pages run one idiom: a rail of sections (what needs you first, then
+the substrate's own categories), one section at a time, one-line rows, and
+the right pane for the item — settings, bots, skills, memory, workspace
+history, and calibration all share it. The main rail groups its fifteen
+destinations, every one with its own mark, and **a group's label folds its
+rows** and keeps the needs-you count it holds, so the rail can return a
+third of the screen without hiding anything silently.
+
+Shots at 1440×900 from a scratch home — the owner's own home is never the
+fixture.
 
 | | |
 |---|---|
-| ![the conversation](docs/images/surface-chat.jpg) | ![the router](docs/images/surface-router.jpg) |
-| ![sessions](docs/images/surface-sessions.jpg) | ![delegation](docs/images/surface-delegation.jpg) |
-| ![memory](docs/images/surface-memory.jpg) | ![skills](docs/images/surface-skills.jpg) |
-| ![second brain](docs/images/surface-second-brain.jpg) | ![bots](docs/images/surface-bots.jpg) |
-| ![workspace history](docs/images/surface-workspace-history.jpg) | ![vault](docs/images/surface-vault.jpg) |
-| ![settings](docs/images/surface-settings.jpg) | ![calibration](docs/images/surface-calibration.jpg) |
-| ![the design canvas](docs/images/surface-design.jpg) | ![a page in focus](docs/images/design-focus-page.jpg) |
-| ![the designer's review](docs/images/design-review.jpg) | ![the export card](docs/images/design-export.jpg) |
-| ![the model fan-out](docs/images/design-fanout.jpg) | ![the local host](docs/images/design-site.jpg) |
+| ![the conversation](docs/images/surface-chat.jpg) *the conversation: the plan's goal rides the composer, the run's cards open in place* | ![the rooms](docs/images/surface-huddles.jpg) *a room: you and two bots, a deliverable on the shelf, a capability gap the room names* |
+| ![sessions](docs/images/surface-sessions.jpg) *sessions: what is alive — active, handed back, capped — grouped by project* | ![the design canvas](docs/images/surface-design.jpg) *the design canvas: boards by project, pages on a pan/zoom board, the composer in the center frame* |
+| ![the router](docs/images/surface-router.jpg) *the router: the declared chain, the day's ledger, the hour and model mix* | ![delegation](docs/images/surface-delegation.jpg) *delegation: the run's own tree, the runs before it, the plan's declared graph* |
+| ![memory](docs/images/surface-memory.jpg) *memory: one fact per file, recalled by shape, with the corpus counted* | ![skills](docs/images/surface-skills.jpg) *skills: the library by category, what was never used, what awaits a decision* |
+| ![second brain](docs/images/surface-second-brain.jpg) *second brain: every project's six-week pulse and what needs a person* | ![bots](docs/images/surface-bots.jpg) *bots: a persona's conversations, and the channels work arrives on* |
+| ![vault](docs/images/surface-vault.jpg) *the vault: names listed, no value ever rendered* | ![settings](docs/images/surface-settings.jpg) *settings: the router, the accounts, the rules — one card per decision* |
+| ![calibration](docs/images/surface-calibration.jpg) *calibration: the day's stream, the failover gate, the rows it grades* | ![plugins](docs/images/surface-plugins.jpg) *plugins: the tool plugin, the lanes, the MCP servers, the installed bundles* |
+| ![telemetry](docs/images/surface-telemetry.jpg) *the telemetry bundle: eight strata of the real pipeline, every figure a query answer* | ![the folded rail](docs/images/rail-folded.jpg) *the rail with two groups folded — fifteen destinations, six rows* |
+
 
 - **Collision-free delegation, on LayerFS** — each delegated child works
   in its own writable workspace over one shared committed history, so

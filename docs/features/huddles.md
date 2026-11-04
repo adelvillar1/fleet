@@ -13,6 +13,20 @@ model, completed) and
 (the surface, completed); the screens it was built against live in
 `docs/plans/mockups/2026-11-04-huddles-ux/`.
 
+## In pictures
+
+| | |
+|---|---|
+| ![a room](../images/surface-huddles.jpg) | ![the rooms column](../images/huddles-rooms.jpg) |
+
+*Left: a room at 1440×900 from a scratch home — the head with its state
+word, goal, member stack and deliverable shelf; the transcript with
+bylines, the capability-gap card with its one **convene** press, the
+delivered file opening the pane; the composer addressing **to the room**
+(a member pressed moves that chip). Right: the rooms column on its own —
+three groups, each row carrying the member stack, the last line and who
+said it, the time, and what the room produced.*
+
 ## The rooms column
 
 A huddle lives at `#/huddles/<id>`, in the work group beside the

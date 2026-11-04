@@ -45,7 +45,7 @@ else is standard library. Five subsystems, each with a boundary:
   core. Their boundary promise: every read the browser performs is
   spawn_blocking off the async worker, and every write rides the module
   the CLI rides — the browser has no second truth.
-- **The plugin host** (`plugins/face.rs`, `plugins/eval.rs`) — the face-plugin format, registry, and two-tier lifecycle; the untrusted tier's sandbox (the network-dead frame plus the bridge-enforced declared-query set). The tool-plugin seam (`plugins/second_brain.rs`) sits beside it.
+- **The plugin host** (`plugins/face.rs`, `plugins/eval.rs`) — the face-plugin format, registry, and two-tier lifecycle; the untrusted tier's sandbox (the network-dead frame plus the bridge-enforced declared-query set). The tool-plugin seam (`plugins/second_brain.rs`) sits beside it, and `plugins/telemetry/` is the shipped bundle: one self-contained page declaring eight read-only queries, mounted at `#/<name>` and answered through `POST /api/plugins/query`.
 - **The evidence spine** (`calib.rs`, `eval.rs`, `judge.rs`,
   `delegate.rs`, `explain.rs`, `anomalies.rs`) — recording, grading,
   the stream's own anomaly pass (six deterministic classes, at most
@@ -314,7 +314,10 @@ model call is visible. One ask per run; a second silent stop ends with
 the stop reason `completed without a report` rather than `completed`.
 
 #### `canvas.rs`
-The design canvas's document and transforms. One project per
+The design canvas's document and transforms — the native port of the
+owner's design-canvas project: its frame model and contract came over,
+its Prisma/Postgres store did not (a board is one document in the home).
+One project per
 `<home>/canvas/<slug>/project.json`: frames in array order (which is the
 z-order), each an opaque HTML page with its token spec, pins and version
 snapshots; caps 512 KiB of HTML, 20 versions, 10 reviews, refused by name.

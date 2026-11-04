@@ -54,7 +54,9 @@ method in three words — plan, delegate, verify — and where a run's work
 goes: local to the machine, turns to the providers that serve them, a
 document escalated to Perception to Nace.
 
-**Work — design.** The board. Your pages, side by side on a canvas you
+**Work — design.** The board — Fleet's native descendant of the owner's
+**design-canvas** project: the canvas, the frame model and the contract came
+over, the SaaS shell did not. Your pages, side by side on a canvas you
 can pan and zoom: a page is a complete HTML design — a landing screen, a
 pricing table, a component sheet — and the board is where they live. The
 **boards rail** on the left lists every board you have made — the same
@@ -268,7 +270,7 @@ store and its diff, and a command palette over every pane and panel
 | the day's calibration stream | `fleet calib` — the stream's cards with the usage columns and the spend card when rows carry them (then `fleet judge`, `fleet delegate` for the grading beats) |
 | the day's anomalies | `fleet calib --anomalies` — the six deterministic classes as cards, with the lane's severity and narration when a class fired (`--dry-run` rehearses with no lane ask) |
 | the day's trajectory shapes | `fleet calib --shape` — the runs' per-turn token curves and the closing rot question (median growth, doubled runs, folds, capped endings) |
-| the face's plugins | `fleet plugins list` — the installed bundles with their tiers and states; `install <path>` carries a bundle in (`--privileged` is the elevation act, naming the grant); `enable`/`disable`/`remove` move one by name; `eval <name>` runs the deterministic suite |
+| the face's plugins | `fleet plugins list` — the installed bundles with their tiers and states; `install <path>` carries a bundle in (`--privileged` is the elevation act, naming the grant); `enable`/`disable`/`remove` move one by name; `eval <name>` runs the deterministic suite. In the console, `#/plugins` is the host and `#/<name>` mounts a bundle (the shipped example is `#/telemetry`) |
 | why a verdict stood | `fleet explain` |
 | the harness's own performance | `fleet eval` (`--last` for the last run) |
 | the knobs | `fleet settings` (`set <key> <value>` writes one; `provider add`/`remove`, `workload set` edit the roster and the tiers) |

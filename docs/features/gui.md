@@ -438,6 +438,15 @@ in `aria-label` and the hover title.
 | `#/plugins` | the face plugin host: the installed bundles as one-card chains — the tier as a mark, the entry, the provenance, the enable/disable toggle, the remove with its blast radius, and install-from-path with the elevation confirmation — plus creator mode's drafts awaiting review. A plugin's own card (`#/plugins/<name>`) is its bundle in a frame: sandboxed for the untrusted tier, plain for the owner-vouched privileged one (`docs/features/plugins.md`) |
 | `#/settings` | every configurable surface: the router (spend guard, tiers with resolved-now, thresholds, pin), the providers as field editors, the lane cards, the MCP servers card (`docs/features/mcp.md`): the registry's rows with their probe dots and enable/probe/remove, the scan's discovery rows with their badges and import, the roles editor, the vault, the spend caps, the remaining knobs, the rules, the cron jobs, the identity slot, and the env names |
 
+**A bundle's mount.** An installed bundle is not a route in the rail's
+`GROUPS`: `#/<name>` resolves to `panel-bundle`, which plays the bundle's
+own page in a frame and relays only the queries its manifest declares —
+the bridge enforces the declared set, the frame's own window gates which
+asks it answers. The head names the bundle, its tier and the live tally
+(`n asked · n answered · n refused`). The shipped example is
+`#/telemetry` — eight strata of the real pipeline, every figure a query
+answer (`docs/features/plugins.md` § The mount).
+
 ## The configuration surface
 
 The Settings page is one page with section chips: **router · providers ·

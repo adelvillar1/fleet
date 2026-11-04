@@ -3,27 +3,29 @@
 Fleet's own board of designed pages. A **frame** is one complete,
 self-contained HTML page — the artifact a design run produces — and the
 canvas is where frames land, get tweaked, pinned, reviewed and handed
-off. It was ported from the design-canvas project; what came over is the
-canvas surface and its contract, and what stayed behind is that app's
-SaaS shell (billing, accounts, publishing, collaboration). The reasoning
-lives in `docs/plans/2026-10-31-design-canvas-native.md`.
+off. It is the **native descendant of the owner's design-canvas
+project**: the canvas, its frame model and its contract came over
+(the frame is opaque HTML, the array order is z-order, a tweak is a
+`:root` variable), and what stayed behind is that app's SaaS shell —
+billing, accounts, publishing, collaboration, its Prisma/Postgres
+store — because a board is one document in the home and the face
+already owns the writes. The reasoning, the leg-by-leg mapping and what
+was deliberately not ported (vector editing, undo for geometry) live in
+[docs/plans/2026-10-31-design-canvas-native.md](../plans/2026-10-31-design-canvas-native.md).
 
 ## In pictures
 
-| | |
-|---|---|
-| ![the design canvas](../images/surface-design.jpg) | ![a page in focus](../images/design-focus-page.jpg) |
-| ![the designer's review](../images/design-review.jpg) | ![the export card](../images/design-export.jpg) |
-| ![the model fan-out](../images/design-fanout.jpg) | ![the local host](../images/design-site.jpg) |
+![the design canvas](../images/surface-design.jpg)
 
-Shots at 1440×900 from a scratch home (the owner's canvas is never the
-fixture). Top-left: the board with the rail grouped by project, the save
-chip, and the composer floating at the canvas's center. Top-right: a
-page selected — the focus chip reads `page · Landing` and the mode
-follows to *refine*. Middle: the designer's review with the
-deterministic scan above the model's eight scores and **the ask**; the
-export card's downloads with the site kind; a second model pressed for
-the **fan-out**; and the board served as a site at `/site/<slug>/`.
+*The board at 1440×900 from a scratch home (the owner's canvas is never
+the fixture): the boards rail grouped by the project each board belongs
+to, the canvas with its pages and the zoom controls, and the composer
+floating at the canvas's center. The head carries the save chip and the
+board's settings; a page selected swaps the composer's focus to
+`page · <name>`, a review card puts the deterministic scan above the
+model's eight scores and **the ask**, the export card lists the
+downloads by kind, and the same board serves as a site at
+`/site/<slug>/` — the frames themselves, network-dead.*
 
 ## The surface
 

@@ -2731,6 +2731,17 @@
     settle();
   }
 
+  // A document's refusal is its `refused` entries — never the key. A good
+  // read carries the key as an empty array, and an empty array is truthy,
+  // so reading the key alone turns every successful read into a refusal
+  // (the router board and the folder browser both sat on their loading
+  // card because of it; KI-422). One predicate, so the next reader cannot
+  // spell it wrong on its own.
+  function refusals(doc) {
+    var said = doc && doc.refused;
+    return said && said.length ? said : null;
+  }
+
   // ---------------------------------------------------------- the reducer
 
   // One event in, the face changed. Replay and live are this function
@@ -4400,7 +4411,7 @@
 
   function paintOnboard() {
     var doc = face.onboard;
-    if (!doc || doc.refused) return;
+    if (!doc || refusals(doc)) return;
     var step = (doc.steps || []).filter(function (one) { return one.id === 'home'; })[0];
     // U10: the door is up until the home itself is set up, not merely
     // until fleet can answer — a fresh home can reach a lane and still
@@ -5555,11 +5566,20 @@
     if (!read) {
       el.routerBoard.appendChild(surfaceHead('Intelligence', 'Router',
         'Where this run\u2019s work went, what it tried first, and what the day has served.', null));
-      var waiting = boardCard(12, 'reading', null, null);
-      waiting.appendChild(node('p', 'board-empty',
-        'The board\u2019s read has not landed yet. The live decision below is the run\u2019s own event ' +
-        'and does not wait for it.'));
-      el.routerBoard.appendChild(waiting);
+      // A first read that refused names its refusal: the loading card is
+      // for a read still in flight, and a refusal that leaves it up reads
+      // as a board that never arrives (KI-422's other half).
+      if (face.routerRefused && face.routerRefused.length) {
+        var failed = boardCard(12, 'the read did not land', null, null);
+        failed.appendChild(node('p', 'board-empty', face.routerRefused.join(' \u00b7 ')));
+        el.routerBoard.appendChild(failed);
+      } else {
+        var waiting = boardCard(12, 'reading', null, null);
+        waiting.appendChild(node('p', 'board-empty',
+          'The board\u2019s read has not landed yet. The live decision below is the run\u2019s own event ' +
+          'and does not wait for it.'));
+        el.routerBoard.appendChild(waiting);
+      }
       el.routerBoard.appendChild(decisionCard());
       return;
     }
@@ -5575,7 +5595,11 @@
     var tiers = read.tiers || [];
     var totals = read.totals || {};
     var errors = totals.errors || 0;
-    var rate = totals.success_rate == null ? '\u2014' : Math.round(totals.success_rate * 100) + '%';
+    // The document's rate is already a percentage (the bridge divides by
+    // the calls it counted), so the strip takes it as it comes — the ×100
+    // here printed the live console's "10000% SUCCESS" (KI-422's second
+    // find) while the ledger tile beside it read 100%.
+    var rate = totals.success_rate == null ? '\u2014' : Math.round(totals.success_rate) + '%';
     var instrument = surfaceInstrument('the router', read.pin || 'no pin',
       'judge ' + (read.judge ? read.judge.lane : '\u2014') + ' \u00b7 ' + tiers.length + ' tier chains',
       [
@@ -5640,8 +5664,9 @@
         // A refused document is not a route (gui-revamp C2): the last
         // good read stays on the board and the refusal is shown beside
         // it, so a transient read never blanks a panel that was whole.
-        if (doc && doc.refused) {
-          face.routerRefused = doc.refused;
+        var said = refusals(doc);
+        if (said) {
+          face.routerRefused = said;
           if (face.panel === 'router') paintRouter();
           return;
         }
@@ -9094,8 +9119,9 @@
       browseFolder(parentOf(here));
     });
     list.appendChild(up);
-    if (doc.refused) {
-      list.appendChild(node('span', 'folder-empty', (doc.refused || []).join('; ')));
+    var said = refusals(doc);
+    if (said) {
+      list.appendChild(node('span', 'folder-empty', said.join('; ')));
       return;
     }
     var wanted = (prefix || '').toLowerCase();
@@ -9267,8 +9293,9 @@
         browseDocs(parts.join('/'));
       });
       list.appendChild(up);
-      if (doc.refused) {
-        list.appendChild(node('span', 'folder-empty', (doc.refused || []).join('; ')));
+      var said = refusals(doc);
+      if (said) {
+        list.appendChild(node('span', 'folder-empty', said.join('; ')));
         return;
       }
       var entries = doc.entries || [];

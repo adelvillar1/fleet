@@ -8379,6 +8379,11 @@ body[data-work="collapsed"] .work-list { display: none; }
 /* The plugins surface (the plugins-ux plan): the approved mockup's
    grouped, status-first sections — the dots, the presses, the doors.
    The palette is the face's own; no new tokens. */
+/* The board is the face's 12-column grid, and this surface is a stack:
+   a section that does not span it takes one column and the whole page
+   renders as slivers (the plugins surface shipped that way — every
+   section, the headline and the drafts list are full-width rows). */
+#plugins-board > * { grid-column: 1 / -1; }
 .plugins-headline {
   display: flex;
   align-items: baseline;
