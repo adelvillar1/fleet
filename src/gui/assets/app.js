@@ -750,6 +750,7 @@
     nextGoal: document.getElementById('next-goal'),
     nextGo: document.getElementById('next-go'),
     seat: document.getElementById('seat'),
+    seatVerdict: document.getElementById('seat-verdict'),
     seatLabel: document.getElementById('seat-label'),
     seatSummary: document.getElementById('seat-summary'),
     seatActions: document.getElementById('seat-actions'),
@@ -3113,10 +3114,25 @@
     // move the buttons under the owner's cursor mid-click. The key is
     // what the seat actually says; a new seat, and only a new seat,
     // builds the buttons again.
-    var key = [seat.tool, seat.summary, seat.label, seat.allowlistable].join('\u0000');
+    var key = [seat.tool, seat.summary, seat.label, seat.allowlistable,
+      seat.verdict ? seat.verdict.reason : ''].join('\u0000');
     el.seat.hidden = false;
     el.seatLabel.textContent = seat.label || seat.tool;
     el.seatSummary.textContent = seat.summary;
+    // sys1's verdict, when one was judged (C10): the reason the seat gives
+    // before the buttons do, and whether it was a judgment at all.
+    var verdict = seat.verdict;
+    if (verdict) {
+      el.seatVerdict.hidden = false;
+      el.seatVerdict.textContent =
+        (verdict.destructive ? 'destructive \u00b7 ' : 'not destructive \u00b7 ') +
+        verdict.reason +
+        ' \u00b7 judged by ' + verdict.judged_from +
+        ' \u00b7 confidence ' + Number(verdict.confidence || 0).toFixed(2);
+    } else {
+      el.seatVerdict.hidden = true;
+      el.seatVerdict.textContent = '';
+    }
     if (key === face.seatKey) return;
     face.seatKey = key;
     el.seatActions.textContent = '';

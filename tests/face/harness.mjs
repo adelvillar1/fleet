@@ -5074,6 +5074,52 @@ async function theStrategyStepShowsItsPreview() {
         page.rows('.pmark img').map((one) => one.src)));
   }
 
+  // sys1's verdict rides the seat as data (the huddles plan's C10): the
+  // reason before the buttons, and which judgment produced it — a seat
+  // with no verdict shows no line rather than implying one.
+  async function theSeatCarriesSys1sVerdict() {
+    const page = boot({
+      documents: {
+        state: (asked) => ({ ...emptyState(asked), session: asked }),
+        reply: { type: 'seat', tool: 'write_file', summary: 'rewrite docs/x.md',
+          verdict: { destructive: true,
+            reason: 'an overwrite discards what is there',
+            confidence: 0.91, judged_from: 'sys1' } }
+      }
+    });
+    await flush();
+    page.open();
+    await flush();
+    // A seat arrives through the stream's `seat` event.
+    page.push({ type: 'seat', tool: 'write_file', summary: 'rewrite docs/x.md',
+      label: 'write_file', allowlistable: false,
+      verdict: { destructive: true,
+        reason: 'an overwrite discards what is there',
+        confidence: 0.91, judged_from: 'sys1' } });
+    await flush(40);
+    const verdict = page.IDS['seat-verdict'];
+    check('C10 the seat carries the judged reason',
+      !verdict.hidden &&
+        String(verdict.textContent).indexOf('an overwrite discards what is there') !== -1,
+      verdict.hidden ? 'hidden' : String(verdict.textContent));
+    check('C10 the seat names which judgment produced it',
+      String(verdict.textContent).indexOf('sys1') !== -1,
+      String(verdict.textContent));
+
+    const plain = boot({
+      documents: { state: (asked) => ({ ...emptyState(asked), session: asked }) }
+    });
+    await flush();
+    plain.open();
+    await flush();
+    plain.push({ type: 'seat', tool: 'bash', summary: 'run cargo test',
+      label: 'bash', allowlistable: true });
+    await flush(40);
+    check('C10 a seat with no verdict shows no line',
+      plain.IDS['seat-verdict'].hidden,
+      String(plain.IDS['seat-verdict'].hidden));
+  }
+
   async function theBotsSurfaceMintsTheBotCard() {
     const page = boot({
       reply: {
@@ -8165,6 +8211,7 @@ const cases = [
   ['C3 an unanswered ask warns the row', anUnansweredAskWarnsTheRow],
   ['C9 a phase rides beneath its room', aPhaseRidesBeneathItsRoom],
   ['C11 the persona card shows the owner’s image', thePersonaCardShowsTheOwnersImage],
+  ['C10 the seat carries sys1’s verdict', theSeatCarriesSys1sVerdict],
   ['KI-380 the zombie tab cannot hide a seat or lose the reads', theZombieTabCannotHideASeatOrLoseTheReads],
   ['C1/C8 the list groups by attention and counts what the server counted', theListGroupsByAttentionAndCountsWhatTheServerCounted],
   ['C2 every state opens through one verb', everyStateOpensThroughOneVerb],

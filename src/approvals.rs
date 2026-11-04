@@ -1012,3 +1012,148 @@ mod tests {
         assert!(text.contains("yes-guarded"), "{text}");
     }
 }
+
+/// A destructive verdict judged by sys1 for an action the gate already
+/// held (the huddles plan's C10, scoped by the owner to the actions the
+/// standing class flags). `judged_from` says which judgment produced it,
+/// so a seat always names whether the verdict was a judgment or the
+/// standing class standing in.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DestructiveVerdict {
+    pub destructive: bool,
+    pub reason: String,
+    pub confidence: f64,
+    pub judged_from: &'static str,
+}
+
+impl DestructiveVerdict {
+    /// The standing class standing in: used when the lane cannot answer,
+    /// so the seat says the judgment was not made rather than implying it.
+    pub fn standing_class(destructive: bool) -> DestructiveVerdict {
+        DestructiveVerdict {
+            destructive,
+            reason: "the judgment lane could not answer — the standing \
+                     destructive class decides"
+                .to_string(),
+            confidence: 0.0,
+            judged_from: "standing class",
+        }
+    }
+}
+
+/// Ask sys1 whether a held action is destructive, and why. `None` when the
+/// lane cannot answer — the caller then stands the class in and names it.
+///
+/// Scoped to actions the standing class already flagged: the judgment
+/// explains the ask with a reason the seat can show, and the lane is
+/// spent once per held action rather than on every write-capable call.
+pub async fn judge_destructive(call: &ToolCall) -> Option<DestructiveVerdict> {
+    let prompt = format!(
+        "Judge whether this tool call is destructive — it would discard or \
+         overwrite something that cannot be recovered. Answer with JSON: \
+         {{\"destructive\": true or false, \"reason\": \"one line\", \
+         \"confidence\": 0.0 to 1.0}}.\n\nTool: {}\nArguments: {}",
+        call.function.name, call.function.arguments
+    );
+    let mut session = crate::judge::LaneSession::open(
+        &crate::judge::LaneSource::Vendored,
+        crate::judge::JUDGE_LANE,
+        crate::delegate::DELEGATE_TOOL,
+        "destructiveness judgment",
+    )
+    .await
+    .ok()?;
+    let answer = session.ask(&prompt).await.ok()?;
+    session.close().await;
+    let object = verdict_object(&answer)?;
+    let destructive = object
+        .get("destructive")
+        .and_then(serde_json::Value::as_bool)
+        .or_else(|| {
+            object
+                .get("label")
+                .and_then(serde_json::Value::as_str)
+                .map(|label| label == "destructive" || label.contains("destructive"))
+        })?;
+    let reason = object
+        .get("reason")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .unwrap_or("the lane gave no reason")
+        .to_string();
+    let confidence = object
+        .get("confidence")
+        .and_then(serde_json::Value::as_f64)
+        .unwrap_or(0.0);
+    Some(DestructiveVerdict {
+        destructive,
+        reason,
+        confidence,
+        judged_from: "sys1",
+    })
+}
+
+/// The first object in a nested lane answer that names a verdict — the
+/// sys1 answer arrives under `answers.<provider>.<head>`, so the shape is
+/// walked rather than assumed.
+fn verdict_object(
+    value: &serde_json::Value,
+) -> Option<&serde_json::Map<String, serde_json::Value>> {
+    if let Some(object) = value.as_object() {
+        if object.contains_key("destructive") || object.contains_key("label") {
+            return Some(object);
+        }
+        for entry in object.values() {
+            if let Some(found) = verdict_object(entry) {
+                return Some(found);
+            }
+        }
+    } else if let Some(list) = value.as_array() {
+        for entry in list {
+            if let Some(found) = verdict_object(entry) {
+                return Some(found);
+            }
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod verdict_tests {
+    use super::*;
+
+    /// The sys1 answer arrives nested under `answers.<provider>.<head>`, so
+    /// the shape is walked rather than assumed — and a label-shaped answer
+    /// parses too, because the lane has answered both ways.
+    #[test]
+    fn a_nested_lane_answer_yields_its_verdict() {
+        let nested = serde_json::json!({
+            "answers": { "sys1": { "workload": {
+                "destructive": true,
+                "reason": "an overwrite discards what is there",
+                "confidence": 0.91
+            } } }
+        });
+        let object = verdict_object(&nested).expect("the nested verdict is found");
+        assert_eq!(object.get("destructive"), Some(&serde_json::json!(true)));
+        assert_eq!(
+            object.get("reason").and_then(serde_json::Value::as_str),
+            Some("an overwrite discards what is there")
+        );
+        let labelled = serde_json::json!({"label": "destructive", "confidence": 0.5});
+        assert!(verdict_object(&labelled).is_some(), "a label parses");
+        // An answer with no verdict names nothing at all.
+        assert!(verdict_object(&serde_json::json!({"answers": {"sys1": {}}})).is_none());
+    }
+
+    /// The standing class standing in says so: a seat must never imply a
+    /// judgment was made when the lane could not answer.
+    #[test]
+    fn the_fallback_names_itself() {
+        let fallback = DestructiveVerdict::standing_class(true);
+        assert!(fallback.destructive);
+        assert_eq!(fallback.judged_from, "standing class");
+        assert!(fallback.reason.contains("could not answer"));
+    }
+}

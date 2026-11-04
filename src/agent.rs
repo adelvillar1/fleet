@@ -1045,6 +1045,10 @@ pub struct ApprovalRequest {
     pub summary: String,
     /// Where the decision goes; dropping it denies.
     pub responder: std::sync::mpsc::Sender<Approval>,
+    /// sys1's verdict on a held action, when one was judged — the seat
+    /// shows the reason rather than asserting a class (the huddles
+    /// plan's C10). `None` means the standing class decided and said so.
+    pub verdict: Option<crate::approvals::DestructiveVerdict>,
 }
 
 /// Approval gate that asks the UI thread and waits for the keyboard. The
@@ -1081,6 +1085,7 @@ impl Approver for TuiApprover {
         }
         let (responder, decision) = std::sync::mpsc::channel();
         let request = ApprovalRequest {
+            verdict: None,
             call: call.clone(),
             summary: call_summary(call),
             responder,

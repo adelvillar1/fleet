@@ -590,14 +590,16 @@ pub fn default_preferences() -> Vec<Preference> {
         },
         Preference {
             // The vision workload: a task that carries an image. The
-            // owner's pinned multimodal model heads it — GLM-5.3-Flash
-            // declares text, image and video — and step-5-preview
-            // follows, whose own input declaration carries images. A
-            // workload with no vision model in its chain fails by name
-            // rather than silently sending an image to a text-only one.
+            // home's multimodal models head it — GLM-5.3-Flash declares
+            // text, image and video, and MiMo-2.6-Flash follows as the
+            // owner's other configured multimodal — with step-5-preview
+            // and gemma4 behind them. A workload with no vision model in
+            // its chain fails by name rather than silently sending an
+            // image to a text-only one.
             workload: "vision",
             candidates: vec![
                 ("zai-coding-plan", "GLM-5.3-Flash"),
+                ("xiaomi-mimo", "mimo-v2.6-flash"),
                 ("stepfun", "step-5-preview"),
                 ("ollama-cloud", "gemma4:31b"),
             ],
@@ -3985,13 +3987,14 @@ mod tests {
     #[test]
     fn the_vision_workloads_chain_reaches_gemma4_on_ollama_cloud() {
         let decision = workload_decision("vision").expect("the vision workload exists");
-        // The order is the chain: GLM first, stepfun second, gemma4 third
-        // as the hosted multimodal reserve — and the walk closes on the
-        // failover tail like every order the router builds.
+        // The order is the chain: GLM first, MiMo second, stepfun third,
+        // gemma4 fourth as the hosted multimodal reserve — and the walk
+        // closes on the failover tail like every order the router builds.
         assert_eq!(
             decision.order,
             vec![
                 ("zai-coding-plan".to_string(), "GLM-5.3-Flash".to_string()),
+                ("xiaomi-mimo".to_string(), "mimo-v2.6-flash".to_string()),
                 ("stepfun".to_string(), "step-5-preview".to_string()),
                 ("ollama-cloud".to_string(), "gemma4:31b".to_string()),
                 (

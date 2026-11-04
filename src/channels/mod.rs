@@ -1212,6 +1212,7 @@ mod tests {
         sources
             .seat
             .send(crate::agent::ApprovalRequest {
+                verdict: None,
                 call: crate::api::ToolCall {
                     id: "c1".to_string(),
                     kind: "function".to_string(),

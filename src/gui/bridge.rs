@@ -885,6 +885,16 @@ impl Bridge {
                     "summary": seat.summary,
                     "label": approvals::Rule::for_call(&seat.call).label(),
                     "destructive": approvals::Gate::is_destructive(&seat.call),
+                    // sys1's verdict, when one was judged — the seat's own
+                    // reason, and which judgment produced it (C10).
+                    "verdict": seat.verdict.as_ref().map(|one| {
+                        json!({
+                            "destructive": one.destructive,
+                            "reason": one.reason,
+                            "confidence": one.confidence,
+                            "judged_from": one.judged_from,
+                        })
+                    }),
                     "allowlistable": approvals::allowlistable(&seat.call),
                 })
             }),
@@ -2273,6 +2283,7 @@ impl Bridge {
                 state.pending_replay = Some((session_key.clone(), name.to_string(), parsed));
                 let attached = state.attached(&session_key);
                 attached.seat = Some(ApprovalRequest {
+                    verdict: None,
                     call: call.clone(),
                     summary: crate::agent::call_summary(&call),
                     responder: {
@@ -10473,11 +10484,28 @@ pub(crate) fn describe(event: &UiEvent) -> Value {
 /// unlabelled class, because that is what "don't ask again" would
 /// remember; and `allowlistable` is carried so the page can hide the
 /// choice honestly rather than offer a button the writer would refuse.
-fn describe_seat(call: &ToolCall, summary: &str) -> Value {
+fn describe_seat(
+    call: &ToolCall,
+    summary: &str,
+    verdict: Option<&crate::approvals::DestructiveVerdict>,
+) -> Value {
+    // The judgment rides as data beside the controls: the stamp and the
+    // reason are what the owner reads before answering, and a seat whose
+    // verdict came from the standing class says so rather than implying
+    // a judgment was made.
+    let judged = verdict.map(|one| {
+        json!({
+            "destructive": one.destructive,
+            "reason": one.reason,
+            "confidence": one.confidence,
+            "judged_from": one.judged_from,
+        })
+    });
     json!({
         "type": "seat",
         "tool": call.function.name,
         "summary": summary,
+        "verdict": judged,
         "label": approvals::Rule::for_call(call).label(),
         // The bot plan's R5: a destructive act is held every time and
         // flagged — this is the flag as data, so the face renders the
@@ -10550,9 +10578,22 @@ async fn fan_out(
                 None => ui_done = true,
             },
             request = seat_rx.recv(), if !seat_done => match request {
-                Some(request) => {
+                Some(mut request) => {
                     let session = lock(&state).target();
-                    let mut pending = describe_seat(&request.call, &request.summary);
+                    // sys1 judges the held action (the huddles plan's C10,
+                    // scoped to what the standing class already flags): the
+                    // verdict rides the seat as data with its reason, and
+                    // a lane that cannot answer stands the class in and
+                    // says so rather than implying a judgment.
+                    if crate::approvals::Gate::is_destructive(&request.call) {
+                        request.verdict = match crate::approvals::judge_destructive(&request.call).await {
+                            Some(verdict) => Some(verdict),
+                            None => Some(crate::approvals::DestructiveVerdict::standing_class(
+                                true,
+                            )),
+                        };
+                    }
+                    let mut pending = describe_seat(&request.call, &request.summary, request.verdict.as_ref());
                     // The seat names its session: seats are per-session,
                     // and a surface watching another conversation must
                     // not be shown one that is not theirs.
@@ -10665,6 +10706,7 @@ impl Approver for GuiApprover {
         }
         let (responder, decision) = std::sync::mpsc::channel();
         let request = ApprovalRequest {
+            verdict: None,
             call: call.clone(),
             summary: crate::agent::call_summary(call),
             responder,
@@ -12355,6 +12397,7 @@ mod tests {
         sources
             .seat
             .send(ApprovalRequest {
+                verdict: None,
                 call: shell.clone(),
                 summary: "run cargo test".to_string(),
                 responder,
@@ -12410,6 +12453,7 @@ mod tests {
         sources
             .seat
             .send(ApprovalRequest {
+                verdict: None,
                 call: shell.clone(),
                 summary: "run cargo test".to_string(),
                 responder,
@@ -12640,6 +12684,7 @@ mod tests {
         sources
             .seat
             .send(ApprovalRequest {
+                verdict: None,
                 call: shell.clone(),
                 summary: "run cargo test".to_string(),
                 responder,
@@ -12688,6 +12733,7 @@ mod tests {
         sources
             .seat
             .send(ApprovalRequest {
+                verdict: None,
                 call: shell.clone(),
                 summary: "search the source".to_string(),
                 responder,
@@ -12725,6 +12771,7 @@ mod tests {
         sources
             .seat
             .send(ApprovalRequest {
+                verdict: None,
                 call: shell,
                 summary: "search the source again".to_string(),
                 responder,
@@ -12899,6 +12946,7 @@ mod tests {
         sources
             .seat
             .send(ApprovalRequest {
+                verdict: None,
                 call: shell,
                 summary: "run echo hi".to_string(),
                 responder,
@@ -12943,6 +12991,7 @@ mod tests {
         sources
             .seat
             .send(ApprovalRequest {
+                verdict: None,
                 call: call("write", r#"{"path":"a.txt","content":"x"}"#),
                 summary: "write a.txt".to_string(),
                 responder,
@@ -12969,6 +13018,7 @@ mod tests {
         sources
             .seat
             .send(ApprovalRequest {
+                verdict: None,
                 call: call("bash", r#"{"command":"cargo build"}"#),
                 summary: "run cargo build".to_string(),
                 responder,
@@ -13010,6 +13060,7 @@ mod tests {
         sources
             .seat
             .send(ApprovalRequest {
+                verdict: None,
                 call: call("bash", r#"{"command":"rm -rf /tmp/x"}"#),
                 summary: "remove /tmp/x".to_string(),
                 responder,
@@ -13351,6 +13402,7 @@ mod tests {
         sources
             .seat
             .send(ApprovalRequest {
+                verdict: None,
                 call: shell,
                 summary: "run cargo test".to_string(),
                 responder,
@@ -14073,6 +14125,7 @@ mod tests {
                 kind: String::new(),
             },
             "rewrite docs/x.md",
+            None,
         );
         assert_eq!(destructive["destructive"], json!(true));
         assert_eq!(destructive["allowlistable"], json!(false));
@@ -14087,6 +14140,7 @@ mod tests {
                 kind: String::new(),
             },
             "read docs/x.md",
+            None,
         );
         assert_eq!(plain["destructive"], json!(false));
     }

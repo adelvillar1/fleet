@@ -8914,3 +8914,14 @@ body[data-work="collapsed"] .work-list { display: none; }
   color: var(--dsw-alias-ink-tertiary);
   flex: 0 0 auto;
 }
+
+/* sys1's verdict on a held action (the huddles plan's C10): the reason the
+   seat gives before the buttons do, and which judgment produced it. */
+.seat-verdict {
+  margin: 8px 0 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--dsw-alias-ink-secondary);
+  border-left: 3px solid var(--dsw-alias-hairline-strong);
+  padding-left: 10px;
+}
