@@ -216,8 +216,9 @@ every visible `.tile`, `.badge`, `.rrow`, `.rank-row`, `.cal-cell`,
   freshness is its **fold count** — how many times it outgrew its
   window and was folded — not its turn count: the surfaces that measured
   size by turns read the fold count from the log, a conversation that
-  never folded says so, and a turn count survives only as a remaining
-  budget, never a size claim. The rail renders the
+  never folded says so, and no turn count faces the user at all — the
+  context-health read (the working line and the meter) is the one
+  degradation signal on the surface. The rail renders the
   owner's work only: system-initiated sessions — scheduled jobs,
   delegated children, peer channels — live in the log (`fleet cron`,
   `fleet sessions`), never on the user screen, and a log with no words
@@ -310,15 +311,38 @@ every visible `.tile`, `.badge`, `.rrow`, `.rank-row`, `.cal-cell`,
   folded lines open their records the same way.
 - **The working line.** While a run works, the tail of the conversation
   itself carries the run's live state — a spinner, "working", the
-  turn or exchange, and an elapsed time since the last event, ticked
+  context-health read, and an elapsed time since the last event, ticked
   once a second from the same anchor — and a standing seat swaps the
-  words to its own wait, the seat's answer card beside it. The line
-  sits outside the stream's rows, so a replay repaint cannot swallow
-  it, and it is display only: never a log record. The composer's hint
-  keeps its idle words in every state (plan mode's words are the
-  composer's own): the run reports where the reading is, the composer
-  is where the owner acts — the run's state is a property of the
-  conversation, not of where you type.
+  words to its own wait, the seat's answer card beside it. The health
+  read is the measure the fold checks, not the loop's turn count: the
+  occupancy against the budget, the trend's turns-to-the-fold once the
+  last three prompt readings climb (an approximation, and shown only
+  then — a fresh or flat run reads nothing there), and the folds the
+  conversation has taken. The turn count stays internal: the owner's
+  2026-11-03 ruling named context degradation, not iterations, as the
+  thing a user would care for. The line sits outside the stream's
+  rows, so a replay repaint cannot swallow it, and it is display only:
+  never a log record. The composer's hint keeps its idle words in every
+  state (plan mode's words are the composer's own): the run reports
+  where the reading is, the composer is where the owner acts — the
+  run's state is a property of the conversation, not of where you type.
+- **The context meter and the health read share one arithmetic.** The
+  head's meter divides the last request's prompt tokens by the budget
+  the fold itself checks — `budget_for` of the window the serving
+  model declares, carried per turn on the usage event so a mid-run pin
+  changes the budget with the model — never by a constant; a model
+  nothing declares serves the floor and the gauge says so. The bands
+  are calm, high, and fold-imminent (nine tenths of the fold budget),
+  and the hover names what the line omits: the model whose window
+  derived the budget (or the named floor), the folds so far, the
+  first-hand share — how much of the conversation is still verbatim,
+  computed from the fold's own markers — and the served provider's
+  cache-hit ratio when the provider reports one. A reopened
+  conversation shows the health its log carries (the last prompt
+  tokens and the fold count ride the state read), never a zero; and
+  at each fold the log records what survived — the task, the goal,
+  each deliverable path, each ledger item, measured against the
+  working set the fold left behind.
 - **The conversation's text size is the owner's.** `A−`/`A+` in the
   conversation's head — and `Alt+↓`/`Alt+↑` from the composer — step a
   multiplier (85% to 170%, 100% by default) on the transcript. The

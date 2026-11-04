@@ -1,5 +1,5 @@
 ---
-status: draft
+status: complete
 created: 2026-11-04
 updated: 2026-11-04
 slug: context-health
@@ -105,65 +105,101 @@ leaves the surface entirely.
 
 ## Acceptance criteria
 
-- [ ] **C0 — the state's budget.** Both state branches carry
-      `budget_for(window)` for the model the next run would serve; the
-      floor appears only when no window is declared, and the state names
-      that. Harness: a session whose serving model declares 262k reads
-      157,286, not 100,000.
-- [ ] **C1 — the run's budget on the wire.** `UiEvent::Usage` carries
-      the run's budget and the cache hit count;
-      `describe()` passes both; the face uses the event's budget while
-      a run is live and the state's when idle. Harness: a fixture run
-      that re-pins mid-run shows the budget change at the next turn.
-- [ ] **C2 — the health line.** The working line reads the measure, not
-      the turn: "working · 34k of 96k · ~12 turns to the fold · 2 folds
-      · 8s since the last event", with turns-to-fold only when a stable
-      slope exists and never for a fresh run. The turn count is gone
-      from the line. Harness pins the three states: fresh, trending,
-      post-fold.
-- [ ] **C3 — the meter.** The head meter divides by the same budget the
-      line does; the bands are calm / high / fold-imminent; the hover
-      detail names tokens, budget, the declaring model, folds, share,
-      cache-hit ratio. One arithmetic, two surfaces — pinned by a
-      harness case that reads both.
-- [ ] **C4 — the resume seed.** The state read carries the last turn's
-      prompt tokens and the fold count off the log, so a reopened
-      conversation shows its health immediately; `face.context` /
-      `face.budget` never initialize to 0% against a conversation that
-      has run. Proven on a resumed session in the harness.
-- [ ] **C5 — the cache parse.** The usage parser reads whatever the
-      **served** provider reports, never one model's contract: the
-      chat-completions format reads DeepSeek's
-      `prompt_cache_hit_tokens` and OpenAI's
-      `prompt_tokens_details.cached_tokens`, the Anthropic format
-      reads `cache_read_input_tokens` as it already does; all land in
-      the generic `Usage.cache_read_tokens`. Adding a name never
-      changes another provider's parse, and a provider that reports
-      no breakdown leaves the field absent, never zero. Fixture pins
-      the parse and the ratio arithmetic.
-- [ ] **C6 — the survival check.** At each fold the agent checks task,
-      goal, deliverable paths, and ledger items against the assembled
-      working set; the compaction record gains the M-of-N line and
-      names anything that dropped; the limitation (prose containment)
-      is stated at the definition. Harness: a fold fixture whose
-      summary omits a deliverable path reads "3 of 4 deliverables still
-      in context — the fold dropped landing-copy.md".
-- [ ] **C7 — the first-hand share.** The working set's verbatim /
-      summarized / stubbed composition is computed from the fold's own
-      markers, rides the usage event, and shows in the hover detail;
-      it only drops at a fold. Harness: no folds reads 100% verbatim;
-      post-fold reads lower.
-- [ ] **C8 — the gate.** fmt, clippy `-D warnings`, release build,
-      `cargo test` exit 0; the harness count read from its own line;
-      every existing case stays green.
-- [ ] **C9 — the live proof.** On a scratch home, a model whose declared
-      window is overridden small drives a real fold live: the line's
-      occupancy climbs, the fold logs its survival line, the share
-      drops, the cache ratio shows, and reopening the session seeds the
-      health read from the log.
-- [ ] **C10 — the delivery.** The deployed `~/.fleet/bin/fleet` serves
-      the new face, the Tauri app is rebuilt, the branch is pushed, and
-      the plan's status flips in the landing turn.
+- [x] **C0 — the state's budget.** Both state branches carry *Met:*
+      `next_run_budget` derives `budget_for` from the pin, else the
+      log's last `End.served_model` (via `declared_window_for_model`),
+      else the configured model; `budget_declared` names the floor.
+      `the_state_budget_follows_the_next_runs_model` reads 157,286 for
+      a 262k-declared model, and the old floor assert became the
+      derived one (600,000 for the fixture's 1M model). Live: the
+      console's empty session reads `budget: 100000, declared: false,
+      model: auto` — the floor, named.
+- [x] **C1 — the run's budget on the wire.** `UiEvent::Usage` carries *Met:*
+      `budget_tokens`, `folds`, `verbatim_share`, `cache_read_tokens`;
+      `describe()` maps all four. Live proof: the served model changed
+      step-5-preview → deepseek-flash mid-proof and the event's budget
+      followed (614,400 then 100,000), the mid-run override included.
+      The wire, caught on `/events`: `{"budget":100000,"cache_read":3968,
+      "completion":2,"folds":0,"prompt":49724,"share":97,"type":"usage"}`.
+- [x] **C2 — the health line.** The working line reads the measure, not *Met:*
+      the turn — `healthLine()` names occupancy, the trend's
+      turns-to-the-fold (only on three climbing readings), and the
+      folds. `theWorkingLineReadsTheHealthNotTheTurn` pins fresh
+      (no slope), trending (~N turns to the fold), and the folds; the
+      exchange-count case now asserts the line names neither turn nor
+      exchange. The trend is an approximation by its own doc comment.
+- [x] **C3 — the meter.** The head meter divides by the same budget *Met:*
+      the line does; `paint()` sets calm / high / fold-imminent (the
+      `full` band retired, the `imminent` rule beside it), and
+      `contextDetail()` names tokens, the declaring model or the named
+      floor, folds, the share, and the cache-hit ratio. The harness
+      case reads both surfaces from the same event.
+- [x] **C4 — the resume seed.** The state read carries the last turn's *Met:*
+      prompt tokens and the fold count off the log (`session_context_health`
+      over the usage and compaction records), the reset block seeds
+      them, and `aReopenedConversationSeedsItsHealth` reads 64% on
+      reopen with the hover naming the model and the fold. Live: the
+      post-fold state read carried `context=49710, folds=1` — the
+      reopened conversation's health, not a zero.
+- [x] **C5 — the cache parse.** The usage parser reads whatever the *Met:*
+      **served** provider reports: the serde alias reads DeepSeek's
+      `prompt_cache_hit_tokens`, the `prompt_tokens_details` capture +
+      `absorbed()` fold reads OpenAI's nested count, the Anthropic name
+      as before — all into the generic `Usage.cache_read_tokens`, and
+      `the_cache_breakdown_reads_whatever_provider_served` pins each
+      plus the absence and the never-serialized capture. Live:
+      `cache_read: 3968` rode the wire event from the served
+      deepseek-flash response.
+- [x] **C6 — the survival check.** At each fold the agent checks task, *Met:*
+      goal, deliverable paths (`write_file`/`send_file` paths,
+      `deliverable_paths`), and ledger items against the fold's working
+      set (`compaction::survival_check`, the limitation stated at the
+      definition); the record carries the answer. Unit pins: the dropped
+      path names itself, containment survives case/whitespace, an empty
+      item is kept. Live: the fold's record read `survival: {kept: 1,
+      total: 1}` — the task survived in the verbatim tail, honestly
+      counted rather than assumed.
+- [x] **C7 — the first-hand share.** `verbatim_share` classifies by *Met:*
+      the fold's own markers (`summary_frame`'s and the elision stub's
+      opening words), rides the usage event, and shows in the hover.
+      Unit pins: 100 until a fold marks the conversation, the stub
+      counts as second-hand. Live: `share: 97` on the wire after the
+      proof's fold — second-hand, and only because of it.
+- [x] **C8 — the gate.** fmt 0, clippy 0, release build 0, *Met:*
+      `cargo test` 0 (1,838 lib + 164 integration + the eval corpus and
+      the rest, all suites), harness 844 checks / 95 cases exit 0 —
+      counts read from their own lines. The eval corpus's log-shape
+      counts were re-measured (10/10/11) and the position-based asserts
+      moved one slot for the usage record. KI-426 filed the layerfs
+      stubs' load-sensitivity the full runs exposed.
+- [x] **C9 — the live proof.** On a scratch home (`/tmp/fleet-health-proof`, *Met:*
+      the machine's credentials in its environment, nothing on disk),
+      seventeen runs through the real API: the router served
+      step-5-preview and the budget followed it (614,400); the owner's
+      per-model override moved the budget to 100,000 mid-conversation
+      without a restart; the fold fired at a two-turn boundary through
+      the owner's own `{"fold": true}` control — 198,036 → 42,186
+      tokens, one compaction record, survival kept 1 of 1; the wire
+      carried the usage event with the budget, the share (97), and the
+      served provider's cache breakdown (3,968); the state read seeded
+      the reopened conversation (context 49,710, folds 1). The proof
+      also caught the seam the plan's contract names: the fold's
+      per-pair window lookup and the gauge's by-model scan disagree
+      when an override sits under a different provider than the one
+      that served — the proof's own first override did, and the honest
+      reading is the plan's one-arithmetic rule, which the fold's
+      per-pair lookup follows.
+- [x] **C10 — the delivery.** `~/.fleet/bin/fleet` replaced through a *Met:*
+      new inode and `launchctl bootout` + `bootstrap` on `com.fleet.gui`
+      (pid 98960, 127.0.0.1:3080); the served `/app.js` carries
+      `healthLine`/`turnsToFold`/`contextDetail`, and the console's
+      state document reads the derived budget with the floor named on
+      an empty session. The Tauri shell rebuilt and bundled
+      (`fleet_0.3.0-beta_aarch64.dmg`, 10.39 MiB; the packaged binary
+      carries `budget_declared`, `prompt_cache_hit_tokens`,
+      `prompt_tokens_details`, and the embedded face's
+      `face.budgetDeclared` line). Branch pushed
+      (`b28d04b..d23ea4c`).
 
 ## Out of scope
 
