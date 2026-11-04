@@ -652,6 +652,8 @@
     hhState: document.getElementById('hh-state'),
     hhPhases: document.getElementById('hh-phases'),
     hhBreakout: document.getElementById('hh-breakout'),
+    hhKnowledge: document.getElementById('hh-knowledge'),
+    hhDistil: document.getElementById('hh-distil'),
     panelCalibration: document.getElementById('panel-calibration'),
     panelSecondBrain: document.getElementById('panel-second-brain'),
     panelWorkspaceHistory: document.getElementById('panel-workspace-history'),
@@ -8195,8 +8197,9 @@
     // a resumed room shows who is here without waiting for an event.
     face.goal = state.goal || null;
     face.members = state.members || [];
-    // The room's phases, for its head (C9).
+    // The room's phases and knowledge, for its head (C9/C15).
     face.phases = state.phases || [];
+    face.knowledge = state.knowledge || { recalled: [], wrote: [] };
     face.rules = state.rules || [];
     // The face plugins' own list — the rail's dynamic rows and the
     // management surface read this one list (the plugin host plan).
@@ -9412,6 +9415,19 @@
   if (el.huddleCreate) el.huddleCreate.addEventListener('click', createHuddle);
   if (el.huddleCancel) el.huddleCancel.addEventListener('click', closeHuddleDoor);
   if (el.hhBreakout) el.hhBreakout.addEventListener('click', breakOutPhase);
+  if (el.hhDistil) {
+    // Distil what the room learned (C16): a run whose brief turns the room's
+    // lessons into facts and skill proposals through the existing writers.
+    el.hhDistil.addEventListener('click', function () {
+      post('/api/run?session=' + encodeURIComponent(face.session), {
+        task: 'Distil what this room learned: write the durable lessons as ' +
+          'facts with `remember`, and the better ways of working as skill ' +
+          'proposals. Be specific — name what surprised us and what should change.',
+        mode: 'yes-guarded',
+        budget_turns: 6
+      }).then(function () { load(); }).catch(function () { });
+    });
+  }
   if (el.personaCreate) el.personaCreate.addEventListener('click', createPersona);
   if (el.personaCancel) {
     el.personaCancel.addEventListener('click', function () {
@@ -9648,10 +9664,14 @@
     var state = node('span', 'hrow-state');
     state.appendChild(document.createTextNode(goal || 'a room with its bots'));
     button.appendChild(state);
-    if (row.deliverables) {
+    // The outcome count (the huddles plan's C17): files plus the knowledge
+    // the room wrote — a room's produced set, not its artifacts alone.
+    var wrote = ((row.knowledge || {}).wrote) || 0;
+    var outcomes = (row.deliverables || 0) + wrote;
+    if (outcomes) {
       var meta = node('span', 'hrow-meta');
       meta.appendChild(node('span', 'files',
-        row.deliverables + (row.deliverables === 1 ? ' file' : ' files')));
+        outcomes + (outcomes === 1 ? ' outcome' : ' outcomes')));
       button.appendChild(meta);
     }
     button.appendChild(node('span', 'chip ' + derived.chip, derived.word));
@@ -10254,6 +10274,18 @@
     var row = workSelected();
     el.hhState.textContent = row ? huddleState(row).word : '';
     el.hhState.dataset.state = (row || {}).state || '';
+
+    // The room's knowledge (the huddles plan's C15): what it recalled and
+    // what it wrote. A room that produced no files but taught the home three
+    // things reads as three, not zero.
+    var knowledge = face.knowledge || { recalled: [], wrote: [] };
+    var recalled = (knowledge.recalled || []).length;
+    var wrote = (knowledge.wrote || []).length;
+    if (el.hhKnowledge) {
+      el.hhKnowledge.hidden = !recalled && !wrote;
+      el.hhKnowledge.textContent =
+        'knowledge \u00b7 recalled ' + recalled + ' \u00b7 wrote ' + wrote;
+    }
 
     // The room's phases (the huddles plan's C9): what has split off, and
     // whether each has ended. The rail carries their full state; this is

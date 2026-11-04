@@ -821,6 +821,8 @@ impl Bridge {
             "members": session_members(&self.home, &key),
             // The room's phases, for its head (C9).
             "phases": session_children(&self.home, &key, &live),
+            // The room's knowledge: what it recalled and what it wrote (C15).
+            "knowledge": session_knowledge(&self.home, &key),
                 "feedback": feedback_for(&self.home, &key),
                 "budget": crate::compaction::COMPACTION_TOKEN_BUDGET,
                 "turn_budget": crate::route::run_config(&self.home).max_turns,
@@ -855,6 +857,8 @@ impl Bridge {
             "members": session_members(&self.home, &key),
             // The room's phases, for its head (C9).
             "phases": session_children(&self.home, &key, &live),
+            // The room's knowledge: what it recalled and what it wrote (C15).
+            "knowledge": session_knowledge(&self.home, &key),
             "feedback": feedback_for(&self.home, &key),
             "budget": crate::compaction::COMPACTION_TOKEN_BUDGET,
             "turn_budget": crate::route::run_config(&self.home).max_turns,
@@ -5552,6 +5556,55 @@ pub fn session_goal(home: &std::path::Path, session: &str) -> Option<String> {
     load_goals(home).remove(session)
 }
 
+/// A room's knowledge for its head (the huddles plan's C15): what it
+/// **recalled** (the facts that rode its runs) and what it **produced** (the
+/// facts its members wrote). Both come off the log's own records — nothing is
+/// inferred — so a room that produced no files but taught the home three
+/// things reads as three, not zero.
+fn session_knowledge(home: &std::path::Path, session: &str) -> Value {
+    let path = session::session_path(home, session);
+    let Ok(records) = session::replay(&path) else {
+        return json!({"recalled": [], "wrote": []});
+    };
+    let mut recalled: std::collections::BTreeSet<String> = Default::default();
+    let mut wrote: std::collections::BTreeSet<String> = Default::default();
+    for record in &records {
+        match record {
+            // The memory block a run carried: the facts it recalled.
+            session::Record::Memory { facts, .. } => {
+                for name in facts {
+                    recalled.insert(name.clone());
+                }
+            }
+            // A member wrote a fact: the writer's result names it.
+            session::Record::ToolResult {
+                name,
+                approved: true,
+                output,
+                ..
+            } if name == crate::tools::REMEMBER_TOOL => {
+                if let Some(named) = wrote_fact_name(output) {
+                    wrote.insert(named);
+                }
+            }
+            _ => {}
+        }
+    }
+    json!({
+        "recalled": recalled.into_iter().collect::<Vec<_>>(),
+        "wrote": wrote.into_iter().collect::<Vec<_>>(),
+    })
+}
+
+/// The fact name out of a `remember` result: `remembered \`name\` — …`.
+fn wrote_fact_name(output: &str) -> Option<String> {
+    let start = output.find("remembered `")? + "remembered `".len();
+    let rest = &output[start..];
+    let end = rest.find('`')?;
+    let name = rest[..end].trim().to_string();
+    (!name.is_empty()).then_some(name)
+}
+
 /// A room's breakouts for its head (the huddles plan's C9): each child's
 /// id, its title, and whether its log has ended. The rail carries the
 /// full state; this is the head's own line, so it names the phases
@@ -7325,12 +7378,17 @@ fn huddles_read(home: &std::path::Path, current: &str, live: &LiveFace) -> Value
             }
             awaiting_you = last_ask > last_owner;
         }
+        let knowledge = session_knowledge(home, &entry.id);
         let row = json!({
             "id": entry.id,
             "title": title,
             "goal": goal,
             "personas": entry.personas,
             "avatars": avatars,
+            "knowledge": {
+                "recalled": knowledge["recalled"].as_array().map_or(0, |list| list.len()),
+                "wrote": knowledge["wrote"].as_array().map_or(0, |list| list.len()),
+            },
             "awaiting_you": awaiting_you,
             "parent": parents.get(&entry.id),
             "children": Vec::<Value>::new(),
@@ -14133,6 +14191,56 @@ mod tests {
         let summary = crate::session::summarize(&session::session_path(&home, &id))
             .expect("the log summarizes");
         assert_eq!(summary.personas, vec!["tower".to_string()]);
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// A room's knowledge comes off its own log (the huddles plan's C15):
+    /// what it recalled rides the `memory` records, what it wrote rides the
+    /// approved `remember` results — a refused write is not a lesson.
+    #[test]
+    fn a_rooms_knowledge_comes_off_its_own_log() {
+        let home = std::env::temp_dir().join(format!(
+            "fleet-knowledge-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|at| at.as_nanos())
+                .unwrap_or_default()
+        ));
+        std::fs::create_dir_all(&home).unwrap();
+        let session = session::Session::create(&home, "m").unwrap();
+        let id = session.id().to_string();
+        let mut log = session::Session::open(&session::session_path(&home, &id)).unwrap();
+        log.record(&session::Record::Memory {
+            shape: "structure".to_string(),
+            facts: vec!["alpha".to_string(), "beta".to_string()],
+            design: None,
+        })
+        .unwrap();
+        log.record(&session::Record::ToolResult {
+            call_id: "c1".into(),
+            name: "remember".into(),
+            output: "remembered `gamma` \u{2014} the lesson".into(),
+            truncated: false,
+            approved: true,
+        })
+        .unwrap();
+        log.record(&session::Record::ToolResult {
+            call_id: "c2".into(),
+            name: "remember".into(),
+            output: "remembered `delta` \u{2014} refused".into(),
+            truncated: false,
+            approved: false,
+        })
+        .unwrap();
+        drop(log);
+        let knowledge = session_knowledge(&home, &id);
+        assert_eq!(
+            knowledge["recalled"],
+            json!(["alpha", "beta"]),
+            "{knowledge}"
+        );
+        assert_eq!(knowledge["wrote"], json!(["gamma"]), "{knowledge}");
         std::fs::remove_dir_all(&home).ok();
     }
 

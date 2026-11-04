@@ -4467,7 +4467,7 @@ async function theStrategyStepShowsItsPreview() {
     check('HUDDLES the first room names its bots and its deliverables',
       botMarks(rows[0], 'designer').length === 1 &&
         botMarks(rows[0], 'scholar').length === 1 &&
-        String(rows[0].textContent).includes('2 files') &&
+        String(rows[0].textContent).includes('2 outcomes') &&
         String(rows[0].textContent).includes('thrift’s landing page'),
       'marks=' + botMarks(rows[0], 'designer').length +
         '/' + botMarks(rows[0], 'scholar').length);
@@ -4969,7 +4969,8 @@ async function theStrategyStepShowsItsPreview() {
           ...emptyState(asked), session: 'room-p',
           goal: 'thrift’s landing page, ready for the launch review',
           members: [{ name: 'designer', voice: 'makes pages' }],
-          phases: [{ id: 'phase-1', title: 'pricing', state: 'active' }]
+          phases: [{ id: 'phase-1', title: 'pricing', state: 'active' }],
+          knowledge: { recalled: ['alpha', 'beta'], wrote: ['gamma'] }
         })
       }
     });
@@ -5019,6 +5020,20 @@ async function theStrategyStepShowsItsPreview() {
       phases.hidden ? 'hidden' : String(phases.textContent));
     const breakout = page.IDS['hh-breakout'];
     check('C9 the head carries the break-out press', !!breakout, 'none');
+    const knowledge = page.IDS['hh-knowledge'];
+    check('C15 the head shows what the room recalled and wrote',
+      !knowledge.hidden &&
+        String(knowledge.textContent).indexOf('recalled 2') !== -1 &&
+        String(knowledge.textContent).indexOf('wrote 1') !== -1,
+      knowledge.hidden ? 'hidden' : String(knowledge.textContent));
+    const distil = page.IDS['hh-distil'];
+    check('C16 the head carries the distil action', !!distil, 'none');
+    if (distil) distil.click();
+    await flush(40);
+    const distilRuns = page.calls.filter((c) => c.url.indexOf('/api/run') === 0 &&
+      String(c.body || '').indexOf('Distil what this room learned') !== -1);
+    check('C16 distil starts a run over the room', distilRuns.length === 1,
+      JSON.stringify(page.calls.map((c) => c.url)));
     if (breakout) breakout.click();
     await flush(40);
     const split = page.calls.filter((c) =>
