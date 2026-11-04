@@ -647,6 +647,59 @@ impl Bridge {
         Ok(id)
     }
 
+    /// Break a phase out of a room (the huddles plan's C9): a child room
+    /// carrying its own phase brief or the parent's standing goal, and the
+    /// membership it inherited plus anyone the owner adds. The child names
+    /// its parent on its start record, so the log says where the phase
+    /// came from rather than the surface inferring it.
+    pub fn huddle_breakout(
+        &self,
+        parent: &str,
+        brief: Option<&str>,
+        personas: &[String],
+    ) -> Result<String, String> {
+        let inherited =
+            crate::session::summarize(&crate::session::session_path(&self.home, parent))
+                .map(|summary| summary.personas)
+                .unwrap_or_default();
+        let mut names: Vec<String> = if personas.is_empty() {
+            inherited
+        } else {
+            Vec::new()
+        };
+        for asked in personas {
+            let asked = asked.trim();
+            if asked.is_empty() {
+                continue;
+            }
+            let role = crate::roles::load(&self.home, asked)
+                .map_err(|error| format!("the persona `{asked}` does not resolve: {error}"))?;
+            if !names.contains(&role.name) {
+                names.push(role.name);
+            }
+        }
+        if names.is_empty() {
+            return Err("a breakout needs at least one bot — name who is in the phase".to_string());
+        }
+        let created =
+            session::Session::create_with_parent(&self.home, &self.model, parent, Some(names))
+                .map_err(|error| format!("could not create the phase: {error}"))?;
+        let id = created.id().to_string();
+        // The room's standing goal rides with the phase: the brief when
+        // there is one, the parent's otherwise.
+        let goal = brief
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .map(str::to_string)
+            .or_else(|| session_goal(&self.home, parent));
+        if let Some(text) = goal {
+            let mut goals = load_goals(&self.home);
+            goals.insert(id.clone(), text);
+            save_goals(&self.home, &goals);
+        }
+        Ok(id)
+    }
+
     /// Refuse a room's task whose address names someone the room cannot
     /// receive (the huddles plan's C3): an address nobody can answer is a
     /// mistake the owner should hear about, not a run that quietly
@@ -734,6 +787,17 @@ impl Bridge {
     pub fn state(&self, session: &str) -> Value {
         let state = lock(&self.state);
         let rules = lock(&self.rules);
+        // The same live facts the rail reads, so a room's head and the
+        // archive cannot disagree about a child room's state.
+        let live = LiveFace {
+            driving: state.driving.clone(),
+            seats: state
+                .sessions
+                .iter()
+                .filter(|(_, attached)| attached.seat.is_some())
+                .map(|(id, _)| id.clone())
+                .collect(),
+        };
         // The gate the verify step names: the same knob the failover's
         // decision reads, never a second interpretation of it. It is one
         // small config file and the page asks for state once per load,
@@ -758,6 +822,8 @@ impl Bridge {
             // The room's members, when it is a room: an empty list on
             // an ordinary conversation keeps the head from rendering.
             "members": session_members(&self.home, &key),
+            // The room's phases, for its head (C9).
+            "phases": session_children(&self.home, &key, &live),
                 "feedback": feedback_for(&self.home, &key),
                 "budget": crate::compaction::COMPACTION_TOKEN_BUDGET,
                 "turn_budget": crate::route::run_config(&self.home).max_turns,
@@ -790,6 +856,8 @@ impl Bridge {
             // The room's members, when it is a room: an empty list on
             // an ordinary conversation keeps the head from rendering.
             "members": session_members(&self.home, &key),
+            // The room's phases, for its head (C9).
+            "phases": session_children(&self.home, &key, &live),
             "feedback": feedback_for(&self.home, &key),
             "budget": crate::compaction::COMPACTION_TOKEN_BUDGET,
             "turn_budget": crate::route::run_config(&self.home).max_turns,
@@ -5472,6 +5540,50 @@ pub fn session_goal(home: &std::path::Path, session: &str) -> Option<String> {
     load_goals(home).remove(session)
 }
 
+/// A room's breakouts for its head (the huddles plan's C9): each child's
+/// id, its title, and whether its log has ended. The rail carries the
+/// full state; this is the head's own line, so it names the phases
+/// without re-deriving the archive's state machine.
+fn session_children(home: &std::path::Path, session: &str, live: &LiveFace) -> Vec<Value> {
+    let titles = load_titles(home);
+    let archived = load_archived(home);
+    let Ok(entries) = session::list(home) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for entry in entries.iter().filter(|one| !one.personas.is_empty()) {
+        let Ok(records) = session::replay(&session::session_path(home, &entry.id)) else {
+            continue;
+        };
+        let parent = records.iter().find_map(|record| match record {
+            session::Record::Start { parent, .. } => parent.clone(),
+            _ => None,
+        });
+        if parent.as_deref() != Some(session) {
+            continue;
+        }
+        // The archive's own state word, so the head agrees with the rail
+        // rather than carrying a second opinion about a child room.
+        let (title, _) = title_ladder(
+            titles.get(&entry.id).cloned(),
+            session_goal(home, &entry.id),
+            entry.last_plan.clone(),
+            entry.first_text.clone(),
+        );
+        out.push(json!({
+            "id": entry.id,
+            "title": title,
+            "state": work_state(
+                entry,
+                live,
+                paused_by_owner(home, &entry.id),
+                archived.contains_key(&entry.id),
+            ),
+        }));
+    }
+    out
+}
+
 /// A room's task addressed to someone the room cannot receive (the
 /// huddles plan's C3): an address nobody can answer is a mistake the owner
 /// should hear about, not a run that quietly ignores it. Only a room is
@@ -7107,6 +7219,22 @@ fn sessions_read(home: &std::path::Path, current: &str, live: &LiveFace, query: 
 fn huddles_read(home: &std::path::Path, current: &str, live: &LiveFace) -> Value {
     let titles = load_titles(home);
     let archived = load_archived(home);
+    // The phase splits (the huddles plan's C9): which room each one broke
+    // away from. Read off the start records, so the lineage is the log's
+    // own rather than something the surface infers.
+    let mut parents: std::collections::HashMap<String, String> = Default::default();
+    if let Ok(all) = session::list(home) {
+        for entry in all.iter().filter(|one| !one.personas.is_empty()) {
+            if let Ok(records) = session::replay(&session::session_path(home, &entry.id)) {
+                if let Some(parent) = records.iter().find_map(|record| match record {
+                    session::Record::Start { parent, .. } => parent.clone(),
+                    _ => None,
+                }) {
+                    parents.insert(entry.id.clone(), parent);
+                }
+            }
+        }
+    }
     let entries = match session::list(home) {
         Ok(entries) => entries,
         Err(error) => {
@@ -7172,6 +7300,8 @@ fn huddles_read(home: &std::path::Path, current: &str, live: &LiveFace) -> Value
             "personas": entry.personas,
             "avatars": avatars,
             "awaiting_you": awaiting_you,
+            "parent": parents.get(&entry.id),
+            "children": Vec::<Value>::new(),
             "state": state,
             "stop_reason": entry.stop_reason,
             "last_write": entry.last_write,
@@ -7186,6 +7316,48 @@ fn huddles_read(home: &std::path::Path, current: &str, live: &LiveFace) -> Value
             | "interrupted" => active.push(row),
             // Ran and stopped, and was never put away: parked, not gone.
             _ => inactive.push(row),
+        }
+    }
+    // A room's children ride beside it: they leave the flat list and hang
+    // off the room they split from. A parent this document does not carry
+    // keeps its child in place, named.
+    let rooms: std::collections::HashSet<String> = entries
+        .iter()
+        .filter(|one| !one.personas.is_empty())
+        .map(|one| one.id.clone())
+        .collect();
+    let mut detached: Vec<(String, Value)> = Vec::new();
+    for group in [&mut active, &mut inactive, &mut ended] {
+        let mut kept: Vec<Value> = Vec::new();
+        for row in group.drain(..) {
+            let id = row["id"].as_str().unwrap_or_default().to_string();
+            let parent = parents.get(&id).cloned();
+            match parent.filter(|parent| rooms.contains(parent)) {
+                Some(parent) => {
+                    let mut child = row;
+                    child["parent"] = json!(parent);
+                    detached.push((parent, child));
+                }
+                None => kept.push(row),
+            }
+        }
+        *group = kept;
+    }
+    for (parent, child) in detached {
+        let mut pending = Some(child);
+        for group in [&mut active, &mut inactive, &mut ended] {
+            if pending.is_none() {
+                break;
+            }
+            for row in group.iter_mut() {
+                if row["id"].as_str() == Some(parent.as_str()) {
+                    row["children"]
+                        .as_array_mut()
+                        .expect("every row carries a children array")
+                        .push(pending.take().expect("checked some"));
+                    break;
+                }
+            }
         }
     }
     let counts = json!({

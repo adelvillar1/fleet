@@ -8880,3 +8880,37 @@ body[data-work="collapsed"] .work-list { display: none; }
 .mention.review .mention-kind { color: var(--dsw-alias-warn-on-light, rgb(122, 82, 8)); }
 .mention-who { font-weight: 600; color: var(--dsw-alias-ink); }
 .mention-from { color: var(--dsw-alias-ink-tertiary); }
+
+/* The room's phase list, and the press that breaks one out (C9). */
+.hh-phases {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--dsw-alias-ink-tertiary);
+}
+.hh-breakout {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--dsw-alias-accent);
+  background: none;
+  border: 1px solid var(--dsw-alias-hairline-strong);
+  border-radius: 999px;
+  padding: 6px 12px;
+  min-height: 32px;
+  cursor: pointer;
+}
+.hh-breakout:hover { border-color: var(--dsw-alias-accent); }
+
+/* A phase rides indented beneath the room it split from. */
+.hrow-phase {
+  margin-left: 22px;
+  width: calc(100% - 22px);
+}
+.hrow-stem {
+  font-family: var(--font-mono, inherit);
+  font-size: 12px;
+  color: var(--dsw-alias-ink-tertiary);
+  flex: 0 0 auto;
+}

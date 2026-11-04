@@ -913,6 +913,47 @@ async fn serve_connection(
                 Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
             }
         }
+        // Break a phase out of a room (the huddles plan's C9): the path
+        // names the parent room, the body the phase brief and any extra
+        // bots. The child inherits its membership unless one is named.
+        ("POST", path) if path.starts_with("/api/huddles/") => {
+            let parent = percent_decode(path.trim_start_matches("/api/huddles/"));
+            let body = match read_body(&mut stream, &request, rest).await {
+                Ok(body) if body.trim().is_empty() => serde_json::Value::Null,
+                Ok(body) => match serde_json::from_str(&body) {
+                    Ok(value) => value,
+                    Err(_) => {
+                        return write_reply(
+                            &mut stream,
+                            bad_request("the creation body is not JSON"),
+                        )
+                        .await
+                    }
+                },
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            let brief = body.get("goal").and_then(serde_json::Value::as_str);
+            let personas: Vec<String> = body
+                .get("personas")
+                .and_then(serde_json::Value::as_array)
+                .map(|list| {
+                    list.iter()
+                        .filter_map(serde_json::Value::as_str)
+                        .map(String::from)
+                        .collect()
+                })
+                .unwrap_or_default();
+            match bridge.huddle_breakout(&parent, brief, &personas) {
+                Ok(id) => {
+                    write_reply(
+                        &mut stream,
+                        api(200, json!({"type": "huddle", "id": id, "created": true})),
+                    )
+                    .await
+                }
+                Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
+            }
+        }
         // One persona joins the conversation (P2): a row in the log,
         // refused by name when the persona does not resolve or is
         // already here.

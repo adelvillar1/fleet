@@ -523,6 +523,21 @@ impl Session {
         Session::open_new(&dir, model, None, None, personas)
     }
 
+    /// Create a breakout room's log under `home`: a session with members
+    /// that names the room it split from (the huddles plan's C9). It is an
+    /// ordinary conversation, not a delegated child — no `kind` — but its
+    /// start record carries the parent, so the log itself says where the
+    /// phase came from without the surface inferring it.
+    pub fn create_with_parent(
+        home: &Path,
+        model: &str,
+        parent: &str,
+        personas: Option<Vec<String>>,
+    ) -> io::Result<Session> {
+        let dir = crate::home::ensure_sessions_dir(home)?;
+        Session::open_new(&dir, model, None, Some(parent), personas)
+    }
+
     /// Create a delegated child's log under `home` — the same convention
     /// as [`Session::create`], so every constructor takes a home and
     /// resolves the sessions directory the one way (KI-072) — marked
@@ -1478,6 +1493,33 @@ mod tests {
         let bare = Session::create(&home, "m").unwrap();
         let summary = summarize(bare.path()).expect("the plain log summarizes");
         assert!(summary.personas.is_empty());
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    /// C9 of the huddles plan: a breakout names the room it split from,
+    /// and the log itself says so — no surface has to infer the lineage.
+    #[test]
+    fn a_breakout_names_the_room_it_split_from() {
+        let home = temp_home("breakout");
+        let room =
+            Session::create_with_persona(&home, "m", Some(vec!["designer".to_string()])).unwrap();
+        let room_id = room.id().to_string();
+        let child =
+            Session::create_with_parent(&home, "m", &room_id, Some(vec!["designer".to_string()]))
+                .unwrap();
+        let records = crate::session::replay(child.path()).expect("the log replays");
+        let start = records
+            .iter()
+            .find_map(|record| match record {
+                Record::Start { parent, kind, .. } => Some((parent.clone(), kind.clone())),
+                _ => None,
+            })
+            .expect("the start record carries its lineage");
+        assert_eq!(start.0.as_deref(), Some(room_id.as_str()));
+        // A room, not a delegated child: no kind, and its own members.
+        assert!(start.1.is_none(), "a breakout is not a subagent");
+        let summary = summarize(child.path()).expect("the log summarizes");
+        assert_eq!(summary.personas, vec!["designer".to_string()]);
         let _ = fs::remove_dir_all(&home);
     }
 

@@ -650,6 +650,8 @@
     hhStack: document.getElementById('hh-stack'),
     hhVoices: document.getElementById('hh-voices'),
     hhState: document.getElementById('hh-state'),
+    hhPhases: document.getElementById('hh-phases'),
+    hhBreakout: document.getElementById('hh-breakout'),
     panelCalibration: document.getElementById('panel-calibration'),
     panelSecondBrain: document.getElementById('panel-second-brain'),
     panelWorkspaceHistory: document.getElementById('panel-workspace-history'),
@@ -8150,6 +8152,8 @@
     // a resumed room shows who is here without waiting for an event.
     face.goal = state.goal || null;
     face.members = state.members || [];
+    // The room's phases, for its head (C9).
+    face.phases = state.phases || [];
     face.rules = state.rules || [];
     // The face plugins' own list — the rail's dynamic rows and the
     // management surface read this one list (the plugin host plan).
@@ -9364,6 +9368,7 @@
   el.scrim.addEventListener('click', closeDrawer);
   if (el.huddleCreate) el.huddleCreate.addEventListener('click', createHuddle);
   if (el.huddleCancel) el.huddleCancel.addEventListener('click', closeHuddleDoor);
+  if (el.hhBreakout) el.hhBreakout.addEventListener('click', breakOutPhase);
   el.inspectFace.addEventListener('click', function () { inspect(null); });
   document.addEventListener('click', function (event) {
     var line = event.target.closest ? event.target.closest('.stream-line') : null;
@@ -9572,14 +9577,18 @@
     return { word: 'inactive', dot: 'idle', chip: 'idle' };
   }
 
-  function huddleRow(row) {
+  function huddleRow(row, phase) {
     // A bot's question still open: the row warns rather than reading as
     // merely parked (the huddles plan's C3).
     var waiting = !!row.awaiting_you;
     var derived = waiting
       ? { word: 'asks you', dot: 'warn', chip: 'wait' }
       : huddleState(row);
-    var button = node('button', 'hrow' + (row.current ? ' open' : ''));
+    var button = node('button',
+      'hrow' + (row.current ? ' open' : '') + (phase ? ' hrow-phase' : ''));
+    if (phase) {
+      button.appendChild(node('span', 'hrow-stem', '\u2514\u2500'));
+    }
     button.type = 'button';
     button.appendChild(node('span', 'dot ' + derived.dot));
     var name = node('span', 'hrow-name');
@@ -9601,8 +9610,10 @@
       // Opening a room lands in the conversation on that session; the
       // room itself is C8's surface, and until it exists the row does the
       // one thing every session row can do.
+      // Opening a room lands in the work list's conversation on that
+      // session — `#/chat/<id>` is the home route and clears it.
       face.focus = { panel: 'huddles', id: row.id };
-      window.location.hash = '#/chat/' + row.id;
+      window.location.hash = '#/sessions/' + encodeURIComponent(row.id);
     });
     return button;
   }
@@ -9628,8 +9639,16 @@
       var rows = huddleRows(one[0]);
       if (!rows.length) return;
       any = true;
-      board.appendChild(huddleSection(one[1], rows.length, one[2],
-        rows.map(huddleRow)));
+      // A room's phases ride indented beneath it, each still its own row
+      // with its own state (the huddles plan's C9).
+      var rendered = [];
+      rows.forEach(function (row) {
+        rendered.push(huddleRow(row));
+        (row.children || []).forEach(function (child) {
+          rendered.push(huddleRow(child, true));
+        });
+      });
+      board.appendChild(huddleSection(one[1], rows.length, one[2], rendered));
     });
     if (!any) {
       board.appendChild(node('p', 'page-note',
@@ -9691,7 +9710,7 @@
           return;
         }
         closeHuddleDoor();
-        window.location.hash = '#/chat/' + reply.body.id;
+        window.location.hash = '#/sessions/' + encodeURIComponent(reply.body.id);
       })
       .catch(function () {
         create.disabled = false;
@@ -10062,6 +10081,46 @@
     var row = workSelected();
     el.hhState.textContent = row ? huddleState(row).word : '';
     el.hhState.dataset.state = (row || {}).state || '';
+
+    // The room's phases (the huddles plan's C9): what has split off, and
+    // whether each has ended. The rail carries their full state; this is
+    // the head's own line.
+    if (el.hhPhases) {
+      var phases = face.phases || [];
+      el.hhPhases.hidden = !phases.length;
+      el.hhPhases.textContent = phases.length
+        ? 'phases \u00b7 ' + phases.map(function (one) {
+            return one.title + ' \u00b7 ' + huddleState({ state: one.state }).word;
+          }).join(' \u00b7 ')
+        : '';
+    }
+
+  }
+
+  // Break a phase out of the room you are reading (the huddles plan's C9):
+  // the child inherits this room's membership and its standing goal unless
+  // the owner names otherwise, and the log records which room it split from.
+  function breakOutPhase() {
+    var breakout = el.hhBreakout;
+    breakout.disabled = true;
+    breakout.textContent = 'breaking out\u2026';
+    post('/api/huddles/' + encodeURIComponent(face.session), { goal: '', personas: [] })
+      .then(function (reply) {
+        breakout.disabled = false;
+        breakout.textContent = '+ break out a phase';
+        if (!reply.body || !reply.body.id) {
+          notice('the phase was not created',
+            (reply.body && reply.body.error) || 'the home refused it');
+          return;
+        }
+        window.location.hash = '#/sessions/' + encodeURIComponent(reply.body.id);
+        load();
+      })
+      .catch(function () {
+        breakout.disabled = false;
+        breakout.textContent = '+ break out a phase';
+        notice('the phase was not created', 'the home could not be read');
+      });
   }
 
   // The conversation's head: the way out, the way to another, the state

@@ -4831,7 +4831,7 @@ async function theStrategyStepShowsItsPreview() {
       body || 'no call');
 
     check('C2 the new room opens',
-      page.window.location.hash.indexOf('#/chat/new-1') === 0,
+      page.window.location.hash.indexOf('#/sessions/new-1') === 0,
       page.window.location.hash);
   }
 
@@ -4934,6 +4934,100 @@ async function theStrategyStepShowsItsPreview() {
     check('C3 it says who is asking and that they wait',
       String(rows[0].textContent).indexOf('asks you') !== -1,
       String(rows[0].textContent));
+  }
+
+  // A phase splits off a room (the huddles plan's C9): the child rides
+  // indented beneath its parent on the rail, the parent's head lists it,
+  // and breaking another one out posts to the parent and opens the child.
+  async function aPhaseRidesBeneathItsRoom() {
+    const page = boot({
+      reply: { type: 'huddle', id: 'child-new', created: true },
+      documents: {
+        huddles: {
+          type: 'huddles',
+          active: [{
+            id: 'room-p', title: 'the-q3-board',
+            goal: 'thrift’s landing page, ready for the launch review',
+            personas: ['designer'], avatars: {}, awaiting_you: false,
+            state: 'working', last_write: 'x', current: false, deliverables: 0,
+            parent: null,
+            children: [{
+              id: 'phase-1', title: 'pricing', goal: 'the pricing block',
+              personas: ['designer'], avatars: {}, awaiting_you: false,
+              state: 'active', last_write: 'x', current: false,
+              deliverables: 1, parent: 'room-p', children: []
+            }]
+          }],
+          inactive: [], ended: [], counts: { active: 1, inactive: 0, ended: 0 }
+        },
+        sessions: {
+          type: 'sessions', read_at: 'now', current: '',
+          counts: { needs: 0, working: 1, background: 0, earlier: 0, total: 1 },
+          sessions: [row('room-p', 'working', { title: 'the-q3-board' })]
+        },
+        state: (asked) => ({
+          ...emptyState(asked), session: 'room-p',
+          goal: 'thrift’s landing page, ready for the launch review',
+          members: [{ name: 'designer', voice: 'makes pages' }],
+          phases: [{ id: 'phase-1', title: 'pricing', state: 'active' }]
+        })
+      }
+    });
+    await flush();
+    page.open();
+    await flush();
+    page.hash('#/huddles');
+    for (let i = 0; i < 8; i++) await flush();
+    const rows = page.IDS['huddles-board'].find((one) =>
+      String(one.className || '').split(/\s+/).includes('hrow'));
+    check('C9 the room and its phase are both rows',
+      rows.length === 2, String(rows.length));
+    const phase = rows.filter((one) =>
+      String(one.className).split(/\s+/).includes('hrow-phase'))[0];
+    check('C9 the phase reads as a phase of its room',
+      !!phase &&
+        String(phase.textContent).indexOf('pricing') !== -1 &&
+        phase.find((one) =>
+          String(one.className || '').split(/\s+/).includes('hrow-stem')).length === 1,
+      phase ? String(phase.className) : 'none');
+    const order = [];
+    const readOrder = (one) => {
+      if (String(one.className || '').split(/\s+/).includes('hrow')) order.push('hrow');
+      (one.children || []).forEach(readOrder);
+    };
+    readOrder(page.IDS['huddles-board']);
+    check('C9 the phase sits beneath its room', order.join(',') === 'hrow,hrow',
+      order.join(','));
+
+    // A child opens from its parent: pressing the phase lands on it.
+    if (phase) phase.click();
+    await flush(40);
+    check('C9 a child opens from its parent',
+      page.window.location.hash.indexOf('#/sessions/phase-1') === 0,
+      page.window.location.hash);
+
+    // The room's own head names the phase and can break another out. The
+    // room opens from the work list, which is the route that holds its
+    // session — `#/chat/<id>` deliberately clears it.
+    page.hash('#/sessions/room-p');
+    for (let i = 0; i < 10; i++) await flush();
+    const phases = page.IDS['hh-phases'];
+    check('C9 the head lists the room’s phases with their states',
+      !phases.hidden &&
+        String(phases.textContent).indexOf('pricing') !== -1 &&
+        String(phases.textContent).indexOf('active') !== -1,
+      phases.hidden ? 'hidden' : String(phases.textContent));
+    const breakout = page.IDS['hh-breakout'];
+    check('C9 the head carries the break-out press', !!breakout, 'none');
+    if (breakout) breakout.click();
+    await flush(40);
+    const split = page.calls.filter((c) =>
+      c.method === 'POST' && c.url.indexOf('/api/huddles/room-p') === 0);
+    check('C9 breaking out posts to the parent room',
+      split.length === 1, JSON.stringify(page.calls.map((c) => c.method + ' ' + c.url)));
+    check('C9 the new phase opens',
+      page.window.location.hash.indexOf('#/sessions/child-new') === 0,
+      page.window.location.hash);
   }
 
   async function theBotsSurfaceMintsTheBotCard() {
@@ -8025,6 +8119,7 @@ const cases = [
   ['C2 the new-room door creates and opens', theNewRoomDoorCreatesAndOpens],
   ['C8 addresses highlight inline and stand as rows', addressesHighlightInlineAndStandAsRows],
   ['C3 an unanswered ask warns the row', anUnansweredAskWarnsTheRow],
+  ['C9 a phase rides beneath its room', aPhaseRidesBeneathItsRoom],
   ['KI-380 the zombie tab cannot hide a seat or lose the reads', theZombieTabCannotHideASeatOrLoseTheReads],
   ['C1/C8 the list groups by attention and counts what the server counted', theListGroupsByAttentionAndCountsWhatTheServerCounted],
   ['C2 every state opens through one verb', everyStateOpensThroughOneVerb],

@@ -257,8 +257,12 @@
         <div class="hh-members">
           <span class="pstack" id="hh-stack"></span>
           <span class="hh-voices" id="hh-voices"></span>
+          <button class="hh-breakout" id="hh-breakout" type="button">+ break out a phase</button>
           <span class="hh-state" id="hh-state" data-state=""></span>
         </div>
+        <!-- The room's phases (the huddles plan's C9): the rooms that split
+             off this one, and whether each has ended. -->
+        <p class="hh-phases" id="hh-phases" hidden></p>
       </div>
 
       <!-- The conversation's own head: back to the work list (or open it,
