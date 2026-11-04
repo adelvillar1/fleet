@@ -4899,6 +4899,43 @@ async function theStrategyStepShowsItsPreview() {
       reviewRows.length ? String(reviewRows[0].textContent) : 'none');
   }
 
+  // A bot's open question to the owner (the huddles plan's C3): the row
+  // warns instead of reading as merely parked — the owner's glance finds
+  // what is waiting on them.
+  async function anUnansweredAskWarnsTheRow() {
+    const page = boot({
+      documents: {
+        huddles: {
+          type: 'huddles',
+          active: [{
+            id: 'a1', title: 'the-q3-board', goal: 'thrift’s landing page',
+            personas: ['auditor'], state: 'completed', awaiting_you: true,
+            last_write: 'x', current: false, deliverables: 0
+          }],
+          inactive: [], ended: [], counts: { active: 1, inactive: 0, ended: 0 }
+        }
+      }
+    });
+    await flush();
+    page.open();
+    await flush();
+    page.hash('#/huddles');
+    for (let i = 0; i < 8; i++) await flush();
+    const rows = page.IDS['huddles-board'].find((one) =>
+      String(one.className || '').split(/\s+/).includes('hrow'));
+    check('C3 the waiting room is still one row', rows.length === 1,
+      String(rows.length));
+    const dot = rows[0].find((one) =>
+      String(one.className || '').split(/\s+/).includes('dot'));
+    check('C3 it warns rather than reading as parked',
+      dot.length === 1 &&
+        String(dot[0].className).split(/\s+/).includes('warn'),
+      dot.length ? String(dot[0].className) : 'no dot');
+    check('C3 it says who is asking and that they wait',
+      String(rows[0].textContent).indexOf('asks you') !== -1,
+      String(rows[0].textContent));
+  }
+
   async function theBotsSurfaceMintsTheBotCard() {
     const page = boot({
       reply: {
@@ -7987,6 +8024,7 @@ const cases = [
   ['C5 a recommendation renders one convene press', aRecommendationRendersOneConvenePress],
   ['C2 the new-room door creates and opens', theNewRoomDoorCreatesAndOpens],
   ['C8 addresses highlight inline and stand as rows', addressesHighlightInlineAndStandAsRows],
+  ['C3 an unanswered ask warns the row', anUnansweredAskWarnsTheRow],
   ['KI-380 the zombie tab cannot hide a seat or lose the reads', theZombieTabCannotHideASeatOrLoseTheReads],
   ['C1/C8 the list groups by attention and counts what the server counted', theListGroupsByAttentionAndCountsWhatTheServerCounted],
   ['C2 every state opens through one verb', everyStateOpensThroughOneVerb],

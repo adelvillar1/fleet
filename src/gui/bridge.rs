@@ -647,6 +647,16 @@ impl Bridge {
         Ok(id)
     }
 
+    /// Refuse a room's task whose address names someone the room cannot
+    /// receive (the huddles plan's C3): an address nobody can answer is a
+    /// mistake the owner should hear about, not a run that quietly
+    /// ignores it. Only a room is checked — an ordinary conversation has
+    /// no members to address — and a role the home keeps is a
+    /// recommendation (C5), never a refusal.
+    pub fn refused_mention(&self, session: &str, task: &str) -> Option<String> {
+        refused_mention(&self.home, session, task)
+    }
+
     /// One persona joins this conversation — the 2026-10-28 ruling that
     /// a conversation may hold more than one persona, recorded as a row
     /// in the log (`join`), never a silent change of voice. The role's
@@ -5462,6 +5472,30 @@ pub fn session_goal(home: &std::path::Path, session: &str) -> Option<String> {
     load_goals(home).remove(session)
 }
 
+/// A room's task addressed to someone the room cannot receive (the
+/// huddles plan's C3): an address nobody can answer is a mistake the owner
+/// should hear about, not a run that quietly ignores it. Only a room is
+/// checked — an ordinary conversation has no members to address — and a
+/// role the home keeps is a recommendation (C5), never a refusal.
+pub fn refused_mention(home: &std::path::Path, session: &str, task: &str) -> Option<String> {
+    let (member, _) = crate::session::last_mention(task)?;
+    if member == crate::session::MENTION_OWNER {
+        return None;
+    }
+    let personas = crate::session::summarize(&crate::session::session_path(home, session))
+        .map(|summary| summary.personas)
+        .unwrap_or_default();
+    if personas.is_empty() || personas.iter().any(|name| name == member) {
+        return None;
+    }
+    if crate::roles::load(home, member).is_ok() {
+        return None;
+    }
+    Some(format!(
+        "`{member}` is neither in this room nor a role this home keeps"
+    ))
+}
+
 /// One room's members as the head reads them — `(name, voice)` in join
 /// order, the lead first (the huddles plan's C8). The voice is the role's
 /// own one-line contract, resolved at read time so a room can say who it
@@ -7110,12 +7144,34 @@ fn huddles_read(home: &std::path::Path, current: &str, live: &LiveFace) -> Value
                 );
             }
         }
+        // A bot's address to the owner, still unanswered: the row says so
+        // rather than reading as merely parked (the huddles plan's C3).
+        // The last owner message and the last `@you` decide it, in log
+        // order — a reply after the ask clears it.
+        let mut awaiting_you = false;
+        if let Ok(records) = session::replay(&session::session_path(home, &entry.id)) {
+            let mut last_owner = 0usize;
+            let mut last_ask = 0usize;
+            for (at, record) in records.iter().enumerate() {
+                match record {
+                    session::Record::User { .. } => last_owner = at,
+                    session::Record::Mention { member, .. }
+                        if member == crate::session::MENTION_OWNER =>
+                    {
+                        last_ask = at;
+                    }
+                    _ => {}
+                }
+            }
+            awaiting_you = last_ask > last_owner;
+        }
         let row = json!({
             "id": entry.id,
             "title": title,
             "goal": goal,
             "personas": entry.personas,
             "avatars": avatars,
+            "awaiting_you": awaiting_you,
             "state": state,
             "stop_reason": entry.stop_reason,
             "last_write": entry.last_write,
@@ -14757,5 +14813,57 @@ mod tests {
         // the face watching the parent filters the card away.
         assert_eq!(streamed["session"], "child-1", "{streamed}");
         assert_eq!(streamed["parent"], "s", "{streamed}");
+    }
+
+    /// An address the room cannot receive is refused by name (the huddles
+    /// plan's C3), while a role the home keeps stays a recommendation and
+    /// an ordinary conversation has no members to address at all.
+    #[test]
+    fn an_unaddressable_name_is_refused_but_a_kept_role_is_not() {
+        let home = std::env::temp_dir().join(format!(
+            "fleet-huddle-refuse-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|at| at.as_nanos())
+                .unwrap_or_default()
+        ));
+        std::fs::create_dir_all(home.join("roles")).unwrap();
+        std::fs::write(
+            home.join("roles/designer.md"),
+            "---\nname: designer\ndescription: makes pages\n---\nvoice\n",
+        )
+        .unwrap();
+        std::fs::write(
+            home.join("roles/auditor.md"),
+            "---\nname: auditor\ndescription: checks what changed\n---\nvoice\n",
+        )
+        .unwrap();
+        let room = crate::session::Session::create_with_persona(
+            &home,
+            "m",
+            Some(vec!["designer".to_string()]),
+        )
+        .unwrap();
+        let id = room.id().to_string();
+        assert_eq!(
+            refused_mention(&home, &id, "@stranger can you look"),
+            Some("`stranger` is neither in this room nor a role this home keeps".to_string())
+        );
+        // A role the home keeps is a recommendation (C5), never a refusal.
+        assert_eq!(
+            refused_mention(&home, &id, "@auditor the contrast pairs fail"),
+            None
+        );
+        // A member routes; `@you` asks; neither is a routing problem.
+        assert_eq!(
+            refused_mention(&home, &id, "@designer the hero reads thin"),
+            None
+        );
+        assert_eq!(refused_mention(&home, &id, "@you worth a look"), None);
+        // An ordinary conversation has no members: nothing is refused.
+        let plain = crate::session::Session::create(&home, "m").unwrap();
+        assert_eq!(refused_mention(&home, plain.id(), "@stranger hello"), None);
+        let _ = std::fs::remove_dir_all(&home);
     }
 }

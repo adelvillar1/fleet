@@ -9573,7 +9573,12 @@
   }
 
   function huddleRow(row) {
-    var derived = huddleState(row);
+    // A bot's question still open: the row warns rather than reading as
+    // merely parked (the huddles plan's C3).
+    var waiting = !!row.awaiting_you;
+    var derived = waiting
+      ? { word: 'asks you', dot: 'warn', chip: 'wait' }
+      : huddleState(row);
     var button = node('button', 'hrow' + (row.current ? ' open' : ''));
     button.type = 'button';
     button.appendChild(node('span', 'dot ' + derived.dot));
