@@ -9896,6 +9896,7 @@ mod tests {
             .map(|index| crate::skills::Skill {
                 name: format!("skill-{index:02}"),
                 description: "a description".to_string(),
+                shapes: Vec::new(),
                 body: "body".to_string(),
                 path: std::path::PathBuf::from("/x/SKILL.md"),
                 modified: Some(
@@ -10158,6 +10159,7 @@ mod tests {
             .map(|index| crate::skills::Skill {
                 name: format!("skill-{index:02}"),
                 description: "a description".to_string(),
+                shapes: Vec::new(),
                 body: "body".to_string(),
                 path: std::path::PathBuf::from("/x/SKILL.md"),
                 // Newest first: skill-69 is the most recently modified.
@@ -11362,6 +11364,7 @@ mod tests {
         let agent = build(vec![crate::skills::Skill {
             name: "demo".to_string(),
             description: "a demo skill".to_string(),
+            shapes: Vec::new(),
             body: "body".to_string(),
             path: std::path::PathBuf::from("/x/SKILL.md"),
             modified: None,

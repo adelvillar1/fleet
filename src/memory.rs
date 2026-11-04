@@ -1706,7 +1706,7 @@ fn day_age(date: &str, today_days: Option<i64>) -> Option<i64> {
 /// name it. Keyword order decides — the same order the memory importer
 /// tags in, so the shape this picks is the first structural tag the
 /// importer would put on the same text.
-pub const SHAPE_KEYWORDS: [(&str, &[&str]); 7] = [
+pub const SHAPE_KEYWORDS: [(&str, &[&str]); 10] = [
     (
         "deploy",
         &[
@@ -1795,6 +1795,27 @@ pub const SHAPE_KEYWORDS: [(&str, &[&str]); 7] = [
             "rewrite",
             "revert",
             "breaking change",
+        ],
+    ),
+    (
+        // The desk's knowledge-work kinds (the 2026-11-04 desk plan):
+        // appended last so every text the table classified before
+        // classifies identically - the order rule is the contract.
+        "presentation",
+        &["presentation", "slide", "deck", "pitch"],
+    ),
+    (
+        "document",
+        &["document", "one-pager", "memo", "whitepaper", "brief"],
+    ),
+    (
+        "analysis",
+        &[
+            "analysis",
+            "report",
+            "evaluation",
+            "assessment",
+            "scorecard",
         ],
     ),
 ];

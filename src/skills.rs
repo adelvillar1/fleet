@@ -88,6 +88,11 @@ pub const MAX_LESSONS_PER_SESSION: usize = 3;
 pub struct Skill {
     pub name: String,
     pub description: String,
+    /// The problem shapes this skill serves, from the frontmatter's
+    /// optional `shapes:` line — comma-separated, the same vocabulary
+    /// the memory importer tags with. Empty means the skill is
+    /// methodology-agnostic: it shows in every shape's discovery.
+    pub shapes: Vec<String>,
     /// Everything after the frontmatter fence; what `use_skill` returns.
     pub body: String,
     pub path: PathBuf,
@@ -672,13 +677,92 @@ fn live_skill(
             "carries `proposed: true` \u{2014} that is a proposal, not a live skill".to_string(),
         );
     }
+    let shapes = document
+        .get("shapes")
+        .map(|value| {
+            value
+                .split(',')
+                .map(str::trim)
+                .filter(|shape| !shape.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
     Ok(Skill {
         name,
         description,
+        shapes,
         body: document.body,
         path,
         modified,
     })
+}
+
+// --- shape-first discovery ---------------------------------------------------
+
+/// The lexical floor the undefined-shape case admits a skill above —
+/// the tool router's own scale, token overlap; a low bar that still
+/// refuses the unrelated.
+pub const SKILL_MEANING_FLOOR: f64 = 0.15;
+
+/// Shape-first discovery over the library. The query routes under a
+/// shape by memory's keyword rule — one vocabulary, the importer's own
+/// order rule deciding — and the skills declaring it lead; a skill
+/// declaring no shape is methodology-agnostic and rides every shape.
+/// When nothing routes — the undefined-shape case — the library ranks
+/// by the lexical floor here, and the sem1 seam (the tool router's own
+/// ranking) replaces the fallback when the embeddings lane is up.
+pub fn select_for_query<'a>(
+    query: &str,
+    library: &'a [Skill],
+) -> (Option<&'static str>, Vec<&'a Skill>) {
+    match crate::memory::classify_shape(query) {
+        Some(shape) => {
+            let matching: Vec<&Skill> = library
+                .iter()
+                .filter(|skill| skill.shapes.is_empty() || skill.shapes.iter().any(|s| s == shape))
+                .collect();
+            (Some(shape), matching)
+        }
+        None => {
+            let candidates: Vec<crate::tool_router::Candidate> = library
+                .iter()
+                .map(|skill| crate::tool_router::Candidate {
+                    name: skill.name.clone(),
+                    description: skill.description.clone(),
+                })
+                .collect();
+            let ranked = crate::tool_router::lexical_rank(query, &candidates);
+            let named: std::collections::HashSet<&str> = ranked
+                .iter()
+                .filter(|ranked| ranked.score >= SKILL_MEANING_FLOOR)
+                .map(|ranked| ranked.name.as_str())
+                .collect();
+            (
+                None,
+                library
+                    .iter()
+                    .filter(|skill| named.contains(skill.name.as_str()))
+                    .collect(),
+            )
+        }
+    }
+}
+
+/// A role's shape range narrows the library: a role declaring shapes
+/// sees the skills serving them plus the methodology-agnostic ones; a
+/// role with an empty range sees everything — the behavior every role
+/// carried before the vocabulary existed.
+pub fn for_shape_range<'a>(role_shapes: &[String], library: &'a [Skill]) -> Vec<&'a Skill> {
+    if role_shapes.is_empty() {
+        return library.iter().collect();
+    }
+    library
+        .iter()
+        .filter(|skill| {
+            skill.shapes.is_empty() || skill.shapes.iter().any(|s| role_shapes.contains(s))
+        })
+        .collect()
 }
 
 /// Load every proposal under `<home>/skills/proposals`, sorted by name.
@@ -2378,6 +2462,7 @@ mod tests {
         let skills = vec![Skill {
             name: "demo".to_string(),
             description: "d".to_string(),
+            shapes: Vec::new(),
             body: "the body".to_string(),
             path: PathBuf::from("/x/SKILL.md"),
             modified: None,
@@ -3104,6 +3189,7 @@ mod tests {
         Skill {
             name: name.to_string(),
             description: "a test skill".to_string(),
+            shapes: Vec::new(),
             body: body.to_string(),
             path: PathBuf::from(format!("/tmp/{name}/SKILL.md")),
             modified: None,
@@ -3144,5 +3230,119 @@ mod tests {
         assert!(rendered.contains("report-only"), "{rendered}");
         let quiet = render_duplicates(distinct_only.len(), &[]);
         assert!(quiet.contains("no pair reaches the threshold"), "{quiet}");
+    }
+    #[test]
+    fn a_skill_declares_its_shapes_from_the_frontmatter() {
+        let text = "---\nname: bkv-presentations\ndescription: the BKV deck methodology\nshapes: presentation, analysis\n---\n\nbody";
+        let document = parse_document(text).unwrap();
+        let skill = live_skill(document, "bkv-presentations", PathBuf::from("/x"), None).unwrap();
+        assert_eq!(skill.shapes, vec!["presentation", "analysis"]);
+        let plain = live_skill(
+            parse_document("---\nname: plain\ndescription: no shapes line\n---\n\nbody").unwrap(),
+            "plain",
+            PathBuf::from("/y"),
+            None,
+        )
+        .unwrap();
+        assert!(plain.shapes.is_empty());
+    }
+
+    #[test]
+    fn shape_first_discovery_routes_and_falls_back_to_meaning() {
+        let library = vec![
+            live_skill(
+                parse_document("---\nname: bkv-presentations\ndescription: the BKV deck methodology\nshapes: presentation\n---\n\nb").unwrap(),
+                "bkv-presentations",
+                PathBuf::from("/a"),
+                None,
+            )
+            .unwrap(),
+            live_skill(
+                parse_document("---\nname: grounded-citations\ndescription: every claim carries its source\nshapes: analysis\n---\n\nb").unwrap(),
+                "grounded-citations",
+                PathBuf::from("/b"),
+                None,
+            )
+            .unwrap(),
+            live_skill(
+                parse_document("---\nname: generic-helper\ndescription: reads files and writes files\n---\n\nb").unwrap(),
+                "generic-helper",
+                PathBuf::from("/c"),
+                None,
+            )
+            .unwrap(),
+        ];
+        // The defined case: the brief's words route under presentation.
+        let (shape, skills) = select_for_query("a slide deck for the beta cohort", &library);
+        assert_eq!(shape, Some("presentation"));
+        assert!(skills.iter().any(|s| s.name == "bkv-presentations"));
+        assert!(!skills.iter().any(|s| s.name == "grounded-citations"));
+        // The undefined case: no shape term matches and no token
+        // overlaps any description, so the lexical floor admits nothing.
+        let (shape, skills) = select_for_query("xqzzk wvort qlumph", &library);
+        assert_eq!(shape, None);
+        assert!(skills.is_empty(), "{skills:?}");
+    }
+
+    #[test]
+    fn a_role_shape_range_narrows_and_an_empty_range_sees_all() {
+        let library = vec![
+            live_skill(
+                parse_document("---\nname: decks\ndescription: d\nshapes: presentation\n---\n\nb")
+                    .unwrap(),
+                "decks",
+                PathBuf::from("/a"),
+                None,
+            )
+            .unwrap(),
+            live_skill(
+                parse_document("---\nname: agnostic\ndescription: a\n---\n\nb").unwrap(),
+                "agnostic",
+                PathBuf::from("/b"),
+                None,
+            )
+            .unwrap(),
+        ];
+        let presentation = vec!["presentation".to_string()];
+        let narrowed = for_shape_range(&presentation, &library);
+        assert_eq!(
+            narrowed.len(),
+            2,
+            "the declared shape plus the agnostic one"
+        );
+        let all = for_shape_range(&[], &library);
+        assert_eq!(all.len(), 2);
+        let analysis = vec!["analysis".to_string()];
+        let only_agnostic = for_shape_range(&analysis, &library);
+        assert_eq!(only_agnostic.len(), 1);
+        assert_eq!(only_agnostic[0].name, "agnostic");
+    }
+
+    #[test]
+    fn the_desk_kinds_route_and_every_older_classification_stands() {
+        // The desk's kinds joined the structure axis appended last, so
+        // the fork's order rule still decides for every text it
+        // classified before.
+        assert_eq!(
+            crate::memory::classify_shape("a pitch deck for the beta cohort"),
+            Some("presentation")
+        );
+        // A memo names no earlier shape's term, so the appended kind decides.
+        assert_eq!(
+            crate::memory::classify_shape("a memo for the cohort"),
+            Some("document")
+        );
+        assert_eq!(
+            crate::memory::classify_shape("an evaluation of the extract probe"),
+            Some("analysis")
+        );
+        assert_eq!(
+            crate::memory::classify_shape("deploy the service to production"),
+            Some("deploy")
+        );
+        assert_eq!(
+            crate::memory::classify_shape("the sync dropped the row"),
+            Some("drops-the-row")
+        );
     }
 }

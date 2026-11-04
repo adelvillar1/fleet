@@ -178,6 +178,12 @@ pub struct DeskProject {
     /// The claim the brief asks the deliverable to make.
     pub claim: String,
     pub sources: Vec<Source>,
+    /// The problem shape the brief routed under — memory's keyword
+    /// rule, one vocabulary — and what selects the declared methodology
+    /// skills. `None` when nothing routed: the undefined-shape case,
+    /// and discovery falls to meaning.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shape: Option<String>,
     /// The bound workspace project folder — the board's binding law,
     /// an absolute path when one was named. Unbound desk work is
     /// allowed but second-class.
@@ -272,6 +278,7 @@ pub fn create(
     let now = crate::calib::stamp();
     let desk = DeskProject {
         slug: slug.to_string(),
+        shape: crate::memory::classify_shape(&format!("{audience} {claim}")).map(str::to_string),
         name: name.to_string(),
         audience: audience.to_string(),
         claim: claim.to_string(),
@@ -552,6 +559,7 @@ mod tests {
     fn sample() -> DeskProject {
         DeskProject {
             slug: "landing-copy".to_string(),
+            shape: None,
             name: "The landing page's copy".to_string(),
             audience: "the beta cohort".to_string(),
             claim: "the fold earns its keep".to_string(),
