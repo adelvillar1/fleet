@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="paper">
+<head>
+<meta charset="utf-8">
+<title>huddles · the rooms rail — mockup</title>
+<link rel="stylesheet" href="mockup.css">
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-chat" viewBox="0 0 24 24"><path d="M4 6h16v10H9l-5 4z"/></symbol>
+  <symbol id="i-design" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 9h16"/></symbol>
+  <symbol id="i-sessions" viewBox="0 0 24 24"><path d="M5 7h14M5 12h14M5 17h9"/></symbol>
+  <symbol id="i-huddles" viewBox="0 0 24 24"><circle cx="9" cy="10" r="3.2"/><circle cx="16" cy="12" r="2.6"/><path d="M3.5 19c.6-2.6 2.8-4 5.5-4s4.9 1.4 5.5 4"/><path d="M14 18.6c.4-1.8 1.8-2.8 3.4-2.8 1.4 0 2.5.7 3.1 2"/></symbol>
+  <symbol id="i-router" viewBox="0 0 24 24"><path d="M5 19V9m0 0 4-4m-4 4L1 5"/><path d="M5 13h6a4 4 0 0 0 4-4V5"/><circle cx="19" cy="5" r="2"/></symbol>
+  <symbol id="i-delegation" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="5" rx="1"/><rect x="3" y="16" width="6" height="5" rx="1"/><rect x="15" y="16" width="6" height="5" rx="1"/><path d="M12 8v4M6 16v-2h12v2"/></symbol>
+  <symbol id="i-memory" viewBox="0 0 24 24"><path d="M6 4h11a2 2 0 0 1 2 2v14H8a2 2 0 0 1-2-2z"/><path d="M6 4v14"/></symbol>
+  <symbol id="i-skills" viewBox="0 0 24 24"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M18 16l.8 2.2L21 19l-2.2.8L18 22l-.8-2.2L15 19l2.2-.8z"/></symbol>
+  <symbol id="i-brain" viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="1"/><rect x="13" y="4" width="7" height="7" rx="1"/><rect x="4" y="13" width="7" height="7" rx="1"/><path d="M16.5 13v7M13 16.5h7"/></symbol>
+  <symbol id="i-history" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></symbol>
+  <symbol id="i-bots" viewBox="0 0 24 24"><rect x="4" y="7" width="16" height="12" rx="3"/><path d="M12 3v4M9 13h.01M15 13h.01M9 16h6"/></symbol>
+  <symbol id="i-vault" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></symbol>
+  <symbol id="i-settings" viewBox="0 0 24 24"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></symbol>
+  <symbol id="i-calib" viewBox="0 0 24 24"><path d="M4 18a8 8 0 1 1 16 0"/><path d="M12 18l4-5"/></symbol>
+  <symbol id="i-plugins" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M9 9h6v6H9z"/></symbol>
+</svg>
+
+<div class="shell">
+  <!-- ------------------------------------------------------- the global rail -->
+  <nav class="rail" aria-label="surfaces">
+    <div class="brand">
+      <span class="brand-glyph">f</span>
+      <span><span class="brand-name">fleet</span><span class="brand-tag">local console</span></span>
+    </div>
+    <div class="nav">
+      <span class="nav-group">work</span>
+      <button class="nav-row"><svg class="nav-icon"><use href="#i-chat"/></svg><span class="nav-label">conversation</span></button>
+      <button class="nav-row"><svg class="nav-icon"><use href="#i-design"/></svg><span class="nav-label">design</span></button>
+      <button class="nav-row"><svg class="nav-icon"><use href="#i-sessions"/></svg><span class="nav-label">sessions</span></button>
+      <button class="nav-row" aria-current="page"><svg class="nav-icon"><use href="#i-huddles"/></svg><span class="nav-label">huddles</span></button>
+      <span class="nav-group">intelligence</span>
+      <button class="nav-row"><svg class="nav-icon"><use href="#i-router"/></svg><span class="nav-label">router</span></button>
+      <button class="nav-row"><svg class="nav-icon"><use href="#i-delegation"/></svg><span class="nav-label">delegation</span></button>
+      <span class="nav-group">knowledge</span>
+      <button class="nav-row"><svg class="nav-icon"><use href="#i-memory"/></svg><span class="nav-label">memory</span></button>
+      <button class="nav-row"><svg class="nav-icon"><use href="#i-skills"/></svg><span class="nav-label">skills</span></button>
+      <button class="nav-row"><svg class="nav-icon"><use href="#i-brain"/></svg><span class="nav-label">second brain</span></button>
+      <button class="nav-row"><svg class="nav-icon"><use href="#i-history"/></svg><span class="nav-label">workspace history</span></button>
+      <span class="nav-group">system</span>
+      <button class="nav-row"><svg class="nav-icon"><use href="#i-bots"/></svg><span class="nav-label">bots</span></button>
+      <button class="nav-row"><svg class="nav-icon"><use href="#i-vault"/></svg><span class="nav-label">vault</span></button>
+      <button class="nav-row"><svg class="nav-icon"><use href="#i-settings"/></svg><span class="nav-label">settings</span></button>
+      <button class="nav-row"><svg class="nav-icon"><use href="#i-calib"/></svg><span class="nav-label">calibration</span></button>
+      <button class="nav-row"><svg class="nav-icon"><use href="#i-plugins"/></svg><span class="nav-label">plugins</span></button>
+    </div>
+    <div class="rail-foot">
+      <span class="rail-where">this machine</span>
+      <button class="rail-jump">jump to anything <kbd>⌘K</kbd></button>
+    </div>
+  </nav>
+
+  <!-- ------------------------------------------------------- the rooms rail -->
+  <section class="rooms" aria-label="rooms">
+    <header class="rooms-head">
+      <div class="rooms-title">
+        <h2>huddles</h2>
+        <span class="count">3 active</span>
+        <button class="rooms-new">+ new</button>
+      </div>
+      <label class="rooms-search">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="6"/><path d="M16 16l4 4"/></svg>
+        <input placeholder="goal, member, what it produced" aria-label="search rooms">
+      </label>
+    </header>
+
+    <div class="rooms-list">
+      <div class="rooms-group"><span>active</span><span class="n">3</span></div>
+
+      <button class="room-row" data-state="working" aria-current="true">
+        <span class="room-bar"></span>
+        <span class="room-body">
+          <span class="room-top">
+            <span class="stack">
+              <span class="mark you sm">you</span>
+              <span class="mark l1 sm">d</span>
+              <span class="mark l2 sm">s</span>
+            </span>
+            <span class="room-name">the-q3-board</span>
+            <span class="room-when">14:03</span>
+          </span>
+          <span class="room-line"><b>designer</b> the hero copy is tightened — the promise leads</span>
+          <span class="room-meta"><span>working</span><span class="room-facts">2 files · 3 facts</span></span>
+        </span>
+      </button>
+
+      <button class="room-row room-phase" data-state="asks">
+        <span class="room-bar"></span>
+        <span class="room-body">
+          <span class="room-top">
+            <span class="stack">
+              <span class="mark you sm">you</span>
+              <span class="mark l1 sm">d</span>
+            </span>
+            <span class="room-name"><span class="room-stem">└</span>pricing</span>
+            <span class="room-when">13:58</span>
+          </span>
+          <span class="room-line"><b>designer</b> phase 2 — the pricing block, its own page</span>
+          <span class="room-meta"><span class="warn">needs you</span><span class="room-facts">1 file</span></span>
+        </span>
+      </button>
+
+      <button class="room-row" data-state="asks">
+        <span class="room-bar"></span>
+        <span class="room-body">
+          <span class="room-top">
+            <span class="stack">
+              <span class="mark you sm">you</span>
+              <span class="mark l3 sm">p</span>
+            </span>
+            <span class="room-name">deck-for-nace</span>
+            <span class="room-when">14:01</span>
+          </span>
+          <span class="room-line"><b>presenter</b> six slides are up — the first one needs your call</span>
+          <span class="room-meta"><span class="warn">needs you</span><span class="room-facts">6 files</span></span>
+        </span>
+      </button>
+
+      <button class="room-row" data-state="working">
+        <span class="room-bar"></span>
+        <span class="room-body">
+          <span class="room-top">
+            <span class="stack">
+              <span class="mark you sm">you</span>
+              <span class="mark l4 sm">a</span>
+            </span>
+            <span class="room-name">onboard-copy</span>
+            <span class="room-when">13:47</span>
+          </span>
+          <span class="room-line"><b>auditor</b> the first-run steps read as a checklist, not a promise</span>
+          <span class="room-meta"><span>working</span><span class="room-facts">1 fact</span></span>
+        </span>
+      </button>
+
+      <div class="rooms-group"><span>parked</span><span class="n">2</span></div>
+
+      <button class="room-row" data-state="parked">
+        <span class="room-bar"></span>
+        <span class="room-body">
+          <span class="room-top">
+            <span class="stack">
+              <span class="mark you sm">you</span>
+              <span class="mark l0 sm">c</span>
+            </span>
+            <span class="room-name">pricing-rewrite</span>
+            <span class="room-when">2d</span>
+          </span>
+          <span class="room-line"><b>clerk</b> the ledger is reconciled; the page waits on the tier table</span>
+          <span class="room-meta"><span>parked</span><span class="room-facts">0 files · 2 facts</span></span>
+        </span>
+      </button>
+
+      <button class="room-row" data-state="parked">
+        <span class="room-bar"></span>
+        <span class="room-body">
+          <span class="room-top">
+            <span class="stack">
+              <span class="mark you sm">you</span>
+              <span class="mark l2 sm">s</span>
+            </span>
+            <span class="room-name">handbook-v1</span>
+            <span class="room-when">5d</span>
+          </span>
+          <span class="room-line"><b>scholar</b> every rule now names the case it came from</span>
+          <span class="room-meta"><span>parked</span><span class="room-facts">3 files</span></span>
+        </span>
+      </button>
+
+      <div class="rooms-group"><span>ended</span><span class="n">4</span><span class="fold">▸</span></div>
+    </div>
+  </section>
+
+  <!-- ------------------------------------------------------- the room -->
+  <main class="room">
+    <header class="room-head">
+      <div class="room-head-inner">
+      <div class="room-bar-top">
+        <h1 class="room-name-lg">the-q3-board</h1>
+        <span class="room-state">active</span>
+        <div class="room-acts">
+          <button class="room-act">break out</button>
+          <button class="room-act">distil</button>
+          <button class="room-act">archive</button>
+        </div>
+      </div>
+      <p class="room-goal"><b>goal</b><span class="goal-text">thrift’s landing page, ready for the launch review</span></p>
+
+      <div class="room-members">
+        <span class="member">
+          <span class="mark lg you">you</span>
+          <span class="member-text"><span class="member-name">you</span><span class="member-voice">the owner</span></span>
+        </span>
+        <span class="member speaking">
+          <span class="mark lg l1 speaking">d</span>
+          <span class="member-text"><span class="member-name">designer</span><span class="member-voice">makes pages, keeps their identity</span></span>
+          <span class="pulse">writing</span>
+        </span>
+        <span class="member">
+          <span class="mark lg l2">s</span>
+          <span class="member-text"><span class="member-name">scholar</span><span class="member-voice">grounds every claim</span></span>
+        </span>
+      </div>
+
+      <div class="shelf">
+        <div class="shelf-label">deliverables <span class="n">2</span></div>
+        <div class="shelf-rail">
+          <button class="artifact">
+            <span class="artifact-glyph">HTML</span>
+            <span class="artifact-body"><span class="artifact-name">landing.html</span><span class="artifact-meta">12.4 KB · designer</span></span>
+            <span class="artifact-open">open ↗</span>
+          </button>
+          <button class="artifact">
+            <span class="artifact-glyph">MD</span>
+            <span class="artifact-body"><span class="artifact-name">hero-copy.md</span><span class="artifact-meta">2.1 KB · designer</span></span>
+            <span class="artifact-open">open ↗</span>
+          </button>
+        </div>
+      </div>
+      </div>
+    </header>
+
+    <div class="transcript">
+      <div class="stream">
+        <div class="msg">
+          <span class="mark md l1">d</span>
+          <div>
+            <div class="msg-head"><span class="msg-who">designer</span><span class="msg-when">14:02</span></div>
+            <div class="msg-body">
+              <p>The hero copy is tightened. The promise leads, the proof follows — the page opens on the offer now, not on the company. One line changed; the layout stands.</p>
+              <button class="posted">
+                <span class="posted-glyph">HTML</span>
+                <span class="posted-body"><span class="posted-name">landing.html</span><span class="posted-meta">12.4 KB · designer · 14:02</span></span>
+                <span class="posted-open">open ↗</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="system"><span><b>you</b> → <b>scholar</b> <span class="word">· review requested</span></span></div>
+
+        <div class="owner-msg">
+          <span class="owner-tag">you</span>
+          <span class="owner-text">@scholar tighten the hero — the 38% claim needs a source before this goes to the review.</span>
+        </div>
+
+        <div class="msg">
+          <span class="mark md l2">s</span>
+          <div>
+            <div class="msg-head"><span class="msg-who">scholar</span><span class="msg-when">14:03</span></div>
+            <div class="msg-body">
+              <p>Two claims need a source: the <em>38%</em> figure and “most teams”. The first I can ground from the onboarding data — it is 41% of the rooms that finished a first brief. The second I would cut; there is no corpus behind it.</p>
+              <p>@designer keep the layout — the copy change is one line.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="gap">
+          <span class="gap-label">designer · capability gap · role</span>
+          <span class="gap-said">The pricing block needs someone who can model tiers and keep the ledger. No one in this room prices.</span>
+          <span class="gap-acts">
+            <button class="room-act primary">convene auditor</button>
+            <button class="room-act">hire for this</button>
+          </span>
+        </div>
+      </div>
+    </div>
+
+    <div class="composer-wrap">
+      <form class="composer">
+        <textarea rows="2" placeholder="message the room — @name hands the turn"></textarea>
+        <div class="composer-foot">
+          <span class="to">to <b>the room</b><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M7 10l5 5 5-5"/></svg></span>
+          <span class="field">ask before</span>
+          <span class="field">deepseek-flash</span>
+          <span class="field">no folder</span>
+          <span class="spacer"></span>
+          <span class="field">plan</span>
+          <button class="send" type="button">send</button>
+        </div>
+      </form>
+      <p class="hint">a mention routes the turn — <b>@you</b> asks, never runs.</p>
+    </div>
+  </main>
+</div>
+
+<div class="theme-bar">
+  <button data-t="paper" aria-pressed="true">paper</button>
+  <button data-t="console">console</button>
+  <button data-t="graphite">graphite</button>
+  <button data-t="contrast">contrast</button>
+</div>
+<script>
+  const bar = document.querySelector('.theme-bar');
+  const set = (t) => {
+    document.documentElement.dataset.theme = t;
+    bar.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.t === t)));
+    const u = new URL(location.href); u.searchParams.set('theme', t); history.replaceState(null, '', u);
+  };
+  bar.addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) set(b.dataset.t); });
+  const asked = new URL(location.href).searchParams.get('theme');
+  if (asked) set(asked);
+</script>
+</body>
+</html>
