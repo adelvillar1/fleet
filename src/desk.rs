@@ -168,6 +168,17 @@ pub struct UnsourcedAssertion {
     pub overlap: f64,
 }
 
+/// The coverage beat's verdict as the store carries it — the parsed
+/// answer's durable shape.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CoverageRecord {
+    pub score: f64,
+    pub material_gap: bool,
+    pub off_brief: bool,
+    pub escalated: bool,
+    pub reason: String,
+}
+
 /// The desk project: one JSON document, the whole loop's state.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DeskProject {
@@ -204,6 +215,22 @@ pub struct DeskProject {
     /// generated, and part of the number guard's givens.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub figures: Vec<Figure>,
+    /// The coverage beat's verdict, once it ran. An escalated verdict is
+    /// stored as it answered: unresolved, with its reason.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coverage: Option<CoverageRecord>,
+    /// The outline the composing lane answered, before render target
+    /// selection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outline: Option<String>,
+    /// The rendered draft — the document target's markdown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub draft: Option<String>,
+    /// The number guard's refusals: metric numbers the draft carried
+    /// that no given answers. The end gate counts these beside the
+    /// document law's refusals.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub number_refusals: Vec<UnsourcedNumber>,
     /// The digest's path under the home, once one was written.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub digest: Option<String>,
@@ -288,6 +315,10 @@ pub fn create(
         claims: Vec::new(),
         refusals: Vec::new(),
         figures: Vec::new(),
+        coverage: None,
+        outline: None,
+        draft: None,
+        number_refusals: Vec::new(),
         digest: None,
         created: now.clone(),
         updated: now,
@@ -1096,7 +1127,7 @@ pub async fn figure_ask(
 }
 
 /// One metric-shaped number the draft carried that no given answers.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UnsourcedNumber {
     /// The number as the draft wrote it.
     pub raw: String,
@@ -1170,7 +1201,27 @@ pub fn metric_numbers(draft: &str) -> Vec<(String, f64)> {
 /// computed figures both feed it. Returns the refusals; an empty vec is
 /// a draft whose numbers all stand.
 pub fn check_numbers(draft: &str, givens: &[f64]) -> Vec<UnsourcedNumber> {
-    metric_numbers(draft)
+    // The outline's list ordinals are structure, not assertions: a
+    // line-leading `N.` marker leaves the draft before the scan, while
+    // every other number in the line is a claim the givens must carry.
+    let scan = draft
+        .lines()
+        .map(|line| {
+            let trimmed = line.trim_start();
+            let marker = trimmed
+                .split_once('.')
+                .filter(|(head, tail)| {
+                    !head.is_empty()
+                        && head.chars().all(|c| c.is_ascii_digit())
+                        && tail.starts_with(' ')
+                })
+                .map_or(0, |(head, _)| head.len() + 2);
+            let prefix = line.len() - trimmed.len();
+            format!("{}{}", &line[..prefix], &trimmed[marker..])
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    metric_numbers(&scan)
         .into_iter()
         .filter(|(_, value)| {
             !givens
@@ -1181,8 +1232,12 @@ pub fn check_numbers(draft: &str, givens: &[f64]) -> Vec<UnsourcedNumber> {
         .collect()
 }
 
-/// The givens one desk project carries: every claim's sentence's metric
-/// numbers plus every computed figure's answer numbers, canonicalized.
+/// The givens one desk project carries: every claim's sentence's and
+/// text's metric numbers, the claims' own confidences (the floors
+/// computed them — the draft's p annotations are bookkeeping, not
+/// assertions), the coverage score, and every computed figure's answer
+/// numbers, canonicalized. The outline's numbers are NOT givens — that
+/// is the point: a stat the composing lane invented refuses here.
 pub fn number_givens(desk: &DeskProject) -> Vec<f64> {
     let mut givens = Vec::new();
     for claim in &desk.claims {
@@ -1192,6 +1247,10 @@ pub fn number_givens(desk: &DeskProject) -> Vec<f64> {
         for (_, value) in metric_numbers(&claim.text) {
             givens.push(value);
         }
+        givens.push(claim.confidence);
+    }
+    if let Some(coverage) = &desk.coverage {
+        givens.push(coverage.score);
     }
     for figure in &desk.figures {
         for (_, value) in metric_numbers(&figure.answer.to_string()) {
@@ -1264,6 +1323,334 @@ pub fn cards(home: &Path) -> String {
     projects.iter().map(card).collect()
 }
 
+// --- the stage runner --------------------------------------------------------
+//
+// The loop's orchestration: claims → coverage → outline → render →
+// review → knowledge, walking the store's own stages and marking each
+// transition as it lands — a stage that fails stops by name, and the
+// deliverable cannot end while a refusal stands.
+
+/// The blend1 verb the outline stage asks.
+pub const BLEND1_ASK_TOOL: &str = "ask";
+
+/// Mark one stage and save — the one funnel every transition crosses,
+/// so the store on disk never disagrees with the walk.
+fn mark_stage(
+    home: &Path,
+    desk: &mut DeskProject,
+    stage: Stage,
+    state: StageState,
+) -> Result<(), String> {
+    if let Some(entry) = desk.stages.iter_mut().find(|(s, _)| *s == stage) {
+        entry.1 = state;
+    }
+    desk.updated = crate::calib::stamp();
+    save(home, desk)
+}
+
+/// The outline stage's ask: the brief, the coverage verdict, and the
+/// asserted claims ride one composed ask — the answer is the outline,
+/// where a named gap renders as a gap because the prompt says so.
+pub async fn outline_ask(
+    source: &crate::judge::LaneSource,
+    desk: &DeskProject,
+    coverage: Option<&CoverageRecord>,
+) -> Result<String, String> {
+    let spec = crate::judge::lane_spec(source, "blend1")?;
+    let server = crate::mcp::McpServer::spawn(&spec)
+        .map_err(|error| format!("the composed lane could not start: {error}"))?;
+    let result = async {
+        server
+            .initialize()
+            .await
+            .map_err(|error| format!("the composed lane's handshake failed: {error}"))?;
+        let tools = server
+            .list_tools()
+            .await
+            .map_err(|error| format!("the composed lane's tool list failed: {error}"))?;
+        if !tools
+            .iter()
+            .any(|declared| declared.name == BLEND1_ASK_TOOL)
+        {
+            return Err(format!(
+                "lane `blend1` declares no `{BLEND1_ASK_TOOL}` tool — the outline stage cannot ask"
+            ));
+        }
+        let asserted: Vec<&Claim> = desk
+            .claims
+            .iter()
+            .filter(|c| c.verdict == ClaimVerdict::Asserted)
+            .collect();
+        let mut prompt = format!(
+            "Compose the outline for a deliverable.\nAudience: {}\nThe claim it must make: {}\n",
+            desk.audience, desk.claim
+        );
+        if let Some(coverage) = coverage {
+            if coverage.escalated {
+                prompt.push_str(&format!(
+                    "The coverage judgment did not assert ({}). Name the gaps as gaps.\n",
+                    coverage.reason
+                ));
+            } else {
+                prompt.push_str(&format!(
+                    "Coverage scored {} of 5. A material gap: {}. Off-brief claims: {}.\n",
+                    coverage.score, coverage.material_gap, coverage.off_brief
+                ));
+            }
+        }
+        prompt.push_str(&format!(
+            "The claim set carries {} asserted claims. Write a numbered outline; \
+             a sub-question the claims do not answer renders as `GAP:` followed by the \
+             question, never as an answer.",
+            asserted.len()
+        ));
+        let arguments = serde_json::json!({ "prompt": prompt, "retrieve": false });
+        let call: crate::mcp::CallResult = server
+            .call_tool(BLEND1_ASK_TOOL, arguments)
+            .await
+            .map_err(|error| format!("the composed lane refused the outline: {error}"))?;
+        if call.is_error {
+            return Err(format!(
+                "the composed lane refused the outline: {}",
+                call.text()
+            ));
+        }
+        let answer: serde_json::Value =
+            serde_json::from_str(call.text().as_str()).map_err(|error| {
+                format!("the composed lane's answer was not structured content: {error}")
+            })?;
+        answer
+            .get("final_answer")
+            .and_then(|a| a.as_str())
+            .map(str::to_string)
+            .ok_or_else(|| "the composed lane's answer carries no final_answer".to_string())
+    };
+    let outcome = result.await;
+    server.close().await.ok();
+    outcome
+}
+
+/// The document target's render: deterministic markdown over the
+/// outline and the claims — the deliverable's evidence-first body,
+/// every claim carrying its quote. The run's model polishes prose; the
+/// numbers and the quotes come from here, where they are honest.
+pub fn render_document(desk: &DeskProject) -> String {
+    let mut out = String::new();
+    out.push_str(&format!("# {}\n\n", desk.name));
+    out.push_str(&format!("*For {}.*\n\n", desk.audience));
+    if let Some(outline) = &desk.outline {
+        out.push_str(&format!("{outline}\n\n"));
+    }
+    out.push_str("## The claims\n\n");
+    for claim in &desk.claims {
+        match claim.verdict {
+            ClaimVerdict::Asserted => out.push_str(&format!(
+                "- {} _(p {:.2}, {})_\n  > \"{}\"\n",
+                claim.text, claim.confidence, claim.source, claim.sentence
+            )),
+            ClaimVerdict::Contested => out.push_str(&format!(
+                "- {} _(contested, p {:.2}, {})_\n",
+                claim.text, claim.confidence, claim.source
+            )),
+            ClaimVerdict::Vetoed => {}
+        }
+    }
+    if let Some(coverage) = &desk.coverage {
+        if coverage.material_gap {
+            out.push_str(&format!(
+                "\n> GAP: the sources do not answer every sub-question the claim implies (coverage {}). The gap is named, not filled.\n",
+                if coverage.escalated { "unresolved".to_string() } else { format!("{:.0}/5", coverage.score) }
+            ));
+        }
+    }
+    out
+}
+
+/// What stands between the deliverable and its end: the document law's
+/// refusals and the number guard's, named — `None` when nothing does.
+pub fn end_stands(desk: &DeskProject) -> Option<String> {
+    let mut stands = Vec::new();
+    for refusal in &desk.refusals {
+        stands.push(format!("unsourced assertion: \"{}\"", refusal.assertion));
+    }
+    for refusal in &desk.number_refusals {
+        stands.push(format!("unsourced number: {}", refusal.raw));
+    }
+    if stands.is_empty() {
+        None
+    } else {
+        Some(stands.join("; "))
+    }
+}
+
+/// One source's text for the claim pass: files read from disk, URL
+/// captures read from the desk project's sources directory. A source
+/// that names no readable text is a named skip.
+fn source_text(home: &Path, desk: &DeskProject, source: &Source) -> Option<String> {
+    let _ = desk;
+    match source.kind {
+        SourceKind::Url => std::fs::read_to_string(desk_root(home).join(&source.path)).ok(),
+        SourceKind::File => std::fs::read_to_string(&source.path).ok(),
+        // A fact's text rides the assembled context, not the claim
+        // pass: the fact is already a corpus sentence with its own
+        // provenance.
+        SourceKind::Fact => None,
+    }
+}
+
+/// The walk. `extract` carries the extraction spine's client and its
+/// first verifier when the claims stage should read; `None` means the
+/// store's claim set stands (a resume). Every stage marks the store as
+/// it lands; a stage that fails marks refused and returns the error.
+pub async fn run_stages(
+    source: &crate::judge::LaneSource,
+    home: &Path,
+    slug: &str,
+    extract: Option<(&crate::extract::ExtractClient, &crate::extract::Verifier)>,
+) -> Result<DeskProject, String> {
+    let mut desk = load(home, slug)?;
+
+    // Claims.
+    if desk.claims.is_empty() {
+        mark_stage(home, &mut desk, Stage::Claims, StageState::Running)?;
+        let Some((client, verifier)) = extract else {
+            let error =
+                "the claims stage has no extractor and the store holds no claims".to_string();
+            mark_stage(
+                home,
+                &mut desk,
+                Stage::Claims,
+                StageState::Refused {
+                    reason: error.clone(),
+                },
+            )?;
+            return Err(error);
+        };
+        let mut claims = Vec::new();
+        for source_desc in &desk.sources {
+            let Some(text) = source_text(home, &desk, source_desc) else {
+                continue;
+            };
+            match claims_from_source(client, verifier, &source_desc.path, &text) {
+                Ok(mut found) => claims.append(&mut found),
+                Err(error) => {
+                    let reason = format!("the claim pass failed on {}: {error}", source_desc.path);
+                    mark_stage(
+                        home,
+                        &mut desk,
+                        Stage::Claims,
+                        StageState::Refused {
+                            reason: reason.clone(),
+                        },
+                    )?;
+                    return Err(reason);
+                }
+            }
+        }
+        desk.claims = claims;
+        mark_stage(home, &mut desk, Stage::Claims, StageState::Done)?;
+    } else if !matches!(desk.stage(Stage::Claims), StageState::Done) {
+        // The resume path: the store's claim set stands, and the stage
+        // says so.
+        mark_stage(home, &mut desk, Stage::Claims, StageState::Done)?;
+    }
+
+    // Coverage.
+    if desk.coverage.is_none() {
+        mark_stage(home, &mut desk, Stage::Outline, StageState::Running)?;
+        match coverage_ask(source, home, &desk).await {
+            Ok(coverage) => {
+                desk.coverage = Some(CoverageRecord {
+                    score: coverage.score,
+                    material_gap: coverage.material_gap,
+                    off_brief: coverage.off_brief,
+                    escalated: coverage.escalated,
+                    reason: coverage.reason,
+                });
+            }
+            Err(error) => {
+                // The beat's named absence rides the outline: the gap
+                // question stays open.
+                desk.coverage = Some(CoverageRecord {
+                    score: 0.0,
+                    material_gap: true,
+                    off_brief: false,
+                    escalated: true,
+                    reason: error.clone(),
+                });
+            }
+        }
+        save(home, &desk)?;
+    }
+
+    // Outline.
+    if desk.outline.is_none() {
+        mark_stage(home, &mut desk, Stage::Outline, StageState::Running)?;
+        match outline_ask(source, &desk, desk.coverage.as_ref()).await {
+            Ok(outline) => desk.outline = Some(outline),
+            Err(error) => {
+                mark_stage(
+                    home,
+                    &mut desk,
+                    Stage::Outline,
+                    StageState::Refused {
+                        reason: error.clone(),
+                    },
+                )?;
+                return Err(error);
+            }
+        }
+        mark_stage(home, &mut desk, Stage::Outline, StageState::Done)?;
+    }
+
+    // Render.
+    if desk.draft.is_none() {
+        mark_stage(home, &mut desk, Stage::Render, StageState::Running)?;
+        desk.draft = Some(render_document(&desk));
+        mark_stage(home, &mut desk, Stage::Render, StageState::Done)?;
+    }
+
+    // Review: the number guard over the draft; the document law's
+    // refusals are already the store's own.
+    if desk.refusals.is_empty() && desk.number_refusals.is_empty() {
+        mark_stage(home, &mut desk, Stage::Review, StageState::Running)?;
+        let draft = desk.draft.clone().unwrap_or_default();
+        desk.number_refusals = check_numbers(&draft, &number_givens(&desk));
+        let state = if desk.number_refusals.is_empty() {
+            StageState::Done
+        } else {
+            StageState::Refused {
+                reason: format!(
+                    "{} unsourced number(s) — the review names them",
+                    desk.number_refusals.len()
+                ),
+            }
+        };
+        mark_stage(home, &mut desk, Stage::Review, state)?;
+    }
+
+    // Knowledge: the digest rides every save; the corpus seed lands
+    // here, and a bound project's seed failure refuses the stage by
+    // name.
+    mark_stage(home, &mut desk, Stage::Knowledge, StageState::Running)?;
+    match seed_corpus(source, &desk).await {
+        Ok(()) => mark_stage(home, &mut desk, Stage::Knowledge, StageState::Done)?,
+        Err(error) => {
+            mark_stage(
+                home,
+                &mut desk,
+                Stage::Knowledge,
+                StageState::Refused {
+                    reason: error.clone(),
+                },
+            )?;
+            return Err(error);
+        }
+    }
+
+    Ok(desk)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1301,6 +1688,10 @@ mod tests {
             }],
             refusals: Vec::new(),
             figures: Vec::new(),
+            coverage: None,
+            outline: None,
+            draft: None,
+            number_refusals: Vec::new(),
             digest: None,
             created: "2026-11-04T12:00:00Z".to_string(),
             updated: "2026-11-04T12:00:00Z".to_string(),
@@ -1757,5 +2148,53 @@ Independent labs measured the load at ninety milliseconds.";
         delete_project(&home, "landing-copy").unwrap();
         assert!(!exists(&home, "landing-copy"));
         assert!(!digest_path(&home, "landing", "landing-copy").exists());
+    }
+    #[test]
+    fn the_document_render_carries_quotes_marks_and_the_named_gap() {
+        let mut desk = sample();
+        desk.outline = Some("1. The fold\n2. What the labs measured".to_string());
+        desk.coverage = Some(CoverageRecord {
+            score: 3.0,
+            material_gap: true,
+            off_brief: false,
+            escalated: false,
+            reason: String::new(),
+        });
+        let draft = render_document(&desk);
+        assert!(draft.starts_with("# The landing page's copy"));
+        assert!(draft.contains("1. The fold"));
+        assert!(draft.contains("> \"The fold earns its keep on every screen.\""));
+        assert!(draft.contains("GAP:"));
+        assert!(draft.contains("3/5"));
+        // A contested claim ships marked, never as an assertion.
+        desk.claims.push(Claim {
+            text: "a contested reading".to_string(),
+            source: "sources/x.txt".to_string(),
+            sentence: "s".to_string(),
+            confidence: 0.6,
+            kind: ClaimKind::Claim,
+            verdict: ClaimVerdict::Contested,
+        });
+        let draft = render_document(&desk);
+        assert!(draft.contains("_(contested, p 0.60"));
+    }
+
+    #[test]
+    fn the_end_gate_names_what_stands_or_says_nothing() {
+        let mut desk = sample();
+        assert_eq!(end_stands(&desk), None);
+        desk.refusals.push(UnsourcedAssertion {
+            assertion: "the footer converts at four percent".to_string(),
+            near_miss: String::new(),
+            near_miss_source: String::new(),
+            overlap: 0.17,
+        });
+        desk.number_refusals.push(UnsourcedNumber {
+            raw: "4.0%".to_string(),
+            canonical: 0.04,
+        });
+        let stands = end_stands(&desk).unwrap();
+        assert!(stands.contains("the footer converts at four percent"));
+        assert!(stands.contains("4.0%"));
     }
 }

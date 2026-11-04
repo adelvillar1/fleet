@@ -12768,3 +12768,73 @@ async fn the_desk_figure_leg_answers_one_sdm1_call_and_parses_the_table_result()
     assert_eq!(refusals[0].raw, "4.0%");
     std::fs::remove_dir_all(&home).ok();
 }
+
+#[tokio::test]
+async fn the_desk_stage_runner_walks_claims_to_knowledge_over_scripted_lanes() {
+    // A desk project whose claim set already stands (the resume path —
+    // no extractor rides): the coverage beat meets a lane that declares
+    // no sys1_classify and its named absence rides the outline; the
+    // outline and the seed ride the composed lane's scripted answers.
+    let fake = FakeMcp::start(vec![
+        serde_json::json!({ "reply": initialize_reply() }),
+        serde_json::json!({ "reply": tools_list_reply(serde_json::json!([
+            { "name": "ask", "description": "the composed ask", "inputSchema": { "type": "object" } },
+            { "name": "seed", "description": "seed the corpus", "inputSchema": { "type": "object" } }
+        ])) }),
+        serde_json::json!({ "reply": call_reply(
+            r#"{"path":"synthesized","final_answer":"1. The fold earns its keep\n2. GAP: what the sources do not answer","validation":{}}"#
+        ) }),
+        serde_json::json!({ "reply": call_reply(
+            r#"{"seeded": 1, "project": "landing"}"#
+        ) }),
+    ]);
+    let home = temp_home("desk-runner");
+    let mut desk = fleet::desk::create(
+        &home,
+        "runner-walk",
+        "The runner's walk",
+        "the beta cohort",
+        "the fold earns its keep",
+        Vec::new(),
+        Some("/Users/someone/Projects/landing".to_string()),
+    )
+    .unwrap();
+    desk.claims = vec![fleet::desk::Claim {
+        text: "the fold earns its keep".to_string(),
+        source: "sources/brief.txt".to_string(),
+        sentence: "The fold earns its keep on every screen.".to_string(),
+        confidence: 0.91,
+        kind: fleet::desk::ClaimKind::Claim,
+        verdict: fleet::desk::ClaimVerdict::Asserted,
+    }];
+    fleet::desk::save(&home, &desk).unwrap();
+
+    let desk = fleet::desk::run_stages(
+        &fleet::judge::LaneSource::Scripted(fake.spec()),
+        &home,
+        "runner-walk",
+        None,
+    )
+    .await
+    .expect("the walk");
+
+    // Coverage: the lane carried no sys1_classify, so the beat's named
+    // absence rides — escalated, with the reason stored.
+    let coverage = desk.coverage.clone().expect("the coverage record");
+    assert!(coverage.escalated, "{coverage:?}");
+    // The outline and the draft landed.
+    let outline = desk.outline.clone().expect("the outline");
+    assert!(outline.contains("GAP:"), "{outline}");
+    let draft = desk.draft.clone().expect("the draft");
+    assert!(draft.contains("The fold earns its keep on every screen."));
+    // Every stage says done.
+    for (stage, state) in &desk.stages {
+        assert!(
+            matches!(state, fleet::desk::StageState::Done),
+            "{stage:?} is {state:?}"
+        );
+    }
+    // The end gate is clean.
+    assert_eq!(fleet::desk::end_stands(&desk), None);
+    std::fs::remove_dir_all(&home).ok();
+}
