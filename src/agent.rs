@@ -2436,6 +2436,17 @@ impl<'a> Agent<'a> {
         if scope.admits(name) {
             return None;
         }
+        // Delivery and the room's escape hatch are not work tools: a
+        // narrowed scope must not take away the ability to hand a file
+        // over (KI-410, which the live proof caught twice — once at the
+        // declaration and once here) or to hire for a domain the room
+        // lacks. Both are declared on every run for the same reason.
+        if matches!(
+            name,
+            tools::READ_DOCUMENT_TOOL | tools::SEND_FILE_TOOL | tools::AUTHOR_PERSONA_TOOL
+        ) {
+            return None;
+        }
         // The one refusal with a reason of its own: a subagent reaching
         // for delegation is the depth cap, named.
         if name == tools::SUBAGENT_TOOL {
@@ -4583,6 +4594,19 @@ impl<'a> Agent<'a> {
             });
         }
 
+        // The room's escape hatch: a persona is authored and convened at once.
+        // It rides the serial lane — the live proof caught it declared but
+        // refused as an unknown tool, because the base-tool table does not
+        // know it and each extra tool needs its own branch.
+        if name == tools::AUTHOR_PERSONA_TOOL {
+            if let Err(error) = serde_json::from_str::<serde_json::Value>(&call.function.arguments)
+            {
+                return Ok(settled(format!(
+                    "error[validation]: arguments were not valid JSON: {error}"
+                )));
+            }
+            return Ok(Prepared::Serial { call: call.clone() });
+        }
         if name == tools::READ_DOCUMENT_TOOL || name == tools::SEND_FILE_TOOL {
             let read = name == tools::READ_DOCUMENT_TOOL;
             return Ok(match serde_json::from_str(&call.function.arguments) {
@@ -9067,6 +9091,85 @@ mod tests {
             &mut *progress,
         )
         .expect("the agent assembles")
+    }
+
+    #[tokio::test]
+    async fn author_persona_resolves_rather_than_refusing() {
+        // The live proof's second finding: the tool was declared but the call
+        // was refused as unknown, because the base-tool table does not know it.
+        // Each extra tool needs its own branch in `prepare_call`.
+        let m = fold_mock("done");
+        let home = scratch("author-resolve");
+        let mut session = crate::session::Session::create_with_persona(
+            &home,
+            "m",
+            Some(vec!["clerk".to_string()]),
+        )
+        .unwrap();
+        let client = Client::new(format!("http://127.0.0.1:{}", m.port), "test-key");
+        let mut options = routing_options("m");
+        options.improve_home = Some(home.clone());
+        let progress: &'static mut Vec<u8> = Box::leak(Box::new(Vec::new()));
+        let mut agent = Agent::new(
+            &client,
+            options,
+            &mut session,
+            Box::new(ApproveAll),
+            &mut *progress,
+        )
+        .unwrap();
+        let call = crate::api::ToolCall {
+            id: "c1".into(),
+            kind: "function".into(),
+            function: crate::api::FunctionCall {
+                name: "author_persona".into(),
+                arguments: serde_json::json!({
+                    "name": "pricer",
+                    "description": "builds the pricing model"
+                })
+                .to_string(),
+            },
+        };
+        let prepared = agent.prepare_call(&call).unwrap();
+        assert!(matches!(prepared, Prepared::Serial { .. }), "{prepared:?}");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[tokio::test]
+    async fn delivery_and_hiring_pass_the_scope_gate() {
+        // KI-410's second half: the declaration was fixed first, and the
+        // live proof showed the execution gate still refused the call —
+        // the model could see send_file and could not use it. Both the
+        // delivery tools and the room's escape hatch are exempt; a work
+        // tool the role does not admit is still refused.
+        let m = fold_mock("done");
+        let home = scratch("scope-gate");
+        let mut session = crate::session::Session::create_with_persona(
+            &home,
+            "m",
+            Some(vec!["clerk".to_string()]),
+        )
+        .unwrap();
+        let client = Client::new(format!("http://127.0.0.1:{}", m.port), "test-key");
+        let mut options = routing_options("m");
+        options.scope = Some(crate::subagents::Scope::child(
+            Some(vec!["read_file".to_string()]),
+            0,
+        ));
+        let progress: &'static mut Vec<u8> = Box::leak(Box::new(Vec::new()));
+        let agent = Agent::new(
+            &client,
+            options,
+            &mut session,
+            Box::new(ApproveAll),
+            &mut *progress,
+        )
+        .unwrap();
+        assert!(agent.scope_refusal(tools::SEND_FILE_TOOL).is_none());
+        assert!(agent.scope_refusal(tools::READ_DOCUMENT_TOOL).is_none());
+        assert!(agent.scope_refusal(tools::AUTHOR_PERSONA_TOOL).is_none());
+        assert!(agent.scope_refusal(tools::FRAME_TOOL).is_some());
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     #[tokio::test]
