@@ -545,480 +545,75 @@ pub fn desk_context_section(home: &Path, key: &str) -> Option<String> {
     Some(format!("## Desk\n\n{}", lines.join("\n")))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+// --- the corpus leg ----------------------------------------------------------
+//
+// The digest is the knowledge; the corpus is where it embeds. A bound
+// desk project seeds its digest into the project's blend1 corpus by the
+// lane's own `seed` verb — idempotent by key, the next brief recalls it
+// through `search`. Unbound desk work names the skip: nothing keys it.
 
-    fn temp_home(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("fleet-desk-{tag}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
-    }
+/// The blend1 verb the corpus leg calls.
+pub const BLEND1_SEED_TOOL: &str = "seed";
 
-    fn sample() -> DeskProject {
-        DeskProject {
-            slug: "landing-copy".to_string(),
-            shape: None,
-            name: "The landing page's copy".to_string(),
-            audience: "the beta cohort".to_string(),
-            claim: "the fold earns its keep".to_string(),
-            sources: vec![Source {
-                kind: SourceKind::Url,
-                path: "sources/brief-source.txt".to_string(),
-                url: Some("https://example.com/brief".to_string()),
-                fetched_at: Some("2026-11-04T12:00:00Z".to_string()),
-                title: Some("The brief".to_string()),
-            }],
-            project: Some("/Users/someone/Projects/landing".to_string()),
-            stages: STAGES.map(|s| (s, StageState::Pending)).to_vec(),
-            claims: vec![Claim {
-                text: "the fold earns its keep".to_string(),
-                source: "sources/brief-source.txt".to_string(),
-                sentence: "The fold earns its keep on every screen.".to_string(),
-                confidence: 0.91,
-                kind: ClaimKind::Claim,
-                verdict: ClaimVerdict::Asserted,
-            }],
-            refusals: Vec::new(),
-            figures: Vec::new(),
-            digest: None,
-            created: "2026-11-04T12:00:00Z".to_string(),
-            updated: "2026-11-04T12:00:00Z".to_string(),
-        }
-    }
-
-    #[test]
-    fn a_desk_project_round_trips_through_the_store() {
-        let home = temp_home("round-trip");
-        let desk = sample();
-        save(&home, &desk).unwrap();
-        let read = load(&home, "landing-copy").unwrap();
-        assert_eq!(read, desk);
-        assert!(exists(&home, "landing-copy"));
-    }
-
-    #[test]
-    fn a_second_project_with_a_lived_slug_is_refused_by_name() {
-        let home = temp_home("collision");
-        create(&home, "landing-copy", "one", "a", "c", vec![], None).unwrap();
-        let error = create(&home, "landing-copy", "two", "a", "c", vec![], None).unwrap_err();
-        assert!(error.contains("already exists"), "{error}");
-        assert!(error.contains("supersede"), "{error}");
-    }
-
-    #[test]
-    fn the_binding_keys_the_digest_by_the_folders_final_segment() {
-        let home = temp_home("binding");
-        save(&home, &sample()).unwrap();
-        let path = digest_path(&home, "landing", "landing-copy");
-        assert!(path.is_file(), "the digest lands at {}", path.display());
-        let text = std::fs::read_to_string(&path).unwrap();
-        assert!(text.contains("# The landing page's copy"));
-        assert!(text.contains("claims: 1 asserted"));
-    }
-
-    #[test]
-    fn an_unbound_project_keeps_no_digest() {
-        let home = temp_home("unbound");
-        let mut desk = sample();
-        desk.project = None;
-        save(&home, &desk).unwrap();
-        assert!(!desk_root(&home).join(DIGESTS_DIR).exists());
-    }
-
-    #[test]
-    fn the_document_law_admits_a_sourced_assertion() {
-        let desk = sample();
-        let claim =
-            check_assertion("the fold earns its keep on every screen", &desk.claims).unwrap();
-        assert_eq!(claim.source, "sources/brief-source.txt");
-    }
-
-    #[test]
-    fn the_document_law_refuses_and_names_the_near_miss() {
-        let desk = sample();
-        let error =
-            check_assertion("the footer converts at four percent", &desk.claims).unwrap_err();
-        assert_eq!(error.near_miss, "The fold earns its keep on every screen.");
-        assert!(error.near_miss_source.contains("brief-source"));
-        assert!(error.overlap < ASSERTION_MATCH_FLOOR);
-    }
-
-    #[test]
-    fn a_vetoed_claim_never_carries_an_assertion() {
-        let mut desk = sample();
-        desk.claims[0].verdict = ClaimVerdict::Vetoed;
-        assert!(check_assertion("the fold earns its keep", &desk.claims).is_err());
-    }
-
-    #[test]
-    fn the_context_section_is_bounded_and_one_line_per_deliverable() {
-        let home = temp_home("context");
-        for n in 0..(DESK_CONTEXT_MAX + 2) {
-            let mut desk = sample();
-            desk.slug = format!("deliverable-{n}");
-            desk.name = format!("Deliverable {n}");
-            save(&home, &desk).unwrap();
-        }
-        let section = desk_context_section(&home, "landing").unwrap();
-        assert!(section.starts_with("## Desk"));
-        assert_eq!(section.lines().count() - 2, DESK_CONTEXT_MAX);
-        // Newest first, so the bound cuts the oldest two.
-        assert!(section.contains("Deliverable 9"));
-        assert!(!section.contains("Deliverable 0"));
-    }
-
-    // --- the claim pass ------------------------------------------------------
-
-    use std::io::{Read, Write};
-    use std::sync::{Arc, Mutex};
-
-    /// A stub systemone endpoint that routes by marker: the first body
-    /// whose marker appears in the request wins, else the default. The
-    /// desk's claim pass makes two shapes of call — the batched
-    /// narrowing (its state carries `[SEGMENT`) and the per-segment
-    /// kind choice — and the stub answers each in its own voice.
-    fn stub_by_marker(
-        routes: Vec<(&'static str, String)>,
-        default: String,
-    ) -> (u16, Arc<Mutex<Vec<String>>>) {
-        let routes: Arc<Vec<(&'static str, String)>> = Arc::new(routes);
-        let default = Arc::new(default);
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = listener.local_addr().unwrap().port();
-        let seen: Arc<Mutex<Vec<String>>> = Arc::default();
-        let seen_writer = Arc::clone(&seen);
-        std::thread::spawn(move || {
-            for mut stream in listener.incoming().flatten() {
-                let mut request: Vec<u8> = Vec::new();
-                let mut chunk = [0u8; 8192];
-                loop {
-                    let read = stream.read(&mut chunk).unwrap_or(0);
-                    if read == 0 {
-                        break;
-                    }
-                    request.extend_from_slice(&chunk[..read]);
-                    if request.windows(4).any(|w| w == b"\r\n\r\n") {
-                        let head_end =
-                            request.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
-                        let head =
-                            String::from_utf8_lossy(&request[..head_end]).to_ascii_lowercase();
-                        let declared: usize = head
-                            .lines()
-                            .find_map(|line| line.strip_prefix("content-length:"))
-                            .and_then(|value| value.trim().parse().ok())
-                            .unwrap_or(0);
-                        if request.len() >= head_end + declared {
-                            break;
-                        }
-                    }
-                }
-                let request = String::from_utf8_lossy(&request).into_owned();
-                if let Some(body_at) = request.find("\r\n\r\n") {
-                    seen_writer
-                        .lock()
-                        .unwrap()
-                        .push(request[body_at + 4..].to_string());
-                }
-                let body = routes
-                    .iter()
-                    .find(|(marker, _)| request.contains(marker))
-                    .map(|(_, body)| body.clone())
-                    .unwrap_or_else(|| (*default).clone());
-                let reply = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                    body.len(),
-                    body
-                );
-                let _ = stream.write_all(reply.as_bytes());
-            }
-        });
-        (port, seen)
-    }
-
-    fn kind_body(p_claim: f64) -> String {
-        serde_json::json!({
-            "answers": {
-                "kind": {
-                    "label": if p_claim >= 0.5 { "claim" } else { "background" },
-                    "probabilities": {
-                        "claim": p_claim,
-                        "support": (1.0 - p_claim) * 0.3,
-                        "background": (1.0 - p_claim) * 0.5,
-                        "boilerplate": (1.0 - p_claim) * 0.2,
-                    }
-                }
-            }
-        })
-        .to_string()
-    }
-
-    /// The first verifier, glide: always present in a resolved config,
-    /// state_object false — the plain-string state.
-    fn glide_at(port: u16) -> Verifier {
-        Verifier {
-            name: "glide".to_string(),
-            url: format!("http://127.0.0.1:{port}/v1/systemone"),
-            model: "fastino/glide".to_string(),
-            key: "test-key".to_string(),
-            state_object: false,
-        }
-    }
-
-    fn client_at(port: u16) -> ExtractClient {
-        ExtractClient::new(crate::extract::ExtractConfig {
-            base_url: format!("http://127.0.0.1:{port}"),
-            entity_model: "fastino/gliner2.5-multi-v1".to_string(),
-            token: "test-key".to_string(),
-            verifiers: vec![glide_at(port)],
-        })
-    }
-
-    #[test]
-    fn the_claim_pass_asserts_vetoes_and_labels_by_the_floors() {
-        let text = "The fold earns its keep on every screen the owner opens. \
-The footer carries the usual legal furniture and nothing more. \
-Independent labs measured the load at ninety milliseconds.";
-        // Three sentences, three segments; each gets its own kind call.
-        let (port, seen) = stub_by_marker(
-            vec![
-                ("The fold earns its keep", kind_body(0.91)),
-                ("legal furniture", kind_body(0.10)),
-                ("ninety milliseconds", kind_body(0.60)),
-            ],
-            kind_body(0.0),
-        );
-        let client = client_at(port);
-        let verifier = glide_at(port);
-        let claims = claims_from_source(&client, &verifier, "sources/brief.txt", text).unwrap();
-        assert_eq!(claims.len(), 3, "{claims:?}");
-        assert_eq!(claims[0].verdict, ClaimVerdict::Asserted);
-        assert_eq!(claims[0].kind, ClaimKind::Claim);
-        assert_eq!(claims[1].verdict, ClaimVerdict::Vetoed);
-        assert_eq!(claims[2].verdict, ClaimVerdict::Contested);
-        assert!(claims.iter().all(|c| c.source == "sources/brief.txt"));
-        // No batched call ran: a short source carries every segment.
-        assert!(seen
-            .lock()
-            .unwrap()
+/// Seed one bound desk project's digest into its project corpus. The
+/// key is the desk path and the deliverable — the provenance the
+/// search answers carry. An unbound project is a named skip: the corpus
+/// keys by project, and unbound desk work has none.
+pub async fn seed_corpus(
+    source: &crate::judge::LaneSource,
+    desk: &DeskProject,
+) -> Result<(), String> {
+    let Some(key) = desk.project.as_deref().and_then(crate::canvas::project_key) else {
+        return Err(format!(
+            "{} is unbound — a desk project seeds its corpus only when a project keys it",
+            desk.slug
+        ));
+    };
+    let spec = crate::judge::lane_spec(source, "blend1")?;
+    let server = crate::mcp::McpServer::spawn(&spec)
+        .map_err(|error| format!("the composed lane could not start: {error}"))?;
+    let result = async {
+        server
+            .initialize()
+            .await
+            .map_err(|error| format!("the composed lane's handshake failed: {error}"))?;
+        let tools = server
+            .list_tools()
+            .await
+            .map_err(|error| format!("the composed lane's tool list failed: {error}"))?;
+        if !tools
             .iter()
-            .all(|body| !body.contains("[SEGMENT")));
-    }
-
-    #[test]
-    fn a_long_source_narrows_in_chunks_before_it_verifies() {
-        // 30 sentence-segments: over the carrying cap, so the
-        // narrowing rides first — 3 chunks of <= 14.
-        let mut text = String::new();
-        for i in 0..30 {
-            text.push_str(&format!(
-                "Sentence number {i} states a measured fact about the system. "
+            .any(|declared| declared.name == BLEND1_SEED_TOOL)
+        {
+            return Err(format!(
+                "lane `blend1` declares no `{BLEND1_SEED_TOOL}` tool — the corpus leg cannot seed"
             ));
         }
-        let batched = serde_json::json!({
-            "answers": {
-                "seg-0": {"noul": 0.9},
-                "seg-1": {"noul": 0.8},
-            }
-        })
-        .to_string();
-        let (port, seen) = stub_by_marker(vec![("[SEGMENT", batched)], kind_body(0.95));
-        let client = client_at(port);
-        let verifier = glide_at(port);
-        let claims = claims_from_source(&client, &verifier, "sources/long.txt", &text).unwrap();
-        let bodies = seen.lock().unwrap();
-        let batched_calls = bodies
-            .iter()
-            .filter(|body| body.contains("[SEGMENT"))
-            .count();
-        assert_eq!(batched_calls, 3, "30 segments narrow in 3 chunks of <= 14");
-        // Only the narrowed survivors cost a kind call: two per chunk
-        // (seg-0 and seg-1 clear the batched floor), so six.
-        let kind_calls = bodies
-            .iter()
-            .filter(|body| !body.contains("[SEGMENT"))
-            .count();
-        assert_eq!(kind_calls, 6, "{kind_calls}");
-        assert_eq!(claims.len(), 6);
-        assert!(claims.iter().all(|c| c.verdict == ClaimVerdict::Asserted));
-    }
-    #[test]
-    fn parse_coverage_reads_the_provider_keyed_heads() {
-        let answer = serde_json::json!({
-            "verdict": "pass",
-            "reason": "the lane's own reading",
-            "answers": {
-                "glide": {
-                    "coverage": {"score": 4, "confidence": 0.9},
-                    "material_gap": {"noul": 0.15},
-                    "off_brief": {"noul": 0.05}
-                }
-            }
+        let arguments = serde_json::json!({
+            "project": key,
+            "items": [{
+                "key": format!("desk/{}/{}", desk.slug, desk.name),
+                "text": digest_markdown(desk),
+            }],
         });
-        let coverage = parse_coverage(&answer).unwrap();
-        assert_eq!(coverage.score, 4.0);
-        assert!(!coverage.material_gap);
-        assert!(!coverage.off_brief);
-        assert!(!coverage.escalated);
-        assert_eq!(coverage.provider.as_deref(), Some("glide"));
-    }
-
-    #[test]
-    fn an_escalated_coverage_stays_unresolved_and_names_its_reason() {
-        let answer = serde_json::json!({
-            "verdict": "escalate",
-            "reason": "a head answered under its floor",
-            "answers": {"glide": {"coverage": {"score": 2, "confidence": 0.4}}}
-        });
-        let coverage = parse_coverage(&answer).unwrap();
-        assert!(coverage.escalated);
-        assert!(coverage.reason.contains("floor"));
-        // A noul the answer never carried reads as a gap — the named
-        // absence, never a clean bill.
-        assert!(coverage.material_gap);
-    }
-
-    #[test]
-    fn a_malformed_answer_is_a_named_error() {
-        let error = parse_coverage(&serde_json::json!({"verdict": "pass"})).unwrap_err();
-        assert!(error.contains("answers"), "{error}");
-    }
-
-    #[test]
-    fn the_coverage_state_carries_the_brief_first_and_skips_vetoed() {
-        let mut desk = sample();
-        desk.claims.push(Claim {
-            text: "a vetoed non-claim".to_string(),
-            source: "sources/other.txt".to_string(),
-            sentence: "x".to_string(),
-            confidence: 0.2,
-            kind: ClaimKind::Background,
-            verdict: ClaimVerdict::Vetoed,
-        });
-        let state = coverage_state(&desk);
-        assert!(state.starts_with("BRIEF"));
-        assert!(state.contains("claim: the fold earns its keep"));
-        assert!(state.contains("1 asserted, 0 contested, 1 vetoed"));
-        assert!(!state.contains("a vetoed non-claim"));
-        assert!(state.len() <= COVERAGE_STATE_CHARS);
-    }
-
-    #[tokio::test]
-    async fn the_coverage_beat_refuses_over_budget_before_it_opens() {
-        let home = temp_home("budget");
-        crate::calib::record_spend(&home, DESK_SPEND_LEDGER, Some(DESK_COVERAGE_BUDGET_USD_DAY));
-        let log = Arc::new(Mutex::new(crate::judge::CountingLog::default()));
-        let error = coverage_ask(
-            &crate::judge::LaneSource::Counting(log.clone()),
-            &home,
-            &sample(),
-        )
-        .await
-        .unwrap_err();
-        assert!(error.contains("budget"), "{error}");
-        // Refused before the lane: no open, no ask.
-        assert!(
-            log.lock().unwrap().events.is_empty(),
-            "{:?}",
-            log.lock().unwrap().events
-        );
-    }
-
-    #[tokio::test]
-    async fn the_coverage_beat_opens_asks_and_closes_without_spending_on_a_failed_ask() {
-        let home = temp_home("counting");
-        let log = Arc::new(Mutex::new(crate::judge::CountingLog::default()));
-        let error = coverage_ask(
-            &crate::judge::LaneSource::Counting(log.clone()),
-            &home,
-            &sample(),
-        )
-        .await
-        .unwrap_err();
-        // The counting lane's scripted answer is the workload shape, not
-        // the coverage shape — the parse names it, and no spend lands.
-        assert!(
-            error.contains("coverage") || error.contains("answers"),
-            "{error}"
-        );
-        let events = log.lock().unwrap().events.clone();
-        assert_eq!(events, vec!["open", "ask", "close"], "{events:?}");
-        assert_eq!(
-            crate::calib::sidecar_spend(&home, DESK_SPEND_LEDGER, "2026-11-04"),
-            0.0
-        );
-    }
-    // --- the number leg ------------------------------------------------------
-
-    #[test]
-    fn metric_numbers_canonicalize_their_shapes() {
-        let numbers = metric_numbers("92.4% of $4,180.00 across 12 runs, at 0.924 and 90ms");
-        let values: Vec<f64> = numbers.iter().map(|(_, v)| *v).collect();
-        assert_eq!(
-            values,
-            vec![0.924, 4180.0, 12.0, 0.924, 90.0],
-            "{numbers:?}"
-        );
-    }
-
-    #[test]
-    fn the_number_guard_admits_a_sourced_figure_and_refuses_an_invented_one() {
-        let givens = vec![0.924, 4180.0];
-        assert!(
-            check_numbers("the load read 92.4% and the total was $4,180.00", &givens).is_empty()
-        );
-        let refusals = check_numbers("the footer converts at 4.0%", &givens);
-        assert_eq!(refusals.len(), 1);
-        assert_eq!(refusals[0].raw, "4.0%");
-        assert!((refusals[0].canonical - 0.04).abs() < 1e-9);
-    }
-
-    #[test]
-    fn the_givens_read_claims_and_figures_alike() {
-        let mut desk = sample();
-        let figure = Figure {
-            target: "churned".to_string(),
-            task_type: "classification".to_string(),
-            answer: serde_json::json!({
-                "verdict": "pass",
-                "predictions": [{"churned": 1, "probabilities": {"1": 0.842}}]
-            }),
-            computed_by: "sdm1".to_string(),
-        };
-        desk.figures.push(figure);
-        let givens = number_givens(&desk);
-        assert!(
-            givens.iter().any(|v| (v - 0.842).abs() < 1e-9),
-            "{givens:?}"
-        );
-    }
-
-    #[test]
-    fn a_figure_answered_in_error_is_a_named_absence() {
-        let request = FigureRequest {
-            table: vec![serde_json::json!({"x": 1, "y": null})],
-            target: "y".to_string(),
-            task_type: "classification".to_string(),
-        };
-        let error = parse_figure(
-            r#"{"verdict": "error", "summary": "no labeled context rows"}"#,
-            &request,
-        )
-        .unwrap_err();
-        assert!(error.contains("no labeled context rows"), "{error}");
-    }
-
-    #[test]
-    fn deleting_a_project_removes_its_digest() {
-        let home = temp_home("delete");
-        save(&home, &sample()).unwrap();
-        assert!(digest_path(&home, "landing", "landing-copy").is_file());
-        delete_project(&home, "landing-copy").unwrap();
-        assert!(!exists(&home, "landing-copy"));
-        assert!(!digest_path(&home, "landing", "landing-copy").exists());
-    }
+        let call: crate::mcp::CallResult = server
+            .call_tool(BLEND1_SEED_TOOL, arguments)
+            .await
+            .map_err(|error| format!("the composed lane refused the seed: {error}"))?;
+        if call.is_error {
+            return Err(format!(
+                "the composed lane refused the seed: {}",
+                call.text()
+            ));
+        }
+        Ok(())
+    };
+    let outcome = result.await;
+    server.close().await.ok();
+    outcome
 }
+
+// --- the number leg ------------------------------------------------------
 
 // --- the claim set -----------------------------------------------------------
 //
@@ -1604,4 +1199,500 @@ pub fn number_givens(desk: &DeskProject) -> Vec<f64> {
         }
     }
     givens
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_home(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("fleet-desk-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn sample() -> DeskProject {
+        DeskProject {
+            slug: "landing-copy".to_string(),
+            shape: None,
+            name: "The landing page's copy".to_string(),
+            audience: "the beta cohort".to_string(),
+            claim: "the fold earns its keep".to_string(),
+            sources: vec![Source {
+                kind: SourceKind::Url,
+                path: "sources/brief-source.txt".to_string(),
+                url: Some("https://example.com/brief".to_string()),
+                fetched_at: Some("2026-11-04T12:00:00Z".to_string()),
+                title: Some("The brief".to_string()),
+            }],
+            project: Some("/Users/someone/Projects/landing".to_string()),
+            stages: STAGES.map(|s| (s, StageState::Pending)).to_vec(),
+            claims: vec![Claim {
+                text: "the fold earns its keep".to_string(),
+                source: "sources/brief-source.txt".to_string(),
+                sentence: "The fold earns its keep on every screen.".to_string(),
+                confidence: 0.91,
+                kind: ClaimKind::Claim,
+                verdict: ClaimVerdict::Asserted,
+            }],
+            refusals: Vec::new(),
+            figures: Vec::new(),
+            digest: None,
+            created: "2026-11-04T12:00:00Z".to_string(),
+            updated: "2026-11-04T12:00:00Z".to_string(),
+        }
+    }
+
+    // --- the claim pass ------------------------------------------------------
+
+    use std::io::{Read, Write};
+    use std::sync::{Arc, Mutex};
+
+    /// A stub systemone endpoint that routes by marker: the first body
+    /// whose marker appears in the request wins, else the default. The
+    /// desk's claim pass makes two shapes of call — the batched
+    /// narrowing (its state carries `[SEGMENT`) and the per-segment
+    /// kind choice — and the stub answers each in its own voice.
+    fn stub_by_marker(
+        routes: Vec<(&'static str, String)>,
+        default: String,
+    ) -> (u16, Arc<Mutex<Vec<String>>>) {
+        let routes: Arc<Vec<(&'static str, String)>> = Arc::new(routes);
+        let default = Arc::new(default);
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let seen: Arc<Mutex<Vec<String>>> = Arc::default();
+        let seen_writer = Arc::clone(&seen);
+        std::thread::spawn(move || {
+            for mut stream in listener.incoming().flatten() {
+                let mut request: Vec<u8> = Vec::new();
+                let mut chunk = [0u8; 8192];
+                loop {
+                    let read = stream.read(&mut chunk).unwrap_or(0);
+                    if read == 0 {
+                        break;
+                    }
+                    request.extend_from_slice(&chunk[..read]);
+                    if request.windows(4).any(|w| w == b"\r\n\r\n") {
+                        let head_end =
+                            request.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
+                        let head =
+                            String::from_utf8_lossy(&request[..head_end]).to_ascii_lowercase();
+                        let declared: usize = head
+                            .lines()
+                            .find_map(|line| line.strip_prefix("content-length:"))
+                            .and_then(|value| value.trim().parse().ok())
+                            .unwrap_or(0);
+                        if request.len() >= head_end + declared {
+                            break;
+                        }
+                    }
+                }
+                let request = String::from_utf8_lossy(&request).into_owned();
+                if let Some(body_at) = request.find("\r\n\r\n") {
+                    seen_writer
+                        .lock()
+                        .unwrap()
+                        .push(request[body_at + 4..].to_string());
+                }
+                let body = routes
+                    .iter()
+                    .find(|(marker, _)| request.contains(marker))
+                    .map(|(_, body)| body.clone())
+                    .unwrap_or_else(|| (*default).clone());
+                let reply = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(reply.as_bytes());
+            }
+        });
+        (port, seen)
+    }
+
+    fn kind_body(p_claim: f64) -> String {
+        serde_json::json!({
+            "answers": {
+                "kind": {
+                    "label": if p_claim >= 0.5 { "claim" } else { "background" },
+                    "probabilities": {
+                        "claim": p_claim,
+                        "support": (1.0 - p_claim) * 0.3,
+                        "background": (1.0 - p_claim) * 0.5,
+                        "boilerplate": (1.0 - p_claim) * 0.2,
+                    }
+                }
+            }
+        })
+        .to_string()
+    }
+
+    /// The first verifier, glide: always present in a resolved config,
+    /// state_object false — the plain-string state.
+    fn glide_at(port: u16) -> Verifier {
+        Verifier {
+            name: "glide".to_string(),
+            url: format!("http://127.0.0.1:{port}/v1/systemone"),
+            model: "fastino/glide".to_string(),
+            key: "test-key".to_string(),
+            state_object: false,
+        }
+    }
+
+    fn client_at(port: u16) -> ExtractClient {
+        ExtractClient::new(crate::extract::ExtractConfig {
+            base_url: format!("http://127.0.0.1:{port}"),
+            entity_model: "fastino/gliner2.5-multi-v1".to_string(),
+            token: "test-key".to_string(),
+            verifiers: vec![glide_at(port)],
+        })
+    }
+
+    #[test]
+    fn a_desk_project_round_trips_through_the_store() {
+        let home = temp_home("round-trip");
+        let desk = sample();
+        save(&home, &desk).unwrap();
+        let read = load(&home, "landing-copy").unwrap();
+        assert_eq!(read, desk);
+        assert!(exists(&home, "landing-copy"));
+    }
+
+    #[test]
+    fn a_second_project_with_a_lived_slug_is_refused_by_name() {
+        let home = temp_home("collision");
+        create(&home, "landing-copy", "one", "a", "c", vec![], None).unwrap();
+        let error = create(&home, "landing-copy", "two", "a", "c", vec![], None).unwrap_err();
+        assert!(error.contains("already exists"), "{error}");
+        assert!(error.contains("supersede"), "{error}");
+    }
+
+    #[test]
+    fn the_binding_keys_the_digest_by_the_folders_final_segment() {
+        let home = temp_home("binding");
+        save(&home, &sample()).unwrap();
+        let path = digest_path(&home, "landing", "landing-copy");
+        assert!(path.is_file(), "the digest lands at {}", path.display());
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("# The landing page's copy"));
+        assert!(text.contains("claims: 1 asserted"));
+    }
+
+    #[test]
+    fn an_unbound_project_keeps_no_digest() {
+        let home = temp_home("unbound");
+        let mut desk = sample();
+        desk.project = None;
+        save(&home, &desk).unwrap();
+        assert!(!desk_root(&home).join(DIGESTS_DIR).exists());
+    }
+
+    #[test]
+    fn the_document_law_admits_a_sourced_assertion() {
+        let desk = sample();
+        let claim =
+            check_assertion("the fold earns its keep on every screen", &desk.claims).unwrap();
+        assert_eq!(claim.source, "sources/brief-source.txt");
+    }
+
+    #[test]
+    fn the_document_law_refuses_and_names_the_near_miss() {
+        let desk = sample();
+        let error =
+            check_assertion("the footer converts at four percent", &desk.claims).unwrap_err();
+        assert_eq!(error.near_miss, "The fold earns its keep on every screen.");
+        assert!(error.near_miss_source.contains("brief-source"));
+        assert!(error.overlap < ASSERTION_MATCH_FLOOR);
+    }
+
+    #[test]
+    fn a_vetoed_claim_never_carries_an_assertion() {
+        let mut desk = sample();
+        desk.claims[0].verdict = ClaimVerdict::Vetoed;
+        assert!(check_assertion("the fold earns its keep", &desk.claims).is_err());
+    }
+
+    #[test]
+    fn the_context_section_is_bounded_and_one_line_per_deliverable() {
+        let home = temp_home("context");
+        for n in 0..(DESK_CONTEXT_MAX + 2) {
+            let mut desk = sample();
+            desk.slug = format!("deliverable-{n}");
+            desk.name = format!("Deliverable {n}");
+            save(&home, &desk).unwrap();
+        }
+        let section = desk_context_section(&home, "landing").unwrap();
+        assert!(section.starts_with("## Desk"));
+        assert_eq!(section.lines().count() - 2, DESK_CONTEXT_MAX);
+        // Newest first, so the bound cuts the oldest two.
+        assert!(section.contains("Deliverable 9"));
+        assert!(!section.contains("Deliverable 0"));
+    }
+
+    #[test]
+    fn the_claim_pass_asserts_vetoes_and_labels_by_the_floors() {
+        let text = "The fold earns its keep on every screen the owner opens. \
+The footer carries the usual legal furniture and nothing more. \
+Independent labs measured the load at ninety milliseconds.";
+        // Three sentences, three segments; each gets its own kind call.
+        let (port, seen) = stub_by_marker(
+            vec![
+                ("The fold earns its keep", kind_body(0.91)),
+                ("legal furniture", kind_body(0.10)),
+                ("ninety milliseconds", kind_body(0.60)),
+            ],
+            kind_body(0.0),
+        );
+        let client = client_at(port);
+        let verifier = glide_at(port);
+        let claims = claims_from_source(&client, &verifier, "sources/brief.txt", text).unwrap();
+        assert_eq!(claims.len(), 3, "{claims:?}");
+        assert_eq!(claims[0].verdict, ClaimVerdict::Asserted);
+        assert_eq!(claims[0].kind, ClaimKind::Claim);
+        assert_eq!(claims[1].verdict, ClaimVerdict::Vetoed);
+        assert_eq!(claims[2].verdict, ClaimVerdict::Contested);
+        assert!(claims.iter().all(|c| c.source == "sources/brief.txt"));
+        // No batched call ran: a short source carries every segment.
+        assert!(seen
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|body| !body.contains("[SEGMENT")));
+    }
+
+    #[test]
+    fn a_long_source_narrows_in_chunks_before_it_verifies() {
+        // 30 sentence-segments: over the carrying cap, so the
+        // narrowing rides first — 3 chunks of <= 14.
+        let mut text = String::new();
+        for i in 0..30 {
+            text.push_str(&format!(
+                "Sentence number {i} states a measured fact about the system. "
+            ));
+        }
+        let batched = serde_json::json!({
+            "answers": {
+                "seg-0": {"noul": 0.9},
+                "seg-1": {"noul": 0.8},
+            }
+        })
+        .to_string();
+        let (port, seen) = stub_by_marker(vec![("[SEGMENT", batched)], kind_body(0.95));
+        let client = client_at(port);
+        let verifier = glide_at(port);
+        let claims = claims_from_source(&client, &verifier, "sources/long.txt", &text).unwrap();
+        let bodies = seen.lock().unwrap();
+        let batched_calls = bodies
+            .iter()
+            .filter(|body| body.contains("[SEGMENT"))
+            .count();
+        assert_eq!(batched_calls, 3, "30 segments narrow in 3 chunks of <= 14");
+        // Only the narrowed survivors cost a kind call: two per chunk
+        // (seg-0 and seg-1 clear the batched floor), so six.
+        let kind_calls = bodies
+            .iter()
+            .filter(|body| !body.contains("[SEGMENT"))
+            .count();
+        assert_eq!(kind_calls, 6, "{kind_calls}");
+        assert_eq!(claims.len(), 6);
+        assert!(claims.iter().all(|c| c.verdict == ClaimVerdict::Asserted));
+    }
+
+    #[test]
+    fn parse_coverage_reads_the_provider_keyed_heads() {
+        let answer = serde_json::json!({
+            "verdict": "pass",
+            "reason": "the lane's own reading",
+            "answers": {
+                "glide": {
+                    "coverage": {"score": 4, "confidence": 0.9},
+                    "material_gap": {"noul": 0.15},
+                    "off_brief": {"noul": 0.05}
+                }
+            }
+        });
+        let coverage = parse_coverage(&answer).unwrap();
+        assert_eq!(coverage.score, 4.0);
+        assert!(!coverage.material_gap);
+        assert!(!coverage.off_brief);
+        assert!(!coverage.escalated);
+        assert_eq!(coverage.provider.as_deref(), Some("glide"));
+    }
+
+    #[test]
+    fn an_escalated_coverage_stays_unresolved_and_names_its_reason() {
+        let answer = serde_json::json!({
+            "verdict": "escalate",
+            "reason": "a head answered under its floor",
+            "answers": {"glide": {"coverage": {"score": 2, "confidence": 0.4}}}
+        });
+        let coverage = parse_coverage(&answer).unwrap();
+        assert!(coverage.escalated);
+        assert!(coverage.reason.contains("floor"));
+        // A noul the answer never carried reads as a gap — the named
+        // absence, never a clean bill.
+        assert!(coverage.material_gap);
+    }
+
+    #[test]
+    fn a_malformed_answer_is_a_named_error() {
+        let error = parse_coverage(&serde_json::json!({"verdict": "pass"})).unwrap_err();
+        assert!(error.contains("answers"), "{error}");
+    }
+
+    #[test]
+    fn the_coverage_state_carries_the_brief_first_and_skips_vetoed() {
+        let mut desk = sample();
+        desk.claims.push(Claim {
+            text: "a vetoed non-claim".to_string(),
+            source: "sources/other.txt".to_string(),
+            sentence: "x".to_string(),
+            confidence: 0.2,
+            kind: ClaimKind::Background,
+            verdict: ClaimVerdict::Vetoed,
+        });
+        let state = coverage_state(&desk);
+        assert!(state.starts_with("BRIEF"));
+        assert!(state.contains("claim: the fold earns its keep"));
+        assert!(state.contains("1 asserted, 0 contested, 1 vetoed"));
+        assert!(!state.contains("a vetoed non-claim"));
+        assert!(state.len() <= COVERAGE_STATE_CHARS);
+    }
+
+    #[tokio::test]
+    async fn the_coverage_beat_refuses_over_budget_before_it_opens() {
+        let home = temp_home("budget");
+        crate::calib::record_spend(&home, DESK_SPEND_LEDGER, Some(DESK_COVERAGE_BUDGET_USD_DAY));
+        let log = Arc::new(Mutex::new(crate::judge::CountingLog::default()));
+        let error = coverage_ask(
+            &crate::judge::LaneSource::Counting(log.clone()),
+            &home,
+            &sample(),
+        )
+        .await
+        .unwrap_err();
+        assert!(error.contains("budget"), "{error}");
+        // Refused before the lane: no open, no ask.
+        assert!(
+            log.lock().unwrap().events.is_empty(),
+            "{:?}",
+            log.lock().unwrap().events
+        );
+    }
+
+    #[tokio::test]
+    async fn the_coverage_beat_opens_asks_and_closes_without_spending_on_a_failed_ask() {
+        let home = temp_home("counting");
+        let log = Arc::new(Mutex::new(crate::judge::CountingLog::default()));
+        let error = coverage_ask(
+            &crate::judge::LaneSource::Counting(log.clone()),
+            &home,
+            &sample(),
+        )
+        .await
+        .unwrap_err();
+        // The counting lane's scripted answer is the workload shape, not
+        // the coverage shape — the parse names it, and no spend lands.
+        assert!(
+            error.contains("coverage") || error.contains("answers"),
+            "{error}"
+        );
+        let events = log.lock().unwrap().events.clone();
+        assert_eq!(events, vec!["open", "ask", "close"], "{events:?}");
+        assert_eq!(
+            crate::calib::sidecar_spend(&home, DESK_SPEND_LEDGER, "2026-11-04"),
+            0.0
+        );
+    }
+
+    #[test]
+    fn metric_numbers_canonicalize_their_shapes() {
+        let numbers = metric_numbers("92.4% of $4,180.00 across 12 runs, at 0.924 and 90ms");
+        let values: Vec<f64> = numbers.iter().map(|(_, v)| *v).collect();
+        assert_eq!(
+            values,
+            vec![0.924, 4180.0, 12.0, 0.924, 90.0],
+            "{numbers:?}"
+        );
+    }
+
+    #[test]
+    fn the_number_guard_admits_a_sourced_figure_and_refuses_an_invented_one() {
+        let givens = vec![0.924, 4180.0];
+        assert!(
+            check_numbers("the load read 92.4% and the total was $4,180.00", &givens).is_empty()
+        );
+        let refusals = check_numbers("the footer converts at 4.0%", &givens);
+        assert_eq!(refusals.len(), 1);
+        assert_eq!(refusals[0].raw, "4.0%");
+        assert!((refusals[0].canonical - 0.04).abs() < 1e-9);
+    }
+
+    #[test]
+    fn the_givens_read_claims_and_figures_alike() {
+        let mut desk = sample();
+        let figure = Figure {
+            target: "churned".to_string(),
+            task_type: "classification".to_string(),
+            answer: serde_json::json!({
+                "verdict": "pass",
+                "predictions": [{"churned": 1, "probabilities": {"1": 0.842}}]
+            }),
+            computed_by: "sdm1".to_string(),
+        };
+        desk.figures.push(figure);
+        let givens = number_givens(&desk);
+        assert!(
+            givens.iter().any(|v| (v - 0.842).abs() < 1e-9),
+            "{givens:?}"
+        );
+    }
+
+    #[test]
+    fn a_figure_answered_in_error_is_a_named_absence() {
+        let request = FigureRequest {
+            table: vec![serde_json::json!({"x": 1, "y": null})],
+            target: "y".to_string(),
+            task_type: "classification".to_string(),
+        };
+        let error = parse_figure(
+            r#"{"verdict": "error", "summary": "no labeled context rows"}"#,
+            &request,
+        )
+        .unwrap_err();
+        assert!(error.contains("no labeled context rows"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn an_unbound_desk_project_names_its_seed_skip() {
+        // The seed is async, but the unbound refusal fires before any
+        // lane: no spawn stands between the call and the refusal.
+        let mut desk = sample();
+        desk.project = None;
+        let error = seed_corpus(
+            &crate::judge::LaneSource::Scripted(crate::mcp::ServerSpec {
+                program: "true".to_string(),
+                args: vec![],
+                env: Vec::new(),
+                passthrough: Vec::new(),
+                cwd: None,
+            }),
+            &desk,
+        )
+        .await
+        .unwrap_err();
+        assert!(error.contains("unbound"), "{error}");
+    }
+
+    #[test]
+    fn deleting_a_project_removes_its_digest() {
+        let home = temp_home("delete");
+        save(&home, &sample()).unwrap();
+        assert!(digest_path(&home, "landing", "landing-copy").is_file());
+        delete_project(&home, "landing-copy").unwrap();
+        assert!(!exists(&home, "landing-copy"));
+        assert!(!digest_path(&home, "landing", "landing-copy").exists());
+    }
 }
