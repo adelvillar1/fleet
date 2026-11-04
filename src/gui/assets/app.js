@@ -676,6 +676,8 @@
     personaOverlay: document.getElementById('persona-overlay'),
     personaCreate: document.getElementById('persona-create'),
     personaCancel: document.getElementById('persona-cancel'),
+    personaMatches: document.getElementById('persona-matches'),
+    personaTemporal: document.getElementById('persona-temporal'),
     panelDesign: document.getElementById('panel-design'),
     designRail: document.getElementById('design-rail'),
     designWorld: document.getElementById('design-world'),
@@ -9749,6 +9751,40 @@
     var suggested = gap && gap.name ? gap.name : '';
     el.personaName.value = suggested;
     el.personaDescription.value = gap && gap.reason ? gap.reason : '';
+    // The catalog first: a role that already covers the gap is brought up,
+    // not re-authored — a hire is storage, so reuse is free.
+    var entries = ((face.settings && face.settings.roles) || {}).entries || [];
+    var q = suggested ? String(suggested).toLowerCase() : '';
+    el.personaMatches.textContent = '';
+    entries.filter(function (one) {
+      if (!one || one.broken) return false;
+      return !q || one.name.indexOf(q) !== -1 ||
+        String(one.description || '').toLowerCase().indexOf(q) !== -1;
+    }).slice(0, 4).forEach(function (one) {
+      var row = node('div', 'persona-match');
+      row.appendChild(huddleMark(one.name, 'sm'));
+      row.appendChild(node('span', null,
+        one.name + ' \u00b7 ' + (one.description || '')));
+      var press = node('button', 'press', 'convene');
+      press.type = 'button';
+      press.addEventListener('click', function () {
+        press.disabled = true;
+        press.textContent = 'convening\u2026';
+        post('/api/session/join', { session: face.session, persona: one.name })
+          .then(function (reply) {
+            if (reply.status === 401) throw new Error('token');
+            press.textContent = 'convoked';
+            load();
+          })
+          .catch(function () {
+            press.disabled = false;
+            press.textContent = 'convene';
+            notice('the role was not added', 'the room could not be read');
+          });
+      });
+      row.appendChild(press);
+      el.personaMatches.appendChild(row);
+    });
     el.personaOverlay.value = '';
     el.personaTools.textContent = '';
     el.personaSkills.textContent = '';
@@ -9799,7 +9835,8 @@
       tools: picked(el.personaTools),
       skills: picked(el.personaSkills),
       shapes: [],
-      overlay: el.personaOverlay.value || ''
+      overlay: el.personaOverlay.value || '',
+      temporal: el.personaTemporal.value === 'temporal'
     };
     create.disabled = true;
     create.textContent = 'creating\u2026';
@@ -9808,7 +9845,11 @@
         if (reply.status !== 200 || !reply.body) {
           throw new Error((reply.body && reply.body.error) || 'the writer refused it');
         }
-        return post('/api/session/join', { session: face.session, persona: name });
+        return post('/api/session/join', {
+          session: face.session,
+          persona: name,
+          temporal: !!el.personaTemporal && el.personaTemporal.value === 'temporal'
+        });
       })
       .then(function (reply) {
         create.disabled = false;

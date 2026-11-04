@@ -5124,12 +5124,14 @@ async function theStrategyStepShowsItsPreview() {
   // plan's C5): a name the home cannot convene — a tool, a skill, or an
   // unnamed capability — offers to author a persona for it, and that persona
   // persists in the home for every later huddle.
+  // A capability gap is a hiring decision (the huddles plan's C5): a name
+  // the home cannot convene offers to author a persona for it, and that door
+  // searches the catalog FIRST — a role that already covers the gap is brought
+  // up with a convene press rather than re-authored.
   async function aGapOffersToHireAPersona() {
-    const page = boot({
-      // The authoring door offers the tool and skill catalogs, so the
-      // settings read lands before the room is opened.
+    const bootPage = (gapName) => boot({
       hash: '#/settings',
-      reply: { type: 'join', persona: 'a11y-reviewer' },
+      reply: { type: 'join', persona: 'scholar' },
       documents: {
         settings: {
           type: 'settings', read_at: 'now',
@@ -5147,58 +5149,90 @@ async function theStrategyStepShowsItsPreview() {
           servers: { servers: [], refused: [] },
           tools: { calls_per_turn: 0, definition_tokens: 0, disabled: [], last_sweep: '', window: 0 },
           vault: { names: [], exists: true, passphrase: false, plaintext: [] },
-          roles: { dir: '/tmp', entries: [{ name: 'scholar', description: 'grounds every claim',
-            tools: [], skills: [], shapes: [], overlay: 'voice' }] }
+          roles: { dir: '/tmp', entries: [
+            { name: 'scholar', description: 'grounds every claim',
+              tools: [], skills: [], shapes: [], overlay: 'voice' }
+          ] }
         },
         state: (asked) => ({
           ...emptyState(asked), session: asked,
           members: [{ name: 'scholar', voice: 'grounds every claim' }],
           events: [
             { type: 'message', role: 'owner', text: 'the launch brief' },
-            { type: 'recommend', name: 'a11y-scan', kind: 'skill',
+            { type: 'recommend', name: gapName, kind: 'skill',
               reason: 'the contrast pairs need an accessibility pass', from: 'scholar' }
           ]
         })
       }
     });
+    // A gap the catalog already covers: the door offers the convene, not a
+    // blank authoring form.
+    const covered = bootPage('scholar');
     await flush();
-    page.open();
+    covered.open();
     await flush();
-    page.hash('#/chat');
+    covered.hash('#/chat');
     await flush(40);
-    const cards = page.rows('.suggest');
-    check('C5 the gap is a suggestion card', cards.length === 1, String(cards.length));
-    check('C5 the gap says it is a skill, not a role',
-      String(cards[0].textContent).indexOf('skill') !== -1,
-      String(cards[0].textContent));
-    const hire = cards[0].find((one) => one.className === 'press primary')[0];
-    check('C5 a non-role gap offers to hire', !!hire &&
-      String(hire.textContent).indexOf('create a persona') !== -1,
+    let card = covered.rows('.suggest')[0];
+    let hire = card ? card.find((one) => one.className === 'press primary')[0] : null;
+    check('C5 a gap the catalog covers still opens the door',
+      !!hire && String(hire.textContent).indexOf('create a persona') !== -1,
       hire ? String(hire.textContent) : 'no press');
-    if (!hire) return;
-    hire.click();
+    if (hire) hire.click();
     await flush(20);
-    check('C5 the authoring door opens', !page.IDS['persona-door'].hidden, 'hidden');
-    check('C5 the gap pre-fills the name',
-      String(page.IDS['persona-name'].value).indexOf('a11y-scan') !== -1,
-      JSON.stringify(page.IDS['persona-name'].value));
-    const tools = page.IDS['persona-tools'].find((one) =>
-      String(one.className).split(/\s+/).includes('pick'));
-    check('C5 the tools catalog is offered', tools.length >= 2, String(tools.length));
-    page.IDS['persona-create'].click();
+    check('C5 the door opens', !covered.IDS['persona-door'].hidden, 'hidden');
+    const matches = covered.IDS['persona-matches'].find((one) =>
+      String(one.className || '').split(/\s+/).includes('persona-match'));
+    const press = matches.length
+      ? matches[0].find((one) => one.className === 'press')[0]
+      : null;
+    check('C5 the catalog offers the matching role, not a blank form',
+      matches.length === 1 &&
+        String(press && press.textContent).indexOf('convene') !== -1,
+      matches.length + ':' + (press ? String(press.textContent) : 'none'));
+    if (press) press.click();
     await flush(40);
-    const writes = page.calls.filter((c) => c.url === '/api/settings' &&
+    const joined = covered.calls.filter((c) =>
+      c.url.indexOf('/api/session/join') === 0 &&
+      String(c.body || '').indexOf('"persona":"scholar"') !== -1);
+    check('C5 bringing up a role convenes it', joined.length === 1,
+      JSON.stringify(covered.calls.map((c) => c.url)));
+
+    // A genuinely new capability: the door offers authoring, and the
+    // engagement is a choice.
+    const fresh = bootPage('a11y-scan');
+    await flush();
+    fresh.open();
+    await flush();
+    fresh.hash('#/chat');
+    await flush(40);
+    card = fresh.rows('.suggest')[0];
+    hire = card ? card.find((one) => one.className === 'press primary')[0] : null;
+    if (hire) hire.click();
+    await flush(20);
+    check('C5 the door opens for a new capability',
+      !fresh.IDS['persona-door'].hidden, 'hidden');
+    const none = fresh.IDS['persona-matches'].find((one) =>
+      String(one.className || '').split(/\s+/).includes('persona-match'));
+    check('C5 a gap with no catalog match offers authoring', none.length === 0,
+      String(none.length));
+    check('C5 the engagement is a choice',
+      !!fresh.IDS['persona-temporal'], 'no select');
+    fresh.IDS['persona-name'].value = 'a11y-reviewer';
+    fresh.IDS['persona-description'].value = 'audits contrast and focus';
+    fresh.IDS['persona-create'].click();
+    await flush(40);
+    const writes = fresh.calls.filter((c) => c.url === '/api/settings' &&
       String(c.body || '').indexOf('"op":"role"') !== -1);
     check('C5 the persona is written through the role writer',
       writes.length === 1 &&
-        String(writes[0].body).indexOf('"name":"a11y-scan"') !== -1,
+        String(writes[0].body).indexOf('"name":"a11y-reviewer"') !== -1,
       writes.length ? String(writes[0].body) : 'no write');
-    const joins = page.calls.filter((c) => c.url.indexOf('/api/session/join') === 0);
-    check('C5 the new persona is convened into the room',
-      joins.length === 1 &&
-        String(joins[0].body).indexOf('"persona":"a11y-scan"') !== -1,
-      joins.length ? String(joins[0].body) : 'no join');
+    const joins = fresh.calls.filter((c) => c.url.indexOf('/api/session/join') === 0);
+    check('C5 the new persona is convened into the room', joins.length === 1,
+      JSON.stringify(fresh.calls.map((c) => c.url)));
   }
+
 
   async function theBotsSurfaceMintsTheBotCard() {
     const page = boot({

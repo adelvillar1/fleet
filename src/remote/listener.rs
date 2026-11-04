@@ -907,7 +907,8 @@ async fn route_with(
                 Ok(pair) => pair,
                 Err(message) => return bad_request(&message),
             };
-            match bridge.join(&session, &persona) {
+            let temporal = crate::gui::server::temporal_of(&body);
+            match bridge.join(&session, &persona, temporal) {
                 Ok(document) => api(200, document),
                 Err(message) => api(409, json!({"error": message})),
             }

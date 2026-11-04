@@ -328,6 +328,12 @@ pub enum Record {
         persona: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         role: Option<String>,
+        /// A temporal hire: it joins for THIS huddle and is released when the
+        /// room ends. The role file stays — storage is free and a hire you
+        /// have already made can be brought up instead of authored again —
+        /// but it leaves the room with the rest of the engagement.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        temporal: bool,
         at: String,
     },
     /// One persona leaving this conversation. The set shrinks; the log
@@ -1459,6 +1465,7 @@ mod tests {
             .record(&Record::Join {
                 persona: "auditor".to_string(),
                 role: Some("checks what changed".to_string()),
+                temporal: false,
                 at: "2026-10-28T12:00:00Z".to_string(),
             })
             .unwrap();
@@ -1466,6 +1473,7 @@ mod tests {
             .record(&Record::Join {
                 persona: "auditor".to_string(),
                 role: None,
+                temporal: false,
                 at: "2026-10-28T12:01:00Z".to_string(),
             })
             .unwrap();
@@ -1488,6 +1496,7 @@ mod tests {
             .record(&Record::Join {
                 persona: "auditor".to_string(),
                 role: None,
+                temporal: false,
                 at: "2026-10-28T12:03:00Z".to_string(),
             })
             .unwrap();
@@ -1545,6 +1554,7 @@ mod tests {
             .record(&Record::Join {
                 persona: "scholar".to_string(),
                 role: Some("grounds every claim".to_string()),
+                temporal: false,
                 at: "2026-11-03T14:00:00Z".to_string(),
             })
             .unwrap();

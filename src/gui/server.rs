@@ -960,7 +960,8 @@ async fn serve_connection(
                 Ok(pair) => pair,
                 Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
             };
-            match bridge.join(&session, &persona) {
+            let temporal = temporal_of(&body);
+            match bridge.join(&session, &persona, temporal) {
                 Ok(document) => write_reply(&mut stream, api(200, document)).await,
                 Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
             }
@@ -2113,6 +2114,17 @@ fn usage_event_of(body: &str) -> Result<(String, String, String), String> {
 /// holds, so a malformed body is a 400 before any control is written.
 /// The `session` + `persona` pair the join and leave verbs post. A
 /// missing either is a named 400, not a guess.
+/// Whether the join is temporal — for this huddle only. Absent is standing.
+pub(crate) fn temporal_of(body: &str) -> bool {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(body) else {
+        return false;
+    };
+    value
+        .get("temporal")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
+}
+
 pub(crate) fn session_persona_of(body: &str) -> Result<(String, String), String> {
     let value: serde_json::Value =
         serde_json::from_str(body).map_err(|_| "the body is not JSON".to_string())?;

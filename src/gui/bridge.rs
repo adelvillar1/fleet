@@ -712,7 +712,7 @@ impl Bridge {
     /// description rides the record, so a replay can say what the
     /// joiner was. A persona that does not resolve is refused by name;
     /// a persona already in the set is refused as already-here.
-    pub fn join(&self, session: &str, persona: &str) -> Result<Value, String> {
+    pub fn join(&self, session: &str, persona: &str, temporal: bool) -> Result<Value, String> {
         let role = crate::roles::load(&self.home, persona)
             .map_err(|error| format!("the persona `{persona}` does not resolve: {error}"))?;
         let summary = session::summarize(&session::session_path(&self.home, session))
@@ -728,6 +728,7 @@ impl Bridge {
         log.record(&session::Record::Join {
             persona: role.name.clone(),
             role: Some(role.description.clone()),
+            temporal,
             at: crate::boards::now_stamp(),
         })
         .map_err(|error| format!("could not write the join: {error}"))?;
@@ -4233,6 +4234,10 @@ impl Bridge {
         }
         save_archived(&self.home, &archived_map);
         if archived {
+            // A temporal hire leaves with the engagement: the role file stays
+            // (the catalog keeps it, so the next room can bring it up instead
+            // of authoring it) but it is no longer in this one.
+            release_temporal(&self.home, session)?;
             let mut goals = load_goals(&self.home);
             if goals.remove(session).is_some() {
                 save_goals(&self.home, &goals);
@@ -5589,6 +5594,49 @@ fn session_children(home: &std::path::Path, session: &str, live: &LiveFace) -> V
         }));
     }
     out
+}
+
+/// Release the temporal hires still in a room when it ends. The role files
+/// stay — a hire you have already made can be brought up instead of authored
+/// again — but the persona leaves the room with the rest of the engagement.
+fn release_temporal(home: &std::path::Path, session: &str) -> Result<(), String> {
+    let path = session::session_path(home, session);
+    let Ok(records) = session::replay(&path) else {
+        return Ok(());
+    };
+    let mut in_room: std::collections::HashSet<String> = Default::default();
+    let mut temporal: std::collections::HashSet<String> = Default::default();
+    for record in &records {
+        match record {
+            session::Record::Join {
+                persona,
+                temporal: true,
+                ..
+            } => {
+                in_room.insert(persona.clone());
+                temporal.insert(persona.clone());
+            }
+            session::Record::Join { persona, .. } => {
+                in_room.insert(persona.clone());
+            }
+            session::Record::Leave { persona, .. } => {
+                in_room.remove(persona);
+            }
+            _ => {}
+        }
+    }
+    let mut log = session::Session::open(&path)
+        .map_err(|error| format!("could not open the conversation: {error}"))?;
+    for persona in temporal {
+        if in_room.contains(&persona) {
+            log.record(&session::Record::Leave {
+                persona,
+                at: crate::boards::now_stamp(),
+            })
+            .map_err(|error| format!("could not write the leave: {error}"))?;
+        }
+    }
+    Ok(())
 }
 
 /// One room's members as the head reads them — `(name, voice)` in join
@@ -14064,7 +14112,7 @@ mod tests {
             Some("close KI-339 and run the gate")
         );
         // A persona joins: a row in the log, and the set grows.
-        bridge.join(&id, "auditor").expect("the join");
+        bridge.join(&id, "auditor", false).expect("the join");
         let summary = crate::session::summarize(&session::session_path(&home, &id))
             .expect("the log summarizes");
         assert_eq!(
@@ -14074,9 +14122,9 @@ mod tests {
         // A second join of the same persona is refused as already-here;
         // an unknown persona is refused by name; the lead cannot leave
         // while others remain.
-        let again = bridge.join(&id, "auditor").unwrap_err();
+        let again = bridge.join(&id, "auditor", false).unwrap_err();
         assert!(again.contains("already"), "{again}");
-        let unknown = bridge.join(&id, "nonpersona").unwrap_err();
+        let unknown = bridge.join(&id, "nonpersona", false).unwrap_err();
         assert!(unknown.contains("does not resolve"), "{unknown}");
         let lead = bridge.leave(&id, "tower").unwrap_err();
         assert!(lead.contains("leads this conversation"), "{lead}");
@@ -14085,6 +14133,42 @@ mod tests {
         let summary = crate::session::summarize(&session::session_path(&home, &id))
             .expect("the log summarizes");
         assert_eq!(summary.personas, vec!["tower".to_string()]);
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// A temporal hire leaves with the engagement: the role file stays (the
+    /// catalog keeps it, so the next room can bring it up instead of authoring
+    /// it) but the persona is out of the room when the room ends.
+    #[tokio::test]
+    async fn a_temporal_hire_leaves_when_the_room_ends() {
+        let (bridge, _sources, _door) = bridge().await;
+        let home = bridge.home.clone();
+        std::fs::create_dir_all(home.join("roles")).unwrap();
+        std::fs::write(
+            home.join("roles/designer.md"),
+            "---\nname: designer\ndescription: makes pages\n---\nv\n",
+        )
+        .unwrap();
+        let session = session::Session::create(&home, "m").unwrap();
+        let id = session.id().to_string();
+        drop(session);
+        bridge
+            .join(&id, "designer", true)
+            .expect("the temporal hire joins");
+        let summary =
+            session::summarize(&session::session_path(&home, &id)).expect("the log summarizes");
+        assert_eq!(summary.personas, vec!["designer".to_string()]);
+        bridge.session_archive(&id, true).expect("the room ends");
+        let records = session::replay(&session::session_path(&home, &id)).expect("the log replays");
+        assert!(records.iter().any(|record| matches!(
+            record,
+            session::Record::Leave { persona, .. } if persona == "designer"
+        )));
+        // The role file stays in the catalog.
+        assert!(home.join("roles/designer.md").is_file());
+        let summary =
+            session::summarize(&session::session_path(&home, &id)).expect("the log summarizes");
+        assert!(summary.personas.is_empty(), "{:?}", summary.personas);
         std::fs::remove_dir_all(&home).ok();
     }
 

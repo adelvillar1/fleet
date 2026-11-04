@@ -828,8 +828,14 @@
     <div class="form">
       <h2>New persona</h2>
       <p class="sub">A consultant for this gap. It joins the room and stays in the home's roles.</p>
+      <!-- The catalog first: a role that already covers the gap is convened,
+           not re-authored — a hire is storage, so bringing one up is free. -->
       <div class="field">
-        <label for="persona-name">name</label>
+        <label>the catalog</label>
+        <div class="persona-matches" id="persona-matches"></div>
+      </div>
+      <div class="field">
+        <label for="persona-name">or author one</label>
         <input type="text" id="persona-name" placeholder="quantum-reviewer">
       </div>
       <div class="field">
@@ -847,6 +853,13 @@
       <div class="field">
         <label for="persona-overlay">voice</label>
         <textarea id="persona-overlay" class="soul-box" rows="3" placeholder="how this persona works and speaks"></textarea>
+      </div>
+      <div class="field">
+        <label for="persona-temporal">engagement</label>
+        <select id="persona-temporal">
+          <option value="standing">standing — stays in the catalog</option>
+          <option value="temporal">temporal — for this huddle</option>
+        </select>
       </div>
       <div class="acts">
         <button class="press primary" id="persona-create" type="button">create &amp; convene</button>

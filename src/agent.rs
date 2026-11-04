@@ -5124,6 +5124,7 @@ impl<'a> Agent<'a> {
         self.record(&Record::Join {
             persona: role.name.clone(),
             role: Some(role.description.clone()),
+            temporal: false,
             at: crate::boards::now_stamp(),
         })?;
         self.apply_speaker(&role.name)?;
@@ -9140,6 +9141,7 @@ mod tests {
             .record(&crate::session::Record::Join {
                 persona: "auditor".to_string(),
                 role: None,
+                temporal: false,
                 at: "2026-11-03T14:00:00Z".to_string(),
             })
             .unwrap();
@@ -9184,6 +9186,7 @@ mod tests {
             .record(&crate::session::Record::Join {
                 persona: "auditor".to_string(),
                 role: None,
+                temporal: false,
                 at: "2026-11-03T14:00:00Z".to_string(),
             })
             .unwrap();
@@ -9244,6 +9247,7 @@ mod tests {
             .record(&crate::session::Record::Join {
                 persona: "auditor".to_string(),
                 role: None,
+                temporal: false,
                 at: "2026-11-03T14:00:00Z".to_string(),
             })
             .unwrap();
@@ -9902,6 +9906,7 @@ mod tests {
             .record(&Record::Join {
                 persona: "designer".to_string(),
                 role: None,
+                temporal: false,
                 at: "2026-11-03T14:00:00Z".to_string(),
             })
             .unwrap();
