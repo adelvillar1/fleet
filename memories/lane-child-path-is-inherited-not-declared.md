@@ -8,7 +8,7 @@ tier: durable
 shape: [build, deps]
 phrases: [BASE_ENV copies the parent PATH, src/mcp.rs:119 BASE_ENV, launch spec declares no PATH, env -i PATH=/usr/bin:/bin:/usr/local/bin python3 -V 3.9.6, /usr/local/bin/python3 3.13.6, zip(strict=) Python 3.10]
 missing: []
-recall-count: 0
+recall-count: 1
 superseded-by:
 valid-until:
 ---
