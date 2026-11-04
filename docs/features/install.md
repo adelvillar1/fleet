@@ -257,10 +257,17 @@ served face lags the pushed one (KI-408). The reload is two commands and
 a restart of the agent:
 
 ```sh
-cargo build --release && cp target/release/fleet ~/.fleet/bin/fleet
+cargo build --release
+cp target/release/fleet ~/.fleet/bin/fleet.new && mv -f ~/.fleet/bin/fleet.new ~/.fleet/bin/fleet
 launchctl bootout gui/$(id -u)/com.fleet.gui
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.fleet.gui.plist
 ```
+
+The `mv` is not cosmetic: the running daemon has the installed file mapped,
+and an in-place `cp` over it leaves a binary whose every later exec is
+killed with SIGKILL (exit 137) while the running process keeps serving —
+the installed copy is replaced through a new inode, never rewritten in
+place (KI-418).
 
 Killing the agent's PID works too — `KeepAlive` re-execs the installed
 binary. Verify by diffing the served `/app.js` against
