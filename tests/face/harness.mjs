@@ -4486,80 +4486,261 @@ async function theStrategyStepShowsItsPreview() {
       badge ? 'hidden=' + badge.hidden + ' text=' + badge.textContent : 'no badge');
   }
 
-  // The huddle rail (the huddles plan's C7): the owner's rooms in the
-  // three states, each row carrying its members' marks, its goal and its
-  // deliverables. The grouping and the counts are the server's own
-  // derivation; the page renders what it is handed and decides nothing.
+
+  // The shelf (the huddles-ux plan's C6): a room's deliverables sit in the
+  // head, one card per file, and a press reads it in the pane's preview.
+  async function theShelfOpensThePanePreview() {
+    const page = boot({
+      hash: '#/huddles/a1',
+      documents: {
+        huddles: {
+          type: 'huddles',
+          active: [{
+            id: 'a1', title: 'the-q3-board', goal: 'thrift’s landing page',
+            personas: ['designer'], avatars: {}, state: 'working',
+            preview: 'landed the page', from: 'designer', last_write: 1793807361,
+            current: true, awaiting_you: false, deliverables: 1,
+            knowledge: { recalled: 0, wrote: 0 }, parent: null, children: []
+          }],
+          inactive: [], ended: [], counts: { active: 1, inactive: 0, ended: 0 }
+        },
+        state: (asked) => ({
+          ...emptyState(asked), session: asked, goal: 'thrift’s landing page',
+          members: [{ name: 'designer', voice: 'makes pages' }],
+          events: [
+            { type: 'message', role: 'owner', text: 'the brief' },
+            { type: 'message', role: 'assistant', text: 'Landing the page.', persona: 'designer' },
+            { type: 'artifact', path: '/tmp/landing.html', size: 12697, note: 'the page itself' }
+          ]
+        })
+      }
+    });
+    await flush();
+    page.open();
+    await flush(60);
+    const shelf = page.IDS['room-shelf'];
+    check('C6 the room head carries a shelf', !!shelf && !shelf.hidden,
+      'hidden=' + (shelf || {}).hidden);
+    const cards = page.rows('.artifact');
+    check('C6 each deliverable is one card', cards.length === 1,
+      'cards=' + cards.length);
+    if (!cards.length) return;
+    check('C6 the card names the file, its size and its author',
+      String(cards[0].textContent).indexOf('landing.html') !== -1 &&
+        String(cards[0].textContent).indexOf('designer') !== -1,
+      String(cards[0].textContent));
+    cards[0].click();
+    await flush(40);
+    const opened = page.calls.filter((c) =>
+      c.url.indexOf('/api/file?path=') === 0 &&
+      decodeURIComponent(c.url.split('path=')[1] || '') === '/tmp/landing.html');
+    check('C6 the shelf press reads that file in the pane',
+      opened.length === 1, JSON.stringify(page.calls.map((c) => c.url)));
+  }
+
+  // The composer's address (the huddles-ux plan's C8): a mention routes
+  // the turn, so the draft says who hears it — and the send names them.
+  async function theComposerNamesWhoHearsIt() {
+    const page = boot({
+      hash: '#/huddles/a1',
+      documents: {
+        huddles: {
+          type: 'huddles',
+          active: [{
+            id: 'a1', title: 'the-q3-board', goal: 'thrift’s landing page',
+            personas: ['designer'], avatars: {}, state: 'working',
+            preview: 'x', from: 'designer', last_write: 1793807361,
+            current: true, awaiting_you: false, deliverables: 0,
+            knowledge: { recalled: 0, wrote: 0 }, parent: null, children: []
+          }],
+          inactive: [], ended: [], counts: { active: 1, inactive: 0, ended: 0 }
+        },
+        state: (asked) => ({
+          ...emptyState(asked), session: asked, goal: 'thrift’s landing page',
+          members: [{ name: 'designer', voice: 'makes pages' }]
+        })
+      }
+    });
+    await flush();
+    page.open();
+    await flush(60);
+    check('C8 the composer says who hears an unaddressed draft',
+      !page.IDS['composer-to'].hidden &&
+        String(page.IDS['composer-to'].textContent).indexOf('the room') !== -1,
+      String(page.IDS['composer-to'].textContent));
+    const box = page.IDS['task'];
+    box.value = '@designer tighten the hero';
+    box.fire('input', {});
+    await flush(20);
+    check('C8 an address names the member in the chip',
+      String(page.IDS['composer-to'].textContent).indexOf('designer') !== -1,
+      String(page.IDS['composer-to'].textContent));
+    check('C8 the send names who it is for',
+      String(page.IDS['send-label'].textContent) === 'send to designer',
+      String(page.IDS['send-label'].textContent));
+    box.value = '@you is this right?';
+    box.fire('input', {});
+    await flush(20);
+    check('C8 addressing the owner reads as the ask that starts no run',
+      String(page.IDS['composer-to'].textContent).indexOf('you') !== -1,
+      String(page.IDS['composer-to'].textContent) + ' / ' +
+        page.IDS['composer-to'].title);
+  }
+
+  // The huddles surface's own states (the huddles-ux plan's C9): the
+  // invitation when the home keeps no rooms, the reason when the read was
+  // refused — and never a room that is not there.
+  async function theHuddleSurfaceNamesItsStates() {
+    const empty = boot({
+      documents: {
+        huddles: { type: 'huddles', active: [], inactive: [], ended: [],
+          counts: { active: 0, inactive: 0, ended: 0 } },
+        settings: {
+          roles: {
+            dir: '/tmp',
+            entries: [
+              { name: 'designer', description: 'makes pages', tools: [], skills: [],
+                shapes: [], overlay: 'voice' },
+              { name: 'scholar', description: 'grounds every claim', tools: [], skills: [],
+                shapes: [], overlay: 'voice' }
+            ]
+          }
+        }
+      }
+    });
+    await flush();
+    empty.open();
+    await flush();
+    empty.hash('#/huddles');
+    for (let i = 0; i < 8; i++) await flush();
+    check('C9 no rooms yet reads as the invitation',
+      String(empty.IDS['room-empty'].textContent).indexOf('A room for the work') !== -1,
+      String(empty.IDS['room-empty'].textContent).slice(0, 80));
+    const picks = empty.rows('.picks .pick');
+    check('C9 the invitation offers the home’s bots',
+      picks.length >= 1, 'picks=' + picks.length);
+    check('C9 the welcome never stands beside it',
+      empty.IDS['empty'].hidden === true, 'welcome');
+
+    const refused = boot({
+      documents: { huddles: { type: 'huddles', refused: ['the archive could not be read: locked'] } }
+    });
+    await flush();
+    refused.open();
+    await flush();
+    refused.hash('#/huddles');
+    for (let i = 0; i < 8; i++) await flush();
+    check('C9 a refused read names its reason',
+      String(refused.IDS['room-empty'].textContent).indexOf('could not be read') !== -1,
+      String(refused.IDS['room-empty'].textContent).slice(0, 90));
+  }
+
+
+  // The bots rail's personas (the icons plan's C6): a persona is a mark —
+  // the same initial disc a huddle draws — and the channels row keeps the
+  // robot, so the two kinds never look alike.
+  async function theBotsRailWearsItsInitials() {
+    const page = boot({
+      documents: {
+        channels: {
+          type: 'channels',
+          conversations: {
+            type: 'conversations', bound: 20, needs: 0, count: 0,
+            personas: [{ name: 'designer', sessions: [], needs: 0, turned_back: 0 }]
+          },
+          service: { channels: [] }, channels: [], activity: [], devices: []
+        }
+      }
+    });
+    await flush();
+    page.open();
+    await flush();
+    page.hash('#/bots');
+    for (let i = 0; i < 8; i++) await flush();
+    const rows = page.rows('#bots-rail .section-rail-row');
+    const discs = page.rows('#bots-rail .section-rail-mark .pmark');
+    check('ICONS a persona row wears its initial disc',
+      discs.length === 1 && String(discs[0].textContent) === 'd',
+      'discs=' + discs.length + ' text=' + (discs[0] ? String(discs[0].textContent) : '-'));
+    check('ICONS the channels row keeps the robot, not a disc',
+      rows.length === 2 && discs.length === 1, 'rows=' + rows.length);
+  }
+
+  // The rooms column (the huddles-ux plan's C4): the three states in the
+  // column beside the room, each row carrying its members, its name, who
+  // spoke last and what they said, the time, and what needs the owner.
   async function theHuddleRailCarriesTheThreeStates() {
+    const room = (id, title, personas, state, extra) => Object.assign({
+      id, title, goal: 'a goal', personas, avatars: {}, state,
+      preview: '', from: '', last_write: 1793807000, current: false,
+      awaiting_you: false, deliverables: 0,
+      knowledge: { recalled: 0, wrote: 0 }, parent: null, children: []
+    }, extra || {});
     const page = boot({
       documents: {
         huddles: {
           type: 'huddles',
           active: [
-            { id: 'a1', title: 'the-q3-board',
-              goal: 'thrift’s landing page, ready for the launch review',
-              personas: ['designer', 'scholar'], state: 'working',
-              last_write: '2026-11-03T14:02:00Z', current: true, deliverables: 2 },
-            { id: 'a2', title: 'deck-for-nace', goal: 'the Nace brief, six slides',
-              personas: ['presenter'], state: 'needs-approval',
-              last_write: '2026-11-03T14:01:00Z', current: false, deliverables: 1 }
+            room('a1', 'the-q3-board', ['designer', 'scholar'], 'working', {
+              preview: 'the hero copy is tightened — the promise leads',
+              from: 'designer', deliverables: 2,
+              knowledge: { recalled: 0, wrote: 3 }
+            }),
+            room('a2', 'deck-for-nace', ['presenter'], 'needs-approval', {
+              preview: 'six slides are up', from: 'presenter', awaiting_you: true,
+              deliverables: 1
+            })
           ],
-          inactive: [
-            { id: 'i1', title: 'pricing-rewrite', goal: 'the pricing page’s rewrite',
-              personas: ['designer'], state: 'completed',
-              last_write: '2026-11-01T09:00:00Z', current: false, deliverables: 0 }
-          ],
-          ended: [
-            { id: 'e1', title: 'brand-audit', goal: 'the brand audit',
-              personas: ['auditor'], state: 'archived',
-              last_write: '2026-10-28T09:00:00Z', current: false, deliverables: 4 }
-          ],
+          inactive: [room('i1', 'pricing-rewrite', ['auditor'], 'completed', {
+            preview: 'the ledger is reconciled', from: 'auditor',
+            knowledge: { recalled: 0, wrote: 2 }
+          })],
+          ended: [room('e1', 'brand-audit', ['auditor'], 'archived', {
+            deliverables: 4
+          })],
           counts: { active: 2, inactive: 1, ended: 1 }
         }
       }
     });
+    await flush();
     page.open();
     await flush();
     page.hash('#/huddles');
     for (let i = 0; i < 8; i++) await flush();
-    check('HUDDLES the huddles panel is the one showing',
-      !!page.IDS['panel-huddles'] && !page.IDS['panel-huddles'].hidden,
-      'panel-huddles hidden=' + (page.IDS['panel-huddles'] || {}).hidden);
-    const board = page.IDS['huddles-board'];
-    const sections = board.find((one) =>
-      String(one.className || '').split(/\s+/).includes('hsection'));
-    check('HUDDLES the rooms render as three state sections in order',
-      sections.length === 3 &&
-        String(sections[0].textContent).includes('Active') &&
-        String(sections[1].textContent).includes('Inactive') &&
-        String(sections[2].textContent).includes('Ended'),
-      'sections=' + sections.length);
-    const rows = board.find((one) =>
-      String(one.className || '').split(/\s+/).includes('hrow'));
-    check('HUDDLES each room is one row carrying its state word',
-      rows.length === 4 &&
-        String(rows[0].textContent).includes('active') &&
-        String(rows[1].textContent).includes('active') &&
-        String(rows[2].textContent).includes('inactive') &&
-        String(rows[3].textContent).includes('ended'),
-      'rows=' + rows.length);
-    const botMarks = (one, name) => one.find((kid) =>
-      String(kid.className || '').split(/\s+/).includes('pmark') &&
-      kid.getAttribute && kid.getAttribute('data-p') === name);
-    check('HUDDLES every row carries the owner’s own mark',
-      rows.every((one) => one.find((kid) =>
-        String(kid.className || '').split(/\s+/).includes('pmark-you')).length === 1),
-      'owner mark on each row');
-    check('HUDDLES the first room names its bots and its deliverables',
-      botMarks(rows[0], 'designer').length === 1 &&
-        botMarks(rows[0], 'scholar').length === 1 &&
-        String(rows[0].textContent).includes('2 outcomes') &&
-        String(rows[0].textContent).includes('thrift’s landing page'),
-      'marks=' + botMarks(rows[0], 'designer').length +
-        '/' + botMarks(rows[0], 'scholar').length);
-    check('HUDDLES the open room is marked',
-      String(rows[0].className).split(/\s+/).includes('open'),
-      rows[0].className);
+    check('HUDDLES the rooms column is the one showing',
+      page.body.dataset.work === 'open', String(page.body.dataset.work));
+    const groups = page.rows('.rooms-group span').map((one) => String(one.textContent).trim());
+    check('HUDDLES the column carries active, parked and ended in order',
+      groups[0] === 'active' && groups[2] === 'parked' && groups[4] === 'ended',
+      groups.join(','));
+    const rows = page.rows('.room-row');
+    check('HUDDLES each room is one row', rows.length === 3, 'rows=' + rows.length);
+    if (rows.length !== 3) return;
+    const first = rows[0];
+    const text = String(first.textContent);
+    check('HUDDLES the row names its members and its room',
+      first.find((one) => String(one.className || '').split(/\s+/).includes('pmark')).length === 3 &&
+        text.indexOf('the-q3-board') !== -1,
+      text.slice(0, 90));
+    check('HUDDLES the row carries its last line and its author',
+      text.indexOf('designer') !== -1 &&
+        text.indexOf('the hero copy is tightened') !== -1,
+      text.slice(0, 120));
+    check('HUDDLES the row says what it is doing and what it produced',
+      text.indexOf('working') !== -1 && text.indexOf('2 files') !== -1 &&
+        text.indexOf('3 facts') !== -1,
+      text.slice(0, 140));
+    check('HUDDLES a room that needs the owner says so',
+      rows[1].dataset.state === 'asks' &&
+        String(rows[1].textContent).indexOf('needs you') !== -1,
+      rows[1].dataset.state + ' ' + String(rows[1].textContent).slice(0, 60));
+    // The ended rooms are put away until the owner asks for them.
+    const fold = page.rows('.rooms-group-fold');
+    check('HUDDLES the ended rooms start folded', fold.length === 1, 'folds=' + fold.length);
+    if (fold.length) fold[0].click();
+    await flush(30);
+    check('HUDDLES a press shows the ended rooms',
+      page.rows('.room-row').length === 4, 'rows=' + page.rows('.room-row').length);
   }
 
   // The deliverable post (the huddles plan's C6): a file handed over renders
@@ -4601,13 +4782,24 @@ async function theStrategyStepShowsItsPreview() {
       opened.length === 1, JSON.stringify(page.calls.map((c) => c.url)));
   }
 
-  // The room's head (the huddles plan's C8): where the session carries
-  // members, the conversation gains a strip with the goal as chrome, the
-  // members' marks and each role's own voice; an ordinary conversation
-  // shows none of it.
+  // The room's head (the huddles-ux plan's C5): one header — the room's
+  // name and state, the goal, the members with the voice each brings —
+  // and the conversation's own head stands down inside it.
   async function theRoomHeadNamesItsMembers() {
     const page = boot({
+      hash: '#/huddles/a1',
       documents: {
+        huddles: {
+          type: 'huddles',
+          active: [{
+            id: 'a1', title: 'the-q3-board', goal: 'thrift’s landing page',
+            personas: ['designer', 'scholar'], avatars: {}, state: 'working',
+            preview: 'x', from: 'designer', last_write: 1793807361, current: true,
+            awaiting_you: false, deliverables: 0,
+            knowledge: { recalled: 0, wrote: 0 }, parent: null, children: []
+          }],
+          inactive: [], ended: [], counts: { active: 1, inactive: 0, ended: 0 }
+        },
         state: (asked) => ({
           ...emptyState(asked), session: asked,
           goal: 'thrift’s landing page',
@@ -4620,37 +4812,38 @@ async function theStrategyStepShowsItsPreview() {
     });
     await flush();
     page.open();
-    await flush();
-    const head = page.IDS['huddle-head'];
+    await flush(40);
+    const head = page.IDS['room-head'];
     check('C8 the room head renders where there are members',
       !!head && !head.hidden, 'hidden=' + (head || {}).hidden);
-    const stack = page.IDS['hh-stack'];
-    const marks = stack.find((one) =>
-      String(one.className || '').split(/\s+/).includes('pmark'));
-    check('C8 the owner and both bots carry marks',
-      marks.length === 3 &&
-        marks.some((one) => one.getAttribute && one.getAttribute('data-p') === 'designer') &&
-        marks.some((one) => one.getAttribute && one.getAttribute('data-p') === 'scholar'),
-      'marks=' + marks.length);
+    if (!head || head.hidden) return;
+    check('C8 the room names itself and its state',
+      String(page.IDS['room-name'].textContent).indexOf('the-q3-board') !== -1 &&
+        String(page.IDS['room-state'].textContent).indexOf('working') !== -1,
+      String(page.IDS['room-name'].textContent) + ' / ' +
+        String(page.IDS['room-state'].textContent));
+    check('C8 the goal is a quiet line',
+      String(page.IDS['room-goal'].textContent).indexOf('thrift’s landing page') !== -1,
+      String(page.IDS['room-goal'].textContent));
+    const members = page.IDS['room-members'].find((one) =>
+      String(one.className || '').split(/\s+/).includes('member'));
+    check('C8 the owner and both bots are named',
+      members.length === 3 &&
+        String(page.IDS['room-members'].textContent).indexOf('designer') !== -1 &&
+        String(page.IDS['room-members'].textContent).indexOf('scholar') !== -1,
+      'members=' + members.length);
     check('C8 each role’s own voice is named',
-      String(page.IDS['hh-voices'].textContent).includes('designer — makes pages') &&
-        String(page.IDS['hh-voices'].textContent).includes('scholar — grounds every claim'),
-      String(page.IDS['hh-voices'].textContent));
-    check('C8 the goal is chrome on the strip',
-      String(page.IDS['hh-goal-text'].textContent).includes('thrift’s landing page'),
-      String(page.IDS['hh-goal-text'].textContent));
-
-    const plain = boot({
-      documents: {
-        state: (asked) => ({ ...emptyState(asked), session: asked, members: [] })
-      }
-    });
+      String(page.IDS['room-members'].textContent).indexOf('makes pages') !== -1 &&
+        String(page.IDS['room-members'].textContent).indexOf('grounds every claim') !== -1,
+      String(page.IDS['room-members'].textContent));
+    check('C8 the conversation’s head stands down in a room',
+      page.IDS['conv-head'].hidden === true, 'conv head');
+    const plain = boot({ documents: {} });
     await flush();
     plain.open();
     await flush();
-    const plainHead = plain.IDS['huddle-head'];
-    check('C8 an ordinary conversation shows no room head',
-      !!plainHead && plainHead.hidden, 'hidden=' + (plainHead || {}).hidden);
+    check('C8 an ordinary conversation has no room head',
+      plain.IDS['room-head'].hidden === true, 'room head');
   }
 
   // The room's @ picker (the huddles plan's C8): typing an address offers
@@ -4742,18 +4935,21 @@ async function theStrategyStepShowsItsPreview() {
 
   // An owner-supplied avatar (the huddles plan's C11): where the role
   // keeps an image, the mark carries it instead of the derived initial —
-  // in the rail row and in the room head alike, and never beside a
-  // message.
+  // in the rooms row and in the room head alike.
   async function anOwnerSuppliedAvatarReplacesTheInitial() {
     const url = '/api/avatar?name=designer';
     const page = boot({
+      hash: '#/huddles/a1',
       documents: {
         huddles: {
           type: 'huddles',
           active: [{
             id: 'a1', title: 'the-q3-board', goal: 'thrift’s landing page',
             personas: ['designer'], avatars: { designer: url },
-            state: 'working', last_write: 'x', current: false, deliverables: 0
+            state: 'working', preview: 'x', from: 'designer',
+            last_write: 1793807361, current: true, awaiting_you: false,
+            deliverables: 0, knowledge: { recalled: 0, wrote: 0 },
+            parent: null, children: []
           }],
           inactive: [], ended: [], counts: { active: 1, inactive: 0, ended: 0 }
         },
@@ -4761,10 +4957,10 @@ async function theStrategyStepShowsItsPreview() {
           roles: {
             dir: '/tmp',
             entries: [
-              { name: 'designer', description: 'makes pages', tools: [], skills: [], shapes: [],
-                overlay: 'voice', avatar: url },
-              { name: 'scholar', description: 'grounds every claim', tools: [], skills: [], shapes: [],
-                overlay: 'voice' }
+              { name: 'designer', description: 'makes pages', tools: [], skills: [],
+                shapes: [], overlay: 'voice', avatar: url },
+              { name: 'scholar', description: 'grounds every claim', tools: [], skills: [],
+                shapes: [], overlay: 'voice' }
             ]
           }
         },
@@ -4776,51 +4972,21 @@ async function theStrategyStepShowsItsPreview() {
     });
     await flush();
     page.open();
-    await flush();
-    page.hash('#/huddles');
-    for (let i = 0; i < 8; i++) await flush();
-    const board = page.IDS['huddles-board'];
-    const rowMark = board.find((one) =>
-      String(one.className || '').split(/\s+/).includes('pmark') &&
-      one.getAttribute && one.getAttribute('data-p') === 'designer')[0];
+    await flush(40);
+    const rowMark = page.rows('.room-row .pmark').find((one) =>
+      one.getAttribute && one.getAttribute('data-p') === 'designer');
     const img = rowMark ? rowMark.find((one) => one.name === 'img') : [];
-    check('C11 the rail row’s mark carries the owner’s image',
-      img.length === 1 && img[0].src === url, JSON.stringify(img.map((i) => i.src)));
+    check('C11 the rooms row’s mark carries the owner’s image',
+      !!rowMark && img.length === 1 && img[0].src === url,
+      JSON.stringify(img.map((one) => one.src)));
     check('C11 the image replaces the derived initial',
-      String(rowMark.textContent) === '', String(rowMark.textContent));
-
-    // The room head reads the same document's members.
-    page.hash('#/chat/a1');
-    for (let i = 0; i < 6; i++) await flush();
-    const headMark = page.IDS['hh-stack'].find((one) =>
-      String(one.className || '').split(/\s+/).includes('pmark') &&
+      !!rowMark && String(rowMark.textContent) === '', rowMark ? String(rowMark.textContent) : 'no mark');
+    const headMark = page.IDS['room-members'].find((one) =>
       one.getAttribute && one.getAttribute('data-p') === 'designer')[0];
     const headImg = headMark ? headMark.find((one) => one.name === 'img') : [];
     check('C11 the room head’s mark carries the same image',
       headImg.length === 1 && headImg[0].src === url,
-      JSON.stringify(headImg.map((i) => i.src)));
-
-    // And the new-room picker offers the bot with its face, while the
-    // bot without an image keeps its initial.
-    const trigger = board.find((one) =>
-      String(one.className || '').split(/\s+/).includes('press') &&
-      String(one.textContent).indexOf('new huddle') !== -1)[0];
-    if (trigger) trigger.click();
-    await flush();
-    const chips = page.IDS['huddle-convenor'].find((one) =>
-      String(one.className || '').split(/\s+/).includes('pick'));
-    const withFace = chips.filter((one) =>
-      one.getAttribute && one.getAttribute('data-name') === 'designer')[0];
-    const without = chips.filter((one) =>
-      one.getAttribute && one.getAttribute('data-name') === 'scholar')[0];
-    const faceImg = withFace ? withFace.find((one) => one.name === 'img') : [];
-    check('C11 the picker offers the bot with its face',
-      faceImg.length === 1 && faceImg[0].src === url,
-      JSON.stringify(faceImg.map((i) => i.src)));
-    check('C11 a bot without an image keeps its initial',
-      without && String(without.textContent).indexOf('s') !== -1 &&
-        (!without.find((one) => one.name === 'img').length),
-      without ? String(without.textContent) : 'none');
+      JSON.stringify(headImg.map((one) => one.src)));
   }
 
   // A member's capability-gap proposal (the huddles plan's C5/C8): one
@@ -4865,9 +5031,9 @@ async function theStrategyStepShowsItsPreview() {
       joins.length === 1, JSON.stringify(page.calls.map((c) => c.method + ' ' + c.url)));
   }
 
-  // The new-room door (the huddles plan's C2): the goal and the home's
-  // roles, a press that creates exactly those bots in one session, and a
-  // landing on the room it made.
+  // The new-room door (the huddles-ux plan's C9): the column's New opens
+  // it, the home's roles are offered, and the press creates exactly those
+  // bots in one session and lands on the room it made.
   async function theNewRoomDoorCreatesAndOpens() {
     const page = boot({
       reply: { type: 'huddle', id: 'new-1', created: true },
@@ -4888,10 +5054,9 @@ async function theStrategyStepShowsItsPreview() {
     await flush();
     page.hash('#/huddles');
     for (let i = 0; i < 8; i++) await flush();
-    const trigger = page.IDS['huddles-board'].find((one) =>
-      String(one.className || '').split(/\s+/).includes('press') &&
-      String(one.textContent).indexOf('new huddle') !== -1)[0];
-    check('C2 the rail carries a new-huddle press', !!trigger, 'no press');
+    const trigger = page.IDS['work-head'].find((one) =>
+      String(one.className || '').split(/\s+/).includes('work-new'))[0];
+    check('C2 the column carries a new-room press', !!trigger, 'no press');
     if (!trigger) return;
     trigger.click();
     await flush();
@@ -4906,7 +5071,6 @@ async function theStrategyStepShowsItsPreview() {
     page.IDS['huddle-goal'].value = 'thrift’s landing page';
     page.IDS['huddle-create'].click();
     await flush(40);
-    // Only the creation POST counts; the rail's own GET rides the same path.
     const made = page.calls.filter((c) =>
       c.method === 'POST' && c.url.indexOf('/api/huddles') === 0);
     const body = made.length ? String(made[0].body) : '';
@@ -4916,8 +5080,8 @@ async function theStrategyStepShowsItsPreview() {
         body.indexOf('"personas":["designer","scholar"]') !== -1,
       body || 'no call');
 
-    check('C2 the new room opens',
-      page.window.location.hash.indexOf('#/sessions/new-1') === 0,
+    check('C2 the new room opens at its own address',
+      page.window.location.hash.indexOf('#/huddles/new-1') === 0,
       page.window.location.hash);
   }
 
@@ -4986,8 +5150,8 @@ async function theStrategyStepShowsItsPreview() {
   }
 
   // A bot's open question to the owner (the huddles plan's C3): the row
-  // warns instead of reading as merely parked — the owner's glance finds
-  // what is waiting on them.
+  // says it needs the owner before it says anything else, and its bar
+  // carries the warn tone — the owner's glance finds what is waiting.
   async function anUnansweredAskWarnsTheRow() {
     const page = boot({
       documents: {
@@ -4995,8 +5159,11 @@ async function theStrategyStepShowsItsPreview() {
           type: 'huddles',
           active: [{
             id: 'a1', title: 'the-q3-board', goal: 'thrift’s landing page',
-            personas: ['auditor'], state: 'completed', awaiting_you: true,
-            last_write: 'x', current: false, deliverables: 0
+            personas: ['auditor'], avatars: {}, state: 'completed',
+            preview: 'the audit is ready when you are', from: 'auditor',
+            awaiting_you: true, last_write: 1793807000, current: false,
+            deliverables: 0, knowledge: { recalled: 0, wrote: 0 },
+            parent: null, children: []
           }],
           inactive: [], ended: [], counts: { active: 1, inactive: 0, ended: 0 }
         }
@@ -5007,27 +5174,24 @@ async function theStrategyStepShowsItsPreview() {
     await flush();
     page.hash('#/huddles');
     for (let i = 0; i < 8; i++) await flush();
-    const rows = page.IDS['huddles-board'].find((one) =>
-      String(one.className || '').split(/\s+/).includes('hrow'));
+    const rows = page.rows('.room-row');
     check('C3 the waiting room is still one row', rows.length === 1,
       String(rows.length));
-    const dot = rows[0].find((one) =>
-      String(one.className || '').split(/\s+/).includes('dot'));
+    if (!rows.length) return;
     check('C3 it warns rather than reading as parked',
-      dot.length === 1 &&
-        String(dot[0].className).split(/\s+/).includes('warn'),
-      dot.length ? String(dot[0].className) : 'no dot');
+      rows[0].dataset.state === 'asks', rows[0].dataset.state);
     check('C3 it says who is asking and that they wait',
-      String(rows[0].textContent).indexOf('asks you') !== -1,
-      String(rows[0].textContent));
+      String(rows[0].textContent).indexOf('needs you') !== -1,
+      String(rows[0].textContent).slice(0, 80));
   }
 
   // A phase splits off a room (the huddles plan's C9): the child rides
-  // indented beneath its parent on the rail, the parent's head lists it,
+  // indented beneath its parent in the rooms column, the head lists it,
   // and breaking another one out posts to the parent and opens the child.
   async function aPhaseRidesBeneathItsRoom() {
     const page = boot({
       reply: { type: 'huddle', id: 'child-new', created: true },
+      hash: '#/huddles/room-p',
       documents: {
         huddles: {
           type: 'huddles',
@@ -5035,12 +5199,14 @@ async function theStrategyStepShowsItsPreview() {
             id: 'room-p', title: 'the-q3-board',
             goal: 'thrift’s landing page, ready for the launch review',
             personas: ['designer'], avatars: {}, awaiting_you: false,
-            state: 'working', last_write: 'x', current: false, deliverables: 0,
+            state: 'working', preview: 'the hero copy is tightened', from: 'designer',
+            last_write: 1793807361, current: true, deliverables: 0,
             parent: null,
             children: [{
               id: 'phase-1', title: 'pricing', goal: 'the pricing block',
               personas: ['designer'], avatars: {}, awaiting_you: false,
-              state: 'active', last_write: 'x', current: false,
+              state: 'active', preview: 'phase 2', from: 'designer',
+              last_write: 1793807000, current: false,
               deliverables: 1, parent: 'room-p', children: []
             }]
           }],
@@ -5062,57 +5228,47 @@ async function theStrategyStepShowsItsPreview() {
     });
     await flush();
     page.open();
-    await flush();
-    page.hash('#/huddles');
-    for (let i = 0; i < 8; i++) await flush();
-    const rows = page.IDS['huddles-board'].find((one) =>
-      String(one.className || '').split(/\s+/).includes('hrow'));
-    check('C9 the room and its phase are both rows',
-      rows.length === 2, String(rows.length));
-    const phase = rows.filter((one) =>
-      String(one.className).split(/\s+/).includes('hrow-phase'))[0];
+    await flush(60);
+    const rows = page.rows('.room-row');
+    const phase = rows.find((one) => String(one.textContent).indexOf('pricing') !== -1);
+    check('C9 the room and its phase are both rows', rows.length === 2,
+      'rows=' + rows.length);
     check('C9 the phase reads as a phase of its room',
       !!phase &&
-        String(phase.textContent).indexOf('pricing') !== -1 &&
+        String(phase.className).split(/\s+/).includes('room-phase') &&
         phase.find((one) =>
-          String(one.className || '').split(/\s+/).includes('hrow-stem')).length === 1,
+          String(one.className || '').split(/\s+/).includes('room-stem')).length === 1,
       phase ? String(phase.className) : 'none');
-    const order = [];
-    const readOrder = (one) => {
-      if (String(one.className || '').split(/\s+/).includes('hrow')) order.push('hrow');
-      (one.children || []).forEach(readOrder);
-    };
-    readOrder(page.IDS['huddles-board']);
-    check('C9 the phase sits beneath its room', order.join(',') === 'hrow,hrow',
-      order.join(','));
-
-    // A child opens from its parent: pressing the phase lands on it.
+    // The phase sits beneath its room: the parent is the row before it.
+    const names = rows.map((one) => {
+      const name = one.find((kid) =>
+        String(kid.className || '').split(/\s+/).includes('room-name'))[0];
+      return name ? String(name.textContent) : '';
+    });
+    check('C9 the phase sits beneath its room',
+      names[0] === 'the-q3-board' && names[1] === 'pricing', names.join(' | '));
     if (phase) phase.click();
-    await flush(40);
+    await flush(60);
     check('C9 a child opens from its parent',
-      page.window.location.hash.indexOf('#/sessions/phase-1') === 0,
+      page.window.location.hash.indexOf('#/huddles/phase-1') === 0,
       page.window.location.hash);
 
-    // The room's own head names the phase and can break another out. The
-    // room opens from the work list, which is the route that holds its
-    // session — `#/chat/<id>` deliberately clears it.
-    page.hash('#/sessions/room-p');
+    // The head lists the phases and carries the break-out press.
+    page.hash('#/huddles/room-p');
     for (let i = 0; i < 10; i++) await flush();
-    const phases = page.IDS['hh-phases'];
+    const phases = page.IDS['room-phases'];
     check('C9 the head lists the room’s phases with their states',
       !phases.hidden &&
         String(phases.textContent).indexOf('pricing') !== -1 &&
         String(phases.textContent).indexOf('active') !== -1,
       phases.hidden ? 'hidden' : String(phases.textContent));
-    const breakout = page.IDS['hh-breakout'];
-    check('C9 the head carries the break-out press', !!breakout, 'none');
-    const knowledge = page.IDS['hh-knowledge'];
+    const knowledge = page.IDS['room-knowledge'];
     check('C15 the head shows what the room recalled and wrote',
       !knowledge.hidden &&
         String(knowledge.textContent).indexOf('recalled 2') !== -1 &&
         String(knowledge.textContent).indexOf('wrote 1') !== -1,
       knowledge.hidden ? 'hidden' : String(knowledge.textContent));
-    const distil = page.IDS['hh-distil'];
+    const distil = page.IDS['room-distil'];
     check('C16 the head carries the distil action', !!distil, 'none');
     if (distil) distil.click();
     await flush(40);
@@ -5120,6 +5276,8 @@ async function theStrategyStepShowsItsPreview() {
       String(c.body || '').indexOf('Distil what this room learned') !== -1);
     check('C16 distil starts a run over the room', distilRuns.length === 1,
       JSON.stringify(page.calls.map((c) => c.url)));
+    const breakout = page.IDS['room-breakout'];
+    check('C9 the head carries the break-out press', !!breakout, 'none');
     if (breakout) breakout.click();
     await flush(40);
     const split = page.calls.filter((c) =>
@@ -5127,7 +5285,7 @@ async function theStrategyStepShowsItsPreview() {
     check('C9 breaking out posts to the parent room',
       split.length === 1, JSON.stringify(page.calls.map((c) => c.method + ' ' + c.url)));
     check('C9 the new phase opens',
-      page.window.location.hash.indexOf('#/sessions/child-new') === 0,
+      page.window.location.hash.indexOf('#/huddles/child-new') === 0,
       page.window.location.hash);
   }
 
@@ -5343,17 +5501,22 @@ async function theStrategyStepShowsItsPreview() {
       id: 'room-1', title: 'the-q3-board', goal: 'the launch',
       personas: ['scholar'], avatars: {}, awaiting_you: false,
       state: state.archived['room-1'] ? 'archived' : 'working',
-      last_write: 'x', current: false, deliverables: 0,
-      parent: null, children: []
+      preview: 'the hero copy is tightened', from: 'scholar',
+      last_write: 1793807000, current: false, deliverables: 0,
+      knowledge: { recalled: 0, wrote: 0 }, parent: null, children: []
     });
     const page = boot({
-      hash: '#/sessions/room-1',
+      hash: '#/huddles/room-1',
       documents: {
         sessions: {
           type: 'sessions', read_at: 'now', current: '',
           counts: { needs: 0, working: 1, background: 0, earlier: 0, total: 1 },
           sessions: [row('room-1', 'working', { title: 'the-q3-board' })]
         },
+        state: (asked) => ({
+          ...emptyState(asked), session: asked, goal: 'the launch',
+          members: [{ name: 'scholar', voice: 'grounds every claim' }]
+        }),
         huddles: (state) => ({
           type: 'huddles',
           active: state.archived['room-1'] ? [] : [room(state)],
@@ -5370,23 +5533,25 @@ async function theStrategyStepShowsItsPreview() {
     await flush();
     page.open();
     await flush(40);
-    const archive = page.IDS['conv-archive'];
+    const archive = page.IDS['room-archive'];
     check('ARCH the room carries the archive verb', !!archive, 'none');
     if (!archive) return;
     archive.click();
-    await flush(40);
+    await flush(60);
     const posted = page.calls.filter((c) => c.url === '/api/session/archive' &&
       String(c.body || '').indexOf('"archived":true') !== -1);
     check('ARCH the verb posts the engagement', posted.length === 1,
       JSON.stringify(page.calls.map((c) => c.url)));
     page.hash('#/huddles');
-    await flush(40);
-    const heads = page.rows('.hsection-head h2').map((one) => String(one.textContent));
-    check('ARCH the rail moves the room to ended',
-      heads.indexOf('Ended') !== -1 && heads.indexOf('Active') === -1,
-      heads.join(','));
-    const endedRows = page.IDS['huddles-board'].find((one) =>
-      String(one.className || '').split(/\s+/).includes('hrow'));
+    await flush(60);
+    const groups = page.rows('.rooms-group span').map((one) => String(one.textContent).trim());
+    check('ARCH the column moves the room to ended',
+      groups.indexOf('ended') !== -1 && groups.indexOf('active') === -1,
+      groups.join(','));
+    const fold = page.rows('.rooms-group-fold');
+    if (fold.length) fold[0].click();
+    await flush(30);
+    const endedRows = page.rows('.room-row');
     check('ARCH the ended section holds the room', endedRows.length === 1,
       String(endedRows.length));
   }
@@ -8623,10 +8788,141 @@ async function theConnectCardSaysWhatHappened() {
         ' chat hidden=' + page.IDS['panel-chat'].hidden);
   }
 
+
+  // ---------------------------------------------------------------- icons
+
+  // The source pin (the icons plan's C3): every key the face asks for is
+  // drawn. Thirteen were not — the rail showed huddles, vault and plugins
+  // as the same hollow ring — so the check is the whole class, read from
+  // the source rather than from one rendered screen.
+  async function everyIconKeyTheFaceAsksForIsDrawn() {
+    const start = SRC.indexOf('var ICONS = {');
+    const stop = SRC.indexOf('// Which group an address belongs to');
+    const block = SRC.slice(start, stop);
+    const drawn = new Set([...block.matchAll(/^\s{4}'?([a-z][a-z-]*)'?: \[/gm)].map((m) => m[1]));
+    const asked = new Set();
+    for (const m of SRC.matchAll(/\bicon\('([^']+)'/g)) asked.add(m[1]);
+    for (const m of SRC.matchAll(/\bicon: '([^']+)'/g)) asked.add(m[1]);
+    for (const name of ['MEMORY_SECTION_ICONS', 'SKILL_CATEGORY_ICONS']) {
+      const at = SRC.indexOf('var ' + name + ' = {');
+      const body = SRC.slice(at, SRC.indexOf('};', at));
+      for (const m of body.matchAll(/'([a-z][a-z-]*)'\s*:\s*'([a-z][a-z-]*)'/g)) asked.add(m[2]);
+    }
+    const opsAt = SRC.indexOf('var CALIBRATION_OPS = [');
+    const ops = SRC.slice(opsAt, SRC.indexOf('];', opsAt));
+    for (const m of ops.matchAll(/\['[a-z_]+', '[^']+', '([a-z][a-z-]*)'\]/g)) asked.add(m[1]);
+    const groupsAt = SRC.indexOf('var GROUPS = [');
+    const groups = SRC.slice(groupsAt, SRC.indexOf('\n  ];', groupsAt));
+    for (const m of groups.matchAll(/\['([a-z-]+)', '[a-z ]+'\]/g)) asked.add(m[1]);
+    const missing = [...asked].filter((key) => !drawn.has(key)).sort();
+    check('ICONS every key the face asks for is drawn',
+      missing.length === 0,
+      'missing=' + missing.join(',') + ' · drawn=' + drawn.size + ' asked=' + asked.size);
+    check('ICONS the table draws the main rail\u2019s fifteen', drawn.size >= 15,
+      'drawn=' + drawn.size);
+  }
+
+  // The rail's collapse control is the icon alone (C9): no label span, the
+  // words kept in the accessible name and the hover title. The button's
+  // static markup is read from index.html — the stub does not parse nested
+  // markup, so the DOM alone cannot see an inline SVG.
+  async function theRailToggleIsTheIconAlone() {
+    const start = HTML.indexOf('<button class="surfaces-toggle"');
+    const end = HTML.indexOf('</button>', start);
+    const button = start >= 0 ? HTML.slice(start, end) : '';
+    check('ICONS the rail toggle exists', start >= 0 && end > start, 'toggle');
+    check('ICONS the rail toggle draws the chevron alone',
+      /<svg/.test(button) && /M14\.5 5\.5L8 12/.test(button), 'svg');
+    check('ICONS the rail toggle carries no label span',
+      !/surfaces-toggle-name/.test(button) && !/surfaces-toggle-name/.test(HTML),
+      'label span');
+    check('ICONS the rail toggle keeps its words',
+      /aria-label="collapse the surfaces rail"/.test(button) &&
+        /title="collapse the surfaces rail"/.test(button),
+      'words');
+    check('ICONS the dead label is gone from the code',
+      !SRC.includes('railToggleName'), 'railToggleName');
+    const page = boot({ documents: {} });
+    page.open();
+    await flush();
+    const toggle = page.IDS['rail-toggle'];
+    toggle.click();
+    await flush();
+    check('ICONS the toggle names its state after a press',
+      toggle.getAttribute('aria-label') === 'expand the surfaces rail' &&
+        toggle.title === 'expand the surfaces rail',
+      'label=' + toggle.getAttribute('aria-label') + ' title=' + toggle.title);
+  }
+
+  // The groups fold (C13): a press puts a group's rows away and the label
+  // keeps the count of what inside it needs the owner; the state persists.
+  async function theRailsGroupsFold() {
+    const page = boot({ documents: {} });
+    page.open();
+    await flush();
+    const groups = page.IDS['rail-tree'].find((one) =>
+      String(one.className || '').split(/\s+/).includes('surfaces-group'));
+    check('ICONS the rail carries four group controls', groups.length === 4,
+      'groups=' + groups.length);
+    check('ICONS a group starts open',
+      groups[0].getAttribute('aria-expanded') === 'true' &&
+        groups[0].parentNode.dataset.folded !== 'true',
+      'expanded=' + groups[0].getAttribute('aria-expanded'));
+    groups[0].click();
+    await flush();
+    const section = page.IDS['rail-tree'].find((one) =>
+      one.dataset && one.dataset.group === 'work')[0];
+    check('ICONS a press folds the group',
+      !!section && section.dataset.folded === 'true',
+      section ? 'folded=' + section.dataset.folded : 'no section');
+    const head = section.find((one) =>
+      String(one.className || '').split(/\s+/).includes('surfaces-group'))[0];
+    check('ICONS the folded label says it is folded',
+      head.getAttribute('aria-expanded') === 'false',
+      'expanded=' + head.getAttribute('aria-expanded'));
+    check('ICONS the fold is remembered',
+      String(page.window.localStorage.getItem('fleet-rail-folded') || '').includes('work'),
+      'stored=' + page.window.localStorage.getItem('fleet-rail-folded'));
+    head.click();
+    await flush();
+    const open = page.IDS['rail-tree'].find((one) =>
+      one.dataset && one.dataset.group === 'work')[0];
+    check('ICONS a second press unfolds it',
+      !!open && open.dataset.folded !== 'true',
+      open ? 'folded=' + open.dataset.folded : 'no section');
+  }
+
+  // Fifteen destinations, fifteen drawings (C4): no destination shares a
+  // mark with another, and none wears the unknown state.
+  async function theMainRailDrawsFifteenMarks() {
+    const page = boot({ documents: {} });
+    page.open();
+    await flush();
+    const links = page.IDS['rail-tree'].find((one) =>
+      String(one.className || '').split(/\s+/).includes('surfaces-link'));
+    check('ICONS the main rail lists fifteen destinations', links.length === 15,
+      'links=' + links.length);
+    const shapes = links.map((link) => {
+      const svg = link.find((one) => one.name === 'svg')[0];
+      return svg ? svg.children.map((shape) => JSON.stringify(shape.attrs || {})).join('|') : '';
+    });
+    check('ICONS every destination draws its own mark',
+      shapes.every(Boolean) && new Set(shapes).size === 15,
+      'distinct=' + new Set(shapes).size + ' empty=' + shapes.filter((one) => !one).length);
+  }
+
 const cases = [
+  ['ICONS every key the face asks for is drawn', everyIconKeyTheFaceAsksForIsDrawn],
+  ['ICONS the rail toggle is the icon alone', theRailToggleIsTheIconAlone],
+  ['ICONS the rail\u2019s groups fold', theRailsGroupsFold],
+  ['ICONS the main rail draws fifteen distinct marks', theMainRailDrawsFifteenMarks],
+  ['ICONS the bots rail wears its initials', theBotsRailWearsItsInitials],
   ['PALETTE the palette agrees with the rail', thePaletteAgreesWithTheRail],
   ['PLUGINS the management surface and the two tiers\' frames', thePluginsSurfaceManagesTheChains],
-  ['HUDDLES the rail carries the three states, member marks and deliverables', theHuddleRailCarriesTheThreeStates],
+  ['HUDDLES the rooms column carries the three states and its rows', theHuddleRailCarriesTheThreeStates],
+  ['C6 the shelf opens a deliverable in the pane', theShelfOpensThePanePreview],
+  ['C8 the composer names who hears the draft', theComposerNamesWhoHearsIt],
+  ['C9 the huddles surface names its own states', theHuddleSurfaceNamesItsStates],
   ['C6 a deliverable posts in-line and opens the pane preview', anArtifactPostOpensThePanePreview],
   ['C8 the room head names its members and their voices', theRoomHeadNamesItsMembers],
   ['C8 the @ picker offers the room’s members first', theRoomsAtPickerOffersItsMembers],

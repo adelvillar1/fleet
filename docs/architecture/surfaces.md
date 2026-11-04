@@ -185,23 +185,23 @@ separate read-only replay retired: the conversation is the replay.
 
 ### Huddles — *work*
 
-**What it is.** The owner's rooms with their bots: a huddle is one
-session with members, and the rail lists every room in three states —
-*active*, *inactive*, *ended* — each row carrying its member marks, its
-state word and its outcome count. The open room's head carries the goal,
-the member stack with each bot's voice line, the phases, and the
-composer's modes; the transcript renders `@` mentions as rows of their
-own, the speaker's bylines, and deliverables posted in-line.
+**What it is.** The owner's rooms with their bots, in the split the work
+surfaces share: a rooms column beside the room. The column lists every
+room in three groups — *active*, *parked*, *ended* (put away, folded until
+asked) — each row carrying its member stack, its name, who spoke last and
+what they said, the time and what it produced; a phase nests under its
+room. The room has one head — the name and state, the goal, the members
+with the voice each brings — and, under it, the shelf of files the room
+handed over.
 
-**What you do.** Open a room and read it. Post `@name` and the next turn
-is authored by that member — its own tools, skills and role overlay ride
-it, so the answer comes back in that bot's voice. Read a deliverable's
-card and open it in the right pane. Break a phase out into a child
-huddle; it names its parent and inherits its membership. Press **distil
-what we learned** and a run turns the room's lessons into facts and skill
-proposals. When a bot names a capability the room lacks, convene a role
-the home keeps or hire a persona for the gap — standing, or temporal and
-released when the room ends.
+**What you do.** Open a room (its address is its own). Read the transcript:
+byLines name each speaker, a mention is a line between hairlines, a
+deliverable is a card that opens in the pane. Post `@name` and the next
+turn is authored by that member; the composer's chip says who hears the
+draft before it is sent. Break a phase out into a child room; distil the
+room's lessons into facts and skill proposals; archive it when the work is
+put away. When a bot names a capability the room lacks, convene a role the
+home keeps or hire a persona for the gap.
 
 **Why.** A room is a knowledge space, not a deliverable factory: what it
 recalled and what it produced sit beside its outcomes, so a room that
@@ -209,9 +209,11 @@ produced no files but taught the home three things reads as three. And a
 capability gap is an opportunity to hire, not a reason to abandon the
 brief — if the room needs a quantum physicist, the room gets one.
 
-**State.** Complete; the room, the mentions, the scope, the gaps and the
-hires, the breakouts, the knowledge line and the distil action are built
-and pinned by the harness, and the live proof drove a whole huddle.
+**State.** Complete; the model (mentions, scope, gaps and hires,
+breakouts, knowledge, delivery) is the huddles plan's, and the surface is
+the huddles-ux plan's — the rooms column, the head, the shelf, the
+composer's address, the four states — pinned by the harness and driven
+live.
 
 ### Router — *intelligence*
 

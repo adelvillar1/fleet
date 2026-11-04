@@ -114,9 +114,14 @@
       </span>
       </a>
       <button class="surfaces-toggle" id="rail-toggle" type="button"
-              aria-label="collapse the surfaces rail" aria-expanded="true">
-        <span class="surfaces-toggle-mark" aria-hidden="true">‹</span>
-        <span class="surfaces-toggle-name" id="rail-toggle-name">collapse the rail</span>
+              aria-label="collapse the surfaces rail" aria-expanded="true"
+              title="collapse the surfaces rail">
+        <span class="surfaces-toggle-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
+               stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M14.5 5.5L8 12l6.5 6.5"/>
+          </svg>
+        </span>
       </button>
     </div>
     <div class="surfaces-tree" id="rail-tree"></div>
@@ -142,7 +147,7 @@
     <div class="topbar-left">
       <button class="rail-menu" id="rail-menu" type="button"
               aria-label="open the surfaces rail" aria-expanded="false">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
              stroke-linecap="round" aria-hidden="true">
           <path d="M4 7h16"></path>
           <path d="M4 12h16"></path>
@@ -248,27 +253,39 @@
   <main class="stage" id="panel-chat">
     <section class="column">
 
-      <!-- The room's own head: who is here and why. Rendered only when
-           the session carries members — an ordinary conversation has no
-           room, and shows no strip. The goal is chrome; the members are
-           the people in the room; the voices are their contracts. -->
-      <div class="huddle-head" id="huddle-head" hidden>
-        <p class="hh-goal"><b>goal</b><span id="hh-goal-text"></span></p>
-        <div class="hh-members">
-          <span class="pstack" id="hh-stack"></span>
-          <span class="hh-voices" id="hh-voices"></span>
-          <button class="hh-breakout" id="hh-breakout" type="button">+ break out a phase</button>
-          <span class="hh-state" id="hh-state" data-state=""></span>
-        </div>
-        <!-- The room's phases (the huddles plan's C9): the rooms that split
-             off this one, and whether each has ended. -->
-        <p class="hh-phases" id="hh-phases" hidden></p>
-        <!-- The room's knowledge (the huddles plan's C15): what it recalled
-             and what it wrote, so a room that taught the home something
-             reads as something. -->
-        <p class="hh-knowledge" id="hh-knowledge" hidden></p>
-        <div class="hh-actions">
-          <button class="hh-distil" id="hh-distil" type="button">distil what we learned</button>
+      <!-- The room's head: one header, not two. The name and the state
+           chip, the goal as a quiet line, the members with the voice each
+           one brings, and the shelf of what the room has produced. Drawn
+           only while a room is open; an ordinary conversation has none. -->
+      <div class="room-head" id="room-head" hidden>
+        <div class="room-head-inner">
+          <div class="room-headline">
+            <button class="room-back" id="room-back" type="button"
+                    aria-label="the rooms" title="the rooms">&#8249;</button>
+            <h1 class="room-title" id="room-name"></h1>
+            <span class="room-state" id="room-state" data-state=""></span>
+            <div class="room-acts">
+              <button class="room-act" id="room-breakout" type="button"
+                      title="break a phase out into its own room">break out</button>
+              <button class="room-act" id="room-distil" type="button"
+                      title="turn what the room learned into facts and skill proposals">distil</button>
+              <button class="room-act" id="room-archive" type="button"
+                      title="end the room — its deliverables stay">archive</button>
+            </div>
+          </div>
+          <p class="room-goal"><b>goal</b><span id="room-goal"></span></p>
+          <div class="room-members" id="room-members"></div>
+          <!-- The rooms that split off this one (the huddles plan's C9). -->
+          <p class="room-phases" id="room-phases" hidden></p>
+          <!-- What the room recalled and wrote (the huddles plan's C15). -->
+          <p class="room-knowledge" id="room-knowledge" hidden></p>
+          <!-- The shelf: what the room has produced, one card per file, a
+               press to read it in the pane. Deliverables are the point of
+               a room, so they get a place that does not scroll away. -->
+          <div class="room-shelf" id="room-shelf" hidden>
+            <div class="room-shelf-label">deliverables <span class="n" id="room-shelf-count"></span></div>
+            <div class="room-shelf-rail" id="room-shelf-rail"></div>
+          </div>
         </div>
       </div>
 
@@ -308,6 +325,11 @@
           </button>
         </span>
       </header>
+
+      <!-- The huddles surface with no room open: the invitation when the
+           home has none yet, the recent rooms when it has some, and the
+           reason when the read was refused. It takes the welcome's place. -->
+      <div class="room-empty" id="room-empty" hidden></div>
 
       <div class="empty" id="empty">
         <p class="empty-eyebrow" id="empty-eyebrow">fleet &middot; local console</p>
@@ -500,6 +522,9 @@
           </div>
         </div>
         <footer class="composer-foot">
+          <!-- Who the draft addresses, when the composer is a room's: a
+               mention routes the turn, so the chip says who hears it. -->
+          <span class="composer-to" id="composer-to" hidden></span>
           <!-- The run's standing choices on one line: how far a tool call
                may go, which provider serves it, and where it works. Each
                is one field showing only its current value. -->
@@ -621,7 +646,7 @@
             <button type="submit" class="foot-btn send" id="send"
                     aria-label="send the task">
               <span class="foot-label" id="send-label">Send</span>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
                    stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path d="M5 12h13"></path>
                 <path d="M13 7l5 5-5 5"></path>
@@ -848,8 +873,7 @@
        a room has: active (something live), inactive (parked), ended (put
        away). One session per room; every member sees every message. The
        row carries its members' marks, its goal and its deliverables. -->
-  <main class="stage stage-board stage-split" id="panel-huddles" hidden>
-    <nav class="section-rail" id="huddles-rail" aria-label="huddle states"></nav>
+  <main class="stage stage-board" id="panel-huddles" hidden>
     <div class="board" id="huddles-board"></div>
   </main>
 

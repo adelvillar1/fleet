@@ -453,41 +453,47 @@
       }]
   ];
 
-  // A short mark per destination, so the collapsed rail still reads at a
-  // glance. The house rule for glyphs: a mark is always the surface's own
-  // first letter rather than an icon set shipped beside the binary.
-  // The marks. The rail's places and the empty state's offers use the
-  // same 24-unit icon set, drawn here rather than shipped as a second
-  // asset: a stroke icon is geometry, and geometry belongs with the code
-  // that places it. GROUP_MARKS remains the letter fallback the palette
-  // can use when a surface has no icon of its own.
-  var GROUP_MARKS = { work: 'w', intelligence: 'i', knowledge: 'k', system: 's' };
-
+  // The marks. One 24-unit stroke table, drawn here rather than shipped
+  // as a font or a sprite: an icon is geometry, and geometry belongs with
+  // the code that places it. Every key a rail, the palette or a card asks
+  // for is drawn here — a key that is not is a defect the sheet caught
+  // thirteen of, so `icon()` now falls back to a visible `unknown` rather
+  // than to the same ring an intentional "everything else" row wears.
   var ICONS = {
+    // the main rail's fifteen
     chat: [['path', { d: 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z' }]],
-    // The canvas: an artboard with a sun and a horizon — the design-tool
-    // sheet's own motif, at the stroke set's weight so it reads at 18px.
     design: [
       ['rect', { x: 3.5, y: 4.5, width: 17, height: 15, rx: 2 }],
       ['circle', { cx: 8.5, cy: 9.5, r: 1.6 }],
       ['path', { d: 'M4 17.5l4.5-4.5 3.5 3.5 3-2.5 5 4' }]
     ],
+    // the archive: two cards, stacked — the clock belongs to "today" now
     sessions: [
-      ['circle', { cx: 12, cy: 12, r: 8.5 }],
-      ['path', { d: 'M12 7.5V12l3 1.8' }]
+      ['path', { d: 'M7 4.5h9a2 2 0 0 1 2 2v9' }],
+      ['rect', { x: 4, y: 7.5, width: 13, height: 13, rx: 2 }],
+      ['path', { d: 'M7.5 11.5h6M7.5 15h4' }]
     ],
+    // a room: two figures, the owner and a bot
+    huddles: [
+      ['circle', { cx: 9, cy: 8, r: 2.7 }],
+      ['path', { d: 'M4.6 18.5c.5-3 2.6-4.6 4.9-4.6s4.4 1.6 4.9 4.6' }],
+      ['circle', { cx: 16.8, cy: 9.6, r: 2.2 }],
+      ['path', { d: 'M15.2 14.4c2 .2 3.6 1.6 4 4.1' }]
+    ],
+    // a fork: work entering the chain and leaving it on one of two paths
     router: [
-      ['path', { d: 'M4 7h5a4 4 0 0 1 4 4v2a4 4 0 0 0 4 4h3' }],
-      ['circle', { cx: 4, cy: 7, r: 1.6 }],
-      ['circle', { cx: 20, cy: 17, r: 1.6 }]
+      ['path', { d: 'M4 12h5l4-6h6' }],
+      ['path', { d: 'M9 12l4 6h6' }],
+      ['circle', { cx: 4, cy: 12, r: 1.8 }],
+      ['circle', { cx: 19, cy: 6, r: 1.8 }],
+      ['circle', { cx: 19, cy: 18, r: 1.8 }]
     ],
+    // one brief, children beneath it
     delegation: [
-      ['circle', { cx: 6, cy: 6, r: 2 }],
-      ['circle', { cx: 18, cy: 6, r: 2 }],
-      ['circle', { cx: 12, cy: 18, r: 2 }],
-      ['path', { d: 'M7.4 7.3 10.8 16.2' }],
-      ['path', { d: 'M16.6 7.3 13.2 16.2' }],
-      ['path', { d: 'M8 6h8' }]
+      ['rect', { x: 9, y: 3, width: 6, height: 5, rx: 1.2 }],
+      ['rect', { x: 3, y: 16, width: 6, height: 5, rx: 1.2 }],
+      ['rect', { x: 15, y: 16, width: 6, height: 5, rx: 1.2 }],
+      ['path', { d: 'M12 8v4M6 16v-4h12v4' }]
     ],
     memory: [
       ['path', { d: 'M4 19.5A2.5 2.5 0 0 1 6.5 17H20' }],
@@ -504,61 +510,208 @@
       ['rect', { x: 3.5, y: 13.5, width: 7, height: 7, rx: 1.5 }],
       ['rect', { x: 13.5, y: 13.5, width: 7, height: 7, rx: 1.5 }]
     ],
+    // a project, its branches — a git mark, not a share graph
     'workspace-history': [
-      ['circle', { cx: 6, cy: 5.5, r: 2.4 }],
-      ['circle', { cx: 6, cy: 12, r: 2.4 }],
-      ['circle', { cx: 6, cy: 18.5, r: 2.4 }],
-      ['path', { d: 'M6 8v2.5M6 14.5v2' }],
-      ['circle', { cx: 17, cy: 9.5, r: 2.4 }],
-      ['path', { d: 'M8.4 6.6 14.6 8.8' }],
-      ['path', { d: 'M8.4 12.6 14.6 10.2' }]
+      ['path', { d: 'M6 4.5v15' }],
+      ['circle', { cx: 6, cy: 6, r: 2.1 }],
+      ['circle', { cx: 6, cy: 18, r: 2.1 }],
+      ['circle', { cx: 17.5, cy: 10, r: 2.1 }],
+      ['path', { d: 'M6 13.5h6.5a3 3 0 0 0 3-3' }]
     ],
+    // a face with a stem: the robot, cut to what reads at 17px
     bots: [
-      ['rect', { x: 4, y: 8, width: 16, height: 11, rx: 2.5 }],
-      ['path', { d: 'M12 8V4.5' }],
-      ['circle', { cx: 12, cy: 3.4, r: 1.3 }],
-      ['path', { d: 'M9 13v1.5' }],
-      ['path', { d: 'M15 13v1.5' }],
-      ['path', { d: 'M2.5 12.5v3' }],
-      ['path', { d: 'M21.5 12.5v3' }]
+      ['rect', { x: 4, y: 8, width: 16, height: 10.5, rx: 3 }],
+      ['path', { d: 'M12 8V5.6' }],
+      ['circle', { cx: 12, cy: 4.5, r: 1.1 }],
+      ['path', { d: 'M9.5 12.8v1.4M14.5 12.8v1.4' }]
+    ],
+    // a sealed credential
+    vault: [
+      ['rect', { x: 5, y: 10, width: 14, height: 10, rx: 2.5 }],
+      ['path', { d: 'M8.5 10V7.2a3.5 3.5 0 0 1 7 0V10' }],
+      ['circle', { cx: 12, cy: 15, r: 1.1 }]
     ],
     settings: [
-      ['path', { d: 'M4 7h10' }],
-      ['path', { d: 'M18 7h2' }],
-      ['circle', { cx: 16, cy: 7, r: 2 }],
-      ['path', { d: 'M4 17h4' }],
-      ['path', { d: 'M12 17h8' }],
-      ['circle', { cx: 10, cy: 17, r: 2 }]
+      ['path', { d: 'M4 7h9M17 7h3' }],
+      ['circle', { cx: 15, cy: 7, r: 2 }],
+      ['path', { d: 'M4 17h3M11 17h9' }],
+      ['circle', { cx: 9, cy: 17, r: 2 }]
     ],
-    calibration: [['path', { d: 'M3 12h4l2.5-7 4 14 2.5-7h5' }]],
-    tower: [
-      ['path', { d: 'M5 20V10' }],
-      ['path', { d: 'M12 20V4' }],
-      ['path', { d: 'M19 20v-7' }],
-      ['path', { d: 'M3 20h18' }]
+    // a measured signal: two beats, not four peaks
+    calibration: [['path', { d: 'M3 13h3.5l2.5-6 4 11 2.5-6H21' }]],
+    // something that slots in
+    plugins: [
+      ['path', { d: 'M9 3v4M15 3v4' }],
+      ['path', { d: 'M7 10.5h10v2.5a5 5 0 0 1-10 0z' }],
+      ['path', { d: 'M12 18v3' }]
     ],
-    plan: [
-      ['path', { d: 'M9 4h6v3H9z' }],
-      ['path', { d: 'M9 4H7a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-2' }]
+    // one installed bundle
+    plugin: [
+      ['rect', { x: 4, y: 4, width: 16, height: 16, rx: 3 }],
+      ['path', { d: 'M9 9h6v6H9z' }]
     ],
-    // The conversation's two card types wear their names (the density
-    // plan, P0): a call at the prompt for a tool, the diamond that was
-    // the thought card's ◇ drawn as a shape. Both are the table's own
-    // idiom — one stroke weight, geometry, no second alphabet.
-    tools: [
-      ['path', { d: 'M5 7l5 5-5 5' }],
-      ['path', { d: 'M12.5 17H19' }]
-    ],
-    thinking: [
-      ['path', { d: 'M12 3.5 20.5 12 12 20.5 3.5 12z' }],
-      ['circle', { cx: 12, cy: 12, r: 1.8 }]
+
+    // the section rails' concepts
+    pending: [
+      ['path', { d: 'M6.5 16.5h11l-1.4-2.2V10a4.1 4.1 0 0 0-8.2 0v4.3z' }],
+      ['path', { d: 'M10 19.2a2 2 0 0 0 4 0' }]
     ],
     repo: [
       ['path', { d: 'M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z' }]
     ],
-    dot: [['circle', { cx: 12, cy: 12, r: 6 }]],
-    plugin: [['rect', { x: 4, y: 4, width: 16, height: 16, rx: 3 }],
-      ['path', { d: 'M9 9h6v6H9z' }]]
+    person: [
+      ['circle', { cx: 12, cy: 8, r: 3.2 }],
+      ['path', { d: 'M5.2 20c.7-4 3.5-6 6.8-6s6.1 2 6.8 6' }]
+    ],
+    rules: [
+      ['path', { d: 'M6 3.5h8l4 4v13H6z' }],
+      ['path', { d: 'M14 3.5v4h4' }],
+      ['path', { d: 'M9 12.5l1.8 1.8L14 11' }]
+    ],
+    events: [
+      ['path', { d: 'M4 12h16' }],
+      ['circle', { cx: 7, cy: 12, r: 1.8 }],
+      ['circle', { cx: 12, cy: 12, r: 1.8 }],
+      ['circle', { cx: 17, cy: 12, r: 1.8 }]
+    ],
+    other: [
+      ['circle', { cx: 6.5, cy: 12, r: 1.5 }],
+      ['circle', { cx: 12, cy: 12, r: 1.5 }],
+      ['circle', { cx: 17.5, cy: 12, r: 1.5 }]
+    ],
+    retired: [['path', { d: 'M20 14.6A8.2 8.2 0 1 1 9.4 4a6.6 6.6 0 0 0 10.6 10.6z' }]],
+    archive: [
+      ['rect', { x: 3.5, y: 4.5, width: 17, height: 4.5, rx: 1.2 }],
+      ['path', { d: 'M5.5 9v9a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V9' }],
+      ['path', { d: 'M10 13h4' }]
+    ],
+    today: [
+      ['circle', { cx: 12, cy: 12, r: 8.2 }],
+      ['path', { d: 'M12 7.5V12l3 1.8' }]
+    ],
+    // written down before the work: a clipboard, not a page
+    plan: [
+      ['rect', { x: 5, y: 5, width: 14, height: 15.5, rx: 2 }],
+      ['path', { d: 'M9.5 5V3.6h5V5' }],
+      ['path', { d: 'M9 11h6M9 14.5h4' }]
+    ],
+    web: [
+      ['circle', { cx: 12, cy: 12, r: 8.2 }],
+      ['path', { d: 'M4 12h16' }],
+      ['path', { d: 'M12 3.8c2.4 2.4 3.6 5.2 3.6 8.2s-1.2 5.8-3.6 8.2c-2.4-2.4-3.6-5.2-3.6-8.2S9.6 6.2 12 3.8z' }]
+    ],
+    pen: [
+      ['path', { d: 'M14.5 4.5l5 5L9 20H4v-5z' }],
+      ['path', { d: 'M12.5 6.5l5 5' }]
+    ],
+    media: [
+      ['circle', { cx: 12, cy: 12, r: 8.2 }],
+      ['path', { d: 'M10 8.8l5.2 3.2-5.2 3.2z' }]
+    ],
+    documents: [
+      ['rect', { x: 5, y: 3.5, width: 14, height: 17, rx: 1.5 }],
+      ['path', { d: 'M8.5 8h7M8.5 11.5h7M8.5 15h4' }]
+    ],
+    data: [
+      ['ellipse', { cx: 12, cy: 6, rx: 7, ry: 2.6 }],
+      ['path', { d: 'M5 6v12c0 1.4 3.1 2.6 7 2.6s7-1.2 7-2.6V6' }],
+      ['path', { d: 'M5 12c0 1.4 3.1 2.6 7 2.6s7-1.2 7-2.6' }]
+    ],
+    platforms: [
+      ['path', { d: 'M7 18a4.2 4.2 0 0 1 .4-8.4 5.2 5.2 0 0 1 10 1.4A3.6 3.6 0 0 1 17 18z' }]
+    ],
+    tools: [
+      ['path', { d: 'M5 7l5 5-5 5' }],
+      ['path', { d: 'M12.5 17H19' }]
+    ],
+    curation: [['path', { d: 'M4 5h16l-6 7.5V19l-4 2v-8.5z' }]],
+    declined: [
+      ['circle', { cx: 12, cy: 12, r: 8.2 }],
+      ['path', { d: 'M12 8v7M9 12.5l3 3 3-3' }]
+    ],
+    gate: [
+      ['rect', { x: 6, y: 3.5, width: 12, height: 17, rx: 1.5 }],
+      ['circle', { cx: 14.5, cy: 12.5, r: 1 }],
+      ['path', { d: 'M4 20.5h16' }]
+    ],
+    spark: [
+      ['path', { d: 'M12 3.5l1.7 4.8 4.8 1.7-4.8 1.7L12 16.5l-1.7-4.8L5.5 10l4.8-1.7z' }],
+      ['path', { d: 'M18.2 15.2l.7 2 2 .7-2 .7-.7 2-.7-2-2-.7 2-.7z' }]
+    ],
+    eval: [
+      ['circle', { cx: 12, cy: 12, r: 8.2 }],
+      ['circle', { cx: 12, cy: 12, r: 4.2 }],
+      ['circle', { cx: 12, cy: 12, r: 1 }]
+    ],
+    recall: [
+      ['circle', { cx: 10.5, cy: 10.5, r: 5.8 }],
+      ['path', { d: 'M15 15l4.5 4.5' }]
+    ],
+    consolidate: [
+      ['path', { d: 'M4 6h5l3 5 3-5h5' }],
+      ['path', { d: 'M12 11v9M9 17l3 3 3-3' }]
+    ],
+    screen: [['path', { d: 'M12 3.5l7 2.8v5.4c0 4.4-2.9 7.6-7 9-4.1-1.4-7-4.6-7-9V6.3z' }]],
+    question: [
+      ['path', { d: 'M21 14.5a2 2 0 0 1-2 2H8l-4 4V5a2 2 0 0 1 2-2h13a2 2 0 0 1 2 2z' }],
+      ['path', { d: 'M9.8 8.6a2.3 2.3 0 0 1 4.4.8c0 1.5-2.2 1.8-2.2 3' }],
+      ['path', { d: 'M12 14.6h.01' }]
+    ],
+    verify: [
+      ['circle', { cx: 12, cy: 12, r: 8.2 }],
+      ['path', { d: 'M8 12.3l2.6 2.6L16 9.4' }]
+    ],
+    timing: [
+      ['circle', { cx: 12, cy: 13, r: 6.5 }],
+      ['path', { d: 'M12 9.5V13l2.2 1.4' }],
+      ['path', { d: 'M9.5 3.5h5M12 3.5v3' }]
+    ],
+    cycle: [
+      ['path', { d: 'M20 12a8 8 0 0 1-13.7 5.6M4 12a8 8 0 0 1 13.7-5.6' }],
+      ['path', { d: 'M17.7 3.2v3.5h-3.5M6.3 20.8v-3.5h3.5' }]
+    ],
+    models: [
+      ['rect', { x: 7, y: 7, width: 10, height: 10, rx: 2 }],
+      ['path', { d: 'M12 7V3.6M12 20.4V17M7 12H3.6M20.4 12H17' }]
+    ],
+    roles: [
+      ['rect', { x: 4, y: 6, width: 16, height: 12, rx: 2 }],
+      ['circle', { cx: 9, cy: 12, r: 2.2 }],
+      ['path', { d: 'M13 11h4M13 14h3' }]
+    ],
+    // trust grants, the vault seals: an open shackle against a closed one
+    trust: [
+      ['rect', { x: 5, y: 10, width: 14, height: 10, rx: 2.5 }],
+      ['path', { d: 'M8.5 10V7.2a3.5 3.5 0 0 1 6.7-1.3' }],
+      ['circle', { cx: 12, cy: 15, r: 1.1 }]
+    ],
+    schedule: [
+      ['rect', { x: 4, y: 5.5, width: 16, height: 14.5, rx: 2 }],
+      ['path', { d: 'M4 10h16M8 3.5v4M16 3.5v4' }],
+      ['circle', { cx: 12, cy: 14.5, r: 1.6, fill: 'currentColor', stroke: 'none' }]
+    ],
+    interface: [
+      ['rect', { x: 4, y: 4.5, width: 16, height: 15, rx: 2 }],
+      ['path', { d: 'M9.5 4.5v15M9.5 9h10.5' }]
+    ],
+    environment: [
+      ['circle', { cx: 8, cy: 12, r: 3.5 }],
+      ['path', { d: 'M11.5 12H20M17 12v3M20 12v2.5' }]
+    ],
+    thinking: [['path', { d: 'M12 3.5 20.5 12 12 20.5 3.5 12z' }]],
+    theme: [
+      ['circle', { cx: 12, cy: 12, r: 8.2 }],
+      ['path', { d: 'M12 3.8a8.2 8.2 0 0 1 0 16.4z', fill: 'currentColor', 'fill-opacity': '0.22' }]
+    ],
+    chevron: [['path', { d: 'M14.5 5.5L8 12l6.5 6.5' }]],
+
+    // states, not concepts
+    dot: [['circle', { cx: 12, cy: 12, r: 2.5, fill: 'currentColor', stroke: 'none' }]],
+    unknown: [
+      ['circle', { cx: 12, cy: 12, r: 8.2, 'stroke-dasharray': '2.6 2.4' }],
+      ['path', { d: 'M9.8 9.4a2.3 2.3 0 0 1 4.4.8c0 1.5-2.2 1.8-2.2 3' }],
+      ['path', { d: 'M12 16h.01' }]
+    ]
   };
 
   // Which group an address belongs to, and its label in that group —
@@ -572,7 +725,6 @@
     rail: document.getElementById('rail'),
     railTree: document.getElementById('rail-tree'),
     railToggle: document.getElementById('rail-toggle'),
-    railToggleName: document.getElementById('rail-toggle-name'),
     railJump: document.getElementById('rail-jump'),
     railMenu: document.getElementById('rail-menu'),
     railScrim: document.getElementById('rail-scrim'),
@@ -645,15 +797,22 @@
     convNew: document.getElementById('conv-new'),
     convRename: document.getElementById('conv-rename'),
     convArchive: document.getElementById('conv-archive'),
-    huddleHead: document.getElementById('huddle-head'),
-    hhGoalText: document.getElementById('hh-goal-text'),
-    hhStack: document.getElementById('hh-stack'),
-    hhVoices: document.getElementById('hh-voices'),
-    hhState: document.getElementById('hh-state'),
-    hhPhases: document.getElementById('hh-phases'),
-    hhBreakout: document.getElementById('hh-breakout'),
-    hhKnowledge: document.getElementById('hh-knowledge'),
-    hhDistil: document.getElementById('hh-distil'),
+    roomHead: document.getElementById('room-head'),
+    roomBack: document.getElementById('room-back'),
+    roomName: document.getElementById('room-name'),
+    roomState: document.getElementById('room-state'),
+    roomGoal: document.getElementById('room-goal'),
+    roomMembers: document.getElementById('room-members'),
+    roomPhases: document.getElementById('room-phases'),
+    roomKnowledge: document.getElementById('room-knowledge'),
+    roomShelf: document.getElementById('room-shelf'),
+    roomShelfCount: document.getElementById('room-shelf-count'),
+    roomShelfRail: document.getElementById('room-shelf-rail'),
+    roomBreakout: document.getElementById('room-breakout'),
+    roomDistil: document.getElementById('room-distil'),
+    roomArchive: document.getElementById('room-archive'),
+    roomEmpty: document.getElementById('room-empty'),
+    composerTo: document.getElementById('composer-to'),
     panelCalibration: document.getElementById('panel-calibration'),
     panelSecondBrain: document.getElementById('panel-second-brain'),
     panelWorkspaceHistory: document.getElementById('panel-workspace-history'),
@@ -670,9 +829,6 @@
     bundleChip: document.getElementById('bundle-chip'),
     bundleRelay: document.getElementById('bundle-relay'),
     bundleReload: document.getElementById('bundle-reload'),
-    panelHuddles: document.getElementById('panel-huddles'),
-    huddlesRail: document.getElementById('huddles-rail'),
-    huddlesBoard: document.getElementById('huddles-board'),
     huddleDoor: document.getElementById('huddle-door'),
     huddleGoal: document.getElementById('huddle-goal'),
     huddleConvenor: document.getElementById('huddle-convenor'),
@@ -1067,15 +1223,6 @@
     paneTab: 'run'
   };
 
-  // A short mark for a tool, so a card reads at a glance without an
-  // icon set shipped beside the binary. The first letter is the honest
-  // fallback: it is always the tool's own.
-  var GLYPHS = {
-    bash: '>', read: '<', write: 'w', edit: 'e', search: '?',
-    recall: 'm', skill: 's', task: '*', delegate: '*', web: '@',
-    deck: '\u25c7'
-  };
-
   var OFFERS = [
     {
       id: 'plan',
@@ -1142,7 +1289,9 @@
     made.setAttribute('stroke-linejoin', 'round');
     made.setAttribute('aria-hidden', 'true');
     if (className) made.setAttribute('class', className);
-    (ICONS[name] || ICONS.dot).forEach(function (part) {
+    // A key with no drawing is a defect made visible: a dashed circle
+    // with a question mark, never the mark an intentional state wears.
+    (ICONS[name] || ICONS.unknown).forEach(function (part) {
       var shape = document.createElementNS('http://www.w3.org/2000/svg', part[0]);
       Object.keys(part[1]).forEach(function (key) { shape.setAttribute(key, part[1][key]); });
       made.appendChild(shape);
@@ -2028,12 +2177,15 @@
   function mentionRow(event) {
     var review = event.kind === 'review';
     var card = node('div', 'mention' + (review ? ' review' : ''));
-    card.appendChild(node('span', 'mention-kind',
-      review ? 'review requested' : (event.kind === 'ask' ? 'asked' : 'addressed')));
-    card.appendChild(node('span', 'mention-who', '@' + event.member));
+    var text = node('span', 'mention-text');
     if (event.from && event.from !== event.member) {
-      card.appendChild(node('span', 'mention-from', 'by ' + event.from));
+      text.appendChild(node('b', null, event.from));
+      text.appendChild(document.createTextNode(' \u2192 '));
     }
+    text.appendChild(node('b', null, '@' + event.member));
+    text.appendChild(node('span', 'mention-kind', ' \u00b7 ' +
+      (review ? 'review requested' : (event.kind === 'ask' ? 'asked' : 'addressed'))));
+    card.appendChild(text);
     return row(card, event);
   }
 
@@ -2046,10 +2198,11 @@
     var why = event.reason || '';
     var card = node('div', 'suggest');
     card.appendChild(node('div', 'suggest-label',
-      kind === 'role' ? 'capability gap' : ('capability gap \u00b7 ' + kind)));
+      (event.from ? event.from + ' \u00b7 ' : '') + 'capability gap' +
+      (kind === 'role' ? ' \u00b7 role' : (' \u00b7 ' + kind))));
     var text = node('p', 'suggest-why');
     text.appendChild(document.createTextNode(
-      why ? (name + ' \u2014 ' + why) : ('this room does not hold ' + name)));
+      why ? why : ('this room does not hold ' + name)));
     card.appendChild(text);
     var acts = node('div', 'suggest-acts');
     if (kind === 'role') {
@@ -2639,6 +2792,11 @@
         if (event.id) face.session = event.id;
         break;
       case 'message':
+        // Who spoke last: the room's head rings that member and the
+        // shelf attributes a file to whoever handed it over.
+        face.lastSpeaker = event.role === 'owner'
+          ? 'you'
+          : (event.persona || face.lastSpeaker || '');
         if (event.role === 'owner') {
           face.running = true;
           face.stop = null;
@@ -2741,10 +2899,21 @@
       case 'artifact':
         closeAssistant();
         artifactRow(event);
+        face.roomFiles = face.roomFiles || [];
+        if (!face.roomFiles.some(function (one) { return one.path === event.path; })) {
+          face.roomFiles.push({
+            path: event.path,
+            size: event.size || 0,
+            note: event.note || '',
+            from: face.lastSpeaker || ''
+          });
+        }
+        if (face.panel === 'huddles') paintShelf();
         break;
       case 'mention':
         // An address between members: its own row, so who was asked and
         // what they were asked for is never buried in prose (C8).
+        face.roomSpeaker = event.member || '';
         mentionRow(event);
         break;
       case 'persona-authored':
@@ -3397,6 +3566,7 @@
     // run is in flight or a seat waits — the composer is never a dead
     // grey square the owner cannot use to end the work.
     if (el.sendLabel) el.sendLabel.textContent = busy ? 'Stop' : 'Send';
+    if (!busy) paintComposerAddress();
     if (el.send) {
       el.send.dataset.mode = busy ? 'stop' : 'send';
       el.send.disabled = false;
@@ -6175,11 +6345,13 @@
     'archive': 'archive', 'today': 'today\u2019s recall'
   };
 
+  // One mark per concept. A surface's own section shares the surface's
+  // mark (reference = the book); everything else gets its own drawing.
   var MEMORY_SECTION_ICONS = {
-    'needs-you': 'pending', 'user': 'seat', 'feedback': 'rules',
+    'needs-you': 'pending', 'user': 'person', 'feedback': 'rules',
     'project': 'repo', 'reference': 'memory', 'episodic': 'events',
-    'everything-else': 'dot', 'retired': 'rows', 'archive': 'sessions',
-    'today': 'recent'
+    'everything-else': 'other', 'retired': 'retired', 'archive': 'archive',
+    'today': 'today'
   };
 
   /// The type sections the read actually holds, in the substrate's own
@@ -6964,11 +7136,13 @@
     'machine': 'machine', 'everything-else': 'everything else'
   };
 
+  // The category's own concept: a globe for the web, a pen for design, a
+  // cloud for a platform — not the mark of a surface it merely touches.
   var SKILL_CATEGORY_ICONS = {
-    'needs-you': 'pending', 'building': 'plan', 'web': 'router', 'design': 'theme',
-    'media': 'sessions', 'documents': 'repo', 'data': 'memory',
-    'platforms': 'bots', 'machine': 'settings', 'everything-else': 'dot',
-    'declined': 'dot', 'curation': 'rules', 'retired': 'rows'
+    'needs-you': 'pending', 'building': 'plan', 'web': 'web', 'design': 'pen',
+    'media': 'media', 'documents': 'documents', 'data': 'data',
+    'platforms': 'platforms', 'machine': 'tools', 'everything-else': 'other',
+    'declined': 'declined', 'curation': 'curation', 'retired': 'retired'
   };
 
   /// The proposals that still need a decision: a draft the gate has
@@ -8243,6 +8417,11 @@
     if (face.seat) paintTabCue();
     face.events = [];
     face.rows = [];
+    // The shelf comes off the state document (the log's own send_file
+    // results); the live stream appends the same shape as it lands.
+    face.roomFiles = (state.deliverables || []).slice();
+    face.lastSpeaker = '';
+    face.roomSpeaker = '';
     face.assistant = null;
     dropThinking();
     face.strip = null;
@@ -8278,8 +8457,12 @@
       return event.type === 'message' || event.type === 'turn' ||
         event.type === 'tool_call' || event.type === 'tool_result';
     });
-    el.log.hidden = !talked;
-    el.empty.hidden = talked;
+    // A room with no messages still needs its transcript's height, so the
+    // composer sits where the owner expects it rather than under the head.
+    el.log.hidden = !talked && face.panel !== 'huddles';
+    // The welcome is the chat's home; the huddles surface has its own
+    // empty state and never borrows this one.
+    el.empty.hidden = talked || face.panel === 'huddles';
     face.replaying = true;
     (state.events || []).forEach(apply);
     face.replaying = false;
@@ -9341,6 +9524,7 @@
     grow();
     saveDraft();
     typeAhead();
+    paintComposerAddress();
   });
   el.task.addEventListener('keydown', function (event) {
     // The type-ahead owns the keys while it is open, so a command is one
@@ -9430,20 +9614,10 @@
   el.scrim.addEventListener('click', closeDrawer);
   if (el.huddleCreate) el.huddleCreate.addEventListener('click', createHuddle);
   if (el.huddleCancel) el.huddleCancel.addEventListener('click', closeHuddleDoor);
-  if (el.hhBreakout) el.hhBreakout.addEventListener('click', breakOutPhase);
-  if (el.hhDistil) {
-    // Distil what the room learned (C16): a run whose brief turns the room's
-    // lessons into facts and skill proposals through the existing writers.
-    el.hhDistil.addEventListener('click', function () {
-      post('/api/run?session=' + encodeURIComponent(face.session), {
-        task: 'Distil what this room learned: write the durable lessons as ' +
-          'facts with `remember`, and the better ways of working as skill ' +
-          'proposals. Be specific — name what surprised us and what should change.',
-        mode: 'yes-guarded',
-        budget_turns: 6
-      }).then(function () { load(); }).catch(function () { });
-    });
-  }
+  if (el.roomBreakout) el.roomBreakout.addEventListener('click', breakOutPhase);
+  if (el.roomDistil) el.roomDistil.addEventListener('click', distilRoom);
+  if (el.roomArchive) el.roomArchive.addEventListener('click', function () { archiveRoom(face.session); });
+  if (el.roomBack) el.roomBack.addEventListener('click', function () { setWork(false); });
   if (el.personaCreate) el.personaCreate.addEventListener('click', createPersona);
   if (el.personaCancel) {
     el.personaCancel.addEventListener('click', function () {
@@ -9632,7 +9806,7 @@
       })
       .then(function (doc) {
         face.huddles = doc;
-        if (face.panel === 'huddles') paintHuddles();
+        if (face.panel === 'huddles') refreshHuddles();
         paintRailCounts();
       })
       .catch(function () {
@@ -9645,8 +9819,9 @@
     return ((face.huddles && face.huddles[name]) || []);
   }
 
-  // One room's state word and dot, from the document's own session state:
-  // put away is ended, something live is active, everything else parked.
+  // One room's state word and tone, from the document's own session state:
+  // put away is ended, something live is working, an open ask needs you,
+  // everything else is parked.
   function huddleState(row) {
     var state = row.state || '';
     if (state === 'archived') return { word: 'ended', dot: 'off', chip: 'ended' };
@@ -9658,91 +9833,571 @@
     return { word: 'inactive', dot: 'idle', chip: 'idle' };
   }
 
-  function huddleRow(row, phase) {
-    // A bot's question still open: the row warns rather than reading as
-    // merely parked (the huddles plan's C3).
-    var waiting = !!row.awaiting_you;
-    var derived = waiting
-      ? { word: 'asks you', dot: 'warn', chip: 'wait' }
-      : huddleState(row);
-    var button = node('button',
-      'hrow' + (row.current ? ' open' : '') + (phase ? ' hrow-phase' : ''));
-    if (phase) {
-      button.appendChild(node('span', 'hrow-stem', '\u2514\u2500'));
+  // The row's own words: the room says what it is doing, and a room that
+  // asked you says so before it says anything else.
+  function roomTone(row) {
+    if (row.awaiting_you) return { word: 'needs you', tone: 'asks' };
+    if (row.state === 'archived') return { word: 'ended', tone: 'ended' };
+    if (row.state === 'working' || row.state === 'resumed') {
+      return { word: 'working', tone: 'working' };
     }
+    if (row.state === 'needs-approval' || row.state === 'paused' ||
+        row.state === 'interrupted') {
+      return { word: 'needs you', tone: 'asks' };
+    }
+    if (row.state === 'new' || row.state === 'active') {
+      return { word: 'active', tone: 'working' };
+    }
+    return { word: 'parked', tone: 'parked' };
+  }
+
+  // How long since the room last moved. The rows carry `last_write` in
+  // seconds, not a created date like the archive's rows.
+  function roomAge(stamp) {
+    if (!stamp) return '';
+    var then = typeof stamp === 'number' ? stamp * 1000 : Date.parse(stamp);
+    if (isNaN(then)) return '';
+    var span = Math.max(0, Date.now() - then);
+    var minutes = Math.floor(span / 60000);
+    if (minutes < 1) return 'now';
+    if (minutes < 60) return minutes + 'm';
+    var hours = Math.floor(minutes / 60);
+    if (hours < 24) return hours + 'h';
+    return Math.floor(hours / 24) + 'd';
+  }
+
+  // The rooms' rows, filtered by the column's search: the title, the goal,
+  // the last line and the members all answer.
+  function roomsMatching(row) {
+    var asked = (face.roomQuery || '').trim().toLowerCase();
+    if (!asked) return true;
+    var hay = [row.title, row.goal, row.preview, row.from, row.id]
+      .concat(row.personas || []).join(' ').toLowerCase();
+    return hay.indexOf(asked) >= 0;
+  }
+
+  // One room in the rail: its members, its name, who spoke last and what
+  // they said, the time, and what needs the owner — the channel list's own
+  // shape, in the app's row anatomy.
+  function roomRow(row, phase) {
+    var tone = roomTone(row);
+    var button = node('button', 'room-row' + (phase ? ' room-phase' : ''));
     button.type = 'button';
-    button.appendChild(node('span', 'dot ' + derived.dot));
-    var name = node('span', 'hrow-name');
-    name.appendChild(huddleStack(row.personas, row.avatars));
-    name.appendChild(document.createTextNode(row.title || row.id));
-    button.appendChild(name);
-    var goal = row.goal || '';
-    var state = node('span', 'hrow-state');
-    state.appendChild(document.createTextNode(goal || 'a room with its bots'));
-    button.appendChild(state);
-    // The outcome count (the huddles plan's C17): files plus the knowledge
-    // the room wrote — a room's produced set, not its artifacts alone.
-    var wrote = ((row.knowledge || {}).wrote) || 0;
-    var outcomes = (row.deliverables || 0) + wrote;
-    if (outcomes) {
-      var meta = node('span', 'hrow-meta');
-      meta.appendChild(node('span', 'files',
-        outcomes + (outcomes === 1 ? ' outcome' : ' outcomes')));
-      button.appendChild(meta);
+    button.dataset.state = tone.tone;
+    if (face.session === row.id) button.setAttribute('aria-current', 'true');
+    if (phase) button.appendChild(node('span', 'room-bar'));
+    else button.appendChild(node('span', 'room-bar'));
+    var body = node('span', 'room-body');
+    var top = node('span', 'room-top');
+    var stack = huddleStack(row.personas, row.avatars);
+    if (phase) {
+      var stem = node('span', 'room-stem', '\u2514');
+      top.appendChild(stem);
     }
-    button.appendChild(node('span', 'chip ' + derived.chip, derived.word));
-    button.addEventListener('click', function () {
-      // Opening a room lands in the conversation on that session; the
-      // room itself is C8's surface, and until it exists the row does the
-      // one thing every session row can do.
-      // Opening a room lands in the work list's conversation on that
-      // session — `#/chat/<id>` is the home route and clears it.
-      face.focus = { panel: 'huddles', id: row.id };
-      window.location.hash = '#/sessions/' + encodeURIComponent(row.id);
-    });
+    top.appendChild(stack);
+    top.appendChild(node('span', 'room-name', row.title || row.id));
+    var age = roomAge(row.last_write);
+    top.appendChild(node('span', 'room-when', age));
+    body.appendChild(top);
+    var line = node('span', 'room-line');
+    if (row.preview) {
+      if (row.from) line.appendChild(node('b', null, row.from));
+      line.appendChild(document.createTextNode(row.preview));
+    } else {
+      line.appendChild(document.createTextNode(row.goal || 'a room with its bots'));
+    }
+    body.appendChild(line);
+    var meta = node('span', 'room-meta');
+    meta.appendChild(node('span', tone.tone === 'asks' ? 'warn' : null, tone.word));
+    var files = row.deliverables || 0;
+    var facts = ((row.knowledge || {}).wrote) || 0;
+    var bits = [];
+    if (files) bits.push(files + (files === 1 ? ' file' : ' files'));
+    if (facts) bits.push(facts + (facts === 1 ? ' fact' : ' facts'));
+    if (bits.length) meta.appendChild(node('span', 'room-facts', bits.join(' \u00b7 ')));
+    body.appendChild(meta);
+    button.appendChild(body);
+    button.addEventListener('click', function () { openRoom(row.id); });
     return button;
   }
 
-  function paintHuddles() {
-    var board = el.huddlesBoard;
-    board.textContent = '';
-    var counts = (face.huddles && face.huddles.counts) || {};
-    board.appendChild(pageHead('Work', 'Huddles',
-      (counts.active || 0) + ' active · ' + (counts.inactive || 0) +
-      ' inactive · ' + (counts.ended || 0) + ' ended', null));
-    if (face.huddles && face.huddles.refused) {
-      board.appendChild(node('p', 'page-note', face.huddles.refused[0]));
+  // The column's head and list, painted from the one read. The three
+  // states are the document's own groups — the rail says what the archive
+  // counted, never a second derivation.
+  function paintRooms() {
+    if (!el.workList) return;
+    el.workHead.textContent = '';
+    el.workList.textContent = '';
+    var counts = face.huddles && face.huddles.counts ? face.huddles.counts : null;
+    if (workFolded()) {
+      roomsStrip(counts);
+      return;
+    }
+    var head = node('div', 'work-title');
+    head.appendChild(node('h2', null, 'huddles'));
+    var countText = 'reading\u2026';
+    if (counts) {
+      var waiting = 0;
+      ['active', 'inactive', 'ended'].forEach(function (group) {
+        (huddleRows(group) || []).forEach(function (row) { if (row.awaiting_you) waiting += 1; });
+      });
+      countText = waiting
+        ? waiting + (waiting === 1 ? ' needs you' : ' need you')
+        : (counts.active || 0) + (counts.active === 1 ? ' active' : ' active');
+    }
+    head.appendChild(node('span', 'work-count', countText));
+    var fresh = node('button', 'work-new');
+    fresh.type = 'button';
+    fresh.appendChild(node('span', null, '+'));
+    fresh.appendChild(node('span', null, 'New'));
+    fresh.title = 'a new room';
+    fresh.addEventListener('click', function () { openHuddleDoor(); });
+    head.appendChild(fresh);
+    var fold = node('button', 'work-fold');
+    fold.type = 'button';
+    fold.setAttribute('aria-expanded', 'true');
+    fold.setAttribute('aria-label', 'collapse the rooms');
+    fold.title = 'collapse the rooms';
+    fold.textContent = '\u2039';
+    fold.addEventListener('click', function () { foldWork(true); });
+    head.appendChild(fold);
+    el.workHead.appendChild(head);
+    var search = node('div', 'work-search');
+    var box = node('input', null);
+    box.type = 'search';
+    box.placeholder = 'goal, member, what it said';
+    box.value = face.roomQuery || '';
+    box.setAttribute('aria-label', 'search rooms');
+    box.addEventListener('input', function () {
+      face.roomQuery = box.value;
+      paintRooms();
+      var again = el.workList && el.workHead.querySelector('.work-search input');
+      if (again) {
+        again.focus();
+        again.setSelectionRange(again.value.length, again.value.length);
+      }
+    });
+    search.appendChild(box);
+    el.workHead.appendChild(search);
+
+    if (!face.huddles) {
+      el.workList.appendChild(node('p', 'board-empty', 'Reading the rooms\u2026'));
+      return;
+    }
+    if (face.huddles.refused && face.huddles.refused.length) {
+      el.workList.appendChild(node('p', 'board-empty',
+        'The rooms could not be read: ' + face.huddles.refused.join('; ')));
       return;
     }
     var sections = [
-      ['active', 'Active', 'a room someone is working in'],
-      ['inactive', 'Inactive', 'parked — nothing running, nothing waiting'],
-      ['ended', 'Ended', 'closed — put away, not done']
+      ['active', 'active', 'a room someone is working in'],
+      ['inactive', 'parked', 'nothing running, nothing waiting'],
+      ['ended', 'ended', 'put away, not done']
     ];
     var any = false;
     sections.forEach(function (one) {
-      var rows = huddleRows(one[0]);
+      var rows = huddleRows(one[0]).filter(roomsMatching);
       if (!rows.length) return;
       any = true;
-      // A room's phases ride indented beneath it, each still its own row
-      // with its own state (the huddles plan's C9).
-      var rendered = [];
+      var group = node('div', 'rooms-group');
+      group.appendChild(node('span', null, one[1]));
+      group.appendChild(node('span', 'n', String(rows.length)));
+      if (one[0] === 'ended' && !face.showEndedRooms) {
+        var more = node('button', 'rooms-group-fold', '\u25b8');
+        more.type = 'button';
+        more.title = 'show the rooms that ended';
+        more.addEventListener('click', function () {
+          face.showEndedRooms = true;
+          paintRooms();
+        });
+        group.appendChild(more);
+        el.workList.appendChild(group);
+        return;
+      }
+      el.workList.appendChild(group);
       rows.forEach(function (row) {
-        rendered.push(huddleRow(row));
+        el.workList.appendChild(roomRow(row));
         (row.children || []).forEach(function (child) {
-          rendered.push(huddleRow(child, true));
+          el.workList.appendChild(roomRow(child, true));
         });
       });
-      board.appendChild(huddleSection(one[1], rows.length, one[2], rendered));
     });
     if (!any) {
-      board.appendChild(node('p', 'page-note',
-        'no huddles yet — a room is one session with you and one or more bots'));
+      el.workList.appendChild(node('p', 'board-empty',
+        (face.roomQuery || '').trim()
+          ? 'No room matches \u201c' + face.roomQuery + '\u201d.'
+          : 'no rooms yet \u2014 a room is one session with you and one or more bots'));
     }
-    var make = node('button', 'press primary', '+ new huddle');
-    make.type = 'button';
-    make.addEventListener('click', openHuddleDoor);
-    board.appendChild(make);
+  }
+
+  // Folded, the column is a strip: the rooms' name, the way back, and how
+  // much is waiting on the owner.
+  function roomsStrip(counts) {
+    var expand = node('button', 'work-expand');
+    expand.type = 'button';
+    expand.setAttribute('aria-expanded', 'false');
+    expand.setAttribute('aria-label', 'expand the rooms');
+    expand.title = 'expand the rooms';
+    expand.textContent = '\u203a';
+    expand.addEventListener('click', function () { foldWork(false); });
+    el.workHead.appendChild(expand);
+    el.workHead.appendChild(node('span', 'work-folded-label', 'rooms'));
+    var waiting = 0;
+    ['active', 'inactive', 'ended'].forEach(function (group) {
+      (huddleRows(group) || []).forEach(function (row) { if (row.awaiting_you) waiting += 1; });
+    });
+    if (waiting) {
+      var badge = node('span', 'work-folded-badge', String(waiting));
+      badge.title = waiting + (waiting === 1 ? ' room needs you' : ' rooms need you');
+      el.workHead.appendChild(badge);
+    }
+  }
+
+  // The panel's paint, whichever half is showing: the column always, the
+  // room's head when one is open, and the empty state when none is.
+  function refreshHuddles() {
+    if (face.panel !== 'huddles') return;
+    paintRooms();
+    paintRoomHead();
+    paintRoomEmpty();
+  }
+
+  // Opening a room is opening its session in the huddles surface: the
+  // address carries the room, so a reload lands where the owner was.
+  function openRoom(id, opts) {
+    if (!id) return Promise.resolve();
+    var options = opts || {};
+    var same = face.session === id;
+    face.pendingNew = false;
+    swapDraft(face.session, id);
+    face.panel = 'huddles';
+    face.focus = { panel: 'huddles', id: id };
+    if (!options.keepHash) {
+      try {
+        window.history.replaceState(null, '', '#/huddles/' + encodeURIComponent(id));
+      } catch (error) { }
+    }
+    setWork(true);
+    if (window.innerWidth <= 1180) setWork(false);
+    if (same) {
+      paintRooms();
+      paintRoomHead();
+      return Promise.resolve();
+    }
+    return post('/api/resume', { session: id }).then(function (reply) {
+      var refused = reply.status !== 200 &&
+        !/run is in flight/.test((reply.body && reply.body.error) || '');
+      if (refused) {
+        notice('that room would not open',
+          (reply.body && reply.body.error) || 'the face said no without a reason');
+        return;
+      }
+      face.sessions = null;
+      return Promise.resolve(load(true)).then(function () {
+        // An address that is not a room names itself: a session with no
+        // members is a conversation, not a room, and a blank head would
+        // read as one that exists.
+        if (!(face.members || []).length) {
+          notice('that room is not here',
+            'no session with members at that address — pick a room');
+          paintRooms();
+          paintRoomHead();
+          paintRoomEmpty();
+          return;
+        }
+        face.stick = true;
+        var toLast = function () {
+          var rows = face.stream ? face.stream.children : [];
+          var last = rows.length ? rows[rows.length - 1] : null;
+          if (last && last.scrollIntoView) last.scrollIntoView({ block: 'end' });
+          else if (el.log) el.log.scrollTop = el.log.scrollHeight;
+        };
+        toLast();
+        window.setTimeout(toLast, 80);
+        paintRooms();
+        paintRoomHead();
+        paintRoomEmpty();
+        readHuddles(true);
+      });
+    }).catch(function () { });
+  }
+
+  // One member in the room's head: the mark, the name, the voice it
+  // brings, and a ring on the one who spoke last — presence, not a guess
+  // at who is typing.
+  function memberChip(name, voice, avatar, speaking, writing) {
+    var chip = node('span', 'member' + (speaking ? ' speaking' : ''));
+    var disc = name === 'you'
+      ? node('span', 'pmark pmark-you lg' + (speaking ? ' speaking' : ''), 'you')
+      : huddleMark(name, 'lg', avatar);
+    if (speaking && name !== 'you') disc.className += ' speaking';
+    chip.appendChild(disc);
+    var text = node('span', 'member-text');
+    text.appendChild(node('span', 'member-name', name));
+    if (voice) text.appendChild(node('span', 'member-voice', voice));
+    chip.appendChild(text);
+    if (writing) chip.appendChild(node('span', 'member-pulse', 'writing'));
+    return chip;
+  }
+
+  // Who the draft addresses: a mention routes the turn, so the chip says
+  // who hears it — the member the text names, or the room.
+  function paintComposerAddress() {
+    if (!el.composerTo) return;
+    var inRoom = face.panel === 'huddles' && face.session && (face.members || []).length;
+    if (!inRoom) {
+      el.composerTo.hidden = true;
+      return;
+    }
+    var text = el.task ? String(el.task.value || '') : '';
+    var named = null;
+    (face.members || []).forEach(function (member) {
+      if (!named && text.indexOf('@' + member.name) >= 0) named = member;
+    });
+    var toYou = text.indexOf('@you') >= 0;
+    el.composerTo.hidden = false;
+    el.composerTo.textContent = '';
+    if (toYou) {
+      el.composerTo.appendChild(node('span', null, 'to '));
+      el.composerTo.appendChild(node('b', null, 'you'));
+      el.composerTo.title = 'addressed to you: it asks, and starts no run';
+    } else if (named) {
+      el.composerTo.appendChild(huddleMark(named.name, 'sm', named.avatar));
+      el.composerTo.appendChild(node('span', null, 'to '));
+      el.composerTo.appendChild(node('b', null, named.name));
+      el.composerTo.title = 'the turn is authored by ' + named.name;
+    } else {
+      el.composerTo.appendChild(node('span', null, 'to '));
+      el.composerTo.appendChild(node('b', null, 'the room'));
+      el.composerTo.title = 'every member hears it; the lead answers';
+    }
+    if (el.sendLabel && !face.running) {
+      el.sendLabel.textContent = named ? 'send to ' + named.name : 'Send';
+    }
+  }
+
+  // The room's head: the name and its state, the goal, the members with
+  // their voices, the phases that split off, what the room knows, and the
+  // shelf of what it produced. One header, not two.
+  function paintRoomHead() {
+    if (!el.roomHead) return;
+    var members = face.members || [];
+    var room = face.session && members.length;
+    el.roomHead.hidden = !room;
+    // A room and the invitation are exclusive; the two are painted here
+    // and in paintRoomEmpty, so neither can stand inside the other.
+    if (el.roomEmpty) el.roomEmpty.hidden = !!room;
+    // A room hides the conversation's head; the general rule (no session,
+    // or the huddles surface) is paintConvHead's to set.
+    if (room && el.convHead) el.convHead.hidden = true;
+    if (room) el.empty.hidden = true;
+    if (!room) return;
+    var row = null;
+    ['active', 'inactive', 'ended'].forEach(function (group) {
+      (huddleRows(group) || []).forEach(function (one) {
+        if (one.id === face.session) row = one;
+        (one.children || []).forEach(function (child) {
+          if (child.id === face.session) row = child;
+        });
+      });
+    });
+    el.roomName.textContent = (row && (row.title || row.id)) || face.session;
+    var tone = row ? roomTone(row) : { word: 'active', tone: 'working' };
+    el.roomState.textContent = tone.word;
+    el.roomState.dataset.state = tone.tone;
+    el.roomGoal.textContent = (row && row.goal) || (face.goal || 'a room with its bots');
+
+    el.roomMembers.textContent = '';
+    var writing = face.running && face.driving === face.session && face.roomSpeaker;
+    el.roomMembers.appendChild(memberChip('you', 'the owner', null,
+      face.lastSpeaker === 'you', false));
+    members.forEach(function (member) {
+      el.roomMembers.appendChild(memberChip(
+        member.name, member.voice, member.avatar,
+        face.lastSpeaker === member.name || (!face.lastSpeaker && member.name === (members[0] || {}).name),
+        writing === member.name));
+    });
+
+    var phases = face.phases || [];
+    el.roomPhases.hidden = !phases.length;
+    if (phases.length) {
+      el.roomPhases.textContent = '';
+      el.roomPhases.appendChild(node('b', null, 'phases'));
+      el.roomPhases.appendChild(document.createTextNode(
+        phases.map(function (one) {
+          return ' ' + (one.title || one.id) + ' \u00b7 ' + one.state;
+        }).join(' \u00b7')));
+    }
+    var knowledge = face.knowledge || { recalled: [], wrote: [] };
+    var recalled = (knowledge.recalled || []).length;
+    var wrote = (knowledge.wrote || []).length;
+    el.roomKnowledge.hidden = !(recalled || wrote);
+    if (!el.roomKnowledge.hidden) {
+      el.roomKnowledge.textContent = '';
+      el.roomKnowledge.appendChild(node('b', null, 'knowledge'));
+      el.roomKnowledge.appendChild(document.createTextNode(
+        ' recalled ' + recalled + ' \u00b7 wrote ' + wrote));
+    }
+    paintShelf();
+  }
+
+  // The shelf: each artifact the room handed over, its name and size and
+  // who made it, and a press that opens it in the pane's preview.
+  function paintShelf() {
+    if (!el.roomShelf) return;
+    var files = face.roomFiles || [];
+    el.roomShelf.hidden = !files.length;
+    if (!files.length) return;
+    el.roomShelfCount.textContent = String(files.length);
+    el.roomShelfRail.textContent = '';
+    files.forEach(function (file) {
+      var card = node('button', 'artifact');
+      card.type = 'button';
+      card.title = file.path;
+      var parts = String(file.path).split('/');
+      var name = parts[parts.length - 1] || file.path;
+      var ext = (name.indexOf('.') >= 0 ? name.split('.').pop() : 'file').slice(0, 4).toUpperCase();
+      card.appendChild(node('span', 'artifact-glyph', ext));
+      var body = node('span', 'artifact-body');
+      body.appendChild(node('span', 'artifact-name', name));
+      body.appendChild(node('span', 'artifact-meta',
+        bytes(file.size || 0) + (file.from ? ' \u00b7 ' + file.from : '')));
+      card.appendChild(body);
+      card.appendChild(node('span', 'artifact-open', 'open'));
+      card.addEventListener('click', function () {
+        openPane();
+        showPaneTab('preview');
+        openFile(file.path);
+      });
+      el.roomShelfRail.appendChild(card);
+    });
+  }
+
+  // No room selected: the invitation when the home keeps none yet, the
+  // recent rooms when it does, and the read's own refusal when it failed.
+  function paintRoomEmpty() {
+    if (!el.roomEmpty) return;
+    var on = face.panel === 'huddles' && !(face.session && (face.members || []).length);
+    el.roomEmpty.hidden = !on;
+    if (face.panel === 'huddles') el.empty.hidden = true;
+    if (!on) return;
+    el.roomEmpty.textContent = '';
+    if (face.huddles && face.huddles.refused && face.huddles.refused.length) {
+      var card = node('div', 'room-empty-card');
+      card.appendChild(node('p', 'empty-eyebrow', 'work \u00b7 huddles'));
+      card.appendChild(node('h1', 'empty-title', 'The rooms could not be read.'));
+      card.appendChild(node('p', 'empty-note', face.huddles.refused[0]));
+      el.roomEmpty.appendChild(card);
+      return;
+    }
+    var rooms = [].concat(huddleRows('active'), huddleRows('inactive'), huddleRows('ended'));
+    var card2 = node('div', 'room-empty-card');
+    if (rooms.length) {
+      card2.appendChild(node('p', 'empty-eyebrow', 'work \u00b7 huddles'));
+      card2.appendChild(node('h1', 'empty-title', 'Pick a room.'));
+      card2.appendChild(node('p', 'empty-note',
+        'The rooms you keep are in the column beside this page. Or open a new one.'));
+      var recent = node('div', 'room-recents');
+      rooms.slice(0, 5).forEach(function (row) {
+        var pick = node('button', 'room-recent');
+        pick.type = 'button';
+        pick.appendChild(huddleStack(row.personas, row.avatars));
+        pick.appendChild(node('span', null, row.title || row.id));
+        pick.appendChild(node('span', 'when', roomAge(row.last_write)));
+        pick.addEventListener('click', function () { openRoom(row.id); });
+        recent.appendChild(pick);
+      });
+      card2.appendChild(recent);
+      var acts2 = node('div', 'empty-acts');
+      var fresh2 = node('button', 'press primary', 'new room');
+      fresh2.type = 'button';
+      fresh2.addEventListener('click', openHuddleDoor);
+      acts2.appendChild(fresh2);
+      card2.appendChild(acts2);
+      el.roomEmpty.appendChild(card2);
+      return;
+    }
+    // The invitation: the goal, the bots with their voices, one press.
+    card2.appendChild(node('p', 'empty-eyebrow', 'work \u00b7 huddles'));
+    card2.appendChild(node('h1', 'empty-title', 'A room for the work.'));
+    card2.appendChild(node('p', 'empty-note',
+      'One session with you and one or more bots. Every member sees every message; a mention hands the turn; what the room produces is posted in-line.'));
+    var goalField = node('div', 'empty-field');
+    goalField.appendChild(node('label', 'empty-label', 'the goal'));
+    var goalInput = node('input', 'empty-input');
+    goalInput.type = 'text';
+    goalInput.placeholder = 'what this room is for';
+    goalInput.setAttribute('aria-label', 'the room goal');
+    goalField.appendChild(goalInput);
+    card2.appendChild(goalField);
+    var botField = node('div', 'empty-field');
+    botField.appendChild(node('span', 'empty-label', 'bots in the room'));
+    var picks = node('div', 'picks');
+    var roles = (face.settings && face.settings.roles && face.settings.roles.entries) || [];
+    var usable = roles.filter(function (one) { return !one.broken; });
+    usable.forEach(function (role) {
+      var pick = node('button', 'pick');
+      pick.type = 'button';
+      pick.dataset.name = role.name;
+      pick.appendChild(huddleMark(role.name, 'md', role.avatar));
+      var text = node('span');
+      text.appendChild(node('span', 'pick-name', role.name));
+      if (role.description) text.appendChild(node('span', 'pick-voice', role.description));
+      pick.appendChild(text);
+      pick.addEventListener('click', function () {
+        pick.classList.toggle('on');
+      });
+      picks.appendChild(pick);
+    });
+    if (!usable.length) {
+      picks.appendChild(node('p', 'hint',
+        'this home declares no roles yet \u2014 a bot is a role file under <home>/roles/'));
+    }
+    botField.appendChild(picks);
+    card2.appendChild(botField);
+    var acts = node('div', 'empty-acts');
+    var open = node('button', 'press primary', 'open the room');
+    open.type = 'button';
+    open.addEventListener('click', function () {
+      var personas = [...picks.querySelectorAll('.pick.on')].map(function (one) {
+        return one.dataset.name;
+      });
+      createRoom(goalInput.value.trim(), personas, open);
+    });
+    acts.appendChild(open);
+    acts.appendChild(node('span', 'empty-hint', 'the first one named leads'));
+    card2.appendChild(acts);
+    el.roomEmpty.appendChild(card2);
+  }
+
+  // The one create call both the door and the invitation ride.
+  function createRoom(goal, personas, button) {
+    if (!personas.length) {
+      notice('the room was not created', 'name at least one bot');
+      return;
+    }
+    if (button) {
+      button.disabled = true;
+      button.textContent = 'opening\u2026';
+    }
+    post('/api/huddles', { goal: goal || null, personas: personas })
+      .then(function (reply) {
+        if (reply.status !== 200) {
+          notice('the room was not created',
+            (reply.body && reply.body.error) || 'the home refused it');
+          if (button) { button.disabled = false; button.textContent = 'open the room'; }
+          return;
+        }
+        face.huddles = null;
+        var id = reply.body && reply.body.id;
+        closeHuddleDoor();
+        if (id) return openRoom(id);
+        return readHuddles(true).then(refreshHuddles);
+      })
+      .catch(function () {
+        notice('the room was not created', 'the home could not be read');
+        if (button) { button.disabled = false; button.textContent = 'open the room'; }
+      });
   }
 
   // The new-room door (the huddles plan's C2): the goal, then the home's
@@ -9906,37 +10561,7 @@
     var personas = (el.huddleConvenor
       ? [...el.huddleConvenor.querySelectorAll('.pick.on')]
       : []).map((one) => one.dataset.name);
-    var create = el.huddleCreate;
-    create.disabled = true;
-    create.textContent = 'opening…';
-    post('/api/huddles', { goal: goal, personas: personas })
-      .then(function (reply) {
-        create.disabled = false;
-        create.textContent = 'open the room';
-        if (!reply.body || !reply.body.id) {
-          notice('the room was not created',
-            (reply.body && reply.body.error) || 'the home refused it');
-          return;
-        }
-        closeHuddleDoor();
-        window.location.hash = '#/sessions/' + encodeURIComponent(reply.body.id);
-      })
-      .catch(function () {
-        create.disabled = false;
-        create.textContent = 'open the room';
-        notice('the room was not created', 'the home could not be read');
-      });
-  }
-
-  function huddleSection(title, count, why, rows) {
-    var section = node('div', 'hsection');
-    var head = node('div', 'hsection-head');
-    head.appendChild(node('h2', null, title));
-    head.appendChild(node('span', 'count', String(count)));
-    head.appendChild(node('span', 'why', why));
-    section.appendChild(head);
-    rows.forEach(function (row) { section.appendChild(row); });
-    return section;
+    createRoom(goal, personas, el.huddleCreate);
   }
 
   // A shell is a log with no words and no kind — a New the owner
@@ -10057,6 +10682,12 @@
   // question is "what needs me" before "what exists".
   function paintWork() {
     if (!el.workList) return;
+    // The column is one component with two tenants: the archive's rows, or
+    // the rooms of the huddles surface.
+    if (face.panel === 'huddles') {
+      paintRooms();
+      return;
+    }
     el.workHead.textContent = '';
     el.workList.textContent = '';
     var read = face.sessions;
@@ -10267,62 +10898,11 @@
     return button;
   }
 
-  // The room's head (the huddles plan's C8): the goal as chrome, the
-  // members' marks, and each role's own voice. Rendered only where the
-  // session carries members — an ordinary conversation has no room and
-  // shows no strip, so nothing about the usual surface moves.
-  function paintHuddleHead() {
-    if (!el.huddleHead) return;
-    var members = face.members || [];
-    el.huddleHead.hidden = members.length === 0;
-    if (!members.length) return;
-    el.hhGoalText.textContent = face.goal || 'a room with its bots';
-    el.hhStack.textContent = '';
-    el.hhStack.appendChild(node('span', 'pmark pmark-you sm', 'you'));
-    members.forEach(function (one) {
-      el.hhStack.appendChild(huddleMark(one.name, 'sm', one.avatar));
-    });
-    el.hhVoices.textContent = members
-      .map(function (one) { return one.voice ? one.name + ' \u2014 ' + one.voice : one.name; })
-      .join(' \u00b7 ');
-    // The state word rides the archive's own row; without one the strip
-    // says nothing rather than guessing.
-    var row = workSelected();
-    el.hhState.textContent = row ? huddleState(row).word : '';
-    el.hhState.dataset.state = (row || {}).state || '';
-
-    // The room's knowledge (the huddles plan's C15): what it recalled and
-    // what it wrote. A room that produced no files but taught the home three
-    // things reads as three, not zero.
-    var knowledge = face.knowledge || { recalled: [], wrote: [] };
-    var recalled = (knowledge.recalled || []).length;
-    var wrote = (knowledge.wrote || []).length;
-    if (el.hhKnowledge) {
-      el.hhKnowledge.hidden = !recalled && !wrote;
-      el.hhKnowledge.textContent =
-        'knowledge \u00b7 recalled ' + recalled + ' \u00b7 wrote ' + wrote;
-    }
-
-    // The room's phases (the huddles plan's C9): what has split off, and
-    // whether each has ended. The rail carries their full state; this is
-    // the head's own line.
-    if (el.hhPhases) {
-      var phases = face.phases || [];
-      el.hhPhases.hidden = !phases.length;
-      el.hhPhases.textContent = phases.length
-        ? 'phases \u00b7 ' + phases.map(function (one) {
-            return one.title + ' \u00b7 ' + huddleState({ state: one.state }).word;
-          }).join(' \u00b7 ')
-        : '';
-    }
-
-  }
-
   // Break a phase out of the room you are reading (the huddles plan's C9):
   // the child inherits this room's membership and its standing goal unless
   // the owner names otherwise, and the log records which room it split from.
   function breakOutPhase() {
-    var breakout = el.hhBreakout;
+    var breakout = el.roomBreakout;
     breakout.disabled = true;
     breakout.textContent = 'breaking out\u2026';
     post('/api/huddles/' + encodeURIComponent(face.session), { goal: '', personas: [] })
@@ -10334,7 +10914,7 @@
             (reply.body && reply.body.error) || 'the home refused it');
           return;
         }
-        window.location.hash = '#/sessions/' + encodeURIComponent(reply.body.id);
+        window.location.hash = '#/huddles/' + encodeURIComponent(reply.body.id);
         load();
       })
       .catch(function () {
@@ -10344,14 +10924,54 @@
       });
   }
 
+  // Distil what the room learned (C16): a run whose brief turns the room's
+  // lessons into facts and skill proposals through the existing writers.
+  function distilRoom() {
+    if (!face.session) return;
+    notice('distilling the room', 'the lessons become facts and skill proposals');
+    post('/api/run?session=' + encodeURIComponent(face.session), {
+      task: 'Distil what this room learned: write the durable lessons as ' +
+        'facts with `remember`, and the better ways of working as skill ' +
+        'proposals. Be specific — name what surprised us and what should change.',
+      mode: 'yes-guarded',
+      budget_turns: 6
+    }).then(function () { load(); }).catch(function () { });
+  }
+
+  // Ending a room is the owner's act: the archive puts it away, its
+  // deliverables stay, and a temporal hire leaves (the huddles plan).
+  function archiveRoom(id) {
+    if (!id) return;
+    archiveSession(id, true);
+    face.huddles = null;
+    window.setTimeout(function () {
+      readHuddles(true).then(function () {
+        refreshHuddles();
+        if (face.session === id) {
+          face.session = null;
+          face.members = [];
+          face.roomFiles = [];
+          face.lastSpeaker = '';
+          face.events = [];
+          if (face.stream) face.stream.textContent = '';
+          if (el.log) el.log.hidden = true;
+          paintRoomHead();
+          paintRoomEmpty();
+        }
+      });
+    }, 240);
+  }
+
   // The conversation's head: the way out, the way to another, the state
   // in words, and New. Shown whenever a conversation is loaded, so the
   // face never reads as a one-way door.
   function paintConvHead() {
     if (!el.convHead) return;
     var row = workSelected();
-    el.convHead.hidden = !face.session;
-    paintHuddleHead();
+    // The huddles surface has its own head: the conversation's is for a
+    // chat, not for a room.
+    el.convHead.hidden = !face.session || face.panel === 'huddles';
+    paintRoomHead();
     if (!face.session) return;
     el.convName.textContent = (row && row.title) || sessionLabel(face.session);
     // The name's rung rides the tooltip: a derived name says what
@@ -10653,18 +11273,18 @@
 
   var CALIBRATION_OPS = [
     ['route', 'routes', 'router'],
-    ['route_judged', 'judgments', 'calibration'],
-    ['turn', 'turns', 'sessions'],
+    ['route_judged', 'judgments', 'verify'],
+    ['turn', 'turns', 'chat'],
     ['delegation', 'delegations', 'delegation'],
-    ['propose', 'proposals', 'plan'],
-    ['eval_corpus', 'eval runs', 'gate'],
-    ['recall_hit', 'recall hits', 'memory'],
-    ['consolidate', 'consolidations', 'repo'],
-    ['tool_screen', 'tool screens', 'settings'],
-    ['explain', 'explains', 'chat'],
-    ['verify', 'verifies', 'plan'],
-    ['embed_timing', 'embed timings', 'budget'],
-    ['lifecycle', 'lifecycles', 'rows']
+    ['propose', 'proposals', 'spark'],
+    ['eval_corpus', 'eval runs', 'eval'],
+    ['recall_hit', 'recall hits', 'recall'],
+    ['consolidate', 'consolidations', 'consolidate'],
+    ['tool_screen', 'tool screens', 'screen'],
+    ['explain', 'explains', 'question'],
+    ['verify', 'verifies', 'verify'],
+    ['embed_timing', 'embed timings', 'timing'],
+    ['lifecycle', 'lifecycles', 'cycle']
   ];
 
   /// The sections the day carries: the gate first, then the ops with
@@ -13869,7 +14489,8 @@
     var rows = (conv.personas || []).map(function (persona) {
       var needs = (persona.needs || 0) + (persona.turned_back || 0);
       return {
-        id: persona.name, icon: 'skills', name: persona.name,
+        id: persona.name, initial: persona.name, avatar: persona.avatar,
+        name: persona.name,
         badge: needs || 0,
         badgeTitle: needs
           ? needs + ' need' + (needs === 1 ? 's' : '') + ' you'
@@ -16252,7 +16873,7 @@
 
     return [
       {
-        id: 'models', icon: 'router', name: 'models',
+        id: 'models', icon: 'models', name: 'models',
         badge: lists.length, badgeTitle: 'overrides in this section',
         changed: lists.some(function (one) { return one.reverts; }) || ownerSet('pin'),
         paint: function () {
@@ -16300,7 +16921,7 @@
         }
       },
       {
-        id: 'roles', icon: 'skills', name: 'roles',
+        id: 'roles', icon: 'roles', name: 'roles',
         badge: roles.length, badgeTitle: 'roles',
         changed: false,
         paint: function () {
@@ -16317,7 +16938,7 @@
         }
       },
       {
-        id: 'trust', icon: 'vault', name: 'trust',
+        id: 'trust', icon: 'trust', name: 'trust',
         badge: rules.length, badgeTitle: 'remembered rules',
         changed: rules.length > 0 || ownerSet('approvals'),
         paint: function () {
@@ -16355,7 +16976,7 @@
       // dashboard answers a question they do not ask. The three caps stay
       // writable from `fleet settings` — the face does not render them.
       {
-        id: 'schedule', icon: 'cron', name: 'schedule',
+        id: 'schedule', icon: 'schedule', name: 'schedule',
         badge: cron.length, badgeTitle: 'cron jobs',
         changed: cron.length > 0,
         paint: function () {
@@ -16390,7 +17011,7 @@
         }
       },
       {
-        id: 'environment', icon: 'bots', name: 'environment',
+        id: 'environment', icon: 'environment', name: 'environment',
         badge: env.length, badgeTitle: 'names in this section',
         changed: false,
         paint: function () {
@@ -16636,7 +17257,7 @@
 
   function paintSettingsRail(read) {
     var sections = read ? settingsSections(read) : [
-      { id: 'models', icon: 'router', name: 'models' }
+      { id: 'models', icon: 'models', name: 'models' }
     ];
     sectionRail(el.settingsRail, sections.map(function (section) {
       return {
@@ -17644,7 +18265,13 @@
       button.title = row.name;
       if (row.id === current) button.setAttribute('aria-current', 'page');
       var mark = node('span', 'section-rail-mark');
-      mark.appendChild(icon(row.icon || 'dot'));
+      if (row.initial) {
+        // A persona is a mark, not a shared icon: the same disc the
+        // huddle rows wear, with the role's image when it has one.
+        mark.appendChild(huddleMark(row.initial, 'sm', row.avatar));
+      } else {
+        mark.appendChild(icon(row.icon || 'dot'));
+      }
       button.appendChild(mark);
       button.appendChild(node('span', 'section-rail-name', row.name));
       if (row.badge) {
@@ -21466,7 +22093,6 @@
     vault: el.panelVault,
     settings: el.panelSettings,
     plugins: el.panelPlugins,
-    huddles: el.panelHuddles,
     // An installed bundle mounts here: one panel for every plugin the
     // owner presses, because the bundle brings its own page and this
     // face only supplies the frame.
@@ -21511,7 +22137,7 @@
     // The work surface is not a panel of its own any more: it is the
     // conversation with the work column beside it, so the two are one
     // place with one verb (open in place) instead of a list you leave.
-    var work = address === 'sessions';
+    var work = address === 'sessions' || address === 'huddles';
     closeDrawer();
     face.panel = address;
     usageRecord('panels', address, 'opens');
@@ -21553,11 +22179,18 @@
         load().then(function () { paintPlugins(); });
       },
       huddles: function () {
-        paintHuddles();
-        readHuddles(true).then(paintHuddles);
-        // The new-room door offers the home's roles; read them once so a
-        // press never opens an empty picker.
+        paintRooms();
+        paintRoomHead();
+        paintRoomEmpty();
+        readHuddles(true).then(refreshHuddles);
+        // The new-room door and the invitation offer the home's roles;
+        // read them once so a press never opens an empty picker.
         readSettings(true);
+        readHome(false).then(paintRoomEmpty).catch(function () { });
+        var asked = face.focus && face.focus.id ? face.focus.id : '';
+        if (asked && asked !== face.session) {
+          openRoom(asked, { keepHash: true });
+        }
       },
       sessions: function () {
         paintWork();
@@ -22931,8 +23564,28 @@
   // surfaces flat beneath it — built from GROUPS, the same declaration the
   // palette searches, so the two can never disagree about where a surface
   // lives. The merged row names are the approved mockup's own words.
+  // Which groups are folded: remembered across launches, per group, so a
+  // rail arranged for the work in front of the owner stays arranged.
+  var RAIL_FOLDED_KEY = 'fleet-rail-folded';
+
+  function railFoldedGroups() {
+    try {
+      var saved = JSON.parse(window.localStorage.getItem(RAIL_FOLDED_KEY) || '[]');
+      return Array.isArray(saved) ? saved : [];
+    } catch (error) { return []; }
+  }
+
+  function setRailGroupFolded(group, folded) {
+    var held = railFoldedGroups();
+    var at = held.indexOf(group);
+    if (folded && at < 0) held.push(group);
+    if (!folded && at >= 0) held.splice(at, 1);
+    try { window.localStorage.setItem(RAIL_FOLDED_KEY, JSON.stringify(held)); } catch (error) { }
+  }
+
   function buildRail() {
     el.railTree.textContent = '';
+    var folded = railFoldedGroups();
     GROUPS.forEach(function (group) {
       var id = group[0], label = group[1], items = group[2].slice();
       // The face plugins' entries join their declared group — the
@@ -22944,7 +23597,24 @@
       });
       var section = node('div', 'surfaces-section');
       section.dataset.group = id;
-      section.appendChild(node('span', 'surfaces-group', label));
+      if (folded.indexOf(id) >= 0) section.dataset.folded = 'true';
+      // The label is the fold: a press puts the group's rows away, and the
+      // label keeps the count of what inside it needs the owner.
+      var head = node('button', 'surfaces-group');
+      head.type = 'button';
+      head.setAttribute('aria-expanded', String(section.dataset.folded !== 'true'));
+      head.appendChild(node('span', 'surfaces-group-chev')).appendChild(icon('chevron'));
+      head.appendChild(node('span', 'surfaces-group-name', label));
+      var needs = node('span', 'surfaces-group-needs');
+      needs.dataset.needs = id;
+      needs.hidden = true;
+      head.appendChild(needs);
+      head.addEventListener('click', function () {
+        setRailGroupFolded(id, section.dataset.folded !== 'true');
+        buildRail();
+        paintRailCounts();
+      });
+      section.appendChild(head);
       items.forEach(function (item) {
         var address = item[0], name = item[1];
         var link = node('button', 'surfaces-link');
@@ -23014,6 +23684,15 @@
           : working + (working === 1 ? ' conversation working' : ' conversations working'))
         : '';
     });
+    // A folded group still says what it holds: the work group counts the
+    // conversations waiting or working, the system group the drafts.
+    var perGroup = { work: waiting, system: drafts };
+    Array.prototype.forEach.call(el.railTree.querySelectorAll('.surfaces-group-needs'), function (span) {
+      var held = perGroup[span.dataset.needs] || 0;
+      span.hidden = !held;
+      span.textContent = held ? String(held) : '';
+      span.title = held ? held + (held === 1 ? ' waiting here' : ' waiting here') : '';
+    });
   }
 
   function markRail() {
@@ -23063,9 +23742,7 @@
     el.railToggle.setAttribute('aria-expanded', mode === 'icons' ? 'false' : 'true');
     el.railToggle.setAttribute('aria-label',
       mode === 'icons' ? 'expand the surfaces rail' : 'collapse the surfaces rail');
-    if (el.railToggleName) {
-      el.railToggleName.textContent = mode === 'icons' ? 'expand the rail' : 'collapse the rail';
-    }
+    el.railToggle.title = mode === 'icons' ? 'expand the surfaces rail' : 'collapse the surfaces rail';
     if (remember) {
       try { window.localStorage.setItem('fleet-rail', mode); } catch (error) { }
     }

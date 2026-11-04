@@ -5,31 +5,59 @@ and one or more bots — shaped like a Slack channel the owner opens the way
 they open a chat. Members see every message; a bot addresses another
 member with `@` and that member answers with its own tools, skills and
 voice; deliverables post in-line and open in the right pane; a phase can
-break out into a child huddle. Plan:
-[`docs/plans/2026-11-03-huddles.md`](../plans/2026-11-03-huddles.md)
-(status: completed); the four screens it was built against live in
-`docs/plans/mockups/2026-11-03-huddles/`.
+break out into a child huddle. The surface is the split the console uses for Sessions: a **rooms
+column**, the room, and the right pane. Plans:
+[`docs/plans/2026-11-03-huddles.md`](../plans/2026-11-03-huddles.md) (the
+model, completed) and
+[`docs/plans/2026-11-04-huddles-ux.md`](../plans/2026-11-04-huddles-ux.md)
+(the surface, completed); the screens it was built against live in
+`docs/plans/mockups/2026-11-04-huddles-ux/`.
+
+## The rooms column
+
+A huddle lives at `#/huddles/<id>`, in the work group beside the
+conversation and the sessions. The **rooms column** — the work column's
+other tenant, the same 320px, the same 48px folded strip, the same sheet
+below 1180px — lists every room in three groups: **active** (something
+live), **parked** (nothing running, nothing waiting), **ended** (put away,
+not done, folded until asked for). Each row carries its member stack, its
+name, **who spoke last and what they said**, the time, its state word, and
+what it produced (`2 files · 3 facts`). A phase nests under its room with
+the stem, one level. The column's search reads the title, the goal, the
+last line and the members.
+
+The last line is the room's own sentence, read off the log's last owner or
+assistant message (`/api/huddles` rows carry `preview` and `from`), so a
+resumed room shows its line without a second read.
 
 ## The room and its states
-
-A huddle lives at `#/huddles`, in the work group beside the conversation
-and the sessions. The rail lists every room in three sections —
-**active**, **inactive**, **ended** — each row carrying its member marks,
-its state word, and its outcome count. A room ends only by the owner's
-act: archiving it moves the row to *ended* with its deliverables intact.
 
 A huddle is a session, so it inherits the work list's own grammar. Creating
 one writes a `Start` record whose persona set is the join order, the first
 named leading, and stores the goal; a session created without personas is
-not a huddle and never appears on the rail.
+not a huddle and never appears on the column. A room ends only by the
+owner's act: archiving it moves the row to *ended* with its deliverables
+intact.
+
+Opening a room is opening its session **in this surface**: the address is
+`#/huddles/<id>`, a reload lands where the owner was, and the conversation's
+own head stands down for the room's.
 
 ## The head
 
-The open room's head carries the name, the goal, the **member stack** with
-each bot's voice line, the state chip, and the composer's own
-ask / autonomous / full-access modes. Below it, the **phases**: the child
-huddles broken out of this one, each with its own state, each opening in
-place.
+One header, not two. The room's **name** and its state chip; `break out ·
+distil · archive` at the right; the **goal** as a quiet line; the
+**members** — the owner and each bot with the mark, the name and the voice
+it brings, a ring on the one who spoke last. Then the **shelf**:
+`deliverables · N` over a rail of artifact cards (file mark, name, size,
+author), each press reading the file in the pane's preview. Below the
+head, the room's **phases** and what it **recalled and wrote**, as quiet
+lines.
+
+The composer keeps the app's own controls and gains one thing: a **`to`
+chip** naming who hears the draft — `to designer` when the text addresses
+a member, `to the room` otherwise, `to you` for an ask that starts no run
+— and the send button names the same member (`send to designer`).
 
 ## Addresses
 
@@ -83,9 +111,13 @@ idiom as an address, and the owner presses the convene.
 A `send_file` inside a huddle renders an artifact card in the transcript at
 the post's position, and the card's press opens the file in the right
 pane's preview tab — the renderer every transcript already uses, so a
-deliverable is session-agnostic. `read_document` and `send_file` are
-declared on **every** run, so a scoped bot can write a file and hand it
-over; both are exempt from the scope gate that would otherwise refuse them.
+deliverable is session-agnostic. **The head carries the same set as a
+shelf**: the state document's `deliverables` (path, size, author) is read
+off the log's approved `send_file` results, so a resumed room draws the
+shelf a live one did; the live stream appends the same shape as it lands.
+`read_document` and `send_file` are declared on **every** run, so a scoped
+bot can write a file and hand it over; both are exempt from the scope gate
+that would otherwise refuse them.
 
 ## Breakouts
 

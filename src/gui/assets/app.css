@@ -449,14 +449,70 @@ body[data-pane="open"] .face {
 .surfaces-section { display: grid; gap: 1px; min-width: 0; }
 .surfaces-section + .surfaces-section { margin-top: 14px; }
 
+/* The group is a control: a press folds its rows to the label, and the
+   label keeps the group's needs-you count so nothing hides silently. */
 .surfaces-group {
-  padding: 0 10px 5px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 24px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
   color: var(--dsw-alias-ink-tertiary);
   font-size: 9.5px;
   font-weight: 600;
   letter-spacing: 0.11em;
   text-transform: uppercase;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--fast) var(--ease), color var(--fast) var(--ease);
 }
+
+.surfaces-group:hover {
+  background: var(--dsw-alias-surface-raised);
+  color: var(--dsw-alias-ink-secondary);
+}
+
+.surfaces-group-chev {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 11px;
+  height: 11px;
+  transform: rotate(-90deg);
+  transition: transform var(--fast) var(--ease);
+}
+
+.surfaces-group-chev svg { width: 11px; height: 11px; }
+
+.surfaces-section[data-folded="true"] .surfaces-group-chev { transform: rotate(180deg); }
+
+.surfaces-group-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.surfaces-group-needs {
+  flex: 0 0 auto;
+  min-width: 16px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--dsw-alias-warn) 16%, transparent);
+  color: var(--dsw-alias-warn);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  line-height: 1.5;
+  letter-spacing: 0;
+  text-align: center;
+}
+
+.surfaces-section[data-folded="true"] .surfaces-link { display: none; }
 
 .surfaces-link {
   position: relative;
@@ -602,13 +658,15 @@ body[data-pane="open"] .face {
 
 .surfaces-toggle-mark {
   flex: 0 0 auto;
-  width: 17px;
-  font-size: 14px;
-  line-height: 1;
-  text-align: center;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
 }
 
-.surfaces-name, .surfaces-toggle-name { min-width: 0; }
+.surfaces-toggle-mark svg { width: 16px; height: 16px; }
+
+.surfaces-name { min-width: 0; }
 
 /* The compact rail: the map loses its words, not its places. */
 body[data-rail="icons"] .face {
@@ -637,9 +695,11 @@ body[data-rail="icons"] .mark-text { display: none; }
 body[data-rail="icons"] .surfaces-label,
 body[data-rail="icons"] .surfaces-group,
 body[data-rail="icons"] .surfaces-name,
-body[data-rail="icons"] .surfaces-toggle-name,
 body[data-rail="icons"] .surfaces-where,
 body[data-rail="icons"] .surfaces-foot kbd { display: none; }
+/* The labels are hidden in icons mode, so there is nothing to press: every
+   row shows, and the fold is remembered for the full rail. */
+body[data-rail="icons"] .surfaces-section[data-folded="true"] .surfaces-link { display: flex; }
 body[data-rail="icons"] .surfaces-section + .surfaces-section { margin-top: 8px; }
 body[data-rail="icons"] .surfaces-section + .surfaces-section::before {
   content: "";
@@ -2645,11 +2705,7 @@ body[data-object-card="open"] .dock-object {
 }
 .card-row .glyph svg { display: block; width: 13px; height: 13px; }
 
-.card-row[data-kind="route"] .glyph,
-.card-row[data-kind="memory"] .glyph,
-.card-row[data-kind="skills"] .glyph,
 .card-row[data-kind="delegation"] .glyph,
-.card-row[data-kind="lane"] .glyph,
 .card-row[data-kind="tool"] .glyph,
 .card-row[data-kind="deck"] .glyph { color: var(--dsw-alias-accent); }
 
@@ -7022,11 +7078,10 @@ button.bots-open:hover { color: var(--dsw-alias-accent-lift); }
   body[data-rail="icons"] .mark { justify-content: flex-start; padding: 0 8px; }
   body[data-rail="icons"] .mark-text { display: grid; }
   body[data-rail="icons"] .surfaces-label,
-  body[data-rail="icons"] .surfaces-group,
   body[data-rail="icons"] .surfaces-name,
-  body[data-rail="icons"] .surfaces-toggle-name,
   body[data-rail="icons"] .surfaces-where,
   body[data-rail="icons"] .surfaces-foot kbd { display: inline; }
+  body[data-rail="icons"] .surfaces-group { display: flex; }
   body[data-rail="icons"] .surfaces-link,
   body[data-rail="icons"] .surfaces-palette,
   body[data-rail="icons"] .surfaces-toggle { justify-content: flex-start; padding: 0 10px; }
@@ -8617,118 +8672,304 @@ body[data-work="collapsed"] .work-list { display: none; }
 
 /* The rail's sections and rows, on the work rail's idiom: a header with a
    count and a why, then one row per room. */
-.hsection { margin: 0 0 18px; }
-.hsection-head {
+/* ------------------------------------------------------ the rooms column
+   The work column's other tenant: the huddles surface's rooms. One row is
+   the channel list's shape — the member stack, the name, who spoke last
+   and what they said, the time — drawn in the app's own row rhythm. */
+.rooms-group {
   display: flex;
   align-items: baseline;
-  gap: 10px;
-  padding: 0 2px 8px;
+  gap: 8px;
+  margin: 10px 0 2px;
+  padding: 0 6px;
 }
-.hsection-head h2 {
-  font-size: 12px;
+.rooms-group span {
+  font-size: 9.5px;
   font-weight: 600;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.11em;
   text-transform: uppercase;
-  color: var(--dsw-alias-ink-secondary);
-  margin: 0;
-}
-.hsection-head .count {
-  font-size: 11px;
   color: var(--dsw-alias-ink-tertiary);
-  font-variant-numeric: tabular-nums;
 }
-.hsection-head .why {
+.rooms-group .n {
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+.rooms-group-fold {
   margin-left: auto;
-  font-size: 12px;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
   color: var(--dsw-alias-ink-tertiary);
+  font-size: 11px;
+}
+.rooms-group-fold:hover {
+  background: var(--dsw-alias-surface-raised);
+  color: var(--dsw-alias-ink);
 }
 
-.hrow {
-  display: flex;
-  align-items: center;
-  gap: 12px;
+.room-row {
+  display: grid;
+  grid-template-columns: 3px minmax(0, 1fr);
+  gap: 9px;
   width: 100%;
-  min-height: 48px;
-  padding: 10px 14px;
-  margin: 0 0 6px;
-  border: 1px solid var(--dsw-alias-hairline);
-  border-radius: 10px;
-  background: var(--dsw-alias-surface);
+  padding: 8px;
+  border-radius: 9px;
+  text-align: left;
   color: var(--dsw-alias-ink);
   font: inherit;
-  text-align: left;
   cursor: pointer;
 }
-.hrow:hover { border-color: var(--dsw-alias-accent); }
-.hrow.open { border-left: 3px solid var(--dsw-alias-accent); padding-left: 12px; }
-.hrow-name {
+.room-row:hover {
+  background: color-mix(in srgb, var(--dsw-alias-surface) 70%, transparent);
+}
+.room-row[aria-current="true"] {
+  background: color-mix(in srgb, var(--dsw-alias-accent) 9%, var(--dsw-alias-surface));
+}
+.room-bar {
+  border-radius: 3px;
+  background: var(--dsw-alias-hairline-strong);
+}
+.room-row[data-state="working"] .room-bar { background: var(--dsw-alias-ok); }
+.room-row[data-state="asks"] .room-bar { background: var(--dsw-alias-warn); }
+.room-row[data-state="ended"] .room-bar { background: var(--dsw-alias-hairline); }
+.room-row[aria-current="true"] .room-bar { background: var(--dsw-alias-accent); }
+.room-body { min-width: 0; display: grid; gap: 3px; }
+.room-top {
   display: flex;
   align-items: center;
-  gap: 10px;
-  min-width: 210px;
-  font-weight: 600;
-}
-.hrow-state {
-  flex: 1 1 auto;
+  gap: 7px;
   min-width: 0;
+}
+.room-top .pstack { flex: 0 0 46px; }
+.room-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.room-when {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--dsw-alias-ink-tertiary);
+}
+.room-line {
+  font-size: 12px;
+  line-height: 1.4;
   color: var(--dsw-alias-ink-secondary);
-  font-size: 13px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.hrow-meta {
-  flex: 0 0 auto;
-  font-size: 11px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--dsw-alias-ink-tertiary);
-}
-.hrow-meta .files { color: var(--dsw-alias-ink-secondary); }
-
-/* The room's own head: the goal as chrome, then who is here and their
-   voices. Rendered only where the session carries members, so an ordinary
-   conversation shows no strip at all. */
-.huddle-head {
-  padding: 10px 14px 12px;
-  border-bottom: 1px solid var(--dsw-alias-hairline);
-  background: var(--dsw-alias-surface);
-}
-.hh-goal {
-  display: flex;
-  gap: 8px;
-  align-items: baseline;
-  margin: 0 0 8px;
-  font-size: 13px;
-  color: var(--dsw-alias-ink-secondary);
-}
-.hh-goal b {
-  font-size: 10px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--dsw-alias-ink-tertiary);
-  flex: 0 0 auto;
-}
-.hh-members {
+.room-line b { font-weight: 600; color: var(--dsw-alias-ink); margin-right: 4px; }
+.room-meta {
   display: flex;
   align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 10px;
+  color: var(--dsw-alias-ink-tertiary);
 }
-.hh-voices {
-  flex: 1 1 auto;
-  min-width: 0;
+.room-meta .warn { color: var(--dsw-alias-warn); font-weight: 600; }
+.room-facts { margin-left: auto; font-family: var(--font-mono); }
+.room-phase { margin-left: 22px; width: calc(100% - 22px); }
+.room-stem {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
   font-size: 12px;
   color: var(--dsw-alias-ink-tertiary);
 }
-.hh-state {
+
+/* ----------------------------------------------------------- the room
+   One header, not two: the name and its state, the goal as a quiet line,
+   the members with the voice each brings, and the shelf of what the room
+   produced. Drawn only while a room is open. */
+.room-head {
   flex: 0 0 auto;
-  font-size: 10px;
+  padding: 14px 0 0;
+  border-bottom: 1px solid var(--dsw-alias-hairline);
+  background: color-mix(in srgb, var(--dsw-alias-surface) 62%, var(--dsw-alias-page));
+}
+.room-head-inner {
+  width: min(820px, calc(100% - 64px));
+  margin: 0 auto;
+}
+.room-headline { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; row-gap: 6px; }
+.room-back {
+  flex: 0 0 auto;
+  display: none;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  color: var(--dsw-alias-ink-tertiary);
+  font-size: 16px;
+  line-height: 1;
+}
+.room-back:hover { background: var(--dsw-alias-surface-raised); color: var(--dsw-alias-ink); }
+body[data-work="collapsed"] .room-back { display: grid; }
+@media (max-width: 1180px) { .room-back { display: grid; } }
+.room-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 21px;
+  font-weight: 500;
+  line-height: 1.1;
+  letter-spacing: -0.015em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.room-state {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 21px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: var(--dsw-alias-surface-raised);
+  font-size: 10.5px;
+  color: var(--dsw-alias-ink-secondary);
+}
+.room-state::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--dsw-alias-ok);
+}
+.room-state[data-state="asks"] {
+  background: color-mix(in srgb, var(--dsw-alias-warn) 12%, transparent);
+  color: var(--dsw-alias-warn);
+}
+.room-state[data-state="asks"]::before { background: var(--dsw-alias-warn); }
+.room-state[data-state="ended"]::before { background: var(--dsw-alias-ink-tertiary); }
+.room-acts { margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap; }
+.room-act {
+  height: 26px;
+  padding: 0 9px;
+  border-radius: var(--radius-sm, 7px);
+  border: 1px solid var(--dsw-alias-hairline);
+  background: var(--dsw-alias-surface);
+  font-size: 11px;
+  color: var(--dsw-alias-ink-secondary);
+}
+.room-act:hover { border-color: var(--dsw-alias-accent); color: var(--dsw-alias-accent); }
+.room-goal {
+  display: flex;
+  gap: 9px;
+  align-items: baseline;
+  margin: 9px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--dsw-alias-ink-secondary);
+}
+.room-goal b {
+  flex: 0 0 auto;
+  font-size: 9.5px;
   font-weight: 600;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.11em;
   text-transform: uppercase;
   color: var(--dsw-alias-ink-tertiary);
 }
+.room-goal span { color: var(--dsw-alias-ink); }
+.room-members { display: flex; align-items: center; flex-wrap: wrap; padding: 10px 0 12px; }
+.member { display: flex; align-items: center; gap: 9px; }
+.member + .member {
+  margin-left: 18px;
+  padding-left: 18px;
+  border-left: 1px solid var(--dsw-alias-hairline);
+}
+.member-text { display: grid; gap: 1px; }
+.member-name { font-size: 12px; font-weight: 600; }
+.member-voice { font-size: 11px; color: var(--dsw-alias-ink-tertiary); }
+.member.speaking .member-name { color: var(--dsw-alias-accent); }
+.member-pulse {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  color: var(--dsw-alias-accent);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.pmark.speaking {
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--tint, var(--dsw-alias-accent)) 40%, transparent),
+    0 0 0 2px var(--dsw-alias-accent);
+}
+.room-phases,
+.room-knowledge {
+  margin: 0 0 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--dsw-alias-ink-tertiary);
+}
+.room-phases b,
+.room-knowledge b {
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--dsw-alias-ink-tertiary);
+}
+.room-knowledge { color: var(--dsw-alias-accent); }
+
+/* The shelf: each artifact the room handed over. Deliverables are the
+   point of a room, so they get a place that does not scroll away. */
+.room-shelf { padding: 0 0 12px; }
+.room-shelf-label {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 7px;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--dsw-alias-ink-tertiary);
+}
+.room-shelf-label .n { font-family: var(--font-mono); font-size: 10px; color: var(--dsw-alias-ink-secondary); }
+.room-shelf-rail {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+.artifact {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 190px;
+  max-width: 240px;
+  padding: 7px 9px;
+  border-radius: var(--card-radius-inner, 10px);
+  border: 1px solid var(--dsw-alias-hairline);
+  background: var(--dsw-alias-surface);
+  box-shadow: var(--shadow-1);
+  color: var(--dsw-alias-ink);
+  text-align: left;
+}
+.artifact:hover { border-color: var(--dsw-alias-accent); }
+.artifact-glyph {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  background: var(--dsw-alias-surface-raised);
+  font-family: var(--font-mono);
+  font-size: 8px;
+  font-weight: 600;
+  color: var(--dsw-alias-ink-secondary);
+}
+.artifact-body { min-width: 0; display: grid; gap: 1px; }
+.artifact-name { font-size: 11.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.artifact-meta { font-family: var(--font-mono); font-size: 9.5px; color: var(--dsw-alias-ink-tertiary); }
+.artifact-open { margin-left: auto; font-size: 10px; color: var(--dsw-alias-accent); }
 
 /* The room's byline: which member authored a turn (the huddles plan's C8).
    Only rendered where the replay carries an author. */
@@ -8749,10 +8990,11 @@ body[data-work="collapsed"] .work-list { display: none; }
 /* A member's proposal to convene a role the room lacks (the huddles plan's
    C5). Dashed so it reads as a suggestion, never as work already done. */
 .suggest {
-  border: 1px dashed var(--dsw-alias-hairline-strong);
-  border-radius: 10px;
+  border: 1px solid var(--dsw-alias-hairline);
+  border-radius: var(--card-radius-inner, 10px);
   background: var(--dsw-alias-surface);
-  padding: 12px 14px;
+  box-shadow: var(--shadow-1);
+  padding: 11px 13px;
   margin: 0 0 8px;
 }
 .suggest-label {
@@ -8766,7 +9008,8 @@ body[data-work="collapsed"] .work-list { display: none; }
 .suggest-why {
   margin: 0 0 10px;
   font-size: 13px;
-  color: var(--dsw-alias-ink-secondary);
+  line-height: 1.55;
+  color: var(--dsw-alias-ink);
 }
 .suggest-acts { display: flex; gap: 10px; align-items: center; }
 
@@ -8853,67 +9096,28 @@ body[data-work="collapsed"] .work-list { display: none; }
   color: var(--dsw-alias-accent);
 }
 
-/* The mention's own row: who was asked, and what for. A review request
-   reads differently from a directive, because the asker wants a verdict
-   rather than work. */
+/* An address between members, as a system line: who spoke to whom and
+   what they asked for, between the hairlines the turn marks use, so it
+   reads as an event and never as a message. */
 .mention {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 10px;
-  flex-wrap: wrap;
-  padding: 8px 12px;
-  margin: 0 0 8px;
-  border-left: 3px solid var(--dsw-alias-hairline-strong);
-  background: var(--dsw-alias-surface);
-  font-size: 12px;
-}
-.mention.review {
-  border-left-color: var(--dsw-alias-warn-on-light, rgb(122, 82, 8));
-}
-.mention-kind {
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+  font-size: 10.5px;
+  line-height: 1.5;
   color: var(--dsw-alias-ink-tertiary);
 }
-.mention.review .mention-kind { color: var(--dsw-alias-warn-on-light, rgb(122, 82, 8)); }
-.mention-who { font-weight: 600; color: var(--dsw-alias-ink); }
-.mention-from { color: var(--dsw-alias-ink-tertiary); }
-
-/* The room's phase list, and the press that breaks one out (C9). */
-.hh-phases {
-  margin: 8px 0 0;
-  font-size: 12px;
-  color: var(--dsw-alias-ink-tertiary);
+.mention::before,
+.mention::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--dsw-alias-hairline);
 }
-.hh-breakout {
-  margin-left: auto;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--dsw-alias-accent);
-  background: none;
-  border: 1px solid var(--dsw-alias-hairline-strong);
-  border-radius: 999px;
-  padding: 6px 12px;
-  min-height: 32px;
-  cursor: pointer;
-}
-.hh-breakout:hover { border-color: var(--dsw-alias-accent); }
-
-/* A phase rides indented beneath the room it split from. */
-.hrow-phase {
-  margin-left: 22px;
-  width: calc(100% - 22px);
-}
-.hrow-stem {
-  font-family: var(--font-mono, inherit);
-  font-size: 12px;
-  color: var(--dsw-alias-ink-tertiary);
-  flex: 0 0 auto;
-}
+.mention-text { white-space: nowrap; }
+.mention b { font-weight: 600; color: var(--dsw-alias-ink-secondary); }
+.mention-kind { font-size: 9.5px; letter-spacing: 0.06em; text-transform: uppercase; }
+.mention.review .mention-kind { color: var(--dsw-alias-warn); }
 
 /* sys1's verdict on a held action (the huddles plan's C10): the reason the
    seat gives before the buttons do, and which judgment produced it. */
@@ -8956,27 +9160,6 @@ body[data-work="collapsed"] .work-list { display: none; }
 
 /* The room's knowledge line and its distil action (the huddles plan's
    C15/C16). */
-.hh-knowledge {
-  margin: 8px 0 0;
-  font-size: 12px;
-  color: var(--dsw-alias-accent);
-}
-.hh-actions { margin: 8px 0 0; }
-.hh-distil {
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--dsw-alias-ink-secondary);
-  background: none;
-  border: 1px solid var(--dsw-alias-hairline-strong);
-  border-radius: 999px;
-  padding: 6px 12px;
-  min-height: 32px;
-  cursor: pointer;
-}
-.hh-distil:hover { border-color: var(--dsw-alias-accent); color: var(--dsw-alias-accent); }
-
 /* ------------------------------------------------------- a bundle's page
    The mount is one frame and its head: the head says which bundle is
    running, how it is trusted, and what its declared data path is; the
@@ -9124,3 +9307,135 @@ body[data-work="collapsed"] .work-list { display: none; }
   .stage-bundle { padding: 16px 14px 14px; }
   .bundle-head { flex-direction: column; gap: var(--space-2); }
 }
+
+/* The shared press: the app's button in the doors and the surfaces'
+   inline acts. One rule, so a door never renders as a user-agent button
+   (the icons audit found three surfaces wearing bare ones). */
+.press {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  height: 32px;
+  padding: 0 14px;
+  border-radius: var(--radius-sm, 7px);
+  border: 1px solid var(--dsw-alias-hairline-strong);
+  background: var(--dsw-alias-surface);
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--dsw-alias-ink);
+  cursor: pointer;
+  transition: background var(--fast) var(--ease), border-color var(--fast) var(--ease);
+}
+.press:hover { border-color: var(--dsw-alias-accent); }
+.press.primary {
+  border-color: var(--dsw-alias-accent);
+  background: var(--dsw-alias-accent);
+  color: #fff;
+}
+.press.primary:hover { background: var(--dsw-alias-accent-deep); }
+.press.quiet { color: var(--dsw-alias-ink-secondary); }
+.press:disabled { opacity: 0.6; cursor: default; }
+
+/* The composer's address: a mention routes the turn, so the chip says who
+   hears the draft before it is sent. */
+.composer-to {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 9px;
+  border-radius: 999px;
+  background: var(--dsw-alias-surface-raised);
+  font-size: 10.5px;
+  color: var(--dsw-alias-ink-tertiary);
+}
+.composer-to b { font-weight: 600; color: var(--dsw-alias-ink); }
+.composer-to .pmark { width: 16px; height: 16px; font-size: 9px; }
+
+/* The huddles surface with no room open: the invitation, the recent
+   rooms, or the read's own refusal. It takes the welcome's place. */
+.room-empty {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  place-items: center;
+  padding: 30px;
+}
+.room-empty-card { width: min(560px, 100%); }
+.empty-title {
+  margin: 0 0 8px;
+  font-family: var(--font-display);
+  font-size: clamp(30px, 3.2vw, 38px);
+  font-weight: 500;
+  line-height: 1.04;
+  letter-spacing: -0.025em;
+}
+.empty-note {
+  margin: 0 0 22px;
+  max-width: 46ch;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--dsw-alias-ink-secondary);
+}
+.empty-field { margin-bottom: 14px; }
+.empty-label {
+  display: block;
+  margin-bottom: 5px;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--dsw-alias-ink-tertiary);
+}
+.empty-input {
+  width: 100%;
+  height: 40px;
+  padding: 0 12px;
+  border-radius: var(--radius-md, 10px);
+  border: 1px solid var(--dsw-alias-hairline-strong);
+  background: var(--dsw-alias-surface);
+  font: inherit;
+  font-size: 14px;
+  color: var(--dsw-alias-ink);
+}
+.empty-input::placeholder { color: var(--dsw-alias-ink-tertiary); }
+.picks { display: flex; flex-wrap: wrap; gap: 8px; }
+.picks .pick {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 11px 7px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--dsw-alias-hairline);
+  background: var(--dsw-alias-surface);
+  text-align: left;
+  color: var(--dsw-alias-ink);
+}
+.picks .pick:hover { border-color: var(--dsw-alias-hairline-strong); }
+.picks .pick.on {
+  border-color: var(--dsw-alias-accent);
+  background: color-mix(in srgb, var(--dsw-alias-accent) 8%, var(--dsw-alias-surface));
+}
+.pick-name { font-size: 12px; font-weight: 600; line-height: 1.2; }
+.pick-voice { display: block; font-size: 10.5px; line-height: 1.3; color: var(--dsw-alias-ink-tertiary); }
+.empty-acts { display: flex; align-items: center; gap: 10px; margin-top: 20px; }
+.empty-acts .press { height: 38px; padding: 0 18px; font-size: 12.5px; }
+.empty-hint { font-size: 11px; color: var(--dsw-alias-ink-tertiary); }
+.room-recents { display: grid; gap: 2px; margin: 0 0 18px; }
+.room-recent {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 6px;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--dsw-alias-ink-secondary);
+  text-align: left;
+}
+.room-recent:hover { background: var(--dsw-alias-surface-raised); color: var(--dsw-alias-ink); }
+.room-recent .when { margin-left: auto; font-family: var(--font-mono); font-size: 10px; color: var(--dsw-alias-ink-tertiary); }

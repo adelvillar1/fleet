@@ -661,7 +661,13 @@ capture root follows the folder. The huddle's room rides the same bridge:
 /api/huddles/<parent>` breaks a child out, `GET /api/avatar` serves an
 owner-supplied role image, and the seams are `bridge::huddle`,
 `huddle_breakout`, `join` (with `Join.temporal`), `session_archive` (which
-releases a temporal hire) and `session_knowledge`. The log's vocabulary is
+releases a temporal hire), `session_knowledge` and `session_deliverables`
+(the shelf, parsed from the log's approved `send_file` results so a
+resumed room draws what a live one did). A rooms row carries `preview` and
+`from` — the log's last line and its author — read in the same fold that
+derives the state and the open ask. The rooms column is the work column
+with a second painter (`paintRooms`), selected by the panel; the room's
+address is `#/huddles/<id>`. The log's vocabulary is
 `Record::Mention` (member + kind: directive | ask | review),
 `Record::Recommend` (name, kind: role | tool | skill | capability, reason)
 and `Assistant.persona`; a speaker's turn is scoped by

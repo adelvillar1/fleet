@@ -561,7 +561,10 @@ mod tests {
         // `huddles` joined the set because the telemetry bundle asks for
         // it, and `/api/huddles` already answers: a declared query that
         // resolves is the sandbox's breadth, and this one resolves.
-        assert!(READ_ONLY_QUERIES.contains(&"huddles"), "huddles is read-only");
+        assert!(
+            READ_ONLY_QUERIES.contains(&"huddles"),
+            "huddles is read-only"
+        );
         let with_huddles = MANIFEST.replace("\"sessions\"", "\"sessions\", \"huddles\"");
         let manifest = FaceManifest::parse(&with_huddles).expect("a huddles declaration parses");
         assert_eq!(manifest.queries, vec!["state", "sessions", "huddles"]);

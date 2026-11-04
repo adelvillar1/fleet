@@ -141,7 +141,7 @@ members: the room says what a huddle is.
 
 ## Acceptance criteria
 
-- [ ] **C1 — the mockups.** Five screens at
+- [x] **C1 — the mockups.** Five screens at *Met:* five screens, a60713b; measured 0 overflow, ink 5.7-7.0:1, rows 72.8px.
       `docs/plans/mockups/2026-11-04-huddles-ux/` (`rooms.html`,
       `room.html`, `deliverable.html`, `empty.html`, `seat.html`) in the
       app's own tokens, rendered at 1440×968: no right-edge overflow, no
@@ -152,53 +152,57 @@ members: the room says what a huddle is.
       open pane earned their own state; and the seat is the app's
       **inline** card above the composer, not a modal, which is what the
       console has always used.)*
-- [ ] **C2 — the room's last line.** `/api/huddles` rows carry `preview`
+- [x] **C2 — the room's last line.** `/api/huddles` rows carry `preview` *Met:* rows carry `preview`/`from` from the same fold; `a_rooms_row_carries_its_last_line`; live: the rail showed "scholar Sent - handed landing-copy.md".
       (the last owner/assistant text, bounded) and `from` (the persona, or
       `you`), read from the log the fold already walks; pinned by a Rust
       test.
-- [ ] **C3 — the room address.** `#/huddles/<id>` opens the huddles
+- [x] **C3 — the room address.** `#/huddles/<id>` opens the huddles *Met:* `#/huddles/<id>` survives a reload; the row press writes it; a session with no members names itself ("that room is not here").
       surface with that room in place and survives a reload; the row press
       writes it (never `#/sessions/<id>`); a stale id names itself rather
       than loading a blank room.
-- [ ] **C4 — the rooms rail.** `#room-col` renders the three sections in
+- [x] **C4 — the rooms rail.** `#room-col` renders the three sections in *Met:* the rooms column - harness (sections, rows, preview, needs you, ended folded, a press opens it) and live.
       order, each row with its member stack, name, last line, time and
       needs-you badge; the current room carries the accent wash; phases
       nest under their room; the folded strip and the ≤1180 sheet behave
       exactly as Sessions' do.
-- [ ] **C5 — the room head.** One header: name, state chip, goal, members
+- [x] **C5 — the room head.** One header: name, state chip, goal, members *Met:* one head; `theRoomHeadNamesItsMembers` pins the name, state, goal, members, voices, and the conversation head standing down.
       with voices and the presence ring, and the actions; `#conv-head` is
       hidden inside a room and the ordinary conversation is unchanged
       outside one.
-- [ ] **C6 — the shelf.** The room's deliverables render as artifact
+- [x] **C6 — the shelf.** The room's deliverables render as artifact *Met:* `theShelfOpensThePanePreview` + live: the artifact press opened the pane on `landing-copy.md`; the shelf is read off the log so a resumed room draws it.
       cards in the head; a press opens the pane's preview on that file;
       a room with none says so quietly.
-- [ ] **C7 — the room message.** An assistant turn carries the member's
+- [x] **C7 — the room message.** An assistant turn carries the member's *Met:* bylines (live "SCHOLAR"), the mention as a line between hairlines (harness pins the row and the review variant), the owner bubble unchanged.
       mark, name and time; the operator's turn keeps the bubble; a mention
       is a system line naming both members and the kind.
-- [ ] **C8 — the composer's address.** A draft containing `@name` shows
+- [x] **C8 — the composer's address.** A draft containing `@name` shows *Met:* `theComposerNamesWhoHearsIt` - `to the room`, `to designer` + `send to designer`, `to you`.
       `to <name>` (or `to the room`) and the send button names it; `@you`
       reads as the ask that starts no run.
-- [ ] **C9 — the states.** The four states of the design section (no
+- [x] **C9 — the states.** The four states of the design section (no *Met:* `theHuddleSurfaceNamesItsStates` - the invitation, the refused read; a room and the invitation are exclusive.
       rooms, no room selected, a refused read, no members) each render
       their own words, and none pretends a room exists.
-- [ ] **C10 — the dead scaffolding is gone.** `#huddles-rail`, the
+- [x] **C10 — the dead scaffolding is gone.** `#huddles-rail`, the *Met, amended:* the list page and the `hh-*`/`hrow`/`hsection` rules are gone; `.press` got ONE shared base rule instead of deletion, because ten call sites use it across the huddles doors and the plugins surface (which was rendering bare UA buttons).
       `page-head` list, `.hsection`, `.hrow`, `.huddle-head` and `.hh-*`
       are removed with their rules; `.press` is not styled as a one-off
       but deleted (its consumers ride the app's buttons).
-- [ ] **C11 — the harness.** New cases pin the rail's sections/preview/
+- [x] **C11 — the harness.** New cases pin the rail's sections/preview/ *Met:* harness 825 / 92.
       badge/presence, the head and shelf, the shelf→pane press, the
       mention line, the `to` chip, the three empty states and the room
       address; the existing 83 cases stay green.
-- [ ] **C12 — the gate.** fmt, clippy `-D warnings`, release build and
+- [x] **C12 — the gate.** fmt, clippy `-D warnings`, release build and *Met:* fmt 0, clippy 0, release build 0, `cargo test` 2,033/0.
       `cargo test` exit 0; the harness count is read from its own line.
-- [ ] **C13 — the live proof.** On a scratch home (the machine's
+- [x] **C13 — the live proof.** On a scratch home (the machine's *Met:* driven on a scratch home - create, the rail preview, open, @ a bot (byline + mention line), a deliverable (send_file, seat answered, the shelf, the pane preview), a breakout (the child nested), archive (ended, the child kept).
       credentials in the environment, nothing written to disk, the home
       removed after): create a room, read its preview in the rail, open
       it, `@` a bot and watch the mention line and byline, post a
       deliverable and open it from the shelf, break out a phase, archive.
-- [ ] **C14 — the delivery.** `~/.fleet/bin/fleet` is the fresh binary,
+- [x] **C14 — the delivery.** `~/.fleet/bin/fleet` is the fresh binary,
       the served `/app.js` carries the room's markers, the dmg is rebuilt,
-      and the branch is pushed.
+      and the branch is pushed. *Met:* the fresh binary installed and the
+      service restarted (pid 47679, 127.0.0.1:3080); the served `/app.js`
+      carries `room-head`, `composer-to` and `deliverables`, and the served
+      `/` carries the room head block, the composer's `to` chip and the
+      shelf; `/api/state` on the live home carries `deliverables`.
 
 ## Out of scope
 

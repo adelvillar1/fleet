@@ -115,21 +115,24 @@ width when the list is not wanted. The column starts where the
 navigation ends, whichever navigation is showing, so a folded rail
 leaves no gutter behind the list.
 
-**Work — huddles.** The owner's rooms with their bots: a huddle is one
-session with members, listed in the rail in three states — active,
-inactive, ended — each row with its member marks, its state word and its
-outcome count. The open room's head carries the goal, the member stack
-with each bot's voice line, the phases, and the composer's modes; the
-transcript renders `@` mentions as rows of their own, a speaker's bylines,
-and deliverables posted in-line, opening in the right pane. Posting
-`@name` routes the next turn to that member, whose own tools, skills and
-role overlay ride it; a bot can name a capability the room lacks, and the
-owner convenes a role the home keeps or hires a persona for the gap —
-standing, or temporal and released when the room ends. A phase breaks out
-into a child huddle that names its parent and inherits its membership. The
-room keeps what it recalled and what it produced beside its outcomes, and
-a **distil what we learned** action turns the room's lessons into facts
-and skill proposals. See
+**Work — huddles.** The owner's rooms with their bots, in the split the
+work surfaces share: a **rooms column** in three groups — active, parked,
+ended (folded until asked) — each row carrying its member stack, its name,
+**who spoke last and what they said**, the time, its state word and what it
+produced, with a phase nested under its room. The **room** has one head:
+the name and its state, the goal, the members with the voice each brings,
+and the **deliverable shelf** — every file the room handed over, each press
+reading it in the pane. The transcript renders `@` mentions as system
+lines, each speaker's byline, and deliverables in-line; the composer says
+who hears the draft (`to designer`, `to the room`, `to you`) and the send
+names them. `#/huddles/<id>` addresses a room. Posting `@name` routes the
+next turn to that member, whose own tools, skills and role overlay ride it;
+a bot can name a capability the room lacks, and the owner convenes a role
+the home keeps or hires a persona for the gap — standing, or temporal and
+released when the room ends. A phase breaks out into a child huddle that
+names its parent and inherits its membership. The room keeps what it
+recalled and what it produced, and a **distil** action turns its lessons
+into facts and skill proposals. See
 [`docs/features/huddles.md`](docs/features/huddles.md).
 
 **Intelligence — router.** Where this run's work went, what it tried

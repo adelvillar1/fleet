@@ -823,6 +823,9 @@ impl Bridge {
             "phases": session_children(&self.home, &key, &live),
             // The room's knowledge: what it recalled and what it wrote (C15).
             "knowledge": session_knowledge(&self.home, &key),
+            // The shelf: every file the room handed over, read off the log
+            // so a resumed room keeps what a live one drew.
+            "deliverables": session_deliverables(&self.home, &key),
                 "feedback": feedback_for(&self.home, &key),
                 "budget": crate::compaction::COMPACTION_TOKEN_BUDGET,
                 "turn_budget": crate::route::run_config(&self.home).max_turns,
@@ -859,6 +862,9 @@ impl Bridge {
             "phases": session_children(&self.home, &key, &live),
             // The room's knowledge: what it recalled and what it wrote (C15).
             "knowledge": session_knowledge(&self.home, &key),
+            // The shelf: every file the room handed over, read off the log
+            // so a resumed room keeps what a live one drew.
+            "deliverables": session_deliverables(&self.home, &key),
             "feedback": feedback_for(&self.home, &key),
             "budget": crate::compaction::COMPACTION_TOKEN_BUDGET,
             "turn_budget": crate::route::run_config(&self.home).max_turns,
@@ -7304,6 +7310,23 @@ fn sessions_read(home: &std::path::Path, current: &str, live: &LiveFace, query: 
 /// cannot disagree with the rows it counts. Only sessions carrying
 /// personas are huddles — an ordinary conversation is not a room, and a
 /// room with no members is not invented.
+/// A room's last line, cut to one rail-wide sentence: the first non-empty
+/// line, whitespace collapsed, bounded with an ellipsis. The rail shows a
+/// preview, never a paragraph.
+fn room_preview(text: &str) -> String {
+    let line = text
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or("");
+    let flat = line.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut out: String = flat.chars().take(92).collect();
+    if flat.chars().count() > 92 {
+        out.push('\u{2026}');
+    }
+    out
+}
+
 fn huddles_read(home: &std::path::Path, current: &str, live: &LiveFace) -> Value {
     let titles = load_titles(home);
     let archived = load_archived(home);
@@ -7365,12 +7388,35 @@ fn huddles_read(home: &std::path::Path, current: &str, live: &LiveFace) -> Value
         // The last owner message and the last `@you` decide it, in log
         // order — a reply after the ask clears it.
         let mut awaiting_you = false;
+        // The row's last line: who spoke last and what they said, read off
+        // the same fold the state and the ask already ride. The rail's
+        // preview is the room's own sentence, not its goal re-stated.
+        let mut preview = String::new();
+        let mut from = String::new();
         if let Ok(records) = session::replay(&session::session_path(home, &entry.id)) {
             let mut last_owner = 0usize;
             let mut last_ask = 0usize;
             for (at, record) in records.iter().enumerate() {
                 match record {
-                    session::Record::User { .. } => last_owner = at,
+                    session::Record::User { content } => {
+                        last_owner = at;
+                        if !content.trim().is_empty() {
+                            preview = room_preview(content);
+                            from = "you".to_string();
+                        }
+                    }
+                    session::Record::Assistant {
+                        content: Some(text),
+                        persona,
+                        ..
+                    } => {
+                        if !text.trim().is_empty() {
+                            preview = room_preview(text);
+                            from = persona.clone().unwrap_or_else(|| {
+                                entry.personas.first().cloned().unwrap_or_default()
+                            });
+                        }
+                    }
                     session::Record::Mention { member, .. }
                         if member == crate::session::MENTION_OWNER =>
                     {
@@ -7392,6 +7438,8 @@ fn huddles_read(home: &std::path::Path, current: &str, live: &LiveFace) -> Value
                 "recalled": knowledge["recalled"].as_array().map_or(0, |list| list.len()),
                 "wrote": knowledge["wrote"].as_array().map_or(0, |list| list.len()),
             },
+            "preview": preview,
+            "from": from,
             "awaiting_you": awaiting_you,
             "parent": parents.get(&entry.id),
             "children": Vec::<Value>::new(),
@@ -7471,6 +7519,50 @@ fn huddles_read(home: &std::path::Path, current: &str, live: &LiveFace) -> Value
 /// from the log's own approved `send_file` results, so a reload reads the
 /// same number the rail first showed. A log that cannot be read counts
 /// zero — the row still renders, and the transcript names the file.
+/// The room's deliverables, read off the log: every approved `send_file`,
+/// its path and size parsed from the result the tool wrote, attributed to
+/// the member whose turn handed it over. A resumed room draws the same
+/// shelf a live one did, because the shelf is the log's, not the stream's.
+fn session_deliverables(home: &std::path::Path, id: &str) -> Vec<Value> {
+    let Ok(records) = session::replay(&session::session_path(home, id)) else {
+        return Vec::new();
+    };
+    let mut from = String::new();
+    let mut out: Vec<Value> = Vec::new();
+    for record in records.iter() {
+        match record {
+            session::Record::Assistant {
+                persona: Some(name),
+                ..
+            } => {
+                from = name.clone();
+            }
+            session::Record::ToolResult {
+                name,
+                output,
+                approved,
+                ..
+            } if name == crate::tools::SEND_FILE_TOOL && *approved => {
+                // The tool's own words: "handed `<path>` to the owner
+                // (<n> bytes); the face shows it as a card".
+                let Some(at) = output.find('`') else { continue };
+                let rest = &output[at + 1..];
+                let Some(end) = rest.find('`') else { continue };
+                let path = rest[..end].to_string();
+                let size = rest[end..]
+                    .split(" bytes")
+                    .next()
+                    .and_then(|chunk| chunk.rsplit('(').next())
+                    .and_then(|digits| digits.trim().parse::<u64>().ok())
+                    .unwrap_or(0);
+                out.push(json!({"path": path, "size": size, "from": from.clone()}));
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
 fn huddle_deliverables(home: &std::path::Path, id: &str) -> usize {
     match session::replay(&session::session_path(home, id)) {
         Ok(records) => records
@@ -14256,6 +14348,59 @@ mod tests {
             "{knowledge}"
         );
         assert_eq!(knowledge["wrote"], json!(["gamma"]), "{knowledge}");
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// A room's rail row carries its last line — who spoke last and what
+    /// they said — read off the log the fold already walks (the huddles-ux
+    /// plan's C2). One line, bound, so the rail shows a sentence and not a
+    /// paragraph.
+    #[tokio::test]
+    async fn a_rooms_row_carries_its_last_line() {
+        let (bridge, _sources, _door) = bridge().await;
+        let home = bridge.home.clone();
+        std::fs::create_dir_all(home.join("roles")).unwrap();
+        std::fs::write(
+            home.join("roles/designer.md"),
+            "---\nname: designer\ndescription: makes pages\n---\nv\n",
+        )
+        .unwrap();
+        let id = bridge
+            .huddle(Some("the pricing page"), &["designer".to_string()])
+            .unwrap();
+        let mut log = session::Session::open(&session::session_path(&home, &id)).unwrap();
+        log.record(&session::Record::User {
+            content: "tighten the hero".to_string(),
+        })
+        .unwrap();
+        log.record(&session::Record::Assistant {
+            content: Some("The hero copy is tightened.\nThe promise leads.".to_string()),
+            tool_calls: Vec::new(),
+            persona: Some("designer".to_string()),
+        })
+        .unwrap();
+        drop(log);
+        let doc = bridge.huddles(&id).await;
+        let row = ["active", "inactive", "ended"]
+            .iter()
+            .filter_map(|group| doc[*group].as_array())
+            .flatten()
+            .find(|row| row["id"] == json!(id))
+            .cloned()
+            .unwrap_or_else(|| panic!("no row for the room: {doc}"));
+        assert_eq!(row["from"], json!("designer"), "{row}");
+        // The rail shows the last line, not the paragraph.
+        assert_eq!(
+            row["preview"],
+            json!("The hero copy is tightened."),
+            "{row}"
+        );
+        assert_eq!(
+            room_preview("  A very long first line\nsecond line "),
+            "A very long first line"
+        );
+        let long = format!("{} tail", "x".repeat(120));
+        assert!(room_preview(&long).ends_with('\u{2026}'), "{long}");
         std::fs::remove_dir_all(&home).ok();
     }
 
