@@ -565,23 +565,24 @@ const ICONS = {
   }
 };
 
-const DESTINATIONS = [
-  ['chat', 'conversation'],
-  ['design', 'design'],
-  ['sessions', 'sessions'],
-  ['huddles', 'huddles'],
-  ['router', 'router'],
-  ['delegation', 'delegation'],
-  ['memory', 'memory'],
-  ['skills', 'skills'],
-  ['second-brain', 'second brain'],
-  ['workspace-history', 'workspace history'],
-  ['bots', 'bots'],
-  ['vault', 'vault'],
-  ['settings', 'settings'],
-  ['calibration', 'calibration'],
-  ['plugins', 'plugins']
+const LABELS = {
+  chat: 'conversation', design: 'design', sessions: 'sessions', huddles: 'huddles',
+  router: 'router', delegation: 'delegation', memory: 'memory', skills: 'skills',
+  'second-brain': 'second brain', 'workspace-history': 'workspace history',
+  bots: 'bots', vault: 'vault', settings: 'settings', calibration: 'calibration',
+  plugins: 'plugins'
+};
+
+// The rail's four groups: the categories that fold.
+const GROUPS = [
+  ['work', ['chat', 'design', 'sessions', 'huddles']],
+  ['intelligence', ['router', 'delegation']],
+  ['knowledge', ['memory', 'skills', 'second-brain', 'workspace-history']],
+  ['system', ['bots', 'vault', 'settings', 'calibration', 'plugins']]
 ];
+
+// What a folded group says it holds: the needs-you count, never hidden.
+const NEEDS = { work: 2, system: 1 };
 
 const RAILS = [
   { name: 'memory', why: 'the fact corpus, by type', rows: [
@@ -712,10 +713,34 @@ function railRow(key, label) {
   return row;
 }
 
+function renderMainRail(host, foldedGroups) {
+  GROUPS.forEach(([group, keys]) => {
+    const folded = foldedGroups.indexOf(group) >= 0;
+    const section = el('section', 'rail-section');
+    section.dataset.folded = String(folded);
+    const head = el('button', 'rail-group');
+    head.setAttribute('aria-expanded', String(!folded));
+    const chev = el('span', 'rail-chev');
+    chev.appendChild(svgFor('chevron', 11));
+    head.appendChild(chev);
+    head.appendChild(el('span', 'rail-group-name', group));
+    if (NEEDS[group]) head.appendChild(el('span', 'rail-needs', String(NEEDS[group])));
+    section.appendChild(head);
+    keys.forEach((key) => {
+      const row = railRow(key, LABELS[key]);
+      if (folded) row.hidden = true;
+      section.appendChild(row);
+    });
+    host.appendChild(section);
+  });
+}
+
 function renderRails() {
   const main = document.getElementById('main-rail');
   if (!main) return;
-  DESTINATIONS.forEach(([key, label]) => main.appendChild(railRow(key, label)));
+  renderMainRail(main, []);
+  const foldedRail = document.getElementById('folded-rail');
+  if (foldedRail) renderMainRail(foldedRail, ['work', 'intelligence']);
 
   const host = document.getElementById('rails');
   RAILS.forEach((rail) => {

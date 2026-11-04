@@ -13,7 +13,7 @@ in `src/gui/assets/app.js`.
 | page | what it shows |
 |---|---|
 | `sheet.html` | Every key at its four real sizes — 13 in a transcript card, 14 in the palette, 17 in a rail, 18 in a section rail — with its meaning and use. A redrawn key shows **was** above and its replacement below. |
-| `rails.html` | The main rail (fifteen destinations), the four section rails (memory, skills, calibration, settings) and the bots rail, read at 236px with 34px rows — the context that matters. |
+| `rails.html` | The main rail (fifteen destinations), **the same rail with two groups folded**, the four section rails (memory, skills, calibration, settings) and the bots rail, read at 236px with 34px rows — the context that matters. |
 | `toggle.html` | The rail head with the collapse control as a chevron **alone**, in both modes. |
 | `zoom.html` | The drawings most at risk at 17px, at 68px (17 × 4): the eye judges pixels here, not intent. |
 
@@ -41,6 +41,17 @@ in `src/gui/assets/app.js`.
 The sheet itself caught one more: `repo` was used by memory's "project"
 row and by every workspace project but had no drawing — it rendered the
 unknown state in the first render of `rails.html`.
+
+## The groups fold
+
+Each group label on the main rail is a control: a press folds its rows to
+the label, and the label keeps the group's **needs-you count** so nothing
+is hidden silently. `rails.html` draws the open rail and the same rail
+with **work** and **intelligence** closed — six rows of fifteen, roughly
+240px returned to the screen. The state is remembered per group across
+launches; a folded group keeps its divider so the rail's rhythm holds; in
+icons mode the labels are hidden, so every row shows and the fold is
+restored when the rail expands.
 
 ## The principles the drawings follow
 
