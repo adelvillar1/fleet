@@ -25,7 +25,7 @@ services decide, measure, index, and render before it
 
 ## The surfaces
 
-Thirteen destinations in four groups, one flat level, reachable from the
+Fourteen destinations in four groups, one flat level, reachable from the
 rail or the ⌘K palette. Every destination shares the grammar: a
 one-sentence purpose, an identity card with **ask** buttons, a strip of
 counts, a column of substance, and a rail of secondary reads. The ask
@@ -114,6 +114,23 @@ the count of what needs you — so the conversation takes the whole
 width when the list is not wanted. The column starts where the
 navigation ends, whichever navigation is showing, so a folded rail
 leaves no gutter behind the list.
+
+**Work — huddles.** The owner's rooms with their bots: a huddle is one
+session with members, listed in the rail in three states — active,
+inactive, ended — each row with its member marks, its state word and its
+outcome count. The open room's head carries the goal, the member stack
+with each bot's voice line, the phases, and the composer's modes; the
+transcript renders `@` mentions as rows of their own, a speaker's bylines,
+and deliverables posted in-line, opening in the right pane. Posting
+`@name` routes the next turn to that member, whose own tools, skills and
+role overlay ride it; a bot can name a capability the room lacks, and the
+owner convenes a role the home keeps or hires a persona for the gap —
+standing, or temporal and released when the room ends. A phase breaks out
+into a child huddle that names its parent and inherits its membership. The
+room keeps what it recalled and what it produced beside its outcomes, and
+a **distil what we learned** action turns the room's lessons into facts
+and skill proposals. See
+[`docs/features/huddles.md`](docs/features/huddles.md).
 
 **Intelligence — router.** Where this run's work went, what it tried
 first, and what the day has served: the live decision, the declared

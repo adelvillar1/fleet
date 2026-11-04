@@ -98,6 +98,19 @@ named, not implied — see Sequencing in
   alive (`handed back`, `capped`, `working`), not what merely stopped;
   archiving is the owner's verb, and archived sessions gather in one
   collapsed group, restorable on demand.
+- **Huddles — rooms with your bots** — the console's `#/huddles`: one
+  session with members (you and one or more bots), listed active /
+  inactive / ended. `@name` routes the next turn to that bot, which
+  answers with its own tools, skills and voice; deliverables post in-line
+  and open in the right pane. A bot that names a capability the room lacks
+  leaves a suggestion card — convene a role the home keeps, or hire a
+  persona for the gap, standing or temporal. A phase breaks out into a
+  child huddle, and the room keeps what it recalled and what it produced
+  beside its outcomes, with a **distil what we learned** action that turns
+  the room's lessons into facts and skill proposals. Destructiveness is
+  judged by sys1 on the seat, and the owner's SOUL is the guardrail under
+  every bot's voice. See
+  [docs/features/huddles.md](docs/features/huddles.md).
 - **A working folder that is a default** — set it once; every chat
   without its own choice works in it, and the face shows the folder the
   run will use.
@@ -227,7 +240,7 @@ owner's own work that predates and feeds this harness. What grew from them is it
 - [FUNCTIONAL-SPECIFICATIONS.md](FUNCTIONAL-SPECIFICATIONS.md) — what
   the product does, surface by surface, in the user's terms.
 - [docs/architecture/surfaces.md](docs/architecture/surfaces.md) · the
-  what and why of all thirteen destinations.
+  what and why of all fourteen destinations.
   [docs/architecture/lanes.md](docs/architecture/lanes.md) — the five-lane
   case.
 - `CLAUDE.md` — the house rules, the pointer index, and the session

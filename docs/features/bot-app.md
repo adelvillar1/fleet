@@ -30,7 +30,10 @@ relay dials). See `remote-access.md` for the origins and the seal.
 3. **A persona is a contract, not a mascot.** Its mark is its serif
    initial on an opaque disc tinted from the console's lane palette, with
    a per-theme ink measured to clear AA (5.2:1 or better in all three
-   themes). No portraits.
+   themes). An **optional, owner-supplied image** may replace the initial
+   — `<roles_dir>/<name>.png|jpg|jpeg|webp|svg`, rendered in rows and
+   member stacks and never beside a message; absent one, the derived
+   initial stands. Renaming a bot is renaming its role file.
 4. **Inter-persona conversations.** A conversation carries a **goal** —
    the owner's own words, shown as chrome above the stream — and a set of
    **personas** in join order, the first being the lead. A persona joins
@@ -76,6 +79,21 @@ Each face carries its own shell and assets and refuses the other's by
 name (403 by route); the API is shared, because the phone and the desk
 are two clients of one conversation. Pairing is home-level: one device
 token works on either face.
+
+## The console's huddle
+
+The session machinery this face built — `Start.personas` in join order, a
+standing `goal`, `Join`/`Leave` records, `Assistant.persona` bylines — is
+what the console's **huddle** is made of. The huddle is the work face's
+room over the same bridge: the owner and one or more bots exchanging
+messages, addressing each other with `@`, posting deliverables in-line,
+breaking a phase out into a child room, and keeping what the room learned
+beside what it produced. It does not move here. This face stays
+assistant-first — the unit is still the persona, the inbox still groups
+conversations by the persona working them, and no huddle rail appears —
+while the console's room and this window are two clients of one
+conversation. The rulings both answer to are above; the room's own what
+and why is [`huddles.md`](huddles.md).
 
 ## The routes
 

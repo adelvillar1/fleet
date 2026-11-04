@@ -3,8 +3,8 @@
 A read of the browser face as a user meets it, taken live on
 2026-10-21 against every destination in the rail — eleven then;
 **workspace history** joined the knowledge group when the LayerFS
-instrument landed, making twelve, and the design canvas makes
-thirteen. This is the what and
+instrument landed, making twelve, the design canvas makes
+thirteen, and the huddles room makes fourteen. This is the what and
 the why of each surface — the terms the README and the functional
 specification should speak. The how stays in the code.
 
@@ -182,6 +182,36 @@ the live face (the seat, the driving session, a pause's control file,
 and a write-time window for a run on another process — a bound the
 surface says rather than a heartbeat the log does not have). The
 separate read-only replay retired: the conversation is the replay.
+
+### Huddles — *work*
+
+**What it is.** The owner's rooms with their bots: a huddle is one
+session with members, and the rail lists every room in three states —
+*active*, *inactive*, *ended* — each row carrying its member marks, its
+state word and its outcome count. The open room's head carries the goal,
+the member stack with each bot's voice line, the phases, and the
+composer's modes; the transcript renders `@` mentions as rows of their
+own, the speaker's bylines, and deliverables posted in-line.
+
+**What you do.** Open a room and read it. Post `@name` and the next turn
+is authored by that member — its own tools, skills and role overlay ride
+it, so the answer comes back in that bot's voice. Read a deliverable's
+card and open it in the right pane. Break a phase out into a child
+huddle; it names its parent and inherits its membership. Press **distil
+what we learned** and a run turns the room's lessons into facts and skill
+proposals. When a bot names a capability the room lacks, convene a role
+the home keeps or hire a persona for the gap — standing, or temporal and
+released when the room ends.
+
+**Why.** A room is a knowledge space, not a deliverable factory: what it
+recalled and what it produced sit beside its outcomes, so a room that
+produced no files but taught the home three things reads as three. And a
+capability gap is an opportunity to hire, not a reason to abandon the
+brief — if the room needs a quantum physicist, the room gets one.
+
+**State.** Complete; the room, the mentions, the scope, the gaps and the
+hires, the breakouts, the knowledge line and the distil action are built
+and pinned by the harness, and the live proof drove a whole huddle.
 
 ### Router — *intelligence*
 

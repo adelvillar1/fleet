@@ -502,7 +502,10 @@ Delegation to depth 2. A child is routed by the router over its own brief
 its own routed client; a parent on a direct, unrouted client — every test
 double — hands the child the same client. Scope is declarative; approval is
 forwarded with calls renamed `subagent -> <tool>`; the result is never
-silence.
+silence. A huddle's breakout is the same parent/child link at the room
+level: `bridge::huddle_breakout` writes a child session whose start record
+names its parent — no `kind`, because a breakout is a room, not a delegated
+child — and inherits the parent's membership unless one is named.
 
 #### `delegate.rs`
 The delegation judgment beat: `fleet delegate` grades a day's delegations
@@ -653,7 +656,17 @@ bridge's state, persisted in `<home>/sessions-workdirs.json` and resolved
 against the launch directory when the run is accepted; the folder picker
 browses the whole hierarchy through the `abs` listing and commits through
 the same writer; the checkpoint store stays under the home and only its
-capture root follows the folder.
+capture root follows the folder. The huddle's room rides the same bridge:
+`GET`/`POST /api/huddles` creates one session with members, `POST
+/api/huddles/<parent>` breaks a child out, `GET /api/avatar` serves an
+owner-supplied role image, and the seams are `bridge::huddle`,
+`huddle_breakout`, `join` (with `Join.temporal`), `session_archive` (which
+releases a temporal hire) and `session_knowledge`. The log's vocabulary is
+`Record::Mention` (member + kind: directive | ask | review),
+`Record::Recommend` (name, kind: role | tool | skill | capability, reason)
+and `Assistant.persona`; a speaker's turn is scoped by
+`subagents::Scope::child` and its delivery tools (`read_document`,
+`send_file`) plus `author_persona` are exempt from the scope refusal.
 
 ### Integration harness
 

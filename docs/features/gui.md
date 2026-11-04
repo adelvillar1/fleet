@@ -418,6 +418,7 @@ a maze. The rail's collapsed state is remembered across launches.
 | `#/memory` | the fact corpus, the day's recall hits, search; an edit rides the substrate's own rewriter |
 | `#/skills` | the library with its loaded/skipped split, the proposals, the curation candidates |
 | `#/sessions` | the archive newest-first; a row opens its replay, and the replay's resume re-anchors the face to that log. A row also names the project it was born in and, when a channel started it, `via <channel> · <peer>`; `via a channel` is a filter chip |
+| `#/huddles` | the owner's rooms with their bots: a rail in three states (active, inactive, ended), each row carrying its member marks, its state word and its outcome count, and the open room with its goal, its member stack and each bot's voice, its phases, its knowledge line, a break-out action, and the transcript's `@` mentions, bylines and in-line deliverables (`docs/features/huddles.md`) |
 | `#/calibration` | the day's stream rows by op and the judged quality's fit cells, the same computation `fleet calib --calibration` rides |
 | `#/design` | the design canvas: boards of frames on a pan/zoom world, each frame an opaque HTML page from a run's `frame` tool — see `docs/features/design.md` |
 | `#/second-brain` | the project atlas: the attention queue, the six-week pulse, the commit ribbon, the report feed with the harness trust lines, and the method band (gates, loops, harness, maturity) |
