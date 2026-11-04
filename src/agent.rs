@@ -2321,16 +2321,15 @@ impl<'a> Agent<'a> {
         if admitted(tools::WEB_TOOL) {
             specs.push(tools::web_spec());
         }
-        // The document reader and the hand-over: both bound to the
-        // chat's folder, and both declared on every run that has one,
-        // because a model that cannot name them reads a PDF with
-        // `read_file` and hands the owner a path in prose.
-        if admitted(tools::READ_DOCUMENT_TOOL) {
-            specs.push(tools::read_document_spec());
-        }
-        if admitted(tools::SEND_FILE_TOOL) {
-            specs.push(tools::send_file_spec());
-        }
+        // The document reader and the hand-over: both bound to the run's
+        // directory, and both declared on EVERY run — the scope does not
+        // gate them. The comment always said so and the code drifted: a
+        // narrowed role could write a file with `write_file` and then had
+        // no way to hand it over, because `send_file` was never declared
+        // (KI-410). A delivery is not a work tool, so it does not belong
+        // behind the scope.
+        specs.push(tools::read_document_spec());
+        specs.push(tools::send_file_spec());
         // The persona-authoring tool rides every run that has a home: it is
         // the room's escape hatch when no member holds the domain the work
         // needs, so a narrowed scope must not take it away.
@@ -9836,6 +9835,47 @@ mod tests {
         )
         .unwrap();
         agent.room_line().unwrap_or_default()
+    }
+
+    #[tokio::test]
+    async fn a_narrowed_scope_still_declares_delivery() {
+        // KI-410: the document reader and the hand-over are bound to the
+        // run's directory, not to the speaker's scope — a bot that can
+        // write a file must be able to hand it over, whatever its role
+        // narrows. This is the drift the live proof caught: the comment
+        // said "every run" while the code gated both on the scope.
+        let m = fold_mock("done");
+        let home = scratch("scope-delivery");
+        let mut session = crate::session::Session::create_with_persona(
+            &home,
+            "m",
+            Some(vec!["clerk".to_string()]),
+        )
+        .unwrap();
+        let client = Client::new(format!("http://127.0.0.1:{}", m.port), "test-key");
+        let mut options = routing_options("m");
+        options.improve_home = Some(home.clone());
+        options.scope = Some(crate::subagents::Scope::child(
+            Some(vec!["read_file".to_string()]),
+            0,
+        ));
+        let progress: &'static mut Vec<u8> = Box::leak(Box::new(Vec::new()));
+        let agent = Agent::new(
+            &client,
+            options,
+            &mut session,
+            Box::new(ApproveAll),
+            &mut *progress,
+        )
+        .unwrap();
+        let specs = agent.declarations();
+        let names: Vec<&str> = specs.iter().map(|spec| spec.name()).collect();
+        assert!(names.contains(&"send_file"), "{names:?}");
+        assert!(names.contains(&"read_document"), "{names:?}");
+        // The scope still narrows the work tools — delivery is not a work
+        // tool, so it is the one thing the narrowing leaves alone.
+        assert!(!names.contains(&"write_file"), "{names:?}");
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     #[tokio::test]

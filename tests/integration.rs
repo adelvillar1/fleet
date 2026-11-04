@@ -6145,7 +6145,12 @@ async fn a_named_role_rides_the_childs_prompt_and_narrows_its_tools() {
     // And its declarations are the role's admitted set — the harness
     // prompt rode along, but write_file was never declared to it.
     let declared = declared_tools(&bodies[1]);
-    assert_eq!(declared, vec!["bash", "read_file"], "{declared:?}");
+    // The role narrows the work tools; delivery rides along regardless.
+    assert_eq!(
+        declared,
+        vec!["bash", "read_file", "read_document", "send_file"],
+        "{declared:?}"
+    );
     // The parent's own prompt is untouched: a role is a delegation's
     // specialization, never the owner's session's.
     let parent_system = bodies[0]["messages"][0]["content"].as_str().unwrap();
@@ -8580,7 +8585,11 @@ async fn a_delegated_task_runs_in_its_own_session_on_the_parents_model() {
             "glob",
             "repo_map",
             "file_change",
-            "todo"
+            "todo",
+            // Delivery is not a work tool, so the child's narrowing leaves
+            // it alone (KI-410).
+            "read_document",
+            "send_file"
         ]
     );
     let (skill_result, _) = tool_result(&child_records, "use_skill");
@@ -9072,7 +9081,7 @@ async fn a_tool_outside_the_childs_scope_is_refused_by_name() {
     // The child's second request declared only what its scope admits.
     assert_eq!(
         declared_tools(&bodies[2]),
-        vec!["bash"],
+        vec!["bash", "read_document", "send_file"],
         "{:?}",
         declared_tools(&bodies[2])
     );
