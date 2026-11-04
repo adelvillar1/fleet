@@ -219,6 +219,9 @@ pub fn use_skill_spec() -> ToolSpec {
     )
 }
 
+/// The model-visible name of the persona-authoring tool.
+pub const AUTHOR_PERSONA_TOOL: &str = "author_persona";
+
 /// The model-visible name of the vision tool.
 pub const VISION_TOOL: &str = "vision";
 
@@ -1078,6 +1081,45 @@ pub fn read_document_spec() -> ToolSpec {
                 },
             },
             "required": ["path"],
+        }),
+    )
+}
+
+pub fn author_persona_spec() -> ToolSpec {
+    ToolSpec::function(
+        AUTHOR_PERSONA_TOOL,
+        "Hire a purpose-built persona for a domain this room has no one in — financial \
+         analysis, linear algebra, non-linear optimization. Writes the role to the home's \
+         roles/ and convenes it in this huddle at once, so it joins immediately and stays \
+         available to every later huddle. Use it when the gap is a domain, not a skill the \
+         library already has.",
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "The persona's name — a name, not a path.",
+                },
+                "description": {
+                    "type": "string",
+                    "description": "One line: what this persona is for.",
+                },
+                "tools": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Harness tools it admits, by name.",
+                },
+                "skills": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Library skills it carries, by name.",
+                },
+                "overlay": {
+                    "type": "string",
+                    "description": "Its voice and approach — how it works and speaks.",
+                },
+            },
+            "required": ["name", "description"],
         }),
     )
 }

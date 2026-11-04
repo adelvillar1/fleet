@@ -1445,6 +1445,11 @@ impl App {
                 self.entries
                     .push(Entry::Artifact(ArtifactCard { path, size, note }));
             }
+            UiEvent::PersonaAuthored { name, description } => {
+                self.flush_streaming();
+                self.run.stage = Stage::Act;
+                self.run.last = format!("hired {name} \u{b7} {description}");
+            }
             UiEvent::Recommended { name, reason, .. } => {
                 // A terminal has no convene press, so the proposal names
                 // itself on the status line rather than growing a card the

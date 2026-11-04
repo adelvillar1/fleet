@@ -290,6 +290,23 @@ fn clamp_concurrency(ceiling: usize, requested: Option<&str>) -> usize {
 /// reads. The cap curates the prompt's list, never the library.
 pub const SKILLS_PROMPT_CAP: usize = 60;
 
+/// A string array out of a tool-call's arguments, empties dropped — the
+/// shape `tools:` and `skills:` take.
+fn string_list(arguments: &serde_json::Value, key: &str) -> Vec<String> {
+    arguments
+        .get(key)
+        .and_then(serde_json::Value::as_array)
+        .map(|list| {
+            list.iter()
+                .filter_map(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|text| !text.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// What a gap's name is, which decides what the owner can do about it: a
 /// role this home keeps can be convened; a tool or a skill can be carried
 /// by a persona the owner authors; anything else is a capability the room
@@ -669,6 +686,10 @@ pub enum UiEvent {
         kind: String,
         reason: String,
     },
+    /// A member authored a persona for a domain the room lacked and it
+    /// joined at once (the huddles plan's C5). The surface says who was
+    /// hired; the role file is the record.
+    PersonaAuthored { name: String, description: String },
     /// The route this run takes, in full: the active provider and how it
     /// was chosen (`judged`/`fallback`/`pinned`), the model it will
     /// actually call, sys1's workload and verdict when there was a
@@ -2309,6 +2330,12 @@ impl<'a> Agent<'a> {
         }
         if admitted(tools::SEND_FILE_TOOL) {
             specs.push(tools::send_file_spec());
+        }
+        // The persona-authoring tool rides every run that has a home: it is
+        // the room's escape hatch when no member holds the domain the work
+        // needs, so a narrowed scope must not take it away.
+        if self.improve_home.is_some() {
+            specs.push(tools::author_persona_spec());
         }
         // The desktop rides every run too, and unlike every other tool
         // it asks in every mode — the ruling lives in the approvals
@@ -4781,6 +4808,9 @@ impl<'a> Agent<'a> {
         if call.function.name == tools::TOOL_SEARCH_TOOL {
             return self.run_tool_search(call).await;
         }
+        if call.function.name == tools::AUTHOR_PERSONA_TOOL {
+            return self.run_author_persona(call).await;
+        }
         // An imagine call shapes the lane's base64 answer into files
         // before the text reaches the model: the bytes never ride the
         // conversation.
@@ -5041,6 +5071,73 @@ impl<'a> Agent<'a> {
     /// closed set, sem1 ranks the candidates by meaning, and a declared
     /// floor decides whether anything fits. Nothing here calls a
     /// language model; a failed lane is a named fallback, never a guess.
+    /// Author a persona for a domain the room lacks, and convene it (C5):
+    /// the role is written through the loader's own grammar, the join is a
+    /// row in the log, and the new persona speaks next. It stays in the
+    /// home's roles, so every later huddle can convene it too.
+    async fn run_author_persona(&mut self, call: &ToolCall) -> Result<(String, bool), AgentError> {
+        let arguments: serde_json::Value =
+            serde_json::from_str(&call.function.arguments).unwrap_or(serde_json::Value::Null);
+        let Some(home) = self.improve_home.clone() else {
+            return Ok((
+                "error: this run has no home to write a role into".to_string(),
+                false,
+            ));
+        };
+        let name = arguments
+            .get("name")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        let description = arguments
+            .get("description")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        if name.is_empty() || description.is_empty() {
+            return Ok((
+                "error: a persona needs a name and a description".to_string(),
+                false,
+            ));
+        }
+        let fields = crate::roles::RoleFields {
+            description: description.clone(),
+            tools: string_list(&arguments, "tools"),
+            skills: string_list(&arguments, "skills"),
+            shapes: Vec::new(),
+            overlay: arguments
+                .get("overlay")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+        };
+        if let Err(error) = crate::roles::write(&home, &name, &fields) {
+            return Ok((format!("error: {error}"), false));
+        }
+        let Ok(role) = crate::roles::load(&home, &name) else {
+            return Ok((
+                format!("error: `{name}` was written but cannot be read back"),
+                false,
+            ));
+        };
+        self.record(&Record::Join {
+            persona: role.name.clone(),
+            role: Some(role.description.clone()),
+            at: crate::boards::now_stamp(),
+        })?;
+        self.apply_speaker(&role.name)?;
+        self.emit(UiEvent::PersonaAuthored {
+            name: role.name.clone(),
+            description,
+        });
+        Ok((
+            format!("`{}` is written to roles/ and joins the room", role.name),
+            false,
+        ))
+    }
+
     async fn run_tool_search(&mut self, call: &ToolCall) -> Result<(String, bool), AgentError> {
         let arguments = parse_arguments(&call.function.arguments);
         let query = arguments
@@ -8970,6 +9067,61 @@ mod tests {
             &mut *progress,
         )
         .expect("the agent assembles")
+    }
+
+    #[tokio::test]
+    async fn authoring_a_persona_writes_the_role_and_convenes_it() {
+        let m = fold_mock("done");
+        let home = scratch("author-persona");
+        let mut session = crate::session::Session::create_with_persona(
+            &home,
+            "m",
+            Some(vec!["scholar".to_string()]),
+        )
+        .unwrap();
+        let path = session.path().to_path_buf();
+        let client = Client::new(format!("http://127.0.0.1:{}", m.port), "test-key");
+        let mut options = routing_options("m");
+        options.improve_home = Some(home.clone());
+        let progress: &'static mut Vec<u8> = Box::leak(Box::new(Vec::new()));
+        let mut agent = Agent::new(
+            &client,
+            options,
+            &mut session,
+            Box::new(ApproveAll),
+            &mut *progress,
+        )
+        .unwrap();
+        let call = crate::api::ToolCall {
+            id: "c1".to_string(),
+            kind: "function".to_string(),
+            function: crate::api::FunctionCall {
+                name: "author_persona".to_string(),
+                arguments: serde_json::json!({
+                    "name": "financial-analyst",
+                    "description": "models the unit economics",
+                    "tools": ["read_file", "write_file"],
+                    "skills": [],
+                    "overlay": "Thinks in contribution margin and payback."
+                })
+                .to_string(),
+            },
+        };
+        let (outcome, _) = agent
+            .run_author_persona(&call)
+            .await
+            .expect("the persona is authored");
+        assert!(outcome.contains("financial-analyst"), "{outcome}");
+        // The role is on disk and the room holds it; the new persona speaks next.
+        assert!(home.join("roles/financial-analyst.md").is_file());
+        assert_eq!(agent.active_speaker.as_deref(), Some("financial-analyst"));
+        drop(agent);
+        let records = crate::session::replay(&path).expect("the log replays");
+        assert!(records.iter().any(|record| matches!(
+            record,
+            Record::Join { persona, .. } if persona == "financial-analyst"
+        )));
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     #[tokio::test]

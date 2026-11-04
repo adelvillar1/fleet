@@ -2735,6 +2735,11 @@
         // what they were asked for is never buried in prose (C8).
         mentionRow(event);
         break;
+      case 'persona-authored':
+        // A persona was hired for a gap the room hit: say who joined.
+        notice('a persona was hired',
+          event.name + ' \u00b7 ' + (event.description || 'joins the room'));
+        break;
       case 'recommend':
       case 'recommended':
         // A member proposed convening a role the room lacks: one

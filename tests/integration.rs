@@ -8289,6 +8289,7 @@ async fn the_improve_tool_files_a_proposal_inside_a_run_and_never_applies_one() 
             "web",
             "read_document",
             "send_file",
+            "author_persona",
             "computer_use",
             // The background handle: a command started
             // in the background is controllable only if the

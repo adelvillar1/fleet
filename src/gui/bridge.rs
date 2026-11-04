@@ -10330,6 +10330,12 @@ pub(crate) fn describe(event: &UiEvent) -> Value {
             "kind": kind,
             "reason": reason,
         }),
+        // A persona was authored for a gap and joined the room at once.
+        UiEvent::PersonaAuthored { name, description } => json!({
+            "type": "persona-authored",
+            "name": name,
+            "description": description,
+        }),
         UiEvent::Routed {
             provider,
             model,
