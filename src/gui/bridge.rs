@@ -7812,23 +7812,28 @@ fn built_ins_value(home: &std::path::Path) -> Value {
     // machine has.
     let setting = |name: &str| std::env::var(name).ok();
     let brain_home = crate::boards::brain_home(&setting);
-    let brain_state = match &brain_home {
+    // The row's state word and its one phrase, the shape every built-in
+    // row carries (KI-425): the address is short enough to read here, the
+    // home's path is not.
+    let (brain_state, brain_detail) = match &brain_home {
         Some(path) => {
             let tool = crate::plugins::second_brain::SecondBrain::new(
                 path.clone(),
                 crate::plugins::second_brain::DEFAULT_PORT,
             );
             if tool.has_tool() {
-                format!("installed \u{b7} {}", tool.address())
+                ("installed".to_string(), tool.address())
             } else {
-                format!(
-                    "the home resolves at {} but carries no control_tower.py \u{2014} a                      misconfiguration, not an outage",
-                    path.display()
+                (
+                    "misconfigured".to_string(),
+                    "its home carries no control_tower.py".to_string(),
                 )
             }
         }
-        None => "no home resolves (SECOND_BRAIN_HOME, ~/.second-brain, ~/Projects/second-brain)"
-            .to_string(),
+        None => (
+            "not found".to_string(),
+            "no home resolves (SECOND_BRAIN_HOME, ~/.second-brain)".to_string(),
+        ),
     };
     let brain_dot = match &brain_home {
         Some(path) => {
@@ -7849,6 +7854,7 @@ fn built_ins_value(home: &std::path::Path) -> Value {
         "kind": "tool plugin",
         "dot": brain_dot,
         "state": brain_state,
+        "detail": brain_detail,
         "manages": "the second-brain panel",
     }));
     // The vendored lanes: the settings read's own lanes document, so
@@ -7860,23 +7866,13 @@ fn built_ins_value(home: &std::path::Path) -> Value {
                 .get("name")
                 .and_then(|n| n.as_str())
                 .unwrap_or_default();
-            let role = lane
-                .get("role")
-                .and_then(|n| n.as_str())
-                .unwrap_or_default();
-            let (state, detail) = match lane.get("unavailable").and_then(|u| u.as_str()) {
-                Some(reason) => ("unavailable".to_string(), reason.to_string()),
-                None => match lane.get("resolved_home").and_then(|h| h.as_str()) {
-                    Some(resolved) => ("resolved".to_string(), format!("at {resolved}")),
-                    None => ("not resolved".to_string(), String::new()),
-                },
-            };
+            let (state, detail) = lane_row_state(lane);
             built_ins.push(serde_json::json!({
                 "name": name,
                 "kind": "lane",
                 "dot": if state == "resolved" { "ok" } else { "off" },
                 "state": state,
-                "detail": format!("{role} \u{b7} {detail}"),
+                "detail": detail,
                 "manages": "the settings page's lane cards",
             }));
         }
@@ -7902,12 +7898,49 @@ fn built_ins_value(home: &std::path::Path) -> Value {
                 "kind": "mcp server",
                 "dot": if enabled { "ok" } else { "off" },
                 "state": if enabled { "enabled" } else { "disabled" },
-                "detail": program,
+                // The row says what the state means for the run, not the
+                // command line it spawns: a program string runs to three
+                // lines in a status row (KI-425). The server's card carries
+                // the program.
+                "detail": if enabled {
+                    "spawned on demand".to_string()
+                } else {
+                    "its tools are not declared this run".to_string()
+                },
+                "program": program,
                 "manages": "the settings page's MCP servers card",
             }));
         }
     }
     serde_json::json!(built_ins)
+}
+
+/// One lane row's human phrase: the role the lane plays, with the noun
+/// every row shares. A document that carries no role says nothing rather
+/// than a bare "lane".
+fn lane_phrase(role: &str) -> String {
+    let role = role.trim();
+    if role.is_empty() {
+        String::new()
+    } else {
+        format!("{role} lane")
+    }
+}
+
+/// A lane row's state word and its one human phrase (KI-425): what the
+/// lane is, never where its home sits — an absolute path reads as machine
+/// noise in a status row and wrapped the surface. The lane card carries
+/// the path; an unavailable lane carries the reason it gave.
+fn lane_row_state(lane: &Value) -> (String, String) {
+    if let Some(reason) = lane.get("unavailable").and_then(Value::as_str) {
+        return ("unavailable".to_string(), reason.to_string());
+    }
+    let role = lane.get("role").and_then(Value::as_str).unwrap_or_default();
+    let state = match lane.get("resolved_home").and_then(Value::as_str) {
+        Some(_) => "resolved",
+        None => "not resolved",
+    };
+    (state.to_string(), lane_phrase(role))
 }
 
 fn settings_read(home: &std::path::Path) -> Value {
@@ -15371,5 +15404,40 @@ mod tests {
         // the face watching the parent filters the card away.
         assert_eq!(streamed["session"], "child-1", "{streamed}");
         assert_eq!(streamed["parent"], "s", "{streamed}");
+    }
+
+    /// KI-425: a built-in's row is a status phrase, not a machine dump. A
+    /// lane that resolved used to render its home as `at /Users/…`, which
+    /// wrapped the row to three lines; the phrase is the role, and the
+    /// document's path stays for the lane card.
+    #[test]
+    fn a_built_in_rows_phrase_carries_no_home_path() {
+        let resolved = serde_json::json!({
+            "name": "sys1", "role": "judgment",
+            "resolved_home": "/Users/someone/Projects/fleet/services/sys1",
+        });
+        let (state, detail) = lane_row_state(&resolved);
+        assert_eq!(state, "resolved");
+        assert_eq!(detail, "judgment lane");
+        assert!(!detail.contains('/'), "{detail}");
+
+        let missing = serde_json::json!({ "name": "documents", "role": "documents" });
+        let (state, detail) = lane_row_state(&missing);
+        assert_eq!(state, "not resolved", "{state}");
+        assert_eq!(detail, "documents lane");
+
+        // An unavailable lane names the reason it gave, verbatim — that
+        // reason is the service's own sentence and reads as one line.
+        let unavailable = serde_json::json!({
+            "name": "gen1", "role": "media",
+            "unavailable": "not configured — its venv is unbuilt",
+        });
+        let (state, detail) = lane_row_state(&unavailable);
+        assert_eq!(state, "unavailable", "{state}");
+        assert_eq!(detail, "not configured — its venv is unbuilt");
+
+        // A document that carries no role says nothing rather than " lane".
+        let anonymous = serde_json::json!({ "name": "x", "resolved_home": "/tmp/x" });
+        assert_eq!(lane_row_state(&anonymous).1, "");
     }
 }

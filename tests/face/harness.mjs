@@ -4435,11 +4435,11 @@ async function theStrategyStepShowsItsPreview() {
             { name: 'fresh-draft', path: '/tmp/fleet-plugins/proposals/fresh-draft' }
           ],
           built_ins: [
-            { name: 'second-brain', kind: 'tool plugin', dot: 'ok', state: 'running at http://127.0.0.1:4175', manages: 'the second-brain panel' },
-            { name: 'sys1', kind: 'lane', dot: 'ok', state: 'judgment lane · resolved', manages: "the settings page's lane cards" },
-            { name: 'documents', kind: 'lane', dot: 'off', state: 'documents lane · not configured — its venv is unbuilt', manages: "the settings page's lane cards" },
-            { name: 'cloudflare', kind: 'mcp server', dot: 'ok', state: 'enabled — spawned on demand', manages: "the settings page's MCP servers card" },
-            { name: 'github', kind: 'mcp server', dot: 'off', state: 'disabled — its tools are not declared this run', manages: "the settings page's MCP servers card" }
+            { name: 'second-brain', kind: 'tool plugin', dot: 'ok', state: 'installed', detail: 'at http://127.0.0.1:4175', manages: 'the second-brain panel' },
+            { name: 'sys1', kind: 'lane', dot: 'ok', state: 'resolved', detail: 'judgment lane', manages: "the settings page's lane cards" },
+            { name: 'documents', kind: 'lane', dot: 'off', state: 'unavailable', detail: 'not configured — its venv is unbuilt', manages: "the settings page's lane cards" },
+            { name: 'cloudflare', kind: 'mcp server', dot: 'ok', state: 'enabled', detail: 'spawned on demand', manages: "the settings page's MCP servers card" },
+            { name: 'github', kind: 'mcp server', dot: 'off', state: 'disabled', detail: 'its tools are not declared this run', manages: "the settings page's MCP servers card" }
           ]
         }
       },
@@ -4462,6 +4462,12 @@ async function theStrategyStepShowsItsPreview() {
       'sections=' + sections.length);
     // The status dots lead the rows: the ok dot on second-brain, the
     // off dot on the not-configured lane.
+    const paths = board
+      .find((one) => one.dataset && one.dataset.role === 'builtin')
+      .map((one) => String(one.textContent))
+      .filter((text) => /(^|\s)(at\s+)?\/Users\/|\/Applications\//.test(text));
+    check('KI-425 a built-in\u2019s row carries no machine path', paths.length === 0,
+      paths.join(' | ').slice(0, 120));
     const secondBrainRow = board.find((one) => one.dataset && one.dataset.plugin === 'second-brain')[0];
     check('PLUGINS the tool plugin\u2019s row carries its ok dot',
       !!secondBrainRow && !!secondBrainRow.children &&

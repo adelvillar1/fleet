@@ -8445,6 +8445,7 @@ body[data-work="collapsed"] .work-list { display: none; }
   align-items: center;
   gap: 12px;
   width: 100%;
+  min-height: 44px;
   padding: 11px 18px;
   border: 0;
   border-bottom: 1px solid var(--dsw-static-paper-600);
@@ -8471,7 +8472,19 @@ body[data-work="collapsed"] .work-list { display: none; }
   border: 1.5px solid var(--dsw-static-paper-400);
 }
 .plugins-row-name { font-weight: 600; min-width: 200px; }
-.plugins-row-state { color: var(--dsw-static-ink-600); flex: 1 1 auto; overflow-wrap: anywhere; }
+/* One line, always: a status row that wraps reads as a wall and pushes the
+   action out of the column its section's head set (KI-425 — a lane's home
+   path and a server's command line both wrapped a row to three lines). The
+   phrase is the producer's to keep short; the ellipsis is the row's promise
+   that the shape survives whatever it is handed. */
+.plugins-row-state {
+  color: var(--dsw-static-ink-600);
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .plugins-row-state .plugins-dim, .plugins-row-state em { color: var(--dsw-static-paper-300); font-style: normal; }
 .plugins-row-kind {
   font: 500 10.5px/1 var(--dsw-static-mono, ui-monospace, monospace);

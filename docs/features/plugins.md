@@ -173,6 +173,18 @@ the bridge — the relay does not decide — and the bridge refuses it by
 name, so the sandbox's boundary stays enforced in the one place that
 owns it.
 
+## A row's words
+
+Every built-in row reads the same way: a status dot, the name, **one
+human phrase**, the kind, and the press that opens its card. The phrase
+is the bridge's to keep short and human — `resolved · judgment lane`,
+`enabled · spawned on demand`, `installed · http://127.0.0.1:4175` —
+and never a machine dump: a lane's home path and a server's command line
+live on the card the row opens, because a status row that carries a path
+wraps to three lines and reads as noise (KI-425). The row itself clamps
+to one line with an ellipsis whatever it is handed, so the section's
+column cannot be pushed apart by a long phrase.
+
 ## The telemetry bundle
 
 `plugins/telemetry/` in this repository is the worked example: a
