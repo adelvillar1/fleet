@@ -5030,6 +5030,50 @@ async function theStrategyStepShowsItsPreview() {
       page.window.location.hash);
   }
 
+  // The settings persona card carries the owner's image too (C11) — the
+  // same mark every other surface renders, now where the role is edited.
+  async function thePersonaCardShowsTheOwnersImage() {
+    const url = '/api/avatar?name=designer';
+    const page = boot({
+      width: 1440,
+      hash: '#/settings/roles',
+      documents: {
+        settings: {
+          type: 'settings', read_at: 'now',
+          scalars: [], lists: [], rules: [], env: [], cron: [],
+          soul: { present: false, text: '' },
+          router: { pin: '', judged: ['quick'],
+            tiers: [{ workload: 'quick', candidates: ['a/one'], resolved: 'a/one', reverts: false }],
+            min_confidence: 0.5, default_workload: 'quick', allow_api_models: false, roster: [] },
+          catalog: { models: [], providers: [] },
+          lanes: { document: {}, lanes: [], refused: [] },
+          servers: { servers: [], refused: [] },
+          tools: { calls_per_turn: 0, definition_tokens: 0, disabled: [], last_sweep: '', window: 0 },
+          vault: { names: [], exists: true, passphrase: false, plaintext: [] },
+          roles: { dir: '/tmp', entries: [
+            { name: 'designer', description: 'makes pages', tools: [], skills: [],
+              shapes: [], overlay: 'voice', avatar: url }
+          ] }
+        },
+        state: (asked) => emptyState(asked)
+      }
+    });
+    await flush();
+    page.open();
+    await flush(80);
+    const row = page.rows('.cfg-item').find((one) =>
+      one.dataset && one.dataset.item === 'role:designer');
+    check('C11 the role’s row is on the roles board', !!row,
+      String(page.rows('.cfg-item').length));
+    if (!row) return;
+    row.click();
+    await flush(60);
+    const img = page.rows('.pmark img').filter((one) => one.src === url);
+    check('C11 the persona card carries the owner’s image',
+      img.length === 1, JSON.stringify(
+        page.rows('.pmark img').map((one) => one.src)));
+  }
+
   async function theBotsSurfaceMintsTheBotCard() {
     const page = boot({
       reply: {
@@ -8120,6 +8164,7 @@ const cases = [
   ['C8 addresses highlight inline and stand as rows', addressesHighlightInlineAndStandAsRows],
   ['C3 an unanswered ask warns the row', anUnansweredAskWarnsTheRow],
   ['C9 a phase rides beneath its room', aPhaseRidesBeneathItsRoom],
+  ['C11 the persona card shows the owner’s image', thePersonaCardShowsTheOwnersImage],
   ['KI-380 the zombie tab cannot hide a seat or lose the reads', theZombieTabCannotHideASeatOrLoseTheReads],
   ['C1/C8 the list groups by attention and counts what the server counted', theListGroupsByAttentionAndCountsWhatTheServerCounted],
   ['C2 every state opens through one verb', everyStateOpensThroughOneVerb],

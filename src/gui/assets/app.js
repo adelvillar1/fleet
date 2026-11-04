@@ -16912,6 +16912,9 @@
 
   function roleSections(read, role) {
     return [
+      // The role's own mark (the huddles plan's C11): the owner-supplied
+      // image where it keeps one, the derived initial otherwise.
+      ['its mark', huddleMark(role.name, 'md', role.avatar)],
       ['the role', node('p', 'derivation', role.description || '(no description)')],
       ['its tools', node('p', 'derivation',
         (role.tools || []).length ? role.tools.join(', ') : 'inherits the run\u2019s')],
@@ -20124,9 +20127,6 @@
   function roleBlock(entry) {
     var details = node('details', 'cfg-details');
     var summary = node('summary', 'cfg-summary');
-    // The role's own mark: the owner-supplied image where it keeps one,
-    // the derived initial otherwise (the huddles plan's C11).
-    summary.appendChild(huddleMark(entry.name, 'sm', entry.avatar));
     summary.appendChild(node('span', 'cfg-lane-name', entry.name));
     if (entry.broken) {
       summary.appendChild(badge('broken', 'down'));
