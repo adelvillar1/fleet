@@ -639,6 +639,163 @@ mod tests {
         assert!(!section.contains("Deliverable 0"));
     }
 
+    // --- the claim pass ------------------------------------------------------
+
+    use std::io::{Read, Write};
+    use std::sync::{Arc, Mutex};
+
+    /// A stub systemone endpoint that routes by marker: the first body
+    /// whose marker appears in the request wins, else the default. The
+    /// desk's claim pass makes two shapes of call — the batched
+    /// narrowing (its state carries `[SEGMENT`) and the per-segment
+    /// kind choice — and the stub answers each in its own voice.
+    fn stub_by_marker(routes: Vec<(&'static str, String)>, default: String) -> (u16, Arc<Mutex<Vec<String>>>) {
+        let routes: Arc<Vec<(&'static str, String)>> = Arc::new(routes);
+        let default = Arc::new(default);
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let seen: Arc<Mutex<Vec<String>>> = Arc::default();
+        let seen_writer = Arc::clone(&seen);
+        std::thread::spawn(move || {
+            for mut stream in listener.incoming().flatten() {
+                let mut request: Vec<u8> = Vec::new();
+                let mut chunk = [0u8; 8192];
+                loop {
+                    let read = stream.read(&mut chunk).unwrap_or(0);
+                    if read == 0 {
+                        break;
+                    }
+                    request.extend_from_slice(&chunk[..read]);
+                    if request.windows(4).any(|w| w == b"\r\n\r\n") {
+                        let head_end = request.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
+                        let head = String::from_utf8_lossy(&request[..head_end]).to_ascii_lowercase();
+                        let declared: usize = head
+                            .lines()
+                            .find_map(|line| line.strip_prefix("content-length:"))
+                            .and_then(|value| value.trim().parse().ok())
+                            .unwrap_or(0);
+                        if request.len() >= head_end + declared {
+                            break;
+                        }
+                    }
+                }
+                let request = String::from_utf8_lossy(&request).into_owned();
+                if let Some(body_at) = request.find("\r\n\r\n") {
+                    seen_writer.lock().unwrap().push(request[body_at + 4..].to_string());
+                }
+                let body = routes
+                    .iter()
+                    .find(|(marker, _)| request.contains(marker))
+                    .map(|(_, body)| body.clone())
+                    .unwrap_or_else(|| (*default).clone());
+                let reply = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(reply.as_bytes());
+            }
+        });
+        (port, seen)
+    }
+
+    fn kind_body(p_claim: f64) -> String {
+        serde_json::json!({
+            "answers": {
+                "kind": {
+                    "label": if p_claim >= 0.5 { "claim" } else { "background" },
+                    "probabilities": {
+                        "claim": p_claim,
+                        "support": (1.0 - p_claim) * 0.3,
+                        "background": (1.0 - p_claim) * 0.5,
+                        "boilerplate": (1.0 - p_claim) * 0.2,
+                    }
+                }
+            }
+        })
+        .to_string()
+    }
+
+    /// The first verifier, glide: always present in a resolved config,
+    /// state_object false — the plain-string state.
+    fn glide_at(port: u16) -> Verifier {
+        Verifier {
+            name: "glide".to_string(),
+            url: format!("http://127.0.0.1:{port}/v1/systemone"),
+            model: "fastino/glide".to_string(),
+            key: "test-key".to_string(),
+            state_object: false,
+        }
+    }
+
+    fn client_at(port: u16) -> ExtractClient {
+        ExtractClient::new(crate::extract::ExtractConfig {
+            base_url: format!("http://127.0.0.1:{port}"),
+            entity_model: "fastino/gliner2.5-multi-v1".to_string(),
+            token: "test-key".to_string(),
+            verifiers: vec![glide_at(port)],
+        })
+    }
+
+    #[test]
+    fn the_claim_pass_asserts_vetoes_and_labels_by_the_floors() {
+        let text = "The fold earns its keep on every screen the owner opens. \
+The footer carries the usual legal furniture and nothing more. \
+Independent labs measured the load at ninety milliseconds.";
+        // Three sentences, three segments; each gets its own kind call.
+        let (port, seen) = stub_by_marker(
+            vec![
+                ("The fold earns its keep", kind_body(0.91)),
+                ("legal furniture", kind_body(0.10)),
+                ("ninety milliseconds", kind_body(0.60)),
+            ],
+            kind_body(0.0),
+        );
+        let client = client_at(port);
+        let verifier = glide_at(port);
+        let claims = claims_from_source(&client, &verifier, "sources/brief.txt", text).unwrap();
+        assert_eq!(claims.len(), 3, "{claims:?}");
+        assert_eq!(claims[0].verdict, ClaimVerdict::Asserted);
+        assert_eq!(claims[0].kind, ClaimKind::Claim);
+        assert_eq!(claims[1].verdict, ClaimVerdict::Vetoed);
+        assert_eq!(claims[2].verdict, ClaimVerdict::Contested);
+        assert!(claims.iter().all(|c| c.source == "sources/brief.txt"));
+        // No batched call ran: a short source carries every segment.
+        assert!(seen.lock().unwrap().iter().all(|body| !body.contains("[SEGMENT")));
+    }
+
+    #[test]
+    fn a_long_source_narrows_in_chunks_before_it_verifies() {
+        // 30 sentence-segments: over the carrying cap, so the
+        // narrowing rides first — 3 chunks of <= 14.
+        let mut text = String::new();
+        for i in 0..30 {
+            text.push_str(&format!(
+                "Sentence number {i} states a measured fact about the system. "
+            ));
+        }
+        let batched = serde_json::json!({
+            "answers": {
+                "seg-0": {"noul": 0.9},
+                "seg-1": {"noul": 0.8},
+            }
+        })
+        .to_string();
+        let (port, seen) = stub_by_marker(vec![("[SEGMENT", batched)], kind_body(0.95));
+        let client = client_at(port);
+        let verifier = glide_at(port);
+        let claims = claims_from_source(&client, &verifier, "sources/long.txt", &text).unwrap();
+        let bodies = seen.lock().unwrap();
+        let batched_calls = bodies.iter().filter(|body| body.contains("[SEGMENT")).count();
+        assert_eq!(batched_calls, 3, "30 segments narrow in 3 chunks of <= 14");
+        // Only the narrowed survivors cost a kind call: two per chunk
+        // (seg-0 and seg-1 clear the batched floor), so six.
+        let kind_calls = bodies.iter().filter(|body| !body.contains("[SEGMENT")).count();
+        assert_eq!(kind_calls, 6, "{kind_calls}");
+        assert_eq!(claims.len(), 6);
+        assert!(claims.iter().all(|c| c.verdict == ClaimVerdict::Asserted));
+    }
+
     #[test]
     fn deleting_a_project_removes_its_digest() {
         let home = temp_home("delete");
@@ -648,4 +805,172 @@ mod tests {
         assert!(!exists(&home, "landing-copy"));
         assert!(!digest_path(&home, "landing", "landing-copy").exists());
     }
+}
+
+// --- the claim set -----------------------------------------------------------
+//
+// The spine's shape, applied to a source: segment (pure Rust), narrow
+// (one batched call per chunk when the source is long), verify
+// (per carrying segment), reconcile (the measured floors). Every claim
+// carries its source and its sentence; a declined answer reads as a
+// veto at 0.0 — a named absence, never a fabricated claim.
+
+use crate::extract::{ExtractClient, ExtractError, Segment, Verifier};
+
+/// The batched narrowing's floor. A probability over many segments in
+/// one state rides lower than the per-segment margin's — the jobhound
+/// split (0.70 for the batched classifier, 0.85 for the per-text one).
+pub const CLAIM_BATCH_FLOOR: f64 = 0.70;
+
+/// Segments per batched narrowing call — the measured fan-out cap:
+/// glide times out on larger multi-head requests, and sys1's own
+/// plansurface chunks at 14 for exactly this reason.
+pub const CLAIM_BATCH_CHUNK: usize = 14;
+
+/// The choice head's labels, in asking order — the
+/// somewhere-to-put-it labels (jobhound's measured lesson: without
+/// them, background becomes phantom claims).
+pub const CLAIM_KINDS: [&str; 4] = ["claim", "support", "background", "boilerplate"];
+
+/// One choice head's probabilities, by label. A missing or malformed
+/// answer is `None` — the named absence, and the caller reads it as a
+/// decline rather than inventing a number.
+fn choice_probabilities(
+    answers: &serde_json::Value,
+    id: &str,
+) -> Option<Vec<(String, f64)>> {
+    let probabilities = answers.get(id)?.get("probabilities")?.as_object()?;
+    let mut pairs: Vec<(String, f64)> = probabilities
+        .iter()
+        .map(|(label, p)| (label.clone(), p.as_f64().unwrap_or(0.0)))
+        .collect();
+    pairs.sort_by(|a, b| b.1.total_cmp(&a.1));
+    Some(pairs)
+}
+
+fn probability_of(pairs: &[(String, f64)], label: &str) -> f64 {
+    pairs
+        .iter()
+        .find(|(name, _)| name == label)
+        .map_or(0.0, |(_, p)| *p)
+}
+
+/// The batched narrowing: which of a long source's segments carry a
+/// claim worth a call of their own. One call per chunk of
+/// `CLAIM_BATCH_CHUNK` segments — the state renders the chunk numbered,
+/// one noul head per segment — and a head under the batched floor drops
+/// its segment by name.
+fn narrow_claims(
+    client: &ExtractClient,
+    verifier: &Verifier,
+    segments: &[Segment],
+) -> Result<Vec<usize>, ExtractError> {
+    let mut kept: Vec<(usize, f64)> = Vec::new();
+    for (chunk_at, chunk) in segments.chunks(CLAIM_BATCH_CHUNK).enumerate() {
+        let state = chunk
+            .iter()
+            .enumerate()
+            .map(|(i, segment)| format!("[SEGMENT {}] {}", chunk_at * CLAIM_BATCH_CHUNK + i, segment.text))
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        let mut questions = serde_json::Map::new();
+        for i in 0..chunk.len() {
+            questions.insert(
+                format!("seg-{i}"),
+                serde_json::json!({
+                    "type": "noul",
+                    "instructions": "Does this segment state a claim a deliverable could stand on, with its evidence in the segment's own words?",
+                    "criteria": {
+                        "true": "Yes, the segment states such a claim.",
+                        "false": "No, it is support, background, or boilerplate.",
+                    },
+                    "id": format!("seg-{i}"),
+                }),
+            );
+        }
+        let answers = client.answers(verifier, &state, serde_json::Value::Object(questions))?;
+        for i in 0..chunk.len() {
+            let p = answers
+                .get(format!("seg-{i}").as_str())
+                .and_then(crate::extract::p_true)
+                .unwrap_or(0.0);
+            if p >= CLAIM_BATCH_FLOOR {
+                kept.push((chunk_at * CLAIM_BATCH_CHUNK + i, p));
+            }
+        }
+    }
+    kept.sort_by(|a, b| b.1.total_cmp(&a.1));
+    kept.truncate(crate::extract::MAX_CARRYING_SEGMENTS);
+    kept.sort_by_key(|(at, _)| *at);
+    Ok(kept.into_iter().map(|(at, _)| at).collect())
+}
+
+/// The claim pass over one source's text. The floors are the
+/// extraction leg's own (`ACCEPT_FLOOR` / `VETO_FLOOR`); the kind is
+/// the choice head's argmax, so background and boilerplate land
+/// somewhere honest instead of passing as claims.
+pub fn claims_from_source(
+    client: &ExtractClient,
+    verifier: &Verifier,
+    source: &str,
+    text: &str,
+) -> Result<Vec<Claim>, ExtractError> {
+    let segments = crate::extract::segments(text);
+    let carrying: Vec<usize> = if segments.len() > crate::extract::MAX_CARRYING_SEGMENTS {
+        narrow_claims(client, verifier, &segments)?
+    } else {
+        (0..segments.len()).collect()
+    };
+    let mut claims = Vec::new();
+    for at in carrying {
+        let segment = &segments[at];
+        let mut questions = serde_json::Map::new();
+        let mut head = serde_json::json!({
+            "type": "choice",
+            "instructions": "What is this text? One label.",
+            "criteria": {
+                "claim": "A statement a deliverable could stand on, with its evidence in the text.",
+                "support": "Evidence for a claim stated elsewhere, not itself the claim.",
+                "background": "Context that carries no claim.",
+                "boilerplate": "Furniture: company blurb, footers, disclaimers.",
+            },
+        });
+        if verifier.state_object {
+            head["id"] = serde_json::Value::String("kind".to_string());
+        }
+        questions.insert("kind".to_string(), head);
+        let answers = client.answers(
+            verifier,
+            &segment.text,
+            serde_json::Value::Object(questions),
+        )?;
+        let pairs = choice_probabilities(&answers, "kind").unwrap_or_default();
+        let (kind_label, _) = pairs
+            .first()
+            .cloned()
+            .unwrap_or_else(|| ("background".to_string(), 0.0));
+        let kind = match kind_label.as_str() {
+            "support" => ClaimKind::Support,
+            "boilerplate" => ClaimKind::Boilerplate,
+            "claim" => ClaimKind::Claim,
+            _ => ClaimKind::Background,
+        };
+        let p_claim = probability_of(&pairs, "claim");
+        let verdict = if p_claim >= crate::extract::ACCEPT_FLOOR {
+            ClaimVerdict::Asserted
+        } else if p_claim <= crate::extract::VETO_FLOOR {
+            ClaimVerdict::Vetoed
+        } else {
+            ClaimVerdict::Contested
+        };
+        claims.push(Claim {
+            text: segment.text.clone(),
+            source: source.to_string(),
+            sentence: segment.text.clone(),
+            confidence: p_claim,
+            kind,
+            verdict,
+        });
+    }
+    Ok(claims)
 }

@@ -478,8 +478,9 @@ impl ExtractClient {
 
     /// Pass 3 — one verify call over one segment: one noul head per
     /// distinct field carrying a candidate there. Returns p(true) per
-    /// field asked.
-    fn verify(
+    /// field asked. The desk's claim pass composes this same call — the
+    /// wire shape is the seam, and there is one of it.
+    pub fn verify(
         &self,
         verifier: &Verifier,
         segment_text: &str,
@@ -526,6 +527,36 @@ impl ExtractClient {
                 (name.clone(), p)
             })
             .collect())
+    }
+
+
+    /// One systemone call's answers, raw — the seam the desk's claim
+    /// pass composes when a head is a choice rather than a noul: the
+    /// call and the answer envelope are the one wire; the head shapes
+    /// are the caller's business, shaped per provider like `verify`
+    /// does. A reply that carries no answers block answers `Null`, and
+    /// every head reads as declined.
+    pub fn answers(
+        &self,
+        verifier: &Verifier,
+        state_text: &str,
+        questions: serde_json::Value,
+    ) -> Result<serde_json::Value, ExtractError> {
+        let state = if verifier.state_object {
+            serde_json::json!({ "text": state_text })
+        } else {
+            serde_json::Value::String(state_text.to_string())
+        };
+        let body = serde_json::json!({
+            "model": verifier.model,
+            "state": state,
+            "questions": questions,
+        });
+        let reply = self.post_json(&verifier.url, &verifier.key, &body, "answers")?;
+        Ok(unwrap_content(&reply)
+            .and_then(|inner| inner.get("answers").cloned())
+            .or_else(|| reply.get("answers").cloned())
+            .unwrap_or(serde_json::Value::Null))
     }
 
     /// The pipeline: locate, segment, verify, reconcile. Every
@@ -784,7 +815,7 @@ fn unwrap_content(reply: &serde_json::Value) -> Option<serde_json::Value> {
 /// confidence; a yes/no string is tolerated the way sys1's parser
 /// tolerates one. A missing confidence on a bare boolean is certainty —
 /// the model said so without hedging.
-fn p_true(entry: &serde_json::Value) -> Option<f64> {
+pub fn p_true(entry: &serde_json::Value) -> Option<f64> {
     let confidence = entry.get("confidence").and_then(|v| v.as_f64());
     match entry.get("noul") {
         Some(serde_json::Value::Number(n)) => n.as_f64(),
