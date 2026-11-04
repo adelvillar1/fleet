@@ -194,6 +194,10 @@ pub struct DeskProject {
     /// The document law's refusals. The deliverable cannot end while
     /// one stands.
     pub refusals: Vec<UnsourcedAssertion>,
+    /// The computed figures the tabular leg answered — computed, never
+    /// generated, and part of the number guard's givens.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub figures: Vec<Figure>,
     /// The digest's path under the home, once one was written.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub digest: Option<String>,
@@ -276,6 +280,7 @@ pub fn create(
         stages: STAGES.map(|s| (s, StageState::Pending)).to_vec(),
         claims: Vec::new(),
         refusals: Vec::new(),
+        figures: Vec::new(),
         digest: None,
         created: now.clone(),
         updated: now,
@@ -568,6 +573,7 @@ mod tests {
                 verdict: ClaimVerdict::Asserted,
             }],
             refusals: Vec::new(),
+            figures: Vec::new(),
             digest: None,
             created: "2026-11-04T12:00:00Z".to_string(),
             updated: "2026-11-04T12:00:00Z".to_string(),
@@ -934,6 +940,65 @@ Independent labs measured the load at ninety milliseconds.";
             crate::calib::sidecar_spend(&home, DESK_SPEND_LEDGER, "2026-11-04"),
             0.0
         );
+    }
+    // --- the number leg ------------------------------------------------------
+
+    #[test]
+    fn metric_numbers_canonicalize_their_shapes() {
+        let numbers = metric_numbers("92.4% of $4,180.00 across 12 runs, at 0.924 and 90ms");
+        let values: Vec<f64> = numbers.iter().map(|(_, v)| *v).collect();
+        assert_eq!(
+            values,
+            vec![0.924, 4180.0, 12.0, 0.924, 90.0],
+            "{numbers:?}"
+        );
+    }
+
+    #[test]
+    fn the_number_guard_admits_a_sourced_figure_and_refuses_an_invented_one() {
+        let givens = vec![0.924, 4180.0];
+        assert!(
+            check_numbers("the load read 92.4% and the total was $4,180.00", &givens).is_empty()
+        );
+        let refusals = check_numbers("the footer converts at 4.0%", &givens);
+        assert_eq!(refusals.len(), 1);
+        assert_eq!(refusals[0].raw, "4.0%");
+        assert!((refusals[0].canonical - 0.04).abs() < 1e-9);
+    }
+
+    #[test]
+    fn the_givens_read_claims_and_figures_alike() {
+        let mut desk = sample();
+        let figure = Figure {
+            target: "churned".to_string(),
+            task_type: "classification".to_string(),
+            answer: serde_json::json!({
+                "verdict": "pass",
+                "predictions": [{"churned": 1, "probabilities": {"1": 0.842}}]
+            }),
+            computed_by: "sdm1".to_string(),
+        };
+        desk.figures.push(figure);
+        let givens = number_givens(&desk);
+        assert!(
+            givens.iter().any(|v| (v - 0.842).abs() < 1e-9),
+            "{givens:?}"
+        );
+    }
+
+    #[test]
+    fn a_figure_answered_in_error_is_a_named_absence() {
+        let request = FigureRequest {
+            table: vec![serde_json::json!({"x": 1, "y": null})],
+            target: "y".to_string(),
+            task_type: "classification".to_string(),
+        };
+        let error = parse_figure(
+            r#"{"verdict": "error", "summary": "no labeled context rows"}"#,
+            &request,
+        )
+        .unwrap_err();
+        assert!(error.contains("no labeled context rows"), "{error}");
     }
 
     #[test]
@@ -1322,4 +1387,213 @@ pub async fn coverage_ask(
         );
     }
     result
+}
+
+// --- the number leg ----------------------------------------------------------
+//
+// Figures are computed, never generated: a question a table can answer
+// goes to sdm1, and every metric-shaped number in the drafted prose
+// must appear canonically in the givens — the composed lane's
+// deterministic number check, applied at the desk. An invented number
+// refuses by name.
+
+/// One computed figure: the question a table answered, the answer, and
+/// what computed it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Figure {
+    /// The target the table was scored against.
+    pub target: String,
+    /// The task type the table was scored under.
+    pub task_type: String,
+    /// The lane's structured answer, verbatim.
+    pub answer: serde_json::Value,
+    /// What computed it — the lane's name, so a figure never reads as
+    /// a model's opinion.
+    pub computed_by: String,
+}
+
+/// One figure request: the table (labeled rows plus query rows), the
+/// target, and the task type.
+#[derive(Debug, Clone)]
+pub struct FigureRequest {
+    pub table: Vec<serde_json::Value>,
+    pub target: String,
+    pub task_type: String,
+}
+
+/// The sdm1 tool the figure leg calls.
+pub const SDM1_TOOL: &str = "sdm1_classify";
+
+/// Parse one `sdm1_classify` answer's text block into a figure. The
+/// lane answers in-band (`verdict` carried, never a raise); a verdict
+/// of `error` is a named absence, not a number.
+pub fn parse_figure(text: &str, request: &FigureRequest) -> Result<Figure, String> {
+    let answer: serde_json::Value = serde_json::from_str(text).map_err(|error| {
+        format!("the tabular lane's answer was not structured content: {error}")
+    })?;
+    if answer.get("verdict").and_then(|v| v.as_str()) == Some("error") {
+        let reason = answer
+            .get("summary")
+            .and_then(|s| s.as_str())
+            .unwrap_or("the tabular lane answered error without a reason");
+        return Err(format!("the tabular lane refused the figure: {reason}"));
+    }
+    Ok(Figure {
+        target: request.target.clone(),
+        task_type: request.task_type.clone(),
+        answer,
+        computed_by: "sdm1".to_string(),
+    })
+}
+
+/// The figure leg: one `sdm1_classify` call on the lane the caller
+/// names — the judge beats' lane-source seam, resolved the same way.
+/// Open once, ask once, close; every failure is a named absence.
+pub async fn figure_ask(
+    source: &crate::judge::LaneSource,
+    request: &FigureRequest,
+) -> Result<Figure, String> {
+    let spec = crate::judge::lane_spec(source, "sdm1")?;
+    let server = crate::mcp::McpServer::spawn(&spec)
+        .map_err(|error| format!("the tabular lane could not start: {error}"))?;
+    let result = async {
+        server
+            .initialize()
+            .await
+            .map_err(|error| format!("the tabular lane's handshake failed: {error}"))?;
+        let tools = server
+            .list_tools()
+            .await
+            .map_err(|error| format!("the tabular lane's tool list failed: {error}"))?;
+        if !tools.iter().any(|declared| declared.name == SDM1_TOOL) {
+            return Err(format!(
+                "lane `sdm1` declares no `{SDM1_TOOL}` tool — it cannot answer the figure leg's ask"
+            ));
+        }
+        let arguments = serde_json::json!({
+            "table": request.table,
+            "target": request.target,
+            "task_type": request.task_type,
+        });
+        let call: crate::mcp::CallResult = server
+            .call_tool(SDM1_TOOL, arguments)
+            .await
+            .map_err(|error| format!("the tabular lane refused the figure: {error}"))?;
+        if call.is_error {
+            return Err(format!(
+                "the tabular lane refused the figure: {}",
+                call.text()
+            ));
+        }
+        parse_figure(call.text().as_str(), request)
+    };
+    let outcome = result.await;
+    server.close().await.ok();
+    outcome
+}
+
+/// One metric-shaped number the draft carried that no given answers.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UnsourcedNumber {
+    /// The number as the draft wrote it.
+    pub raw: String,
+    /// Its canonical value — what was matched, and failed.
+    pub canonical: f64,
+}
+
+/// Canonicalize one metric token: separators and currency stripped, a
+/// percent read as its probability (92.4% == 0.924), the value as f64.
+fn canonical_number(raw: &str) -> Option<f64> {
+    let mut token = raw.trim();
+    let percent = token.ends_with('%');
+    if percent {
+        token = &token[..token.len() - 1];
+    }
+    let token = token.trim_start_matches('$').replace(',', "");
+    if token.is_empty() {
+        return None;
+    }
+    let value = token.parse::<f64>().ok()?;
+    Some(if percent { value / 100.0 } else { value })
+}
+
+/// Every metric-shaped number in a draft, in order: a number token with
+/// optional currency and an optional percent — the shapes a deliverable
+/// asserts with. Plain digits inside identifiers do not count.
+pub fn metric_numbers(draft: &str) -> Vec<(String, f64)> {
+    let mut found = Vec::new();
+    let bytes = draft.as_bytes();
+    let mut at = 0;
+    while at < bytes.len() {
+        let rest = &draft[at..];
+        let mut end = 0;
+        let mut seen_digit = false;
+        for (i, ch) in rest.char_indices() {
+            if ch.is_ascii_digit() {
+                seen_digit = true;
+                end = i + ch.len_utf8();
+            } else if ch == ',' || ch == '.' || ch == '$' {
+                // Only while a number is forming: a second dot ends it.
+                if ch == '.' && rest[i + 1..].starts_with(|c: char| !c.is_ascii_digit()) {
+                    break;
+                }
+                if seen_digit || ch == '$' {
+                    end = i + ch.len_utf8();
+                } else {
+                    break;
+                }
+            } else if ch == '%' {
+                end = i + ch.len_utf8();
+                break;
+            } else {
+                break;
+            }
+        }
+        if seen_digit && end > 0 {
+            let raw = &rest[..end];
+            if let Some(value) = canonical_number(raw) {
+                found.push((raw.to_string(), value));
+            }
+            at += end;
+        } else {
+            at += 1;
+        }
+    }
+    found
+}
+
+/// The guard: every metric-shaped number in the draft must appear
+/// canonically in the givens — the claim set's sentences and the
+/// computed figures both feed it. Returns the refusals; an empty vec is
+/// a draft whose numbers all stand.
+pub fn check_numbers(draft: &str, givens: &[f64]) -> Vec<UnsourcedNumber> {
+    metric_numbers(draft)
+        .into_iter()
+        .filter(|(_, value)| {
+            !givens
+                .iter()
+                .any(|given| (*given - value).abs() <= 1e-6 * value.abs().max(1.0))
+        })
+        .map(|(raw, canonical)| UnsourcedNumber { raw, canonical })
+        .collect()
+}
+
+/// The givens one desk project carries: every claim's sentence's metric
+/// numbers plus every computed figure's answer numbers, canonicalized.
+pub fn number_givens(desk: &DeskProject) -> Vec<f64> {
+    let mut givens = Vec::new();
+    for claim in &desk.claims {
+        for (_, value) in metric_numbers(&claim.sentence) {
+            givens.push(value);
+        }
+        for (_, value) in metric_numbers(&claim.text) {
+            givens.push(value);
+        }
+    }
+    for figure in &desk.figures {
+        for (_, value) in metric_numbers(&figure.answer.to_string()) {
+            givens.push(value);
+        }
+    }
+    givens
 }

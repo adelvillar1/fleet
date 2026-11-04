@@ -12710,3 +12710,61 @@ async fn the_frame_tool_refuses_a_board_it_cannot_find() {
     assert!(fleet::canvas::projects(&home).is_empty());
     std::fs::remove_dir_all(&home).ok();
 }
+
+#[tokio::test]
+async fn the_desk_figure_leg_answers_one_sdm1_call_and_parses_the_table_result() {
+    let fake = FakeMcp::start(vec![
+        serde_json::json!({ "reply": initialize_reply() }),
+        serde_json::json!({ "reply": tools_list_reply(serde_json::json!([
+            { "name": "sdm1_classify", "description": "classify a table", "inputSchema": { "type": "object" } }
+        ])) }),
+        serde_json::json!({ "reply": call_reply(
+            r#"{"verdict":"pass","predictions":[{"churned":1,"probabilities":{"1":0.842}}],"summary":"1 context row, 1 query row"}"#
+        ) }),
+    ]);
+    let request = fleet::desk::FigureRequest {
+        table: vec![
+            serde_json::json!({"tenure": 14, "churned": 1}),
+            serde_json::json!({"tenure": 3, "churned": null}),
+        ],
+        target: "churned".to_string(),
+        task_type: "classification".to_string(),
+    };
+    let figure =
+        fleet::desk::figure_ask(&fleet::judge::LaneSource::Scripted(fake.spec()), &request)
+            .await
+            .expect("the figure");
+    assert_eq!(figure.computed_by, "sdm1");
+    assert_eq!(figure.target, "churned");
+    assert!(
+        figure.answer.to_string().contains("0.842"),
+        "{}",
+        figure.answer
+    );
+    // The figure joins the store's givens: the guard admits the number
+    // it computed and refuses one nothing answered.
+    let home = temp_home("desk-figure");
+    let desk = fleet::desk::create(
+        &home,
+        "figure-leg",
+        "The figure leg",
+        "the beta cohort",
+        "the churn number stands on a computed figure",
+        Vec::new(),
+        None,
+    )
+    .unwrap();
+    let mut with_figure = desk.clone();
+    with_figure.figures.push(figure);
+    fleet::desk::save(&home, &with_figure).unwrap();
+    let reloaded = fleet::desk::load(&home, "figure-leg").unwrap();
+    let givens = fleet::desk::number_givens(&reloaded);
+    assert!(
+        givens.iter().any(|v| (v - 0.842).abs() < 1e-9),
+        "{givens:?}"
+    );
+    let refusals = fleet::desk::check_numbers("the footer converts at 4.0%", &givens);
+    assert_eq!(refusals.len(), 1);
+    assert_eq!(refusals[0].raw, "4.0%");
+    std::fs::remove_dir_all(&home).ok();
+}
