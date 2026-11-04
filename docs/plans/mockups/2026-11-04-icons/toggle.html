@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="paper">
+<head>
+<meta charset="utf-8">
+<title>icons — the collapse control</title>
+<link rel="stylesheet" href="mockup.css">
+</head>
+<body>
+<main class="page">
+  <p class="eyebrow">work · the face</p>
+  <h1 class="title">The chevron, alone.</h1>
+  <p class="note">The rail's collapse control today is a text chevron <b>plus</b> the words “collapse the rail” — the only control in the chrome that explains itself in a label. The section rails' fold has always been a chevron alone. The main rail joins them: one icon, 16px, rotating with its state, the words kept in the accessible name and the hover title.</p>
+
+  <section class="section">
+    <div class="section-head"><h2>full</h2><span class="why">the rail open — the chevron points left</span></div>
+    <div class="toggle-board">
+      <div class="toggle-col" id="toggle-full"></div>
+    </div>
+    <p class="caption">The head keeps the brand and the toggle at its right edge. No label; <code>aria-label</code> reads “collapse the surfaces rail”, <code>title</code> says the same on hover.</p>
+  </section>
+
+  <section class="section">
+    <div class="section-head"><h2>icons</h2><span class="why">the rail collapsed — the same icon, rotated</span></div>
+    <div class="toggle-board">
+      <div class="toggle-col" id="toggle-icons"></div>
+    </div>
+    <p class="caption">One drawing, one behaviour: the chevron turns 180° and the surface's rows lose their labels. The control is the same 24px target in both states.</p>
+  </section>
+</main>
+<div class="theme-bar">
+  <button data-t="paper" aria-pressed="true">paper</button>
+  <button data-t="console">console</button>
+  <button data-t="graphite">graphite</button>
+  <button data-t="contrast">contrast</button>
+</div>
+<script src="icons.js"></script>
+<script>
+  const bar = document.querySelector('.theme-bar');
+  const set = (t) => {
+    document.documentElement.dataset.theme = t;
+    bar.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.t === t)));
+    const u = new URL(location.href); u.searchParams.set('theme', t); history.replaceState(null, '', u);
+  };
+  bar.addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) set(b.dataset.t); });
+  const asked = new URL(location.href).searchParams.get('theme');
+  if (asked) set(asked);
+</script>
+</body>
+</html>

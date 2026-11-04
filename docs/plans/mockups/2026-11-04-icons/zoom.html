@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="paper">
+<head>
+<meta charset="utf-8">
+<title>icons — the 4× read</title>
+<link rel="stylesheet" href="mockup.css">
+</head>
+<body>
+<main class="page">
+  <p class="eyebrow">work · the face</p>
+  <h1 class="title">The 4× read.</h1>
+  <p class="note">The drawings most at risk at 17px, at 68px — the eye judges pixels here, not intent. A mark that loses its shape at this size loses it in the rail too.</p>
+  <section class="section">
+    <div class="section-head"><h2>at 68px</h2><span class="why">17px × 4</span></div>
+    <div class="zoom" id="zoom"></div>
+  </section>
+</main>
+<div class="theme-bar">
+  <button data-t="paper" aria-pressed="true">paper</button>
+  <button data-t="console">console</button>
+  <button data-t="graphite">graphite</button>
+  <button data-t="contrast">contrast</button>
+</div>
+<script src="icons.js"></script>
+<script>
+  const bar = document.querySelector('.theme-bar');
+  const set = (t) => {
+    document.documentElement.dataset.theme = t;
+    bar.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.t === t)));
+    const u = new URL(location.href); u.searchParams.set('theme', t); history.replaceState(null, '', u);
+  };
+  bar.addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) set(b.dataset.t); });
+  const asked = new URL(location.href).searchParams.get('theme');
+  if (asked) set(asked);
+</script>
+</body>
+</html>

@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="paper">
+<head>
+<meta charset="utf-8">
+<title>icons — the sheet</title>
+<link rel="stylesheet" href="mockup.css">
+</head>
+<body>
+<main class="page">
+  <p class="eyebrow">work · the face</p>
+  <h1 class="title">Every icon, one meaning.</h1>
+  <p class="note">Each card is a key in the face's table. The four sizes are the sizes it is drawn at — 13 in a transcript card, 14 in the palette, 17 in a rail, 18 in a section rail. A redrawn key shows <b>was</b> above and its replacement below. Thirteen keys today have no drawing at all and fall through to the same hollow ring; they appear here for the first time.</p>
+
+  <section class="section">
+    <div class="section-head"><h2>the table</h2><span class="why">keep · redraw · new · delete</span></div>
+    <div class="grid" id="grid"></div>
+  </section>
+
+  <section class="section">
+    <div class="section-head"><h2>the 4× read</h2><span class="why">the drawings most at risk at 17px, at 68px</span></div>
+    <div class="zoom" id="zoom"></div>
+  </section>
+</main>
+<div class="theme-bar">
+  <button data-t="paper" aria-pressed="true">paper</button>
+  <button data-t="console">console</button>
+  <button data-t="graphite">graphite</button>
+  <button data-t="contrast">contrast</button>
+</div>
+<script src="icons.js"></script>
+<script>
+  const bar = document.querySelector('.theme-bar');
+  const set = (t) => {
+    document.documentElement.dataset.theme = t;
+    bar.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.t === t)));
+    const u = new URL(location.href); u.searchParams.set('theme', t); history.replaceState(null, '', u);
+  };
+  bar.addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) set(b.dataset.t); });
+  const asked = new URL(location.href).searchParams.get('theme');
+  if (asked) set(asked);
+</script>
+</body>
+</html>

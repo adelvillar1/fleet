@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="paper">
+<head>
+<meta charset="utf-8">
+<title>icons — the rails in situ</title>
+<link rel="stylesheet" href="mockup.css">
+</head>
+<body>
+<main class="page">
+  <p class="eyebrow">work · the face</p>
+  <h1 class="title">The rails, with their marks.</h1>
+  <p class="note">Read at the rail's own width — 236px — with the rows at 34px, the way the face draws them. The main rail first: fifteen destinations, fifteen drawings. Then the four section rails, each row carrying the mark of its own concept — and the bots rail, whose persona rows now wear their initials instead of one shared stack.</p>
+
+  <section class="section">
+    <div class="section-head"><h2>the main rail</h2><span class="why">fifteen destinations · fifteen marks</span></div>
+    <div class="rail-board">
+      <nav class="rail-col" id="main-rail" aria-label="the main rail"></nav>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="section-head"><h2>the section rails</h2><span class="why">one mark per concept, not per rail</span></div>
+    <div class="rail-board" id="rails"></div>
+  </section>
+
+  <section class="section">
+    <div class="section-head"><h2>the bots rail</h2><span class="why">a persona is a mark, not a shared icon</span></div>
+    <div class="rail-board">
+      <nav class="rail-col" id="bots-rail" aria-label="the bots rail"></nav>
+    </div>
+  </section>
+</main>
+<div class="theme-bar">
+  <button data-t="paper" aria-pressed="true">paper</button>
+  <button data-t="console">console</button>
+  <button data-t="graphite">graphite</button>
+  <button data-t="contrast">contrast</button>
+</div>
+<script src="icons.js"></script>
+<script>
+  const bar = document.querySelector('.theme-bar');
+  const set = (t) => {
+    document.documentElement.dataset.theme = t;
+    bar.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.t === t)));
+    const u = new URL(location.href); u.searchParams.set('theme', t); history.replaceState(null, '', u);
+  };
+  bar.addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) set(b.dataset.t); });
+  const asked = new URL(location.href).searchParams.get('theme');
+  if (asked) set(asked);
+</script>
+</body>
+</html>

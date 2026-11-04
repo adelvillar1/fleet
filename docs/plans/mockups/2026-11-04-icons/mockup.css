@@ -1,0 +1,207 @@
+/* The icon sheet — the face's own tokens, hand-copied from app.css, so a
+   mark read here is the mark the face draws. */
+
+:root,
+:root[data-theme="paper"] {
+  --page: rgb(246, 244, 239);
+  --surface: rgb(252, 251, 248);
+  --raised: rgb(239, 236, 230);
+  --hairline: rgb(24 26 29 / 10%);
+  --hairline-strong: rgb(24 26 29 / 17%);
+  --ink: rgb(24, 26, 29);
+  --ink-secondary: rgb(82, 88, 96);
+  --ink-tertiary: rgb(94, 102, 112);
+  --accent: rgb(47, 95, 208);
+  --ok: rgb(22, 110, 46);
+  --warn: rgb(122, 82, 8);
+  --down: rgb(176, 36, 32);
+  --lane-0: rgb(13, 118, 110);
+  --lane-1: rgb(109, 58, 216);
+  --lane-2: rgb(176, 84, 10);
+  --lane-3: rgb(190, 24, 93);
+  --shadow-1: 0 1px 2px rgb(24 26 29 / 6%), 0 1px 1px rgb(24 26 29 / 4%);
+  --shadow-2: 0 18px 40px -24px rgb(24 26 29 / 30%), 0 2px 6px rgb(24 26 29 / 6%);
+}
+
+:root[data-theme="console"] {
+  --page: rgb(14, 15, 18);
+  --surface: rgb(20, 22, 26);
+  --raised: rgb(28, 31, 36);
+  --hairline: rgb(255 255 255 / 8%);
+  --hairline-strong: rgb(255 255 255 / 15%);
+  --ink: rgb(235, 231, 228);
+  --ink-secondary: rgb(166, 175, 188);
+  --ink-tertiary: rgb(138, 148, 163);
+  --accent: rgb(96, 143, 255);
+  --ok: rgb(74, 190, 110);
+  --warn: rgb(220, 166, 66);
+  --down: rgb(240, 106, 99);
+  --lane-0: rgb(45, 212, 191);
+  --lane-1: rgb(167, 139, 250);
+  --lane-2: rgb(251, 191, 36);
+  --lane-3: rgb(251, 113, 133);
+  --shadow-1: 0 1px 2px rgb(0 0 0 / 30%);
+  --shadow-2: 0 18px 40px -20px rgb(0 0 0 / 65%), 0 2px 6px rgb(0 0 0 / 25%);
+}
+
+:root[data-theme="graphite"] {
+  --page: rgb(10, 12, 16);
+  --surface: rgb(15, 18, 23);
+  --raised: rgb(21, 25, 31);
+  --hairline: rgb(255 255 255 / 8%);
+  --hairline-strong: rgb(255 255 255 / 15%);
+  --ink: rgb(232, 238, 244);
+  --ink-secondary: rgb(160, 170, 184);
+  --ink-tertiary: rgb(132, 144, 160);
+  --accent: rgb(94, 148, 255);
+  --ok: rgb(74, 190, 110);
+  --warn: rgb(220, 166, 66);
+  --down: rgb(240, 106, 99);
+  --lane-0: rgb(94, 210, 190);
+  --lane-1: rgb(158, 134, 240);
+  --lane-2: rgb(235, 180, 60);
+  --lane-3: rgb(240, 120, 135);
+  --shadow-1: 0 1px 2px rgb(0 0 0 / 32%);
+  --shadow-2: 0 18px 40px -20px rgb(0 0 0 / 70%), 0 2px 6px rgb(0 0 0 / 28%);
+}
+
+:root[data-theme="contrast"] {
+  --page: rgb(255, 255, 255);
+  --surface: rgb(255, 255, 255);
+  --raised: rgb(238, 238, 238);
+  --hairline: rgb(0 0 0 / 22%);
+  --hairline-strong: rgb(0 0 0 / 45%);
+  --ink: rgb(0, 0, 0);
+  --ink-secondary: rgb(38, 38, 38);
+  --ink-tertiary: rgb(70, 70, 70);
+  --accent: rgb(24, 66, 160);
+  --ok: rgb(0, 104, 32);
+  --warn: rgb(124, 82, 6);
+  --down: rgb(176, 20, 20);
+  --lane-0: rgb(0, 150, 136);
+  --lane-1: rgb(122, 48, 226);
+  --lane-2: rgb(190, 88, 0);
+  --lane-3: rgb(200, 16, 96);
+  --shadow-1: 0 1px 2px rgb(0 0 0 / 12%);
+  --shadow-2: 0 12px 28px -20px rgb(0 0 0 / 30%);
+}
+
+:root {
+  --display: "New York", ui-serif, Georgia, "Iowan Old Style", "Times New Roman", serif;
+  --text: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
+  --radius-sm: 7px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--page); color: var(--ink);
+  font: 13.5px/1.55 var(--text); -webkit-font-smoothing: antialiased;
+}
+h1, h2, h3 { margin: 0; font-weight: 500; }
+p { margin: 0; }
+button { font: inherit; color: inherit; border: 0; background: none; padding: 0; cursor: pointer; }
+
+.page { max-width: 1280px; margin: 0 auto; padding: 34px 40px 90px; }
+.eyebrow { font: 600 9.5px/1.4 var(--text); letter-spacing: .13em; text-transform: uppercase; color: var(--ink-tertiary); margin-bottom: 8px; }
+.title { font: 500 clamp(28px, 3vw, 36px)/1.05 var(--display); letter-spacing: -.025em; margin-bottom: 8px; }
+.note { max-width: 62ch; font: 400 13.5px/1.6 var(--text); color: var(--ink-secondary); }
+.section { margin-top: 34px; }
+.section-head { display: flex; align-items: baseline; gap: 10px; padding-bottom: 8px; border-bottom: 1px solid var(--hairline); margin-bottom: 16px; }
+.section-head h2 { font: 600 11px/1.4 var(--text); letter-spacing: .12em; text-transform: uppercase; color: var(--ink-secondary); }
+.section-head .why { margin-left: auto; font: 400 12px/1.4 var(--text); color: var(--ink-tertiary); }
+
+/* --------------------------------------------------------------- the sheet */
+
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+.icon-card {
+  border: 1px solid var(--hairline); border-radius: var(--radius-md);
+  background: var(--surface); padding: 11px 12px 10px; box-shadow: var(--shadow-1);
+  display: grid; gap: 8px;
+}
+.icon-head { display: flex; align-items: baseline; gap: 8px; }
+.icon-key { font: 600 12px/1.3 var(--mono); }
+.icon-status {
+  margin-left: auto; padding: 1px 6px; border-radius: 999px;
+  font: 600 9px/1.5 var(--text); letter-spacing: .06em; text-transform: uppercase;
+  background: var(--raised); color: var(--ink-tertiary);
+}
+.icon-card[data-status="redraw"] .icon-status { background: color-mix(in srgb, var(--warn) 14%, transparent); color: var(--warn); }
+.icon-card[data-status="new"] .icon-status { background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); }
+.icon-card[data-status="delete"] .icon-status { background: color-mix(in srgb, var(--down) 12%, transparent); color: var(--down); }
+.icon-card[data-status="delete"] .icon-sizes { opacity: .4; }
+
+.icon-sizes { display: flex; align-items: flex-end; gap: 14px; }
+.icon-size { display: grid; justify-items: center; gap: 4px; }
+.icon-size svg { display: block; color: var(--ink); }
+.icon-size-n { font: 500 8.5px/1 var(--mono); color: var(--ink-tertiary); }
+.icon-size.was svg { color: var(--ink-tertiary); }
+.icon-was { display: flex; align-items: flex-end; gap: 12px; padding-top: 6px; border-top: 1px dashed var(--hairline); }
+.icon-was-label { font: 600 8.5px/1 var(--text); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-tertiary); align-self: center; }
+
+.icon-meaning { font: 400 12px/1.45 var(--text); color: var(--ink); }
+.icon-use { font: 400 10.5px/1.4 var(--text); color: var(--ink-tertiary); }
+
+.zoom { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; }
+.zoom-cell { border: 1px solid var(--hairline); border-radius: var(--radius-md); background: var(--surface); padding: 12px; display: grid; justify-items: center; gap: 6px; }
+.zoom-cell svg { color: var(--ink); }
+.zoom-cell span { font: 500 9.5px/1 var(--mono); color: var(--ink-tertiary); }
+
+/* --------------------------------------------------------------- the rails */
+
+.rail-board { display: flex; gap: 26px; align-items: flex-start; flex-wrap: wrap; }
+.rail-col {
+  width: 236px; flex: 0 0 236px; padding: 10px 10px 12px;
+  border: 1px solid var(--hairline); border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--surface) 54%, var(--page));
+}
+.rail-head { padding: 0 8px 8px; }
+.rail-head h3 { font: 400 15px/1.2 var(--display); }
+.rail-why { font: 400 10.5px/1.4 var(--text); color: var(--ink-tertiary); margin-top: 2px; }
+.rail-row { display: flex; align-items: center; gap: 10px; height: 34px; width: 100%; padding: 0 10px; border-radius: 8px; text-align: left; }
+.rail-row:hover { background: var(--raised); }
+.rail-mark { width: 18px; height: 18px; display: grid; place-items: center; color: var(--ink-tertiary); flex: 0 0 auto; }
+.rail-mark svg { display: block; }
+.rail-label { font: 500 13px/1 var(--text); color: var(--ink-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rail-row:hover .rail-label { color: var(--ink); }
+.rail-stack { display: flex; flex-direction: column; }
+.rail-voice { font: 400 10px/1.3 var(--text); color: var(--ink-tertiary); }
+.pmark {
+  width: 18px; height: 18px; border-radius: 50%;
+  display: grid; place-items: center;
+  background: color-mix(in srgb, var(--accent) 16%, var(--surface));
+  color: color-mix(in srgb, var(--accent) 68%, var(--ink));
+  font: 600 10px/1 var(--display);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+/* --------------------------------------------------------------- the toggle */
+
+.toggle-board { display: flex; gap: 26px; flex-wrap: wrap; }
+.toggle-col { width: 236px; padding: 10px 10px 12px; border: 1px solid var(--hairline); border-radius: var(--radius-md); background: color-mix(in srgb, var(--surface) 54%, var(--page)); }
+.toggle-col[data-mode="icons"] { width: 66px; padding: 10px 8px 12px; }
+.rail-head-bar { display: flex; align-items: center; gap: 6px; height: 29px; }
+.toggle-col[data-mode="icons"] .rail-head-bar { position: relative; }
+.rail-brand { display: flex; align-items: center; gap: 10px; height: 40px; padding: 0 8px; flex: 1 1 auto; }
+.rail-glyph { width: 28px; height: 28px; border-radius: 7px; background: var(--ink); color: var(--page); display: grid; place-items: center; font: 600 13px/1 var(--display); flex: 0 0 auto; }
+.rail-brand-name { display: block; font: 500 19px/1.05 var(--display); }
+.rail-brand-tag { display: block; font: 500 9px/1 var(--text); letter-spacing: .12em; text-transform: uppercase; color: var(--ink-tertiary); margin-top: 2px; }
+.rail-toggle { width: 24px; height: 24px; border-radius: var(--radius-sm); display: grid; place-items: center; color: var(--ink-tertiary); flex: 0 0 auto; }
+.rail-toggle:hover { background: var(--raised); color: var(--ink); }
+.rail-toggle-mark { display: grid; place-items: center; }
+.toggle-col[data-mode="icons"] .rail-brand-text { display: none; }
+.toggle-col[data-mode="icons"] .rail-brand { justify-content: center; padding: 0; }
+.toggle-col[data-mode="icons"] .rail-toggle-mark svg { transform: rotate(180deg); }
+.toggle-col[data-mode="icons"] .rail-head-bar { justify-content: center; }
+
+.caption { margin-top: 10px; font: 400 11.5px/1.5 var(--text); color: var(--ink-tertiary); max-width: 46ch; }
+
+/* --------------------------------------------------------------- chrome */
+
+.theme-bar { position: fixed; right: 12px; bottom: 12px; z-index: 60; display: flex; gap: 2px; padding: 3px; border-radius: 999px; border: 1px solid var(--hairline); background: var(--surface); box-shadow: var(--shadow-2); }
+.theme-bar button { height: 22px; padding: 0 9px; border-radius: 999px; font: 500 10px/1 var(--text); color: var(--ink-secondary); }
+.theme-bar button[aria-pressed="true"] { background: var(--ink); color: var(--page); }
+
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
