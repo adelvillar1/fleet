@@ -1054,8 +1054,20 @@
     // failover knob the route module owns.
     gate: null,
     budget: 0,
+    // The model whose declared window derived the budget, and whether
+    // anything declared one at all (false = the floor, named).
+    budgetModel: '',
+    budgetDeclared: true,
     spend: 0,
     context: 0,
+    // The health fields (the context-health plan's C2/C3/C7): the run's
+    // folds so far, the first-hand share, the served provider's cached
+    // count (null = the provider said nothing), and the last prompt
+    // readings the turns-to-fold trend is derived from.
+    folds: 0,
+    share: null,
+    cacheRead: null,
+    promptHist: [],
     turn: 0,
     route: null,
     stop: null,
@@ -2873,6 +2885,19 @@
         // a running sum: a prompt is the whole conversation resent, and
         // the sum would double-count every turn.
         face.context = Number(event.prompt);
+        // The run's own arithmetic rides the event: the budget the fold
+        // actually checks (a mid-run pin can change the model, and the
+        // budget follows it), the folds so far, the first-hand share,
+        // and the served provider's cache breakdown. Null stays null —
+        // a provider's silence is never a zero.
+        if (event.budget) face.budget = Number(event.budget);
+        if (event.budget_model) face.budgetModel = event.budget_model;
+        face.folds = Number(event.folds) || 0;
+        face.share = event.share == null ? null : Number(event.share);
+        face.cacheRead = event.cache_read == null ? null : Number(event.cache_read);
+        face.promptHist.push(face.context);
+        if (face.promptHist.length > 12) face.promptHist.shift();
+        paint();
         break;
       case 'tool_call':
         closeAssistant();
@@ -3183,7 +3208,13 @@
     el.spend.textContent = tokens(face.spend);
     el.context.textContent = pct + '%';
     el.contextFill.style.width = pct + '%';
-    el.contextMeter.dataset.level = pct >= 100 ? 'full' : pct >= 75 ? 'high' : 'calm';
+    // The context-health plan's C3: calm / high / fold-imminent. The
+    // fold fires at the budget itself, so nine tenths is the last
+    // band a conversation visits before it folds — the same down-tone
+    // the old 'full' band wore.
+    el.contextMeter.dataset.level = pct >= 90 ? 'imminent' : pct >= 60 ? 'high' : 'calm';
+    el.contextMeter.title = contextDetail();
+    if (el.context) el.context.title = contextDetail();
 
     if (face.route) {
       el.routePill.textContent = face.route.provider;
@@ -3599,10 +3630,69 @@
     paintWorking();
   }
 
+  // The health read (the context-health plan's C2): the working
+  // line's middle — occupancy first, the folds when there are any,
+  // and the trend's turns-to-the-fold once a slope exists. Every
+  // number is the run's own measure, the same one the fold checks,
+  // and a missing piece is omitted, never a guess.
+  function healthLine() {
+    var parts = [];
+    if (face.context && face.budget) {
+      parts.push(tokens(face.context) + ' of ' + tokens(face.budget));
+    } else if (face.context) {
+      parts.push(tokens(face.context));
+    }
+    var toFold = turnsToFold();
+    if (toFold != null) parts.push('~' + toFold + ' turns to the fold');
+    if (face.folds) parts.push(face.folds + (face.folds === 1 ? ' fold' : ' folds'));
+    return parts.length ? ' \u00b7 ' + parts.join(' \u00b7 ') : '';
+  }
+
+  // Turns to the fold from the live prompt trend. Only when the last
+  // three readings climb — a slope exists — and only as an
+  // approximation: one huge tool result can bend it, and the word is
+  // "about", never "in". A fresh run or a flat one reads nothing
+  // here, which is the honest answer.
+  function turnsToFold() {
+    var hist = face.promptHist;
+    if (!face.budget || hist.length < 3) return null;
+    var deltas = [];
+    for (var i = 1; i < hist.length; i++) deltas.push(hist[i] - hist[i - 1]);
+    var tail = deltas.slice(-3);
+    var climbing = tail.every(function (d) { return d > 0; });
+    if (!climbing) return null;
+    var mean = tail.reduce(function (a, b) { return a + b; }, 0) / tail.length;
+    if (mean <= 0) return null;
+    return Math.max(1, Math.ceil((face.budget - face.context) / mean));
+  }
+
+  // The gauge's hover detail (the context-health plan's C3): the same
+  // numbers the line shows, plus what the line omits — which model's
+  // window the budget came from (or the named floor), the first-hand
+  // share, and the served provider's cache breakdown. A piece the
+  // provider never reported is omitted, never a zero.
+  function contextDetail() {
+    var bits = [];
+    if (face.context) {
+      bits.push(tokens(face.context) + ' of ' + (face.budget ? tokens(face.budget) : '?'));
+    }
+    if (face.budgetModel) {
+      bits.push(face.budgetDeclared
+        ? 'the window ' + face.budgetModel + ' declares'
+        : 'the floor \u2014 nothing declares ' + face.budgetModel);
+    }
+    if (face.folds) bits.push(face.folds + (face.folds === 1 ? ' fold' : ' folds') + ' so far');
+    if (face.share != null) bits.push(face.share + '% first-hand');
+    if (face.cacheRead != null && face.context) {
+      bits.push(Math.round((face.cacheRead / face.context) * 100) + '% cache-hit');
+    }
+    return bits.length ? bits.join(' \u00b7 ') : 'context used against the compaction budget';
+  }
+
   // The working line (the density plan, P4): the run's live state at
   // the tail of the conversation, and nowhere else — a spinner,
-  // "working", the turn, and the elapsed time, drawn from the same
-  // anchor the composer's countdown used and ticked by the same
+  // "working", the health read, and the elapsed time, drawn from the
+  // same anchor the composer's countdown used and ticked by the same
   // one-second timer. A seat swaps the words to its own wait. The
   // line is display only: it never becomes a log record, and it sits
   // outside the stream's rows, so a repaint cannot swallow it.
@@ -3619,11 +3709,14 @@
         // number, a long tool call shows the number climb — the
         // honest answer to "is it doing anything".
         var since = face.process && face.process.at ? Date.now() - face.process.at : 0;
-        var ex = exchanges();
-        var turn = face.turn ? (ex ? ' \u00b7 exchange ' + ex : ' \u00b7 turn ' + face.turn) : '';
+        // The health line (the context-health plan's C2): the measure
+        // the fold checks, not the loop's turn count — occupancy
+        // against the budget, the folds the conversation has taken,
+        // and the trend's turns-to-the-fold once a slope exists. The
+        // turn count stays internal (the owner's 2026-11-03 ruling).
         live.hidden = false;
         live.dataset.mode = 'working';
-        live.textContent = 'working' + turn + ' \u00b7 ' + elapsed(since) +
+        live.textContent = 'working' + healthLine() + ' \u00b7 ' + elapsed(since) +
           ' since the last event';
       } else {
         live.hidden = true;
@@ -8393,6 +8486,8 @@
     face.workspace = state.workspace || '';
     face.folder = state.folder || null;
     face.budget = Number(state.budget) || 0;
+    face.budgetModel = state.budget_model || '';
+    face.budgetDeclared = state.budget_declared !== false;
     face.turnBudget = Number(state.turn_budget) || 0;
     face.running = !!state.running;
     // The session the bridge is executing, which is not always this one:
@@ -8457,7 +8552,16 @@
     face.lastTurn = 0;
     face.buffer = '';
     face.spend = 0;
-    face.context = 0;
+    // The resume seed (the context-health plan's C4): a reopened
+    // conversation shows the health its log carries — the last
+    // request's prompt tokens and the folds — never a zero. The share
+    // and the cache canary are a live run's facts and stay absent
+    // until one lands.
+    face.context = Number(state.context) || 0;
+    face.folds = Number(state.folds) || 0;
+    face.share = null;
+    face.cacheRead = null;
+    face.promptHist = [];
     face.turn = 0;
     face.route = null;
     face.stop = null;

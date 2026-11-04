@@ -1003,7 +1003,13 @@ function boot(options) {
 
 const emptyState = (session) => ({
   session: session || '', model: 'm', workspace: '/w', folder: null, goal: null,
-  budget: 100000, turn_budget: 8, gate: { name: 'sys1', informs_failover: false },
+  // The producer's shape (the context-health plan's C0/C4): the budget
+  // is derived from the next run's model — 'm' declares no window, so
+  // the floor with `budget_declared: false` naming it — and the
+  // resumed conversation's health rides `context`/`folds`.
+  budget: 100000, budget_model: 'm', budget_declared: false,
+  context: 0, folds: 0,
+  turn_budget: 8, gate: { name: 'sys1', informs_failover: false },
   running: false, driving: null, dropped: 0, events: [], approval: null, rules: [], attached: true,
 });
 
@@ -1306,6 +1312,120 @@ async function aStreamedReplyRendersAtItsBoundary() {
     String(page.rows('.assistant .md-code').length));
   check('C6 the caret class is gone', page.rows('.assistant.streaming').length === 0,
     String(page.rows('.assistant.streaming').length));
+}
+
+
+// The context-health plan's C1/C2/C3: the usage event carries the run's
+// own arithmetic, the working line reads it (never the turn count), and
+// the meter shares the arithmetic with the hover naming the provenance.
+async function theWorkingLineReadsTheHealthNotTheTurn() {
+  const page = boot({
+    hash: '#/sessions/health-1',
+    documents: {
+      sessions: {
+        type: 'sessions', read_at: 'now', current: '',
+        counts: { needs: 0, working: 1, background: 0, earlier: 0, total: 1 },
+        sessions: [row('health-1', 'working', { title: 'health' })],
+      },
+      state: (asked) => ({ ...emptyState(asked), session: asked }),
+    },
+  });
+  await flush();
+  page.open();
+  await flush();
+  page.push({ type: 'turn', turn: 1 });
+  page.push({ type: 'usage', prompt: 34000, completion: 900,
+    budget: 96000, folds: 2, share: 87, cache_read: 31000 });
+  await flush();
+  const line = page.text('working-live');
+  check('C2 the line names occupancy and never the turn',
+    /34k of 96k/.test(line) && !/turn 1/.test(line), line);
+  check('C2 the line names the folds', /2 folds/.test(line), line);
+  // One reading is no slope: the trend reads nothing yet.
+  check('C2 a fresh trend reads no turns-to-fold',
+    !/turns to the fold/.test(line), line);
+  // Three climbing readings derive the approximation.
+  page.push({ type: 'usage', prompt: 40000, completion: 800,
+    budget: 96000, folds: 2, share: 80, cache_read: 35000 });
+  page.push({ type: 'usage', prompt: 46000, completion: 700,
+    budget: 96000, folds: 2, share: 76, cache_read: 40000 });
+  await flush();
+  const trended = page.text('working-live');
+  check('C2 a climbing trend reads the turns-to-fold',
+    /~\d+ turns to the fold/.test(trended), trended);
+  const meter = page.rows('#context-meter')[0];
+  check('C3 forty-eight percent reads calm',
+    meter && meter.dataset.level === 'calm', meter && meter.dataset.level);
+  page.push({ type: 'usage', prompt: 62000, completion: 500,
+    budget: 96000, folds: 2, share: 70, cache_read: 58000 });
+  await flush();
+  const high = page.rows('#context-meter')[0];
+  check('C3 sixty-five percent reads high',
+    high && high.dataset.level === 'high', high && high.dataset.level);
+  page.push({ type: 'usage', prompt: 92000, completion: 300,
+    budget: 96000, folds: 2, share: 60, cache_read: 88000 });
+  await flush();
+  const hot = page.rows('#context-meter')[0];
+  check('C3 ninety-six percent reads fold-imminent',
+    hot && hot.dataset.level === 'imminent', hot && hot.dataset.level);
+  check('C3 the hover names the cache ratio',
+    /cache-hit/.test((hot && hot.title) || ''), hot && hot.title);
+  check('C3 the hover names the share',
+    /% first-hand/.test((hot && hot.title) || ''), hot && hot.title);
+  page.push({ type: 'finished', reason: 'stop' });
+  await flush();
+}
+
+// The context-health plan's C4: a reopened conversation seeds its health
+// from the state read, and the floor names itself when nothing declared
+// a window (C0).
+async function aReopenedConversationSeedsItsHealth() {
+  const page = boot({
+    hash: '#/sessions/resumed-1',
+    documents: {
+      sessions: {
+        type: 'sessions', read_at: 'now', current: '',
+        counts: { needs: 0, working: 0, background: 0, earlier: 1, total: 1 },
+        sessions: [row('resumed-1', 'idle', { title: 'resumed' })],
+      },
+      state: (asked) => ({ ...emptyState(asked), session: asked,
+        budget: 96000, budget_model: 'deepseek-flash', budget_declared: true,
+        context: 61000, folds: 1 }),
+    },
+  });
+  await flush();
+  page.open();
+  await flush();
+  const read = page.text('context');
+  check('C4 the reopened conversation reads its occupancy', read === '64%', read);
+  const meter = page.rows('#context-meter')[0];
+  check('C4 sixty-four percent reads high',
+    meter && meter.dataset.level === 'high', meter && meter.dataset.level);
+  check('C4 the hover names the model that declared the window',
+    /deepseek-flash/.test((meter && meter.title) || ''), meter && meter.title);
+  check('C4 the hover names the fold the log carried',
+    /1 fold so far/.test((meter && meter.title) || ''), meter && meter.title);
+  check('C4 nothing runs, the health line hides',
+    page.rows('#working-live')[0].hidden === true, 'hidden');
+  // The floor: a model nothing declares serves the constant, named.
+  const floored = boot({
+    hash: '#/sessions/floored-1',
+    documents: {
+      sessions: {
+        type: 'sessions', read_at: 'now', current: '',
+        counts: { needs: 0, working: 0, background: 0, earlier: 1, total: 1 },
+        sessions: [row('floored-1', 'idle', { title: 'floored' })],
+      },
+      state: (asked) => ({ ...emptyState(asked), session: asked,
+        budget: 100000, budget_model: 'mystery-model', budget_declared: false }),
+    },
+  });
+  await flush();
+  floored.open();
+  await flush();
+  const title = (floored.rows('#context-meter')[0] || {}).title || '';
+  check('C0 the hover names the floor and the model it fell back for',
+    /the floor/.test(title) && /mystery-model/.test(title), title);
 }
 
 // C6 on a replay: a resumed history renders its markdown too.
@@ -3249,8 +3369,11 @@ async function theChatCountsExchangesAndShowsItsControls() {
   page.push({ type: 'turn', turn: 1 });
   await flush(40);
   const live = page.IDS['working-live'].textContent;
-  check('chat the working line names the exchange in flight',
-    live.includes('exchange 1') && !live.includes('turn 1'), live);
+  // The context-health plan's C2: the working line names the health,
+  // never the loop's turn or exchange count — the exchange count stays
+  // on the process pill, where the run's own progress still reads.
+  check('chat the working line names the health, not the exchange',
+    !live.includes('exchange 1') && !live.includes('turn 1'), live);
   const hint = page.IDS['hint'].textContent;
   check('chat the hint keeps its idle words while the run works',
     hint === 'Shift+Enter makes a newline', hint);
@@ -8986,6 +9109,8 @@ async function theConnectCardSaysWhatHappened() {
   }
 
 const cases = [
+  ['HEALTH the working line reads the health, not the turn', theWorkingLineReadsTheHealthNotTheTurn],
+  ['HEALTH a reopened conversation seeds its health and the floor names itself', aReopenedConversationSeedsItsHealth],
   ['ICONS every key the face asks for is drawn', everyIconKeyTheFaceAsksForIsDrawn],
   ['ICONS the rail toggle is the icon alone', theRailToggleIsTheIconAlone],
   ['ICONS the rail\u2019s groups fold', theRailsGroupsFold],

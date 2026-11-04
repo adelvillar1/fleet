@@ -809,6 +809,12 @@ impl Bridge {
         // error, and it reads the same keys the attached document does:
         // a surface that asks about one gets an answer it can render
         // without branching on the shape.
+        // One arithmetic for both branches: the gauge's denominator and
+        // the resumed conversation's seed (the context-health plan's
+        // C0 and C4).
+        let (budget, budget_model, budget_declared) =
+            next_run_budget(&self.home, state.provider_pin.as_deref(), &key, &self.model);
+        let (context, folds) = session_context_health(&self.home, &key);
         let Some(attached) = state.attached_if(session) else {
             return json!({
                 "session": key,
@@ -827,7 +833,19 @@ impl Bridge {
             // so a resumed room keeps what a live one drew.
             "deliverables": session_deliverables(&self.home, &key),
                 "feedback": feedback_for(&self.home, &key),
-                "budget": crate::compaction::COMPACTION_TOKEN_BUDGET,
+                // The gauge's denominator: budget_for of the window the
+                // next run's model declares — the pin, else this
+                // conversation's last served model, else the configured
+                // model (C0). The floor appears only when nothing
+                // declares a window, and `budget_declared` says so.
+                "budget": budget,
+                "budget_model": budget_model,
+                "budget_declared": budget_declared,
+                // The resume seed (C4): the last request's prompt tokens
+                // and the fold count, both off the log, so a reopened
+                // conversation shows its health instead of a zero.
+                "context": context,
+                "folds": folds,
                 "turn_budget": crate::route::run_config(&self.home).max_turns,
                 "gate": {
                     "name": "sys1",
@@ -866,7 +884,13 @@ impl Bridge {
             // so a resumed room keeps what a live one drew.
             "deliverables": session_deliverables(&self.home, &key),
             "feedback": feedback_for(&self.home, &key),
-            "budget": crate::compaction::COMPACTION_TOKEN_BUDGET,
+            // Same derivation as the un-attached branch: one arithmetic,
+            // two branches (C0/C4).
+            "budget": budget,
+            "budget_model": budget_model,
+            "budget_declared": budget_declared,
+            "context": context,
+            "folds": folds,
             "turn_budget": crate::route::run_config(&self.home).max_turns,
             "gate": {
                 "name": "sys1",
@@ -6187,7 +6211,10 @@ fn cards_from_records(records: &[session::Record]) -> (Vec<Value>, usize) {
             | session::Record::TurnFailed { .. }
             // A leave only ends a participation the join row opened;
             // the join row itself is what the transcript shows.
-            | session::Record::Leave { .. } => {}
+            | session::Record::Leave { .. }
+            // What a request cost is the surfaces' measure, not a
+            // conversation block.
+            | session::Record::Usage { .. } => {}
             // An address between members is its own row (the huddles
             // plan's C3/C8): who was asked, and what they were asked for,
             // is not a detail to bury in prose. The row lands where the
@@ -7523,6 +7550,90 @@ fn huddles_read(home: &std::path::Path, current: &str, live: &LiveFace) -> Value
 /// its path and size parsed from the result the tool wrote, attributed to
 /// the member whose turn handed it over. A resumed room draws the same
 /// shelf a live one did, because the shelf is the log's, not the stream's.
+/// The budget the face's gauge divides by: `budget_for` of the window
+/// the next run's model declares — the pin when it names a model, else
+/// the conversation's own last served model (the log's `End` record,
+/// KI-073), else the bridge's configured model. A bare provider pin
+/// constrains the provider, not the model — the route answers at run
+/// start — so it falls through to the served chain, and the returned
+/// flag says what the number is: `true` when a declared window derived
+/// it, `false` when it is the floor because nothing declared one. A
+/// surface shows a named fallback, never a wrong number wearing a
+/// right one.
+fn next_run_budget(
+    home: &std::path::Path,
+    pin: Option<&str>,
+    session: &str,
+    fallback_model: &str,
+) -> (u64, Option<String>, bool) {
+    let mut model: Option<String> = None;
+    if let Some((_, named)) = pin
+        .filter(|pin| !pin.is_empty() && *pin != "auto")
+        .and_then(|pin| pin.split_once('/'))
+    {
+        model = Some(named.to_string());
+    }
+    if model.is_none() {
+        model = session_last_served_model(home, session);
+    }
+    let model = model.unwrap_or_else(|| fallback_model.to_string());
+    match crate::route::declared_window_for_model(Some(home), &model) {
+        Some(window) => (
+            crate::compaction::budget_for(Some(window)),
+            Some(model),
+            true,
+        ),
+        None => (
+            crate::compaction::COMPACTION_TOKEN_BUDGET,
+            Some(model),
+            false,
+        ),
+    }
+}
+
+/// The conversation's last served model, off the log: the most recent
+/// `End` record's `served_model`, else the start record's nominal
+/// model. `None` when the log does not exist or names neither.
+fn session_last_served_model(home: &std::path::Path, session: &str) -> Option<String> {
+    let records = session::replay(&session::session_path(home, session)).ok()?;
+    let served = records.iter().rev().find_map(|record| match record {
+        session::Record::End {
+            served_model: Some(model),
+            ..
+        } => Some(model.clone()),
+        _ => None,
+    });
+    served.or_else(|| {
+        records.iter().find_map(|record| match record {
+            session::Record::Start { model, .. } => Some(model.clone()),
+            _ => None,
+        })
+    })
+}
+
+/// The context health a reopened conversation shows (the
+/// context-health plan's C4): the last request's prompt tokens and the
+/// fold count, both read off the log — the usage record rides beside
+/// each answer, and the compaction records count themselves. A log
+/// that carries neither (a fresh conversation) reads `(None, 0)`.
+fn session_context_health(home: &std::path::Path, session: &str) -> (Option<u64>, u64) {
+    let Ok(records) = session::replay(&session::session_path(home, session)) else {
+        return (None, 0);
+    };
+    let mut folds = 0u64;
+    let mut last_prompt = None;
+    for record in &records {
+        match record {
+            session::Record::Compaction { .. } => folds += 1,
+            session::Record::Usage { prompt_tokens, .. } => {
+                last_prompt = Some(*prompt_tokens);
+            }
+            _ => {}
+        }
+    }
+    (last_prompt, folds)
+}
+
 fn session_deliverables(home: &std::path::Path, id: &str) -> Vec<Value> {
     let Ok(records) = session::replay(&session::session_path(home, id)) else {
         return Vec::new();
@@ -10515,10 +10626,24 @@ pub(crate) fn describe(event: &UiEvent) -> Value {
         UiEvent::Usage {
             prompt_tokens,
             completion_tokens,
+            budget_tokens,
+            folds,
+            verbatim_share,
+            cache_read_tokens,
         } => json!({
             "type": "usage",
             "prompt": prompt_tokens,
             "completion": completion_tokens,
+            // The run's own budget — `budget_for` of the serving
+            // model's window — never the state's fallback: a mid-run
+            // pin can change the model, and the gauge follows the
+            // model that will answer the next request.
+            "budget": budget_tokens,
+            "folds": folds,
+            "share": verbatim_share,
+            // Null when the provider reports no breakdown — the face
+            // reads its absence, never a zero (the usage plan's C0).
+            "cache_read": cache_read_tokens,
         }),
         UiEvent::ToolCall {
             name,
@@ -13379,6 +13504,10 @@ mod tests {
             .send(UiEvent::Usage {
                 prompt_tokens: 1200,
                 completion_tokens: 80,
+                budget_tokens: 96_000,
+                folds: 0,
+                verbatim_share: 100,
+                cache_read_tokens: None,
             })
             .expect("the usage lands");
         sources
@@ -13428,13 +13557,90 @@ mod tests {
         assert_eq!(events[2]["detail"]["calls"], 2);
         assert_eq!(events[3]["type"], "finished");
         assert_eq!(state["running"], false, "the run ended");
-        assert_eq!(state["budget"], crate::compaction::COMPACTION_TOKEN_BUDGET);
+        // The gauge's denominator follows the model the log names: the
+        // fixture's `deepseek-flash` declares a 1M window, so the
+        // budget is three fifths of it, not the floor — the floor is
+        // gone from this surface (the context-health plan's C0, the
+        // owner's steer).
+        let expected =
+            crate::route::declared_window_for_model(Some(&bridge.home), "deepseek-flash")
+                .map(|window| crate::compaction::budget_for(Some(window)))
+                .unwrap_or(crate::compaction::COMPACTION_TOKEN_BUDGET);
+        assert_eq!(state["budget"], expected, "{}", state["budget"]);
+        assert_eq!(state["budget_declared"], true);
         // The gate the verify step names is the failover's own knob.
         assert_eq!(state["gate"]["name"], "sys1");
         assert_eq!(
             state["gate"]["informs_failover"],
             crate::route::calibration_config(&bridge.home).informs_failover
         );
+    }
+
+    #[tokio::test]
+    async fn the_state_budget_follows_the_next_runs_model() {
+        // The context-health plan's C0: the gauge's denominator is
+        // `budget_for` of the window the NEXT run's model declares —
+        // here the conversation's last served model off the log — and
+        // the floor appears only when nothing declares a window, named
+        // by `budget_declared`.
+        let (bridge, _sources, _door) = bridge().await;
+        let mut session = crate::session::Session::create(&bridge.home, "nominal").unwrap();
+        let id = session.id().to_string();
+        session
+            .record(&crate::session::Record::End {
+                stop_reason: "completed".to_string(),
+                turns: 2,
+                served_model: Some("step-3.7-flash".to_string()),
+            })
+            .unwrap();
+        drop(session);
+        let state = bridge.state(&id);
+        // Three fifths of 262,144, held under the window's edge.
+        assert_eq!(state["budget"], 157_286, "{}", state["budget"]);
+        assert_eq!(state["budget_model"], "step-3.7-flash");
+        assert_eq!(state["budget_declared"], true);
+    }
+
+    #[tokio::test]
+    async fn the_state_seeds_a_resumed_conversations_health() {
+        // The context-health plan's C4: the state read carries the last
+        // request's prompt tokens and the fold count off the log, so a
+        // reopened conversation shows its health instead of a zero.
+        let (bridge, _sources, _door) = bridge().await;
+        let mut session = crate::session::Session::create(&bridge.home, "m").unwrap();
+        let id = session.id().to_string();
+        session
+            .record(&crate::session::Record::Usage {
+                turn: 1,
+                prompt_tokens: 34_000,
+                completion_tokens: 900,
+            })
+            .unwrap();
+        session
+            .record(&crate::session::Record::Compaction {
+                summary: "the summary".to_string(),
+                first_turn: 1,
+                last_turn: 1,
+                tokens_before: 34_000,
+                tokens_after: 900,
+                survival: Some(crate::session::Survival {
+                    kept: 1,
+                    total: 1,
+                    dropped: Vec::new(),
+                }),
+            })
+            .unwrap();
+        session
+            .record(&crate::session::Record::Usage {
+                turn: 2,
+                prompt_tokens: 41_000,
+                completion_tokens: 700,
+            })
+            .unwrap();
+        drop(session);
+        let state = bridge.state(&id);
+        assert_eq!(state["context"], 41_000, "{}", state["context"]);
+        assert_eq!(state["folds"], 1);
     }
 
     /// The pane's tree: one directory's entries, with each entry's kind

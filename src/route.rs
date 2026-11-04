@@ -166,6 +166,57 @@ pub fn declared_window(home: Option<&Path>, provider: &str, model: &str) -> Opti
     context_window(provider, model)
 }
 
+/// The context window for a bare model name — the shape the session
+/// log's `End` record carries (`served_model`, KI-073: the model that
+/// answered, no provider). The owner's per-model settings are searched
+/// across every provider first — a discovery-written or owner-set
+/// window outranks the compiled table, the same precedence
+/// [`declared_window`] runs per pair — then the compiled table by
+/// model alone. `None` when nothing declares the model: the caller
+/// falls back to the floor and says so.
+pub fn declared_window_for_model(home: Option<&Path>, model: &str) -> Option<u64> {
+    if let Some(home) = home {
+        if let Some(window) =
+            any_provider_model_setting(home, model, |settings| settings.context_window)
+        {
+            return Some(window);
+        }
+    }
+    let model = model.to_ascii_lowercase();
+    CONTEXT_WINDOWS
+        .iter()
+        .find(|(_, m, _)| m.to_ascii_lowercase() == model)
+        .map(|(_, _, window)| *window)
+}
+
+/// One model's setting off the home's config, searched across every
+/// provider that carries it. First provider in the file wins — the
+/// same-model-on-two-providers case does not exist in the roster
+/// today, and a tie is a declaration to disambiguate, not a guess to
+/// bury.
+fn any_provider_model_setting<T>(
+    home: &Path,
+    model: &str,
+    read: impl Fn(&ModelSettings) -> Option<T>,
+) -> Option<T> {
+    let text = std::fs::read_to_string(home.join("config.json")).ok()?;
+    let document: serde_json::Value = serde_json::from_str(&text).ok()?;
+    document
+        .get("providers")?
+        .as_array()?
+        .iter()
+        .find_map(|entry| {
+            let settings = entry
+                .get("model_settings")?
+                .as_object()?
+                .iter()
+                .find(|(key, _)| key.eq_ignore_ascii_case(model))?
+                .1;
+            let settings: ModelSettings = serde_json::from_value(settings.clone()).ok()?;
+            read(&settings)
+        })
+}
+
 /// The output ceiling for one model, the same config-first resolution
 /// the window runs. `None` when nothing declares one — and the request
 /// then carries no `max_tokens` field at all, the wire every model has
@@ -2610,7 +2661,10 @@ pub struct WalkReport {
 
 /// Map a client error onto a failure class. 400/404 are client errors —
 /// every candidate would fail them the same way — so they do not failover;
-/// everything else does.
+/// everything else does. The one exception is a 400/404 whose body names
+/// the *model* as unavailable on this provider: the same model on the next
+/// candidate's provider answers fine, so the walk advances (the opencode
+/// Go gateway's `This Go model requires Global regions` is exactly this).
 pub fn failure_class(error: &ClientError) -> &'static str {
     match error {
         ClientError::Api(api) => match api.status {
@@ -2620,7 +2674,13 @@ pub fn failure_class(error: &ClientError) -> &'static str {
             408 | 425 | 504 => "timeout",
             429 => "rate-limit",
             500..=599 => "server",
-            400 | 404 => "client-error",
+            400 | 404 => {
+                if names_model_unavailable(&api.message) {
+                    "model-availability"
+                } else {
+                    "client-error"
+                }
+            }
             _ => "api",
         },
         ClientError::Network(message) => {
@@ -2640,8 +2700,24 @@ pub fn failure_class(error: &ClientError) -> &'static str {
     }
 }
 
+/// Whether an API error's body names *this model* as unavailable on the
+/// provider — as against a malformed request, which every candidate would
+/// fail the same way. The phrases are the gateways' own: opencode's Go
+/// gateway refuses a model its workspace's region policy excludes
+/// (`This Go model requires Global regions`), and every gateway answers a
+/// model it does not carry with `Model is unavailable`. Both mean the
+/// *next* candidate may serve the same model, so the walk advances.
+fn names_model_unavailable(message: &str) -> bool {
+    let lowered = message.to_lowercase();
+    lowered.contains("requires global")
+        || lowered.contains("model is unavailable")
+        || lowered.contains("model unavailable")
+        || lowered.contains("unknown model")
+}
+
 /// Whether a failure class advances the walk. Everything but a client error
-/// (400/404) does.
+/// (400/404) does — and a 400/404 that names the model as unavailable is
+/// not a client error but a `model-availability` one, so it advances too.
 fn failover_eligible_class(class: &str) -> bool {
     class != "client-error"
 }
@@ -4081,6 +4157,31 @@ mod tests {
                 "{status} must not fail over"
             );
         }
+        // A 400 that names the model as unavailable on this provider is not
+        // a client error: the next candidate may serve the same model (the
+        // opencode Go gateway's region refusal), so the walk advances.
+        for body in [
+            "Upstream request failed: This Go model requires Global regions. Select Global in your workspace's Privacy settings to use it.",
+            "Upstream request failed: Model is unavailable.",
+            "unknown model: nope",
+        ] {
+            let error = ClientError::Api(crate::api::ApiError {
+                status: 400,
+                message: body.to_string(),
+                request_id: None,
+            });
+            assert_eq!(failure_class(&error), "model-availability", "{body}");
+            assert!(failover_eligible(&error), "{body} must fail over");
+        }
+        // A 400 about the *request* — a malformed body, a bad parameter —
+        // is still a client error: every candidate would fail it alike.
+        let malformed = ClientError::Api(crate::api::ApiError {
+            status: 400,
+            message: "invalid request: `max_tokens` must be positive".to_string(),
+            request_id: None,
+        });
+        assert_eq!(failure_class(&malformed), "client-error");
+        assert!(!failover_eligible(&malformed));
         assert!(failover_eligible(&ClientError::Network(
             "refused".to_string()
         )));

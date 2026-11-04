@@ -767,6 +767,7 @@ async fn client_chat_stream_assembles_the_same_response_chat_returns() {
         cache_creation_tokens: None,
         reasoning_tokens: None,
         finish_reason: None,
+        prompt_tokens_details: None,
     })));
 }
 
@@ -839,18 +840,21 @@ async fn run_completes_a_two_turn_tool_loop() {
     );
     assert_eq!(replayed_calls[0]["id"], "call-1");
 
-    // The log holds exactly what the model saw plus bookkeeping.
+    // The log holds exactly what the model saw plus bookkeeping — and
+    // since the context-health plan, one usage record per request.
     let records = session::replay(session.path()).unwrap();
-    assert_eq!(records.len(), 8);
+    assert_eq!(records.len(), 10);
     assert!(matches!(&records[0], Record::Start { v: 1, model, .. } if model == "test-model"));
     assert!(matches!(&records[1], Record::Declarations { .. }));
     assert!(matches!(&records[2], Record::User { content } if content == "say hello"));
     // KI-016: the assistant record carries the call the model made, so a
-    // resumed session replays a valid sequence.
+    // resumed session replays a valid sequence. The usage record rides
+    // beside the answer now (the context-health plan), so the assistant
+    // sits one slot later than it did.
     assert!(
-        matches!(&records[3], Record::Assistant { tool_calls, .. } if tool_calls.len() == 1 && tool_calls[0].id == "call-1"),
+        matches!(&records[4], Record::Assistant { tool_calls, .. } if tool_calls.len() == 1 && tool_calls[0].id == "call-1"),
         "{:?}",
-        records[3]
+        records[4]
     );
     assert!(matches!(
         first_result(&records),
@@ -3017,6 +3021,10 @@ async fn ui_events_arrive_in_order_and_beside_the_log() {
             UiEvent::Usage {
                 prompt_tokens: 10,
                 completion_tokens: 5,
+                budget_tokens: 100_000,
+                folds: 0,
+                verbatim_share: 100,
+                cache_read_tokens: None,
             },
             UiEvent::ToolCall {
                 name: "bash".to_string(),
@@ -3035,6 +3043,10 @@ async fn ui_events_arrive_in_order_and_beside_the_log() {
             UiEvent::Usage {
                 prompt_tokens: 10,
                 completion_tokens: 5,
+                budget_tokens: 100_000,
+                folds: 0,
+                verbatim_share: 100,
+                cache_read_tokens: None,
             },
             UiEvent::Finished {
                 stop_reason: "handed back".to_string()
@@ -3045,7 +3057,8 @@ async fn ui_events_arrive_in_order_and_beside_the_log() {
     // The headless contract is untouched: the log holds the whole turn, and
     // the progress sink saw the same deltas as raw text.
     let records = session::replay(&log_path).unwrap();
-    assert_eq!(records.len(), 8);
+    // Two requests, two usage records (the context-health plan).
+    assert_eq!(records.len(), 10);
     let progress = String::from_utf8(progress).unwrap();
     assert!(progress.contains("bash: echo hi"), "{progress}");
     assert!(progress.contains("exit 0"), "{progress}");
@@ -4442,19 +4455,21 @@ async fn a_full_run_calls_the_real_sem1_lane_through_the_mock_api() {
     // The log holds the whole turn, in order: the assistant's call, the
     // lane that joined for it, the result, and the answer.
     let records = session::replay(session.path()).unwrap();
-    assert_eq!(records.len(), 9, "{records:?}");
+    // Two requests, two usage records (the context-health plan).
+    assert_eq!(records.len(), 11, "{records:?}");
     assert!(
         matches!(&records[2], Record::User { content } if content == "probe the embeddings worker")
     );
     assert!(
-        matches!(&records[3], Record::Assistant { tool_calls, .. }
+        matches!(&records[4], Record::Assistant { tool_calls, .. }
             if tool_calls.len() == 1 && tool_calls[0].function.name == "mcp__sem1__probe"),
         "{:?}",
-        records[3]
+        records[4]
     );
     // The reconstructability record: the lane, and every tool it brought
-    // with the description and schema the model was shown.
-    match &records[4] {
+    // with the description and schema the model was shown. One slot
+    // later than it was: the usage record rides beside the answer.
+    match &records[5] {
         Record::LaneTools { lane, tools } => {
             assert_eq!(lane, "sem1");
             let names: Vec<&str> = tools.iter().map(|tool| tool.name.as_str()).collect();
@@ -4701,6 +4716,10 @@ async fn a_lane_joining_is_visible_and_its_child_is_closed() {
             UiEvent::Usage {
                 prompt_tokens: 10,
                 completion_tokens: 5,
+                budget_tokens: 100_000,
+                folds: 0,
+                verbatim_share: 100,
+                cache_read_tokens: None,
             },
             UiEvent::ToolCall {
                 name: "mcp__sem1__probe".to_string(),
@@ -4720,6 +4739,10 @@ async fn a_lane_joining_is_visible_and_its_child_is_closed() {
             UiEvent::Usage {
                 prompt_tokens: 10,
                 completion_tokens: 5,
+                budget_tokens: 100_000,
+                folds: 0,
+                verbatim_share: 100,
+                cache_read_tokens: None,
             },
             UiEvent::Finished {
                 stop_reason: "handed back".to_string()
@@ -9666,6 +9689,7 @@ async fn a_conversation_past_the_budget_compacts_and_the_next_request_carries_th
             last_turn,
             tokens_before,
             tokens_after,
+            survival: _,
         }) => {
             assert_eq!(summary, "- the summary of the early turns");
             assert_eq!(*first_turn, 1);
@@ -10064,7 +10088,9 @@ async fn a_run_under_the_budget_logs_no_compaction_record() {
     // Two requests, the log's own shape, and no compaction marker.
     assert_eq!(mock.bodies().len(), 2);
     let records = session::replay(session.path()).unwrap();
-    assert_eq!(records.len(), 8, "{records:?}");
+    // Two requests, two usage records, and no compaction marker (the
+    // context-health plan's usage record rides every answer).
+    assert_eq!(records.len(), 10, "{records:?}");
     assert!(!session::list(&home).unwrap()[0].compacted);
     // Every message the second request carried is reconstructable from the
     // log, and the log holds the final answer after it.

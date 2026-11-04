@@ -3056,7 +3056,7 @@ impl<'a> Agent<'a> {
                 budget_tokens: compaction::budget_for(self.serving_window()),
                 folds: self.compactions,
                 verbatim_share: compaction::verbatim_share(&self.messages),
-                cache_read_tokens: response.usage.cache_read_tokens.clone(),
+                cache_read_tokens: response.usage.cache_read_tokens,
             });
             // The same measure rides the log as bookkeeping (replays to
             // no message): what a reopened conversation shows is the
@@ -3319,7 +3319,8 @@ impl<'a> Agent<'a> {
         if self.compaction_latch {
             return Ok(());
         }
-        self.compact(system_prompt, tail_start, measured, task).await
+        self.compact(system_prompt, tail_start, measured, task)
+            .await
     }
 
     /// The context window of the model this run is actually serving, read
@@ -3462,8 +3463,7 @@ impl<'a> Agent<'a> {
                 if call.function.name != "write_file" && call.function.name != "send_file" {
                     continue;
                 }
-                let Ok(value) =
-                    serde_json::from_str::<serde_json::Value>(&call.function.arguments)
+                let Ok(value) = serde_json::from_str::<serde_json::Value>(&call.function.arguments)
                 else {
                     continue;
                 };
@@ -3604,8 +3604,7 @@ impl<'a> Agent<'a> {
         // that is the named limitation, not a hidden one. The cure (the
         // compaction request reporting what it kept) is a deferred
         // increment, not a quiet strengthening here.
-        let mut items: Vec<(String, String)> =
-            vec![("the task".to_string(), task.to_string())];
+        let mut items: Vec<(String, String)> = vec![("the task".to_string(), task.to_string())];
         if let Some(goal) = self.options.goal.as_deref() {
             items.push(("the goal".to_string(), goal.to_string()));
         }

@@ -1247,7 +1247,10 @@ body[data-rail="icons"] .surfaces-toggle-mark { transform: rotate(180deg); }
 }
 
 .meter[data-level="high"] .meter-fill { background: var(--dsw-alias-warn); }
-.meter[data-level="full"] .meter-fill { background: var(--dsw-alias-down); }
+/* Fold-imminent (the context-health plan's C3): the same down-tone the
+   old 'full' band wore — at nine tenths of the fold budget the next few
+   turns are the last ones this window has. */
+.meter[data-level="imminent"] .meter-fill { background: var(--dsw-alias-down); }
 
 /* ------------------------------------------------------------- the stage */
 

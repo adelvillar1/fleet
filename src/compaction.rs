@@ -190,8 +190,8 @@ pub fn verbatim_share(messages: &[Message]) -> u64 {
         let text = message.content.as_deref().unwrap_or("");
         let len = text.len() as u64;
         total += len;
-        let folded = text.starts_with(SUMMARY_FRAME_PREFIX)
-            || text.starts_with(ELISION_STUB_PREFIX);
+        let folded =
+            text.starts_with(SUMMARY_FRAME_PREFIX) || text.starts_with(ELISION_STUB_PREFIX);
         if !folded {
             verbatim += len;
         }
@@ -236,7 +236,10 @@ pub fn survival_check(items: &[(String, String)], working_set: &str) -> crate::s
 /// Lowercase with whitespace runs collapsed to one space, so a
 /// multi-line brief can match across a summary's bullets.
 fn normalize(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+    text.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
 }
 
 /// Replace older tool results with a byte-count stub before the region
@@ -547,6 +550,70 @@ mod tests {
             start + 2,
             "one more turn is one assistant plus its result"
         );
+    }
+
+    #[test]
+    fn the_share_reads_100_until_a_fold_marks_the_conversation() {
+        let messages = vec![
+            Message::text(Role::User, "the task"),
+            Message::text(Role::Assistant, "working on it"),
+        ];
+        assert_eq!(verbatim_share(&messages), 100);
+        // The framed summary is second-hand by the marker the fold
+        // itself wrote; the share reads the mix, never a guess.
+        let mut folded = messages.clone();
+        folded.insert(
+            1,
+            Message::text(Role::User, summary_frame(1, 2, "- the summary")),
+        );
+        let share = verbatim_share(&folded);
+        assert!(share < 100, "{share}");
+        assert!(share > 0, "{share}");
+    }
+
+    #[test]
+    fn the_share_counts_the_stub_as_second_hand() {
+        let stub =
+            "[tool output elided before the fold: bash \u{b7} 120 bytes; the result was already read]";
+        let messages = vec![
+            Message::text(Role::User, "the task"),
+            Message::tool_result("c1", stub),
+        ];
+        let share = verbatim_share(&messages);
+        assert!(share < 100, "{share}");
+    }
+
+    #[test]
+    fn the_survival_check_names_what_dropped_and_keeps_what_is_present() {
+        let items = vec![
+            ("the task".to_string(), "ship the landing page".to_string()),
+            ("the goal".to_string(), "a calm launch".to_string()),
+            ("landing-copy.md".to_string(), "landing-copy.md".to_string()),
+        ];
+        let working_set = "Summary of turns 1 through 3, compacted to fit the window:\n\n- ship the landing page\n- keep a calm launch";
+        let survival = survival_check(&items, working_set);
+        assert_eq!(survival.kept, 2);
+        assert_eq!(survival.total, 3);
+        assert_eq!(survival.dropped, vec!["landing-copy.md".to_string()]);
+    }
+
+    #[test]
+    fn the_survival_check_is_containment_after_normalizing_case_and_space() {
+        let items = vec![(
+            "the task".to_string(),
+            "Ship   the LANDING\npage".to_string(),
+        )];
+        let survival = survival_check(&items, "first, ship the landing page, then rest");
+        assert_eq!(survival.kept, 1);
+        assert!(survival.dropped.is_empty());
+    }
+
+    #[test]
+    fn an_empty_item_is_kept_for_there_is_nothing_in_it_to_lose() {
+        let items = vec![("the goal".to_string(), String::new())];
+        let survival = survival_check(&items, "anything");
+        assert_eq!(survival.kept, 1);
+        assert!(survival.dropped.is_empty());
     }
 
     #[test]
