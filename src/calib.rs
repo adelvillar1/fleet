@@ -3942,6 +3942,7 @@ mod tests {
                 cache_read_tokens: None,
                 cache_creation_tokens: None,
                 reasoning_tokens: None,
+                prompt_tokens_details: None,
             },
             input_chars: 4,
             input_hash: hash16("task"),

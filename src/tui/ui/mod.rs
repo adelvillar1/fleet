@@ -4565,6 +4565,10 @@ mod tests {
         app.apply_ui_event(UiEvent::Usage {
             prompt_tokens: 33_360,
             completion_tokens: 3,
+            budget_tokens: 96_000,
+            folds: 0,
+            verbatim_share: 100,
+            cache_read_tokens: None,
         });
         app
     }

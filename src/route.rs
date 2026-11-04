@@ -5464,6 +5464,7 @@ mod tests {
             cache_creation_tokens: None,
             reasoning_tokens: None,
             finish_reason: Some("stop".to_string()),
+            prompt_tokens_details: None,
         });
         let usage = router
             .row("route the row", 5)

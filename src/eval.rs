@@ -1451,10 +1451,13 @@ async fn two_turn_tool_loop(mock_bin: PathBuf) -> ScenarioOutcome {
             )
             .await;
             let records = session::replay(session.path()).unwrap_or_default();
-            // The third record is the assistant's call, read through a
-            // checked access: a short log grades the check failed
-            // rather than panicking on the index.
-            let assistant_call = records.get(3).is_some_and(|record| {
+            // The assistant's call rides its own record wherever the
+            // bookkeeping sits: a turn's usage record is interleaved
+            // with the answer's records now, so the check reads the
+            // first assistant record that carries a call — checked
+            // access: a log without one grades the check failed
+            // rather than panicking on an index.
+            let assistant_call = records.iter().any(|record| {
                 matches!(record, Record::Assistant { tool_calls, .. }
                     if tool_calls.len() == 1 && tool_calls[0].id == "call-1")
             });
@@ -1486,7 +1489,7 @@ async fn two_turn_tool_loop(mock_bin: PathBuf) -> ScenarioOutcome {
                                 "the second request saw the tool result",
                                 mock.roles(1) == vec!["system", "user", "assistant", "tool"],
                             ),
-                            ("the log reconstructs the turn", records.len() == 8),
+                            ("the log reconstructs the turn", records.len() == 10),
                             ("the assistant record carries its call", assistant_call),
                         ],
                     )
@@ -1582,7 +1585,7 @@ async fn session_corpus_replay(mock_bin: PathBuf) -> ScenarioOutcome {
                         NAME,
                         family,
                         &[
-                            ("the log reconstructs", records.len() == 8),
+                            ("the log reconstructs", records.len() == 10),
                             (
                                 "the replayed conversation matches the request",
                                 replayed == sent,
@@ -5246,7 +5249,7 @@ async fn blend1_grounded_fact(mock_bin: PathBuf) -> ScenarioOutcome {
                 run.lane_answer.contains("\"path\":\"synthesized\"")
                     && run.lane_answer.contains("\"escalated\":false"),
             ),
-            ("the log reconstructs the turn", run.records.len() == 9),
+            ("the log reconstructs the turn", run.records.len() == 11),
         ],
     )
 }
@@ -5340,7 +5343,7 @@ async fn blend1_escalation(mock_bin: PathBuf) -> ScenarioOutcome {
                 "the escalated answer still carries the computed fact",
                 final_answer.contains(FACT),
             ),
-            ("the log reconstructs the turn", run.records.len() == 9),
+            ("the log reconstructs the turn", run.records.len() == 11),
         ],
     )
 }
@@ -5408,7 +5411,7 @@ async fn blend1_reprocess(mock_bin: PathBuf) -> ScenarioOutcome {
                 "the wrong answer is retained in the result, not dropped",
                 run.lane_answer.contains(wrong),
             ),
-            ("the log reconstructs the turn", run.records.len() == 9),
+            ("the log reconstructs the turn", run.records.len() == 11),
         ],
     )
 }
@@ -5467,7 +5470,7 @@ async fn blend1_corpus_recall(mock_bin: PathBuf) -> ScenarioOutcome {
                 "the final answer quotes the fact unaltered",
                 final_answer.contains(fact),
             ),
-            ("the log reconstructs the turn", run.records.len() == 9),
+            ("the log reconstructs the turn", run.records.len() == 11),
         ],
     )
 }

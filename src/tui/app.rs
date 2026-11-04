@@ -1359,6 +1359,7 @@ impl App {
             UiEvent::Usage {
                 prompt_tokens,
                 completion_tokens,
+                ..
             } => {
                 // The per-response numbers feed the bar's totals and the
                 // run card's sparkline. Summing these events, rather
@@ -3101,7 +3102,10 @@ fn entry_of(record: &Record) -> Option<Entry> {
         | Record::Join { .. }
         | Record::Leave { .. }
         | Record::Mention { .. }
-        | Record::Recommend { .. } => None,
+        | Record::Recommend { .. }
+        // What a request cost is for the surfaces, not for the model:
+        // the transcript grows no block for it.
+        | Record::Usage { .. } => None,
         // The mid-run curation is the memory block's own bookkeeping,
         // one seam later: the note rode one request's tail, and the
         // run's memory line already told the owner. Not a conversation
@@ -3833,6 +3837,7 @@ mod tests {
             cache_creation_tokens: None,
             reasoning_tokens: None,
             finish_reason: None,
+            prompt_tokens_details: None,
         }));
         app.seed(&[Record::User {
             content: "old task".to_string(),
@@ -3848,6 +3853,7 @@ mod tests {
             cache_creation_tokens: None,
             reasoning_tokens: None,
             finish_reason: None,
+            prompt_tokens_details: None,
         }));
         assert_eq!(app.status.prompt_tokens, 7);
         assert_eq!(app.status.completion_tokens, 3);
@@ -4237,6 +4243,7 @@ mod tests {
             cache_read_tokens: None,
             cache_creation_tokens: None,
             reasoning_tokens: None,
+            prompt_tokens_details: None,
         }));
         app.apply_status(StatusUpdate::Usage(Usage {
             prompt_tokens: 20,
@@ -4246,6 +4253,7 @@ mod tests {
             cache_read_tokens: None,
             cache_creation_tokens: None,
             reasoning_tokens: None,
+            prompt_tokens_details: None,
         }));
         assert_eq!(app.status.prompt_tokens, 30);
         assert_eq!(app.status.completion_tokens, 12);
@@ -4606,6 +4614,7 @@ mod tests {
                 first_turn: 1,
                 last_turn: 2,
                 tokens_before: 120_000,
+                survival: None,
                 tokens_after: 900,
             },
             Record::Assistant {
@@ -4721,6 +4730,10 @@ mod tests {
         app.apply_ui_event(UiEvent::Usage {
             prompt_tokens: 33_360,
             completion_tokens: 3,
+            budget_tokens: 96_000,
+            folds: 0,
+            verbatim_share: 100,
+            cache_read_tokens: None,
         });
         assert_eq!(app.run.context, 33_360);
         assert_eq!(app.run.tokens, vec![33_363]);
@@ -4882,6 +4895,10 @@ mod tests {
         app.apply_ui_event(UiEvent::Usage {
             prompt_tokens: 100,
             completion_tokens: 10,
+            budget_tokens: 96_000,
+            folds: 0,
+            verbatim_share: 100,
+            cache_read_tokens: None,
         });
         assert_eq!(app.status.prompt_tokens, 100);
         assert_eq!(app.status.completion_tokens, 10);
@@ -4890,6 +4907,10 @@ mod tests {
         app.apply_ui_event(UiEvent::Usage {
             prompt_tokens: 20,
             completion_tokens: 2,
+            budget_tokens: 96_000,
+            folds: 0,
+            verbatim_share: 100,
+            cache_read_tokens: None,
         });
         assert_eq!(app.status.prompt_tokens, 120);
         assert_eq!(app.status.completion_tokens, 12);

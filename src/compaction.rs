@@ -163,6 +163,82 @@ pub fn summary_frame(first_turn: u64, last_turn: u64, summary: &str) -> String {
 /// How many of the most recent tool results a fold keeps verbatim.
 pub const VERBATIM_TOOL_RESULTS: usize = 6;
 
+/// The marker every summary frame opens with — `summary_frame`'s own
+/// first words. The first-hand share classifies by this marker, so the
+/// share cannot drift from what the fold actually wrote.
+const SUMMARY_FRAME_PREFIX: &str = "Summary of turns ";
+
+/// The marker every elision stub opens with — `elide_tool_results`' own
+/// first words, for the same reason.
+const ELISION_STUB_PREFIX: &str = "[tool output elided before the fold";
+
+/// How much of the working set is still first-hand, as a percent: the
+/// text carried by messages that are neither a summary frame nor an
+/// elision stub, over all the text the working set carries. A
+/// conversation with no folds reads 100; the share only ever drops at a
+/// fold, because those are the only writers of the two markers.
+///
+/// The measure is the text the conversation carries, not the tool
+/// calls' arguments: the calls ride beside their results, and the
+/// results are counted. This is the depth signal beside occupancy —
+/// the context-health plan's C7 — not a second arithmetic on the
+/// window: nothing here reads the budget.
+pub fn verbatim_share(messages: &[Message]) -> u64 {
+    let mut verbatim = 0u64;
+    let mut total = 0u64;
+    for message in messages {
+        let text = message.content.as_deref().unwrap_or("");
+        let len = text.len() as u64;
+        total += len;
+        let folded = text.starts_with(SUMMARY_FRAME_PREFIX)
+            || text.starts_with(ELISION_STUB_PREFIX);
+        if !folded {
+            verbatim += len;
+        }
+    }
+    if total == 0 {
+        return 100;
+    }
+    verbatim * 100 / total
+}
+
+/// The fold-time survival check (the context-health plan's C6): which
+/// of the named intent-and-deliverable items are still present in the
+/// working set the fold left behind.
+///
+/// Presence is containment after normalizing case and whitespace runs —
+/// strong for the paths that dominate the set, honest-but-crude for
+/// prose, and the limitation is the plan's own: a paraphrase reads as
+/// absent. The cure (a manifest in the compaction request) is a named
+/// deferred increment, not a quiet strengthening here.
+///
+/// An item whose text is empty counts as kept — there is nothing in it
+/// to lose.
+pub fn survival_check(items: &[(String, String)], working_set: &str) -> crate::session::Survival {
+    let needle = normalize(working_set);
+    let mut kept = 0usize;
+    let mut dropped = Vec::new();
+    for (name, text) in items {
+        let text = normalize(text);
+        if text.is_empty() || needle.contains(&text) {
+            kept += 1;
+        } else {
+            dropped.push(name.clone());
+        }
+    }
+    crate::session::Survival {
+        kept,
+        total: items.len(),
+        dropped,
+    }
+}
+
+/// Lowercase with whitespace runs collapsed to one space, so a
+/// multi-line brief can match across a summary's bullets.
+fn normalize(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+}
+
 /// Replace older tool results with a byte-count stub before the region
 /// is summarized. The observation is the expensive part of a long
 /// conversation, and a summary of summaries does not need every log

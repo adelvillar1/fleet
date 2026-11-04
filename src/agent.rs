@@ -645,6 +645,25 @@ pub enum UiEvent {
         prompt_tokens: u64,
         /// What this response generated.
         completion_tokens: u64,
+        /// The budget the run itself is checked against: `budget_for`
+        /// of the serving model's declared window, computed here so a
+        /// mid-run pin that changes the model changes the budget with
+        /// it. The face divides by this, never by a constant — the
+        /// gauge and the fold share one arithmetic.
+        budget_tokens: u64,
+        /// The run's folds so far: the loss the conversation has
+        /// taken, the count the owner's own ruling named as the thing
+        /// a user would care for.
+        folds: u64,
+        /// The first-hand share (the context-health plan's C7): how
+        /// much of the working set is still verbatim, computed from
+        /// the fold's own markers.
+        verbatim_share: u64,
+        /// Tokens the provider served from its prompt cache, when it
+        /// reports the breakdown — the canary for a prefix that
+        /// stopped being stable. `None` when the provider says
+        /// nothing, never a zero.
+        cache_read_tokens: Option<u64>,
     },
     /// The model requested a tool call, before the approval gate. The
     /// summary is the clipped line the transcript shows; `arguments` is
@@ -3034,7 +3053,20 @@ impl<'a> Agent<'a> {
             self.emit(UiEvent::Usage {
                 prompt_tokens: curve_prompt,
                 completion_tokens: response.usage.completion_tokens,
+                budget_tokens: compaction::budget_for(self.serving_window()),
+                folds: self.compactions,
+                verbatim_share: compaction::verbatim_share(&self.messages),
+                cache_read_tokens: response.usage.cache_read_tokens.clone(),
             });
+            // The same measure rides the log as bookkeeping (replays to
+            // no message): what a reopened conversation shows is the
+            // last of these, read off its own log — the resume seed the
+            // context-health plan's C4 promises.
+            self.record(&Record::Usage {
+                turn: self.turns,
+                prompt_tokens: curve_prompt,
+                completion_tokens: response.usage.completion_tokens,
+            })?;
             self.turn_curve
                 .push((curve_prompt, response.usage.completion_tokens));
             let choice = match response.choices.into_iter().next() {
@@ -3197,7 +3229,7 @@ impl<'a> Agent<'a> {
             // would carry — and a compaction it performs is already in
             // place by the time that request is assembled.
             let boundary = self.prompt_for_turn(memory_block.as_deref(), &system_prompt);
-            self.maybe_compact(&boundary).await?;
+            self.maybe_compact(&boundary, task).await?;
         }
 
         let turns = self.turns;
@@ -3241,7 +3273,7 @@ impl<'a> Agent<'a> {
     /// (or a failed or skipped one) until a measurement comes back under
     /// the budget, so a conversation whose tail is itself over the
     /// window is not folded every turn.
-    async fn maybe_compact(&mut self, system_prompt: &str) -> Result<(), AgentError> {
+    async fn maybe_compact(&mut self, system_prompt: &str, task: &str) -> Result<(), AgentError> {
         // KI-081: the fallback estimate counts the system prompt and the
         // tool declarations beside the messages — the prompt they ride
         // in is the assembled one, so the declarations are in it. The
@@ -3287,7 +3319,7 @@ impl<'a> Agent<'a> {
         if self.compaction_latch {
             return Ok(());
         }
-        self.compact(system_prompt, tail_start, measured).await
+        self.compact(system_prompt, tail_start, measured, task).await
     }
 
     /// The context window of the model this run is actually serving, read
@@ -3420,12 +3452,39 @@ impl<'a> Agent<'a> {
     /// The summary rides as a user-role message framed by
     /// [`compaction::summary_frame`], the most recent
     /// [`compaction::COMPACTION_TAIL_TURNS`] turns stay verbatim after
-    /// it, and the record carries the counts either side of the fold.
+    /// it, and the record carries the counts either side of the fold —
+    /// and, since the context-health plan's C6, what survived it.
+    fn deliverable_paths(messages: &[Message]) -> Vec<(String, String)> {
+        let mut seen = std::collections::BTreeSet::new();
+        let mut items = Vec::new();
+        for message in messages {
+            for call in &message.tool_calls {
+                if call.function.name != "write_file" && call.function.name != "send_file" {
+                    continue;
+                }
+                let Ok(value) =
+                    serde_json::from_str::<serde_json::Value>(&call.function.arguments)
+                else {
+                    continue;
+                };
+                let Some(path) = value.get("path").and_then(|path| path.as_str()) else {
+                    continue;
+                };
+                if path.is_empty() || !seen.insert(path.to_string()) {
+                    continue;
+                }
+                items.push((path.to_string(), path.to_string()));
+            }
+        }
+        items
+    }
+
     async fn compact(
         &mut self,
         system_prompt: &str,
         tail_start: usize,
         tokens_before: u64,
+        task: &str,
     ) -> Result<(), AgentError> {
         // The range the summary replaces: from the first message's turn to
         // the last assistant answer before the tail. A tool result is
@@ -3536,12 +3595,40 @@ impl<'a> Agent<'a> {
             .collect();
 
         self.compactions += 1;
+        // The fold-time survival check (the context-health plan's C6):
+        // the named set — the task, the goal, every deliverable path,
+        // every ledger step — measured against the working set the fold
+        // leaves behind. Presence is containment after normalizing case
+        // and whitespace: strong for the paths that dominate the set,
+        // honest-but-crude for prose — a paraphrase reads as absent, and
+        // that is the named limitation, not a hidden one. The cure (the
+        // compaction request reporting what it kept) is a deferred
+        // increment, not a quiet strengthening here.
+        let mut items: Vec<(String, String)> =
+            vec![("the task".to_string(), task.to_string())];
+        if let Some(goal) = self.options.goal.as_deref() {
+            items.push(("the goal".to_string(), goal.to_string()));
+        }
+        items.extend(Self::deliverable_paths(&self.messages));
+        if let Ok(todos) = self.todos.lock() {
+            for (step, _mark) in todos.iter() {
+                items.push((format!("the ledger step {step}"), step.clone()));
+            }
+        }
+        let working_set = self
+            .messages
+            .iter()
+            .filter_map(|message| message.content.as_deref())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let survival = compaction::survival_check(&items, &working_set);
         self.record(&Record::Compaction {
             summary: summary.clone(),
             first_turn,
             last_turn,
             tokens_before,
             tokens_after,
+            survival: Some(survival),
         })?;
         let _ = writeln!(
             self.progress,
@@ -9514,7 +9601,7 @@ mod tests {
                 ))
                 .unwrap();
         }
-        agent.maybe_compact("system").await.unwrap();
+        agent.maybe_compact("system", "the task").await.unwrap();
         let records = crate::session::replay(&session_path_of(&home)).unwrap();
         let compaction = records
             .iter()
@@ -12637,7 +12724,7 @@ You are auditing a change. Read the diff before you judge it.
         agent
             .push_message(Message::text(Role::User, "one short task"))
             .unwrap();
-        agent.maybe_compact("system").await.unwrap();
+        agent.maybe_compact("system", "the task").await.unwrap();
         let records = crate::session::replay(&session_path_of(&home)).unwrap();
         assert!(
             !records
@@ -12694,7 +12781,7 @@ You are auditing a change. Read the diff before you judge it.
         // the verbatim tail already (400k characters reads as 100k
         // tokens against the 100k floor).
         agent.messages = vec![Message::text(Role::User, "x".repeat(400_000))];
-        let error = agent.maybe_compact("system").await.unwrap_err();
+        let error = agent.maybe_compact("system", "the task").await.unwrap_err();
         let said = error.to_string();
         assert!(
             said.contains("the recent context alone exceeds the window"),
@@ -12774,7 +12861,7 @@ You are auditing a change. Read the diff before you judge it.
             .push_message(Message::text(Role::User, "x".repeat(1_200_000)))
             .unwrap();
         agent.last_prompt_tokens = Some(300_000);
-        agent.maybe_compact("system").await.unwrap();
+        agent.maybe_compact("system", "the task").await.unwrap();
         let records = crate::session::replay(&session_path_of(&home)).unwrap();
         assert!(
             !records
@@ -13071,6 +13158,7 @@ You are auditing a change. Read the diff before you judge it.
                 last_turn: 2,
                 tokens_before: 120_000,
                 tokens_after: 900,
+                survival: None,
             })
             .unwrap();
         let path = written.path().to_path_buf();

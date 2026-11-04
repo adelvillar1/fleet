@@ -487,6 +487,17 @@ pub struct ChatResponse {
     pub usage: Usage,
 }
 
+impl ChatResponse {
+    /// Fold the usage's nested cached count into the flat field. The
+    /// one call site per chat parse: serde captures OpenAI's details
+    /// object on the way in, and this folds it before any reader
+    /// looks.
+    fn absorbed(mut self) -> ChatResponse {
+        self.usage = self.usage.absorbed();
+        self
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct Choice {
     pub message: Message,
@@ -514,11 +525,17 @@ pub struct Usage {
     /// every format confirmed so far, never an addition to it (the
     /// live leg of the usage plan confirms per provider; the reading
     /// lives here, at the definition, so no call site re-derives it).
-    /// The wire names are the providers' own (`cache_read_input_tokens`
-    /// and `cache_creation_input_tokens`, the usage-in-calibration
-    /// plan's C0).
+    /// The wire names are the providers' own, read per format and
+    /// never per model: the Anthropic name, DeepSeek's
+    /// `prompt_cache_hit_tokens` (the served-from-cache half of its
+    /// hit/miss split), and OpenAI's nested
+    /// `prompt_tokens_details.cached_tokens` — the last two land here
+    /// through the alias and the details capture below, so whichever
+    /// provider the router picked, the breakdown reads the same. A
+    /// provider that reports none of them leaves this `None`.
     #[serde(
         default,
+        alias = "prompt_cache_hit_tokens",
         rename = "cache_read_input_tokens",
         skip_serializing_if = "Option::is_none"
     )]
@@ -530,6 +547,15 @@ pub struct Usage {
         skip_serializing_if = "Option::is_none"
     )]
     pub cache_creation_tokens: Option<u64>,
+    /// OpenAI-format providers nest their cached count inside a
+    /// details object. Captured here, folded into
+    /// [`Usage::cache_read_tokens`] by [`Usage::absorbed`] at the two
+    /// chat parse sites, and never serialized — the wire shape is
+    /// unchanged. Public only so an external test can name it in a
+    /// struct literal; readers should use
+    /// [`Usage::cache_read_tokens`] after [`Usage::absorbed`].
+    #[serde(default, skip_serializing)]
+    pub prompt_tokens_details: Option<PromptTokensDetails>,
     /// Tokens the model spent reasoning, when the provider reports
     /// them separately (DeepSeek's `reasoning_tokens` shape).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -548,6 +574,29 @@ impl Usage {
     pub fn billed_tokens(&self) -> u64 {
         self.prompt_tokens.saturating_add(self.completion_tokens)
     }
+
+    /// Fold OpenAI's nested cached count into the flat field, leaving
+    /// the details capture empty. A direct field (Anthropic's,
+    /// DeepSeek's) wins when present: the details object is only the
+    /// count's other home, never a second accounting.
+    pub fn absorbed(mut self) -> Usage {
+        if self.cache_read_tokens.is_none() {
+            if let Some(details) = self.prompt_tokens_details.take() {
+                self.cache_read_tokens = details.cached_tokens;
+            }
+        } else {
+            self.prompt_tokens_details = None;
+        }
+        self
+    }
+}
+
+/// OpenAI's `prompt_tokens_details` object: the home of
+/// `cached_tokens` on the chat-completions format.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+pub struct PromptTokensDetails {
+    #[serde(default)]
+    pub cached_tokens: Option<u64>,
 }
 
 /// A non-2xx API answer.
@@ -714,7 +763,9 @@ impl Client {
         let body = response
             .into_string()
             .map_err(|error| ClientError::Network(error.to_string()))?;
-        serde_json::from_str(&body).map_err(|error| ClientError::Decode(error.to_string()))
+        serde_json::from_str(&body)
+            .map(ChatResponse::absorbed)
+            .map_err(|error| ClientError::Decode(error.to_string()))
     }
 
     /// One streamed chat completion. Every delta reaches `on_event` as it
@@ -1034,6 +1085,7 @@ fn responses_response_value(document: &serde_json::Value) -> Result<ChatResponse
         cache_read_tokens: None,
         cache_creation_tokens: None,
         reasoning_tokens: None,
+        prompt_tokens_details: None,
     };
     Ok(ChatResponse {
         choices: vec![Choice {
@@ -1232,7 +1284,7 @@ fn parse_sse(
         if let Some(counted) = chunk.usage {
             // A dropped receiver means the caller stopped caring; reading on
             // would only block on a channel nobody reads.
-            if events.send(StreamEvent::Usage(counted)).is_err() {
+            if events.send(StreamEvent::Usage(counted.absorbed())).is_err() {
                 return Ok(true);
             }
         }
@@ -1645,6 +1697,7 @@ mod tests {
                     cache_read_tokens: None,
                     cache_creation_tokens: None,
                     reasoning_tokens: None,
+                    prompt_tokens_details: None,
                 }),
             ]
         );
@@ -1719,6 +1772,7 @@ mod tests {
             cache_read_tokens: None,
             cache_creation_tokens: None,
             reasoning_tokens: None,
+            prompt_tokens_details: None,
         })));
     }
 
@@ -2135,6 +2189,53 @@ mod tests {
         let json = serde_json::to_value(&without).expect("serializes");
         assert!(json.get("cache_read_input_tokens").is_none(), "{json}");
         assert!(json.get("cache_read_tokens").is_none(), "{json}");
+    }
+
+    #[test]
+    fn the_cache_breakdown_reads_whatever_provider_served() {
+        // DeepSeek's chat-completions answer names the served-from-cache
+        // half directly; the alias reads it into the same generic field
+        // the Anthropic name lands in. Not a DeepSeek default — a
+        // per-format name, read only when that provider serves.
+        let deepseek: Usage = serde_json::from_str(
+            r#"{"prompt_tokens": 100, "completion_tokens": 20,
+                "prompt_cache_hit_tokens": 90, "prompt_cache_miss_tokens": 10}"#,
+        )
+        .expect("parses");
+        assert_eq!(deepseek.cache_read_tokens, Some(90));
+        assert_eq!(deepseek.cache_creation_tokens, None);
+        // OpenAI nests the count in a details object; the capture holds
+        // it on the way in and the fold moves it into the flat field.
+        let openai: Usage = serde_json::from_str::<Usage>(
+            r#"{"prompt_tokens": 100, "completion_tokens": 20,
+                "prompt_tokens_details": {"cached_tokens": 77}}"#,
+        )
+        .expect("parses")
+        .absorbed();
+        assert_eq!(openai.cache_read_tokens, Some(77));
+        assert!(openai.prompt_tokens_details.is_none());
+        // A direct field wins over the details object — one accounting,
+        // never two.
+        let both: Usage = serde_json::from_str::<Usage>(
+            r#"{"prompt_tokens": 100, "completion_tokens": 20,
+                "cache_read_input_tokens": 80,
+                "prompt_tokens_details": {"cached_tokens": 77}}"#,
+        )
+        .expect("parses")
+        .absorbed();
+        assert_eq!(both.cache_read_tokens, Some(80));
+        // A provider that reports neither leaves the field absent.
+        let none: Usage = serde_json::from_str::<Usage>(
+            r#"{"prompt_tokens": 100, "completion_tokens": 20,
+                "prompt_tokens_details": {"cached_tokens": null}}"#,
+        )
+        .expect("parses")
+        .absorbed();
+        assert_eq!(none.cache_read_tokens, None);
+        // And the capture never serializes — the wire shape is
+        // unchanged for every reader downstream.
+        let json = serde_json::to_value(&openai).expect("serializes");
+        assert!(json.get("prompt_tokens_details").is_none(), "{json}");
     }
 
     #[test]

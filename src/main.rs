@@ -3239,6 +3239,10 @@ async fn compact_command(session_id: Option<&str>, force: bool) -> ExitCode {
         last_turn,
         tokens_before: measured,
         tokens_after,
+        // The CLI's own `compact` folds on demand and does not run the
+        // survival check (the agent's fold does): recorded as not
+        // measured, never as a loss.
+        survival: None,
     }) {
         eprintln!("fleet: {error}");
         return ExitCode::FAILURE;

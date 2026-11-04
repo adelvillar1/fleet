@@ -131,11 +131,16 @@ leaves the surface entirely.
       conversation shows its health immediately; `face.context` /
       `face.budget` never initialize to 0% against a conversation that
       has run. Proven on a resumed session in the harness.
-- [ ] **C5 — the cache parse.** The chat-completions parser reads
-      `prompt_cache_hit_tokens` / `prompt_cache_miss_tokens` into
-      `Usage.cache_read_tokens` per DeepSeek's contract (hit + miss =
-      prompt); a provider that reports neither leaves the field absent,
-      never zero. Fixture pins the parse and the ratio arithmetic.
+- [ ] **C5 — the cache parse.** The usage parser reads whatever the
+      **served** provider reports, never one model's contract: the
+      chat-completions format reads DeepSeek's
+      `prompt_cache_hit_tokens` and OpenAI's
+      `prompt_tokens_details.cached_tokens`, the Anthropic format
+      reads `cache_read_input_tokens` as it already does; all land in
+      the generic `Usage.cache_read_tokens`. Adding a name never
+      changes another provider's parse, and a provider that reports
+      no breakdown leaves the field absent, never zero. Fixture pins
+      the parse and the ratio arithmetic.
 - [ ] **C6 — the survival check.** At each fold the agent checks task,
       goal, deliverable paths, and ledger items against the assembled
       working set; the compaction record gains the M-of-N line and

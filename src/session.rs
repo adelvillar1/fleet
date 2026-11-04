@@ -109,6 +109,24 @@ fn is_name_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-'
 }
 
+/// The fold-time survival check's answer (the context-health plan's C6):
+/// of the named intent-and-deliverable set — the task, the goal, each
+/// deliverable path, each ledger item — how many are still present in
+/// the working set the fold left behind, and which dropped. Presence is
+/// containment: a paraphrase reads as absent, and that limitation is
+/// stated where the check runs, not hidden here.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Survival {
+    /// How many of the named items are still present.
+    pub kept: usize,
+    /// How many were named.
+    pub total: usize,
+    /// The names of what dropped, in the check's own words; empty when
+    /// nothing did.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dropped: Vec<String>,
+}
+
 /// One line of a session log.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -500,6 +518,29 @@ pub enum Record {
         /// Tokens the compacted conversation carries: the estimate of the
         /// framed summary plus the verbatim tail.
         tokens_after: u64,
+        /// What survived the fold, when the survival check ran: the
+        /// named set measured against the working set the fold left
+        /// behind. `None` on logs written before the field existed; a
+        /// tolerant reader takes that as "not measured" rather than as
+        /// a loss.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        survival: Option<Survival>,
+    },
+    /// What one request cost, written beside the answer it belongs to.
+    /// Bookkeeping: it replays to no message — the conversation the
+    /// next request builds is the message records alone. It is what
+    /// lets a reopened conversation show its occupancy (the state read
+    /// takes the last of these) without recomputing the estimate, and
+    /// it is the log's own copy of what the live Usage event carried.
+    Usage {
+        /// The turn the request belongs to.
+        turn: u64,
+        /// The API's own prompt count when it reported one, the chars/4
+        /// estimate when it did not — the same measure `maybe_compact`
+        /// checked one line earlier.
+        prompt_tokens: u64,
+        /// What the response generated.
+        completion_tokens: u64,
     },
 }
 
@@ -1274,12 +1315,15 @@ pub fn conversation(records: &[Record]) -> Conversation {
             // of fact about the conversation's staffing, not its content,
             // and a mention is the routing fact behind an address the
             // message itself already carries. A recommendation is the same
-            // kind of fact: the proposal rides its own surface card.
+            // kind of fact: the proposal rides its own surface card. The
+            // usage record is bookkeeping of the same kind — what a
+            // request cost, for the surfaces, not for the model.
             Record::Channel { .. }
             | Record::Join { .. }
             | Record::Leave { .. }
             | Record::Mention { .. }
-            | Record::Recommend { .. } => {}
+            | Record::Recommend { .. }
+            | Record::Usage { .. } => {}
             Record::User { content } => {
                 messages.push(Message::text(Role::User, content.clone()));
                 turns.push(next_turn);
@@ -1839,6 +1883,7 @@ mod tests {
                     last_turn: range,
                     tokens_before: 100,
                     tokens_after: 10,
+                    survival: None,
                 })
                 .unwrap();
         }
@@ -2771,6 +2816,7 @@ mod tests {
             last_turn: 2,
             tokens_before: 120_000,
             tokens_after: 900,
+            survival: None,
         }
     }
 
@@ -2886,6 +2932,7 @@ mod tests {
             last_turn: 6,
             tokens_before: 140_000,
             tokens_after: 800,
+            survival: None,
         });
         let messages = messages(&records);
         // One summary plus the last four assistant answers.
@@ -2944,12 +2991,17 @@ mod tests {
                 last_turn,
                 tokens_before,
                 tokens_after,
+                survival,
             } => {
                 assert_eq!(summary, "- did the thing\n- then the other thing");
                 assert_eq!(*first_turn, 1);
                 assert_eq!(*last_turn, 2);
                 assert_eq!(*tokens_before, 120_000);
                 assert_eq!(*tokens_after, 900);
+                // The record was written without a survival check (the
+                // fixture predates the field); the round-trip reads it
+                // back as absent, not as a loss.
+                assert!(survival.is_none());
             }
             other => panic!("expected a compaction record, got {other:?}"),
         }
