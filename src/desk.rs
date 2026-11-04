@@ -1201,6 +1201,69 @@ pub fn number_givens(desk: &DeskProject) -> Vec<f64> {
     givens
 }
 
+// --- the CLI card ------------------------------------------------------------
+
+/// The card width the crate's CLI surfaces draw at.
+const CARD_WIDTH: usize = 72;
+
+/// One desk project's card: the name, the binding, the stage marks, the
+/// shape, the evidence status — the `fleet desk` listing.
+pub fn card(desk: &DeskProject) -> String {
+    let line = "\u{2500}".repeat(CARD_WIDTH);
+    let mut out = String::new();
+    out.push_str(&format!("{}\n", desk.name));
+    out.push_str(&format!("{line}\n"));
+    out.push_str(&format!("deliverable  {}\n", desk.slug));
+    out.push_str(&format!(
+        "project      {}\n",
+        desk.project.as_deref().unwrap_or("\u{2014} unbound")
+    ));
+    out.push_str(&format!(
+        "shape        {}\n",
+        desk.shape.as_deref().unwrap_or("\u{2014} unrouted")
+    ));
+    out.push_str(&format!("claim        {}\n", desk.claim));
+    for (stage, state) in &desk.stages {
+        let mark = match state {
+            StageState::Pending => "\u{2014}",
+            StageState::Running => "running",
+            StageState::Done => "done",
+            StageState::Refused { reason } => {
+                // A short refusal rides its reason; a long one names the
+                // state here and the review view carries the words.
+                if reason.chars().count() <= CARD_WIDTH - 14 {
+                    reason.as_str()
+                } else {
+                    "refused (the review view names it)"
+                }
+            }
+        };
+        out.push_str(&format!("  {:9} {}\n", stage.name(), mark));
+    }
+    let (refusals, contested) = desk.evidence_status();
+    let asserted = desk
+        .claims
+        .iter()
+        .filter(|c| c.verdict == ClaimVerdict::Asserted)
+        .count();
+    out.push_str(&format!(
+        "evidence     {asserted} asserted, {contested} contested, {refusals} open refusal(s), {} figure(s)\n",
+        desk.figures.len()
+    ));
+    out.push_str(&format!("updated      {}\n", desk.updated));
+    out
+}
+
+/// The `fleet desk` listing: every project's card, newest first, or the
+/// named absence when the desk is empty.
+pub fn cards(home: &Path) -> String {
+    let projects = projects(home);
+    if projects.is_empty() {
+        return "the desk holds no deliverables yet \u{2014} a brief starts one\n".to_string();
+    }
+    projects.iter().map(card).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

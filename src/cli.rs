@@ -6,6 +6,8 @@ use crate::channels::Capability;
 /// Everything `fleet` answers to.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Command {
+    /// The desk: the knowledge-work surface's CLI card.
+    Desk,
     /// Run one task to completion.
     Run(RunOptions),
     /// Interactive multi-turn session.
@@ -915,6 +917,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "run" => parse_run(rest),
         "chat" => parse_chat(rest),
         "sessions" => parse_sessions(rest),
+        "desk" => parse_desk(rest),
         "compact" => parse_compact(rest),
         "settings" => parse_settings(rest),
         "lanes" => no_flags(rest, Command::Lanes),
@@ -1098,6 +1101,15 @@ fn parse_sessions(args: &[String]) -> Result<Command, String> {
         view,
         probes,
     })
+}
+
+fn parse_desk(rest: &[String]) -> Result<Command, String> {
+    if !rest.is_empty() {
+        return Err(
+            "`fleet desk` takes no arguments — the card reads the home's desk store".to_string(),
+        );
+    }
+    Ok(Command::Desk)
 }
 
 /// `fleet compact [<session>]`: fold one session's stored context on
@@ -3346,6 +3358,8 @@ mod tests {
         // A second positional is refused by name: the surface opens one
         // session at a time.
         assert!(parse(&args(&["sessions", "a", "b"])).is_err());
+        assert!(matches!(parse(&args(&["desk"])), Ok(Command::Desk)));
+        assert!(parse(&args(&["desk", "extra"])).is_err());
         assert_eq!(
             parse(&args(&["sessions", "--recall", "the router pin"])).unwrap(),
             Command::SessionsView {

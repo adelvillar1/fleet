@@ -171,6 +171,7 @@ fn dispatch_sync(args: &[String]) -> ExitCode {
         Ok(Command::Plan(options)) => plan_command(&options),
         Ok(Command::Skills(options)) => skills_command(&options),
         Ok(Command::Memories(options)) => memories_command(&options),
+        Ok(Command::Desk) => desk_command(),
         Ok(Command::Cron(options)) => cron_command(&options),
         Ok(Command::Improve(options)) => improve_command(&options),
         Ok(Command::Vault(options)) => vault_command(&options),
@@ -1571,6 +1572,18 @@ fn skills_command(options: &cli::SkillsOptions) -> ExitCode {
 /// cycle — the same pass the scheduled thread runs hourly in a chat or
 /// the TUI — and prints what it did before the cards, with every
 /// action's row in the calibration stream.
+fn desk_command() -> ExitCode {
+    let home = match fleet_home() {
+        Ok(home) => home,
+        Err(error) => {
+            eprintln!("{error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    print!("{}", fleet::desk::cards(&home));
+    ExitCode::SUCCESS
+}
+
 fn memories_command(options: &cli::MemoriesOptions) -> ExitCode {
     let root = fleet::memory::resolve_root(&std::env::current_dir().unwrap_or_default());
     if options.archive {
