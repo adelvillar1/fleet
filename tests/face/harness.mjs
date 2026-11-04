@@ -2338,6 +2338,13 @@ async function theTurnIsANavigationalUnit() {
   await flush(60);
   const marks = page.rows('.turn-mark');
   check('C8 three turn marks', marks.length === 3, String(marks.length));
+  // The mark is the divider, the rewind point and the jump target — and
+  // it names no ordinal: where the run stands in its own loop is the
+  // harness's bookkeeping, invisible to the owner (the 2026-11-05 ruling).
+  check('C8 the mark carries no turn ordinal',
+    page.rows('.turn-fold').every((one) => !/turn/i.test(one.textContent)) &&
+      page.body.textContent.indexOf('turn 1') === -1,
+    page.rows('.turn-fold').map((one) => one.textContent).join('|'));
   check('C8 nothing auto-collapses',
     page.rows('.assistant').every((one) => !one.hidden), '');
   // Fold turn 2: its rows hide, the mark stays, the others do not move.
@@ -7534,8 +7541,14 @@ async function theBotsRailGroupsByPersona() {
     page.body.dataset.objectCard === 'open', String(page.body.dataset.objectCard));
   const body = page.text('dock-object-body');
   check('BOTS the card carries the details',
-    body.includes('m') && body.includes('handed back') && body.includes('3'),
+    body.includes('m') && body.includes('handed back') && body.includes('2026-10-30'),
     body.slice(0, 120));
+  // A conversation's position in its own loop is not one of its details
+  // (the 2026-11-05 ruling): the card names who, what model, when, where.
+  const detailNames = page.rows('#dock-object-body .cfg-item-name')
+    .map((one) => one.textContent);
+  check('BOTS the details carry no turn count',
+    !detailNames.includes('turns'), detailNames.join(','));
   check('BOTS the card carries the decisions',
     body.includes('ship the thing') && body.includes('the-decision') &&
       body.includes('shall I commit?'),
@@ -8520,9 +8533,9 @@ async function theConversationDensityHolds() {
   check('D1 the answer stays open',
     page.rows('.assistant').every((one) => !one.hidden), '');
   const fold = page.rows('.turn-fold')[0];
-  check('D1 the mark carries the counts',
-    !!fold && /turn 1/.test(fold.textContent) && /1 tool/.test(fold.textContent) &&
-      /thought 2s/.test(fold.textContent),
+  check('D1 the mark carries the counts and no ordinal',
+    !!fold && /1 tool/.test(fold.textContent) && /thought 2s/.test(fold.textContent) &&
+      !/turn/i.test(fold.textContent) && !/\d+\s*$/.test(fold.textContent.trim()),
     fold ? fold.textContent : 'no mark');
   check('D1 the mark starts folded',
     !!fold && fold.getAttribute('aria-expanded') === 'false',

@@ -20,10 +20,10 @@ keeps the width.
 │ ✓ bash  cargo test  done                   │ │ ◉ act  bash · 3 calls │
 │                                            │ │ gate on · sys1        │
 │                                            │ │ branches 1            │
-│                                            │ │ ● 3f2a1c done 4 turns │
+│                                            │ │ ● 3f2a1c  done        │
 │                                            │ │ [s] stop  [i] steer   │
 ├────────────────────────────────────────────┴─┴───────────────────────┤
-│ ● stepfun · auto  t7  12.4k tok  ctx 38% ▰▰▰▰▱▱  pane run           │
+│ ● idle  route auto  12.4k tok  ctx 38%                      pane run │
 │ ▍ message                                                            │
 │ Enter send · Ctrl-P palette · Ctrl-R run · Ctrl-T plan · q quit      │
 └──────────────────────────────────────────────────────────────────────┘
@@ -32,7 +32,12 @@ keeps the width.
 The status bar's context gauge is a `LineGauge` fed by the last
 streamed `usage` event; the conversation has a `Scrollbar`; the boards
 use the tab row as their title. The palette and the tables are the only
-surfaces that need their own state (`ListState`/`TableState`).
+surfaces that need their own state (`ListState`/`TableState`). The bar
+carries the state, the routing mode, the session, the token counts and
+that gauge — and no turn ordinal (the 2026-11-05 ruling): a run on its
+seventh turn draws the same bar as one on its first, and `status.turn`
+stays because the cap, the log and the checkpoint paths read it, not
+because the owner does.
 
 ## The composed boards
 
@@ -85,8 +90,12 @@ slot has not landed or refused.
 ## The run card and the controls
 
 The card is reduced from the same `UiEvent` log the conversation reads:
-route → think → act → verify, the turn, the tool, the calls, the facts,
-the lanes, the checkpoint, the delegation branches, and the last step.
+route → think → act → verify, the tool, the calls, the facts, the lanes,
+the checkpoint, the delegation branches, and the last step. The turn's
+ordinal is not among them (the 2026-11-05 ruling): the think step says
+"the model's turn", the strip carries no `tN`, and a done branch names
+its outcome. The loop's counter stays internal; the checkpoint stays
+because it names a rewind target the owner can act on.
 The verify step names the failover gate from `route::calibration_config`
 (`gate on · sys1` / `gate shut`). A stopped run renders as **stopped by
 you**, not a failure: the core reports a stop through `Failed`, and only

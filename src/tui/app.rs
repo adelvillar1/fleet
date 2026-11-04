@@ -355,9 +355,9 @@ impl RunState {
         } else {
             parts.push("idle".to_string());
         }
-        if self.turn > 0 {
-            parts.push(format!("t{}", self.turn));
-        }
+        // The strip is a summary of what the run is doing, not of where it
+        // stands in its own loop: no turn ordinal here (the 2026-11-05
+        // ruling). The tool and the call count are the work itself.
         if !self.tool.is_empty() {
             parts.push(self.tool.clone());
         }
@@ -1338,7 +1338,12 @@ impl App {
                 self.run.active = true;
                 self.run.stage = Stage::Think;
                 self.run.turn = turn;
-                self.run.last = format!("turn {turn}");
+                // The pane's last line says what the run is doing, never
+                // where it stands in its own loop (the 2026-11-05 ruling):
+                // the stage line already reads "the model's turn", and the
+                // ordinal that used to ride here is bookkeeping the cap,
+                // the log and the checkpoints read — not the owner.
+                self.run.last = "the model's turn".to_string();
                 self.status.turn = turn;
                 self.status.working = true;
             }

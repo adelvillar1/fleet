@@ -10,6 +10,7 @@ phrases: [compositional generalization, locally in-distribution, RLM, recursive 
 missing: [the trajectory-shape reader (unbuilt; extends the usage plan's rows)]
 superseded-by:
 valid-until:
+recall-count: 1
 ---
 
 Source: https://alexzhang13.github.io/blog/2026/harness/ (Zhang & Khattab, MIT CSAIL, Jul 2026). Thesis: harnesses that keep every LM call locally in-distribution (LID) induce equivalence classes over tasks, so RL on short tasks transfers 8–32× longer; the RLM testbed = context offloading + programmatic sub-calls in a REPL; context rot (appended tool outputs bloating history) is the named failure mode; the paper itself warns hand-coded strategies run afoul of the bitter lesson.

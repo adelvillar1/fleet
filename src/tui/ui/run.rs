@@ -122,9 +122,10 @@ fn head_lines(app: &App, width: usize) -> Vec<Line<'static>> {
         ]));
     }
     let mut meta: Vec<String> = Vec::new();
-    if run.turn > 0 {
-        meta.push(format!("t{}", run.turn));
-    }
+    // No turn ordinal among the run pane's figures (the 2026-11-05
+    // ruling): the position in the loop is the harness's bookkeeping,
+    // and the pane reports what the run spent and did. The checkpoint
+    // stays — it names a rewind target the owner can act on.
     if run.calls > 0 {
         meta.push(format!(
             "{} call{}",
@@ -200,13 +201,7 @@ fn stage_note(app: &App, stage: Stage) -> String {
                 said
             }
         }
-        Stage::Think => {
-            if run.turn > 0 {
-                format!("turn {}", run.turn)
-            } else {
-                "the model's turn".to_string()
-            }
-        }
+        Stage::Think => "the model's turn".to_string(),
         Stage::Act => {
             if !run.tool.is_empty() {
                 format!(
@@ -272,7 +267,10 @@ fn branch_line(branch: &Branch, width: usize) -> Line<'static> {
             }
         )
     } else if branch.stage == "done" {
-        format!("{} \u{b7} {} turn(s)", branch.outcome, branch.turns)
+        // The child's outcome, never its turn count: a delegation's own
+        // loop is internal (the 2026-11-05 ruling), and the branch line
+        // says what it produced.
+        branch.outcome.clone()
     } else {
         clip(&branch.goal, 32)
     };

@@ -1,7 +1,7 @@
 ---
 status: completed
 created: 2026-10-31
-updated: 2026-10-31
+updated: 2026-11-05
 slug: conversation-density
 ---
 
@@ -262,11 +262,12 @@ cases**, the ledger green (381 rows, 34 open).
       that finished during this session folds.
 - [x] **R9 — the working line is on the conversation and absent from
       the composer.** While a run is live the tail of the conversation
-      carries the spinner, "working", the turn, and an elapsed time
-      that ticks; a standing seat shows its own wait there; the line
-      survives a stream repaint and is gone when neither is live — and
-      the composer's hint reads its idle words while the run works, so
-      the run reports only where the reading is. Pinned by a harness
+      carries the spinner, "working", the context-health read, and an
+      elapsed time that ticks; a standing seat shows its own wait there;
+      the line survives a stream repaint and is gone when neither is
+      live — and the composer's hint reads its idle words while the run
+      works, so the run reports only where the reading is. Pinned by a
+      harness
       case (the words, the tick, the seat variant, the removal, and the
       composer's silence).
 - [x] **R8 — the gate.** The four commands run and each exit code read
@@ -336,3 +337,14 @@ heights at two widths; the screenshots are read as the review.
 - The D8 turn-fold machinery (`toggleTurn`/`paintTurnFold`) — this
   reuses it rather than adding a second folding mechanism.
 - The `ICONS` table and the `icon()` helper — the rail's shared set.
+
+## Amendments
+
+- **2026-11-05 — the ordinal retires from the margin.** R5 shipped a mark
+  reading `turn 3 · 4 tools · thought 2s` and R9 shipped a working line
+  naming the turn. The owner ruled the turn number is meaningless to a
+  user: the mark now carries the counts only (`4 tools · thought 2s`), an
+  unfolded turn's mark says nothing while staying the divider, the
+  rewind point and the jump target, and the working line keeps the
+  context-health read instead. Nothing else in this plan moves — the
+  fold, the press, the answer and R7's replay rule are unchanged.

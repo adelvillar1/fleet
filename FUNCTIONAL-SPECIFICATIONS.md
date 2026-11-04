@@ -45,9 +45,12 @@ the way back to the work list, the title (press it for the switcher,
 press the pencil to rename), the state in words, and **New**. A
 conversation is a place with a way out and a way to another, never a
 one-way door. While a run works, the
-composer says so and says how: the turn, and how long since the last
-event — a live run shows a small number, a long tool call shows it climb,
-and the state pill turns with it. A standing seat counts the owner's own
+conversation's tail says so and says how: a spinner, "working", the
+context-health read, and how long since the last event — a live run
+shows the health climb, a long tool call shows the elapsed time climb,
+and the state pill turns with it. The tail never prints the turn's
+ordinal (the 2026-11-05 ruling); the composer keeps its idle words. A
+standing seat counts the owner's own
 wait. The home state names
 the counts (facts known, skills in reach, runs under this home), the
 method in three words — plan, delegate, verify — and where a run's work
@@ -344,11 +347,16 @@ head, the rail and the panels keep the measure they have.
   the time it took, the output it returned, and a `raw record` button.
   Both cards wear an icon that names what they are. At the final
   output the exchange summarizes: its tool and thinking rows fold under
-  their turn marks and each mark carries the counts it hides (`turn 3 ·
-  4 tools · thought 2s`), one press from every row; the answer is never
+  their turn marks and each mark carries the counts it hides (`4 tools ·
+  thought 2s`), one press from every row; the mark never names the
+  turn's ordinal — where the run stands in its own loop is the
+  harness's bookkeeping, not the owner's measure of the work (the
+  2026-11-05 ruling), and an unfolded turn's mark is still the divider,
+  the rewind point and the jump target; the answer is never
   folded, and a history loaded from a log keeps its rows as the record
   stands. While a run works, the conversation's tail carries the
-  working line — a spinner, "working", the turn, and the elapsed time —
+  working line — a spinner, "working", the context-health read, and the
+  elapsed time —
   and a seat shows how long it has waited; the run's state lives on
   the conversation, never in the composer, which keeps its idle words.
   The run strip's folded lines (route, memory, skills, lane,
@@ -421,8 +429,14 @@ head, the rail and the panels keep the measure they have.
   outgrew its window and was folded — not its turn count. The surfaces
   that measured size by turns (the delegation tree, the replay line, the
   live branch note) read the fold count; a conversation that never
-  folded says so. A turn count remains only where it is a remaining
-  budget, never a size claim.
+  folded says so. The turn **number** is invisible on every main-session
+  surface (the 2026-11-05 ruling): the transcript's marks, the working
+  line, the run pane and its strip, the receipt, the delegation rows and
+  the terminal's progress line none of them print it. What remains is the
+  **cap** — `runs.max_turns` in the settings, and a run that used it up
+  says so and offers the continuation — and the internal keys: the log's
+  own `turn` records, the checkpoint paths, the rewind target and the
+  resumed position.
 - A provider that runs out of quota mid-run hands the walk to the next
   candidate in the chain rather than failing the run: quota is a
   persistent state, and the order's tail exists for it.

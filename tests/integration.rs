@@ -2552,14 +2552,17 @@ async fn streamed_tokens_reach_progress_before_the_run_ends() {
     assert_eq!(deltas, vec!["Wri", "ting ", "tokens."]);
 
     // And they arrived during the turn, not as one blob at the end: at the
-    // first delta the run had not yet reached turn 2 or the final answer.
+    // first delta the run had not yet reached its second turn or the final
+    // answer. The progress line names the turn but no longer counts it (the
+    // 2026-11-05 ruling), so the boundary is read from how many turn marks
+    // the snapshot holds: one at the first delta, two only after a second.
+    let marker = "\u{2014} the model\u{2019}s turn";
     let first = probe
         .snapshots
         .iter()
         .find(|snapshot| snapshot.contains("Wri"))
         .expect("the first delta was written to progress");
-    assert!(first.contains("\u{2014} turn 1"), "{first}");
-    assert!(!first.contains("\u{2014} turn 2"), "{first}");
+    assert_eq!(first.matches(marker).count(), 1, "{first}");
     assert!(!first.contains("tokens."), "{first}");
     assert!(!first.contains("Writing tokens."), "{first}");
 

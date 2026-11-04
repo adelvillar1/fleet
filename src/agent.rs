@@ -2907,7 +2907,12 @@ impl<'a> Agent<'a> {
         while self.turns < self.options.max_turns as u64 {
             self.turns += 1;
             self.emit(UiEvent::Turn(self.turns));
-            let _ = writeln!(self.progress, "\u{2014} turn {}", self.turns);
+            // The terminal's progress line marks the model's turn without
+            // its ordinal: the position in the loop is the harness's own
+            // bookkeeping and says nothing to whoever reads the run (the
+            // 2026-11-05 ruling). The counter itself stays — the cap, the
+            // log and the checkpoints are keyed on it.
+            let _ = writeln!(self.progress, "\u{2014} the model\u{2019}s turn");
             let _ = self.progress.flush();
 
             // The control channel, read before every model call. An

@@ -1468,7 +1468,9 @@ fn render_error(frame: &mut Frame<'_>, message: &str, area: Rect) {
     frame.render_widget(Paragraph::new(line), area);
 }
 
-/// The status bar: model, session, turn, tokens, and the run's state.
+/// The status bar: model, session, tokens, and the run's state — never
+/// the turn's ordinal, which is the loop's own bookkeeping (the 2026-11-05
+/// ruling).
 fn render_status(frame: &mut Frame<'_>, app: &App, area: Rect) {
     let status = &app.status;
     // The context gauge gets its own cells on the right where the bar is
@@ -1485,11 +1487,11 @@ fn render_status(frame: &mut Frame<'_>, app: &App, area: Rect) {
     } else {
         (palette::IDLE, "idle")
     };
-    let turn = if status.turn == 0 {
-        "—".to_string()
-    } else {
-        status.turn.to_string()
-    };
+    // The loop's own counter is bookkeeping and never a user-facing
+    // measure: the model's turn is not a quantity the owner tracks (the
+    // 2026-11-05 ruling). The bar used to print `turn 3` here; it prints
+    // nothing for it now. `status.turn` stays because the cap, the log
+    // and the checkpoint paths read it.
     let mut spans = vec![
         Span::styled(" ● ", Style::new().fg(dot)),
         Span::styled(state, Style::new().fg(dot)),
@@ -1546,8 +1548,6 @@ fn render_status(frame: &mut Frame<'_>, app: &App, area: Rect) {
         },
         Style::new().fg(palette::TEXT),
     ));
-    spans.push(Span::styled("  turn ", Style::new().fg(palette::DIM)));
-    spans.push(Span::styled(turn, Style::new().fg(palette::TEXT)));
     spans.push(Span::styled("  tokens ", Style::new().fg(palette::DIM)));
     spans.push(Span::styled(
         format!("{}/{}", status.prompt_tokens, status.completion_tokens),
@@ -1593,7 +1593,7 @@ fn render_status(frame: &mut Frame<'_>, app: &App, area: Rect) {
     // whatever width they needed and the last one clipped mid-word
     // unreadable; now the bar is trimmed to the area by priority: the
     // state and the routing mode are what the bar is for, and the
-    // board, memory, tokens, turn, and session segments are what a
+    // board, memory, tokens, and session segments are what a
     // narrow bar drops — in that order. The session id is the last to
     // go, because it is already abbreviated and its tail is the part
     // that identifies the log.
@@ -2655,6 +2655,54 @@ mod tests {
             "the bar fits its width: {bar} ({})",
             bar.chars().count()
         );
+    }
+
+    /// The 2026-11-05 ruling, on the terminal's own bar: the loop's
+    /// counter is bookkeeping, so the bar names the state, the route, the
+    /// session and the tokens and never the turn's ordinal — a run on its
+    /// seventh turn draws the same bar as one on its first. The counter
+    /// still exists (`status.turn`), because the cap, the log and the
+    /// checkpoint paths read it; it just does not reach the owner.
+    #[test]
+    fn the_status_bar_carries_no_turn_ordinal() {
+        let mut app = fresh();
+        app.status.routing = Some("auto".to_string());
+        app.status.turn = 7;
+        let chat = draw(&app, 120, 24);
+        // The bar is the line carrying the token segment.
+        let bar = chat
+            .lines()
+            .find(|line| line.contains(" tokens "))
+            .expect("the status bar");
+        assert!(!bar.contains("turn"), "the bar names no turn: {bar}");
+        assert!(!chat.contains("turn 7"), "no ordinal anywhere: {chat}");
+        // The retired segment left nothing behind it: the session id runs
+        // straight into the token counts at the bar's usual separator.
+        assert!(
+            bar.contains("20261013T101010Z-abcdef  tokens "),
+            "the session id runs into the counts: {bar:?}"
+        );
+    }
+
+    /// The same ruling on the run pane's own lines: a live turn's stage
+    /// reads "the model's turn" and its `last` line says the same, so
+    /// nothing in the pane names where the run stands in its loop. The
+    /// counter stays on `run.turn`; only its rendering is gone.
+    #[test]
+    fn the_run_pane_carries_no_turn_ordinal() {
+        let mut app = fresh();
+        app.status.routing = Some("auto".to_string());
+        // The pane opens on the board by default; the run card is the
+        // tab that carries the stage and the last line.
+        app.pane = crate::tui::app::Pane::Run;
+        app.apply_ui_event(UiEvent::Turn(4));
+        let frame = draw(&app, 120, 30);
+        assert!(frame.contains("the model's turn"), "{frame}");
+        assert!(!frame.contains("turn 4"), "no ordinal in the pane: {frame}");
+        // The counter itself is untouched — the cap, the log and the
+        // checkpoint paths read it.
+        assert_eq!(app.run.turn, 4);
+        assert_eq!(app.status.turn, 4);
     }
 
     #[test]

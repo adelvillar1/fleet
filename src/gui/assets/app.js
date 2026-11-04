@@ -1505,6 +1505,13 @@
   }
   function exchanges() { return exchangesIn(face.events); }
 
+  // Where the run stands, as the owner reads it: the exchange in flight
+  // — one owner message and the answer to it. The loop's own turn
+  // counter is bookkeeping the owner never needs (the 2026-11-05
+  // ruling), so a run that has not counted an exchange yet says
+  // nothing here and the caller names the stage instead.
+  function progressPosition(ex) { return ex ? 'exchange ' + ex : ''; }
+
   // The turn's controls are icons: the words live in the tooltip and
   // the accessible name, and the glyph carries the row. One path table
   // and two builders, so the footer's five and the owner bubble's copy
@@ -1817,9 +1824,16 @@
     // press that folds the turn's rows to the mark line, and the next
     // and previous marks are one press away from every mark. Nothing
     // auto-collapses — quiet by default is the rule the owner set.
-    var fold = node('button', 'turn-fold', 'turn ' + event.turn);
+    // The label carries the counts the fold hides and never the turn's
+    // ordinal: where the run stands in its own loop is the harness's
+    // bookkeeping, meaningless to the owner reading the work (the
+    // 2026-11-05 ruling). An unfolded turn therefore says nothing — the
+    // mark is still the divider, the rewind point and the jump target —
+    // and its name lives on the button for a screen reader.
+    var fold = node('button', 'turn-fold', '');
     fold.type = 'button';
     fold.title = 'fold or unfold this turn\u2019s rows';
+    fold.setAttribute('aria-label', 'fold or unfold this turn\u2019s rows');
     fold.setAttribute('aria-expanded', 'true');
     fold.addEventListener('click', function () { toggleTurn(event.turn); });
     el0.appendChild(fold);
@@ -1905,11 +1919,13 @@
 
   // The turn's summary at the final output (the density plan, P3):
   // the exchange's tool and thinking rows fold under their marks,
-  // each mark carrying the counts — `turn 3 \u00b7 4 tools \u00b7 thought 2s`
-  // — and the answer row is never a fold target, because the answer
-  // is the surface. The fold lands in the turn's own state, so the
-  // mark's press expands every row back and folds them under the
-  // rule the owner set for a manual fold (D8).
+  // each mark carrying the counts — `4 tools \u00b7 thought 2s` — and
+  // the answer row is never a fold target, because the answer is the
+  // surface. The fold lands in the turn's own state, so the mark's
+  // press expands every row back and folds them under the rule the
+  // owner set for a manual fold (D8). The ordinal is absent on
+  // purpose: the mark names what it hides, and the position in the
+  // loop is not the owner's business (the 2026-11-05 ruling).
   function summarizeRun(from, to) {
     if (!to) return;
     var start = from && from <= to ? from : to;
@@ -1937,7 +1953,7 @@
     if (!parts.length) return;
     face.turnFolded[turn] = true;
     face.turnSummaries = face.turnSummaries || {};
-    face.turnSummaries[turn] = 'turn ' + turn + ' \u00b7 ' + parts.join(' \u00b7 ');
+    face.turnSummaries[turn] = parts.join(' \u00b7 ');
     paintTurnSummary(turn);
   }
 
@@ -2152,7 +2168,11 @@
       if (next.stage === 'working') {
         sub.textContent = 'working \u00b7 ' + next.detail.calls + ' calls \u00b7 ' + next.detail.tool;
       } else if (next.stage === 'done') {
-        sub.textContent = 'done \u00b7 ' + next.detail.outcome + ' \u00b7 ' + next.detail.turns + ' turns';
+        // A delegation's own turns are internal: the row names what the
+        // child did and stops there, never where it stood in its loop
+        // (the 2026-11-05 ruling). The child's fold count rides the
+        // delegation tree's cards, read from the log.
+        sub.textContent = 'done \u00b7 ' + (next.detail.outcome || 'done');
       } else {
         sub.textContent = 'spawned';
       }
@@ -2297,7 +2317,10 @@
         (event.withdrawn ? ' \u00b7 withdrawn' : (event.tools != null ? ' \u00b7 ' + event.tools + ' tools' : ''));
       case 'cron': return (event.job || '') + (event.outcome ? ' \u00b7 ' + event.outcome : '');
       case 'compacted': return (event.turns || '?') + ' turns \u00b7 ' + tokens(event.before) + ' \u2192 ' + tokens(event.after);
-      case 'checkpoint': return 'turn ' + event.turn + ' \u00b7 ' + event.files + ' files held';
+      // The checkpoint line names what it holds, not where the run stood:
+      // the ordinal is bookkeeping (the 2026-11-05 ruling) and the line's
+      // own rewind button already carries the destination internally.
+      case 'checkpoint': return event.files + ' files held';
       case 'folder': return event.note || (event.path ? 'set to ' + event.path : 'cleared');
       case 'goal': return event.text ? 'goal \u00b7 ' + event.text : 'goal cleared';
       case 'control':
@@ -2309,7 +2332,7 @@
         if (event.control === 'stop') return 'stopped by you';
         return 'control \u00b7 ' + event.control;
       case 'repair': return 'asked once for the closing report (attempt ' + (event.attempt || 1) + ')';
-      case 'rewound': return 'to turn ' + event.turn + ' \u00b7 ' + event.restored + ' restored';
+      case 'rewound': return event.restored + ' restored';
       case 'dropped': return 'the face holds the last 4096; one fell off the front';
       default: return event.type;
     }
@@ -2438,7 +2461,10 @@
     if (capped) {
       var note = el0.querySelector('.note');
       note.hidden = false;
-      note.textContent = 'the run reached ' + face.turn + ' turns - its state is carried in ' +
+      // The budget is the honest statement — the run used its room up —
+      // and the number of steps it took to do so is not the owner's
+      // measure of the work (the 2026-11-05 ruling).
+      note.textContent = 'the run used its whole turn budget - its state is carried in ' +
         'this session. Continue and it picks the work back up; raise the budget first in ' +
         'settings (runs.max_turns) if the task needs more room.';
       var actions = node('div', 'receipt-actions');
@@ -2621,7 +2647,8 @@
     var evidence = [];
     var ex = exchanges();
     if (ex) evidence.push(ex + (ex === 1 ? ' exchange' : ' exchanges'));
-    else if (face.turn) evidence.push(face.turn + (face.turn === 1 ? ' turn' : ' turns'));
+    // No turn ordinal in the receipt either: when no owner message is on
+    // the log yet the evidence line simply starts at what it does have.
     if (face.spend) evidence.push(tokens(face.spend) + ' tokens');
     if (face.context && face.budget) {
       evidence.push(Math.min(100, Math.round((face.context / face.budget) * 100)) +
@@ -3832,7 +3859,7 @@
       case 'turn':
         p.stage = 'think';
         p.turn = Number(event.turn) || p.turn;
-        p.last = ex ? 'exchange ' + ex : 'turn ' + p.turn;
+        p.last = progressPosition(ex) || 'the model\u2019s turn';
         break;
       case 'tool_call':
         p.stage = 'act';
@@ -3996,7 +4023,7 @@
       case 'route':
         return p.provider ? p.provider + (p.model ? ' \u00b7 ' + p.model : '') : 'waiting for the decision';
       case 'think':
-        return p.turn ? (ex ? 'exchange ' + ex : 'turn ' + p.turn) : 'the model\u2019s turn';
+        return progressPosition(ex) || 'the model\u2019s turn';
       case 'act':
         if (p.waiting) return 'waiting for your approval';
         if (p.tool) return p.tool + (p.calls > 1 ? ' \u00b7 ' + p.calls + ' calls' : '');
@@ -4039,8 +4066,8 @@
     if (el.processPill) {
       el.processPill.hidden = !p || (!p.active && !(p.mode === 'plan' && p.stage === 'review'));
       if (!el.processPill.hidden) {
-        el.processPill.textContent = p.turn
-          ? (ex ? 'exchange ' + ex : 'turn ' + p.turn) + ' \u00b7 ' + p.stage
+        el.processPill.textContent = progressPosition(ex)
+          ? progressPosition(ex) + ' \u00b7 ' + p.stage
           : p.mode === 'plan' ? 'plan mode' : p.stage;
         el.processPill.dataset.state = state === 'review' ? 'running' : state;
       }
@@ -4074,7 +4101,7 @@
     var branches = processBranches(p);
     if (branches) el.processBody.appendChild(branches);
     var meta = node('div', 'process-meta');
-    if (p.turn) meta.appendChild(node('span', null, ex ? 'exchange ' + ex : 'turn ' + p.turn));
+    if (progressPosition(ex)) meta.appendChild(node('span', null, progressPosition(ex)));
     if (p.calls) meta.appendChild(node('span', null, p.calls + ' calls'));
     if (p.facts) meta.appendChild(node('span', null, p.facts + ' facts'));
     if (p.delegations) meta.appendChild(node('span', null, p.delegations + ' delegations'));
@@ -4229,11 +4256,10 @@
     dot.dataset.state = p.active ? 'running' : p.stop === 'failed' ? 'failed' : 'done';
     main.appendChild(dot);
     main.appendChild(node('span', 'process-strip-label',
-      p.turn ? (ex ? 'exchange ' + ex : 'turn ' + p.turn)
-        : p.mode === 'plan' ? 'plan mode' : 'the run'));
+      progressPosition(ex) || (p.mode === 'plan' ? 'plan mode' : 'the run')));
     main.appendChild(node('span', 'process-strip-note',
       p.tool || (p.stage === 'review' ? 'the plan is ready'
-        : p.last && p.last !== (ex ? 'exchange ' + ex : 'turn ' + p.turn) ? p.last : '')));
+        : p.last && p.last !== progressPosition(ex) ? p.last : '')));
     var dots = node('span', 'process-strip-dots');
     var steps = p.mode === 'plan' ? PLAN_STEPS : RUN_STEPS;
     var order = steps.map(function (step) { return step[0]; });
@@ -4269,8 +4295,8 @@
       ['where we are', processSteps(p)],
       ['the last step', node('p', 'derivation', p.last || 'no step yet')],
       ['the counts', node('p', 'derivation',
-        (ex ? 'exchange ' + ex : 'turn ' + p.turn) + ' \u00b7 ' + p.calls + ' calls \u00b7 ' + p.facts +
-        ' facts \u00b7 ' + p.delegations + ' delegations \u00b7 ' + p.lanes + ' lanes')]
+        (progressPosition(ex) ? progressPosition(ex) + ' \u00b7 ' : '') + p.calls + ' calls \u00b7 ' +
+        p.facts + ' facts \u00b7 ' + p.delegations + ' delegations \u00b7 ' + p.lanes + ' lanes')]
     ];
     // Below the dock's breakpoint the drawer is the process card, so it
     // carries the same two controls. They post the same control file;
@@ -8451,7 +8477,8 @@
       '<code>context</code> is the last <code>usage</code> event\u2019s prompt against the budget of ' +
       tokens(face.budget) + ' \u2014 ' + pct + '%.<br>' +
       '<code>route</code> is the last <code>routed</code> event, not a read of the config.<br>' +
-      '<code>turns</code> is the last <code>turn</code> event.']);
+      '<code>exchanges</code> is the owner\u2019s messages on the log, minus the scheduled ' +
+      'and steer frames the run writes as user records.']);
     openDrawer(event ? (event.type || 'event') : 'inspector', sections);
   }
 
@@ -14763,10 +14790,13 @@
   function conversationSections(entry, replay) {
     var cards = replay.cards || [];
     var facts = node('div', 'cfg-list-rows');
+    // No turn count among the details: a conversation's position in its
+    // own loop is bookkeeping, not something the owner reads (the
+    // 2026-11-05 ruling). The card names who, what model, when, and
+    // where — the facts that answer "what is this conversation".
     [
       ['persona', (entry.personas || []).join(', ') || 'unassigned'],
       ['model', replay.model || entry.model || '\u2014'],
-      ['turns', String(replay.turns == null ? '\u2014' : replay.turns)],
       ['created', replay.created || entry.created || '\u2014'],
       ['ended', replay.ended ? (replay.stop_reason || 'yes') : 'not ended'],
       ['workspace', entry.workspace || '\u2014']

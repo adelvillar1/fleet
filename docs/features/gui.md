@@ -303,8 +303,12 @@ every visible `.tile`, `.badge`, `.rrow`, `.rank-row`, `.cal-cell`,
   that the `reasoning` event replaces with the collapsed card. At the
   final output the exchange **summarizes**: its tool and thinking rows
   fold under their turn marks — the D8 fold state, one mechanism — and
-  each mark carries the counts it hides (`turn 3 · 4 tools · thought
-  2s`), its press expanding every row back. The answer row is never a
+  each mark carries the counts it hides (`4 tools · thought 2s`), its
+  press expanding every row back. The mark never names the turn's
+  ordinal: where the run stands in its own loop is the harness's
+  bookkeeping and the owner reads the work (the 2026-11-05 ruling); an
+  unfolded turn's mark is still the divider, the rewind point and the
+  jump target, and it says nothing. The answer row is never a
   fold target, and a history loaded from a log is never re-folded: only
   the turn that finished during this session folds. Both icons come
   from the shared `ICONS` table the rail draws from. The run strip's
@@ -680,7 +684,9 @@ the axis, and the plumbing is one section rather than the page.
   *recent*, budgeted when long.
 - **A conversation opens in the pane** as a card with three parts, all
   from the replay and the state the face already reads: the **details**
-  (persona, model, turns, created, ended, workspace), the **decisions**
+  (persona, model, created, ended, workspace — never a turn count, which
+  is the harness's own bookkeeping, the 2026-11-05 ruling), the
+  **decisions**
   (the goal it served, the facts it chose to remember, the ask it ended
   on), and the **history** (the whole transcript, newest first, tool
   rows one line, the replay's own omitted count named).
