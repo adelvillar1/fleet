@@ -22749,9 +22749,13 @@
   }
 
   // Which surfaces are live today, and which are a later increment — the
-  // rail says so rather than pretending every destination is built.
-  var BUILT = ['chat', 'router', 'delegation', 'memory', 'skills', 'sessions', 'calibration',
-    'tower', 'second-brain', 'workspace-history', 'bots', 'vault', 'settings', 'plugins'];
+  // palette says so rather than pretending every destination is built.
+  // This is the ONE list the rail does not derive, so it drifts: it called
+  // two built surfaces (design, huddles) "later" and carried a phantom
+  // (tower). The harness pins it against the rail's own addresses.
+  var BUILT = ['chat', 'design', 'huddles', 'router', 'delegation', 'memory', 'skills',
+    'sessions', 'calibration', 'second-brain', 'workspace-history', 'bots', 'vault',
+    'settings', 'plugins'];
 
   // The rail's badge: the surface that has something waiting says so,
   // and says nothing when it does not — an empty counter is decoration.

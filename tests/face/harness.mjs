@@ -8395,7 +8395,41 @@ async function theConnectCardSaysWhatHappened() {
     good && good.textContent);
 }
 
+  // The palette's "later" label (the rail's own audit): the label belongs
+  // to a destination not yet built, and BUILT is the one list the rail
+  // does not derive — it drifted, calling two built surfaces (design,
+  // huddles) "later" while carrying a phantom (tower). The pin is the
+  // palette's addresses against the rail's own, and no "later" at all.
+  async function thePaletteAgreesWithTheRail() {
+    const page = boot({ documents: {} });
+    page.open();
+    await flush();
+    page.IDS['palette-open'].click();
+    await flush();
+    const rows = page.IDS['palette-rows'].find((one) =>
+      String(one.className || '').split(/\s+/).includes('palette-row'));
+    const hints = {};
+    rows.forEach((row) => {
+      const hint = row.find((one) =>
+        String(one.className || '').split(/\s+/).includes('palette-row-hint'))[0];
+      hints[row.dataset.address] = hint ? String(hint.textContent) : '(none)';
+    });
+    const rail = page.IDS['rail-tree'].find((one) =>
+      String(one.className || '').split(/\s+/).includes('surfaces-link'))
+      .map((one) => one.dataset.address).sort();
+    const shown = Object.keys(hints).sort();
+    check('PALETTE the palette reaches exactly the rail’s surfaces',
+      rail.join(',') === shown.join(','),
+      rail.join(',') + ' vs ' + shown.join(','));
+    const later = shown.filter((one) => hints[one] === 'later');
+    check('PALETTE no built surface is labelled later',
+      later.length === 0, 'later=' + later.join(','));
+    check('PALETTE the huddle room says open',
+      hints.huddles === 'open', 'huddles=' + hints.huddles);
+  }
+
 const cases = [
+  ['PALETTE the palette agrees with the rail', thePaletteAgreesWithTheRail],
   ['PLUGINS the management surface and the two tiers\' frames', thePluginsSurfaceManagesTheChains],
   ['HUDDLES the rail carries the three states, member marks and deliverables', theHuddleRailCarriesTheThreeStates],
   ['C6 a deliverable posts in-line and opens the pane preview', anArtifactPostOpensThePanePreview],
