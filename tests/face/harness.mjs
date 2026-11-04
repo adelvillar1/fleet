@@ -325,7 +325,10 @@ function boot(options) {
     // The rail's read only: the creation POST falls through to the
     // default reply, exactly as it would reach the server's own route.
     if (pathOnly === '/api/huddles' && method === 'GET') {
-      return Promise.resolve({ status: 200, json: () => Promise.resolve(documents.huddles || emptyHuddles()) });
+      const doc = typeof documents.huddles === 'function'
+        ? documents.huddles(state)
+        : documents.huddles;
+      return Promise.resolve({ status: 200, json: () => Promise.resolve(doc || emptyHuddles()) });
     }
     if (pathOnly === '/api/session') {
       return Promise.resolve({ status: 200, json: () => Promise.resolve(documents.branch || {}) });
@@ -353,9 +356,17 @@ function boot(options) {
       });
     }
     if (pathOnly === '/api/session/archive') {
+      // The rail's next read reflects the engagement: the case can drive a
+      // room to ended and assert the rail moved it there.
+      const parsed = JSON.parse((init && init.body) || '{}');
+      if (parsed.archived) {
+        state.archived[parsed.session] = true;
+      } else {
+        delete state.archived[parsed.session];
+      }
       return Promise.resolve({
         status: opts.archiveStatus || 200,
-        json: () => Promise.resolve(opts.archiveReply || { type: 'archive', session: 'x', archived: true }),
+        json: () => Promise.resolve(opts.archiveReply || { type: 'archive', session: parsed.session, archived: !!parsed.archived }),
       });
     }
     if (pathOnly === '/api/home') {
@@ -743,6 +754,8 @@ function boot(options) {
   document_.documentElement = DOCUMENT_ELEMENT_REF;
   document_.body = body;
 
+  // Per-boot mutable state the fixtures can read: which rooms have ended.
+  const state = { archived: {} };
   const windowListeners = {};
   // The hash is a route: a real browser fires hashchange on every
   // assignment, so the fake does too — the face's router walks on
@@ -5249,6 +5262,62 @@ async function theStrategyStepShowsItsPreview() {
   }
 
 
+  // Ending a room is the owner's verb and the rail reflects it: the archive
+  // posts the engagement, and the rail's next read moves the room from
+  // active to ended — a room put away reads as put away, not as parked.
+  async function endingARoomMovesItToTheRail() {
+    const room = (state) => ({
+      id: 'room-1', title: 'the-q3-board', goal: 'the launch',
+      personas: ['scholar'], avatars: {}, awaiting_you: false,
+      state: state.archived['room-1'] ? 'archived' : 'working',
+      last_write: 'x', current: false, deliverables: 0,
+      parent: null, children: []
+    });
+    const page = boot({
+      hash: '#/sessions/room-1',
+      documents: {
+        sessions: {
+          type: 'sessions', read_at: 'now', current: '',
+          counts: { needs: 0, working: 1, background: 0, earlier: 0, total: 1 },
+          sessions: [row('room-1', 'working', { title: 'the-q3-board' })]
+        },
+        huddles: (state) => ({
+          type: 'huddles',
+          active: state.archived['room-1'] ? [] : [room(state)],
+          inactive: [],
+          ended: state.archived['room-1'] ? [room(state)] : [],
+          counts: {
+            active: state.archived['room-1'] ? 0 : 1,
+            inactive: 0,
+            ended: state.archived['room-1'] ? 1 : 0
+          }
+        })
+      }
+    });
+    await flush();
+    page.open();
+    await flush(40);
+    const archive = page.IDS['conv-archive'];
+    check('ARCH the room carries the archive verb', !!archive, 'none');
+    if (!archive) return;
+    archive.click();
+    await flush(40);
+    const posted = page.calls.filter((c) => c.url === '/api/session/archive' &&
+      String(c.body || '').indexOf('"archived":true') !== -1);
+    check('ARCH the verb posts the engagement', posted.length === 1,
+      JSON.stringify(page.calls.map((c) => c.url)));
+    page.hash('#/huddles');
+    await flush(40);
+    const heads = page.rows('.hsection-head h2').map((one) => String(one.textContent));
+    check('ARCH the rail moves the room to ended',
+      heads.indexOf('Ended') !== -1 && heads.indexOf('Active') === -1,
+      heads.join(','));
+    const endedRows = page.IDS['huddles-board'].find((one) =>
+      String(one.className || '').split(/\s+/).includes('hrow'));
+    check('ARCH the ended section holds the room', endedRows.length === 1,
+      String(endedRows.length));
+  }
+
   async function theBotsSurfaceMintsTheBotCard() {
     const page = boot({
       reply: {
@@ -8339,6 +8408,7 @@ const cases = [
   ['C8 addresses highlight inline and stand as rows', addressesHighlightInlineAndStandAsRows],
   ['C3 an unanswered ask warns the row', anUnansweredAskWarnsTheRow],
   ['C9 a phase rides beneath its room', aPhaseRidesBeneathItsRoom],
+  ['ARCH ending a room moves it to the rail', endingARoomMovesItToTheRail],
   ['C11 the persona card shows the owner’s image', thePersonaCardShowsTheOwnersImage],
   ['C10 the seat carries sys1’s verdict', theSeatCarriesSys1sVerdict],
   ['C5 a gap offers to hire a persona', aGapOffersToHireAPersona],
