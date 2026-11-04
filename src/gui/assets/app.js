@@ -662,6 +662,14 @@
     panelSettings: document.getElementById('panel-settings'),
     panelPlugins: document.getElementById('panel-plugins'),
     pluginsBoard: document.getElementById('plugins-board'),
+    panelBundle: document.getElementById('panel-bundle'),
+    bundleBody: document.getElementById('bundle-body'),
+    bundleTitle: document.getElementById('bundle-title'),
+    bundleNote: document.getElementById('bundle-note'),
+    bundleEyebrow: document.getElementById('bundle-eyebrow'),
+    bundleChip: document.getElementById('bundle-chip'),
+    bundleRelay: document.getElementById('bundle-relay'),
+    bundleReload: document.getElementById('bundle-reload'),
     panelHuddles: document.getElementById('panel-huddles'),
     huddlesRail: document.getElementById('huddles-rail'),
     huddlesBoard: document.getElementById('huddles-board'),
@@ -8216,6 +8224,14 @@
     }).join(',');
     if (pluginsBefore !== pluginsAfter) buildRail();
     if (face.panel === 'plugins') paintPlugins();
+    // A cold load at a bundle's address arrives before this list does,
+    // so the first pass resolves the hash to the conversation. When the
+    // list lands and the hash names a plugin, the route runs again and
+    // the mount happens — a link to a bundle survives a refresh.
+    if (pluginsBefore !== pluginsAfter) {
+      var askedFor = (window.location.hash || '').replace(/^#\/?/, '').split('/')[0];
+      if (askedFor && isPluginAddress(askedFor) && !face.focus) showRoute();
+    }
     paintRailCounts();
     face.feedback = state.feedback || {};
     face.seat = state.approval || null;
@@ -14738,7 +14754,12 @@
         'removing deletes the registry entry and the bundle directory; the rail entry and its ' +
         'card go with them')],
       ['the write', cfgCardActs([{
-        label: plugin.enabled ? 'disable it' : 'enable it', primary: true, run: function () {
+        label: 'mount the bundle', primary: true, run: function () {
+          window.location.hash = '#/' + encodeURIComponent(plugin.name);
+          closeDrawer();
+        }
+      }, {
+        label: plugin.enabled ? 'disable it' : 'enable it', run: function () {
           writeSettings(plugin.enabled ? 'plugin-disable' : 'plugin-enable',
             { id: plugin.name }, function () {
               notice(plugin.enabled ? 'the plugin is disabled' : 'the plugin is enabled', plugin.name);
@@ -14761,6 +14782,199 @@
         }
       }] : []))]
     ];
+  }
+
+  // --------------------------------------------------- the bundle mount
+  // A plugin the owner presses mounts its own page. Two facts shape the
+  // mount. The bundle route sends `frame-ancestors 'none'`, so a frame
+  // cannot point at the bundle's address — the face reads the page's
+  // bytes and hands them in as `srcdoc` instead. And the mounted page
+  // runs sandboxed (scripts only: no same-origin, no network), so its
+  // one data path is the declared-query relay below. The relay does not
+  // decide what is allowed — it asks `/api/plugins/query`, the bridge
+  // enforces the manifest's set, and a refusal comes back as a refusal
+  // rather than as an empty answer the page could read as a zero.
+  var BUNDLE = { name: '', frame: null, wired: false, gen: 0, asked: 0, answered: 0, refused: 0 };
+
+  // The relay's tally, on the mount's head: the frame's data path is one
+  // the owner can count, so a page that is up and asking is visible as
+  // asking rather than as a page that merely loaded.
+  function paintBundleRelay() {
+    if (!el.bundleRelay) return;
+    var total = BUNDLE.asked;
+    el.bundleRelay.hidden = !total;
+    el.bundleRelay.textContent = total
+      ? total + ' asked \u00b7 ' + BUNDLE.answered + ' answered' +
+        (BUNDLE.refused ? ' \u00b7 ' + BUNDLE.refused + ' refused' : '')
+      : '';
+    el.bundleRelay.dataset.refused = BUNDLE.refused ? 'yes' : '';
+    el.bundleRelay.title = total
+      ? 'the bundle asked the bridge ' + total + ' times through the declared set \u2014 ' +
+        BUNDLE.answered + ' answered, ' + BUNDLE.refused + ' refused'
+      : '';
+  }
+
+  function pluginByName(name) {
+    return (face.plugins || []).filter(function (one) { return one.name === name; })[0] || null;
+  }
+
+  function isPluginAddress(address) {
+    return !!pluginByName(address);
+  }
+
+  // The rail's breadcrumb for a plugin address: the manifest's own group
+  // and label, so a bundle sits where it says it sits.
+  function pluginPlace(address) {
+    var plugin = pluginByName(address);
+    if (!plugin) return null;
+    return [plugin.group || 'system', plugin.label || plugin.name];
+  }
+
+  function bundleNote(text) {
+    if (el.bundleNote) el.bundleNote.textContent = text || '';
+  }
+
+  function bundleRefuse(head, message) {
+    el.bundleBody.textContent = '';
+    BUNDLE.frame = null;
+    var card = node('div', 'bundle-refusal');
+    card.appendChild(node('span', 'bundle-refusal-mark', '\u2717'));
+    var body = node('div', 'bundle-refusal-body');
+    body.appendChild(node('p', 'bundle-refusal-head', head));
+    body.appendChild(node('p', 'bundle-refusal-why', message));
+    card.appendChild(body);
+    el.bundleBody.appendChild(card);
+    bundleNote('nothing was loaded');
+  }
+
+  function wireBundle() {
+    if (BUNDLE.wired) return;
+    BUNDLE.wired = true;
+    if (el.bundleReload) {
+      el.bundleReload.addEventListener('click', function () {
+        var name = face.focus && face.focus.panel === 'bundle' ? face.focus.id : BUNDLE.name;
+        if (!name) return;
+        mountBundle(name, { force: true });
+      });
+    }
+    // The sandboxed page's one data path. The frame cannot reach the
+    // bridge itself (opaque origin, no network): it posts a request to
+    // this window and the face relays it. `event.source` is the gate —
+    // only the frame this face mounted is answered.
+    window.addEventListener('message', function (event) {
+      var frame = BUNDLE.frame;
+      if (!frame || event.source !== frame.contentWindow) return;
+      var data = event.data || {};
+      if (!data.fleetPlugin || data.fleetPlugin !== BUNDLE.name) return;
+      var query = String(data.query || '');
+      var seq = data.seq;
+      var asked = BUNDLE.name;
+      BUNDLE.asked += 1;
+      paintBundleRelay();
+      function reply(ok, answer, refused) {
+        if (ok) BUNDLE.answered += 1; else BUNDLE.refused += 1;
+        paintBundleRelay();
+        if (BUNDLE.frame !== frame) return;
+        try {
+          frame.contentWindow.postMessage({
+            fleetPlugin: asked, query: query, seq: seq,
+            ok: ok, answer: answer || null, refused: refused || null
+          }, '*');
+        } catch (error) { }
+      }
+      post('/api/plugins/query', { name: asked, query: query }).then(function (answered) {
+        if (answered.status === 200) { reply(true, answered.body, null); return; }
+        var refused = (answered.body && answered.body.refused) || [];
+        reply(false, null, refused.length ? refused
+          : ['the bridge refused `' + query + '` with status ' + answered.status]);
+      }).catch(function (error) {
+        reply(false, null, ['the bridge could not be reached: ' + error]);
+      });
+    });
+  }
+
+  function mountBundle(name, options) {
+    var force = !!(options && options.force);
+    wireBundle();
+    var plugin = name ? pluginByName(name) : null;
+    if (el.bundleEyebrow) {
+      el.bundleEyebrow.textContent = plugin
+        ? 'bundle \u00b7 ' + (plugin.group || 'no group') : 'bundle';
+    }
+    if (el.bundleTitle) {
+      el.bundleTitle.textContent = plugin ? (plugin.label || plugin.name) : (name || 'no bundle');
+    }
+    if (el.bundleChip) {
+      el.bundleChip.hidden = !plugin;
+      el.bundleChip.textContent = plugin
+        ? (plugin.tier === 'privileged' ? 'privileged' : 'untrusted') : '';
+      el.bundleChip.dataset.tier = plugin ? plugin.tier : '';
+    }
+    if (!name) {
+      bundleRefuse('the address named no bundle',
+        'a bundle mounts at #/<name>, where the name is the installed plugin\u2019s own');
+      return;
+    }
+    if (!plugin) {
+      bundleRefuse('no installed plugin is named \u201c' + name + '\u201d',
+        'the rail builds its bundle rows from the state read, so a name that is not installed ' +
+        'has no page to mount \u2014 install it from the plugins surface first');
+      return;
+    }
+    if (!plugin.enabled) {
+      bundleRefuse('the bundle \u201c' + (plugin.label || plugin.name) + '\u201d is disabled',
+        'a disabled bundle mounts nothing, which is what disabled means here \u2014 enable it on ' +
+        'the plugins surface to mount it again');
+      return;
+    }
+    if (!force && BUNDLE.name === name && BUNDLE.frame &&
+      el.bundleBody.contains(BUNDLE.frame)) {
+      var declared = (plugin.queries || []).length;
+      bundleNote('mounted \u00b7 ' + declared +
+        (declared === 1 ? ' declared query' : ' declared queries') +
+        ' \u00b7 the frame reached the bridge only through them');
+      return;
+    }
+    BUNDLE.name = name;
+    BUNDLE.frame = null;
+    BUNDLE.asked = 0;
+    BUNDLE.answered = 0;
+    BUNDLE.refused = 0;
+    paintBundleRelay();
+    var gen = ++BUNDLE.gen;
+    bundleNote('reading the bundle\u2019s page\u2026');
+    fetch('/plugins/' + encodeURIComponent(name) + '/',
+      { headers: { accept: 'text/html' }, cache: 'no-store' })
+      .then(function (reply) {
+        if (!reply.ok) throw new Error('the bundle\u2019s page answered ' + reply.status);
+        return reply.text();
+      })
+      .then(function (html) {
+        if (gen !== BUNDLE.gen) return;
+        if (!html || !html.trim()) throw new Error('the bundle\u2019s page is empty');
+        var frame = document.createElement('iframe');
+        frame.className = 'bundle-frame';
+        // Scripts and nothing else: no same-origin (so no reads of this
+        // document), no forms, no popups, no network the face did not
+        // relay. The page is untrusted by tier, so the frame is untrusted
+        // by policy.
+        frame.setAttribute('sandbox', 'allow-scripts');
+        frame.setAttribute('referrerpolicy', 'no-referrer');
+        frame.setAttribute('title', (plugin.label || plugin.name) + ' \u00b7 untrusted bundle');
+        frame.srcdoc = html;
+        el.bundleBody.textContent = '';
+        el.bundleBody.appendChild(frame);
+        BUNDLE.frame = frame;
+        var count = (plugin.queries || []).length;
+        bundleNote('sandboxed \u00b7 ' + count +
+          (count === 1 ? ' declared query' : ' declared queries') + ': ' +
+          (plugin.queries || []).join(', ') +
+          ' \u00b7 asked through the face, answered or refused by the bridge');
+      })
+      .catch(function (error) {
+        if (gen !== BUNDLE.gen) return;
+        bundleRefuse('the bundle\u2019s page could not be read', String(error && error.message ? error.message : error));
+      });
   }
 
   function paintBots() {
@@ -21252,7 +21466,11 @@
     vault: el.panelVault,
     settings: el.panelSettings,
     plugins: el.panelPlugins,
-    huddles: el.panelHuddles
+    huddles: el.panelHuddles,
+    // An installed bundle mounts here: one panel for every plugin the
+    // owner presses, because the bundle brings its own page and this
+    // face only supplies the frame.
+    bundle: el.panelBundle
   };
 
   function showRoute() {
@@ -21285,7 +21503,11 @@
       return;
     }
     var known = ROUTES.filter(function (route) { return route[0] === which; })[0];
-    var address = which === 'chat' || !known ? 'chat' : which;
+    // A plugin's name is an address too, and it resolves to the bundle
+    // mount rather than to the conversation: the rail row a plugin
+    // brings has to arrive somewhere, and the somewhere is its own page.
+    var bundleName = !known && isPluginAddress(which) ? which : '';
+    var address = bundleName ? 'bundle' : (which === 'chat' || !known ? 'chat' : which);
     // The work surface is not a panel of its own any more: it is the
     // conversation with the work column beside it, so the two are one
     // place with one verb (open in place) instead of a list you leave.
@@ -21293,7 +21515,9 @@
     closeDrawer();
     face.panel = address;
     usageRecord('panels', address, 'opens');
-    face.focus = focusId ? { panel: address, id: focusId } : null;
+    face.focus = bundleName
+      ? { panel: 'bundle', id: bundleName }
+      : (focusId ? { panel: address, id: focusId } : null);
     try { window.localStorage.setItem('fleet-panel', address); } catch (error) { }
     markRail();
     setWork(work);
@@ -21321,6 +21545,7 @@
         readBots(true).then(paintBots);
         readAccess(true).then(paintBots);
       },
+      bundle: function () { mountBundle(face.focus ? face.focus.id : ''); },
       plugins: function () {
         paintPlugins();
         // The plugin list rides the state document — the repaint after
@@ -22805,7 +23030,7 @@
     // The topbar says where you are in the same words the rail uses. The
     // browser tab follows, so a desk with three fleet windows open is
     // navigable by name rather than by address.
-    var place = WHERE[which] || ['work', 'conversation'];
+    var place = WHERE[which] || pluginPlace(which) || ['work', 'conversation'];
     if (el.crumbGroup) el.crumbGroup.textContent = place[0];
     if (el.crumbPage) el.crumbPage.textContent = place[1];
     var title = place[1].replace(/(^|\s)\S/g, function (letter) { return letter.toUpperCase(); });

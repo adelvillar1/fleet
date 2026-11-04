@@ -1,0 +1,17 @@
+{
+  "name": "telemetry",
+  "tier": "untrusted",
+  "version": "1.0.0",
+  "entry": { "group": "system", "label": "telemetry" },
+  "queries": [
+    "state",
+    "memory",
+    "skills",
+    "sessions",
+    "router",
+    "delegation",
+    "huddles",
+    "usage"
+  ],
+  "provenance": "creator:fleet repo · plugins/telemetry"
+}

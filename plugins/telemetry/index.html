@@ -1,0 +1,1518 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>fleet telemetry</title>
+<style>
+  /* The instrument's whole vocabulary: a near-black field, one hairline
+     weight, tabular numerals, and one accent per stratum. The accent is the
+     only colour that ever moves, so motion reads as information. */
+  :root {
+    --bg: #07080b;
+    --field: #0a0d12;
+    --line: #1b2331;
+    --line-soft: #121821;
+    --ink: #e9eef7;
+    --dim: #8494a9;
+    --faint: #4a586c;
+    --cyan: #57cfe2;
+    --amber: #e9b45d;
+    --teal: #5ed3bb;
+    --blue: #6f9bf5;
+    --copper: #d18d64;
+    --green: #78d78d;
+    --red: #e8695f;
+    --mono: ui-monospace, Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font: 13px/1.45 var(--sans);
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+  }
+  /* The grid is the paper: hairlines at the threshold of visibility, so the
+     field has depth without a single gradient wash. */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    background-image:
+      repeating-linear-gradient(to right, rgba(120, 160, 220, .045) 0 1px, transparent 1px 128px),
+      repeating-linear-gradient(to bottom, rgba(120, 160, 220, .035) 0 1px, transparent 1px 32px);
+  }
+  .shell {
+    position: relative;
+    height: 100vh;
+    display: grid;
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
+  }
+
+  /* ---------------------------------------------------------- the mast */
+  .mast {
+    display: flex;
+    align-items: flex-end;
+    gap: 28px;
+    padding: 16px 20px 13px;
+    border-bottom: 1px solid var(--line);
+    background: linear-gradient(180deg, rgba(20, 30, 46, .5), rgba(7, 8, 11, 0));
+  }
+  .brand h1 {
+    margin: 0;
+    font: 600 14px/1 var(--mono);
+    letter-spacing: .46em;
+    color: var(--ink);
+  }
+  .brand p {
+    margin: 7px 0 0;
+    font: 500 10px/1 var(--mono);
+    letter-spacing: .26em;
+    text-transform: uppercase;
+    color: var(--faint);
+  }
+  .nums { display: flex; gap: 22px; flex-wrap: wrap; margin-left: 8px; }
+  .num { min-width: 58px; }
+  .num b {
+    display: block;
+    font: 500 25px/1 var(--mono);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -.02em;
+  }
+  .num i {
+    display: block;
+    margin-top: 5px;
+    font: 500 9px/1 var(--mono);
+    letter-spacing: .2em;
+    text-transform: uppercase;
+    color: var(--faint);
+    font-style: normal;
+  }
+  .live {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font: 500 10px/1 var(--mono);
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    color: var(--dim);
+    padding-bottom: 3px;
+  }
+  .live b { color: var(--green); font-weight: 600; }
+  .pulse {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--green);
+    box-shadow: 0 0 0 0 rgba(120, 215, 141, .6);
+    animation: beat 2.4s ease-out infinite;
+  }
+  .live[data-state="waiting"] b { color: var(--amber); }
+  .live[data-state="waiting"] .pulse { background: var(--amber); animation-duration: .9s; }
+  .live[data-state="dark"] b { color: var(--red); }
+  .live[data-state="dark"] .pulse { background: var(--red); animation: none; }
+  @keyframes beat {
+    0% { box-shadow: 0 0 0 0 rgba(120, 215, 141, .5); }
+    70% { box-shadow: 0 0 0 7px rgba(120, 215, 141, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(120, 215, 141, 0); }
+  }
+
+  /* A refusal is a fact about the boundary, so it earns a line, not a toast. */
+  .notice {
+    padding: 7px 20px;
+    border-bottom: 1px solid rgba(232, 105, 95, .35);
+    background: rgba(232, 105, 95, .07);
+    font: 500 11px/1.5 var(--mono);
+    color: #f0a49c;
+  }
+  .notice span + span { margin-left: 16px; color: #c98d86; }
+
+  /* --------------------------------------------------------- the frame */
+  .frame {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 372px;
+    min-height: 0;
+  }
+  .strata {
+    position: relative;
+    min-height: 0;
+    overflow: auto;
+    padding-bottom: 6px;
+  }
+  #current {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* A stratum. The left 58px is the gutter the cable runs in: the row's own
+     index sits at 12px, the port is drawn by the canvas on the cable. */
+  .row {
+    position: relative;
+    z-index: 1;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 148px 116px;
+    align-items: center;
+    gap: 16px;
+    width: 100%;
+    padding: 13px 18px 13px 58px;
+    border: 0;
+    border-top: 1px solid var(--line-soft);
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition: opacity .18s ease, background-color .18s ease;
+  }
+  .row:first-of-type { border-top: 0; }
+  .row:hover, .row:focus-visible { background: rgba(120, 160, 220, .045); outline: none; }
+  .row[aria-expanded="true"] { background: rgba(120, 160, 220, .06); }
+  .strata[data-focus] .row { opacity: .38; }
+  .strata[data-focus] .row.is-focus { opacity: 1; }
+  .idx {
+    position: absolute;
+    left: 12px;
+    top: 15px;
+    font: 500 9px/1 var(--mono);
+    letter-spacing: .12em;
+    color: var(--faint);
+  }
+  .ident b {
+    display: block;
+    font: 600 13px/1.2 var(--mono);
+    letter-spacing: .1em;
+    text-transform: uppercase;
+  }
+  .ident i {
+    display: block;
+    margin-top: 4px;
+    font: 400 11.5px/1.3 var(--sans);
+    font-style: normal;
+    color: var(--dim);
+  }
+  .strip { width: 100%; height: 30px; display: block; }
+  .figure { text-align: right; }
+  .figure b {
+    display: block;
+    font: 500 19px/1 var(--mono);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -.01em;
+  }
+  .figure i {
+    display: block;
+    margin-top: 5px;
+    font: 500 9px/1.25 var(--mono);
+    letter-spacing: .13em;
+    text-transform: uppercase;
+    color: var(--faint);
+    font-style: normal;
+  }
+
+  /* -------------------------------------------------------- the detail */
+  .detail {
+    border-left: 1px solid var(--line);
+    padding: 16px 18px 26px;
+    overflow: auto;
+    background: linear-gradient(180deg, rgba(16, 22, 32, .55), rgba(7, 8, 11, 0));
+  }
+  .det-eyebrow {
+    display: block;
+    font: 500 9.5px/1 var(--mono);
+    letter-spacing: .22em;
+    text-transform: uppercase;
+    color: var(--faint);
+  }
+  .detail h2 {
+    margin: 9px 0 0;
+    font: 600 15px/1.35 var(--sans);
+    letter-spacing: -.01em;
+  }
+  .det-note { margin: 8px 0 0; font: 400 12px/1.5 var(--sans); color: var(--dim); }
+  .det-figs {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1px;
+    margin: 15px 0 0;
+    background: var(--line-soft);
+    border: 1px solid var(--line-soft);
+  }
+  .det-fig { background: var(--field); padding: 9px 10px; }
+  .det-fig b {
+    display: block;
+    font: 500 16px/1 var(--mono);
+    font-variant-numeric: tabular-nums;
+  }
+  .det-fig i {
+    display: block;
+    margin-top: 5px;
+    font: 500 8.5px/1.2 var(--mono);
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--faint);
+    font-style: normal;
+  }
+  .det-list { list-style: none; margin: 16px 0 0; padding: 0; }
+  .det-list li {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 12px;
+    align-items: baseline;
+    padding: 6px 0;
+    border-top: 1px solid var(--line-soft);
+    font: 400 11.5px/1.35 var(--mono);
+  }
+  .det-list li:first-child { border-top: 0; }
+  .det-list .k { color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .det-list .k em { color: var(--faint); font-style: normal; }
+  .det-list .v { color: var(--dim); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .det-sub {
+    margin: 18px 0 0;
+    font: 500 9px/1 var(--mono);
+    letter-spacing: .2em;
+    text-transform: uppercase;
+    color: var(--faint);
+  }
+  .flow-key { margin: 12px 0 0; }
+  .flow-key div {
+    display: grid;
+    grid-template-columns: 10px 1fr;
+    gap: 10px;
+    align-items: baseline;
+    padding: 5px 0;
+    font: 400 11.5px/1.45 var(--sans);
+    color: var(--dim);
+  }
+  .flow-key .swatch { width: 10px; height: 2px; align-self: center; }
+  .det-hint { margin: 16px 0 0; font: 400 11px/1.5 var(--mono); color: var(--faint); }
+
+  /* ---------------------------------------------------------- the foot */
+  .foot { border-top: 1px solid var(--line); padding: 10px 20px 12px; background: rgba(10, 13, 18, .7); }
+  .river-head {
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+    font: 500 9px/1 var(--mono);
+    letter-spacing: .18em;
+    text-transform: uppercase;
+    color: var(--faint);
+  }
+  .river-title { color: var(--dim); }
+  .river-legend { display: flex; gap: 12px; margin-left: auto; flex-wrap: wrap; }
+  .river-legend span { display: flex; align-items: center; gap: 5px; letter-spacing: .1em; }
+  .river-legend i { width: 6px; height: 6px; display: inline-block; }
+  .river { position: relative; margin-top: 8px; height: 26px; }
+  #riverticks { width: 100%; height: 100%; display: block; }
+  .ticker {
+    margin-top: 8px;
+    font: 400 11px/1.4 var(--mono);
+    color: var(--faint);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .ticker b { color: var(--dim); font-weight: 500; }
+  .river-tip {
+    position: absolute;
+    z-index: 3;
+    top: 0;
+    transform: translate(-50%, -100%);
+    margin-top: -8px;
+    padding: 6px 9px;
+    background: #0d1420;
+    border: 1px solid var(--line);
+    font: 400 10.5px/1.35 var(--mono);
+    color: var(--ink);
+    max-width: 340px;
+    pointer-events: none;
+    white-space: normal;
+  }
+  .river-tip i { display: block; margin-top: 3px; color: var(--faint); font-style: normal; }
+
+  @media (max-width: 1080px) {
+    .frame { grid-template-columns: minmax(0, 1fr) 300px; }
+    .row { grid-template-columns: minmax(0, 1fr) 104px 92px; }
+    .nums { gap: 16px; }
+    .num b { font-size: 21px; }
+  }
+  @media (max-width: 820px) {
+    body { overflow: auto; }
+    .shell { height: auto; min-height: 100vh; }
+    .frame { grid-template-columns: minmax(0, 1fr); }
+    .detail { border-left: 0; border-top: 1px solid var(--line); }
+    .mast { flex-wrap: wrap; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .pulse { animation: none; }
+  }
+</style>
+</head>
+<body>
+<div class="shell">
+  <header class="mast">
+    <div class="brand">
+      <h1>FLEET</h1>
+      <p>telemetry</p>
+    </div>
+    <div class="nums" id="nums"></div>
+    <div class="live" id="live" data-state="waiting">
+      <span class="pulse"></span><b id="live-word">asking</b><span id="stamp">the face…</span>
+    </div>
+  </header>
+
+  <div class="notice" id="notice" hidden></div>
+
+  <main class="frame">
+    <section class="strata" id="strata" aria-label="the eight strata">
+      <canvas id="current" aria-hidden="true"></canvas>
+    </section>
+    <aside class="detail" id="detail" aria-live="polite"></aside>
+  </main>
+
+  <footer class="foot">
+    <div class="river-head">
+      <span class="river-title">the session log</span>
+      <span class="river-legend" id="river-legend"></span>
+    </div>
+    <div class="river" id="river"><canvas id="riverticks"></canvas></div>
+    <div class="ticker" id="ticker"></div>
+  </footer>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  // ------------------------------------------------------------- the wire
+  // An untrusted bundle's whole data path: the manifest's declared queries,
+  // asked of the face through postMessage and answered from the bridge's
+  // plugin-query route. The bridge enforces the declared set, so an
+  // undeclared name never leaves this page. No fetch, no other channel.
+  var NAME = 'telemetry';
+  var QUERIES = ['state', 'memory', 'skills', 'sessions', 'router',
+    'delegation', 'huddles', 'usage'];
+  var seq = 0;
+
+  // The budget an answer gets. The bridge reads real state, and a cold
+  // read of the corpus is slower than a page's patience: 20 s is longer
+  // than any cold read measured on this machine (the slowest, the room
+  // list, answered in 2.4 s warm), so a timeout here means the host is
+  // gone rather than merely busy — which is why the refusal says the
+  // host did not answer rather than that the query failed.
+  var BUDGET = 20000;
+
+  function ask(query) {
+    return new Promise(function (resolve) {
+      if (window.parent === window) {
+        resolve({ query: query, ok: false,
+          refused: ['no host — this page answers only through the face\u2019s plugin host'] });
+        return;
+      }
+      var mine = ++seq;
+      var done = false;
+      var timer = setTimeout(function () {
+        if (done) return;
+        done = true;
+        window.removeEventListener('message', onMessage);
+        resolve({ query: query, ok: false,
+          refused: ['the face did not answer `' + query + '` within ' +
+            (BUDGET / 1000) + ' s — the host is not answering'] });
+      }, BUDGET);
+      function onMessage(event) {
+        var data = event.data || {};
+        if (data.fleetPlugin !== NAME || data.query !== query) return;
+        if (data.seq != null && data.seq !== mine) return;
+        done = true;
+        clearTimeout(timer);
+        window.removeEventListener('message', onMessage);
+        resolve({ query: query, ok: !!data.ok, answer: data.answer || null,
+          refused: data.refused || null });
+      }
+      window.addEventListener('message', onMessage);
+      try {
+        parent.postMessage({ fleetPlugin: NAME, query: query, seq: mine }, '*');
+      } catch (error) {
+        done = true;
+        clearTimeout(timer);
+        window.removeEventListener('message', onMessage);
+        resolve({ query: query, ok: false, refused: ['the host refused the message: ' + error] });
+      }
+    });
+  }
+
+  // ------------------------------------------------------------ the reads
+  var read = {};
+  var asked = 0;
+  var answered = 0;
+
+  function A(query) {
+    var got = read[query];
+    return got && got.ok ? (got.answer || {}) : {};
+  }
+  function has(query) { return !!(read[query] && read[query].ok); }
+  function arr(value) { return Array.isArray(value) ? value : []; }
+  function num(value, fallback) {
+    return typeof value === 'number' && isFinite(value) ? value : (fallback === undefined ? 0 : fallback);
+  }
+  function cut(value, width) {
+    var text = String(value == null ? '' : value).replace(/\s+/g, ' ').trim();
+    return text.length > width ? text.slice(0, width - 1) + '\u2026' : text;
+  }
+  function esc(value) {
+    return String(value == null ? '' : value).replace(/[&<>"']/g, function (character) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character];
+    });
+  }
+  function clockOf(date) {
+    var hh = String(date.getHours()).padStart(2, '0');
+    var mm = String(date.getMinutes()).padStart(2, '0');
+    var ss = String(date.getSeconds()).padStart(2, '0');
+    return hh + ':' + mm + ':' + ss;
+  }
+  function ago(unix) {
+    var seconds = Math.max(0, Math.round(Date.now() / 1000 - num(unix, 0)));
+    if (seconds < 90) return seconds + 's';
+    if (seconds < 5400) return Math.round(seconds / 60) + 'm';
+    if (seconds < 172800) return Math.round(seconds / 3600) + 'h';
+    return Math.round(seconds / 86400) + 'd';
+  }
+
+  var C = {
+    cyan: '#57cfe2', amber: '#e9b45d', teal: '#5ed3bb', blue: '#6f9bf5',
+    copper: '#d18d64', green: '#78d78d', red: '#e8695f', dim: '#8494a9',
+    faint: '#4a586c'
+  };
+  var SESSION_COLOR = {
+    completed: C.green, interrupted: C.copper, capped: C.red,
+    'handed back': C.blue, new: C.faint, resumed: C.teal,
+    working: C.cyan, active: C.cyan, stopped: C.faint, archived: C.faint
+  };
+  var HUDDLE_COLOR = {
+    new: C.green, active: C.cyan, working: C.cyan, interrupted: C.copper,
+    ended: C.faint, stopped: C.faint, capped: C.red
+  };
+
+  // ------------------------------------------------- the eight strata
+  // Every stratum is one layer the turn actually crosses, in the order it
+  // crosses them, and the round trip closes at the write-back. `source`
+  // names the query that must have answered before any figure is shown;
+  // `strip` draws the layer's population; `detail` names the real entities
+  // behind the number, by their own fields.
+  var STRATA = [
+    {
+      key: 'door', name: 'the door', line: 'the turn enters, and everything it says is logged',
+      color: C.cyan, source: 'state',
+      figure: function (m) {
+        return { value: m.state.session ? cut(m.state.session, 17) : '\u2014', unit: 'session' };
+      },
+      strip: function (pen, w, h, m) {
+        var events = arr(m.state.events);
+        var shown = Math.min(events.length, 140);
+        var step = w / Math.max(shown, 1);
+        for (var i = 0; i < shown; i++) {
+          var one = events[events.length - shown + i] || {};
+          var mass = Math.min(num(one.text ? one.text.length : 0), 900) / 900;
+          var recency = shown <= 1 ? 1 : i / (shown - 1);
+          pen.bar(i * step, h - 3 - mass * (h - 8), Math.max(1, step - 1.4), 3 + mass * (h - 8),
+            C.cyan, 0.14 + recency * 0.62);
+        }
+        pen.line(w - 1, 0, w - 1, h, C.cyan, 0.5);
+      },
+      detail: function (m) {
+        var events = arr(m.state.events);
+        var tail = events.slice(-7).reverse();
+        return {
+          eyebrow: '01 · the door',
+          title: 'the turn enters, and everything it says is logged',
+          note: 'Every message of this conversation is an event in the session log — the same ' +
+            'log recall reads and the replay rebuilds. The count is what the bridge holds right ' +
+            'now; the dropped figure is the ring buffer\u2019s own admission.',
+          figs: [
+            [num(events.length).toLocaleString(), 'events held'],
+            [num(m.state.dropped).toLocaleString(), 'dropped'],
+            [m.state.attached ? 'attached' : 'detached', 'the run'],
+            [num(m.state.turn_budget) + '', 'turn budget']
+          ],
+          list: tail.length
+            ? tail.map(function (one) {
+                return [cut(one.text || '(no text)', 84),
+                  num(one.seconds) ? num(one.seconds) + 's' : ''];
+              })
+            : [['no events yet in this session', '']],
+          sub: 'the last seven things said'
+        };
+      }
+    },
+    {
+      key: 'recall', name: 'recall', line: 'what memory offers the turn, and what it took',
+      color: C.amber, source: 'memory',
+      figure: function (m) { return { value: num(m.facts.length), unit: 'facts' }; },
+      strip: function (pen, w, h, m) {
+        var facts = arr(m.facts);
+        var step = w / Math.max(facts.length, 1);
+        for (var i = 0; i < facts.length; i++) {
+          var one = facts[i];
+          var durable = one.tier === 'durable';
+          var weight = Math.min(num(one.recall_count), 60) / 60;
+          pen.bar(i * step, h - 4 - (durable ? 7 : 3), Math.max(1, step - 0.8),
+            3 + (durable ? 4 : 1) + weight * 9, one.protected ? C.red : C.amber,
+            one.protected ? 0.8 : 0.2 + weight * 0.7);
+        }
+        // The turn's own recall: the hits that actually entered, by score.
+        var hits = arr(m.hits).slice(-40);
+        for (var j = 0; j < hits.length; j++) {
+          var x = (j / Math.max(hits.length - 1, 1)) * (w - 2);
+          var score = Math.min(Math.max(num(hits[j].score, 0), 0), 1);
+          pen.dot(x, 4 + (1 - score) * 10, 1.5, C.cyan, 0.35 + score * 0.6);
+        }
+      },
+      detail: function (m) {
+        var hits = arr(m.hits).slice(-10).reverse();
+        var recalled = arr(m.state.knowledge && m.state.knowledge.recalled);
+        var guarded = arr(m.facts).filter(function (one) { return one.protected; });
+        return {
+          eyebrow: '02 · recall',
+          title: 'what memory offers the turn, and what it took',
+          note: 'The corpus is read shape-first: description, then the body on demand. The hits ' +
+            'are the ranked facts of this turn — score against the direction channels, never ' +
+            'the vector alone. Red bars are the protected tier, which is never evicted.',
+          figs: [
+            [num(m.facts.length), 'facts'],
+            [num(m.archive.length), 'archived'],
+            [num(arr(m.hits).length), 'hits'],
+            [num(recalled.length), 'recalled']
+          ],
+          list: (hits.length ? hits.map(function (one) {
+            return [cut(one.fact, 52), num(one.score).toFixed(3)];
+          }) : recalled.slice(0, 10).map(function (name) {
+            return [cut(name, 52), 'in'];
+          })).concat(guarded.length
+            ? [['\u2014 ' + guarded.length + ' protected facts, never evicted', 'tier']]
+            : []),
+          sub: 'ranked this turn'
+        };
+      }
+    },
+    {
+      key: 'skills', name: 'skills', line: 'the procedures the turn may reach for',
+      color: C.teal, source: 'skills',
+      figure: function (m) { return { value: num(m.skillsTotal), unit: 'skills' }; },
+      strip: function (pen, w, h, m) {
+        var skills = arr(m.skills);
+        var step = w / Math.max(skills.length, 1);
+        for (var i = 0; i < skills.length; i++) {
+          var uses = Math.min(num(skills[i].uses), 12) / 12;
+          pen.bar(i * step, h - 5 - uses * 12, Math.max(0.8, step - 0.5), 4 + uses * 12,
+            C.teal, 0.16 + uses * 0.6);
+        }
+        // The drafter's output and the gate's refusals ride the baseline.
+        arr(m.proposals).forEach(function (one, index) {
+          pen.bar(4 + index * 9, h - 4, 6, 4, C.amber, 0.9);
+        });
+        arr(m.skips).forEach(function (one, index) {
+          pen.bar(4 + index * 9, 2, 6, 3, C.copper, 0.6);
+        });
+      },
+      detail: function (m) {
+        var proposals = arr(m.proposals);
+        var skips = arr(m.skips);
+        var merges = arr(m.merges);
+        return {
+          eyebrow: '03 · skills',
+          title: 'the procedures the turn may reach for',
+          note: 'The library is the owner\u2019s cross-harness one, read in place. The bars are every ' +
+            'procedure by its recorded uses; the amber marks are drafts the self-authoring cycle ' +
+            'filed and no gate has applied, the copper ones are files the scan could not read.',
+          figs: [
+            [num(m.skillsTotal), 'loaded'],
+            [num(m.skillsUnused), 'never used'],
+            [num(proposals.length), 'proposals'],
+            [num(m.sessionsScanned), 'sessions scanned']
+          ],
+          list: (proposals.length
+            ? proposals.slice(0, 8).map(function (one) {
+                return [cut(one.name, 46) + ' <em>\u00b7 ' +
+                  esc(cut(one.kind || 'draft', 18)) + '</em>', esc(one.status || 'draft')];
+              })
+            : [['no proposals awaiting the gate', '']])
+            .concat(skips.slice(0, 4).map(function (one) {
+              return ['\u2717 ' + cut(one.name, 34), esc(cut(one.reason, 22))];
+            }))
+            .concat(merges.slice(0, 2).map(function (one) {
+              return [cut(one.survivor, 34) + ' \u2190 ' + cut(one.absorbed, 18),
+                num(one.similarity).toFixed(2)];
+            })),
+          sub: 'drafts, refusals, folds'
+        };
+      }
+    },
+    {
+      key: 'route', name: 'the route', line: 'sys1 judges the task, a chain is walked',
+      color: C.blue, source: 'router',
+      figure: function (m) { return { value: num(m.calls), unit: 'calls' }; },
+      strip: function (pen, w, h, m) {
+        var hours = arr(m.router.hours);
+        var buckets = [];
+        for (var hour = 0; hour < 24; hour++) {
+          var found = hours.filter(function (one) { return num(one.hour) === hour; })[0];
+          buckets.push(found ? num(found.calls) : 0);
+        }
+        var peak = Math.max.apply(null, buckets.concat([1]));
+        var step = w / 24;
+        for (var i = 0; i < 24; i++) {
+          var height = buckets[i] / peak;
+          pen.bar(i * step, h - 4 - height * (h - 8), Math.max(1.5, step - 2),
+            3 + height * (h - 8), C.blue, buckets[i] ? 0.25 + height * 0.65 : 0.1);
+        }
+        // The recent calls, as latency: the chain's own speed.
+        var recent = arr(m.router.recent).slice(0, 12);
+        var slowest = Math.max.apply(null,
+          recent.map(function (one) { return num(one.ms); }).concat([1]));
+        recent.forEach(function (one, index) {
+          var x = (index / Math.max(recent.length - 1, 1)) * (w - 4) + 2;
+          var y = 3 + (num(one.ms) / slowest) * 9;
+          pen.dot(x, y, 1.6, one.ok ? C.cyan : C.red, 0.85);
+        });
+      },
+      detail: function (m) {
+        var router = m.router;
+        var tiers = arr(router.tiers);
+        var recent = arr(router.recent).slice(0, 8);
+        var cache = router.cache || {};
+        var totals = router.totals || {};
+        return {
+          eyebrow: '04 · the route',
+          title: 'sys1 judges the task, a chain is walked',
+          note: 'The judgment names a workload, the workload names a chain, and the chain is ' +
+            'walked in order until a provider answers. The orchestrator — the first model a run ' +
+            'loads — always walks the strong chain whatever was judged.',
+          figs: [
+            [num(totals.calls), 'calls'],
+            [num(totals.success_rate) + '%', 'ok'],
+            [num(totals.errors), 'errors'],
+            [num(cache.entries), 'cached']
+          ],
+          list: tiers.slice(0, 6).map(function (one) {
+            return [esc(cut(one.tier, 18)) + ' \u2192 ' + esc(cut(one.primary, 30)),
+              arr(one.candidates).length + ' in chain'];
+          }).concat(recent.slice(0, 4).map(function (one) {
+            return [cut(one.model, 26) + ' <em>\u00b7 ' + esc(cut(one.provider, 16)) + '</em>',
+              num(one.ms) + ' ms'];
+          })),
+          sub: 'chains, then the calls taken'
+        };
+      }
+    },
+    {
+      key: 'model', name: 'the model', line: 'the lane that answered, and what it cost',
+      color: C.blue, source: 'router',
+      figure: function (m) {
+        var recent = arr(m.router.recent);
+        var latencies = recent.map(function (one) { return num(one.ms); })
+          .filter(function (ms) { return ms > 0; }).sort(function (a, b) { return a - b; });
+        var median = latencies.length ? latencies[Math.floor(latencies.length / 2)] : 0;
+        return { value: median ? median.toLocaleString() : '\u2014', unit: 'median ms' };
+      },
+      strip: function (pen, w, h, m) {
+        var recent = arr(m.router.recent);
+        var slowest = Math.max.apply(null,
+          recent.map(function (one) { return num(one.ms); }).concat([1]));
+        var step = w / Math.max(recent.length, 1);
+        recent.forEach(function (one, index) {
+          var height = num(one.ms) / slowest;
+          pen.bar(index * step + 1, h - 4 - height * (h - 9), Math.max(2, step - 3),
+            3 + height * (h - 9), one.ok ? C.blue : C.red, 0.35 + height * 0.55);
+        });
+        arr(m.router.models).forEach(function (one, index) {
+          pen.bar(w - 3, 2 + index * 4, 3, 3, C.teal, 0.8);
+        });
+      },
+      detail: function (m) {
+        var router = m.router;
+        var models = arr(router.models);
+        var recent = arr(router.recent).slice(0, 7);
+        var totals = router.totals || {};
+        var judged = router.judged || {};
+        return {
+          eyebrow: '05 · the model',
+          title: 'the lane that answered, and what it cost',
+          note: 'Each bar is one route row — its height the milliseconds it took, its colour ' +
+            'whether it served. The reason column is the router\u2019s own sentence: the judgment, ' +
+            'the gate, the walk. Nothing here is inferred from the answer.',
+          figs: [
+            [num(totals.ok), 'served'],
+            [num(totals.errors), 'failed'],
+            [num(models.length), 'lanes'],
+            [num(judged.fresh) + '/' + (num(judged.fresh) + num(judged.cached)), 'judged fresh']
+          ],
+          list: recent.map(function (one) {
+            return [esc(cut(one.model, 20)) + ' <em>\u00b7 ' +
+              esc(cut(one.outcome || (one.ok ? 'served' : 'failed'), 12)) + '</em>',
+              num(one.ms) + ' ms'];
+          }).concat(models.slice(0, 3).map(function (one) {
+            return [cut(one.model, 26), num(one.calls) + ' calls'];
+          })),
+          sub: 'the last calls, newest first'
+        };
+      }
+    },
+    {
+      key: 'tools', name: 'tools', line: 'what may act without asking, and how deep',
+      color: C.copper, source: 'delegation',
+      figure: function (m) {
+        var cap = num(m.delegation.depth_cap);
+        var depth = num(m.delegation.live && m.delegation.live.depth);
+        return { value: cap ? depth + '/' + cap : '\u2014', unit: 'depth' };
+      },
+      strip: function (pen, w, h, m) {
+        var rules = arr(m.state.rules);
+        var step = w / Math.max(rules.length, 1);
+        for (var i = 0; i < rules.length; i++) {
+          var remembered = rules[i].tool === 'bash' && rules[i].program;
+          pen.bar(i * step, h - 4 - (remembered ? 8 : 4), Math.max(1, step - 1),
+            4 + (remembered ? 8 : 0), C.copper, remembered ? 0.8 : 0.32);
+        }
+        // The delegated children, by depth: higher is deeper.
+        var children = arr(m.delegation.history).reduce(function (all, row) {
+          return all.concat(arr(row.children));
+        }, []);
+        children.slice(0, 40).forEach(function (one, index) {
+          var depth = Math.min(num(one.depth, 1), 4);
+          pen.dot(4 + index * 7, h - 2 - depth * 4,
+            2, one.status === 'running' ? C.cyan : C.faint, 0.9);
+        });
+      },
+      detail: function (m) {
+        var delegation = m.delegation;
+        var rules = arr(m.state.rules);
+        var live = delegation.live || {};
+        var children = arr(delegation.history).reduce(function (all, row) {
+          return all.concat(arr(row.children));
+        }, []);
+        return {
+          eyebrow: '06 · tools',
+          title: 'what may act without asking, and how deep',
+          note: 'The approval gate is a list of remembered rules, not a mode: each line is a ' +
+            'program that runs unattended. Delegation is bounded by the depth cap, and every ' +
+            'child inherits the parent\u2019s model — it never downgrades.',
+          figs: [
+            [num(delegation.depth_cap), 'depth cap'],
+            [num(children.length), 'children'],
+            [num(rules.length), 'rules'],
+            [num(arr(delegation.refused).length), 'refused']
+          ],
+          list: rules.slice(0, 8).map(function (one) {
+            return [esc(cut(one.label, 40)), esc(one.tool || '')];
+          }).concat(children.slice(0, 4).map(function (one) {
+            return [cut(one.goal || '(no goal)', 44),
+              esc(cut(one.status || '\u2014', 12)) + ' \u00b7 ' + num(one.turns) + ' turns'];
+          })).concat(live.goal
+            ? [['\u25b8 ' + cut(live.goal, 44), esc(cut(live.status || 'live', 12))]]
+            : []),
+          sub: 'the remembered rules, then the children'
+        };
+      }
+    },
+    {
+      key: 'rooms', name: 'huddles', line: 'the rooms where personas work side by side',
+      color: C.green, source: 'huddles',
+      figure: function (m) { return { value: num(m.huddleCounts.active), unit: 'active' }; },
+      strip: function (pen, w, h, m) {
+        var rooms = arr(m.huddles.active).concat(arr(m.huddles.inactive));
+        var step = w / Math.max(rooms.length, 1);
+        rooms.forEach(function (one, index) {
+          var colour = HUDDLE_COLOR[one.state] || C.faint;
+          var weight = Math.min(arr(one.personas).length, 4) / 4;
+          pen.bar(index * step + 2, h - 5 - weight * 10, Math.max(3, step - 6),
+            5 + weight * 10, colour, 0.35 + weight * 0.5);
+          // Deliverables ride above the room; knowledge below it.
+          for (var d = 0; d < Math.min(num(one.deliverables), 4); d++) {
+            pen.dot(index * step + 4 + d * 3, 3, 1.2, C.amber, 0.9);
+          }
+          var knowledge = one.knowledge || {};
+          for (var k = 0; k < Math.min(num(knowledge.wrote), 5); k++) {
+            pen.dot(index * step + 4 + k * 3, h - 1.5, 1.2, C.cyan, 0.9);
+          }
+        });
+        if (!rooms.length) pen.line(0, h / 2, w, h / 2, C.faint, 0.5);
+      },
+      detail: function (m) {
+        var counts = m.huddleCounts || {};
+        var rooms = arr(m.huddles.active).concat(arr(m.huddles.inactive));
+        return {
+          eyebrow: '07 · huddles',
+          title: 'the rooms where personas work side by side',
+          note: 'A huddle is a session with members: every persona sees every message, speaks ' +
+            'with its own tools and voice, and may recommend convening another room when the ' +
+            'brief outgrows it. Knowledge in and out is counted per room.',
+          figs: [
+            [num(counts.active), 'active'],
+            [num(counts.inactive), 'idle'],
+            [num(counts.ended), 'ended'],
+            [rooms.reduce(function (all, one) { return all + arr(one.personas).length; }, 0), 'voices']
+          ],
+          list: rooms.slice(0, 9).map(function (one) {
+            return [cut(one.title || one.goal || '(untitled)', 46) +
+              ' <em>\u00b7 ' + esc(arr(one.personas).join(', ') || 'no personas') + '</em>',
+              esc(one.state || '\u2014') + ' \u00b7 ' +
+              (num(one.last_write) ? ago(one.last_write) : '\u2014')];
+          }),
+          sub: 'each room, its voices, its last write'
+        };
+      }
+    },
+    {
+      key: 'corpus', name: 'the write-back', line: 'what the turn leaves behind, and what forgets',
+      color: C.amber, source: 'memory',
+      figure: function (m) {
+        return { value: num(arr(m.state.knowledge && m.state.knowledge.wrote).length), unit: 'written' };
+      },
+      strip: function (pen, w, h, m) {
+        // The consolidation preview, as four weighted segments: what the
+        // cycle would compress, keep, supersede and leave untouched.
+        var preview = A('memory').preview || {};
+        var bands = [
+          ['compress', C.copper], ['kept', C.teal],
+          ['supersede', C.red], ['untouched', C.faint]
+        ];
+        var total = bands.reduce(function (all, band) {
+          return all + arr(preview[band[0]]).length;
+        }, 0);
+        var x = 0;
+        if (total) {
+          bands.forEach(function (band) {
+            var width = (arr(preview[band[0]]).length / total) * w;
+            pen.bar(x, 4, Math.max(width - 1, 0), 10, band[1], 0.7);
+            x += width;
+          });
+        } else {
+          pen.line(0, 9, w, 9, C.faint, 0.35);
+        }
+        // Attention: the panels the owner actually opened.
+        var panels = A('usage').panels || {};
+        var keys = Object.keys(panels).sort(function (a, b) {
+          return num(panels[b].opens) - num(panels[a].opens);
+        });
+        var most = Math.max.apply(null,
+          keys.map(function (key) { return num(panels[key].opens); }).concat([1]));
+        var step = w / 26;
+        keys.slice(0, 26).forEach(function (key, index) {
+          var height = num(panels[key].opens) / most;
+          pen.bar(index * step, h - 3 - height * 8, Math.max(1.5, step - 2), 2 + height * 8,
+            C.cyan, 0.2 + height * 0.5);
+        });
+      },
+      detail: function (m) {
+        var knowledge = m.state.knowledge || {};
+        var wrote = arr(knowledge.wrote);
+        var preview = A('memory').preview || {};
+        var panels = A('usage').panels || {};
+        var keys = Object.keys(panels).sort(function (a, b) {
+          return num(panels[b].opens) - num(panels[a].opens);
+        });
+        return {
+          eyebrow: '08 · the write-back',
+          title: 'what the turn leaves behind, and what forgets',
+          note: 'A turn makes facts (and nothing else does), the cycle folds them, and the panels ' +
+            'record where attention went. The four bands are the consolidation preview exactly as ' +
+            'the bridge computes it — an empty band is empty, not unknown.',
+          figs: [
+            [num(wrote.length), 'written'],
+            [num(arr(preview.compress).length), 'compress'],
+            [num(arr(preview.supersede).length), 'supersede'],
+            [num(arr(preview.kept).length), 'kept']
+          ],
+          list: (wrote.length
+            ? wrote.slice(0, 6).map(function (name) { return [cut(name, 44), 'this turn']; })
+            : [['no facts written this session yet', '']])
+            .concat(keys.slice(0, 7).map(function (key) {
+              return ['\u25b8 ' + esc(key), num(panels[key].opens).toLocaleString() + ' opens'];
+            })),
+          sub: 'written, then where attention went'
+        };
+      }
+    }
+  ];
+
+  // -------------------------------------------------------------- the view
+  // One normalized document per load. Every figure the page paints is read
+  // from here, so a refused query can only ever produce a blank — never an
+  // invented number.
+  function view() {
+    var state = A('state');
+    var memory = A('memory');
+    var skills = A('skills');
+    var sessions = A('sessions');
+    var router = A('router');
+    var delegation = A('delegation');
+    var huddles = A('huddles');
+    return {
+      state: state,
+      facts: arr(memory.facts),
+      archive: arr(memory.archive),
+      hits: arr(memory.hits),
+      skills: arr(skills.skills),
+      skillsTotal: has('skills') ? arr(skills.skills).length : null,
+      skillsUnused: num(skills.unused, null),
+      proposals: arr(skills.proposals),
+      skips: arr(skills.skips),
+      merges: arr(skills.merges),
+      sessionsScanned: num(skills.sessions),
+      sessions: arr(sessions.sessions),
+      sessionCounts: sessions.counts || {},
+      router: router,
+      calls: num((router.totals || {}).calls),
+      delegation: delegation,
+      huddles: huddles,
+      huddleCounts: huddles.counts || {},
+      usage: A('usage')
+    };
+  }
+
+  // ------------------------------------------------------------ the paint
+  var el = {
+    nums: document.getElementById('nums'),
+    live: document.getElementById('live'),
+    liveWord: document.getElementById('live-word'),
+    stamp: document.getElementById('stamp'),
+    notice: document.getElementById('notice'),
+    strata: document.getElementById('strata'),
+    current: document.getElementById('current'),
+    detail: document.getElementById('detail'),
+    river: document.getElementById('river'),
+    riverTicks: document.getElementById('riverticks'),
+    riverLegend: document.getElementById('river-legend'),
+    ticker: document.getElementById('ticker')
+  };
+
+  var focused = null;
+  var pinned = null;
+  var rows = {};
+  var model = view();
+
+  function sizeCanvas(canvas, width, height) {
+    var ratio = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = Math.max(1, Math.round(width * ratio));
+    canvas.height = Math.max(1, Math.round(height * ratio));
+    var pen = canvas.getContext('2d');
+    pen.setTransform(ratio, 0, 0, ratio, 0, 0);
+    return pen;
+  }
+
+  // A pen is the three verbs every strip needs and nothing else: a bar, a
+  // dot, a hairline. Everything drawn on this page goes through it.
+  function penFor(pen) {
+    return {
+      bar: function (x, y, w, h, colour, alpha) {
+        if (w <= 0 || h <= 0) return;
+        pen.globalAlpha = alpha == null ? 1 : alpha;
+        pen.fillStyle = colour;
+        pen.fillRect(x, y, w, h);
+        pen.globalAlpha = 1;
+      },
+      dot: function (x, y, r, colour, alpha) {
+        pen.globalAlpha = alpha == null ? 1 : alpha;
+        pen.fillStyle = colour;
+        pen.beginPath();
+        pen.arc(x, y, Math.max(r, 0.4), 0, Math.PI * 2);
+        pen.fill();
+        pen.globalAlpha = 1;
+      },
+      line: function (x1, y1, x2, y2, colour, alpha) {
+        pen.globalAlpha = alpha == null ? 1 : alpha;
+        pen.strokeStyle = colour;
+        pen.lineWidth = 1;
+        pen.beginPath();
+        pen.moveTo(x1 + 0.5, y1 + 0.5);
+        pen.lineTo(x2 + 0.5, y2 + 0.5);
+        pen.stroke();
+        pen.globalAlpha = 1;
+      }
+    };
+  }
+
+  function buildStrata() {
+    STRATA.forEach(function (stratum, index) {
+      var row = document.createElement('button');
+      row.type = 'button';
+      row.className = 'row';
+      row.dataset.key = stratum.key;
+      row.setAttribute('aria-expanded', 'false');
+      row.innerHTML =
+        '<span class="idx">' + String(index + 1).padStart(2, '0') + '</span>' +
+        '<span class="ident"><b style="color:' + stratum.color + '">' + esc(stratum.name) +
+        '</b><i>' + esc(stratum.line) + '</i></span>' +
+        '<canvas class="strip" aria-hidden="true"></canvas>' +
+        '<span class="figure"><b>\u2014</b><i>waiting</i></span>';
+      row.addEventListener('mouseenter', function () { setFocus(stratum.key); });
+      row.addEventListener('focus', function () { setFocus(stratum.key); });
+      row.addEventListener('mouseleave', function () { setFocus(pinned); });
+      row.addEventListener('blur', function () { setFocus(pinned); });
+      row.addEventListener('click', function () {
+        pinned = pinned === stratum.key ? null : stratum.key;
+        setFocus(pinned || stratum.key);
+      });
+      el.strata.appendChild(row);
+      rows[stratum.key] = {
+        row: row,
+        strip: row.querySelector('.strip'),
+        figure: row.querySelector('.figure b'),
+        unit: row.querySelector('.figure i')
+      };
+    });
+  }
+
+  function setFocus(key) {
+    var next = key || null;
+    focused = next;
+    if (next) el.strata.setAttribute('data-focus', next);
+    else el.strata.removeAttribute('data-focus');
+    Object.keys(rows).forEach(function (one) {
+      rows[one].row.classList.toggle('is-focus', one === next);
+      rows[one].row.setAttribute('aria-expanded', one === next ? 'true' : 'false');
+    });
+    paintDetail();
+  }
+
+  function paintMast() {
+    var quick = [
+      [has('memory') ? num(model.facts.length) : '\u2014', 'facts'],
+      [has('skills') ? num(model.skillsTotal) : '\u2014', 'skills'],
+      [has('sessions') ? num(model.sessionCounts.total) : '\u2014', 'sessions'],
+      [has('router') ? num(model.calls) : '\u2014', 'route calls'],
+      [has('huddles') ? num(model.huddleCounts.active) : '\u2014', 'huddles'],
+      [has('router') ? num((model.router.totals || {}).success_rate) + '%' : '\u2014', 'route ok']
+    ];
+    el.nums.innerHTML = quick.map(function (one) {
+      return '<span class="num"><b>' + esc(one[0]) + '</b><i>' + esc(one[1]) + '</i></span>';
+    }).join('');
+  }
+
+  function paintRows() {
+    STRATA.forEach(function (stratum) {
+      var slot = rows[stratum.key];
+      var known = has(stratum.source);
+      var figure = stratum.figure(model);
+      slot.figure.textContent = known ? figure.value : '\u2014';
+      slot.unit.textContent = known ? figure.unit : 'not read';
+    });
+    paintStrips();
+  }
+
+  function paintStrips() {
+    STRATA.forEach(function (stratum) {
+      var canvas = rows[stratum.key].strip;
+      var width = canvas.clientWidth;
+      var height = canvas.clientHeight;
+      if (!width || !height) return;
+      var pen = penFor(sizeCanvas(canvas, width, height));
+      try {
+        stratum.strip(pen, width, height, model);
+      } catch (error) {
+        // A strip never breaks the page: one bad shape costs one drawing.
+      }
+    });
+  }
+
+  function figCells(cells) {
+    return '<div class="det-figs">' + cells.map(function (cell) {
+      return '<div class="det-fig"><b>' + esc(cell[0]) + '</b><i>' + esc(cell[1]) + '</i></div>';
+    }).join('') + '</div>';
+  }
+
+  function paintDetail() {
+    if (!focused) {
+      var events = arr(model.state.events);
+      var last = events[events.length - 1];
+      el.detail.innerHTML =
+        '<span class="det-eyebrow">the spine</span>' +
+        '<h2>how a turn moves</h2>' +
+        '<p class="det-note">Eight strata, one current. Work descends — the door, recall, ' +
+        'skills, the route, the lane, the tools, the room — and knowledge climbs back into the ' +
+        'corpus. The cable on the left moves at the rate the harness is actually working: its ' +
+        'bright strand is work going in, the dim one is knowledge coming back.</p>' +
+        figCells([
+          [has('state') ? num(events.length).toLocaleString() : '\u2014', 'events held'],
+          [has('memory') ? num(model.facts.length) : '\u2014', 'facts'],
+          [has('sessions') ? num(model.sessionCounts.total) : '\u2014', 'sessions'],
+          [has('router') ? num(model.calls) : '\u2014', 'route calls']
+        ]) +
+        '<div class="det-sub">what the colours mean</div>' +
+        '<div class="flow-key">' +
+        [['The door and the write-back — the turn enters, and what it leaves', C.cyan],
+         ['Recall — the facts a turn may be handed', C.amber],
+         ['Skills — the procedures it may reach for', C.teal],
+         ['The route and the lane — judgment, then a provider', C.blue],
+         ['Tools — what may act, and how deep it delegates', C.copper],
+         ['Huddles — rooms of personas working together', C.green]]
+          .map(function (pair) {
+            return '<div><span class="swatch" style="background:' + pair[1] +
+              '"></span><span>' + esc(pair[0]) + '</span></div>';
+          }).join('') + '</div>' +
+        (last
+          ? '<div class="det-sub">the last thing said</div>' +
+            '<p class="det-note">\u201c' + esc(cut(last.text || '', 260)) + '\u201d</p>'
+          : '') +
+        '<p class="det-hint">Hover a stratum to open it; press to pin it open.</p>';
+      return;
+    }
+    var chosen = null;
+    STRATA.forEach(function (one) { if (one.key === focused) chosen = one; });
+    if (!chosen) return;
+    var detail;
+    try {
+      detail = chosen.detail(model);
+    } catch (error) {
+      el.detail.innerHTML = '<p class="det-note">this stratum could not be read: ' +
+        esc(String(error)) + '</p>';
+      return;
+    }
+    el.detail.innerHTML =
+      '<span class="det-eyebrow" style="color:' + chosen.color + '">' +
+      esc(detail.eyebrow) + '</span>' +
+      '<h2>' + esc(detail.title) + '</h2>' +
+      '<p class="det-note">' + esc(detail.note) + '</p>' +
+      figCells(detail.figs) +
+      (detail.sub ? '<div class="det-sub">' + esc(detail.sub) + '</div>' : '') +
+      '<ol class="det-list">' + detail.list.map(function (line) {
+        return '<li><span class="k">' + line[0] + '</span><span class="v">' + line[1] + '</span></li>';
+      }).join('') + '</ol>';
+  }
+
+  function paintTicker() {
+    var events = arr(model.state.events);
+    var last = events[events.length - 1];
+    var session = model.state.session || 'no session';
+    if (!last) {
+      el.ticker.innerHTML = '<b>' + esc(cut(session, 26)) + '</b> \u00b7 no events yet';
+      return;
+    }
+    el.ticker.innerHTML = '<b>' + esc(cut(session, 26)) + '</b> \u00b7 +' +
+      esc(num(last.seconds)) + 's \u00b7 ' + esc(cut(last.text || '', 150));
+    el.ticker.title = last.text || '';
+  }
+
+  function paintRiver() {
+    var width = el.riverTicks.clientWidth;
+    var height = el.riverTicks.clientHeight;
+    if (!width || !height) return;
+    var pen = penFor(sizeCanvas(el.riverTicks, width, height));
+    var all = arr(model.sessions).slice().sort(function (a, b) {
+      return String(a.created || '').localeCompare(String(b.created || ''));
+    });
+    var counts = model.sessionCounts || {};
+    el.riverLegend.innerHTML = [
+      ['working', counts.working, C.cyan],
+      ['interrupted', counts.background, C.copper],
+      ['archived', counts.archived, C.faint],
+      ['total', counts.total, C.dim]
+    ].map(function (one) {
+      return '<span><i style="background:' + one[2] + '"></i>' + esc(one[0]) + ' ' +
+        esc(num(one[1])) + '</span>';
+    }).join('');
+    if (!all.length) {
+      pen.line(0, height / 2, width, height / 2, C.faint, 0.4);
+      return;
+    }
+    var step = width / all.length;
+    all.forEach(function (session, index) {
+      var colour = SESSION_COLOR[session.state] || C.faint;
+      var live = session.current;
+      pen.bar(index * step, live ? 0 : 6, Math.max(1, step - 0.8),
+        live ? height : height - 12, colour,
+        live ? 0.95 : (session.state === 'completed' ? 0.6 : 0.42));
+    });
+    el.river.onmousemove = function (event) {
+      var box = el.river.getBoundingClientRect();
+      var index = Math.floor(((event.clientX - box.left) / box.width) * all.length);
+      showTip(event, all[Math.max(0, Math.min(all.length - 1, index))]);
+    };
+    el.river.onmouseleave = function () {
+      var tip = el.river.querySelector('.river-tip');
+      if (tip) tip.remove();
+    };
+  }
+
+  function showTip(event, session) {
+    var tip = el.river.querySelector('.river-tip');
+    if (!tip) {
+      tip = document.createElement('div');
+      tip.className = 'river-tip';
+      el.river.appendChild(tip);
+    }
+    var box = el.river.getBoundingClientRect();
+    tip.style.left = Math.max(70, Math.min(box.width - 70, event.clientX - box.left)) + 'px';
+    tip.innerHTML = esc(cut(session.title || '(untitled)', 90)) +
+      '<i>' + esc(session.id || '') + ' \u00b7 ' + esc(session.state || '') +
+      ' \u00b7 ' + esc(cut(session.created || '', 16)) + '</i>';
+  }
+
+  // -------------------------------------------------------- the current
+  // The cable: one bright strand carrying work down through every stratum,
+  // one dim strand carrying knowledge back up, and a port at each layer
+  // where the two exchange. Its speed comes from the reads — route calls and
+  // recall hits — so the picture is a measurement, not a decoration.
+  var current = {
+    canvas: el.current, pen: null, ports: [], phase: 0,
+    down: [], up: [], last: 0, width: 0, height: 0
+  };
+
+  function measure() {
+    var width = el.strata.clientWidth;
+    if (!width) return;
+    var box = el.strata.getBoundingClientRect();
+    current.ports = STRATA.map(function (stratum) {
+      var row = rows[stratum.key].row.getBoundingClientRect();
+      return {
+        key: stratum.key,
+        color: stratum.color,
+        y: row.top - box.top + el.strata.scrollTop + row.height / 2
+      };
+    });
+    var height = el.strata.scrollHeight;
+    current.pen = sizeCanvas(current.canvas, width, height);
+    current.width = width;
+    current.height = height;
+    current.canvas.style.height = height + 'px';
+  }
+
+  function flowRates() {
+    var down = 0.6 + Math.min(num(model.calls) / 18, 1.1) +
+      Math.min(arr(model.router.recent).length / 12, 0.6);
+    var hits = arr(model.hits).length +
+      arr(model.state.knowledge && model.state.knowledge.recalled).length;
+    return { down: down, up: 0.45 + Math.min(hits / 60, 1) };
+  }
+
+  function seed(particles, count, span) {
+    var fresh = particles.slice(-90);
+    for (var i = 0; i < count; i++) {
+      fresh.push({
+        t: Math.random() * span,
+        speed: 0.55 + Math.random() * 0.9,
+        size: 0.8 + Math.random() * 1.5,
+        alpha: 0.25 + Math.random() * 0.6
+      });
+    }
+    return fresh;
+  }
+
+  function drawCurrent(now) {
+    if (!current.pen || !current.ports.length) return;
+    var pen = current.pen;
+    pen.clearRect(0, 0, current.width, current.height);
+    var top = current.ports[0].y;
+    var bottom = current.ports[current.ports.length - 1].y;
+    var span = Math.max(bottom - top, 1);
+    var rates = flowRates();
+    var dt = current.last ? Math.min((now - current.last) / 1000, 0.05) : 0.016;
+    current.last = now;
+    current.phase += dt;
+
+    // The two strands: a slow sine gives the cable its braid.
+    var braid = Math.sin(current.phase * 1.3) * 2.2;
+    var strand = function (x, colour, alpha) {
+      pen.strokeStyle = colour;
+      pen.globalAlpha = alpha;
+      pen.lineWidth = 1;
+      pen.beginPath();
+      pen.moveTo(x, top);
+      for (var y = top; y <= bottom; y += 12) {
+        pen.lineTo(x + Math.sin((y + current.phase * 40) / 46) * 1.6, y);
+      }
+      pen.stroke();
+      pen.globalAlpha = 1;
+    };
+    strand(36, C.faint, 0.5);
+    strand(36 + braid, C.blue, 0.22);
+
+    // The ports, one per stratum: a ring, a stub into the row, and the
+    // stratum's own colour so the cable's traffic reads by layer.
+    current.ports.forEach(function (port) {
+      var lit = !focused || focused === port.key;
+      pen.globalAlpha = lit ? 1 : 0.2;
+      pen.strokeStyle = port.color;
+      pen.lineWidth = 1;
+      pen.beginPath();
+      pen.arc(36, port.y, 3.4, 0, Math.PI * 2);
+      pen.stroke();
+      pen.fillStyle = port.color;
+      pen.beginPath();
+      pen.arc(36, port.y, 1.5, 0, Math.PI * 2);
+      pen.fill();
+      pen.strokeStyle = port.color;
+      pen.globalAlpha = lit ? 0.5 : 0.1;
+      pen.beginPath();
+      pen.moveTo(40, port.y + 0.5);
+      pen.lineTo(54, port.y + 0.5);
+      pen.stroke();
+      pen.globalAlpha = 1;
+      if (focused === port.key) {
+        var halo = pen.createRadialGradient(36, port.y, 0, 36, port.y, 22);
+        halo.addColorStop(0, port.color);
+        halo.addColorStop(1, 'rgba(0,0,0,0)');
+        pen.globalAlpha = 0.2;
+        pen.fillStyle = halo;
+        pen.beginPath();
+        pen.arc(36, port.y, 22, 0, Math.PI * 2);
+        pen.fill();
+        pen.globalAlpha = 1;
+      }
+    });
+
+    // Work descends, knowledge climbs. Their populations follow the live
+    // rates, so a burst of calls really does thicken the stream.
+    current.down = seed(current.down, Math.round(rates.down * 2), span);
+    current.up = seed(current.up, Math.round(rates.up * 2), span);
+    var still = window.matchMedia &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    current.down.forEach(function (one) {
+      if (!still) one.t = (one.t + one.speed * 26 * dt * rates.down) % span;
+      var y = top + one.t;
+      pen.globalAlpha = (focused ? 0.45 : 0.8) * one.alpha;
+      pen.fillStyle = C.cyan;
+      pen.beginPath();
+      pen.arc(36 + Math.sin((y + current.phase * 40) / 46) * 1.6, y, one.size, 0, Math.PI * 2);
+      pen.fill();
+      pen.globalAlpha = 1;
+    });
+    current.up.forEach(function (one) {
+      if (!still) one.t = (one.t - one.speed * 16 * dt * rates.up + span) % span;
+      var y = top + one.t;
+      pen.globalAlpha = (focused ? 0.26 : 0.46) * one.alpha;
+      pen.fillStyle = C.amber;
+      pen.beginPath();
+      pen.arc(36 + Math.sin((y + current.phase * 40) / 46) * 1.6, y, one.size * 0.85, 0, Math.PI * 2);
+      pen.fill();
+      pen.globalAlpha = 1;
+    });
+
+    // The cable names its own directions, rotated into the gutter.
+    pen.fillStyle = C.faint;
+    pen.font = '500 8px ui-monospace, monospace';
+    pen.save();
+    pen.translate(19, Math.max(top - 8, 34));
+    pen.rotate(-Math.PI / 2);
+    pen.fillText('W O R K', 0, 0);
+    pen.restore();
+    pen.save();
+    pen.translate(19, bottom + 54);
+    pen.rotate(-Math.PI / 2);
+    pen.fillText('K N O W L E D G E', 0, 0);
+    pen.restore();
+  }
+
+  function animate(now) {
+    drawCurrent(now);
+    requestAnimationFrame(animate);
+  }
+
+  // ------------------------------------------------------------- the load
+  function paintNotice() {
+    var refusals = [];
+    QUERIES.forEach(function (query) {
+      var got = read[query];
+      if (got && !got.ok) {
+        refusals.push('<span>' + esc(query) + '</span>' +
+          esc(cut(arr(got.refused)[0] || 'refused', 150)));
+      }
+    });
+    if (!refusals.length) {
+      el.notice.hidden = true;
+      el.notice.innerHTML = '';
+      return;
+    }
+    el.notice.hidden = false;
+    el.notice.innerHTML = refusals.join('<br>');
+  }
+
+  function paintLive() {
+    var refused = QUERIES.filter(function (query) {
+      return read[query] && !read[query].ok;
+    }).length;
+    if (!answered) {
+      el.live.dataset.state = 'waiting';
+      el.liveWord.textContent = 'asking';
+      el.stamp.textContent = 'the face\u2026';
+      return;
+    }
+    if (refused) {
+      el.live.dataset.state = 'dark';
+      el.liveWord.textContent = refused + ' refused';
+    } else {
+      el.live.dataset.state = 'live';
+      el.liveWord.textContent = 'live';
+    }
+    el.stamp.textContent = 'read ' + clockOf(new Date());
+  }
+
+  function apply() {
+    model = view();
+    paintMast();
+    paintRows();
+    paintDetail();
+    paintTicker();
+    paintRiver();
+    paintNotice();
+    paintLive();
+  }
+
+  function load(queries) {
+    asked++;
+    return Promise.all(queries.map(ask)).then(function (answers) {
+      answers.forEach(function (answer) { read[answer.query] = answer; });
+      answered += answers.filter(function (one) { return one.ok; }).length;
+      apply();
+      measure();
+    });
+  }
+
+  // ---------------------------------------------------------------- boot
+  buildStrata();
+  setFocus(null);
+  apply();
+  measure();
+  requestAnimationFrame(animate);
+
+  // The light reads every four seconds — state is the one that moves — and
+  // the heavy ones every fifth turn of that clock. A refused query keeps its
+  // last answer on screen but is re-asked, so a recovering host recovers the
+  // page without a reload.
+  var light = ['state', 'router', 'sessions', 'huddles'];
+  var heavy = ['memory', 'skills', 'delegation', 'usage'];
+  var cycle = 0;
+  // One read in flight at a time, and the next turn scheduled after the
+  // last settles: a slow answer delays the clock instead of stacking a
+  // second read on top of it.
+  function turn() {
+    cycle++;
+    var asked = cycle % 5 === 1 ? light.concat(heavy) : light;
+    load(asked).then(function () {
+      setTimeout(turn, 4000);
+    }, function () {
+      setTimeout(turn, 4000);
+    });
+  }
+  turn();
+
+  var remeasure = null;
+  function remeasureSoon() {
+    clearTimeout(remeasure);
+    remeasure = setTimeout(function () {
+      measure();
+      paintStrips();
+      paintRiver();
+    }, 120);
+  }
+  window.addEventListener('resize', remeasureSoon);
+  if (window.ResizeObserver) new ResizeObserver(remeasureSoon).observe(el.strata);
+})();
+</script>
+</body>
+</html>

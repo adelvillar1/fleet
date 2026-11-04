@@ -20,7 +20,7 @@ pub const REGISTRY_FILE: &str = "plugins.json";
 /// The read-only query names an untrusted plugin may declare. Each
 /// names a GET route the bridge already serves read-only; the eval
 /// suite drives them, and the bridge enforces the manifest's set.
-pub const READ_ONLY_QUERIES: [&str; 12] = [
+pub const READ_ONLY_QUERIES: [&str; 13] = [
     "state",
     "home",
     "router",
@@ -28,6 +28,7 @@ pub const READ_ONLY_QUERIES: [&str; 12] = [
     "memory",
     "skills",
     "sessions",
+    "huddles",
     "usage",
     "workspace-history",
     "tree",
@@ -295,6 +296,10 @@ pub struct FaceListing {
     pub label: String,
     pub version: String,
     pub provenance: String,
+    /// The declared read-only queries, exactly as the manifest stated
+    /// them: the mount names the set, so the sandbox's data path is
+    /// visible on the surface rather than only inside the bundle.
+    pub queries: Vec<String>,
     pub promotions: Vec<FacePromotion>,
 }
 
@@ -318,6 +323,7 @@ pub fn list(home: &Path) -> Result<Vec<FaceListing>, String> {
                 label: String::new(),
                 version: String::new(),
                 provenance: String::new(),
+                queries: Vec::new(),
                 promotions: state.promotions.clone(),
             });
             continue;
@@ -330,6 +336,7 @@ pub fn list(home: &Path) -> Result<Vec<FaceListing>, String> {
             label: manifest.entry.label,
             version: manifest.version,
             provenance: manifest.provenance,
+            queries: manifest.queries,
             promotions: state.promotions.clone(),
         });
     }
@@ -551,6 +558,13 @@ mod tests {
             error.contains("settings") && error.contains("read-only"),
             "{error}"
         );
+        // `huddles` joined the set because the telemetry bundle asks for
+        // it, and `/api/huddles` already answers: a declared query that
+        // resolves is the sandbox's breadth, and this one resolves.
+        assert!(READ_ONLY_QUERIES.contains(&"huddles"), "huddles is read-only");
+        let with_huddles = MANIFEST.replace("\"sessions\"", "\"sessions\", \"huddles\"");
+        let manifest = FaceManifest::parse(&with_huddles).expect("a huddles declaration parses");
+        assert_eq!(manifest.queries, vec!["state", "sessions", "huddles"]);
     }
 
     #[test]

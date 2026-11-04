@@ -200,6 +200,18 @@ class El {
     child.parentNode = null;
     return child;
   }
+  // A real node's `contains` walks the parent chain: the bundle mount
+  // asks whether the frame it holds is still the body's child before it
+  // re-mounts, and a stub that always answered false would re-read the
+  // page on every repaint.
+  contains(node) {
+    let walker = node || null;
+    while (walker) {
+      if (walker === this) return true;
+      walker = walker.parentNode || null;
+    }
+    return false;
+  }
   setAttribute(k, v) {
     this.attrs[k] = String(v);
     if (k === 'id') this.id = String(v);
@@ -298,6 +310,10 @@ function boot(options) {
   });
   const calls = [];
   const events = [];
+  // Every frame the page built: the bundle mount's sandboxed iframe is a
+  // different window, and the relay's `event.source` gate compares
+  // against this object, so the stub has to carry one.
+  const frames = [];
   let streamSource = null;
   const storage = new Map(Object.entries(opts.storage || {}));
   const intervals = [];
@@ -731,11 +747,59 @@ function boot(options) {
         }),
       });
     }
+    // The bundle's page, read as bytes: the route answers HTML, and the
+    // face reads it into `srcdoc` because the route's CSP forbids being
+    // framed. A name the case did not supply is absent, not empty.
+    if (/^\/plugins\/[^/]+\/$/.test(pathOnly)) {
+      const held = documents.bundle;
+      const named = decodeURIComponent(pathOnly.split('/')[2] || '');
+      const body = typeof held === 'function' ? held(named) : held;
+      if (body == null) {
+        return Promise.resolve({
+          status: 404, ok: false, text: () => Promise.resolve(''),
+        });
+      }
+      return Promise.resolve({
+        status: 200, ok: true, headers: { get: () => 'text/html' },
+        text: () => Promise.resolve(String(body)),
+      });
+    }
+    // One declared query, enforced the way the bridge enforces it: the
+    // manifest's set is the boundary, and an undeclared name comes back
+    // as a refusal with its reason, never as an empty answer.
+    if (pathOnly === '/api/plugins/query') {
+      const parsed = init && init.body ? JSON.parse(init.body) : {};
+      const declared = (documents.queries || {})[parsed.name] || [];
+      if (!declared.includes(String(parsed.query))) {
+        return Promise.resolve({
+          status: 403, ok: false,
+          json: () => Promise.resolve({
+            refused: ['`' + parsed.query + '` is not among `' + parsed.name +
+              '`\u2019s declared queries (' + declared.join(', ') + ')'],
+          }),
+        });
+      }
+      return Promise.resolve({
+        status: 200, ok: true,
+        json: () => Promise.resolve({ type: parsed.query, name: parsed.name,
+          asked: parsed.query, declared }),
+      });
+    }
     return Promise.resolve({ status: 200, json: () => Promise.resolve(opts.reply || {}) });
   };
 
   const document_ = {
-    createElement: (name) => new El(name),
+    createElement: (name) => {
+      const made = new El(name);
+      if (name === 'iframe') {
+        made.contentWindow = {
+          posted: [],
+          postMessage: (data) => { made.contentWindow.posted.push(data); },
+        };
+        frames.push(made);
+      }
+      return made;
+    },
     createElementNS: (_ns, name) => new El(name),
     createTextNode: (text) => { const made = new El('#text'); made._text = String(text); return made; },
     getElementById: (id) => {
@@ -913,6 +977,15 @@ function boot(options) {
     // the next fetch the page issues inside the vm fails.
     setFailNext: (hook) => { failNext = hook; },
     theStream: () => streamSource,
+    // The frames the page built, in mount order, and the way a case makes
+    // one speak: the message arrives with the frame's own window as its
+    // source, which is the gate the relay reads.
+    frames,
+    fromFrame(index, data) {
+      const frame = frames[index || 0];
+      const ev = { source: frame ? frame.contentWindow : null, data };
+      (windowListeners.message || []).slice().forEach((fn) => fn(ev));
+    },
   };
 }
 
@@ -8428,6 +8501,128 @@ async function theConnectCardSaysWhatHappened() {
       hints.huddles === 'open', 'huddles=' + hints.huddles);
   }
 
+  // The bundle mount (the plugin creator pattern's P5): a plugin's name
+  // is an address, and the address mounts the bundle's own page. The
+  // bundle's route answers under `frame-ancestors 'none'`, so the face
+  // reads the page's bytes into `srcdoc` rather than pointing a frame at
+  // the address — and the frame runs sandboxed (scripts, no origin), so
+  // its one data path is the declared-query relay. A query the manifest
+  // does not declare comes back as a named refusal, never as a zero the
+  // page could mistake for an empty fact.
+  async function theBundleMountsAndRelaysItsDeclaredQueries() {
+    const pageHtml = '<!doctype html><html><body><p id="t">the bundle page</p></body></html>';
+    const page = boot({
+      documents: {
+        state: {
+          plugins: [
+            { name: 'telemetry', tier: 'untrusted', enabled: true, group: 'system',
+              label: 'telemetry', version: '1.0.0', provenance: 'creator:fleet repo',
+              queries: ['state', 'memory', 'huddles'] },
+            { name: 'owner-panel', tier: 'privileged', enabled: false, group: 'system',
+              label: 'owner panel', version: '1.0.0', provenance: '/home/owner/panel',
+              queries: ['state'] },
+          ],
+          proposals: [], built_ins: [],
+        },
+        queries: { telemetry: ['state', 'memory', 'huddles'], 'owner-panel': ['state'] },
+        bundle: (name) => (name === 'telemetry' ? pageHtml : null),
+      },
+    });
+    page.open();
+    await flush();
+    page.hash('#/telemetry');
+    for (let i = 0; i < 8; i++) await flush();
+    check('BUNDLE a plugin\u2019s name is an address and it mounts',
+      !!page.IDS['panel-bundle'] && page.IDS['panel-bundle'].hidden === false &&
+        page.IDS['panel-chat'].hidden === true,
+      'bundle hidden=' + (page.IDS['panel-bundle'] || {}).hidden +
+        ' chat hidden=' + page.IDS['panel-chat'].hidden);
+    check('BUNDLE the head names the bundle and its tier',
+      page.text('bundle-title') === 'telemetry' &&
+        page.text('bundle-chip') === 'untrusted' &&
+        page.el('bundle-chip').dataset.tier === 'untrusted',
+      'title=' + page.text('bundle-title') + ' chip=' + page.text('bundle-chip'));
+    // The page's bytes, not a URL: the route cannot be framed.
+    const frame = page.IDS['bundle-body'].children[0];
+    check('BUNDLE the frame is the page\u2019s own bytes',
+      !!frame && frame.name === 'iframe' && frame.srcdoc === pageHtml,
+      frame ? 'tag=' + frame.name + ' srcdoc=' + String(frame.srcdoc).slice(0, 24) : 'no frame');
+    check('BUNDLE the frame runs scripts and nothing else',
+      !!frame && frame.getAttribute('sandbox') === 'allow-scripts' &&
+        frame.getAttribute('referrerpolicy') === 'no-referrer',
+      frame ? 'sandbox=' + frame.getAttribute('sandbox') : 'no frame');
+    check('BUNDLE the mount names the set the frame may ask for',
+      String(page.text('bundle-note')).includes('3 declared queries') &&
+        String(page.text('bundle-note')).includes('state, memory, huddles'),
+      page.text('bundle-note'));
+    check('BUNDLE the fetched page came from the bundle route',
+      page.calls.some((c) => c.method === 'GET' && c.url === '/plugins/telemetry/'),
+      page.calls.map((c) => c.method + ' ' + c.url).join(' | '));
+    // The relay: the frame asks, the face asks the bridge, the bridge
+    // answers, the answer goes back to the same frame with its sequence.
+    page.fromFrame(0, { fleetPlugin: 'telemetry', query: 'memory', seq: 7 });
+    await flush(80);
+    const asked = page.calls.filter((c) => c.method === 'POST' &&
+      c.url === '/api/plugins/query');
+    check('BUNDLE the frame\u2019s ask is relayed as the declared query',
+      asked.length === 1 &&
+        JSON.parse(asked[0].body).name === 'telemetry' &&
+        JSON.parse(asked[0].body).query === 'memory',
+      asked.length ? asked[0].body : 'no ask');
+    const back = frame.contentWindow.posted[0];
+    check('BUNDLE the answer returns to the asking frame with its sequence',
+      !!back && back.seq === 7 && back.query === 'memory' && back.ok === true &&
+        back.answer && back.answer.asked === 'memory',
+      JSON.stringify(back && { seq: back.seq, ok: back.ok, query: back.query }));
+    check('BUNDLE the relay tallies what it asked',
+      String(page.text('bundle-relay')).includes('1 asked') &&
+        String(page.text('bundle-relay')).includes('1 answered'),
+      page.text('bundle-relay'));
+    // A query outside the set is a refusal with its reason — the bridge's
+    // own words, not an empty answer.
+    page.fromFrame(0, { fleetPlugin: 'telemetry', query: 'vault', seq: 8 });
+    await flush(80);
+    const refused = frame.contentWindow.posted[1];
+    check('BUNDLE an undeclared query comes back refused, with its reason',
+      !!refused && refused.ok === false && refused.seq === 8 &&
+        Array.isArray(refused.refused) &&
+        String(refused.refused[0]).includes('not among'),
+      JSON.stringify(refused && { ok: refused.ok, refused: refused.refused }));
+    check('BUNDLE a refusal is counted as a refusal',
+      String(page.text('bundle-relay')).includes('1 refused') &&
+        page.el('bundle-relay').dataset.refused === 'yes',
+      page.text('bundle-relay') + ' data-refused=' + page.el('bundle-relay').dataset.refused);
+    // The frame is the gate: a message from any other window is not
+    // relayed, however well it is shaped.
+    const before = page.calls.length;
+    page.sandbox.window; // (the message listener lives on this window)
+    const stranger = { source: { foreign: true }, data: { fleetPlugin: 'telemetry', query: 'state', seq: 9 } };
+    page.fireWindow('message', stranger);
+    await flush(20);
+    check('BUNDLE an ask from another window is not relayed',
+      page.calls.length === before, 'calls after=' + (page.calls.length - before));
+    // A disabled bundle mounts nothing and says why: disabled is the
+    // reason, not a broken page.
+    page.hash('#/owner-panel');
+    for (let i = 0; i < 8; i++) await flush();
+    const refusal = page.IDS['bundle-body'].children[0];
+    check('BUNDLE a disabled bundle\u2019s refusal names disabled',
+      !!refusal && refusal.className === 'bundle-refusal' &&
+        String(refusal.textContent).includes('disabled') &&
+        page.text('bundle-chip') === 'privileged',
+      refusal ? String(refusal.textContent).slice(0, 90) : 'no refusal');
+    // An address that is not an installed bundle is the conversation's,
+    // not a broken mount: the route only mints the bundle panel for a
+    // name the state read carries.
+    page.hash('#/not-installed');
+    for (let i = 0; i < 8; i++) await flush();
+    check('BUNDLE an unknown address falls back to the conversation',
+      page.IDS['panel-bundle'].hidden === true &&
+        page.IDS['panel-chat'].hidden === false,
+      'bundle hidden=' + page.IDS['panel-bundle'].hidden +
+        ' chat hidden=' + page.IDS['panel-chat'].hidden);
+  }
+
 const cases = [
   ['PALETTE the palette agrees with the rail', thePaletteAgreesWithTheRail],
   ['PLUGINS the management surface and the two tiers\' frames', thePluginsSurfaceManagesTheChains],
@@ -8512,6 +8707,7 @@ const cases = [
   ['CA2b opening a run in flight loads its view', openingARunInFlightLoadsItsView],
   ['CA3/CA4 the run-scoped controls say their scope', theRunScopedControlsSayTheirScope],
   ['CA-C3 the connect card says what happened', theConnectCardSaysWhatHappened],
+  ['BUNDLE the plugin\u2019s own page mounts and relays its queries', theBundleMountsAndRelaysItsDeclaredQueries],
 ];
 
 for (const [name, run] of cases) {

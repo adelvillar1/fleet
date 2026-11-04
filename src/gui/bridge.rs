@@ -959,7 +959,8 @@ impl Bridge {
             .map_err(|error| format!("`{name}`'s manifest does not parse: {error}"))?;
         if !manifest.queries.iter().any(|one| one == query) {
             return Err(format!(
-                "`{query}` is not among `{name}`'s declared queries ({}) — the sandbox's data                  arrives only through the manifest's set",
+                "`{query}` is not among `{name}`'s declared queries ({}) — \
+                 the sandbox's data arrives only through the manifest's set",
                 manifest.queries.join(", ")
             ));
         }
@@ -971,6 +972,7 @@ impl Bridge {
             "memory" => Ok(self.memory().await),
             "skills" => Ok(self.skills().await),
             "sessions" => Ok(self.sessions("", "").await),
+            "huddles" => Ok(self.huddles("").await),
             "usage" => Ok(self.usage()),
             "related" => Ok(self.related("", "", 20).await),
             "tree" => Ok(self.tree("").await),
@@ -1006,6 +1008,7 @@ impl Bridge {
                 "label": listing.label,
                 "version": listing.version,
                 "provenance": listing.provenance,
+                "queries": listing.queries,
             }))
             .collect::<Vec<_>>())
     }
@@ -13152,17 +13155,29 @@ mod tests {
                 responder,
             })
             .expect("the seat arrives");
-        for _ in 0..50 {
-            let approval = bridge.state(&attached)["approval"].clone();
+        // The seat crosses a channel and lands on the state read. The
+        // wait is bounded AND the bound names itself when it elapses:
+        // the 50 x 10 ms form this replaces exited silently, and the
+        // next call then failed with `NoSeat` — which read as a defect
+        // in the answer path rather than as a seat that had not landed
+        // yet under a loaded suite (KI-416).
+        let mut approval = Value::Null;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while std::time::Instant::now() < deadline {
+            approval = bridge.state(&attached)["approval"].clone();
             if approval.is_object() {
-                assert_eq!(
-                    approval["allowlistable"], false,
-                    "the seat must not offer a promise the writer refuses"
-                );
                 break;
             }
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
+        assert!(
+            approval.is_object(),
+            "the seat must stand within 10 s — the approval is {approval}"
+        );
+        assert_eq!(
+            approval["allowlistable"], false,
+            "the seat must not offer a promise the writer refuses"
+        );
         let answered = bridge
             .answer(&attached, "remember", &AnsweredBy::Desktop)
             .expect("the prompt is still answered");

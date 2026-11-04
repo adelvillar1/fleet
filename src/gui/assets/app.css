@@ -8976,3 +8976,151 @@ body[data-work="collapsed"] .work-list { display: none; }
   cursor: pointer;
 }
 .hh-distil:hover { border-color: var(--dsw-alias-accent); color: var(--dsw-alias-accent); }
+
+/* ------------------------------------------------------- a bundle's page
+   The mount is one frame and its head: the head says which bundle is
+   running, how it is trusted, and what its declared data path is; the
+   frame is the bundle's whole surface. The frame is sandboxed, so it
+   never shares this document's origin — the border is the only thing
+   the two have in common, which is why the head carries the tier chip
+   rather than the page. */
+.stage-bundle {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  padding: 22px 26px 20px;
+  background: var(--dsw-alias-page);
+}
+
+.bundle-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex: 0 0 auto;
+  padding: 0 0 14px;
+}
+
+.bundle-head .page-title {
+  margin: 3px 0 0;
+  font-family: var(--font-display);
+  font-size: 21px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+}
+
+.bundle-head .page-note {
+  margin: var(--space-2) 0 0;
+  max-width: 92ch;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.55;
+  color: var(--dsw-alias-ink-tertiary);
+}
+
+.bundle-acts {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 0 0 auto;
+  padding-top: 2px;
+}
+
+.bundle-relay {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  color: var(--dsw-alias-ink-tertiary);
+  padding: 3px 8px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--dsw-static-paper-500);
+  white-space: nowrap;
+}
+.bundle-relay[data-refused="yes"] {
+  color: var(--dsw-static-warn-on-light);
+  border-color: var(--dsw-static-warn-on-light);
+}
+.bundle-relay[hidden] { display: none; }
+
+.bundle-chip {
+  display: inline-block;
+  padding: 3px 9px;
+  border-radius: var(--radius-pill);
+  font: 600 9.5px/1.4 var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--dsw-alias-ink-tertiary);
+  border: 1px solid var(--dsw-static-paper-500);
+  background: transparent;
+}
+.bundle-chip[data-tier="untrusted"] {
+  color: var(--dsw-static-deepseek-600);
+  border-color: var(--dsw-static-deepseek-300);
+  background: rgba(148, 176, 236, 0.12);
+}
+.bundle-chip[data-tier="privileged"] {
+  color: var(--dsw-static-warn-on-light);
+  border-color: var(--dsw-static-warn-on-light);
+  background: rgba(122, 82, 8, 0.06);
+}
+.bundle-chip[hidden] { display: none; }
+
+.bundle-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  border: 1px solid var(--dsw-static-paper-600);
+  border-radius: var(--radius-lg);
+  background: var(--dsw-alias-surface);
+  overflow: hidden;
+}
+
+.bundle-frame {
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
+  border: 0;
+  display: block;
+  background: transparent;
+}
+
+/* A bundle that could not mount says why in the head's own language: a
+   named refusal with its reason, never an empty frame that reads as a
+   page still loading. */
+.bundle-refusal {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  margin: auto;
+  padding: var(--space-5) var(--space-6);
+  max-width: 74ch;
+  border: 1px solid var(--dsw-static-paper-500);
+  border-radius: var(--radius-md);
+  background: var(--dsw-alias-surface-raised);
+}
+.bundle-refusal-mark {
+  font: 600 15px/1 var(--font-mono);
+  color: var(--dsw-static-warn-on-light);
+  padding-top: 2px;
+}
+.bundle-refusal-head {
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--dsw-alias-ink);
+}
+.bundle-refusal-why {
+  margin: 6px 0 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--dsw-alias-ink-secondary);
+}
+
+@media (max-width: 900px) {
+  .stage-bundle { padding: 16px 14px 14px; }
+  .bundle-head { flex-direction: column; gap: var(--space-2); }
+}

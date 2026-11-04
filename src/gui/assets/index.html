@@ -705,6 +705,31 @@
   <main class="stage stage-board" id="panel-plugins" hidden>
     <div class="board" id="plugins-board"></div>
   </main>
+
+  <!-- A bundle's own page. The bridge serves a bundle on a CSP that refuses
+       framing, so the face cannot point a frame at it: it reads the page's
+       bytes and renders them in a sandboxed frame that never shares this
+       origin. The bundle's script runs, reaches nothing of the app's, and
+       its one path to the bridge is postMessage — answered only through the
+       plugin-query route, where the manifest's declared set is enforced. -->
+  <main class="stage stage-bundle" id="panel-bundle" hidden>
+    <header class="bundle-head">
+      <div>
+        <p class="page-eyebrow" id="bundle-eyebrow">a plugin</p>
+        <h1 class="page-title" id="bundle-title">the bundle</h1>
+        <p class="page-note" id="bundle-note"></p>
+      </div>
+      <div class="bundle-acts">
+        <!-- The relay's own tally, counted by the face: a refused query
+             is a number here, not a blank the page could read as zero. -->
+        <span class="bundle-relay" id="bundle-relay" hidden></span>
+        <span class="bundle-chip" id="bundle-chip"></span>
+        <button class="replay-button" id="bundle-reload" type="button"
+          title="re-render the bundle's page from the home">reload</button>
+      </div>
+    </header>
+    <div class="bundle-body" id="bundle-body"></div>
+  </main>
   <main class="stage stage-board stage-split" id="panel-bots" hidden>
     <nav class="section-rail" id="bots-rail" aria-label="bot sections"></nav>
     <div class="board" id="bots-board"></div>

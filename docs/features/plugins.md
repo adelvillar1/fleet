@@ -122,7 +122,13 @@ list/install/enable/disable/remove`, and the face's plugins surface
   same-origin, no network. Its data arrives only through the
   manifest's declared read-only queries, enforced bridge-side: an
   undeclared query is refused by name, and the bridge's
-  `/api/plugins/query` is the sandbox's whole data path.
+  `/api/plugins/query` is the sandbox's whole data path. The declared
+  set is checked twice — against the read-only vocabulary
+  (`READ_ONLY_QUERIES`) when the manifest parses, and against the
+  manifest's own set when a query is asked — and the vocabulary is the
+  bridge's, not the bundle's: `state, home, router, delegation, memory,
+  skills, sessions, huddles, usage, workspace-history, tree, related,
+  preview`.
 
 The ladder: **draft → installed** runs the static pass (a bundle that
 does not conform does not install); **installed → privileged** runs
@@ -131,6 +137,54 @@ the grant *and* the verdict. The registry records each promotion's
 event, verdict, and when. A generated draft is untrusted by
 construction, and nothing promotes anything by itself — the suite
 grades, the owner's act moves.
+
+## The mount
+
+A plugin's rail row is an address: pressing it puts `#/<name>` in the
+hash, and the face resolves that address to the bundle mount rather than
+to the conversation. One panel serves every bundle (`panel-bundle`) —
+the head names the bundle, its tier chip, and the declared queries it
+may ask; the body is the bundle's own page.
+
+The page does not ride a `src` at the bundle's route. The bundle route
+answers under the canvas CSP with `frame-ancestors 'none'` (a bundle is
+never framed by an outside page), so a frame pointed at
+`/plugins/<name>/` would be refused by the browser before it painted.
+The face reads the page's bytes instead and hands them to an
+`<iframe sandbox="allow-scripts" srcdoc=…>`: the script runs, the frame
+shares no origin with the face, has no forms, no popups and no network,
+and therefore cannot read this document or call the bridge itself.
+
+Its one data path is the **relay**. The page posts
+`{fleetPlugin, query, seq}` to its parent; the face checks that
+`event.source` is the frame it mounted and that the name is the bundle
+it is showing, then asks `POST /api/plugins/query` and posts the answer
+(or the bridge's refusal, word for word) back with the same `seq`. The
+relay counts what it relayed and the head shows the tally — `n asked ·
+n answered · n refused` — so a page that is up and asking is visible as
+asking, and a refusal is a number rather than a blank the page could
+read as a zero.
+
+Two honesty rules ride the mount. A bundle that is not installed, or is
+installed and disabled, renders a **named refusal** with its reason
+rather than an empty frame that reads as a page still loading. And a
+bundle that asks something its manifest did not declare still reaches
+the bridge — the relay does not decide — and the bridge refuses it by
+name, so the sandbox's boundary stays enforced in the one place that
+owns it.
+
+## The telemetry bundle
+
+`plugins/telemetry/` in this repository is the worked example: a
+single self-contained page that draws fleet's own pipeline as eight
+strata (the door, recall, skills, the route, the model, the tools, the
+rooms, the corpus) over a live canvas spine whose density follows the
+real counts, with a right column naming the entities of the focused
+stratum and a footer river of the session log. It declares
+`state, memory, skills, sessions, router, delegation, huddles, usage`
+and asks nothing else; its light set polls on its own clock and the
+heavy set every fifth turn, one read in flight at a time so a slow
+answer delays the next turn instead of stacking a second read on it.
 
 ## The evaluation suite
 
