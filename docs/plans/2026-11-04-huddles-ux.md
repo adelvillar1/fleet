@@ -202,7 +202,10 @@ members: the room says what a huddle is.
       service restarted (pid 47679, 127.0.0.1:3080); the served `/app.js`
       carries `room-head`, `composer-to` and `deliverables`, and the served
       `/` carries the room head block, the composer's `to` chip and the
-      shelf; `/api/state` on the live home carries `deliverables`.
+      shelf; `/api/state` on the live home carries `deliverables`. The dmg
+      is `target/release/bundle/dmg/fleet_0.3.0-beta_aarch64.dmg` (10.21
+      MiB, 10:51) and its packaged `fleet-desktop` carries `room-head`
+      (7 occurrences), `paintRooms` (9) and `composer-to`.
 
 ## Out of scope
 
