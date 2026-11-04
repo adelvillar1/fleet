@@ -214,7 +214,13 @@ impl DeskProject {
     /// The evidence status the shelf rows carry: open refusals and the
     /// contested count, read off the store.
     pub fn evidence_status(&self) -> (usize, usize) {
-        (self.refusals.len(), self.claims.iter().filter(|c| c.verdict == ClaimVerdict::Contested).count())
+        (
+            self.refusals.len(),
+            self.claims
+                .iter()
+                .filter(|c| c.verdict == ClaimVerdict::Contested)
+                .count(),
+        )
     }
 }
 
@@ -231,7 +237,10 @@ pub fn project_path(home: &Path, slug: &str) -> PathBuf {
 
 /// The digest path for a bound project key — one file per deliverable.
 pub fn digest_path(home: &Path, key: &str, slug: &str) -> PathBuf {
-    desk_root(home).join(DIGESTS_DIR).join(key).join(format!("{slug}.md"))
+    desk_root(home)
+        .join(DIGESTS_DIR)
+        .join(key)
+        .join(format!("{slug}.md"))
 }
 
 /// Whether a desk project exists.
@@ -408,7 +417,10 @@ pub fn check_assertion(assertion: &str, claims: &[Claim]) -> Result<Claim, Unsou
 }
 
 /// Check a whole draft: every assertion's outcome, in order.
-pub fn check_draft(assertions: &[String], claims: &[Claim]) -> Vec<Result<Claim, UnsourcedAssertion>> {
+pub fn check_draft(
+    assertions: &[String],
+    claims: &[Claim],
+) -> Vec<Result<Claim, UnsourcedAssertion>> {
     assertions
         .iter()
         .map(|assertion| check_assertion(assertion, claims))
@@ -434,7 +446,11 @@ pub fn digest_markdown(desk: &DeskProject) -> String {
     out.push_str(&format!("updated: {}\n", desk.updated));
     out.push_str(&format!("claim: {}\n", desk.claim));
     let (refusals, contested) = desk.evidence_status();
-    let asserted = desk.claims.iter().filter(|c| c.verdict == ClaimVerdict::Asserted).count();
+    let asserted = desk
+        .claims
+        .iter()
+        .filter(|c| c.verdict == ClaimVerdict::Asserted)
+        .count();
     out.push_str(&format!(
         "claims: {} asserted, {contested} contested, {refusals} open refusal(s)\n",
         asserted
@@ -572,8 +588,7 @@ mod tests {
     fn a_second_project_with_a_lived_slug_is_refused_by_name() {
         let home = temp_home("collision");
         create(&home, "landing-copy", "one", "a", "c", vec![], None).unwrap();
-        let error = create(&home, "landing-copy", "two", "a", "c", vec![], None)
-            .unwrap_err();
+        let error = create(&home, "landing-copy", "two", "a", "c", vec![], None).unwrap_err();
         assert!(error.contains("already exists"), "{error}");
         assert!(error.contains("supersede"), "{error}");
     }
@@ -601,15 +616,16 @@ mod tests {
     #[test]
     fn the_document_law_admits_a_sourced_assertion() {
         let desk = sample();
-        let claim = check_assertion("the fold earns its keep on every screen", &desk.claims).unwrap();
+        let claim =
+            check_assertion("the fold earns its keep on every screen", &desk.claims).unwrap();
         assert_eq!(claim.source, "sources/brief-source.txt");
     }
 
     #[test]
     fn the_document_law_refuses_and_names_the_near_miss() {
         let desk = sample();
-        let error = check_assertion("the footer converts at four percent", &desk.claims)
-            .unwrap_err();
+        let error =
+            check_assertion("the footer converts at four percent", &desk.claims).unwrap_err();
         assert_eq!(error.near_miss, "The fold earns its keep on every screen.");
         assert!(error.near_miss_source.contains("brief-source"));
         assert!(error.overlap < ASSERTION_MATCH_FLOOR);
@@ -649,7 +665,10 @@ mod tests {
     /// desk's claim pass makes two shapes of call — the batched
     /// narrowing (its state carries `[SEGMENT`) and the per-segment
     /// kind choice — and the stub answers each in its own voice.
-    fn stub_by_marker(routes: Vec<(&'static str, String)>, default: String) -> (u16, Arc<Mutex<Vec<String>>>) {
+    fn stub_by_marker(
+        routes: Vec<(&'static str, String)>,
+        default: String,
+    ) -> (u16, Arc<Mutex<Vec<String>>>) {
         let routes: Arc<Vec<(&'static str, String)>> = Arc::new(routes);
         let default = Arc::new(default);
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -667,8 +686,10 @@ mod tests {
                     }
                     request.extend_from_slice(&chunk[..read]);
                     if request.windows(4).any(|w| w == b"\r\n\r\n") {
-                        let head_end = request.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
-                        let head = String::from_utf8_lossy(&request[..head_end]).to_ascii_lowercase();
+                        let head_end =
+                            request.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
+                        let head =
+                            String::from_utf8_lossy(&request[..head_end]).to_ascii_lowercase();
                         let declared: usize = head
                             .lines()
                             .find_map(|line| line.strip_prefix("content-length:"))
@@ -681,7 +702,10 @@ mod tests {
                 }
                 let request = String::from_utf8_lossy(&request).into_owned();
                 if let Some(body_at) = request.find("\r\n\r\n") {
-                    seen_writer.lock().unwrap().push(request[body_at + 4..].to_string());
+                    seen_writer
+                        .lock()
+                        .unwrap()
+                        .push(request[body_at + 4..].to_string());
                 }
                 let body = routes
                     .iter()
@@ -761,7 +785,11 @@ Independent labs measured the load at ninety milliseconds.";
         assert_eq!(claims[2].verdict, ClaimVerdict::Contested);
         assert!(claims.iter().all(|c| c.source == "sources/brief.txt"));
         // No batched call ran: a short source carries every segment.
-        assert!(seen.lock().unwrap().iter().all(|body| !body.contains("[SEGMENT")));
+        assert!(seen
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|body| !body.contains("[SEGMENT")));
     }
 
     #[test]
@@ -786,14 +814,126 @@ Independent labs measured the load at ninety milliseconds.";
         let verifier = glide_at(port);
         let claims = claims_from_source(&client, &verifier, "sources/long.txt", &text).unwrap();
         let bodies = seen.lock().unwrap();
-        let batched_calls = bodies.iter().filter(|body| body.contains("[SEGMENT")).count();
+        let batched_calls = bodies
+            .iter()
+            .filter(|body| body.contains("[SEGMENT"))
+            .count();
         assert_eq!(batched_calls, 3, "30 segments narrow in 3 chunks of <= 14");
         // Only the narrowed survivors cost a kind call: two per chunk
         // (seg-0 and seg-1 clear the batched floor), so six.
-        let kind_calls = bodies.iter().filter(|body| !body.contains("[SEGMENT")).count();
+        let kind_calls = bodies
+            .iter()
+            .filter(|body| !body.contains("[SEGMENT"))
+            .count();
         assert_eq!(kind_calls, 6, "{kind_calls}");
         assert_eq!(claims.len(), 6);
         assert!(claims.iter().all(|c| c.verdict == ClaimVerdict::Asserted));
+    }
+    #[test]
+    fn parse_coverage_reads_the_provider_keyed_heads() {
+        let answer = serde_json::json!({
+            "verdict": "pass",
+            "reason": "the lane's own reading",
+            "answers": {
+                "glide": {
+                    "coverage": {"score": 4, "confidence": 0.9},
+                    "material_gap": {"noul": 0.15},
+                    "off_brief": {"noul": 0.05}
+                }
+            }
+        });
+        let coverage = parse_coverage(&answer).unwrap();
+        assert_eq!(coverage.score, 4.0);
+        assert!(!coverage.material_gap);
+        assert!(!coverage.off_brief);
+        assert!(!coverage.escalated);
+        assert_eq!(coverage.provider.as_deref(), Some("glide"));
+    }
+
+    #[test]
+    fn an_escalated_coverage_stays_unresolved_and_names_its_reason() {
+        let answer = serde_json::json!({
+            "verdict": "escalate",
+            "reason": "a head answered under its floor",
+            "answers": {"glide": {"coverage": {"score": 2, "confidence": 0.4}}}
+        });
+        let coverage = parse_coverage(&answer).unwrap();
+        assert!(coverage.escalated);
+        assert!(coverage.reason.contains("floor"));
+        // A noul the answer never carried reads as a gap — the named
+        // absence, never a clean bill.
+        assert!(coverage.material_gap);
+    }
+
+    #[test]
+    fn a_malformed_answer_is_a_named_error() {
+        let error = parse_coverage(&serde_json::json!({"verdict": "pass"})).unwrap_err();
+        assert!(error.contains("answers"), "{error}");
+    }
+
+    #[test]
+    fn the_coverage_state_carries_the_brief_first_and_skips_vetoed() {
+        let mut desk = sample();
+        desk.claims.push(Claim {
+            text: "a vetoed non-claim".to_string(),
+            source: "sources/other.txt".to_string(),
+            sentence: "x".to_string(),
+            confidence: 0.2,
+            kind: ClaimKind::Background,
+            verdict: ClaimVerdict::Vetoed,
+        });
+        let state = coverage_state(&desk);
+        assert!(state.starts_with("BRIEF"));
+        assert!(state.contains("claim: the fold earns its keep"));
+        assert!(state.contains("1 asserted, 0 contested, 1 vetoed"));
+        assert!(!state.contains("a vetoed non-claim"));
+        assert!(state.len() <= COVERAGE_STATE_CHARS);
+    }
+
+    #[tokio::test]
+    async fn the_coverage_beat_refuses_over_budget_before_it_opens() {
+        let home = temp_home("budget");
+        crate::calib::record_spend(&home, DESK_SPEND_LEDGER, Some(DESK_COVERAGE_BUDGET_USD_DAY));
+        let log = Arc::new(Mutex::new(crate::judge::CountingLog::default()));
+        let error = coverage_ask(
+            &crate::judge::LaneSource::Counting(log.clone()),
+            &home,
+            &sample(),
+        )
+        .await
+        .unwrap_err();
+        assert!(error.contains("budget"), "{error}");
+        // Refused before the lane: no open, no ask.
+        assert!(
+            log.lock().unwrap().events.is_empty(),
+            "{:?}",
+            log.lock().unwrap().events
+        );
+    }
+
+    #[tokio::test]
+    async fn the_coverage_beat_opens_asks_and_closes_without_spending_on_a_failed_ask() {
+        let home = temp_home("counting");
+        let log = Arc::new(Mutex::new(crate::judge::CountingLog::default()));
+        let error = coverage_ask(
+            &crate::judge::LaneSource::Counting(log.clone()),
+            &home,
+            &sample(),
+        )
+        .await
+        .unwrap_err();
+        // The counting lane's scripted answer is the workload shape, not
+        // the coverage shape — the parse names it, and no spend lands.
+        assert!(
+            error.contains("coverage") || error.contains("answers"),
+            "{error}"
+        );
+        let events = log.lock().unwrap().events.clone();
+        assert_eq!(events, vec!["open", "ask", "close"], "{events:?}");
+        assert_eq!(
+            crate::calib::sidecar_spend(&home, DESK_SPEND_LEDGER, "2026-11-04"),
+            0.0
+        );
     }
 
     #[test]
@@ -835,10 +975,7 @@ pub const CLAIM_KINDS: [&str; 4] = ["claim", "support", "background", "boilerpla
 /// One choice head's probabilities, by label. A missing or malformed
 /// answer is `None` — the named absence, and the caller reads it as a
 /// decline rather than inventing a number.
-fn choice_probabilities(
-    answers: &serde_json::Value,
-    id: &str,
-) -> Option<Vec<(String, f64)>> {
+fn choice_probabilities(answers: &serde_json::Value, id: &str) -> Option<Vec<(String, f64)>> {
     let probabilities = answers.get(id)?.get("probabilities")?.as_object()?;
     let mut pairs: Vec<(String, f64)> = probabilities
         .iter()
@@ -870,7 +1007,13 @@ fn narrow_claims(
         let state = chunk
             .iter()
             .enumerate()
-            .map(|(i, segment)| format!("[SEGMENT {}] {}", chunk_at * CLAIM_BATCH_CHUNK + i, segment.text))
+            .map(|(i, segment)| {
+                format!(
+                    "[SEGMENT {}] {}",
+                    chunk_at * CLAIM_BATCH_CHUNK + i,
+                    segment.text
+                )
+            })
             .collect::<Vec<_>>()
             .join("\n\n");
         let mut questions = serde_json::Map::new();
@@ -973,4 +1116,210 @@ pub fn claims_from_source(
         });
     }
     Ok(claims)
+}
+
+// --- the coverage beat -------------------------------------------------------
+//
+// One sys1 judgment over the brief and the claim set: does the evidence
+// carry the claim? The vendored `desk_coverage` task carries the heads
+// (an anchored coverage score, the material-gap noul, the off-brief
+// noul); the ask rides the judge beat's own lane session — one lane
+// source, one session, not a second loop — and the spend rides the
+// same home-side ledger pattern under the desk's own name.
+
+/// The vendored task the coverage beat asks.
+pub const DESK_COVERAGE_TASK: &str = "desk_coverage";
+
+/// The daily cap on the coverage beat's spend, in USD — the judge
+/// beat's own shape: a floor under the owner's wallet, not a target.
+pub const DESK_COVERAGE_BUDGET_USD_DAY: f64 = 0.05;
+
+/// The per-ask spend a budget check reserves before it asks — the
+/// judge beat's five-times rationale, mirrored.
+pub const DESK_COVERAGE_ESTIMATED_ASK_USD: f64 = 0.0002;
+
+/// The config seam that can lower the daily budget, never loosen it.
+pub const DESK_COVERAGE_BUDGET_ENV: &str = "FLEET_DESK_BUDGET_USD_DAY";
+
+/// The desk's own home-side spend ledger — its own name, so it never
+/// shares a line with the judge beat's ledger.
+pub const DESK_SPEND_LEDGER: &str = ".fleet-desk-spend.jsonl";
+
+/// The state text's bound inside the ask — the judge beat's evidence
+/// bound, mirrored: the claim set is built from bounded fields, so
+/// this is a ceiling rather than a truncation point.
+pub const COVERAGE_STATE_CHARS: usize = 4_000;
+
+/// The effective daily budget: the constant, lowered by the config
+/// seam when the owner set one. A seam value that does not parse, is
+/// not finite, or is above the constant is ignored.
+pub fn desk_budget_usd_day() -> f64 {
+    match std::env::var(DESK_COVERAGE_BUDGET_ENV) {
+        Ok(value) => match value.trim().parse::<f64>() {
+            Ok(lower)
+                if lower.is_finite() && (0.0..DESK_COVERAGE_BUDGET_USD_DAY).contains(&lower) =>
+            {
+                lower
+            }
+            _ => DESK_COVERAGE_BUDGET_USD_DAY,
+        },
+        Err(_) => DESK_COVERAGE_BUDGET_USD_DAY,
+    }
+}
+
+/// The coverage beat's answer, parsed or named. An escalated verdict
+/// means the lane would not assert: the coverage reads as UNRESOLVED —
+/// the gap question stays open by name, and no number pretends.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Coverage {
+    /// The anchored 1–5 coverage score the task's legend carries.
+    pub score: f64,
+    /// A material sub-question of the brief's claim the claim set does
+    /// not answer.
+    pub material_gap: bool,
+    /// Claims the brief did not ask for.
+    pub off_brief: bool,
+    /// The lane escalated: the judgment did not assert.
+    pub escalated: bool,
+    /// The provider that answered, as the answer carries it.
+    pub provider: Option<String>,
+    /// The lane's own reason, for the review surface.
+    pub reason: String,
+}
+
+/// Parse one `sys1_classify` answer into the beat's coverage. The
+/// provider key varies with the lane's routing, so the heads are read
+/// under the answer's first provider.
+pub fn parse_coverage(answer: &serde_json::Value) -> Result<Coverage, String> {
+    let verdict = answer
+        .get("verdict")
+        .and_then(|v| v.as_str())
+        .unwrap_or("error");
+    let escalated = verdict != "pass";
+    let reason = answer
+        .get("reason")
+        .and_then(|r| r.as_str())
+        .unwrap_or("")
+        .to_string();
+    let answers = answer
+        .get("answers")
+        .and_then(|a| a.as_object())
+        .ok_or_else(|| "the lane's answer carries no answers map".to_string())?;
+    let (provider, heads) = answers
+        .iter()
+        .next()
+        .ok_or_else(|| "the lane's answer carries no provider's heads".to_string())?;
+    let heads = heads
+        .as_object()
+        .ok_or_else(|| "the lane's provider answer is not a head map".to_string())?;
+    let score = heads
+        .get("coverage")
+        .and_then(|h| h.get("score"))
+        .and_then(|s| s.as_f64());
+    let gap = heads.get("material_gap").and_then(crate::extract::p_true);
+    let off = heads.get("off_brief").and_then(crate::extract::p_true);
+    if escalated {
+        return Ok(Coverage {
+            score: score.unwrap_or(0.0),
+            material_gap: gap.is_none_or(|p| p >= 0.5),
+            off_brief: off.is_none_or(|p| p >= 0.5),
+            escalated: true,
+            provider: Some(provider.clone()),
+            reason,
+        });
+    }
+    let score = score.ok_or_else(|| "the passing answer carries no coverage score".to_string())?;
+    Ok(Coverage {
+        score,
+        material_gap: gap.is_none_or(|p| p >= 0.5),
+        off_brief: off.is_none_or(|p| p >= 0.5),
+        escalated: false,
+        provider: Some(provider.clone()),
+        reason,
+    })
+}
+
+/// The ask's state text: the brief, then the claim set's own account —
+/// each carried claim with its confidence and its source, the floors'
+/// verdicts included. Bounded at the ceiling; the brief rides first
+/// because the judgment grades the claim set AGAINST it.
+pub fn coverage_state(desk: &DeskProject) -> String {
+    let asserted = desk
+        .claims
+        .iter()
+        .filter(|c| c.verdict == ClaimVerdict::Asserted)
+        .count();
+    let contested = desk
+        .claims
+        .iter()
+        .filter(|c| c.verdict == ClaimVerdict::Contested)
+        .count();
+    let vetoed = desk
+        .claims
+        .iter()
+        .filter(|c| c.verdict == ClaimVerdict::Vetoed)
+        .count();
+    let mut out = String::new();
+    out.push_str("BRIEF\n");
+    out.push_str(&format!("audience: {}\n", desk.audience));
+    out.push_str(&format!("claim: {}\n", desk.claim));
+    out.push_str(&format!(
+        "\nCLAIM SET\n{asserted} asserted, {contested} contested, {vetoed} vetoed\n"
+    ));
+    for claim in &desk.claims {
+        if claim.verdict == ClaimVerdict::Vetoed {
+            continue;
+        }
+        out.push_str(&format!(
+            "- {} (p {:.2}, {}, {})\n",
+            claim.text,
+            claim.confidence,
+            claim.verdict == ClaimVerdict::Asserted,
+            claim.source
+        ));
+    }
+    crate::extract::take_chars(&out, COVERAGE_STATE_CHARS).to_string()
+}
+
+/// The coverage beat: budget check by name, one bounded ask on the
+/// judge beat's lane session, the answer parsed or named, the spend
+/// recorded. A refused budget or a failed ask is a named absence — the
+/// gap question stays open, and the deliverable's outline renders it as
+/// one.
+pub async fn coverage_ask(
+    source: &crate::judge::LaneSource,
+    home: &Path,
+    desk: &DeskProject,
+) -> Result<Coverage, String> {
+    let today = crate::calib::stamp();
+    let today = today.get(..10).unwrap_or(&today).to_string();
+    let spent = crate::calib::sidecar_spend(home, DESK_SPEND_LEDGER, &today);
+    if spent + DESK_COVERAGE_ESTIMATED_ASK_USD > desk_budget_usd_day() {
+        return Err(format!(
+            "the desk's coverage beat is over its daily budget: {:.4} spent of {:.2} — the cap is a floor under the wallet, and the ask is refused by name",
+            spent,
+            desk_budget_usd_day()
+        ));
+    }
+    let mut session = crate::judge::LaneSession::open(
+        source,
+        "sys1",
+        crate::judge::JUDGE_TOOL,
+        DESK_COVERAGE_TASK,
+    )
+    .await?;
+    let answer = session.ask(&coverage_state(desk)).await;
+    let result = match answer {
+        Ok(answer) => parse_coverage(&answer),
+        Err(error) => Err(error),
+    };
+    session.close().await;
+    if result.is_ok() {
+        crate::calib::record_spend(
+            home,
+            DESK_SPEND_LEDGER,
+            Some(DESK_COVERAGE_ESTIMATED_ASK_USD),
+        );
+    }
+    result
 }

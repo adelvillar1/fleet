@@ -20,7 +20,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .types import Head, Task, make_choice, make_noul
+from .types import Head, Task, make_choice, make_noul, make_score
 
 # Common label sets (kept in one place so all tasks agree).
 DIFF_TYPE_LABELS = ["feat", "fix", "refactor", "docs", "test", "chore", "deps", "style"]
@@ -709,6 +709,51 @@ _CURATE = Task(
 )
 
 
+
+_DESK_COVERAGE = Task(
+    id="desk_coverage",
+    description=(
+        "Desk coverage judgment: does a brief's verified claim set carry "
+        "the evidence the brief's claim needs? The input text is a "
+        "two-part pair: the brief (audience, then the claim it asks the "
+        "deliverable to make), then the claim set's own account - each "
+        "claim with its confidence and its source, the floors' verdicts "
+        "included. What the sources do not answer is a named gap, never "
+        "a filled hole: this task is the judgment that names it."
+    ),
+    heads=[
+        make_score(
+            "A brief and its claim set are given. How completely does the "
+            "claim set carry the evidence the brief's claim needs? Anchor "
+            "on the count: a claim set that answers every material "
+            "sub-question the claim implies scores 5; one that answers "
+            "most of them scores 4; half scores 3; a scattered minority "
+            "scores 2; one that answers nothing the claim needs scores 1.",
+            id="coverage",
+            legend=[
+                "1 - nothing the claim needs is answered",
+                "2 - a scattered minority of the claim's needs answered",
+                "3 - about half the claim's needs answered",
+                "4 - most of the claim's needs answered",
+                "5 - every material sub-question the claim implies answered",
+            ],
+        ),
+        make_noul(
+            "The same pair. Is a material sub-question of the brief's "
+            "claim left unanswered by the claim set - something a reader "
+            "of the deliverable would ask that no claim answers?",
+            id="material_gap",
+        ),
+        make_noul(
+            "The same pair. Does the claim set carry claims the brief "
+            "did not ask for - material beside the brief's claim rather "
+            "than for it?",
+            id="off_brief",
+        ),
+    ],
+)
+
+
 # ── registry + detection ─────────────────────────────────────────────────────
 
 _TASKS: dict[str, Task] = {}
@@ -732,6 +777,7 @@ for _t in (
     _ROUTE,
     _TOOL_ROUTE,
     _CURATE,
+    _DESK_COVERAGE,
 ):
     register_task(_t)
 

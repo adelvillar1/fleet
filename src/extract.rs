@@ -529,7 +529,6 @@ impl ExtractClient {
             .collect())
     }
 
-
     /// One systemone call's answers, raw — the seam the desk's claim
     /// pass composes when a head is a choice rather than a noul: the
     /// call and the answer envelope are the one wire; the head shapes
@@ -936,7 +935,7 @@ fn quote_at(state: &str, start: usize, end: usize) -> String {
 }
 
 /// Take at most `cap` characters without splitting one.
-fn take_chars(text: &str, cap: usize) -> &str {
+pub fn take_chars(text: &str, cap: usize) -> &str {
     if text.chars().count() <= cap {
         return text;
     }
