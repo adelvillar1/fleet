@@ -119,10 +119,26 @@ the same run path and asks the same seats.
    tool completing the goal, the run ending naturally; then a
    delegated child showing its own cap still set; every observation
    quoted.
-8. **Pin and gate**: the harness cases ride the face work; the gate
-   runs whole before any push carrying code — `cargo fmt --all
-   --check`, `cargo clippy --all-targets -- -D warnings`,
-   `cargo build --release`, `cargo test`, exit codes read directly.
+8. **Supervision becomes machinery** (the owner's ruling: a
+   non-delivering task is a failed node the parent completes or
+   kills-and-respawns): a child bound to a plan node dispatches the
+   node on spawn; a child ending `MaxTurns` or `Failed` **fails or
+   demotes the node automatically** with the outcome as the named
+   reason — the vocabulary exists (`graph.fail`, `graph.demote`,
+   `settle`, where a fact outranks a failed report) but today the
+   transition is left to the parent's model noticing text. The
+   parent's rendered result names the node's new state.
+9. **Absorb or respawn — the model chooses, the machinery bounds.**
+   A demoted node is re-offered by `admit_now` (already built); a
+   per-node re-dispatch ceiling (2) bounds the respawn loop — beyond
+   it the node stays failed and the parent's remaining options are
+   absorb the work itself or surface the node to the owner by name.
+   The quota-fire law moves down a level: the main loop is uncapped,
+   a runaway *branch* is not.
+10. **Pin and gate**: the harness cases ride the face work; the gate
+    runs whole before any push carrying code — `cargo fmt --all
+    --check`, `cargo clippy --all-targets -- -D warnings`,
+    `cargo build --release`, `cargo test`, exit codes read directly.
 
 ## Acceptance criteria
 
@@ -163,6 +179,22 @@ the same run path and asks the same seats.
       driving past turn 100 unattended, the tool completing the goal,
       the natural end; a delegated child showing its own cap; every
       observation quoted in the recap.
+- [ ] **C12 — the supervision wiring.** A child bound to a plan node
+      dispatches the node on spawn; a child ending `MaxTurns` or
+      `Failed` marks the node automatically — `fail` or `demote` with
+      the outcome as the reason — and the parent's rendered result
+      names the node's state; `settle` still verifies on landed facts
+      regardless of the mark. Pinned by tests over the child-end
+      path.
+- [ ] **C13 — the respawn bound.** A per-node re-dispatch ceiling
+      (2): beyond it the node stays failed, and the parent's options
+      are absorb or surface the node to the owner by name — the
+      quota-fire law at the node level, pinned by a test driving the
+      ceiling.
+- [ ] **C14 — the seam surfaces.** The plan graph's card names the
+      failed / demoted nodes with their reasons, and the parent's
+      result names the choice taken (absorbed / respawned /
+      surfaced). Pinned by harness cases.
 - [ ] **C11 — the gate.** fmt, clippy `-D warnings`, release build,
       `cargo test` — exit codes read directly, the whole suite.
 
@@ -172,7 +204,11 @@ the same run path and asks the same seats.
   declaration and handling, the `max-turns` event's removal from the
   main path.
 - `src/subagents.rs` — the child bound's config source
-  (`delegation.max_turns`), the uncapped-parent path pinned.
+  (`delegation.max_turns`), the uncapped-parent path pinned, and the
+  supervision wiring: child spawn dispatches the bound node, child
+  end marks it, the re-dispatch ceiling.
+- `src/plan_graph.rs` — the demote/respawn helpers' call sites and
+  the ceiling's home.
 - `src/route.rs` — the clamp's removal from the main path; the
   delegation value's read.
 - `src/settings.rs` — the settings' move.
@@ -244,3 +280,7 @@ cap holding; the receipt without a cap card.
 - **Delegation's uncapped-parent path goes from rare to always** —
   the `None` branch is the one every delegation now takes; its tests
   (C2/C8) are what make that safe.
+- **The respawn ceiling is a judgment**: too low and a hard node
+  surfaces to the owner prematurely; too high and a doomed node
+  burns child budgets. Two is the starting number, named in code
+  like the floors — the calibration stream is where it gets fit.
