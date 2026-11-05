@@ -3345,4 +3345,67 @@ mod tests {
             Some("drops-the-row")
         );
     }
+    #[test]
+    fn the_house_family_routes_by_shape() {
+        // The house skills (the 2026-11-05 plan) carry shapes from the
+        // one vocabulary, so a run's instruction routes them without
+        // naming directories. The real canonical library is the
+        // machine's; the pin builds the family inline and proves the
+        // routing the library rides.
+        let family: Vec<(&str, &str)> = vec![
+            ("house-right-fixes", "change, build"),
+            ("house-evidence-discipline", "docs, analysis, document"),
+            ("house-declaration-is-not-execution", "change, build"),
+            ("house-load-sensitive-tests", "change, build"),
+            ("house-mockups-first", "rendering, presentation, document"),
+            ("house-immediacy", "change, rendering"),
+        ];
+        let library: Vec<Skill> = family
+            .iter()
+            .map(|(name, shapes)| {
+                let text = format!(
+                    "---\nname: {name}\ndescription: the house lesson {name}\nshapes: {shapes}\n---\n\nbody"
+                );
+                live_skill(
+                    parse_document(&text).unwrap(),
+                    name,
+                    PathBuf::from(format!("/x/{name}")),
+                    None,
+                )
+                .unwrap()
+            })
+            .collect();
+        // A change-shaped instruction routes the change-carrying family.
+        let (shape, skills) =
+            select_for_query("a refactor that should have carried its context", &library);
+        assert_eq!(shape, Some("change"));
+        assert!(
+            skills.iter().any(|s| s.name == "house-right-fixes"),
+            "{skills:?}"
+        );
+        // A docs-shaped one routes the evidence discipline.
+        // "primary source" names no shape term; the docs keyword rides
+        // in the phrase that follows.
+        // "document" precedes "docs" in the appended kinds, so the
+        // order rule routes the document kind — the house skill
+        // declares both, so the discovery is the same either way.
+        let (shape, skills) =
+            select_for_query("a document claim that needs its primary source", &library);
+        assert_eq!(shape, Some("document"));
+        assert!(
+            skills
+                .iter()
+                .any(|s| s.name == "house-evidence-discision"
+                    || s.name == "house-evidence-discipline"),
+            "{skills:?}"
+        );
+        // A rendering-shaped one routes the mockups skill.
+        let (shape, skills) =
+            select_for_query("the css layout of a surface to draw and measure", &library);
+        assert_eq!(shape, Some("rendering"));
+        assert!(
+            skills.iter().any(|s| s.name == "house-mockups-first"),
+            "{skills:?}"
+        );
+    }
 }

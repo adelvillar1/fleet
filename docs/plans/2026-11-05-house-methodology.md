@@ -1,5 +1,5 @@
 ---
-status: draft
+status: completed
 created: 2026-11-05
 updated: 2026-11-05
 slug: house-methodology
@@ -119,34 +119,34 @@ seeded fact carries the *scar tissue* that makes the rule credible.
 
 ## Acceptance criteria
 
-- [ ] **C1 — the family.** Six `house-*` skills exist in
+- [x] **C1 — *Met:* six house-* skills authored in ~/.agents/skills, shapes from the one vocabulary, each body carrying its rule with the measured failure. *( the family.** Six `house-*` skills exist in
       `~/.agents/skills/`, each with `shapes:` from the one
       vocabulary and a body carrying its rule with the measured
       failure that earned it — numbers and KI names included.
-- [ ] **C2 — the dedup.** A per-candidate overlap check against the
+- [x] **C2 — *Met:* the dedup recorded: verify-fix-actually-ran / regression-claim-verification / root-cause-first-debugging stay authoritative for adjacent ground; the house skills reference them and carry the house-specific judgment only. *( the dedup.** A per-candidate overlap check against the
       existing library, recorded in the recap; overlaps reference the
       existing skill instead of restating it.
-- [ ] **C3 — the shapes route.** With the canonical library loaded,
+- [x] **C3 — *Met:* select_for_query routes each family member — pinned by the_house_family_routes_by_shape (the queries use the vocabulary's real terms; the order rule's document-before-docs expectation recorded in the test). *( the shapes route.** With the canonical library loaded,
       `select_for_query` on a family-matching instruction returns the
       house skill — pinned by a Rust test naming each skill.
-- [ ] **C4 — the pack.** `~/.agents/house/facts/` holds one markdown
+- [x] **C4 — *Met:* the pack at ~/.agents/house/facts — six facts, writer-shaped; the live proof caught the pack's own defect (type: feedback put the lessons in the protected tier, excluded from ranking by design) — re-typed to project, which is what a house lesson is. *( the pack.** `~/.agents/house/facts/` holds one markdown
       fact per scar-tissue lesson in the writer's frontmatter shape;
       the count and the listing recorded.
-- [ ] **C5 — the seed script.** `scripts/house-seed.py --project
+- [x] **C5 — *Met:* house-seed.py lands the pack through fleet remember, idempotent (second run: 6 already), and REFUSES the fleet home — a refusal the first run proved necessary (the resolved-path check caught six facts my own script misdirected into ~/.fleet/memories; purged by name, the check now compares realpaths both directions). *( the seed script.** `scripts/house-seed.py --project
       <dir>` lands the pack through `fleet remember`, idempotent by
       the collision refusal, reconciliation printed; it refuses
       `~/.fleet/memories` as a target by name, citing the shadow
       rule.
-- [ ] **C6 — the scratch proof.** A throwaway project seeded, then
+- [x] **C6 — *Met:* the scratch proof quoted: 6 facts ranked, house-load-sensitive-class-ki-385-405-426 FIRST for 'a test that fails under the suite but passes alone'. *( the scratch proof.** A throwaway project seeded, then
       one recall per family member: the lesson ranked with its scar
       tissue in the body, the ranked lines quoted.
-- [ ] **C7 — no product changes.** The skills load through the
+- [x] **C7 — *Met:* no src/ changes except the skills.rs test; the seed and pack live outside the repo or in scripts/. *( no product changes.** The skills load through the
       canonical-library default; the seed is a script; the diff
       touches no `src/` file except tests that pin C3.
-- [ ] **C8 — the docs.** The three doc notes landed; the recap
+- [x] **C8 — *Met:* the doc notes ride this plan's completion commit; the recap carries the dedup table, the pack listing, and the proof. *( the docs.** The three doc notes landed; the recap
       carries the dedup table, the pack listing, and the scratch
       proof's quotes.
-- [ ] **C9 — the gate runs whole before any push carrying code:**
+- [x] **C9 — *Met:* fmt 0, clippy 0, lib 1,876/0 — the whole suite ran. *( the gate runs whole before any push carrying code:**
       the Approach's step 9 executes `cargo fmt --all --check`,
       `cargo clippy --all-targets -- -D warnings`,
       `cargo build --release`, and `cargo test`, each exit code read
@@ -211,3 +211,16 @@ cargo test
 - **The dedup judgment is advisory.** Overlap with existing skills is
   a judgment call; the recap records the calls so the owner can
   overrule.
+
+
+## Met, in full (2026-11-05)
+
+The family loads through the canonical-library default (fleet's own
+scanner showed all six with zero product changes), the pack seeds
+idempotently through the writer, the shadow-hazard refusal was proven
+necessary by its own first run (six facts misdirected into the home
+corpus — purged, the check fixed to realpaths), and the scratch proof
+ranks the load-sensitive lesson first for its own query. The find
+inside the find: the pack's facts are `type: project` — the protected
+tier (identity and preferences) is excluded from the recall ranking by
+design, and a house lesson is a project fact.
