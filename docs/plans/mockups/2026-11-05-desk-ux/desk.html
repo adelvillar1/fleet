@@ -1,0 +1,880 @@
+<!doctype html>
+<html lang="en" data-theme="paper">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>desk — a first-class desk surface</title>
+<style>
+/* The face's own tokens, hand-copied from src/gui/assets/app.css so the
+   implementation is a translation and not a reinvention. Nothing here
+   invents a colour or a size. */
+:root, :root[data-theme="paper"] {
+  --page: rgb(246,244,239); --surface: rgb(252,251,248); --raised: rgb(239,236,230);
+  --overlay: #fff; --hairline: rgb(24 26 29 / 10%); --hairline-strong: rgb(24 26 29 / 17%);
+  --ink: rgb(24,26,29); --ink-2: rgb(82,88,96); --ink-3: rgb(94,102,112);
+  --accent: rgb(47,95,208); --accent-deep: rgb(37,78,176); --accent-wash: rgb(47 95 208 / 10%);
+  --ok: rgb(22,110,46); --down: rgb(176,36,32); --warn: rgb(122,82,8);
+  --shadow-1: 0 1px 2px rgb(24 26 29 / 6%), 0 1px 1px rgb(24 26 29 / 4%);
+  --shadow-2: 0 18px 40px -24px rgb(24 26 29 / 30%), 0 2px 6px rgb(24 26 29 / 6%);
+}
+:root[data-theme="console"] {
+  --page: rgb(14,15,18); --surface: rgb(20,22,26); --raised: rgb(28,31,36); --overlay: rgb(32,35,41);
+  --hairline: rgb(255 255 255 / 8%); --hairline-strong: rgb(255 255 255 / 15%);
+  --ink: rgb(235,231,228); --ink-2: rgb(166,175,188); --ink-3: rgb(138,148,163);
+  --accent: rgb(96,143,255); --accent-deep: rgb(66,112,230); --accent-wash: rgb(96 143 255 / 14%);
+  --ok: rgb(74,190,110); --down: rgb(240,106,99); --warn: rgb(220,166,66);
+  --shadow-1: 0 1px 2px rgb(0 0 0 / 30%);
+  --shadow-2: 0 18px 40px -20px rgb(0 0 0 / 65%), 0 2px 6px rgb(0 0 0 / 25%);
+}
+:root[data-theme="graphite"] {
+  --page: rgb(10,12,16); --surface: rgb(15,18,23); --raised: rgb(21,25,31); --overlay: rgb(27,32,39);
+  --hairline: rgb(255 255 255 / 8%); --hairline-strong: rgb(255 255 255 / 15%);
+  --ink: rgb(232,238,244); --ink-2: rgb(160,170,184); --ink-3: rgb(132,144,160);
+  --accent: rgb(94,148,255); --accent-deep: rgb(62,112,232); --accent-wash: rgb(94 148 255 / 14%);
+  --ok: rgb(74,190,110); --down: rgb(240,106,99); --warn: rgb(220,166,66);
+  --shadow-1: 0 1px 2px rgb(0 0 0 / 32%);
+  --shadow-2: 0 18px 40px -20px rgb(0 0 0 / 70%), 0 2px 6px rgb(0 0 0 / 28%);
+}
+:root[data-theme="contrast"] {
+  --page: #fff; --surface: #fff; --raised: rgb(238,238,238); --overlay: #fff;
+  --hairline: rgb(0 0 0 / 22%); --hairline-strong: rgb(0 0 0 / 45%);
+  --ink: #000; --ink-2: rgb(38,38,38); --ink-3: rgb(70,70,70);
+  --accent: rgb(24,66,160); --accent-deep: rgb(16,48,122); --accent-wash: rgb(24 66 160 / 10%);
+  --ok: rgb(0,104,32); --down: rgb(176,20,20); --warn: rgb(124,82,6);
+  --shadow-1: 0 1px 2px rgb(0 0 0 / 12%);
+  --shadow-2: 0 12px 28px -20px rgb(0 0 0 / 30%);
+}
+
+* { box-sizing: border-box; margin: 0; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  background: #e9e6df; color: var(--ink);
+  font: 13.5px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  padding: 0 0 60px; min-height: 100vh;
+}
+.serif { font-family: "New York", ui-serif, Georgia, "Iowan Old Style", "Times New Roman", serif; }
+.mono { font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; }
+
+/* ---------- the review rack: not part of the screen ---------- */
+.rack {
+  display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
+  padding: 12px 20px; background: #1b1d21; color: #d8dce3;
+  font: 12px/1 ui-monospace, "SF Mono", Menlo, monospace; position: sticky; top: 0; z-index: 40;
+}
+.rack .grp { display: flex; align-items: center; gap: 6px; }
+.rack .lbl { color: #7d8590; text-transform: uppercase; letter-spacing: .08em; font-size: 9.5px; }
+.rack button {
+  font: inherit; padding: 6px 10px; border-radius: 6px; cursor: pointer;
+  background: #26292f; color: #c6ccd5; border: 1px solid #33373f; min-height: 26px;
+}
+.rack button[aria-pressed="true"] { background: #3d6fd8; border-color: #3d6fd8; color: #fff; }
+.rack .why { margin-left: auto; color: #7d8590; font-size: 11px; }
+
+/* ---------- the device: the box whose width is the real width ---------- */
+.device {
+  margin: 22px auto 0; background: var(--page); color: var(--ink);
+  box-shadow: 0 30px 80px -40px rgb(0 0 0 / 45%), 0 2px 8px rgb(0 0 0 / 8%);
+  /* clip, not hidden: `overflow: hidden` makes the device the scrollport for
+     any sticky child, and it never scrolls — so a sticky submit row would
+     never engage. `clip` rounds and clips without creating a scroll container. */
+  overflow: clip; border-radius: 10px; container-type: inline-size;
+}
+
+/* ---------- the app's own top bar ---------- */
+.topbar {
+  display: flex; align-items: center; gap: 16px; height: 46px; padding: 0 18px;
+  background: var(--surface); border-bottom: 1px solid var(--hairline);
+}
+.topbar .mark { width: 17px; height: 17px; border-radius: 5px; background: var(--accent); opacity: .9; flex: none; }
+.topbar nav { display: flex; gap: 2px; overflow: hidden; }
+.topbar nav a {
+  color: var(--ink-2); text-decoration: none; font-size: 12.5px; padding: 6px 11px;
+  border-radius: 7px; white-space: nowrap;
+}
+.topbar nav a.here { color: var(--ink); background: var(--raised); font-weight: 500; }
+.topbar .stamp { margin-left: auto; color: var(--ink-3); font-size: 10.5px; white-space: nowrap; }
+
+/* ---------- the page: head + three zones ---------- */
+.view[hidden] { display: none !important; }
+.page { padding: 22px 24px 40px; }
+.page-head {
+  display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: end;
+  gap: 24px; padding: 0 0 18px;
+}
+.eyebrow {
+  margin: 0 0 7px; color: var(--accent); font-size: 9.5px; font-weight: 700;
+  letter-spacing: .13em; text-transform: uppercase;
+}
+.page-title {
+  font-family: "New York", ui-serif, Georgia, serif;
+  font-size: clamp(26px,3vw,34px); font-weight: 500; line-height: 1.05; letter-spacing: -.025em;
+}
+.page-note { max-width: 62ch; margin: 9px 0 0; color: var(--ink-2); font-size: 12.5px; line-height: 1.6; }
+.page-side { display: grid; justify-items: end; gap: 8px; }
+.page-stamp { color: var(--ink-3); font-size: 10px; white-space: nowrap; }
+
+/* the three zones — the desk's whole idea in one grid */
+.zones { display: grid; grid-template-columns: 216px minmax(0,1fr) 330px; gap: 20px; align-items: start; }
+
+/* zone 1: the project rail */
+.rail-card {
+  background: var(--surface); border: 1px solid var(--hairline); border-radius: 12px;
+  box-shadow: var(--shadow-1); padding: 8px; position: sticky; top: 10px;
+}
+.rail-h {
+  font-size: 9.5px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--ink-3); padding: 10px 8px 6px;
+}
+.rail-h:first-child { padding-top: 4px; }
+.rrow {
+  display: flex; align-items: center; gap: 8px; width: 100%; min-height: 32px;
+  padding: 7px 8px; border-radius: 8px; border: 0; background: transparent;
+  color: var(--ink); font: inherit; font-size: 12.5px; text-align: left; cursor: pointer;
+}
+.rrow:hover { background: var(--raised); }
+.rrow.here { background: var(--accent-wash); color: var(--accent-deep); font-weight: 500; }
+:root[data-theme="console"] .rrow.here, :root[data-theme="graphite"] .rrow.here { color: var(--accent); }
+.rrow .cnt { margin-left: auto; color: var(--ink-3); font-size: 10.5px; }
+.rrow .dot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
+.dot.warn { background: var(--down); }
+.dot.ok { background: var(--ok); }
+.dot.idle { background: var(--ink-3); opacity: .5; }
+
+/* zone 2: the shelf */
+.shelf { display: grid; gap: 12px; }
+.dcard {
+  background: var(--surface); border: 1px solid var(--hairline); border-radius: 12px;
+  box-shadow: var(--shadow-1); padding: 16px 18px; text-align: left; width: 100%;
+  font: inherit; color: var(--ink); cursor: pointer; display: block;
+  border-left: 3px solid transparent; transition: box-shadow 120ms, border-color 120ms;
+}
+.dcard:hover { box-shadow: var(--shadow-2); border-color: var(--hairline-strong); }
+.dcard:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.dcard.s-warn { border-left-color: var(--down); }
+.dcard.s-run { border-left-color: var(--accent); }
+.dcard.s-done { border-left-color: transparent; }
+.dcard.s-idle { border-left-color: transparent; }
+.dcard.s-idle .name { color: var(--ink-2); }
+.dcard .top { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.dcard .name { font-family: "New York", ui-serif, Georgia, serif; font-size: 18px; font-weight: 600; letter-spacing: -.01em; }
+.dcard .bind { margin-left: auto; color: var(--ink-3); font-size: 10.5px; }
+.dcard.s-done .name { color: var(--ink-2); }
+.dcard .claimline { margin: 7px 0 12px; color: var(--ink-2); font-size: 12.5px; line-height: 1.5; }
+.dcard .claimline b { color: var(--ink); font-weight: 500; }
+
+/* pills that actually carry their tone */
+.pill {
+  display: inline-flex; align-items: center; gap: 5px; height: 20px; padding: 0 8px;
+  border-radius: 999px; border: 1px solid var(--hairline-strong);
+  font-size: 10.5px; font-weight: 500; white-space: nowrap; color: var(--ink-2);
+  background: transparent;
+}
+.pill .pd { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+.pill.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 34%, transparent); background: color-mix(in srgb, var(--ok) 8%, transparent); }
+.pill.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 34%, transparent); background: color-mix(in srgb, var(--warn) 9%, transparent); }
+.pill.down { color: var(--down); border-color: color-mix(in srgb, var(--down) 34%, transparent); background: color-mix(in srgb, var(--down) 8%, transparent); }
+.pill.acc { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 34%, transparent); background: var(--accent-wash); }
+:root[data-theme="contrast"] .pill.ok, :root[data-theme="contrast"] .pill.warn,
+:root[data-theme="contrast"] .pill.down, :root[data-theme="contrast"] .pill.acc { background: transparent; }
+
+/* the evidence bar: one proportion, not three identical chips */
+.evidence { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.ebar { display: flex; height: 6px; border-radius: 3px; overflow: hidden; flex: 1 1 120px; min-width: 90px; background: var(--raised); gap: 2px; }
+.ebar i { display: block; height: 100%; }
+.ebar .a { background: var(--ok); }
+.ebar .c { background: var(--warn); }
+.ebar .u { background: var(--down); }
+.ecount { color: var(--ink-2); font-size: 10.5px; white-space: nowrap; }
+.ecount b { color: var(--ink); font-weight: 600; }
+.ecount .u { color: var(--down); font-weight: 600; }
+.ecount .c { color: var(--warn); font-weight: 600; }
+.upd { margin-left: auto; color: var(--ink-3); font-size: 10px; white-space: nowrap; }
+
+/* coverage, the field the shipped face never reads */
+.cov { display: flex; align-items: center; gap: 7px; margin-top: 11px; padding-top: 11px; border-top: 1px solid var(--hairline); }
+.cov .cbar { display: flex; gap: 3px; }
+.cov .cbar i { width: 14px; height: 4px; border-radius: 2px; background: var(--raised); }
+.cov .cbar i.on { background: var(--warn); }
+.cov .ctext { font-size: 10.5px; color: var(--ink-2); }
+.cov .flag { margin-left: auto; }
+
+/* zone 3: what the desk owes you */
+.owed { background: var(--surface); border: 1px solid var(--hairline); border-radius: 12px; box-shadow: var(--shadow-1); overflow: hidden; position: sticky; top: 10px; }
+.owed-h { padding: 14px 16px 10px; border-bottom: 1px solid var(--hairline); }
+.owed-h .t { font-size: 12px; font-weight: 600; }
+.owed-h .s { color: var(--ink-3); font-size: 10.5px; margin-top: 2px; }
+.owe { display: flex; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--hairline); align-items: flex-start; }
+.owe:last-child { border-bottom: 0; }
+.owe .mk { width: 7px; height: 7px; border-radius: 50%; margin-top: 6px; flex: none; }
+.owe .mk.down { background: var(--down); }
+.owe .mk.warn { background: var(--warn); }
+.owe .mk.acc { background: var(--accent); }
+.owe .bd { min-width: 0; }
+.owe .what { font-size: 12px; line-height: 1.45; }
+.owe .what b { font-weight: 600; }
+.owe .whom { color: var(--ink-3); font-size: 10.5px; margin-top: 3px; }
+.owe .go {
+  margin-top: 7px; font: inherit; font-size: 11px; padding: 4px 9px; min-height: 26px;
+  border-radius: 6px; border: 1px solid var(--hairline-strong); background: var(--overlay);
+  color: var(--ink); cursor: pointer;
+}
+.owe .go:hover { border-color: var(--accent); color: var(--accent); }
+
+/* ---------- the deliverable ---------- */
+.dhead { display: flex; align-items: flex-start; gap: 14px; flex-wrap: wrap; padding-bottom: 14px; }
+.dhead .meta { min-width: 0; flex: 1 1 300px; }
+.dhead h1 { font-family: "New York", ui-serif, Georgia, serif; font-size: 27px; font-weight: 600; letter-spacing: -.02em; line-height: 1.15; }
+.dhead .sub { color: var(--ink-2); font-size: 12.5px; margin-top: 5px; }
+.dhead .sub .sep { color: var(--ink-3); margin: 0 6px; }
+
+/* the stage rail: five stages, one line, connectors */
+.stagerail { display: flex; align-items: flex-start; gap: 0; padding: 14px 0 18px; overflow-x: auto; }
+.st { display: flex; align-items: center; gap: 0; flex: 1 1 0; min-width: 0; }
+.st .node { display: flex; flex-direction: column; align-items: center; gap: 5px; min-width: 64px; }
+.st .bead {
+  width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center;
+  border: 1.5px solid var(--hairline-strong); background: var(--surface); flex: none;
+  font-size: 9px; font-weight: 700; color: var(--ink-3);
+}
+.st.done .bead { background: var(--ok); border-color: var(--ok); color: #fff; }
+.st.run .bead { background: var(--accent-wash); border-color: var(--accent); color: var(--accent); }
+.st.refused .bead { background: var(--down); border-color: var(--down); color: #fff; }
+/* on a bright fill the glyph inverts: white on --ok is 2.36:1 in the dark
+   themes, so a done bead's mark is dark ink there and white only on paper */
+:root[data-theme="console"] .st.done .bead,
+:root[data-theme="graphite"] .st.done .bead,
+:root[data-theme="console"] .st.refused .bead,
+:root[data-theme="graphite"] .st.refused .bead { color: rgb(12,14,18); }
+.st .slabel { font-size: 10px; color: var(--ink-2); text-align: center; white-space: nowrap; }
+.st.done .slabel { color: var(--ink); }
+.st.refused .slabel { color: var(--down); font-weight: 600; }
+.st .link { flex: 1 1 auto; height: 1.5px; background: var(--hairline); margin: 0 -2px; align-self: center; transform: translateY(-9px); }
+.st.done .link { background: color-mix(in srgb, var(--ok) 45%, transparent); }
+
+/* the gate band: first, not last */
+.gate {
+  border: 1px solid color-mix(in srgb, var(--down) 32%, transparent);
+  background: color-mix(in srgb, var(--down) 5%, var(--surface));
+  border-radius: 12px; padding: 0; overflow: hidden; margin-bottom: 16px;
+}
+:root[data-theme="console"] .gate, :root[data-theme="graphite"] .gate { background: color-mix(in srgb, var(--down) 9%, var(--surface)); }
+.gate-h { display: flex; align-items: baseline; gap: 10px; padding: 13px 16px 11px; flex-wrap: wrap; }
+.gate-h .t { font-size: 13px; font-weight: 600; color: var(--down); }
+.gate-h .s { font-size: 11px; color: var(--ink-2); }
+.gate-h .n { margin-left: auto; font-size: 10.5px; color: var(--ink-2); }
+.gate-body { border-top: 1px solid color-mix(in srgb, var(--down) 18%, transparent); }
+.ref { display: flex; gap: 12px; padding: 13px 16px; border-bottom: 1px solid color-mix(in srgb, var(--down) 12%, transparent); align-items: flex-start; }
+.ref:last-child { border-bottom: 0; }
+.ref .kind { flex: none; width: 74px; padding-top: 1px; }
+.ref .bd { min-width: 0; flex: 1 1 auto; }
+.ref .assertion { font-size: 12.5px; line-height: 1.5; }
+.ref .assertion q { font-style: italic; }
+.ref .near { margin-top: 8px; padding: 8px 10px; border-left: 2px solid var(--hairline-strong); background: var(--surface); border-radius: 0 6px 6px 0; }
+.ref .near .nl { font-size: 9.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); }
+.ref .near p { font-size: 12px; color: var(--ink-2); margin-top: 3px; line-height: 1.5; }
+.ref .near .ov { font-size: 10px; color: var(--ink-3); margin-top: 4px; }
+.ref .fix { flex: none; }
+.btn {
+  font: inherit; font-size: 11.5px; padding: 6px 11px; min-height: 30px; border-radius: 7px;
+  border: 1px solid var(--hairline-strong); background: var(--overlay); color: var(--ink); cursor: pointer;
+  white-space: nowrap;
+}
+.btn:hover { border-color: var(--accent); color: var(--accent); }
+.btn.primary { background: var(--accent); border-color: var(--accent-deep); color: #fff; }
+.btn.primary:hover { background: var(--accent-deep); color: #fff; }
+.btn[disabled] { opacity: .5; cursor: default; }
+.btn[disabled]:hover { border-color: var(--hairline-strong); color: var(--ink); }
+:root[data-theme="console"] .btn.primary, :root[data-theme="graphite"] .btn.primary { color: rgb(12,14,18); }
+
+/* a section of the deliverable */
+.sec { background: var(--surface); border: 1px solid var(--hairline); border-radius: 12px; box-shadow: var(--shadow-1); margin-bottom: 14px; overflow: hidden; }
+.sec-h { display: flex; align-items: baseline; gap: 10px; padding: 13px 16px; border-bottom: 1px solid var(--hairline); }
+.sec-h .t { font-size: 12px; font-weight: 600; }
+.sec-h .s { font-size: 10.5px; color: var(--ink-3); }
+.sec-h .n { margin-left: auto; font-size: 10.5px; color: var(--ink-3); white-space: nowrap; }
+.sec-b { padding: 14px 16px; }
+
+/* the review: claims beside their sentences */
+.claim { display: grid; grid-template-columns: 88px minmax(0,1fr); gap: 12px; padding: 13px 16px; border-bottom: 1px solid var(--hairline); }
+.claim:last-child { border-bottom: 0; }
+.claim .side { display: grid; gap: 5px; justify-items: start; align-content: start; }
+.claim .conf { font-size: 10px; color: var(--ink-3); }
+.confirmbar { width: 56px; height: 3px; border-radius: 2px; background: var(--raised); overflow: hidden; }
+.confirmbar i { display: block; height: 100%; background: var(--ok); }
+.confirmbar.warn i { background: var(--warn); }
+.claim .txt { font-size: 13px; line-height: 1.45; }
+.claim .quote {
+  margin-top: 6px; padding-left: 9px; border-left: 2px solid var(--hairline-strong);
+  color: var(--ink-2); font-size: 12px; line-height: 1.5;
+}
+.claim .src { margin-top: 6px; color: var(--ink-3); font-size: 10px; }
+
+/* the outline, with the gap as a real hole */
+.ol { display: grid; gap: 2px; }
+.ol li { display: flex; gap: 11px; padding: 7px 0; font-size: 13px; line-height: 1.5; list-style: none; }
+.ol .num { color: var(--ink-3); font-size: 11px; width: 16px; flex: none; padding-top: 2px; }
+.ol .gap { color: var(--warn); }
+.ol .gaprow { border: 1px dashed color-mix(in srgb, var(--warn) 45%, transparent); border-radius: 8px; padding: 9px 11px; margin: 4px 0; background: color-mix(in srgb, var(--warn) 5%, transparent); }
+.ol .gaprow .gl { font-size: 9.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--warn); }
+.ol .gaprow .gt { font-size: 12.5px; margin-top: 3px; }
+.ol .gaprow .go { margin-top: 7px; }
+
+/* the draft */
+.draft { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; line-height: 1.7; white-space: pre-wrap; color: var(--ink); }
+.draft .bad { background: color-mix(in srgb, var(--down) 16%, transparent); border-radius: 3px; padding: 1px 3px; text-decoration: underline wavy var(--down); }
+
+/* the end band */
+/* the way out pins to the bottom of the viewport for the same reason the
+   composer's submit does: on a 700px screen the shipped face left its end
+   button 1252px down, where no one looks. */
+.endband {
+  display: flex; align-items: center; gap: 14px; padding: 12px 16px; flex-wrap: wrap;
+  position: sticky; bottom: 0; z-index: 5; margin-top: 18px;
+  background: var(--surface); border: 1px solid var(--hairline-strong);
+  border-radius: 12px; box-shadow: var(--shadow-2);
+}
+.endband .say { font-size: 12px; color: var(--ink-2); }
+.endband .say b { color: var(--ink); }
+.endband .spacer { flex: 1 1 auto; }
+
+/* ---------- the composer ---------- */
+.composer { display: grid; grid-template-columns: minmax(0,1fr) 330px; gap: 20px; align-items: start; }
+.brief { background: var(--surface); border: 1px solid var(--hairline); border-radius: 12px; box-shadow: var(--shadow-1); padding: 18px; }
+.f { margin-bottom: 14px; }
+.f:last-child { margin-bottom: 0; }
+.f label { display: block; font-size: 11px; color: var(--ink-2); margin-bottom: 5px; }
+.f label .req { color: var(--down); margin-left: 3px; }
+.f input, .f textarea {
+  width: 100%; font: inherit; font-size: 13.5px; padding: 9px 11px; min-height: 36px;
+  border-radius: 8px; border: 1px solid var(--hairline-strong); background: var(--overlay); color: var(--ink);
+}
+.f input::placeholder, .f textarea::placeholder { color: var(--ink-3); opacity: 1; }
+.f input:focus, .f textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: var(--accent); }
+.f .hint { font-size: 10.5px; color: var(--ink-3); margin-top: 4px; }
+.f .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+/* the sources: a real list, each with its kind */
+.srcs { display: grid; grid-template-columns: minmax(0,1fr); gap: 8px; }
+.srcrow { display: flex; align-items: center; gap: 8px; padding: 7px 9px; border: 1px solid var(--hairline); border-radius: 8px; background: var(--overlay); }
+.srcrow .kd { flex: none; }
+.srcrow .path { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1 1 auto; }
+.srcrow .x { flex: none; }
+.kindpill { display: inline-flex; align-items: center; height: 19px; padding: 0 7px; border-radius: 5px; font-size: 9.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.kindpill.file { background: color-mix(in srgb, var(--accent) 8%, transparent); color: var(--accent); }
+.kindpill.fact { background: color-mix(in srgb, var(--ok) 10%, transparent); color: var(--ok); }
+.kindpill.url { background: color-mix(in srgb, var(--warn) 12%, transparent); color: var(--warn); }
+.kindpill.know { background: color-mix(in srgb, var(--ink-3) 14%, transparent); color: var(--ink-2); }
+.addsrc { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+.addsrc .btn { font-size: 11px; min-height: 28px; }
+.framing { margin-top: 12px; padding: 9px 11px; border-radius: 8px; background: var(--raised); color: var(--ink-2); font-size: 10.5px; line-height: 1.5; }
+.submitrow {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  position: sticky; bottom: 0; z-index: 5;
+  margin: 16px -18px -18px; padding: 12px 18px 14px;
+  border-top: 1px solid var(--hairline); background: var(--surface);
+  border-radius: 0 0 12px 12px;
+}
+.submitrow .need { font-size: 11px; color: var(--ink-2); }
+.submitrow .need b { color: var(--down); }
+.aside-card { background: var(--surface); border: 1px solid var(--hairline); border-radius: 12px; box-shadow: var(--shadow-1); padding: 15px; }
+.aside-card h3 { font-size: 11px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 9px; }
+.aside-card p { font-size: 12px; color: var(--ink-2); line-height: 1.55; }
+.aside-card .k { display: flex; gap: 9px; padding: 9px 0; border-bottom: 1px solid var(--hairline); align-items: flex-start; }
+.aside-card .k:last-child { border-bottom: 0; padding-bottom: 0; }
+.aside-card .k .kt { font-size: 12px; }
+.aside-card .k .ks { font-size: 10.5px; color: var(--ink-3); margin-top: 2px; }
+
+/* ---------- the empty state ---------- */
+.emptywrap { display: grid; place-items: center; padding: 52px 20px 64px; text-align: center; }
+.emptywrap .card { max-width: 520px; background: var(--surface); border: 1px solid var(--hairline); border-radius: 16px; box-shadow: var(--shadow-2); padding: 30px 28px; }
+.emptywrap .glyph { width: 46px; height: 46px; border-radius: 12px; background: var(--accent-wash); display: grid; place-items: center; margin: 0 auto 14px; color: var(--accent); }
+.emptywrap h2 { font-family: "New York", ui-serif, Georgia, serif; font-size: 21px; font-weight: 600; letter-spacing: -.015em; }
+.emptywrap p { color: var(--ink-2); font-size: 12.5px; line-height: 1.6; margin-top: 8px; }
+.emptywrap .steps { display: grid; gap: 8px; margin: 16px 0 18px; text-align: left; }
+.emptywrap .step { display: flex; gap: 10px; font-size: 12px; color: var(--ink-2); align-items: flex-start; }
+.emptywrap .step .n { flex: none; width: 18px; height: 18px; border-radius: 50%; background: var(--raised); color: var(--ink-2); font-size: 9.5px; font-weight: 700; display: grid; place-items: center; margin-top: 1px; }
+
+/* ---------- responsive, keyed on the device's real width ---------- */
+.device[data-w="mid"] .zones { grid-template-columns: minmax(0,1fr) 300px; }
+.device[data-w="mid"] .rail-card { grid-column: 1 / -1; position: static; display: flex; gap: 4px; overflow-x: auto; padding: 6px; }
+.device[data-w="mid"] .rail-h, .device[data-w="narrow"] .rail-h { display: none; }
+.device[data-w="mid"] .rrow { width: auto; flex: none; }
+
+.device[data-w="narrow"] .page { padding: 16px 14px 32px; }
+.device[data-w="narrow"] .page-head { grid-template-columns: minmax(0,1fr); gap: 12px; align-items: start; }
+.device[data-w="narrow"] .page-side { justify-items: start; }
+.device[data-w="narrow"] .zones { grid-template-columns: minmax(0,1fr); gap: 12px; }
+.device[data-w="narrow"] .rail-card { position: static; display: flex; gap: 4px; overflow-x: auto; padding: 6px; }
+.device[data-w="narrow"] .rrow { width: auto; flex: none; }
+.device[data-w="narrow"] .owed { position: static; order: 3; }
+.device[data-w="narrow"] .topbar { padding: 0 12px; gap: 10px; }
+.device[data-w="narrow"] .topbar .stamp { display: none; }
+.device[data-w="narrow"] .dcard .top { gap: 7px; }
+.device[data-w="narrow"] .dcard .bind { margin-left: 0; flex-basis: 100%; }
+.device[data-w="narrow"] .dcard .name { font-size: 16.5px; }
+.device[data-w="narrow"] .upd { margin-left: 0; flex-basis: 100%; }
+.device[data-w="narrow"] .composer { grid-template-columns: minmax(0,1fr); }
+.device[data-w="narrow"] .f .pair { grid-template-columns: 1fr; }
+.device[data-w="narrow"] .claim { grid-template-columns: minmax(0,1fr); }
+.device[data-w="narrow"] .claim .side { flex-direction: row; display: flex; align-items: center; gap: 8px; }
+.device[data-w="narrow"] .ref { flex-wrap: wrap; }
+.device[data-w="narrow"] .ref .kind { width: auto; flex-basis: 100%; }
+.device[data-w="narrow"] .ref .fix { flex-basis: 100%; }
+.device[data-w="narrow"] .dhead h1 { font-size: 22px; }
+.device[data-w="narrow"] .stagerail { gap: 0; }
+.device[data-w="narrow"] .st .node { min-width: 54px; }
+.device[data-w="narrow"] .st .slabel { font-size: 9px; }
+.device[data-w="narrow"] .endband { flex-direction: column; align-items: stretch; }
+</style>
+</head>
+<body>
+
+<div class="rack" role="group" aria-label="review controls">
+  <div class="grp"><span class="lbl">state</span>
+    <button data-set="state" data-v="shelf" aria-pressed="true">shelf</button>
+    <button data-set="state" data-v="deliverable">deliverable</button>
+    <button data-set="state" data-v="composer">composer</button>
+    <button data-set="state" data-v="empty">empty</button>
+  </div>
+  <div class="grp"><span class="lbl">width</span>
+    <button data-set="w" data-v="1440">1440</button>
+    <button data-set="w" data-v="1024">1024</button>
+    <button data-set="w" data-v="390">390</button>
+  </div>
+  <div class="grp"><span class="lbl">theme</span>
+    <button data-set="theme" data-v="paper">paper</button>
+    <button data-set="theme" data-v="console">console</button>
+    <button data-set="theme" data-v="graphite">graphite</button>
+    <button data-set="theme" data-v="contrast">contrast</button>
+  </div>
+  <span class="why">state, width and theme ride the URL — every cell is one address</span>
+</div>
+
+<div class="device" id="device" data-w="wide">
+  <header class="topbar">
+    <span class="mark" aria-hidden="true"></span>
+    <nav>
+      <a href="#">conversation</a><a href="#">design</a><a href="#">sessions</a>
+      <a href="#">huddles</a><a class="here" href="#">desk</a>
+    </nav>
+    <span class="stamp mono">fleet · desk</span>
+  </header>
+
+  <!-- ======================= SHELF ======================= -->
+  <section class="view" data-view="shelf">
+    <div class="page">
+      <header class="page-head">
+        <div>
+          <p class="eyebrow">Knowledge</p>
+          <h1 class="page-title">The desk</h1>
+          <p class="page-note">A brief, not a blank canvas. The sources are read, every claim keeps the sentence it came from, and nothing ends while a refusal stands.</p>
+        </div>
+        <div class="page-side">
+          <span class="page-stamp mono">4 deliverables · 2 need you</span>
+          <button class="btn primary" data-goto="composer">new deliverable</button>
+        </div>
+      </header>
+
+      <div class="zones">
+        <!-- zone 1 -->
+        <aside class="rail-card">
+          <div class="rail-h">the desk</div>
+          <button class="rrow here"><span class="name">All deliverables</span><span class="cnt">4</span></button>
+          <button class="rrow"><span class="dot warn"></span><span class="name">needs you</span><span class="cnt">2</span></button>
+          <div class="rail-h">by project</div>
+          <button class="rrow"><span class="dot ok"></span><span class="name">landing</span><span class="cnt">2</span></button>
+          <button class="rrow"><span class="dot ok"></span><span class="name">fleet</span><span class="cnt">1</span></button>
+          <button class="rrow"><span class="dot idle"></span><span class="name">unbound</span><span class="cnt">1</span></button>
+          <div class="rail-h">state</div>
+          <button class="rrow"><span class="dot idle"></span><span class="name">running</span><span class="cnt">1</span></button>
+          <button class="rrow"><span class="dot warn"></span><span class="name">refused</span><span class="cnt">1</span></button>
+          <button class="rrow"><span class="dot ok"></span><span class="name">ended</span><span class="cnt">2</span></button>
+        </aside>
+
+        <!-- zone 2 -->
+        <div class="shelf">
+          <button class="dcard s-warn" data-goto="deliverable">
+            <div class="top">
+              <span class="name">The beta cohort's brief</span>
+              <span class="pill down"><span class="pd" aria-hidden="true"></span>2 refusals stand</span>
+              <span class="bind mono">landing</span>
+            </div>
+            <p class="claimline">Must make stand: <b>the beta paid for itself in six weeks</b> · shape analysis</p>
+            <div class="evidence">
+              <span class="ebar" aria-hidden="true"><i class="a" style="width:43%"></i><i class="c" style="width:29%"></i><i class="u" style="width:28%"></i></span>
+              <span class="ecount"><b>3</b> asserted · <span class="c">2</span> contested · <span class="u">2</span> unsourced</span>
+              <span class="upd mono">updated 09:14</span>
+            </div>
+            <div class="cov">
+              <span class="cbar" aria-hidden="true"><i class="on"></i><i class="on"></i><i></i><i></i><i></i></span>
+              <span class="ctext">coverage 2 / 5 — the claim set names no renewal figure</span>
+              <span class="pill warn flag">escalated</span>
+            </div>
+          </button>
+
+          <button class="dcard s-run" data-goto="deliverable">
+            <div class="top">
+              <span class="name">The landing page's copy</span>
+              <span class="pill acc"><span class="pd" aria-hidden="true"></span>outline running</span>
+              <span class="bind mono">landing</span>
+            </div>
+            <p class="claimline">Must make stand: <b>the fold earns its keep</b> · shape presentation</p>
+            <div class="evidence">
+              <span class="ebar" aria-hidden="true"><i class="a" style="width:62%"></i><i class="c" style="width:38%"></i></span>
+              <span class="ecount"><b>5</b> asserted · <span class="c">2</span> contested</span>
+              <span class="upd mono">updated 08:40</span>
+            </div>
+            <div class="cov">
+              <span class="cbar" aria-hidden="true"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i></span>
+              <span class="ctext">coverage 4 / 5 — the brief is answered</span>
+            </div>
+          </button>
+
+          <button class="dcard s-done" data-goto="deliverable">
+            <div class="top">
+              <span class="name">The onboarding one-pager</span>
+              <span class="pill ok"><span class="pd" aria-hidden="true"></span>all five stages done</span>
+              <span class="bind mono">fleet</span>
+            </div>
+            <p class="claimline">Must make stand: <b>the first session decides the tenth</b> · shape explanation</p>
+            <div class="evidence">
+              <span class="ebar" aria-hidden="true"><i class="a" style="width:67%"></i><i class="c" style="width:33%"></i></span>
+              <span class="ecount"><b>2</b> asserted · <span class="c">1</span> contested</span>
+              <span class="upd mono">updated 2026-11-04</span>
+            </div>
+            <div class="cov">
+              <span class="cbar" aria-hidden="true"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i></span>
+              <span class="ctext">coverage 5 / 5 — recalled by the next brief</span>
+            </div>
+          </button>
+
+          <button class="dcard s-idle" data-goto="deliverable">
+            <div class="top">
+              <span class="name">The pricing memo nobody asked for</span>
+              <span class="pill"><span class="pd" aria-hidden="true"></span>not started</span>
+              <span class="bind mono">unbound</span>
+            </div>
+            <p class="claimline">Must make stand: <b>the price is not the problem</b> · no shape routed</p>
+            <div class="evidence">
+              <span class="ebar" aria-hidden="true"></span>
+              <span class="ecount"><b>0</b> asserted · <span class="c">0</span> contested</span>
+              <span class="upd mono">updated 2026-11-02</span>
+            </div>
+            <div class="cov">
+              <span class="cbar" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
+              <span class="ctext">no coverage judgment yet</span>
+              <span class="pill flag">bind a project</span>
+            </div>
+          </button>
+        </div>
+
+        <!-- zone 3 -->
+        <aside class="owed">
+          <div class="owed-h">
+            <div class="t">what the desk owes you</div>
+            <div class="s">2 things stand between the work and its end</div>
+          </div>
+          <div class="owe">
+            <span class="mk down"></span>
+            <div class="bd">
+              <div class="what"><b>An unsourced number, 4.0%</b>, on the beta brief's draft. No source carries it.</div>
+              <div class="whom mono">the beta cohort's brief · review</div>
+              <button class="go">open the review</button>
+            </div>
+          </div>
+          <div class="owe">
+            <span class="mk down"></span>
+            <div class="bd">
+              <div class="what">An assertion <b>nobody sourced</b> — the cohort renewed at a higher rate than the waitlist. The nearest sentence scores only 0.41.</div>
+              <div class="whom mono">the beta cohort's brief · review</div>
+              <button class="go">see the near miss</button>
+            </div>
+          </div>
+          <div class="owe">
+            <span class="mk warn"></span>
+            <div class="bd">
+              <div class="what"><b>Coverage says 2 of 5</b> — no renewal figure is carried by any source, and the outline runs a named gap.</div>
+              <div class="whom mono">the beta cohort's brief · coverage</div>
+              <button class="go">add a source</button>
+            </div>
+          </div>
+          <div class="owe">
+            <span class="mk acc"></span>
+            <div class="bd">
+              <div class="what">The landing copy's <b>outline is running</b>. It renders in the pane when it lands.</div>
+              <div class="whom mono">the landing page's copy · outline</div>
+              <button class="go">watch it</button>
+            </div>
+          </div>
+        </aside>
+      </div>
+    </div>
+  </section>
+
+  <!-- ======================= DELIVERABLE ======================= -->
+  <section class="view" data-view="deliverable" hidden>
+    <div class="page">
+      <div class="dhead">
+        <div class="meta">
+          <p class="eyebrow">Deliverable · analysis</p>
+          <h1>The beta cohort's brief</h1>
+          <p class="sub">For the founding teams <span class="sep">·</span> <span class="mono">~/Projects/landing</span> <span class="sep">·</span> 2 sources read <span class="sep">·</span> created 2026-11-04 09:12</p>
+        </div>
+        <div class="page-side">
+          <button class="btn" data-goto="shelf">the shelf</button>
+        </div>
+      </div>
+
+      <div class="stagerail">
+        <div class="st done"><div class="node"><span class="bead" aria-hidden="true">✓</span><span class="slabel">claims</span></div><span class="link"></span></div>
+        <div class="st done"><div class="node"><span class="bead" aria-hidden="true">✓</span><span class="slabel">outline</span></div><span class="link"></span></div>
+        <div class="st done"><div class="node"><span class="bead" aria-hidden="true">✓</span><span class="slabel">render</span></div><span class="link"></span></div>
+        <div class="st refused"><div class="node"><span class="bead" aria-hidden="true">!</span><span class="slabel">review</span></div><span class="link"></span></div>
+        <div class="st"><div class="node"><span class="bead" aria-hidden="true">5</span><span class="slabel">knowledge</span></div></div>
+      </div>
+
+      <!-- the gate, FIRST: the surface's whole reason -->
+      <div class="gate">
+        <div class="gate-h">
+          <span class="t">2 refusals stand</span>
+          <span class="s">the deliverable cannot end while one does</span>
+          <span class="n mono">review refused — 1 unsourced number(s)</span>
+        </div>
+        <div class="gate-body">
+          <div class="ref">
+            <div class="kind"><span class="pill down"><span class="pd" aria-hidden="true"></span>assertion</span></div>
+            <div class="bd">
+              <div class="assertion"><q>the cohort renewed at a higher rate than the waitlist</q> — this sentence appears in the draft with no source behind it.</div>
+              <div class="near">
+                <div class="nl">nearest sentence found</div>
+                <p>Twelve teams across three continents joined the beta and stayed.</p>
+                <div class="ov mono">sources/brief.md · overlap 0.41 — it answers a different question</div>
+              </div>
+            </div>
+            <div class="fix"><button class="btn">reword it</button></div>
+          </div>
+          <div class="ref">
+            <div class="kind"><span class="pill down"><span class="pd" aria-hidden="true"></span>number</span></div>
+            <div class="bd">
+              <div class="assertion"><b>4.0%</b> in the draft reads as a measured figure. No source carries it; the givens hold no canonical form of it.</div>
+              <div class="near">
+                <div class="nl">what the draft says</div>
+                <p class="mono">The beta paid for itself in 4.0% of the cohort.</p>
+                <div class="ov mono">canonical 0.04 · figures computed 0</div>
+              </div>
+            </div>
+            <div class="fix"><button class="btn">add the figure</button></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- the review -->
+      <div class="sec">
+        <div class="sec-h">
+          <span class="t">the review</span>
+          <span class="s">every claim beside the sentence it was read from</span>
+          <span class="n mono">5 claims · 3 asserted · 2 contested</span>
+        </div>
+        <div class="claim">
+          <div class="side"><span class="pill warn"><span class="pd" aria-hidden="true"></span>contested</span><span class="conf mono">p 0.61</span><span class="confirmbar warn"><i style="width:61%"></i></span></div>
+          <div>
+            <div class="txt">the labs measured ninety milliseconds end to end</div>
+            <div class="quote">"The measured load sat at ninety milliseconds under the beta cohort's own traffic."</div>
+            <div class="src mono">sources/labs.txt · claim</div>
+          </div>
+        </div>
+        <div class="claim">
+          <div class="side"><span class="pill warn"><span class="pd" aria-hidden="true"></span>contested</span><span class="conf mono">p 0.72</span><span class="confirmbar warn"><i style="width:72%"></i></span></div>
+          <div>
+            <div class="txt">onboarding drops thirty percent of sign-ups</div>
+            <div class="quote">"Onboarding drops thirty percent of sign-ups before the first session."</div>
+            <div class="src mono">sources/funnel.csv · claim</div>
+          </div>
+        </div>
+        <div class="claim">
+          <div class="side"><span class="pill ok"><span class="pd" aria-hidden="true"></span>asserted</span><span class="conf mono">p 0.93</span><span class="confirmbar"><i style="width:93%"></i></span></div>
+          <div>
+            <div class="txt">the copy is the cheapest lever the team has</div>
+            <div class="quote">"The copy is the cheapest lever the team has, and it is the one nobody owns."</div>
+            <div class="src mono">sources/brief.md · claim</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- the outline, gaps as holes -->
+      <div class="sec">
+        <div class="sec-h">
+          <span class="t">the outline</span>
+          <span class="s">before any render target is chosen</span>
+          <span class="n mono">1 gap</span>
+        </div>
+        <div class="sec-b">
+          <ul class="ol">
+            <li><span class="num mono">1</span><span>The beta paid for itself</span></li>
+            <li><span class="gaprow"><div class="gl">gap — the outline cannot fill this</div><div class="gt">no renewal figure is carried by any source</div><button class="btn go">add a source that carries it</button></span></li>
+            <li><span class="num mono">3</span><span>What the funnel shows</span></li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- the draft -->
+      <div class="sec">
+        <div class="sec-h"><span class="t">the draft</span><span class="s">markdown · renders in the pane</span><span class="n mono">2 lines</span></div>
+        <div class="sec-b">
+          <div class="draft"># The beta cohort's brief
+
+The beta paid for itself in <span class="bad">4.0%</span> of the cohort.</div>
+        </div>
+      </div>
+
+      <div class="endband">
+        <span class="say"><b>Not ready to end.</b> 2 refusals stand and coverage is 2 of 5.</span>
+        <span class="spacer"></span>
+        <button class="btn" data-goto="shelf">back to the shelf</button>
+        <button class="btn primary" disabled>end and write knowledge</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ======================= COMPOSER ======================= -->
+  <section class="view" data-view="composer" hidden>
+    <div class="page">
+      <header class="page-head">
+        <div>
+          <p class="eyebrow">Knowledge</p>
+          <h1 class="page-title">A new deliverable</h1>
+          <p class="page-note">Name it, say who it is for and what it must make stand, then hand it the sources. It reads them and shows you the claims it found.</p>
+        </div>
+        <div class="page-side"><button class="btn" data-goto="shelf">the shelf</button></div>
+      </header>
+
+      <div class="composer">
+        <div class="brief">
+          <div class="f">
+            <label for="c-name">name<span class="req">*</span></label>
+            <input id="c-name" type="text" placeholder="the landing page's copy" value="the beta cohort's brief">
+          </div>
+          <div class="f">
+            <label for="c-aud">who it is for</label>
+            <input id="c-aud" type="text" placeholder="the founding teams" value="the founding teams">
+          </div>
+          <div class="f">
+            <label for="c-claim">what it must make stand<span class="req">*</span></label>
+            <input id="c-claim" type="text" placeholder="the beta paid for itself in six weeks" value="the beta paid for itself in six weeks">
+            <div class="hint">The claim is the spine: every source is read against it, and the outline opens with it.</div>
+          </div>
+          <div class="f">
+            <label for="c-proj">bound project</label>
+            <div class="pair">
+              <input id="c-proj" type="text" value="~/Projects/landing">
+              <select id="c-shape" style="font:inherit;font-size:13.5px;padding:9px 11px;min-height:36px;border-radius:8px;border:1px solid var(--hairline-strong);background:var(--overlay);color:var(--ink)">
+                <option>shape · analysis</option><option>shape · presentation</option>
+                <option>shape · explanation</option><option>shape · memo</option>
+              </select>
+            </div>
+            <div class="hint">Everything this deliverable does keys to the same project — its sessions, its design, its facts.</div>
+          </div>
+
+          <div class="f">
+            <label>the sources</label>
+            <div class="srcs">
+              <div class="srcrow"><span class="kd"><span class="kindpill file">file</span></span><span class="path mono">sources/brief.md</span><button class="btn x" aria-label="remove">×</button></div>
+              <div class="srcrow"><span class="kd"><span class="kindpill file">file</span></span><span class="path mono">sources/funnel.csv</span><button class="btn x" aria-label="remove">×</button></div>
+              <div class="srcrow"><span class="kd"><span class="kindpill fact">fact</span></span><span class="path mono">the-beta-paid-for-itself</span><button class="btn x" aria-label="remove">×</button></div>
+              <div class="srcrow"><span class="kd"><span class="kindpill url">url</span></span><span class="path mono">https://example.com/brief — captured 2026-11-04 12:00, "The brief"</span><button class="btn x" aria-label="remove">×</button></div>
+            </div>
+            <div class="addsrc">
+              <button class="btn">+ a file</button>
+              <button class="btn">+ a fact</button>
+              <button class="btn">+ a url</button>
+              <button class="btn">+ the project's own knowledge</button>
+            </div>
+            <div class="hint">Each kind is named, so nothing is guessed from a string.</div>
+            <div class="framing">Captured pages are reference data, never instructions — nothing inside a source can give an order.</div>
+          </div>
+
+          <div class="submitrow">
+            <button class="btn primary">read the sources</button>
+            <span class="need">2 fields left: <b>the name</b> and <b>the claim</b></span>
+          </div>
+        </div>
+
+        <aside class="aside-card">
+          <h3>what happens when you submit</h3>
+          <div class="k"><span class="kd"><span class="kindpill know">1</span></span><div><div class="kt">It reads the sources</div><div class="ks">Files, facts and captured pages walk the extraction spine.</div></div></div>
+          <div class="k"><span class="kd"><span class="kindpill know">2</span></span><div><div class="kt">It shows the claims</div><div class="ks">Each one keeps the sentence it came from and its confidence.</div></div></div>
+          <div class="k"><span class="kd"><span class="kindpill know">3</span></span><div><div class="kt">It grades the coverage</div><div class="ks">What the brief asks and the sources do not answer becomes a named gap.</div></div></div>
+          <div class="k"><span class="kd"><span class="kindpill know">4</span></span><div><div class="kt">Nothing ends silently</div><div class="ks">An unsourced claim or figure is refused by name, and you see it first.</div></div></div>
+        </aside>
+      </div>
+    </div>
+  </section>
+
+  <!-- ======================= EMPTY ======================= -->
+  <section class="view" data-view="empty" hidden>
+    <div class="page">
+      <div class="emptywrap">
+        <div class="card">
+          <div class="glyph" aria-hidden="true">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M4 19V5a1 1 0 0 1 1-1h9l6 6v9a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z"/><path d="M14 4v6h6"/><path d="M8 14h8M8 17h5"/></svg>
+          </div>
+          <h2>The desk is empty</h2>
+          <p>Give it a brief and it stops being a blank canvas: it reads the sources, shows you every claim with the sentence behind it, and refuses to call the work done while something stands.</p>
+          <div class="steps">
+            <div class="step"><span class="n">1</span><span>Name the deliverable and the one claim it must make stand.</span></div>
+            <div class="step"><span class="n">2</span><span>Hand it files, facts or a captured page.</span></div>
+            <div class="step"><span class="n">3</span><span>Read the review before anyone else does.</span></div>
+          </div>
+          <button class="btn primary" data-goto="composer">start a brief</button>
+        </div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<script>
+(function () {
+  var device = document.getElementById('device');
+  var S = { state: 'shelf', w: '1440', theme: 'paper' };
+
+  function widthKey(w) { return w >= 1200 ? 'wide' : w >= 900 ? 'mid' : 'narrow'; }
+
+  function apply() {
+    document.documentElement.dataset.theme = S.theme;
+    if (S.w === '390') device.style.width = '390px';
+    else if (S.w === '1024') device.style.width = '1024px';
+    else device.style.width = '100%';
+    device.dataset.w = widthKey(Number(S.w));
+    document.querySelectorAll('.view').forEach(function (v) {
+      v.hidden = v.dataset.view !== S.state;
+    });
+    document.querySelectorAll('.rack button[data-set]').forEach(function (b) {
+      b.setAttribute('aria-pressed', S[b.dataset.set] === b.dataset.v ? 'true' : 'false');
+    });
+    var u = new URL(location.href);
+    u.searchParams.set('state', S.state);
+    u.searchParams.set('w', S.w);
+    u.searchParams.set('theme', S.theme);
+    history.replaceState(null, '', u);
+  }
+
+  document.querySelector('.rack').addEventListener('click', function (e) {
+    var b = e.target.closest('button[data-set]');
+    if (!b) return;
+    S[b.dataset.set] = b.dataset.v;
+    apply();
+  });
+  document.addEventListener('click', function (e) {
+    var g = e.target.closest('[data-goto]');
+    if (!g) return;
+    S.state = g.dataset.goto;
+    apply();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  });
+
+  var q = new URLSearchParams(location.search);
+  ['state', 'w', 'theme'].forEach(function (k) { if (q.get(k)) S[k] = q.get(k); });
+  apply();
+})();
+</script>
+</body>
+</html>
