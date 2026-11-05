@@ -10408,6 +10408,9 @@
       })
       .then(function (desk) {
         face.deskOpenDesk = desk;
+        // A refusal belongs to the desk that issued it, so opening another
+        // deliverable does not carry the last one's reason onto it.
+        face.deskNote = '';
         face.deskView = 'deliverable';
         face.deskFocusRefusal = typeof focusIndex === 'number' ? focusIndex : null;
         paintDesk();
@@ -10500,7 +10503,7 @@
     head.appendChild(meta);
     head.appendChild(side);
     board.appendChild(head);
-    board.appendChild(node('div', 'dk-note', ''));
+    board.appendChild(node('div', face.deskNote ? 'dk-note loud' : 'dk-note', face.deskNote || ''));
     board.appendChild(dkStageRail(desk));
 
     var reasons = (desk.stages || []).filter(function (entry) { return entry.reason; });
@@ -10519,11 +10522,25 @@
     board.appendChild(dkEndBand(desk, counts, stands));
   }
 
+  // A verb's refusal is the reason it was refused, and the owner reads it in
+  // the same place the next paint answers from. The shipped form wrote the
+  // text straight into the live node, and the refresh that runs immediately
+  // after every verb rebuilt the board and erased it — a 409 that said
+  // nothing on screen (KI-447). So the text lives in face state and the
+  // paint is what puts it on the board.
   function showDeskNote(text) {
+    face.deskNote = text || '';
+    // Marked so the refresh that every verb runs afterwards knows this reason
+    // was written by the very press it is following, and leaves it standing.
+    face.deskNoteFresh = Boolean(face.deskNote);
+    if (face.deskOpenDesk) {
+      paintDeskProject(face.deskOpenDesk);
+      return;
+    }
     var note = el.deskBoard.querySelector('.dk-note');
     if (!note) return;
-    note.textContent = text;
-    note.className = 'dk-note loud';
+    note.textContent = face.deskNote;
+    note.className = face.deskNote ? 'dk-note loud' : 'dk-note';
   }
 
   // Each refusal carries the action that closes it (C8), and the action
@@ -10849,6 +10866,11 @@
   // paint shows what the store now carries rather than what was there.
   function refreshOpenDesk() {
     if (!face.deskOpenDesk) return;
+    // A verb that stood clears whatever the last one said; a verb that was
+    // refused has just written its reason (showDeskNote sets deskNoteFresh
+    // immediately before this runs), and that reason must survive the read.
+    if (!face.deskNoteFresh) face.deskNote = '';
+    face.deskNoteFresh = false;
     var slug = face.deskOpenDesk.slug;
     fetch('/api/desk/' + encodeURIComponent(slug), { headers: { accept: 'application/json' } })
       .then(function (reply) { return reply.json(); })

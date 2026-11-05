@@ -370,6 +370,21 @@ function boot(options) {
       listing.projects.unshift(created);
       return Promise.resolve({ status: 200, json: () => Promise.resolve({ type: 'desk', slug, created: true }) });
     }
+    // The verbs (C10/C11): a POST to /api/desk/<slug>/<verb>. A case may
+    // script the answer through `opts.deskVerbReply`, because the whole point
+    // of the note the face paints is what a REFUSED verb says — a stub that
+    // only ever answers 200 cannot exercise it.
+    if (pathOnly.startsWith('/api/desk/') && method === 'POST') {
+      const rest = pathOnly.slice('/api/desk/'.length);
+      const slash = rest.lastIndexOf('/');
+      const verbSlug = decodeURIComponent(rest.slice(0, slash));
+      const verb = rest.slice(slash + 1);
+      const scripted = opts.deskVerbReply && opts.deskVerbReply(verbSlug, verb, documents);
+      return Promise.resolve({
+        status: scripted && scripted.status ? scripted.status : 200,
+        json: () => Promise.resolve(scripted && scripted.body ? scripted.body : { ok: true }),
+      });
+    }
     if (pathOnly.startsWith('/api/desk/') && method === 'GET') {
       const slug = decodeURIComponent(pathOnly.slice('/api/desk/'.length));
       const listing = documents.desk || { projects: [] };
@@ -9206,6 +9221,61 @@ async function theConnectCardSaysWhatHappened() {
     updated: '2026-11-04 16:40',
   });
 
+  // KI-447, found by C19's live pass: a verb the store refused answered 409
+  // with its reason, the face wrote the reason into the board's note, and the
+  // refresh that runs immediately after every verb rebuilt the board and
+  // erased it — so the owner pressed an action and the screen said nothing.
+  // The note is state-driven now; this pin reds if it goes back to a transient
+  // DOM write, because the repaint is part of the same press.
+  async function aRefusedVerbKeepsItsReason() {
+    // deskProject() carries slug `landing-copy` and a refused review stage,
+    // so the address is that slug: a made-up one 404s and the board would
+    // carry the stale-address card instead of a deliverable.
+    const refused = deskProject();
+    const page = boot({
+      hash: '#/desk/landing-copy',
+      documents: { desk: { projects: [refused], unreadable: [] } },
+      // The run route refuses the way the store refuses: 409 + the reason.
+      deskVerbReply: (slug, verb) => (verb === 'run'
+        ? {
+          status: 409,
+          body: {
+            error: slug + ' is unbound — a desk project seeds its corpus only when a project keys it',
+            ended: false,
+          },
+        }
+        : null),
+    });
+    page.open();
+    await flush();
+
+    const board = page.el('desk-board');
+    const band = board.find((one) => String(one.className).includes('dk-endband'))[0];
+    const walk = band && band.find((one) => String(one.textContent).trim() === 'walk the stages')[0];
+    check('DESK the walk action is on the band (KI-447)', Boolean(walk),
+      walk ? 'found' : 'band=' + Boolean(band) + ' nodes=' + (band ? band.find(() => true).map((n) => n.tagName + ':' + String(n.textContent).trim().slice(0, 24)).join(' | ').slice(0, 400) : '-'));
+    if (!walk) return;
+
+    walk.click();
+    // post() resolves a promise, then the reply paints, then the refresh
+    // re-reads and repaints: settle several microtask turns.
+    await flush();
+    await flush();
+    await flush();
+    await flush();
+
+    const after = page.el('desk-board');
+    const note = after.find((one) => String(one.className).split(/\s+/).includes('dk-note'))[0];
+    check('DESK a refused verb leaves a note on the board (KI-447)', Boolean(note),
+      note ? 'note present' : 'the board carries no note node');
+    if (!note) return;
+    check('DESK the note survives the repaint the press triggers (KI-447)',
+      String(note.textContent).includes('unbound'),
+      'note=' + JSON.stringify(String(note.textContent).slice(0, 120)));
+    check('DESK the note is marked loud so it reads as a refusal (KI-447)',
+      String(note.className).includes('loud'), 'class=' + note.className);
+  }
+
   async function theDeskCarriesTheBriefAndTheReview() {
     // ---- the deliverable, opened by its address -----------------------
     const page = boot({
@@ -9723,6 +9793,7 @@ const cases = [
   ['BUNDLE the plugin\u2019s own page mounts and relays its queries', theBundleMountsAndRelaysItsDeclaredQueries],
 
   ['DESK the desk carries the brief and the review', theDeskCarriesTheBriefAndTheReview],
+  ['DESK a refused verb keeps its reason (KI-447)', aRefusedVerbKeepsItsReason],
   ['SEAM the room carries the desk and the hand', theRoomCarriesTheDeskAndTheHand],
 ];
 
