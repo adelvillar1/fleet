@@ -8,6 +8,8 @@ use crate::channels::Capability;
 pub enum Command {
     /// The desk: the knowledge-work surface's CLI card.
     Desk,
+    /// Walk one desk deliverable through the loop.
+    DeskRun(Option<String>),
     /// Run one task to completion.
     Run(RunOptions),
     /// Interactive multi-turn session.
@@ -1104,12 +1106,26 @@ fn parse_sessions(args: &[String]) -> Result<Command, String> {
 }
 
 fn parse_desk(rest: &[String]) -> Result<Command, String> {
-    if !rest.is_empty() {
-        return Err(
-            "`fleet desk` takes no arguments — the card reads the home's desk store".to_string(),
-        );
+    // `fleet desk` reads the cards; `--run <slug>` walks one deliverable
+    // through the loop — the same stage runner the run loop drives.
+    let mut run: Option<String> = None;
+    let mut index = 0;
+    while index < rest.len() {
+        match rest[index].as_str() {
+            "--run" => {
+                index += 1;
+                let value = rest
+                    .get(index)
+                    .ok_or_else(|| "--run names a desk project".to_string())?;
+                run = Some(value.clone());
+            }
+            other => return Err(format!(
+                "`fleet desk` takes no positional arguments and knows --run <slug>, not `{other}`"
+            )),
+        }
+        index += 1;
     }
-    Ok(Command::Desk)
+    Ok(Command::DeskRun(run))
 }
 
 /// `fleet compact [<session>]`: fold one session's stored context on
@@ -3358,7 +3374,10 @@ mod tests {
         // A second positional is refused by name: the surface opens one
         // session at a time.
         assert!(parse(&args(&["sessions", "a", "b"])).is_err());
-        assert!(matches!(parse(&args(&["desk"])), Ok(Command::Desk)));
+        assert!(matches!(
+            parse(&args(&["desk"])),
+            Ok(Command::DeskRun(None))
+        ));
         assert!(parse(&args(&["desk", "extra"])).is_err());
         assert_eq!(
             parse(&args(&["sessions", "--recall", "the router pin"])).unwrap(),

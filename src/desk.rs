@@ -1247,10 +1247,18 @@ pub fn number_givens(desk: &DeskProject) -> Vec<f64> {
         for (_, value) in metric_numbers(&claim.text) {
             givens.push(value);
         }
+        // The render prints the confidence at two decimals ({:.2}) —
+        // the display the reader sees. The guard grades what the
+        // reader sees, so the rounded value is a given beside the
+        // exact one (the live walk refused its own "p 0.81" because
+        // the stored confidence was 0.8087…; the round-trip through
+        // the display is part of the evidence).
         givens.push(claim.confidence);
+        givens.push((claim.confidence * 100.0).round() / 100.0);
     }
     if let Some(coverage) = &desk.coverage {
         givens.push(coverage.score);
+        givens.push((coverage.score * 100.0).round() / 100.0);
     }
     for figure in &desk.figures {
         for (_, value) in metric_numbers(&figure.answer.to_string()) {
@@ -2290,5 +2298,26 @@ Independent labs measured the load at ninety milliseconds.";
         let stands = end_stands(&desk).unwrap();
         assert!(stands.contains("the footer converts at four percent"));
         assert!(stands.contains("4.0%"));
+    }
+    #[test]
+    fn the_live_proofs_outline_zeros_refuse() {
+        // And the outline's invented "0 asserted claims" pair refuses —
+        // the honest guard, the live walk's own finding.
+        let givens = vec![0.81, 0.18, 0.01, 3.5576];
+        let draft = "3. Claim set: 0 asserted claims (the claim set carries 0 asserted claims)";
+        let refusals = check_numbers(draft, &givens);
+        assert_eq!(refusals.len(), 2, "{refusals:?}");
+    }
+    #[test]
+    fn the_display_rounds_and_the_guard_grades_the_display() {
+        // The live walk (2026-11-04) refused its own "p 0.81": the
+        // stored confidence was 0.8087…, the render prints two
+        // decimals. The guard grades the display, so the rounded
+        // value admits the rendered annotation.
+        let mut desk = sample();
+        desk.claims[0].confidence = 0.808_732_387_819_014_7;
+        let givens = number_givens(&desk);
+        let refusals = check_numbers("_(contested, p 0.81, sources/x)_", &givens);
+        assert!(refusals.is_empty(), "{refusals:?}");
     }
 }

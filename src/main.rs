@@ -172,6 +172,7 @@ fn dispatch_sync(args: &[String]) -> ExitCode {
         Ok(Command::Skills(options)) => skills_command(&options),
         Ok(Command::Memories(options)) => memories_command(&options),
         Ok(Command::Desk) => desk_command(),
+        Ok(Command::DeskRun(slug)) => desk_run_command(slug.as_deref()),
         Ok(Command::Cron(options)) => cron_command(&options),
         Ok(Command::Improve(options)) => improve_command(&options),
         Ok(Command::Vault(options)) => vault_command(&options),
@@ -1572,6 +1573,82 @@ fn skills_command(options: &cli::SkillsOptions) -> ExitCode {
 /// cycle — the same pass the scheduled thread runs hourly in a chat or
 /// the TUI — and prints what it did before the cards, with every
 /// action's row in the calibration stream.
+/// `fleet desk --run <slug>`: walk one deliverable through the loop on
+/// the vendored lanes — claims, coverage, outline, render, review,
+/// knowledge — the stage runner marking the store as it goes. The
+/// walk's refusals print by name; the exit carries them.
+fn desk_run_command(slug: Option<&str>) -> ExitCode {
+    let Some(slug) = slug else {
+        eprintln!("--run names a desk project");
+        return ExitCode::FAILURE;
+    };
+    let home = match fleet_home() {
+        Ok(home) => home,
+        Err(error) => {
+            eprintln!("{error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let runtime = match tokio::runtime::Runtime::new() {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            eprintln!("the async runtime would not start: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    // The extraction spine resolves from the environment chain the rest
+    // of the crate reads; its absence is the named refusal the stage
+    // marks, not a silent skip.
+    let extract = fleet::extract::ExtractConfig::resolve(
+        std::env::var("FLEET_HOME").ok().as_deref(),
+        std::env::var("HOME").ok().as_deref(),
+        None,
+        None,
+    )
+    .map(|(config, missing)| {
+        if !missing.is_empty() {
+            eprintln!(
+                "the extraction spine is missing {} — the claim pass will refuse by name",
+                missing.join(", ")
+            );
+        }
+        let client = fleet::extract::ExtractClient::new(config.clone());
+        (client, config.verifiers[0].clone())
+    });
+    let walked = runtime.block_on(fleet::desk::run_stages(
+        &fleet::judge::LaneSource::Vendored,
+        &home,
+        slug,
+        extract
+            .as_ref()
+            .map(|(client, verifier)| (client, verifier)),
+    ));
+    match walked {
+        Ok(desk) => {
+            for (stage, state) in &desk.stages {
+                let mark = match state {
+                    fleet::desk::StageState::Pending => "pending",
+                    fleet::desk::StageState::Running => "running",
+                    fleet::desk::StageState::Done => "done",
+                    fleet::desk::StageState::Refused { reason } => {
+                        println!("  {:9} refused — {reason}", stage.name());
+                        continue;
+                    }
+                };
+                println!("  {:9} {mark}", stage.name());
+            }
+            if let Some(stands) = fleet::desk::end_stands(&desk) {
+                println!("the end gate: {stands}");
+            }
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("{error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 fn desk_command() -> ExitCode {
     let home = match fleet_home() {
         Ok(home) => home,
