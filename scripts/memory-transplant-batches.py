@@ -33,21 +33,26 @@ FLEET = os.path.expanduser("~/.fleet/bin/fleet")
 DATE = re.compile(r"(20\d{2}-\d{2}-\d{2})")
 
 
-def census_transplants():
-    """The census's transplant rows, as (slug, type)."""
+def census_rows(dispositions):
+    """The census's listing rows whose disposition is named, as
+    (slug, type)."""
     rows = []
     with open(CENSUS, encoding="utf-8") as handle:
         for line in handle:
-            if not line.startswith("| ") or "| transplant |" not in line:
+            if not line.startswith("| "):
                 continue
             cells = [c.strip() for c in line.split("|")]
             # The listing's rows carry four cells (slug, type,
             # disposition, reason); the tally's carry two — the length
             # check keeps the tally out.
-            if len(cells) < 5 or cells[3] != "transplant":
+            if len(cells) < 5 or cells[3] not in dispositions:
                 continue
             rows.append((cells[1], cells[2]))
     return rows
+
+
+def census_transplants():
+    return census_rows({"transplant"})
 
 
 def slug_paths():
@@ -111,9 +116,13 @@ def main():
     parser.add_argument("--start", type=int, default=0)
     parser.add_argument("--size", type=int, default=40)
     parser.add_argument("--plan", action="store_true")
+    parser.add_argument(
+        "--screened", action="store_true",
+        help="land the census's screened rows (the owner's nod is recorded in the plan)",
+    )
     args = parser.parse_args()
 
-    rows = census_transplants()
+    rows = census_rows({"transplant", "screen"} if args.screened else {"transplant"})
     dated = [(date_of(read_fact(slug)[0] or "", slug), slug, ftype) for slug, ftype in rows]
     dated.sort()
     batches = [dated[i : i + args.size] for i in range(0, len(dated), args.size)]

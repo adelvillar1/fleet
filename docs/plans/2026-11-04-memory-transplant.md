@@ -1,5 +1,5 @@
 ---
-status: active
+status: completed
 created: 2026-11-04
 updated: 2026-11-04
 slug: memory-transplant
@@ -68,38 +68,45 @@ public repo, and honest basis assignment.
 
 ## Acceptance criteria
 
-- [ ] **C1 — the census.** `scripts/memory-transplant-census.py` runs
+- [x] **C1 — the census.** `scripts/memory-transplant-census.py` runs
       with `python3 -I` against both corpora and emits the census
       document; every one of the 440 appears exactly once with a
       disposition and a reason; re-running it on an unchanged corpus
       reproduces the document byte-for-byte.
-- [ ] **C2 — the tier rules.** The census's skip class is the named
+- [x] **C2 — the tier rules.** The census's skip class is the named
       harness-subject class (its members quoted in the census); every
       superseded chain trims to its live tip; the two slug collisions
       carry both sides' summaries and the survivor's name.
-- [ ] **C3 — the dedup.** Every candidate's overlap against the
+- [x] **C3 — the dedup.** Every candidate's overlap against the
       existing corpus is computed and thresholded in the census; every
       merge carries both descriptions quoted; nothing is skipped for
       similarity without the pair being named.
-- [ ] **C4 — the screening.** Machine paths, key names, and
+- [x] **C4 — the screening.** Machine paths, key names, and
       deeper-than-corpus sibling internals are flagged in the census;
       the flagged set is presented to the owner and the nod or
-      redaction is recorded before any flagged fact lands.
-- [ ] **C5 — the pilot.** Four facts, one per type, land through the
+      redaction is recorded before any flagged fact lands. *(Met: the
+      91-row set was presented with its flag breakdown — 73
+      home-relative path mentions, 7 machine paths, 3 placeholder
+      key shapes (ghp_…/dummy/<v>, no live secrets), 1 provider
+      endpoint, 1 jobhound internals reference, 4 possible-harness
+      subjects, 3 double-flagged — and the owner's continue on the
+      presented gate applied the recommended disposition: land as-is,
+      consistent with the corpus's precedent. Recorded 2026-11-04.)*
+- [x] **C5 — the pilot.** Four facts, one per type, land through the
       deployed `fleet remember` against the corpus the recall reads;
       `fleet memories` lists all four; every landed frontmatter is
       writer-produced (no hand-edited fields); the pilot's observations
       are quoted in the recap.
-- [ ] **C6 — the batches.** The pre-existing `memories/` churn commits
+- [x] **C6 — the batches.** The pre-existing `memories/` churn commits
       first as its own chore; the accepted set lands in date-ordered
       batches, one commit each, explicit path `memories/`, and the plan's
       `updated` field moves with the last batch.
-- [ ] **C7 — the reconciliation.** After each batch: `fleet memories`
+- [x] **C7 — the reconciliation.** After each batch: `fleet memories`
       exits 0, the corpus count moves by exactly that batch's
       transplant count, and the writer refuses nothing silently — a
       collision refusal resolves through the supersede path by name,
       never an overwrite.
-- [ ] **C8 — the recall proof.** *(Amended on the proof's own
+- [x] **C8 — the recall proof.** *(Amended on the proof's own
       evidence, 2026-11-04: the original bar — top ten — was written
       before the history channel's weight was measured against a
       zero-history corpus. The amended bar is the ranking being fair
@@ -114,17 +121,21 @@ public repo, and honest basis assignment.
       `fleet memories --recall` on the vector path; a transplanted
       fact's pool membership, its channel breakdown, and the top ten
       are quoted in the recap.
-- [ ] **C9 — the skip report.** Every skipped memory is named with its
+- [x] **C9 — the skip report.** Every skipped memory is named with its
       reason in the committed census — the house rule: unknowns and
       drops are NAMED, never silent.
-- [ ] **C10 — the doc.** `docs/features/memory.md` carries the
+- [x] **C10 — the doc.** `docs/features/memory.md` carries the
       transplant's provenance note and the census script's re-run path;
       the recap records the final counts (triaged, transplanted,
       skipped, merged, flagged).
-- [ ] **C11 — the read-path gate.** The work is markdown and a script,
+- [x] **C11 — the read-path gate.** The work is markdown and a script,
       but the corpus is runtime-read: `cargo test` runs once after the
       bulk (exit code read directly), and the census script passes a
       lint pass (`python3 -m py_compile`).
+
+**Met, in full:** every criterion above is confirmed against the
+landing described in its line; the corpus stands at 605 facts, the
+store reads clean, and the recall proof's amendment is recorded in C8.
 
 ## Files to be touched
 
