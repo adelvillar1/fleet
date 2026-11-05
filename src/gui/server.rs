@@ -1001,6 +1001,30 @@ async fn serve_connection(
         // Break a phase out of a room (the huddles plan's C9): the path
         // names the parent room, the body the phase brief and any extra
         // bots. The child inherits its membership unless one is named.
+        // Hand it to the desk (the desk plan's C20): the room's goal
+        // becomes the brief's claim, the desk project bound to nothing
+        // the room cannot prove — the workspace project a session's log
+        // names, else unbound and named so. The desk's own loop applies
+        // to what lands: claims and review are not skipped for a
+        // huddle's deliverable.
+        ("POST", path) if path.starts_with("/api/huddles/") && path.ends_with("/hand-to-desk") => {
+            let id = percent_decode(
+                path.trim_start_matches("/api/huddles/")
+                    .trim_end_matches("/hand-to-desk"),
+            );
+            match bridge.hand_to_desk(&id) {
+                Ok(slug) => {
+                    write_reply(
+                        &mut stream,
+                        api(200, json!({ "type": "desk", "slug": slug, "handed": true })),
+                    )
+                    .await
+                }
+                Err(message) => {
+                    write_reply(&mut stream, api(409, json!({ "error": message }))).await
+                }
+            }
+        }
         ("POST", path) if path.starts_with("/api/huddles/") => {
             let parent = percent_decode(path.trim_start_matches("/api/huddles/"));
             let body = match read_body(&mut stream, &request, rest).await {

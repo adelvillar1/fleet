@@ -647,6 +647,39 @@ impl Bridge {
         Ok(id)
     }
 
+    /// Hand it to the desk (the desk plan's C20): the room's standing
+    /// goal becomes the brief's claim, the room's name the deliverable's
+    /// name. The desk's own loop applies to what lands — claims and
+    /// review are not skipped for a huddle's deliverable. The binding
+    /// rides the workspace project the home's working directory names;
+    /// a hand from outside a workspace is unbound, and the reply names
+    /// that so the surface can say so.
+    pub fn hand_to_desk(&self, id: &str) -> Result<String, String> {
+        let goals = load_goals(&self.home);
+        let goal = goals
+            .get(id)
+            .ok_or_else(|| format!("the room `{id}` carries no goal to hand"))?;
+        let name = format!("huddle {id}");
+        // The binding rides the working directory itself — the workspace
+        // the hand was pressed from — keyed by its final segment the way
+        // every binding keys.
+        let project = std::env::current_dir()
+            .ok()
+            .map(|cwd| cwd.to_string_lossy().to_string())
+            .filter(|path| !path.is_empty());
+        let desk = crate::desk::create(
+            &self.home,
+            &crate::desk::slug_for(&format!("huddle-{id}")),
+            &name,
+            "the room",
+            goal,
+            Vec::new(),
+            project,
+        )
+        .map_err(|error| format!("the hand was refused: {error}"))?;
+        Ok(desk.slug)
+    }
+
     /// Break a phase out of a room (the huddles plan's C9): a child room
     /// carrying its own phase brief or the parent's standing goal, and the
     /// membership it inherited plus anyone the owner adds. The child names

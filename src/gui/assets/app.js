@@ -821,6 +821,8 @@
     roomPhases: document.getElementById('room-phases'),
     roomKnowledge: document.getElementById('room-knowledge'),
     roomShelf: document.getElementById('room-shelf'),
+    roomDesk: document.getElementById('room-desk'),
+    roomDeskHand: document.getElementById('room-desk-hand'),
     roomShelfCount: document.getElementById('room-shelf-count'),
     roomShelfRail: document.getElementById('room-shelf-rail'),
     roomBreakout: document.getElementById('room-breakout'),
@@ -10709,6 +10711,11 @@
   function paintShelf() {
     if (!el.roomShelf) return;
     var files = face.roomFiles || [];
+    // The desk's work rides the room (the desk plan's C20): the room's
+    // members see what the desk holds, each card carrying its evidence
+    // state read from the desk store — a desk card is not a file card.
+    readDesk(false).then(paintDeskCards);
+    paintDeskHand();
     el.roomShelf.hidden = !files.length;
     if (!files.length) return;
     el.roomShelfCount.textContent = String(files.length);
@@ -10734,6 +10741,68 @@
       });
       el.roomShelfRail.appendChild(card);
     });
+  }
+
+  // The desk cards in the room: the desk's deliverables as one row of
+  // cards under the shelf rail, each naming its evidence state — never
+  // a zero dressed as an empty fact. The host is the shelf's own
+  // sibling, so a repaint replaces instead of accumulating.
+  function paintDeskCards() {
+    if (!el.roomDesk) return;
+    var deskProjects = face.desk || [];
+    el.roomDesk.textContent = '';
+    if (!deskProjects.length) return;
+    var cards = node('div', 'desk-cards');
+    cards.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;margin-top:8px';
+    deskProjects.slice(0, 6).forEach(function (desk) {
+      var refusals = (desk.refusals || []).length + (desk.number_refusals || []).length;
+      var card = node('button', 'artifact desk-card');
+      card.type = 'button';
+      card.title = 'desk \u00b7 ' + desk.slug;
+      card.appendChild(node('span', 'artifact-glyph', 'DSK'));
+      var body = node('span', 'artifact-body');
+      body.appendChild(node('span', 'artifact-name', desk.name));
+      var contested = (desk.claims || []).filter(function (c) { return c.verdict === 'contested'; }).length;
+      body.appendChild(node('span', 'artifact-meta',
+        (refusals ? refusals + ' refusal(s) stand' : 'evidence clean')
+        + (contested ? ' \u00b7 ' + contested + ' contested' : '')));
+      card.appendChild(body);
+      card.addEventListener('click', function () {
+        window.location.hash = '#/desk/' + desk.slug;
+      });
+      cards.appendChild(card);
+    });
+    el.roomDesk.appendChild(cards);
+  }
+
+  // The hand (C20's other direction): an ended room can hand its goal
+  // to the desk — the desk project lands bound to the workspace, the
+  // goal its claim, and the desk's own loop applies to it. A room
+  // still working says so instead of offering the hand.
+  function paintDeskHand() {
+    if (!el.roomDeskHand) return;
+    el.roomDeskHand.textContent = '';
+    var room = huddleRows('ended').find(function (row) { return row.id === face.session; });
+    var ended = Boolean(room);
+    var hand = node('button', 'press desk-hand');
+    hand.type = 'button';
+    hand.textContent = ended ? 'hand it to the desk' : 'the desk takes this when the room ends';
+    hand.disabled = !ended;
+    hand.style.marginTop = '8px';
+    hand.addEventListener('click', function () {
+      if (!ended) return;
+      fetch('/api/huddles/' + encodeURIComponent(face.session) + '/hand-to-desk', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+      }).then(function (reply) { return reply.json(); }).then(function (answer) {
+        if (answer.slug) {
+          hand.textContent = 'handed \u2014 ' + answer.slug + ' is on the desk';
+          hand.disabled = true;
+          readDesk(true).then(paintDeskCards);
+        }
+      }).catch(function () { });
+    });
+    el.roomDeskHand.appendChild(hand);
   }
 
   // No room selected: the invitation when the home keeps none yet, the

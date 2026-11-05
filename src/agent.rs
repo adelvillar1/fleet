@@ -2507,8 +2507,15 @@ impl<'a> Agent<'a> {
             Some(section) => format!("## Design\n\n{section}"),
             None => String::new(),
         };
+        // The desk account rides beside it (the desk plan's C13): the
+        // same bound, the same absence rule.
+        let desk = self.desk_context();
+        let desk_block = match &desk {
+            Some(section) => format!("## Desk\n\n{section}"),
+            None => String::new(),
+        };
         let Some(memory) = self.memory.clone() else {
-            if design_block.is_empty() {
+            if design_block.is_empty() && desk_block.is_empty() {
                 return Ok(None);
             }
             // Rule 5: what the model sees is in the log — the design
@@ -2518,19 +2525,21 @@ impl<'a> Agent<'a> {
                 facts: Vec::new(),
                 design,
             })?;
-            return Ok(Some(design_block));
+            return Ok(Some(format!("{design_block}\n\n{desk_block}")));
         };
         let assembly = memory.assemble(task, &memory.working());
         let block = memory::render_assembly(&assembly);
-        if block.is_empty() && design_block.is_empty() {
+        if block.is_empty() && design_block.is_empty() && desk_block.is_empty() {
             return Ok(None);
         }
         let full = if block.is_empty() {
-            design_block.clone()
-        } else if design_block.is_empty() {
+            format!("{design_block}\n\n{desk_block}")
+        } else if design_block.is_empty() && desk_block.is_empty() {
             block.clone()
-        } else {
+        } else if desk_block.is_empty() {
             format!("{block}\n\n{design_block}")
+        } else {
+            format!("{block}\n\n{design_block}\n\n{desk_block}")
         };
         let shape = assembly.shape.unwrap_or_default().to_string();
         let facts: Vec<String> = assembly
@@ -2618,6 +2627,32 @@ impl<'a> Agent<'a> {
             let cwd = std::env::current_dir().ok()?;
             let key = cwd.file_name()?.to_string_lossy().to_string();
             crate::canvas::design_context_section(&home, &key)
+        }
+    }
+
+    /// The desk account (the desk plan's C13): the run's workspace
+    /// project's desk deliverables ride the standing context beside the
+    /// design account — the same K6 shape, one line per deliverable,
+    /// bounded, absent when the project has none. A test pin points it
+    /// at a fixture the same way.
+    fn desk_context(&self) -> Option<String> {
+        #[cfg(test)]
+        {
+            if let Some((home, key)) = TEST_DESK_CONTEXT.lock().unwrap().clone() {
+                return crate::desk::desk_context_section(&home, &key);
+            }
+            None
+        }
+        #[cfg(not(test))]
+        {
+            let home = crate::home::fleet_home(
+                std::env::var("FLEET_HOME").ok().as_deref(),
+                std::env::var("HOME").ok().as_deref(),
+            )
+            .ok()?;
+            let cwd = std::env::current_dir().ok()?;
+            let key = cwd.file_name()?.to_string_lossy().to_string();
+            crate::desk::desk_context_section(&home, &key)
         }
     }
 
@@ -8968,6 +9003,9 @@ fn lane_call_output(result: &CallResult) -> String {
 /// a run's assembly must never depend on this machine's own canvas.
 #[cfg(test)]
 static TEST_DESIGN_CONTEXT: std::sync::Mutex<Option<(std::path::PathBuf, String)>> =
+    std::sync::Mutex::new(None);
+#[cfg(test)]
+static TEST_DESK_CONTEXT: std::sync::Mutex<Option<(std::path::PathBuf, String)>> =
     std::sync::Mutex::new(None);
 
 #[cfg(test)]

@@ -9273,6 +9273,91 @@ async function theConnectCardSaysWhatHappened() {
   }
 
 
+  // The surfaces' seam (the desk plan's C20): the room carries the
+  // desk's work — desk cards in the shelf area, each naming its
+  // evidence state — and an ended room offers the hand, whose press
+  // POSTs the hand and names what landed. A working room says when the
+  // desk takes it instead of offering the press.
+  async function theRoomCarriesTheDeskAndTheHand() {
+    const page = boot({
+      hash: '#/huddles/e1',
+      documents: {
+        huddles: {
+          type: 'huddles',
+          active: [],
+          inactive: [],
+          ended: [{
+            id: 'e1', title: 'the-copy-room', goal: 'the fold earns its keep',
+            personas: ['clerk'], avatars: {}, state: 'archived',
+            preview: 'done', from: 'clerk', last_write: 1793807361, current: true,
+            awaiting_you: false, deliverables: 1,
+            knowledge: { recalled: 2, wrote: 1 }, parent: null, children: [],
+          }],
+          counts: { active: 0, inactive: 0, ended: 1 },
+        },
+        state: (asked) => ({
+          ...emptyState(asked), session: asked,
+          goal: 'the fold earns its keep',
+          members: [{ name: 'clerk', voice: 'keeps the record' }],
+        }),
+        desk: {
+          projects: [{
+            slug: 'landing-copy', name: "The landing page's copy",
+            audience: 'the beta cohort', claim: 'the fold earns its keep',
+            shape: 'presentation', project: '/Users/x/landing',
+            sources: [], stages: [], claims: [
+              { text: 'x', source: 's', sentence: 'q', confidence: 0.6, kind: 'claim', verdict: 'contested' },
+            ],
+            refusals: [], number_refusals: [], stands: null, updated: '2026-11-04',
+          }],
+        },
+      },
+    });
+    page.open();
+    await flush();
+    await flush();
+    const seam = page.text('room-desk');
+    check('SEAM the room renders the desk card', seam.includes("The landing page's copy"), seam.slice(0, 120));
+    check('SEAM the desk card names its evidence', seam.includes('contested'), 'no evidence state');
+    const hand = page.text('room-desk-hand');
+    check('SEAM the ended room offers the hand', hand.includes('hand it to the desk'), hand);
+    page.rows('.desk-hand').forEach((b) => b.click());
+    await flush();
+    const handed = page.calls.filter((one) => one.url === '/api/huddles/e1/hand-to-desk');
+    check('SEAM the hand POSTs to the room', handed.length === 1, 'posts=' + handed.length);
+
+    // A working room says when the desk takes it — the press is the
+    // room's, disabled while the room is not done.
+    const working = boot({
+      hash: '#/huddles/a1',
+      documents: {
+        state: (asked) => ({
+          ...emptyState(asked), session: asked,
+          goal: 'x',
+          members: [{ name: 'clerk', voice: 'keeps the record' }],
+        }),
+        huddles: {
+          type: 'huddles',
+          active: [{
+            id: 'a1', title: 'the-live-room', goal: 'x',
+            personas: ['clerk'], avatars: {}, state: 'working',
+            preview: 'x', from: 'clerk', last_write: 1793807361, current: true,
+            awaiting_you: false, deliverables: 0,
+            knowledge: { recalled: 0, wrote: 0 }, parent: null, children: [],
+          }],
+          inactive: [], ended: [], counts: { active: 1, inactive: 0, ended: 0 },
+        },
+      },
+    });
+    working.open();
+    await flush();
+    await flush();
+    const handText = working.text('room-desk-hand');
+    check('SEAM a working room names when the desk takes it',
+      handText.includes('when the room ends'), handText);
+  }
+
+
 const cases = [
   ['HEALTH the working line reads the health, not the turn', theWorkingLineReadsTheHealthNotTheTurn],
   ['HEALTH a reopened conversation seeds its health and the floor names itself', aReopenedConversationSeedsItsHealth],
@@ -9370,7 +9455,9 @@ const cases = [
   ['CA-C3 the connect card says what happened', theConnectCardSaysWhatHappened],
 
   ['BUNDLE the plugin\u2019s own page mounts and relays its queries', theBundleMountsAndRelaysItsDeclaredQueries],
+
   ['DESK the desk carries the brief and the review', theDeskCarriesTheBriefAndTheReview],
+  ['SEAM the room carries the desk and the hand', theRoomCarriesTheDeskAndTheHand],
   ['DESK the desk carries the brief and the review', theDeskCarriesTheBriefAndTheReview],
 ];
 
