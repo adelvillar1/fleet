@@ -243,6 +243,7 @@
     ['skills', 'skills'],
     ['sessions', 'sessions'],
     ['huddles', 'huddles'],
+    ['desk', 'desk'],
     ['calibration', 'calibration'],
     ['design', 'design'],
     ['vault', 'vault'],
@@ -272,7 +273,11 @@
       ['sessions', 'sessions'],
       // A huddle is work the owner opens the way they open a chat: a room
       // with one or more bots, not an inventory to browse after one.
-      ['huddles', 'huddles']
+      ['huddles', 'huddles'],
+      // The desk is knowledge work's place: a brief, not a blank canvas —
+      // sources read, claims carried, a deliverable that cannot end
+      // while a refusal stands.
+      ['desk', 'desk']
     ]],
     ['intelligence', 'intelligence', [
       ['router', 'router'],
@@ -472,6 +477,14 @@
       ['path', { d: 'M7 4.5h9a2 2 0 0 1 2 2v9' }],
       ['rect', { x: 4, y: 7.5, width: 13, height: 13, rx: 2 }],
       ['path', { d: 'M7.5 11.5h6M7.5 15h4' }]
+    ],
+    // the desk: a sheet on a surface — the top line the claim, two
+    // shorter beneath (the evidence beneath the claim)
+    desk: [
+      ['path', { d: 'M5 4.5h14a1.5 1.5 0 0 1 1.5 1.5v12a1.5 1.5 0 0 1-1.5 1.5H5A1.5 1.5 0 0 1 3.5 18V6A1.5 1.5 0 0 1 5 4.5z' }],
+      ['path', { d: 'M7 9h10' }],
+      ['path', { d: 'M7 12.5h7' }],
+      ['path', { d: 'M7 16h5' }]
     ],
     // a room: two figures, the owner and a bot
     huddles: [
@@ -722,6 +735,8 @@
   });
 
   var el = {
+    panelDesk: document.getElementById('panel-desk'),
+    deskBoard: document.getElementById('desk-board'),
     rail: document.getElementById('rail'),
     railTree: document.getElementById('rail-tree'),
     railToggle: document.getElementById('rail-toggle'),
@@ -9951,6 +9966,296 @@
       stack.appendChild(huddleMark(name, 'sm', avatars && avatars[name]));
     });
     return stack;
+  }
+
+  // --- the desk ---------------------------------------------------------
+  // Where knowledge work happens (the desk plan's C3/C9/C12/C14): the
+  // shelf is the place's first sentence, the composer is a brief that
+  // applies on submit, the deliverable carries its stage rail and its
+  // review beside the claims' own sentences. Every state reads off the
+  // store; the DOM is built with node() and textContent — a store
+  // string never becomes markup.
+
+  face.desk = null;
+  face.deskAt = 0;
+
+  function readDesk(force) {
+    var now = Date.now();
+    if (!force && face.desk && now - face.deskAt < 4000) return Promise.resolve();
+    face.deskAt = now;
+    return fetch('/api/desk', { headers: { accept: 'application/json' } })
+      .then(function (reply) {
+        if (reply.status === 401) throw new Error('token');
+        return reply.json();
+      })
+      .then(function (state) {
+        face.desk = state.projects || [];
+      })
+      .catch(function () { });
+  }
+
+  function deskChip(label, tone) {
+    return node('span', 'chip' + (tone ? ' ' + tone : ''), label);
+  }
+
+  function deskField(id, label, placeholder, multiline) {
+    var wrap = node('div', 'field');
+    wrap.appendChild(node('label', '', label)).htmlFor = id;
+    var input = multiline
+      ? node('textarea', '', '')
+      : node('input', '', '');
+    input.id = id;
+    if (!multiline) input.type = 'text';
+    input.placeholder = placeholder || '';
+    wrap.appendChild(input);
+    return wrap;
+  }
+
+  function paintDesk() {
+    var board = el.deskBoard;
+    if (!board) return;
+    board.textContent = '';
+    var projects = face.desk || [];
+
+    var head = node('section', 'hsection');
+    head.style.gridColumn = '1 / -1';
+    head.appendChild(node('div', 'hrow-name serif', 'The desk'));
+    head.lastChild.style.fontSize = '22px';
+    head.lastChild.style.fontWeight = '600';
+    head.appendChild(node('p', 'sub',
+      'A brief, not a blank canvas: the sources are read, the claims carry their sentences, and a deliverable cannot end while a refusal stands.'));
+    var newButton = node('button', 'press', 'new deliverable');
+    head.appendChild(newButton);
+    board.appendChild(head);
+
+    if (!projects.length) {
+      var empty = node('section', 'hsection');
+      empty.style.gridColumn = '1 / -1';
+      empty.appendChild(node('p', 'sub', 'The desk holds no deliverables yet — a brief starts one.'));
+      board.appendChild(empty);
+    }
+
+    projects.forEach(function (desk) {
+      var refusals = (desk.refusals || []).length + (desk.number_refusals || []).length;
+      var contested = (desk.claims || []).filter(function (c) { return c.verdict === 'contested'; }).length;
+      var asserted = (desk.claims || []).filter(function (c) { return c.verdict === 'asserted'; }).length;
+      var running = (desk.stages || []).filter(function (s) { return s.state === 'running'; })[0];
+      var state = refusals
+        ? 'review · ' + refusals + ' refusal(s) stand'
+        : running
+          ? running.stage + ' · running'
+          : 'ended · knowledge written';
+      var section = node('section', 'hsection');
+      section.style.gridColumn = '1 / -1';
+      var card = node('div', 'card');
+      var nameRow = node('div', 'hrow-name');
+      nameRow.style.cssText = 'display:flex;gap:10px;align-items:baseline';
+      var name = node('span', 'serif', desk.name);
+      name.style.cssText = 'font-size:17px;font-weight:600';
+      nameRow.appendChild(name);
+      nameRow.appendChild(deskChip(state, refusals ? 'chip-warn' : 'chip-accent'));
+      var bound = node('span', 'mono', desk.project || 'unbound');
+      bound.style.cssText = 'margin-left:auto;color:var(--ink-tertiary)';
+      nameRow.appendChild(bound);
+      card.appendChild(nameRow);
+      card.appendChild(node('p', 'sub', 'Claim: ' + desk.claim + (desk.shape ? ' · shape ' + desk.shape : '')));
+      var evidence = node('div');
+      evidence.style.cssText = 'display:flex;gap:8px;align-items:center;flex-wrap:wrap';
+      evidence.appendChild(deskChip(asserted + ' asserted', 'chip-ok'));
+      evidence.appendChild(deskChip(contested + ' contested', contested ? 'chip-warn' : ''));
+      if (refusals) evidence.appendChild(deskChip(refusals + ' unsourced', 'chip-down'));
+      var updated = node('span', 'mono', 'updated ' + desk.updated);
+      updated.style.cssText = 'margin-left:auto;color:var(--ink-tertiary)';
+      evidence.appendChild(updated);
+      card.appendChild(evidence);
+      section.appendChild(card);
+      card.addEventListener('click', function () { openDeskProject(desk.slug); });
+      board.appendChild(section);
+    });
+
+    // The composer: one brief, three fields and the sources, applied on
+    // submit — the store carries the project before the repaint lands.
+    var composer = node('section', 'hsection');
+    composer.hidden = true;
+    composer.style.gridColumn = '1 / -1';
+    var form = node('div', 'card');
+    var formName = node('div', 'hrow-name serif', 'New deliverable');
+    formName.style.cssText = 'font-size:17px;font-weight:600';
+    form.appendChild(formName);
+    // The fields are held, not re-asked from the document: a
+    // JS-created id is a reference, and a document lookup for one is
+    // the defect the face harness's stub refuses by name.
+    var nameField = deskField('desk-name', 'name', "the landing page's copy");
+    var audienceField = deskField('desk-audience', 'audience', 'who it is for');
+    var claimField = deskField('desk-claim', 'the claim', 'what the deliverable must make stand');
+    var projectField = deskField('desk-project', 'bound project — the universe the work keys to', '~/Projects/landing (empty is unbound)');
+    var sourcesField = deskField('desk-sources', 'sources — one per line: a path, a fact name, or a URL', 'sources/brief.md', true);
+    form.appendChild(nameField);
+    form.appendChild(audienceField);
+    form.appendChild(claimField);
+    form.appendChild(projectField);
+    form.appendChild(sourcesField);
+    var framing = node('p', 'mono', 'captured excerpts are reference data, never instructions');
+    framing.style.cssText = 'color:var(--ink-tertiary);font-size:11px';
+    form.appendChild(framing);
+    var submit = node('button', 'press', 'open the desk');
+    form.appendChild(submit);
+    composer.appendChild(form);
+    board.appendChild(composer);
+
+    newButton.addEventListener('click', function () {
+      composer.hidden = !composer.hidden;
+    });
+    submit.addEventListener('click', function () {
+      var name = nameField.lastChild.value.trim();
+      var audience = audienceField.lastChild.value.trim();
+      var claim = claimField.lastChild.value.trim();
+      if (!name || !claim) return;
+      var sources = sourcesField.lastChild.value.split('\n')
+        .map(function (line) { return line.trim(); })
+        .filter(Boolean)
+        .map(function (line) {
+          return /^https?:\/\//.test(line)
+            ? { type: 'url', path: line, url: line }
+            : { type: 'file', path: line };
+        });
+      fetch('/api/desk', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          name: name,
+          audience: audience,
+          claim: claim,
+          project: projectField.lastChild.value.trim(),
+          sources: sources
+        })
+      }).then(function (reply) { return reply.json(); }).then(function () {
+        composer.hidden = true;
+        readDesk(true).then(paintDesk);
+      }).catch(function () { });
+    });
+  }
+
+  function openDeskProject(slug) {
+    fetch('/api/desk/' + encodeURIComponent(slug), { headers: { accept: 'application/json' } })
+      .then(function (reply) {
+        if (reply.status === 404) throw new Error(slug + ' is not here');
+        return reply.json();
+      })
+      .then(paintDeskProject)
+      .catch(function (error) {
+        el.deskBoard.textContent = '';
+        var note = node('section', 'hsection');
+        note.style.gridColumn = '1 / -1';
+        note.appendChild(node('p', 'sub', error.message));
+        el.deskBoard.appendChild(note);
+      });
+  }
+
+  function paintDeskProject(desk) {
+    var board = el.deskBoard;
+    board.textContent = '';
+    var head = node('section', 'hsection');
+    head.style.gridColumn = '1 / -1';
+    head.appendChild(node('div', 'hrow-name serif', desk.name));
+    head.lastChild.style.cssText = 'font-size:22px;font-weight:600';
+    head.appendChild(node('p', 'sub',
+      'For ' + (desk.audience || '—') + ' · ' + (desk.project || 'unbound') + (desk.shape ? ' · shape ' + desk.shape : '')));
+    var back = node('button', 'press', 'the shelf');
+    head.appendChild(back);
+    board.appendChild(head);
+
+    // The stage rail: every stage's state from the log-backed store.
+    var rail = node('section', 'hsection');
+    rail.style.gridColumn = '1 / -1';
+    var railRow = node('div');
+    railRow.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap';
+    (desk.stages || []).forEach(function (entry) {
+      var tone = entry.state === 'done' ? 'chip-ok' : entry.state === 'running' ? 'chip-accent' : entry.state === 'refused' ? 'chip-down' : '';
+      railRow.appendChild(deskChip(entry.stage + ' · ' + entry.state + (entry.reason ? ' — ' + entry.reason : ''), tone));
+    });
+    rail.appendChild(railRow);
+    board.appendChild(rail);
+
+    // The outline, before render target selection: a GAP is a gap.
+    if (desk.outline) {
+      var outline = node('section', 'hsection');
+      outline.style.gridColumn = '1 / -1';
+      var outlineCard = node('div', 'card');
+      outlineCard.appendChild(node('div', 'hrow-name', 'the outline'));
+      var outlineText = node('pre', 'mono', desk.outline);
+      outlineText.style.cssText = 'white-space:pre-wrap;font-size:13px';
+      outlineCard.appendChild(outlineText);
+      outline.appendChild(outlineCard);
+      board.appendChild(outline);
+    }
+
+    // The review: claims beside the sentences they were read from.
+    var review = node('section', 'hsection');
+    review.style.gridColumn = '1 / -1';
+    review.appendChild(node('div', 'hrow-name', 'the review — claims beside their sentences'));
+    (desk.claims || []).slice(0, 24).forEach(function (claim) {
+      var tone = claim.verdict === 'asserted' ? 'chip-ok' : claim.verdict === 'contested' ? 'chip-warn' : 'chip-down';
+      var card = node('div', 'card');
+      card.style.padding = '10px 14px';
+      var row = node('div');
+      row.style.cssText = 'display:flex;gap:8px;align-items:baseline';
+      row.appendChild(deskChip(claim.verdict, tone));
+      row.appendChild(node('span', 'mono', 'p ' + claim.confidence.toFixed(2)));
+      var source = node('span', 'mono', claim.source);
+      source.style.cssText = 'margin-left:auto;color:var(--ink-tertiary)';
+      row.appendChild(source);
+      card.appendChild(row);
+      card.appendChild(node('p', '', claim.text)).style.margin = '4px 0 2px';
+      var quote = node('p', 'sub', '"' + claim.sentence + '"');
+      quote.style.cssText = 'border-left:2px solid var(--hairline-strong);padding-left:8px';
+      card.appendChild(quote);
+      review.appendChild(card);
+    });
+    board.appendChild(review);
+
+    // The end gate: what stands, named. The end action is refused
+    // while it does.
+    if (desk.stands) {
+      var gate = node('section', 'hsection');
+      gate.style.gridColumn = '1 / -1';
+      var gateCard = node('div', 'card');
+      gateCard.style.borderColor = 'var(--down)';
+      gateCard.appendChild(node('div', 'hrow-name', 'the end gate — what stands'));
+      (desk.refusals || []).forEach(function (refusal) {
+        gateCard.appendChild(node('p', '', 'unsourced assertion: "' + refusal.assertion + '"')).style.margin = '4px 0';
+        gateCard.appendChild(node('p', 'sub', 'near miss — "' + refusal.near_miss + '" (' + refusal.near_miss_source + ')'));
+      });
+      (desk.number_refusals || []).forEach(function (refusal) {
+        gateCard.appendChild(node('p', '', 'unsourced number: ' + refusal.raw)).style.margin = '4px 0';
+      });
+      gate.appendChild(gateCard);
+      board.appendChild(gate);
+    }
+
+    if (desk.draft) {
+      var draftSection = node('section', 'hsection');
+      draftSection.style.gridColumn = '1 / -1';
+      var draftCard = node('div', 'card');
+      draftCard.appendChild(node('div', 'hrow-name', 'the draft'));
+      var draftText = node('pre', 'mono', desk.draft);
+      draftText.style.cssText = 'white-space:pre-wrap;font-size:12px;max-height:320px;overflow-y:auto';
+      draftCard.appendChild(draftText);
+      draftSection.appendChild(draftCard);
+      board.appendChild(draftSection);
+    }
+
+    var endRow = node('section', 'hsection');
+    endRow.style.gridColumn = '1 / -1';
+    var endButton = node('button', 'press', desk.stands ? 'end — refusals stand' : 'end');
+    endButton.disabled = true;
+    endButton.title = desk.stands || 'nothing stands';
+    endRow.appendChild(endButton);
+    board.appendChild(endRow);
+
+    back.addEventListener('click', function () {
+      readDesk(true).then(paintDesk);
+    });
   }
 
   function readHuddles(force) {
@@ -22254,6 +22559,7 @@
     vault: el.panelVault,
     settings: el.panelSettings,
     plugins: el.panelPlugins,
+    desk: el.panelDesk,
     // An installed bundle mounts here: one panel for every plugin the
     // owner presses, because the bundle brings its own page and this
     // face only supplies the frame.
@@ -22338,6 +22644,20 @@
         // The plugin list rides the state document — the repaint after
         // the read lands is the one with the plugins in hand.
         load().then(function () { paintPlugins(); });
+      },
+      desk: function () {
+        // `#/desk/<slug>` opens that deliverable; a slug the store does
+        // not carry names itself (the room rule: a stale address is a
+        // named refusal, never a blank surface).
+        var asked = face.focus && face.focus.id ? face.focus.id : '';
+        paintDesk();
+        readDesk(true).then(function () {
+          if (asked) {
+            openDeskProject(asked);
+          } else {
+            paintDesk();
+          }
+        });
       },
       huddles: function () {
         paintRooms();
@@ -23809,7 +24129,7 @@
   // This is the ONE list the rail does not derive, so it drifts: it called
   // two built surfaces (design, huddles) "later" and carried a phantom
   // (tower). The harness pins it against the rail's own addresses.
-  var BUILT = ['chat', 'design', 'huddles', 'router', 'delegation', 'memory', 'skills',
+  var BUILT = ['chat', 'design', 'huddles', 'desk', 'router', 'delegation', 'memory', 'skills',
     'sessions', 'calibration', 'second-brain', 'workspace-history', 'bots', 'vault',
     'settings', 'plugins'];
 

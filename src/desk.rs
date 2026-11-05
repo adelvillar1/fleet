@@ -1651,6 +1651,100 @@ pub async fn run_stages(
     Ok(desk)
 }
 
+// --- the face's JSON ---------------------------------------------------------
+
+/// The slug a brief's name becomes: lowercase words joined by hyphens —
+/// the canvas slug rule's reading (`src/canvas.rs`), punctuation dropped.
+pub fn slug_for(name: &str) -> String {
+    let slug: Vec<&str> = name
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .collect();
+    let joined = slug.join("-");
+    let joined = joined.as_str().trim_matches('-').to_string();
+    if joined.is_empty() {
+        "deliverable".to_string()
+    } else {
+        joined.chars().take(64).collect()
+    }
+}
+
+/// One desk project as the face reads it: the whole store document —
+/// the brief, the shape, the stages with their marks, the claims with
+/// their sentences and verdicts, the coverage record, the outline, the
+/// draft, every refusal named. The states are the store's, never
+/// derived twice.
+pub fn project_json(desk: &DeskProject) -> serde_json::Value {
+    serde_json::json!({
+        "slug": desk.slug,
+        "name": desk.name,
+        "audience": desk.audience,
+        "claim": desk.claim,
+        "shape": desk.shape,
+        "project": desk.project,
+        "sources": desk.sources.iter().map(|source| serde_json::json!({
+            "type": match source.kind {
+                SourceKind::File => "file",
+                SourceKind::Fact => "fact",
+                SourceKind::Url => "url",
+            },
+            "path": source.path,
+            "url": source.url,
+            "fetched_at": source.fetched_at,
+            "title": source.title,
+        })).collect::<Vec<_>>(),
+        "stages": desk.stages.iter().map(|(stage, state)| {
+            let (mark, reason) = match state {
+                StageState::Pending => ("pending", None),
+                StageState::Running => ("running", None),
+                StageState::Done => ("done", None),
+                StageState::Refused { reason } => ("refused", Some(reason.as_str())),
+            };
+            serde_json::json!({ "stage": stage.name(), "state": mark, "reason": reason })
+        }).collect::<Vec<_>>(),
+        "claims": desk.claims.iter().map(|claim| serde_json::json!({
+            "text": claim.text,
+            "source": claim.source,
+            "sentence": claim.sentence,
+            "confidence": claim.confidence,
+            "kind": match claim.kind {
+                ClaimKind::Claim => "claim",
+                ClaimKind::Support => "support",
+                ClaimKind::Background => "background",
+                ClaimKind::Boilerplate => "boilerplate",
+            },
+            "verdict": match claim.verdict {
+                ClaimVerdict::Asserted => "asserted",
+                ClaimVerdict::Contested => "contested",
+                ClaimVerdict::Vetoed => "vetoed",
+            },
+        })).collect::<Vec<_>>(),
+        "coverage": desk.coverage.as_ref().map(|coverage| serde_json::json!({
+            "score": coverage.score,
+            "material_gap": coverage.material_gap,
+            "off_brief": coverage.off_brief,
+            "escalated": coverage.escalated,
+            "reason": coverage.reason,
+        })),
+        "outline": desk.outline,
+        "draft": desk.draft,
+        "refusals": desk.refusals.iter().map(|refusal| serde_json::json!({
+            "assertion": refusal.assertion,
+            "near_miss": refusal.near_miss,
+            "near_miss_source": refusal.near_miss_source,
+            "overlap": refusal.overlap,
+        })).collect::<Vec<_>>(),
+        "number_refusals": desk.number_refusals.iter().map(|refusal| serde_json::json!({
+            "raw": refusal.raw,
+            "canonical": refusal.canonical,
+        })).collect::<Vec<_>>(),
+        "figures": desk.figures.len(),
+        "stands": end_stands(desk),
+        "created": desk.created,
+        "updated": desk.updated,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -340,6 +340,38 @@ function boot(options) {
     }
     // The rail's read only: the creation POST falls through to the
     // default reply, exactly as it would reach the server's own route.
+    if (pathOnly === '/api/desk' && method === 'GET') {
+      return Promise.resolve({ status: 200, json: () => Promise.resolve(documents.desk || { projects: [] }) });
+    }
+    if (pathOnly === '/api/desk' && method === 'POST') {
+      const parsed = JSON.parse((init && init.body) || '{}');
+      const slug = parsed.name.toLowerCase().trim().split(/[^a-z0-9]+/).filter(Boolean).join('-');
+      const created = {
+        slug,
+        name: parsed.name,
+        audience: parsed.audience,
+        claim: parsed.claim,
+        shape: 'presentation',
+        project: parsed.project || null,
+        sources: parsed.sources || [],
+        stages: [{ stage: 'claims', state: 'pending' }],
+        claims: [],
+        refusals: [],
+        number_refusals: [],
+        stands: null,
+        updated: '2026-11-04 12:00',
+      };
+      const listing = documents.desk || (documents.desk = { projects: [] });
+      listing.projects.unshift(created);
+      return Promise.resolve({ status: 200, json: () => Promise.resolve({ type: 'desk', slug, created: true }) });
+    }
+    if (pathOnly.startsWith('/api/desk/') && method === 'GET') {
+      const slug = decodeURIComponent(pathOnly.slice('/api/desk/'.length));
+      const listing = documents.desk || { projects: [] };
+      const found = listing.projects.find((one) => one.slug === slug);
+      if (!found) return Promise.resolve({ status: 404, json: () => Promise.resolve({ refused: [slug + ' is not here'] }) });
+      return Promise.resolve({ status: 200, json: () => Promise.resolve(found) });
+    }
     if (pathOnly === '/api/huddles' && method === 'GET') {
       const doc = typeof documents.huddles === 'function'
         ? documents.huddles(state)
@@ -9110,16 +9142,136 @@ async function theConnectCardSaysWhatHappened() {
     await flush();
     const links = page.IDS['rail-tree'].find((one) =>
       String(one.className || '').split(/\s+/).includes('surfaces-link'));
-    check('ICONS the main rail lists fifteen destinations', links.length === 15,
+    check('ICONS the main rail lists sixteen destinations', links.length === 16,
       'links=' + links.length);
     const shapes = links.map((link) => {
       const svg = link.find((one) => one.name === 'svg')[0];
       return svg ? svg.children.map((shape) => JSON.stringify(shape.attrs || {})).join('|') : '';
     });
     check('ICONS every destination draws its own mark',
-      shapes.every(Boolean) && new Set(shapes).size === 15,
+      shapes.every(Boolean) && new Set(shapes).size === 16,
       'distinct=' + new Set(shapes).size + ' empty=' + shapes.filter((one) => !one).length);
   }
+
+  // The desk (the desk plan's C3/C14): the route reaches a built panel —
+  // not the palette's later note — the composer applies on submit (the
+  // store carries the project before the repaint), the shelf rows carry
+  // the binding and the evidence status, and a deliverable's press opens
+  // the stage rail and the review beside the claims' own sentences, the
+  // end gate naming what stands. A stale slug names itself.
+  async function theDeskCarriesTheBriefAndTheReview() {
+    const page = boot({
+      hash: '#/desk',
+      documents: {
+        desk: {
+          projects: [{
+            slug: 'landing-copy',
+            name: "The landing page's copy",
+            audience: 'the beta cohort',
+            claim: 'the fold earns its keep',
+            shape: 'presentation',
+            project: '/Users/someone/Projects/landing',
+            sources: [{ type: 'url', path: 'sources/brief.txt', url: 'https://example.com/brief' }],
+            stages: [
+              { stage: 'claims', state: 'done' },
+              { stage: 'outline', state: 'done' },
+              { stage: 'render', state: 'done' },
+              { stage: 'review', state: 'refused', reason: '1 unsourced number(s)' },
+              { stage: 'knowledge', state: 'pending' },
+            ],
+            claims: [
+              { text: 'the fold earns its keep on every screen', source: 'sources/brief.md',
+                sentence: 'The fold earns its keep on every screen the owner opens.',
+                confidence: 0.91, kind: 'claim', verdict: 'asserted' },
+              { text: 'the labs measured ninety milliseconds', source: 'sources/labs.txt',
+                sentence: 'The measured load sat at ninety milliseconds.',
+                confidence: 0.6, kind: 'claim', verdict: 'contested' },
+            ],
+            coverage: { score: 4, material_gap: false, off_brief: false, escalated: false, reason: '' },
+            outline: '1. The fold earns its keep',
+            draft: "# The landing page's copy",
+            refusals: [],
+            number_refusals: [{ raw: '4.0%', canonical: 0.04 }],
+            stands: 'unsourced number: 4.0%',
+            updated: '2026-11-04 16:40',
+          }],
+        },
+      },
+    });
+    page.open();
+    await flush();
+
+    const panel = page.el('panel-desk');
+    check('DESK the route opens a built panel', !panel.hidden, 'hidden=' + panel.hidden);
+    const shelf = page.text('desk-board');
+    check('DESK the shelf greets the place', shelf.includes('The desk'), 'no greeting');
+    check('DESK the row carries the binding', shelf.includes('/Users/someone/Projects/landing'), 'no binding');
+    check('DESK the row carries the evidence status',
+      shelf.includes('1 asserted') && shelf.includes('1 contested') && shelf.includes('1 unsourced'),
+      shelf.slice(0, 200));
+
+    // The composer: the brief applies on submit — the POST carries the
+    // three fields and the sources, the composer closes, the repaint
+    // carries the new row.
+    const newButton = page.rows('.press').find((b) => b.textContent === 'new deliverable');
+    newButton.click();
+    await flush();
+    // The composer is the section carrying the submit — the toggle
+    // un-hid it, so "hidden" is the old state, not the marker.
+    const composer = page.rows('.hsection').find((one) =>
+      one.find((b) => b.textContent === 'open the desk').length);
+    check('DESK the composer shows on the press', composer && !composer.hidden, 'hidden');
+    const byLabel = (label) => composer.find((one) =>
+      one.name === 'label' && one.textContent === label)[0].parentNode.lastChild;
+    byLabel('name').value = 'the beta brief';
+    byLabel('the claim').value = 'the fold earns its keep';
+    composer.find((b) => b.textContent === 'open the desk')[0].click();
+    await flush();
+    const posted = page.calls.filter((one) => one.url === '/api/desk' && one.method === 'POST');
+    check('DESK the brief POSTs on submit', posted.length === 1, 'posts=' + posted.length);
+    const body = JSON.parse(posted[0].body);
+    check('DESK the brief carries the three fields and the sources kind',
+      body.name === 'the beta brief' && body.claim === 'the fold earns its keep'
+        && Array.isArray(body.sources),
+      JSON.stringify(body).slice(0, 120));
+    check('DESK the composer closed after the apply', composer.hidden, 'still open');
+
+    // The deliverable: the row's press opens the stage rail and the
+    // review beside the claims' own sentences.
+    // paintDesk binds each row's press in-closure (no data attribute to
+    // query): the card carrying the deliverable's serif name is the row.
+    const row = page.rows('.card').find((one) =>
+      one.find((child) => child.textContent === "The landing page's copy").length);
+    row.click();
+    await flush();
+    const detail = page.text('desk-board');
+    check('DESK the stage rail shows every state',
+      detail.includes('claims · done') && detail.includes('review · refused'), detail.slice(0, 200));
+    check('DESK the review renders the claim beside its sentence',
+      detail.includes('The fold earns its keep on every screen') && detail.includes('p 0.91'),
+      'no claim card');
+    check('DESK the contested claim ships marked', detail.includes('contested'), 'unmarked');
+    check('DESK the end gate names what stands',
+      detail.includes('unsourced number: 4.0%') && detail.includes('end — refusals stand'),
+      'no gate');
+    page.rows('.press').find((b) => b.textContent === 'the shelf').click();
+    await flush();
+    check('DESK the shelf returns', page.text('desk-board').includes('The desk'), 'no return');
+
+    // A stale address names itself, never a blank surface: the fetch
+    // 404s and the view carries the refusal's words.
+    const empty = boot({ hash: '#/desk/not-here', documents: { desk: { projects: [] } } });
+    empty.open();
+    await flush();
+    // The arrive's readDesk lands, then the detail fetch inside its own
+    // then — the refusal paints a few microtask rounds in.
+    await flush();
+    await flush();
+    await flush();
+    check('DESK a stale slug names itself', empty.text('desk-board').includes('not-here is not here'),
+      empty.text('desk-board').slice(0, 120));
+  }
+
 
 const cases = [
   ['HEALTH the working line reads the health, not the turn', theWorkingLineReadsTheHealthNotTheTurn],
@@ -9216,7 +9368,10 @@ const cases = [
   ['CA2b opening a run in flight loads its view', openingARunInFlightLoadsItsView],
   ['CA3/CA4 the run-scoped controls say their scope', theRunScopedControlsSayTheirScope],
   ['CA-C3 the connect card says what happened', theConnectCardSaysWhatHappened],
+
   ['BUNDLE the plugin\u2019s own page mounts and relays its queries', theBundleMountsAndRelaysItsDeclaredQueries],
+  ['DESK the desk carries the brief and the review', theDeskCarriesTheBriefAndTheReview],
+  ['DESK the desk carries the brief and the review', theDeskCarriesTheBriefAndTheReview],
 ];
 
 for (const [name, run] of cases) {

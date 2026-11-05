@@ -907,6 +907,97 @@ async fn serve_connection(
                 Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
             }
         }
+        // The desk's brief composer (the desk plan's C3): one composer,
+        // three fields and the sources, applied on submit — the store
+        // carries the project before the reply lands. A lived slug is
+        // refused by name, the writer's own rule.
+        ("POST", "/api/desk") => {
+            let body = match read_body(&mut stream, &request, rest).await {
+                Ok(body) => match serde_json::from_str::<serde_json::Value>(&body) {
+                    Ok(value) => value,
+                    Err(_) => {
+                        return write_reply(&mut stream, bad_request("the brief body is not JSON"))
+                            .await
+                    }
+                },
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            let field = |name: &str| {
+                body.get(name)
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("")
+                    .to_string()
+            };
+            let name = field("name");
+            let audience = field("audience");
+            let claim = field("claim");
+            let project = body
+                .get("project")
+                .and_then(serde_json::Value::as_str)
+                .filter(|p| !p.trim().is_empty())
+                .map(String::from);
+            let mut sources = Vec::new();
+            if let Some(list) = body.get("sources").and_then(serde_json::Value::as_array) {
+                for source in list {
+                    let kind = source
+                        .get("type")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("file");
+                    let kind = match kind {
+                        "url" => crate::desk::SourceKind::Url,
+                        "fact" => crate::desk::SourceKind::Fact,
+                        _ => crate::desk::SourceKind::File,
+                    };
+                    let path = source
+                        .get("path")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("")
+                        .to_string();
+                    sources.push(crate::desk::Source {
+                        kind,
+                        path,
+                        url: source
+                            .get("url")
+                            .and_then(serde_json::Value::as_str)
+                            .map(String::from),
+                        fetched_at: None,
+                        title: source
+                            .get("title")
+                            .and_then(serde_json::Value::as_str)
+                            .map(String::from),
+                    });
+                }
+            }
+            let slug = crate::desk::slug_for(&name);
+            match crate::desk::create(
+                &bridge.home_path(),
+                &slug,
+                &name,
+                &audience,
+                &claim,
+                sources,
+                project,
+            ) {
+                Ok(desk) => {
+                    write_reply(
+                        &mut stream,
+                        api(
+                            200,
+                            json!({
+                                "type": "desk",
+                                "slug": desk.slug,
+                                "shape": desk.shape,
+                                "created": true
+                            }),
+                        ),
+                    )
+                    .await
+                }
+                Err(message) => {
+                    write_reply(&mut stream, api(409, json!({ "error": message }))).await
+                }
+            }
+        }
         // Break a phase out of a room (the huddles plan's C9): the path
         // names the parent room, the body the phase brief and any extra
         // bots. The child inherits its membership unless one is named.
@@ -1218,6 +1309,31 @@ async fn serve_connection(
         ("GET", "/api/huddles") => {
             let session = asked_session(bridge, &request);
             write_reply(&mut stream, api(200, bridge.huddles(&session).await)).await
+        }
+        // The desk shelf: every desk project as the store carries it —
+        // the brief, the stages, the claim set's evidence status — the
+        // states read off the store, never from memory.
+        ("GET", "/api/desk") => {
+            let projects: Vec<serde_json::Value> = crate::desk::projects(&bridge.home_path())
+                .iter()
+                .map(crate::desk::project_json)
+                .collect();
+            write_reply(&mut stream, api(200, json!({ "projects": projects }))).await
+        }
+        // One desk project: the deliverable's whole state — the stage
+        // rail's marks, the claims with their sentences and verdicts,
+        // the coverage record, the outline, the draft, the refusals
+        // named.
+        ("GET", path) if path.starts_with("/api/desk/") => {
+            let slug = percent_decode(path.trim_start_matches("/api/desk/"));
+            match crate::desk::load(&bridge.home_path(), &slug) {
+                Ok(desk) => {
+                    write_reply(&mut stream, api(200, crate::desk::project_json(&desk))).await
+                }
+                Err(message) => {
+                    write_reply(&mut stream, api(404, json!({ "refused": [message] }))).await
+                }
+            }
         }
         // One role's owner-supplied image, served from the home it lives
         // in (the huddles plan's C11). A role with no image is a named
