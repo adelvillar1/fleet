@@ -28,8 +28,9 @@ artifact it produces.
    claim / support / background / boilerplate. Every call is the sys1
    lane's — the spine resolves no vendor key and posts to no vendor
    host, so the same floors judge whatever provider the lane routed. A claim carries its
-   source, the sentence it was read from, its confidence, and its
-   verdict. Contested ships marked — never dropped, never fabricated.
+   source, the SEGMENT it was read from (a sentence, or the few
+   fragments the segmenter merged under the 40-character floor), its
+   confidence, and its verdict. Contested ships marked — never dropped, never fabricated.
 3. **Coverage.** One sys1 judgment (the vendored `desk_coverage` task)
    grades the claim set against the brief: an anchored 1–5 score, the
    material-gap noul, the off-brief noul, bounded by the $0.05/day

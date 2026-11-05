@@ -91,6 +91,16 @@ fmt 0, clippy 0, `cargo build --release` 0, `cargo test` 0 — lib
 1,865/0, integration 168/0 (4 ignored, one of them the live proof) —
 sys1's own `python3 -m unittest discover -s tests -t .` 17/17.
 
+## The audit that followed
+
+A sweep of every judgment surface (2026-11-05, same session) found no
+Fleet surface posting to a System One vendor; the one leftover direct
+caller was the E0 probe, retargeted at the lane (`e86cd4e`). The sweep
+also named three small repairs, fixed in `4bf08f6`: a comment citing the
+removed `sys1_extracts()`, the live test's missing-key branch (a panic
+where the house convention is a loud skip), and the probe's silent-pass
+path on a missing or refused reply.
+
 ## Follow-ups named, not hidden
 
 - The desk's claim pass asks the lane's **choice head per segment**
