@@ -81,7 +81,15 @@ write — the ops now include `board-project`, `board-delete` and
 name is one segment), `/site/<slug>/<page>` (the local host: the
 board's pages as live documents under a network-dead CSP), and
 `/api/design/export` (kinds: html, tokens.css, tokens.json, zip, png,
-site), and `/events` — the ordered event stream the
+site), `/api/desk` (the shelf — `GET` lists every deliverable with the
+rows the store could not parse named beside them, `POST` opens a brief),
+`/api/desk/<slug>` (one deliverable's whole state and its own page), and
+the three verbs a deliverable has: `/run` (`run_stages` on the vendored
+lanes — refuses `409` with the reason when a stage will not walk),
+`/end` (`desk::end_desk`: the distil step, refused `409` naming what
+still stands) and `/delete` (`desk::delete_project`; a slug the store
+does not carry is `404` on all three), and `/events` — the ordered event
+stream the
 transcript is built from. A paired device reaches the
 allowlisted routes with its cookie; the device token is stored as a
 digest; `Host`/`Origin` are checked. Every write rides `settings.rs`.
@@ -576,6 +584,7 @@ batch-only by construction.
 | `gui/` | `docs/features/gui.md` |
 | `checkpoints.rs` | `docs/features/gui.md` (the trust trio) |
 | `deck.rs` | `docs/features/gui.md`; the deck pipeline's render stage |
+| `desk.rs` | `docs/features/desk.md`; `docs/plans/2026-11-05-desk-ux.md` |
 | `vault.rs` | AES-256-GCM at rest, keyed by a passphrase |
 
 #### `home.rs`

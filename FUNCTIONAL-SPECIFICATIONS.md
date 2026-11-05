@@ -140,6 +140,33 @@ recalled and what it produced, and a **distil** action turns its lessons
 into facts and skill proposals. See
 [`docs/features/huddles.md`](docs/features/huddles.md).
 
+**Work — the desk.** Knowledge work's place: a **brief**, not a blank
+canvas. The shelf is the place's first sentence — one card per
+deliverable, each carrying the state it is in as a word (*not started*,
+*running*, *refused*, *all five stages done*) rather than a colour
+alone, the claim it must make stand, the project it is bound to, and one
+proportion bar for its evidence (*asserted*, *contested*, *unsourced*),
+so a refused deliverable is distinguishable from a clean one without
+opening it. Beside the cards, a rail groups them the way the store
+derives them — all, **needs you**, by project, by state — and the
+owed-you column gathers every refusal across the desk with the one
+action that closes it. A deliverable opens onto its own page: the five
+stages as five marks, the coverage meter with its reason in words, then
+the refusals **above** the review — the assertion nobody sourced beside
+the nearest sentence found, and the figure the draft states with no
+source behind it — each carrying its fix (*reword it*, *add the figure*)
+which hands the agent that refusal's own sentence. Below them the review
+keeps every claim beside the sentence it was read from, the outline with
+its named gaps, the draft with the refused figure marked inline, and the
+sources with their kind, title and capture moment. The way out is pinned
+to the bottom of the screen: **a deliverable cannot end while a refusal
+stands**, and the end action says what stands rather than pretending to
+act. A brief that is missing its name or its claim sends nothing and
+says which field it waits for; a brief that lands opens the deliverable
+it made. A project the store cannot read is a named row on the shelf,
+never a silent absence. `#/desk` is the shelf, `#/desk/<slug>` a
+deliverable. See [`docs/features/desk.md`](docs/features/desk.md).
+
 **Intelligence — router.** Where this run's work went, what it tried
 first, and what the day has served: the live decision, the declared
 chain per workload, today's ledger, the model and workload mix, and the

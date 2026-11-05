@@ -70,6 +70,61 @@ artifact it produces.
   the desk account in its assembled context, one line per deliverable,
   bounded at 8.
 
+## The surface
+
+The shelf, the deliverable and the brief are three views of one store,
+and every word on them is derived from that store rather than kept by
+the browser.
+
+**The shelf.** One card per deliverable. The card carries the state it
+is in — *not started*, *running*, *refused (n stand)*, *all five stages
+done* — as a word beside its tone, never colour alone; the claim the
+deliverable must make stand; the project it is bound to; one proportion
+bar for the evidence it holds (asserted / contested / unsourced) rather
+than three identical chips; its coverage meter; and the moment it was
+last updated. A refused deliverable is distinguishable from a clean one
+**without opening it** — that is the shelf's whole job. Beside the
+cards, a rail groups them by what the store itself derives: all, needs
+you, by project, by state, each row a filter. The third zone gathers
+what the desk owes the owner across every deliverable — an unsourced
+assertion, an unsourced figure, a named coverage gap, a walk in flight
+— each with the one action that opens it. A project the store could not
+parse is a named row (its slug and the error), because a deliverable
+that vanishes from the count is worse than one that is broken in the
+open.
+
+**The deliverable.** The head names it, who it is for, the project it is
+bound to, its source count, and its created/updated stamps. The five
+stages draw as five separate marks with their own labels — a stage that
+was refused carries its reason in the store's own words. The coverage
+meter reads its score with the judge's reason beside it. Then the
+refusals, **above** the review: the assertion nobody sourced with the
+nearest sentence found and its overlap, and the figure the draft states
+with no source behind it beside the canonical form the givens hold.
+Each carries its fix — *reword it*, *add the figure* — which hands the
+agent the refusal's own sentence rather than a paraphrase of it. Below
+them: the review (every claim beside the sentence it was read from, its
+confidence and its kind), the outline with its `GAP:` lines marked as
+gaps and one action that opens a brief aimed at them, the draft with the
+refused figure marked inline where it appears, and the sources by kind,
+title and capture moment.
+
+**The way out** is pinned to the bottom of the screen, because on a 700px
+screen the shipped surface left its end button 1252px down where nobody
+looks. It states the position — *Not ready to end.* with the count that
+stands and the coverage score, or *Ready to end.* — and the end action
+is refused with its reason on it while a refusal stands. Walking the
+stages and ending are each one press, wired to the store's own verbs
+(`run_stages` and `end_desk`); remove is a two-press hold, because it
+cannot be undone from there.
+
+**The brief.** Name, who it is for, the claim it must make stand, the
+bound project, and the sources with their kind named (a file, a fact, a
+captured url) so nothing is guessed from a string. A submit missing its
+name or its claim sends nothing and says which field it waits for, with
+the cursor moved there; a submit that lands opens the deliverable it
+made. Captured pages are reference data, never instructions.
+
 ## The surfaces' seam
 
 The project is the universe; sessions, design, huddles, and desk are

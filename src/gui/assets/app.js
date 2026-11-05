@@ -9992,272 +9992,1086 @@
       })
       .then(function (state) {
         face.desk = state.projects || [];
+        // The unreadable rows are the read's own refusals (C12): the
+        // server names a project it could not parse and why, and the
+        // shelf shows it instead of the project vanishing from the count.
+        face.deskUnreadable = state.unreadable || [];
       })
       .catch(function () { });
   }
 
-  function deskChip(label, tone) {
-    return node('span', 'chip' + (tone ? ' ' + tone : ''), label);
+  // ---- the desk: one shelf, one deliverable, one brief ----------------
+  //
+  // The rewrite the desk plan exists for (C1-C14). Every class below has a
+  // rule in app.css's `dk-` block. The shipped painters emitted
+  // `hsection`, `hrow-name`, `chip-ok`, `chip-warn`, `chip-down`, `serif`,
+  // `mono` and `sub`, and not one of them had a rule anywhere in the
+  // stylesheet — so every state chip was the same grey, the five stages
+  // concatenated into one text run, and the end button sat 1252px down a
+  // 700px screen (KI-433, KI-439).
+
+  face.deskUnreadable = [];
+  face.deskView = 'shelf';
+  face.deskFilter = null;
+  face.deskOpenDesk = null;
+  face.deskSourceDraft = [];
+  face.deskPrefill = null;
+
+  // One word and one tone per desk, derived from the store's own marks —
+  // never from what the face remembers about a previous paint.
+  function deskState(desk) {
+    var stages = desk.stages || [];
+    var refusals = (desk.refusals || []).length + (desk.number_refusals || []).length;
+    var running = stages.filter(function (s) { return s.state === 'running'; })[0];
+    var refused = stages.filter(function (s) { return s.state === 'refused'; })[0];
+    var walked = stages.some(function (s) { return s.state !== 'pending'; });
+    var allDone = stages.length > 0 && stages.every(function (s) { return s.state === 'done'; });
+    if (refusals) {
+      return { word: refusals + (refusals === 1 ? ' refusal stands' : ' refusals stand'),
+        tone: 'down', edge: 's-warn', needs: true, live: false };
+    }
+    if (running) return { word: running.stage + ' \u00b7 running', tone: 'acc', edge: 's-run', needs: true, live: true };
+    if (refused) return { word: refused.stage + ' \u00b7 refused', tone: 'warn', edge: 's-warn', needs: true, live: false };
+    if (allDone) return { word: 'all five stages done', tone: 'ok', edge: 's-done', needs: false, live: false };
+    if (walked) return { word: 'walked', tone: '', edge: 's-idle', needs: false, live: false };
+    return { word: 'not started', tone: '', edge: 's-idle', needs: false, live: false };
   }
 
-  function deskField(id, label, placeholder, multiline) {
-    var wrap = node('div', 'field');
-    wrap.appendChild(node('label', '', label)).htmlFor = id;
-    var input = multiline
-      ? node('textarea', '', '')
-      : node('input', '', '');
-    input.id = id;
-    if (!multiline) input.type = 'text';
-    input.placeholder = placeholder || '';
-    wrap.appendChild(input);
+  function deskCounts(desk) {
+    var claims = desk.claims || [];
+    return {
+      asserted: claims.filter(function (c) { return c.verdict === 'asserted'; }).length,
+      contested: claims.filter(function (c) { return c.verdict === 'contested'; }).length,
+      vetoed: claims.filter(function (c) { return c.verdict === 'vetoed'; }).length,
+      unsourced: (desk.refusals || []).length + (desk.number_refusals || []).length,
+      claims: claims.length,
+    };
+  }
+
+  // A pill always carries a word: colour is never the only carrier, so the
+  // state survives a colour-blind reader and a monochrome print.
+  function dkPill(word, tone) {
+    var pill = node('span', 'dk-pill' + (tone ? ' ' + tone : ''));
+    var dot = node('span', 'dk-pd');
+    dot.setAttribute('aria-hidden', 'true');
+    pill.appendChild(dot);
+    pill.appendChild(node('span', '', word));
+    return pill;
+  }
+
+  function dkHead(eyebrow, title, note, side) {
+    var head = node('header', 'page-head');
+    var left = node('div');
+    if (eyebrow) left.appendChild(node('p', 'page-eyebrow', eyebrow));
+    left.appendChild(node('h1', 'page-title', title));
+    if (note) left.appendChild(node('p', 'page-note', note));
+    head.appendChild(left);
+    var right = node('div', 'page-side');
+    (side || []).forEach(function (one) { right.appendChild(one); });
+    head.appendChild(right);
+    return head;
+  }
+
+  // The five stages, in the store's order, drawn as five separate nodes.
+  // The shipped face rendered `claims · doneoutline · donereview · done` as
+  // one string (KI-444); the labels here come from the data, never a guess.
+  function dkStageRail(desk) {
+    var rail = node('div', 'dk-stagerail');
+    (desk.stages || []).forEach(function (entry, index, all) {
+      var mark = entry.state === 'done' ? 'done' : entry.state === 'running' ? 'run'
+        : entry.state === 'refused' ? 'refused' : 'pending';
+      var step = node('div', 'dk-st' + (mark === 'pending' ? '' : ' ' + mark));
+      var inner = node('div', 'node');
+      var bead = node('span', 'bead', mark === 'done' ? '\u2713' : mark === 'refused' ? '!' : String(index + 1));
+      bead.setAttribute('aria-hidden', 'true');
+      inner.appendChild(bead);
+      inner.appendChild(node('span', 'slabel', entry.stage));
+      step.appendChild(inner);
+      if (index < all.length - 1) {
+        var link = node('span', 'link');
+        link.setAttribute('aria-hidden', 'true');
+        step.appendChild(link);
+      }
+      rail.appendChild(step);
+    });
+    return rail;
+  }
+
+  // The coverage meter: the field the shipped face computed and never read.
+  function dkCoverage(desk) {
+    var cov = desk.coverage;
+    var wrap = node('div', 'dk-cov');
+    var bar = node('span', 'cbar');
+    bar.setAttribute('aria-hidden', 'true');
+    var score = cov && typeof cov.score === 'number' ? cov.score : 0;
+    for (var i = 0; i < 5; i += 1) bar.appendChild(node('i', i < score ? 'on' : ''));
+    wrap.appendChild(bar);
+    var text = !cov ? 'no coverage judgment yet'
+      : 'coverage ' + score + ' / 5' + (cov.reason ? ' \u2014 ' + cov.reason : '');
+    wrap.appendChild(node('span', 'ctext', text));
+    var flag = node('span', 'flag');
+    if (cov && cov.escalated) flag.appendChild(dkPill('escalated', 'warn'));
+    else if (cov && cov.material_gap) flag.appendChild(dkPill('material gap', 'warn'));
+    else if (!desk.project) flag.appendChild(dkPill('bind a project', ''));
+    wrap.appendChild(flag);
     return wrap;
   }
+
+  // ---- the shelf -----------------------------------------------------
 
   function paintDesk() {
     var board = el.deskBoard;
     if (!board) return;
     board.textContent = '';
-    var projects = face.desk || [];
-
-    var head = node('section', 'hsection');
-    head.style.gridColumn = '1 / -1';
-    head.appendChild(node('div', 'hrow-name serif', 'The desk'));
-    head.lastChild.style.fontSize = '22px';
-    head.lastChild.style.fontWeight = '600';
-    head.appendChild(node('p', 'sub',
-      'A brief, not a blank canvas: the sources are read, the claims carry their sentences, and a deliverable cannot end while a refusal stands.'));
-    var newButton = node('button', 'press', 'new deliverable');
-    head.appendChild(newButton);
-    board.appendChild(head);
-
-    if (!projects.length) {
-      var empty = node('section', 'hsection');
-      empty.style.gridColumn = '1 / -1';
-      empty.appendChild(node('p', 'sub', 'The desk holds no deliverables yet — a brief starts one.'));
-      board.appendChild(empty);
-    }
-
-    projects.forEach(function (desk) {
-      var refusals = (desk.refusals || []).length + (desk.number_refusals || []).length;
-      var contested = (desk.claims || []).filter(function (c) { return c.verdict === 'contested'; }).length;
-      var asserted = (desk.claims || []).filter(function (c) { return c.verdict === 'asserted'; }).length;
-      var running = (desk.stages || []).filter(function (s) { return s.state === 'running'; })[0];
-      var state = refusals
-        ? 'review · ' + refusals + ' refusal(s) stand'
-        : running
-          ? running.stage + ' · running'
-          : 'ended · knowledge written';
-      var section = node('section', 'hsection');
-      section.style.gridColumn = '1 / -1';
-      var card = node('div', 'card');
-      var nameRow = node('div', 'hrow-name');
-      nameRow.style.cssText = 'display:flex;gap:10px;align-items:baseline';
-      var name = node('span', 'serif', desk.name);
-      name.style.cssText = 'font-size:17px;font-weight:600';
-      nameRow.appendChild(name);
-      nameRow.appendChild(deskChip(state, refusals ? 'chip-warn' : 'chip-accent'));
-      var bound = node('span', 'mono', desk.project || 'unbound');
-      bound.style.cssText = 'margin-left:auto;color:var(--ink-tertiary)';
-      nameRow.appendChild(bound);
-      card.appendChild(nameRow);
-      card.appendChild(node('p', 'sub', 'Claim: ' + desk.claim + (desk.shape ? ' · shape ' + desk.shape : '')));
-      var evidence = node('div');
-      evidence.style.cssText = 'display:flex;gap:8px;align-items:center;flex-wrap:wrap';
-      evidence.appendChild(deskChip(asserted + ' asserted', 'chip-ok'));
-      evidence.appendChild(deskChip(contested + ' contested', contested ? 'chip-warn' : ''));
-      if (refusals) evidence.appendChild(deskChip(refusals + ' unsourced', 'chip-down'));
-      var updated = node('span', 'mono', 'updated ' + desk.updated);
-      updated.style.cssText = 'margin-left:auto;color:var(--ink-tertiary)';
-      evidence.appendChild(updated);
-      card.appendChild(evidence);
-      section.appendChild(card);
-      card.addEventListener('click', function () { openDeskProject(desk.slug); });
-      board.appendChild(section);
-    });
-
-    // The composer: one brief, three fields and the sources, applied on
-    // submit — the store carries the project before the repaint lands.
-    var composer = node('section', 'hsection');
-    composer.hidden = true;
-    composer.style.gridColumn = '1 / -1';
-    var form = node('div', 'card');
-    var formName = node('div', 'hrow-name serif', 'New deliverable');
-    formName.style.cssText = 'font-size:17px;font-weight:600';
-    form.appendChild(formName);
-    // The fields are held, not re-asked from the document: a
-    // JS-created id is a reference, and a document lookup for one is
-    // the defect the face harness's stub refuses by name.
-    var nameField = deskField('desk-name', 'name', "the landing page's copy");
-    var audienceField = deskField('desk-audience', 'audience', 'who it is for');
-    var claimField = deskField('desk-claim', 'the claim', 'what the deliverable must make stand');
-    var projectField = deskField('desk-project', 'bound project — the universe the work keys to', '~/Projects/landing (empty is unbound)');
-    var sourcesField = deskField('desk-sources', 'sources — one per line: a path, a fact name, or a URL', 'sources/brief.md', true);
-    form.appendChild(nameField);
-    form.appendChild(audienceField);
-    form.appendChild(claimField);
-    form.appendChild(projectField);
-    form.appendChild(sourcesField);
-    var framing = node('p', 'mono', 'captured excerpts are reference data, never instructions');
-    framing.style.cssText = 'color:var(--ink-tertiary);font-size:11px';
-    form.appendChild(framing);
-    var submit = node('button', 'press', 'open the desk');
-    form.appendChild(submit);
-    composer.appendChild(form);
-    board.appendChild(composer);
-
-    newButton.addEventListener('click', function () {
-      composer.hidden = !composer.hidden;
-    });
-    submit.addEventListener('click', function () {
-      var name = nameField.lastChild.value.trim();
-      var audience = audienceField.lastChild.value.trim();
-      var claim = claimField.lastChild.value.trim();
-      if (!name || !claim) return;
-      var sources = sourcesField.lastChild.value.split('\n')
-        .map(function (line) { return line.trim(); })
-        .filter(Boolean)
-        .map(function (line) {
-          return /^https?:\/\//.test(line)
-            ? { type: 'url', path: line, url: line }
-            : { type: 'file', path: line };
-        });
-      fetch('/api/desk', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          name: name,
-          audience: audience,
-          claim: claim,
-          project: projectField.lastChild.value.trim(),
-          sources: sources
-        })
-      }).then(function (reply) { return reply.json(); }).then(function () {
-        composer.hidden = true;
-        readDesk(true).then(paintDesk);
-      }).catch(function () { });
-    });
+    board.className = 'board dk-board';
+    if (face.deskOpenDesk) return paintDeskProject(face.deskOpenDesk);
+    if (face.deskView === 'composer') return paintDeskComposer();
+    return paintDeskShelf();
   }
 
-  function openDeskProject(slug) {
+  function paintDeskShelf() {
+    var board = el.deskBoard;
+    var projects = face.desk || [];
+    var unreadable = face.deskUnreadable || [];
+    var needs = projects.filter(function (d) { return deskState(d).needs; });
+
+    var newButton = node('button', 'dk-btn primary', 'new deliverable');
+    newButton.type = 'button';
+    newButton.addEventListener('click', function () {
+      face.deskView = 'composer';
+      face.deskOpenDesk = null;
+      paintDesk();
+    });
+    var stamp = node('span', 'page-stamp mono',
+      projects.length + (projects.length === 1 ? ' deliverable' : ' deliverables')
+      + ' \u00b7 ' + needs.length + ' need you');
+    board.appendChild(dkHead('Knowledge', 'The desk',
+      'A brief, not a blank canvas: the sources are read, the claims carry their sentences, '
+      + 'and a deliverable cannot end while a refusal stands.', [stamp, newButton]));
+
+    unreadable.forEach(function (row) {
+      var broken = node('div', 'dk-broken');
+      broken.appendChild(node('div', 't', row.slug + ' cannot be read'));
+      broken.appendChild(node('div', 'why', row.error || 'the document is not valid JSON'));
+      board.appendChild(broken);
+    });
+
+    if (!projects.length) {
+      board.appendChild(dkEmpty());
+      return;
+    }
+
+    var zones = node('div', 'dk-zones');
+    zones.appendChild(dkRail(projects));
+    zones.appendChild(dkShelf(projects));
+    zones.appendChild(dkOwed(projects));
+    board.appendChild(zones);
+  }
+
+  function dkEmpty() {
+    var wrap = node('div', 'dk-emptywrap');
+    var card = node('div', 'dk-empty');
+    var glyph = node('div', 'glyph');
+    glyph.setAttribute('aria-hidden', 'true');
+    glyph.appendChild(icon('desk'));
+    card.appendChild(glyph);
+    card.appendChild(node('h2', '', 'The desk is empty'));
+    card.appendChild(node('p', '',
+      'Give it a brief and it stops being a blank canvas: it reads the sources, shows you every '
+      + 'claim with the sentence behind it, and refuses to call the work done while something stands.'));
+    var steps = node('div', 'steps');
+    ['Name the deliverable and the one claim it must make stand.',
+      'Hand it files, facts or a captured page.',
+      'Read the review before anyone else does.'].forEach(function (line, index) {
+      var step = node('div', 'step');
+      step.appendChild(node('span', 'n', String(index + 1)));
+      step.appendChild(node('span', '', line));
+      steps.appendChild(step);
+    });
+    card.appendChild(steps);
+    var start = node('button', 'dk-btn primary', 'start a brief');
+    start.type = 'button';
+    start.addEventListener('click', function () {
+      face.deskView = 'composer';
+      face.deskOpenDesk = null;
+      paintDesk();
+    });
+    card.appendChild(start);
+    wrap.appendChild(card);
+    return wrap;
+  }
+
+  // Zone 1. The groups are derived from the deliverables themselves, so a
+  // word on this rail is a fact about the store and not a decoration.
+  function dkRail(projects) {
+    var rail = node('aside', 'dk-rail');
+    var filter = face.deskFilter;
+    var here = function (kind, value) {
+      return filter && filter.kind === kind && filter.value === value;
+    };
+    var row = function (label, count, kind, value, dot) {
+      var made = node('button', 'dk-rrow' + (here(kind, value) ? ' here' : ''));
+      made.type = 'button';
+      if (dot) made.appendChild(node('span', 'dot ' + dot));
+      made.appendChild(node('span', 'dk-name', label));
+      made.appendChild(node('span', 'cnt', String(count)));
+      made.addEventListener('click', function () {
+        face.deskFilter = here(kind, value) ? null : { kind: kind, value: value };
+        paintDesk();
+      });
+      return made;
+    };
+
+    rail.appendChild(node('div', 'dk-rail-h', 'the desk'));
+    rail.appendChild(row('all deliverables', projects.length, 'all', ''));
+    var needing = projects.filter(function (d) { return deskState(d).needs; }).length;
+    if (needing) rail.appendChild(row('needs you', needing, 'needs', '', 'warn'));
+
+    var byProject = {};
+    projects.forEach(function (desk) {
+      var key = desk.project || 'unbound';
+      byProject[key] = (byProject[key] || 0) + 1;
+    });
+    rail.appendChild(node('div', 'dk-rail-h', 'by project'));
+    Object.keys(byProject).forEach(function (key) {
+      var short = key === 'unbound' ? key : key.split('/').filter(Boolean).pop();
+      rail.appendChild(row(short, byProject[key], 'project', key, key === 'unbound' ? 'idle' : 'ok'));
+    });
+
+    rail.appendChild(node('div', 'dk-rail-h', 'state'));
+    var byState = { running: 0, refused: 0, ended: 0 };
+    projects.forEach(function (desk) {
+      var state = deskState(desk);
+      if (state.live) byState.running += 1;
+      else if (state.tone === 'down' || state.tone === 'warn') byState.refused += 1;
+      else if (state.edge === 's-done') byState.ended += 1;
+    });
+    if (byState.running) rail.appendChild(row('running', byState.running, 'state', 'running', 'idle'));
+    if (byState.refused) rail.appendChild(row('refused', byState.refused, 'state', 'refused', 'warn'));
+    if (byState.ended) rail.appendChild(row('ended', byState.ended, 'state', 'ended', 'ok'));
+    return rail;
+  }
+
+  // Zone 2. A row is a real button: Tab reaches it and Enter presses it
+  // (C13) — the shipped cards carried no tabindex, no role and no key
+  // handler, so the whole shelf was mouse-only (KI-441).
+  function dkShelf(projects) {
+    var shelf = node('div', 'dk-shelf');
+    var filter = face.deskFilter;
+    var shown = projects.filter(function (desk) {
+      if (!filter) return true;
+      var state = deskState(desk);
+      if (filter.kind === 'needs') return state.needs;
+      if (filter.kind === 'project') return (desk.project || 'unbound') === filter.value;
+      if (filter.kind === 'state') {
+        if (filter.value === 'running') return state.live;
+        if (filter.value === 'refused') return state.tone === 'down' || state.tone === 'warn';
+        if (filter.value === 'ended') return state.edge === 's-done';
+      }
+      return true;
+    });
+    if (!shown.length) {
+      shelf.appendChild(node('p', 'dk-rail-h', 'nothing under that filter'));
+      return shelf;
+    }
+    shown.forEach(function (desk) { shelf.appendChild(dkCard(desk)); });
+    return shelf;
+  }
+
+  function dkCard(desk) {
+    var state = deskState(desk);
+    var counts = deskCounts(desk);
+    var card = node('button', 'dk-card ' + state.edge);
+    card.type = 'button';
+    card.addEventListener('click', function () { openDeskProject(desk.slug); });
+
+    var top = node('div', 'top');
+    top.appendChild(node('span', 'dk-name', desk.name));
+    top.appendChild(dkPill(state.word, state.tone));
+    top.appendChild(node('span', 'bind mono', desk.project || 'unbound'));
+    card.appendChild(top);
+
+    var claimLine = node('p', 'claimline');
+    claimLine.appendChild(node('span', '', 'Must make stand: '));
+    claimLine.appendChild(node('b', '', desk.claim || '\u2014'));
+    claimLine.appendChild(node('span', '', desk.shape ? ' \u00b7 shape ' + desk.shape : ' \u00b7 no shape routed'));
+    card.appendChild(claimLine);
+
+    // One proportion, not three identical chips.
+    var evidence = node('div', 'dk-evidence');
+    var bar = node('span', 'dk-ebar');
+    bar.setAttribute('aria-hidden', 'true');
+    var total = Math.max(counts.asserted + counts.contested + counts.unsourced, 1);
+    [['a', counts.asserted], ['c', counts.contested], ['u', counts.unsourced]].forEach(function (pair) {
+      if (!pair[1]) return;
+      var slice = node('i', pair[0]);
+      slice.style.width = Math.round((pair[1] / total) * 100) + '%';
+      bar.appendChild(slice);
+    });
+    evidence.appendChild(bar);
+    var count = node('span', 'dk-ecount');
+    count.appendChild(node('b', '', String(counts.asserted)));
+    count.appendChild(node('span', '', ' asserted \u00b7 '));
+    count.appendChild(node('span', 'c', String(counts.contested)));
+    count.appendChild(node('span', '', ' contested'));
+    if (counts.unsourced) {
+      count.appendChild(node('span', '', ' \u00b7 '));
+      count.appendChild(node('span', 'u', String(counts.unsourced)));
+      count.appendChild(node('span', '', ' unsourced'));
+    }
+    evidence.appendChild(count);
+    evidence.appendChild(node('span', 'dk-upd mono', 'updated ' + (desk.updated || '\u2014')));
+    card.appendChild(evidence);
+
+    card.appendChild(dkCoverage(desk));
+    return card;
+  }
+
+  // Zone 3: what the desk owes the owner, gathered from every deliverable.
+  function dkOwed(projects) {
+    var owed = node('aside', 'dk-owed');
+    var head = node('div', 'dk-owed-h');
+    var items = [];
+    projects.forEach(function (desk) {
+      (desk.refusals || []).forEach(function (refusal, index) {
+        items.push({
+          tone: 'down',
+          what: 'An assertion nobody sourced \u2014 \u201c' + refusal.assertion + '\u201d.',
+          whom: desk.name + ' \u00b7 review',
+          act: 'see the near miss',
+          go: function () { openDeskProject(desk.slug, index); },
+        });
+      });
+      (desk.number_refusals || []).forEach(function (refusal) {
+        items.push({
+          tone: 'down',
+          what: 'An unsourced number, ' + refusal.raw + ', in the draft. No source carries it.',
+          whom: desk.name + ' \u00b7 review',
+          act: 'open the review',
+          go: function () { openDeskProject(desk.slug); },
+        });
+      });
+      var state = deskState(desk);
+      if (desk.coverage && desk.coverage.material_gap) {
+        items.push({
+          tone: 'warn',
+          what: 'Coverage says ' + desk.coverage.score + ' of 5 \u2014 the outline runs a named gap.',
+          whom: desk.name + ' \u00b7 coverage',
+          act: 'add a source',
+          go: function () { openDeskProject(desk.slug); },
+        });
+      }
+      if (state.live) {
+        items.push({
+          tone: 'acc',
+          what: desk.name + '\u2019s ' + state.word.replace(' \u00b7 running', '') + ' is running. It renders in the pane when it lands.',
+          whom: desk.name + ' \u00b7 stages',
+          act: 'watch it',
+          go: function () { openDeskProject(desk.slug); },
+        });
+      }
+    });
+
+    head.appendChild(node('div', 't', 'what the desk owes you'));
+    head.appendChild(node('div', 's', items.length
+      ? items.length + (items.length === 1 ? ' thing stands' : ' things stand') + ' between the work and its end'
+      : 'nothing stands \u2014 every deliverable can end'));
+    owed.appendChild(head);
+
+    if (!items.length) {
+      owed.appendChild(node('p', 'quiet', 'The desk owes you nothing. Every refusal is closed.'));
+      return owed;
+    }
+    items.slice(0, 6).forEach(function (item) {
+      var row = node('div', 'dk-owe');
+      row.appendChild(node('span', 'mk ' + item.tone));
+      var body = node('div', 'bd');
+      body.appendChild(node('div', 'what', item.what));
+      body.appendChild(node('div', 'whom mono', item.whom));
+      var go = node('button', 'dk-go', item.act);
+      go.type = 'button';
+      go.addEventListener('click', item.go);
+      body.appendChild(go);
+      row.appendChild(body);
+      owed.appendChild(row);
+    });
+    return owed;
+  }
+
+  // ---- the deliverable -----------------------------------------------
+
+  function openDeskProject(slug, focusIndex) {
     fetch('/api/desk/' + encodeURIComponent(slug), { headers: { accept: 'application/json' } })
       .then(function (reply) {
         if (reply.status === 404) throw new Error(slug + ' is not here');
         return reply.json();
       })
-      .then(paintDeskProject)
+      .then(function (desk) {
+        face.deskOpenDesk = desk;
+        face.deskView = 'deliverable';
+        face.deskFocusRefusal = typeof focusIndex === 'number' ? focusIndex : null;
+        paintDesk();
+      })
       .catch(function (error) {
+        face.deskOpenDesk = null;
+        face.deskView = 'shelf';
         el.deskBoard.textContent = '';
-        var note = node('section', 'hsection');
-        note.style.gridColumn = '1 / -1';
-        note.appendChild(node('p', 'sub', error.message));
-        el.deskBoard.appendChild(note);
+        var broken = node('div', 'dk-broken');
+        broken.appendChild(node('div', 't', 'That deliverable could not be opened'));
+        broken.appendChild(node('div', 'why', error.message));
+        var back = node('button', 'dk-btn', 'the shelf');
+        back.type = 'button';
+        back.addEventListener('click', function () { readDesk(true).then(paintDesk); });
+        broken.appendChild(back);
+        el.deskBoard.appendChild(broken);
       });
   }
 
   function paintDeskProject(desk) {
     var board = el.deskBoard;
     board.textContent = '';
-    var head = node('section', 'hsection');
-    head.style.gridColumn = '1 / -1';
-    head.appendChild(node('div', 'hrow-name serif', desk.name));
-    head.lastChild.style.cssText = 'font-size:22px;font-weight:600';
-    head.appendChild(node('p', 'sub',
-      'For ' + (desk.audience || '—') + ' · ' + (desk.project || 'unbound') + (desk.shape ? ' · shape ' + desk.shape : '')));
-    var back = node('button', 'press', 'the shelf');
-    head.appendChild(back);
-    board.appendChild(head);
+    board.className = 'board dk-board';
+    var counts = deskCounts(desk);
+    var stands = desk.stands || '';
 
-    // The stage rail: every stage's state from the log-backed store.
-    var rail = node('section', 'hsection');
-    rail.style.gridColumn = '1 / -1';
-    var railRow = node('div');
-    railRow.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap';
-    (desk.stages || []).forEach(function (entry) {
-      var tone = entry.state === 'done' ? 'chip-ok' : entry.state === 'running' ? 'chip-accent' : entry.state === 'refused' ? 'chip-down' : '';
-      railRow.appendChild(deskChip(entry.stage + ' · ' + entry.state + (entry.reason ? ' — ' + entry.reason : ''), tone));
-    });
-    rail.appendChild(railRow);
-    board.appendChild(rail);
-
-    // The outline, before render target selection: a GAP is a gap.
-    if (desk.outline) {
-      var outline = node('section', 'hsection');
-      outline.style.gridColumn = '1 / -1';
-      var outlineCard = node('div', 'card');
-      outlineCard.appendChild(node('div', 'hrow-name', 'the outline'));
-      var outlineText = node('pre', 'mono', desk.outline);
-      outlineText.style.cssText = 'white-space:pre-wrap;font-size:13px';
-      outlineCard.appendChild(outlineText);
-      outline.appendChild(outlineCard);
-      board.appendChild(outline);
-    }
-
-    // The review: claims beside the sentences they were read from.
-    var review = node('section', 'hsection');
-    review.style.gridColumn = '1 / -1';
-    review.appendChild(node('div', 'hrow-name', 'the review — claims beside their sentences'));
-    (desk.claims || []).slice(0, 24).forEach(function (claim) {
-      var tone = claim.verdict === 'asserted' ? 'chip-ok' : claim.verdict === 'contested' ? 'chip-warn' : 'chip-down';
-      var card = node('div', 'card');
-      card.style.padding = '10px 14px';
-      var row = node('div');
-      row.style.cssText = 'display:flex;gap:8px;align-items:baseline';
-      row.appendChild(deskChip(claim.verdict, tone));
-      row.appendChild(node('span', 'mono', 'p ' + claim.confidence.toFixed(2)));
-      var source = node('span', 'mono', claim.source);
-      source.style.cssText = 'margin-left:auto;color:var(--ink-tertiary)';
-      row.appendChild(source);
-      card.appendChild(row);
-      card.appendChild(node('p', '', claim.text)).style.margin = '4px 0 2px';
-      var quote = node('p', 'sub', '"' + claim.sentence + '"');
-      quote.style.cssText = 'border-left:2px solid var(--hairline-strong);padding-left:8px';
-      card.appendChild(quote);
-      review.appendChild(card);
-    });
-    board.appendChild(review);
-
-    // The end gate: what stands, named. The end action is refused
-    // while it does.
-    if (desk.stands) {
-      var gate = node('section', 'hsection');
-      gate.style.gridColumn = '1 / -1';
-      var gateCard = node('div', 'card');
-      gateCard.style.borderColor = 'var(--down)';
-      gateCard.appendChild(node('div', 'hrow-name', 'the end gate — what stands'));
-      (desk.refusals || []).forEach(function (refusal) {
-        gateCard.appendChild(node('p', '', 'unsourced assertion: "' + refusal.assertion + '"')).style.margin = '4px 0';
-        gateCard.appendChild(node('p', 'sub', 'near miss — "' + refusal.near_miss + '" (' + refusal.near_miss_source + ')'));
-      });
-      (desk.number_refusals || []).forEach(function (refusal) {
-        gateCard.appendChild(node('p', '', 'unsourced number: ' + refusal.raw)).style.margin = '4px 0';
-      });
-      gate.appendChild(gateCard);
-      board.appendChild(gate);
-    }
-
-    if (desk.draft) {
-      var draftSection = node('section', 'hsection');
-      draftSection.style.gridColumn = '1 / -1';
-      var draftCard = node('div', 'card');
-      draftCard.appendChild(node('div', 'hrow-name', 'the draft'));
-      var draftText = node('pre', 'mono', desk.draft);
-      draftText.style.cssText = 'white-space:pre-wrap;font-size:12px;max-height:320px;overflow-y:auto';
-      draftCard.appendChild(draftText);
-      draftSection.appendChild(draftCard);
-      board.appendChild(draftSection);
-    }
-
-    var endRow = node('section', 'hsection');
-    endRow.style.gridColumn = '1 / -1';
-    var endButton = node('button', 'press', desk.stands ? 'end — refusals stand' : 'end');
-    endButton.disabled = true;
-    endButton.title = desk.stands || 'nothing stands';
-    endRow.appendChild(endButton);
-    board.appendChild(endRow);
-
+    var back = node('button', 'dk-btn', 'the shelf');
+    back.type = 'button';
     back.addEventListener('click', function () {
+      face.deskOpenDesk = null;
+      face.deskView = 'shelf';
       readDesk(true).then(paintDesk);
     });
+
+    // The remove control: held, not silent (C11). The first press only
+    // arms it and says so, because the act cannot be undone from here.
+    var remove = node('button', 'dk-btn', 'remove');
+    remove.type = 'button';
+    var armed = false;
+    remove.addEventListener('click', function () {
+      if (!armed) {
+        armed = true;
+        remove.textContent = 'press again to remove';
+        remove.className = 'dk-btn armed';
+        return;
+      }
+      remove.disabled = true;
+      remove.textContent = 'removing\u2026';
+      post('/api/desk/' + encodeURIComponent(desk.slug) + '/delete', {}).then(function (reply) {
+        if (reply.status !== 200) {
+          remove.disabled = false;
+          armed = false;
+          remove.textContent = 'remove';
+          remove.className = 'dk-btn';
+          showDeskNote('the remove was refused \u2014 '
+            + ((reply.body && reply.body.error) || 'the store did not answer'));
+          return;
+        }
+        face.deskOpenDesk = null;
+        face.deskView = 'shelf';
+        readDesk(true).then(paintDesk);
+      }).catch(function (error) {
+        remove.disabled = false;
+        remove.textContent = 'remove';
+        armed = false;
+        showDeskNote('the remove did not reach the bridge \u2014 ' + error.message);
+      });
+    });
+
+    var side = node('div', 'dk-side');
+    side.appendChild(back);
+    side.appendChild(remove);
+
+    var head = node('div', 'dk-dhead');
+    var meta = node('div', 'meta');
+    meta.appendChild(node('p', 'page-eyebrow', 'Deliverable' + (desk.shape ? ' \u00b7 ' + desk.shape : '')));
+    meta.appendChild(node('h1', '', desk.name));
+    var sub = node('p', 'sub');
+    sub.appendChild(node('span', '', 'For ' + (desk.audience || '\u2014')));
+    sub.appendChild(node('span', 'sep', '\u00b7'));
+    sub.appendChild(node('span', 'mono', desk.project || 'unbound'));
+    sub.appendChild(node('span', 'sep', '\u00b7'));
+    sub.appendChild(node('span', '', (desk.sources || []).length
+      + ((desk.sources || []).length === 1 ? ' source read' : ' sources read')));
+    sub.appendChild(node('span', 'sep', '\u00b7'));
+    sub.appendChild(node('span', '', 'created ' + (desk.created || '\u2014')));
+    sub.appendChild(node('span', 'sep', '\u00b7'));
+    sub.appendChild(node('span', '', 'updated ' + (desk.updated || '\u2014')));
+    meta.appendChild(sub);
+    head.appendChild(meta);
+    head.appendChild(side);
+    board.appendChild(head);
+    board.appendChild(node('div', 'dk-note', ''));
+    board.appendChild(dkStageRail(desk));
+
+    var reasons = (desk.stages || []).filter(function (entry) { return entry.reason; });
+    if (reasons.length) {
+      board.appendChild(node('p', 'dk-stage-reason',
+        reasons.map(function (entry) { return entry.stage + ' \u2014 ' + entry.reason; }).join(' \u00b7 ')));
+    }
+    board.appendChild(dkCoverage(desk));
+
+    // The gate FIRST: the surface's whole reason for existing (C5).
+    if (stands) board.appendChild(dkGate(desk, counts));
+    board.appendChild(dkReview(desk, counts));
+    board.appendChild(dkOutline(desk));
+    if (desk.draft) board.appendChild(dkDraft(desk));
+    board.appendChild(dkSources(desk));
+    board.appendChild(dkEndBand(desk, counts, stands));
+  }
+
+  function showDeskNote(text) {
+    var note = el.deskBoard.querySelector('.dk-note');
+    if (!note) return;
+    note.textContent = text;
+    note.className = 'dk-note loud';
+  }
+
+  // Each refusal carries the action that closes it (C8), and the action
+  // names the refusal it addresses — the press hands the sentence to the
+  // agent's composer, so the fix starts from the thing that stands.
+  function dkGate(desk, counts) {
+    var gate = node('div', 'dk-gate');
+    var head = node('div', 'dk-gate-h');
+    head.appendChild(node('span', 't', counts.unsourced
+      + (counts.unsourced === 1 ? ' refusal stands' : ' refusals stand')));
+    head.appendChild(node('span', 's', 'the deliverable cannot end while one does'));
+    var refusedStage = (desk.stages || []).filter(function (entry) { return entry.state === 'refused'; })[0];
+    if (refusedStage) {
+      head.appendChild(node('span', 'n mono',
+        refusedStage.stage + ' refused' + (refusedStage.reason ? ' \u2014 ' + refusedStage.reason : '')));
+    }
+    gate.appendChild(head);
+
+    var body = node('div', 'dk-gate-body');
+    (desk.refusals || []).forEach(function (refusal, index) {
+      var row = node('div', 'dk-ref');
+      var kind = node('div', 'kind');
+      kind.appendChild(dkPill('assertion', 'down'));
+      row.appendChild(kind);
+      var bd = node('div', 'bd');
+      var assertion = node('div', 'assertion');
+      assertion.appendChild(node('q', '', refusal.assertion));
+      assertion.appendChild(node('span', '', ' \u2014 this sentence appears in the draft with no source behind it.'));
+      bd.appendChild(assertion);
+      var near = node('div', 'near');
+      near.appendChild(node('div', 'nl', 'nearest sentence found'));
+      near.appendChild(node('p', '', refusal.near_miss || '\u2014'));
+      near.appendChild(node('div', 'ov mono',
+        (refusal.near_miss_source || 'no source')
+        + (typeof refusal.overlap === 'number' ? ' \u00b7 overlap ' + refusal.overlap.toFixed(2) : '')
+        + ' \u2014 it answers a different question'));
+      bd.appendChild(near);
+      row.appendChild(bd);
+      var fix = node('div', 'fix');
+      var button = node('button', 'dk-btn', 'reword it');
+      button.type = 'button';
+      button.dataset.refusal = String(index);
+      button.addEventListener('click', function () {
+        ask('The desk refuses this assertion from "' + desk.name + '": "' + refusal.assertion
+          + '". The nearest sentence found was "' + (refusal.near_miss || 'nothing')
+          + '" in ' + (refusal.near_miss_source || 'no source')
+          + '. Either source the assertion or reword the draft so it needs no source.');
+      });
+      fix.appendChild(button);
+      row.appendChild(fix);
+      body.appendChild(row);
+    });
+
+    (desk.number_refusals || []).forEach(function (refusal) {
+      var row = node('div', 'dk-ref');
+      var kind = node('div', 'kind');
+      kind.appendChild(dkPill('number', 'down'));
+      row.appendChild(kind);
+      var bd = node('div', 'bd');
+      var assertion = node('div', 'assertion');
+      assertion.appendChild(node('b', '', refusal.raw));
+      assertion.appendChild(node('span', '', ' in the draft reads as a measured figure. '
+        + 'No source carries it; the givens hold no canonical form of it.'));
+      bd.appendChild(assertion);
+      var near = node('div', 'near');
+      near.appendChild(node('div', 'nl', 'what the store sees'));
+      near.appendChild(node('p', 'mono', 'canonical '
+        + (refusal.canonical != null ? String(refusal.canonical) : 'none')
+        + ' \u00b7 figures computed ' + (desk.figures || 0)));
+      bd.appendChild(near);
+      row.appendChild(bd);
+      var fix = node('div', 'fix');
+      var button = node('button', 'dk-btn', 'add the figure');
+      button.type = 'button';
+      button.dataset.numberRefusal = refusal.raw;
+      button.addEventListener('click', function () {
+        ask('The desk refuses the figure ' + refusal.raw + ' in "' + desk.name
+          + '": no source carries it and the givens hold no canonical form of it. '
+          + 'Find the source that carries it, or remove the figure from the draft.');
+      });
+      fix.appendChild(button);
+      row.appendChild(fix);
+      body.appendChild(row);
+    });
+    gate.appendChild(body);
+    return gate;
+  }
+
+  function dkReview(desk, counts) {
+    var sec = node('div', 'dk-sec');
+    var head = node('div', 'dk-sec-h');
+    head.appendChild(node('span', 't', 'the review'));
+    head.appendChild(node('span', 's', 'every claim beside the sentence it was read from'));
+    head.appendChild(node('span', 'n mono',
+      counts.claims + ' claims \u00b7 ' + counts.asserted + ' asserted \u00b7 ' + counts.contested + ' contested'));
+    sec.appendChild(head);
+
+    if (!counts.claims) {
+      sec.appendChild(node('p', 'quiet',
+        'No claim has been read yet \u2014 walk the stages to read the sources.'));
+      return sec;
+    }
+    (desk.claims || []).slice(0, 40).forEach(function (claim) {
+      var tone = claim.verdict === 'asserted' ? 'ok' : claim.verdict === 'contested' ? 'warn' : 'down';
+      var row = node('div', 'dk-claim');
+      var side = node('div', 'side');
+      side.appendChild(dkPill(claim.verdict, tone));
+      side.appendChild(node('span', 'conf mono', 'p ' + Number(claim.confidence).toFixed(2)));
+      var confirmbar = node('span', 'dk-confbar' + (tone === 'ok' ? '' : ' warn'));
+      confirmbar.setAttribute('aria-hidden', 'true');
+      var fill = node('i');
+      fill.style.width = Math.round(Number(claim.confidence) * 100) + '%';
+      confirmbar.appendChild(fill);
+      side.appendChild(confirmbar);
+      row.appendChild(side);
+      var body = node('div');
+      body.appendChild(node('div', 'txt', claim.text));
+      body.appendChild(node('div', 'quote', '\u201c' + (claim.sentence || '') + '\u201d'));
+      body.appendChild(node('div', 'src mono',
+        (claim.source || 'no source') + ' \u00b7 ' + (claim.kind || 'claim')));
+      row.appendChild(body);
+      sec.appendChild(row);
+    });
+    return sec;
+  }
+
+  function dkOutline(desk) {
+    var sec = node('div', 'dk-sec');
+    var head = node('div', 'dk-sec-h');
+    head.appendChild(node('span', 't', 'the outline'));
+    head.appendChild(node('span', 's', 'before any render target is chosen'));
+    var lines = String(desk.outline || '').split('\n').filter(function (line) { return line.trim(); });
+    var gaps = lines.filter(function (line) { return /GAP:/i.test(line); }).length;
+    head.appendChild(node('span', 'n mono', gaps ? gaps + (gaps === 1 ? ' gap' : ' gaps') : 'no gap named'));
+    sec.appendChild(head);
+
+    var body = node('div', 'dk-ol');
+    if (!lines.length) {
+      body.appendChild(node('p', 'quiet', 'The outline has not been walked yet.'));
+      sec.appendChild(body);
+      return sec;
+    }
+    lines.forEach(function (line) {
+      if (/GAP:/i.test(line)) {
+        var gap = node('div', 'gaprow');
+        gap.appendChild(node('div', 'gl', 'gap \u2014 the outline cannot fill this'));
+        gap.appendChild(node('div', 'gt', line.replace(/^[\s>]*GAP:\s*/i, '').trim()));
+        var go = node('button', 'dk-btn go', 'add a source that carries it');
+        go.type = 'button';
+        go.addEventListener('click', function () {
+          face.deskView = 'composer';
+          face.deskOpenDesk = null;
+          face.deskPrefill = { name: desk.name, audience: desk.audience,
+            claim: desk.claim, project: desk.project || '' };
+          paintDesk();
+        });
+        gap.appendChild(go);
+        body.appendChild(gap);
+        return;
+      }
+      var numbered = line.match(/^\s*(\d+)[.)]\s*(.*)$/);
+      var rowLine = node('div', 'olrow');
+      if (numbered) rowLine.appendChild(node('span', 'num mono', numbered[1]));
+      rowLine.appendChild(node('span', '', numbered ? numbered[2] : line.replace(/^[\s>]+/, '')));
+      body.appendChild(rowLine);
+    });
+    sec.appendChild(body);
+    return sec;
+  }
+
+  function dkDraft(desk) {
+    var sec = node('div', 'dk-sec');
+    var head = node('div', 'dk-sec-h');
+    head.appendChild(node('span', 't', 'the draft'));
+    head.appendChild(node('span', 's', 'the refused figures are marked inline'));
+    var lines = String(desk.draft || '').split('\n');
+    head.appendChild(node('span', 'n mono', lines.length + (lines.length === 1 ? ' line' : ' lines')));
+    sec.appendChild(head);
+
+    var body = node('div', 'dk-sec-b');
+    var draft = node('pre', 'dk-draft');
+    // The refused numbers are marked where they appear: the reader sees
+    // the sentence and the hole in it at the same time.
+    var raw = String(desk.draft || '');
+    var marks = (desk.number_refusals || []).map(function (row) { return row.raw; })
+      .filter(function (one) { return one && raw.indexOf(one) >= 0; });
+    if (!marks.length) {
+      draft.textContent = raw;
+    } else {
+      var pattern = new RegExp('(' + marks.map(function (one) {
+        return one.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      }).join('|') + ')', 'g');
+      raw.split(pattern).forEach(function (part) {
+        if (marks.indexOf(part) < 0) draft.appendChild(document.createTextNode(part));
+        else draft.appendChild(node('span', 'bad', part));
+      });
+    }
+    body.appendChild(draft);
+    sec.appendChild(body);
+    return sec;
+  }
+
+  // The sources, with the fields the store keeps and the shipped face
+  // never read: a captured page's title and the moment it was read (C9).
+  function dkSources(desk) {
+    var sec = node('div', 'dk-sec');
+    var head = node('div', 'dk-sec-h');
+    head.appendChild(node('span', 't', 'the sources'));
+    head.appendChild(node('span', 's', 'each one named by kind, so nothing is guessed from a string'));
+    head.appendChild(node('span', 'n mono',
+      (desk.sources || []).length + ((desk.sources || []).length === 1 ? ' source' : ' sources')));
+    sec.appendChild(head);
+
+    var body = node('div', 'dk-sec-b');
+    var list = node('div', 'dk-srcs');
+    if (!(desk.sources || []).length) {
+      list.appendChild(node('p', 'quiet', 'This brief was handed no sources.'));
+    }
+    (desk.sources || []).forEach(function (source) {
+      var row = node('div', 'dk-srcrow');
+      var kd = node('span', 'kd');
+      kd.appendChild(node('span', 'dk-kindpill ' + (source.type || 'file'), source.type || 'file'));
+      row.appendChild(kd);
+      var label = source.path || source.url || '\u2014';
+      if (source.title) label += ' \u2014 \u201c' + source.title + '\u201d';
+      if (source.fetched_at) label += ' \u00b7 captured ' + source.fetched_at;
+      row.appendChild(node('span', 'path mono', label));
+      list.appendChild(row);
+    });
+    body.appendChild(list);
+    sec.appendChild(body);
+    return sec;
+  }
+
+  // The way out, pinned to the viewport's bottom (C6): on a 700px screen
+  // the shipped face left its end button 1252px down, where nobody looks.
+  function dkEndBand(desk, counts, stands) {
+    var band = node('div', 'dk-endband');
+    var say = node('span', 'say');
+    if (stands) {
+      say.appendChild(node('b', '', 'Not ready to end. '));
+      var why = counts.unsourced + (counts.unsourced === 1 ? ' refusal stands' : ' refusals stand');
+      if (desk.coverage) why += ' and coverage is ' + desk.coverage.score + ' of 5';
+      say.appendChild(node('span', '', why + '.'));
+    } else if (desk.digest) {
+      say.appendChild(node('b', '', 'Ended. '));
+      say.appendChild(node('span', '', 'The knowledge was written to ' + desk.digest + '.'));
+    } else {
+      say.appendChild(node('b', '', 'Ready to end. '));
+      say.appendChild(node('span', '', 'Nothing stands against this deliverable.'));
+    }
+    band.appendChild(say);
+    band.appendChild(node('span', 'spacer'));
+
+    var pending = (desk.stages || []).filter(function (entry) { return entry.state !== 'done'; }).length;
+    var walk = node('button', 'dk-btn', 'walk the stages');
+    walk.type = 'button';
+    walk.disabled = !pending;
+    walk.title = pending ? pending + ' stage(s) left to walk' : 'every stage is done';
+    walk.addEventListener('click', function () {
+      walk.disabled = true;
+      walk.textContent = 'walking\u2026';
+      post('/api/desk/' + encodeURIComponent(desk.slug) + '/run', {}).then(function (reply) {
+        if (reply.status !== 200 && reply.status !== 409) {
+          walk.disabled = false;
+          walk.textContent = 'walk the stages';
+          showDeskNote('the walk was refused \u2014 '
+            + ((reply.body && (reply.body.error || (reply.body.refused || [])[0])) || 'the bridge did not answer'));
+          return;
+        }
+        if (reply.status === 409 && reply.body && reply.body.error) showDeskNote(reply.body.error);
+        refreshOpenDesk();
+      }).catch(function (error) {
+        walk.disabled = false;
+        walk.textContent = 'walk the stages';
+        showDeskNote('the walk did not reach the bridge \u2014 ' + error.message);
+      });
+    });
+    band.appendChild(walk);
+
+    var back = node('button', 'dk-btn', 'back to the shelf');
+    back.type = 'button';
+    back.addEventListener('click', function () {
+      face.deskOpenDesk = null;
+      face.deskView = 'shelf';
+      readDesk(true).then(paintDesk);
+    });
+    band.appendChild(back);
+
+    var end = node('button', 'dk-btn primary', desk.digest ? 'knowledge written' : 'end and write knowledge');
+    end.type = 'button';
+    if (stands) {
+      end.disabled = true;
+      end.title = stands;
+    } else if (desk.digest) {
+      end.disabled = true;
+      end.title = 'the knowledge is already written';
+    } else {
+      end.addEventListener('click', function () {
+        end.disabled = true;
+        end.textContent = 'writing\u2026';
+        post('/api/desk/' + encodeURIComponent(desk.slug) + '/end', {}).then(function (reply) {
+          if (reply.status !== 200) {
+            end.disabled = false;
+            end.textContent = 'end and write knowledge';
+            showDeskNote('the end was refused \u2014 '
+              + ((reply.body && (reply.body.error || (reply.body.refused || [])[0])) || 'the bridge did not answer'));
+            return;
+          }
+          refreshOpenDesk();
+        }).catch(function (error) {
+          end.disabled = false;
+          end.textContent = 'end and write knowledge';
+          showDeskNote('the end did not reach the bridge \u2014 ' + error.message);
+        });
+      });
+    }
+    band.appendChild(end);
+    return band;
+  }
+
+  // The deliverable's own state, re-read after a verb ran, so the next
+  // paint shows what the store now carries rather than what was there.
+  function refreshOpenDesk() {
+    if (!face.deskOpenDesk) return;
+    var slug = face.deskOpenDesk.slug;
+    fetch('/api/desk/' + encodeURIComponent(slug), { headers: { accept: 'application/json' } })
+      .then(function (reply) { return reply.json(); })
+      .then(function (desk) {
+        face.deskOpenDesk = desk;
+        readDesk(true).then(function () { paintDeskProject(desk); });
+      })
+      .catch(function () { });
+  }
+
+  // ---- the composer --------------------------------------------------
+
+  function paintDeskComposer() {
+    var board = el.deskBoard;
+    var prefill = face.deskPrefill || {};
+    var sources = (face.deskSourceDraft || []).slice();
+
+    var back = node('button', 'dk-btn', 'the shelf');
+    back.type = 'button';
+    back.addEventListener('click', function () {
+      face.deskView = 'shelf';
+      face.deskPrefill = null;
+      paintDesk();
+    });
+    board.appendChild(dkHead('Knowledge', 'A new deliverable',
+      'Name it, say who it is for and what it must make stand, then hand it the sources. '
+      + 'It reads them and shows you the claims it found.', [back]));
+
+    var wrap = node('div', 'dk-composer');
+    var brief = node('div', 'dk-brief');
+
+    var field = function (id, label, placeholder, value, required, multiline, hint) {
+      var made = node('div', 'dk-f' + (multiline ? ' claim' : ''));
+      var lab = node('label', '', label);
+      lab.htmlFor = id;
+      if (required) lab.appendChild(node('span', 'req', '*'));
+      made.appendChild(lab);
+      var input = multiline ? node('textarea') : node('input');
+      input.id = id;
+      if (!multiline) input.type = 'text';
+      input.placeholder = placeholder || '';
+      if (value) input.value = value;
+      made.appendChild(input);
+      if (hint) made.appendChild(node('div', 'hint', hint));
+      brief.appendChild(made);
+      return input;
+    };
+
+    var nameInput = field('dk-name', 'name', "the landing page's copy", prefill.name, true);
+    var audienceInput = field('dk-audience', 'who it is for', 'the founding teams', prefill.audience);
+    var claimInput = field('dk-claim', 'what it must make stand', 'the beta paid for itself in six weeks',
+      prefill.claim, true, true,
+      'The claim is the spine: every source is read against it, and the outline opens with it.');
+    var projectInput = field('dk-project', 'bound project',
+      '~/Projects/landing (empty is unbound)', prefill.project, false, false,
+      'Everything this deliverable does keys to the same project \u2014 its sessions, its design, its facts.');
+
+    // The sources: a real list, each with its kind named, never a string
+    // the server has to guess at.
+    var srcField = node('div', 'dk-f');
+    srcField.appendChild(node('label', '', 'the sources'));
+    var list = node('div', 'dk-srcs');
+    var repaintSources = function () {
+      list.textContent = '';
+      if (!sources.length) {
+        list.appendChild(node('p', 'quiet',
+          'No source yet. A brief with no sources cannot be read.'));
+      }
+      sources.forEach(function (source, index) {
+        var row = node('div', 'dk-srcrow');
+        var kd = node('span', 'kd');
+        kd.appendChild(node('span', 'dk-kindpill ' + source.type, source.type));
+        row.appendChild(kd);
+        row.appendChild(node('span', 'path mono', source.path || source.url || '\u2014'));
+        var remove = node('button', 'dk-btn x', '\u00d7');
+        remove.type = 'button';
+        remove.setAttribute('aria-label', 'remove ' + (source.path || source.url || 'the source'));
+        remove.addEventListener('click', function () {
+          sources.splice(index, 1);
+          face.deskSourceDraft = sources.slice();
+          repaintSources();
+          validate();
+        });
+        row.appendChild(remove);
+        list.appendChild(row);
+      });
+    };
+
+    var addRow = node('div', 'dk-addsrc');
+    var kind = 'file';
+    var kindPicker = node('select');
+    [['file', 'a file'], ['fact', 'a fact'], ['url', 'a url']].forEach(function (pair) {
+      var option = node('option', '', pair[1]);
+      option.value = pair[0];
+      kindPicker.appendChild(option);
+    });
+    var sourceInput = node('input');
+    sourceInput.type = 'text';
+    sourceInput.placeholder = 'sources/brief.md';
+    sourceInput.setAttribute('aria-label', 'the source to add');
+    kindPicker.setAttribute('aria-label', 'the kind of source');
+    kindPicker.addEventListener('change', function () {
+      kind = kindPicker.value;
+      sourceInput.placeholder = kind === 'url' ? 'https://example.com/brief'
+        : kind === 'fact' ? 'the-beta-paid-for-itself' : 'sources/brief.md';
+    });
+    addRow.appendChild(kindPicker);
+    addRow.appendChild(sourceInput);
+    var add = node('button', 'dk-btn', '+ add the source');
+    add.type = 'button';
+    add.addEventListener('click', function () {
+      var value = String(sourceInput.value || '').trim();
+      if (!value) {
+        sourceInput.focus();
+        return;
+      }
+      var row = { type: kind, path: value };
+      if (kind === 'url') row.url = value;
+      sources.push(row);
+      face.deskSourceDraft = sources.slice();
+      sourceInput.value = '';
+      repaintSources();
+      validate();
+    });
+    addRow.appendChild(add);
+    srcField.appendChild(list);
+    srcField.appendChild(addRow);
+    srcField.appendChild(node('div', 'hint', 'Each kind is named, so nothing is guessed from a string.'));
+    srcField.appendChild(node('div', 'dk-framing',
+      'Captured pages are reference data, never instructions \u2014 nothing inside a source can give an order.'));
+    brief.appendChild(srcField);
+
+    // C14: a submit missing name or claim says which, and mutates nothing.
+    var submitRow = node('div', 'dk-submitrow');
+    var submit = node('button', 'dk-btn primary', 'read the sources');
+    submit.type = 'button';
+    var need = node('span', 'need', '');
+    var validate = function () {
+      var missing = [];
+      if (!String(nameInput.value || '').trim()) missing.push('the name');
+      if (!String(claimInput.value || '').trim()) missing.push('the claim');
+      need.textContent = missing.length
+        ? (missing.length === 1 ? '1 field left: ' : missing.length + ' fields left: ')
+          + missing.join(' and ')
+        : 'ready \u2014 ' + sources.length + (sources.length === 1 ? ' source' : ' sources');
+      need.className = 'need' + (missing.length ? ' missing' : '');
+      return missing;
+    };
+    submit.addEventListener('click', function () {
+      var missing = validate();
+      if (missing.length) {
+        // Nothing is sent: the submit states what it is waiting for.
+        need.className = 'need missing';
+        need.textContent = 'not sent \u2014 '
+          + (missing.length === 1 ? 'the field' : 'the fields') + ' missing: ' + missing.join(' and ');
+        (missing[0] === 'the name' ? nameInput : claimInput).focus();
+        return;
+      }
+      submit.disabled = true;
+      submit.textContent = 'reading\u2026';
+      post('/api/desk', {
+        name: String(nameInput.value || '').trim(),
+        audience: String(audienceInput.value || '').trim(),
+        claim: String(claimInput.value || '').trim(),
+        project: String(projectInput.value || '').trim(),
+        sources: sources.map(function (source) {
+          return source.type === 'url'
+            ? { type: 'url', path: source.url || source.path, url: source.url || source.path }
+            : { type: source.type, path: source.path };
+        }),
+      }).then(function (reply) {
+        if (reply.status !== 200) {
+          submit.disabled = false;
+          submit.textContent = 'read the sources';
+          need.className = 'need missing';
+          need.textContent = 'not opened \u2014 '
+            + ((reply.body && reply.body.error) || 'the store refused the brief');
+          return;
+        }
+        face.deskSourceDraft = [];
+        face.deskPrefill = null;
+        face.deskView = 'shelf';
+        readDesk(true).then(function () {
+          paintDesk();
+          if (reply.body && reply.body.slug) openDeskProject(reply.body.slug);
+        });
+      }).catch(function (error) {
+        submit.disabled = false;
+        submit.textContent = 'read the sources';
+        need.className = 'need missing';
+        need.textContent = 'not opened \u2014 the bridge did not answer (' + error.message + ')';
+      });
+    });
+    nameInput.addEventListener('input', validate);
+    claimInput.addEventListener('input', validate);
+    submitRow.appendChild(submit);
+    submitRow.appendChild(need);
+    brief.appendChild(submitRow);
+    wrap.appendChild(brief);
+
+    // The aside: what happens on submit, in the owner's words.
+    var aside = node('aside', 'dk-aside');
+    aside.appendChild(node('h3', '', 'what happens when you submit'));
+    [['It reads the sources', 'Files, facts and captured pages walk the extraction spine.'],
+      ['It shows the claims', 'Each one keeps the sentence it came from and its confidence.'],
+      ['It grades the coverage', 'What the brief asks and the sources do not answer becomes a named gap.'],
+      ['Nothing ends silently', 'An unsourced claim or figure is refused by name, and you see it first.']]
+      .forEach(function (pair, index) {
+        var row = node('div', 'k');
+        var kd = node('span', 'kd');
+        kd.appendChild(node('span', 'dk-kindpill know', String(index + 1)));
+        row.appendChild(kd);
+        var body = node('div');
+        body.appendChild(node('div', 'kt', pair[0]));
+        body.appendChild(node('div', 'ks', pair[1]));
+        row.appendChild(body);
+        aside.appendChild(row);
+      });
+    wrap.appendChild(aside);
+    board.appendChild(wrap);
+
+    repaintSources();
+    validate();
   }
 
   function readHuddles(force) {

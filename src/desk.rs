@@ -384,6 +384,28 @@ pub fn projects(home: &Path) -> Vec<DeskProject> {
     all
 }
 
+/// One shelf row's state, by slug: the project itself, or the slug and
+/// the reason it could not be read. A corrupt project is a named row on
+/// the shelf, never a silent absence — `projects()` folds it away with
+/// `.ok()` (KI-437), so the face reads the shelf through here and prints
+/// the failure beside the deliverable that should be there.
+pub fn project_rows(home: &Path) -> Vec<Result<DeskProject, (String, String)>> {
+    let mut rows: Vec<Result<DeskProject, (String, String)>> = list_slugs(home)
+        .into_iter()
+        .map(|slug| load(home, &slug).map_err(|error| (slug, error)))
+        .collect();
+    // Newest first for the rows that can date themselves; a row that
+    // cannot keeps the slug order the listing walked, and sorts after
+    // the readable ones so a broken project never pushes real work down.
+    rows.sort_by(|a, b| match (a, b) {
+        (Ok(left), Ok(right)) => right.updated.cmp(&left.updated),
+        (Ok(_), Err(_)) => std::cmp::Ordering::Less,
+        (Err(_), Ok(_)) => std::cmp::Ordering::Greater,
+        (Err(left), Err(right)) => left.0.cmp(&right.0),
+    });
+    rows
+}
+
 /// The slugs on disk, sorted — the listing walks the store, never a
 /// side file.
 pub fn list_slugs(home: &Path) -> Vec<String> {
@@ -1491,6 +1513,35 @@ pub fn end_stands(desk: &DeskProject) -> Option<String> {
     }
 }
 
+/// End a deliverable: write its knowledge and stamp the record. The end
+/// gate is the law — a refusal that stands refuses the end by name, so a
+/// deliverable that cannot end says why rather than accepting the press.
+///
+/// This is the distil step the plan's C10 names and the face had no verb
+/// for (KI-435): the digest is written to its project-keyed path (the
+/// unit the assembled-context read serves and the corpus refresh embeds),
+/// the knowledge stage is marked done, and the document records where its
+/// knowledge landed. Unbound desk work still ends — it keeps no digest
+/// because nothing keys one, and the record says so by staying `None`.
+pub fn end_desk(home: &Path, slug: &str) -> Result<DeskProject, String> {
+    let mut desk = load(home, slug)?;
+    if let Some(stands) = end_stands(&desk) {
+        return Err(format!("the deliverable cannot end while {stands}"));
+    }
+    // The digest's path is derived, never guessed: `refresh_digest` wrote
+    // it under the project's own key when the binding was made.
+    let digest = desk
+        .project
+        .as_deref()
+        .and_then(crate::canvas::project_key)
+        .map(|key| digest_path(home, &key, &desk.slug))
+        .filter(|path| path.is_file())
+        .map(|path| path.to_string_lossy().to_string());
+    desk.digest = digest;
+    mark_stage(home, &mut desk, Stage::Knowledge, StageState::Done)?;
+    Ok(desk)
+}
+
 /// One source's text for the claim pass: files read from disk, URL
 /// captures read from the desk project's sources directory. A source
 /// that names no readable text is a named skip.
@@ -1747,6 +1798,7 @@ pub fn project_json(desk: &DeskProject) -> serde_json::Value {
             "canonical": refusal.canonical,
         })).collect::<Vec<_>>(),
         "figures": desk.figures.len(),
+        "digest": desk.digest,
         "stands": end_stands(desk),
         "created": desk.created,
         "updated": desk.updated,

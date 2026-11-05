@@ -998,6 +998,197 @@ async fn serve_connection(
                 }
             }
         }
+        // Walk a desk's stages from the face (the desk plan's C10). The
+        // face could read a deliverable and never advance one: the walk
+        // lived only in `fleet desk run`, so a refusal the owner could
+        // see offered no way to reach the thing that closes it (KI-443).
+        //
+        // The walk is long — an extraction pass, a coverage ask, an
+        // outline — so it runs on a blocking task with a runtime of its
+        // own, the shape the side ask uses; the reply is the project as
+        // the store now carries it, and a stage that refuses says why.
+        ("POST", path) if path.starts_with("/api/desk/") && path.ends_with("/run") => {
+            let slug = percent_decode(
+                path.trim_start_matches("/api/desk/")
+                    .trim_end_matches("/run"),
+            );
+            if let Err(message) = read_body(&mut stream, &request, rest).await {
+                return write_reply(&mut stream, bad_request(&message)).await;
+            }
+            let home = bridge.home_path();
+            if !crate::desk::exists(&home, &slug) {
+                return write_reply(
+                    &mut stream,
+                    api(404, json!({ "error": format!("{slug} is not on the desk") })),
+                )
+                .await;
+            }
+            // The closure takes its own copy: the refusal path below still
+            // names the slug it walked.
+            let walked_slug = slug.clone();
+            let walked = tokio::task::spawn_blocking(move || {
+                let runtime = match tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                {
+                    Ok(runtime) => runtime,
+                    Err(error) => return Err(format!("the walk needs a runtime: {error}")),
+                };
+                let extract = crate::extract::ExtractConfig::resolve(
+                    std::env::var("FLEET_HOME").ok().as_deref(),
+                    std::env::var("HOME").ok().as_deref(),
+                    None,
+                    None,
+                )
+                .map(|(config, _missing)| {
+                    (
+                        crate::extract::ExtractClient::new(config.clone()),
+                        config.verifiers[0].clone(),
+                    )
+                });
+                runtime.block_on(crate::desk::run_stages(
+                    &crate::judge::LaneSource::Vendored,
+                    &home,
+                    &walked_slug,
+                    extract
+                        .as_ref()
+                        .map(|(client, verifier)| (client, verifier)),
+                ))
+            })
+            .await
+            .map_err(|error| format!("the walk did not finish: {error}"));
+            match walked {
+                Ok(Ok(desk)) => {
+                    write_reply(
+                        &mut stream,
+                        api(
+                            200,
+                            json!({
+                                "type": "desk",
+                                "walked": true,
+                                "project": crate::desk::project_json(&desk),
+                            }),
+                        ),
+                    )
+                    .await
+                }
+                // A stage that refused is a 409 carrying what the store
+                // now says: the refusal is a state of the deliverable,
+                // not a broken request.
+                Ok(Err(message)) => write_reply(
+                    &mut stream,
+                    api(
+                        409,
+                        json!({
+                            "type": "desk",
+                            "walked": false,
+                            "error": message,
+                            "project": crate::desk::load(&bridge.home_path(), &slug)
+                                .ok()
+                                .map(|desk| crate::desk::project_json(&desk)),
+                        }),
+                    ),
+                )
+                .await,
+                Err(message) => {
+                    write_reply(&mut stream, api(500, json!({ "error": message }))).await
+                }
+            }
+        }
+        // End a deliverable from the face: the distil step (the desk
+        // plan's C10). The end gate is the law — a refusal that stands
+        // refuses the end by name with the store's own words, so the
+        // button can say why instead of pretending to be a control.
+        ("POST", path) if path.starts_with("/api/desk/") && path.ends_with("/end") => {
+            let slug = percent_decode(
+                path.trim_start_matches("/api/desk/")
+                    .trim_end_matches("/end"),
+            );
+            if let Err(message) = read_body(&mut stream, &request, rest).await {
+                return write_reply(&mut stream, bad_request(&message)).await;
+            }
+            // A slug the store does not carry is a missing deliverable,
+            // not a refusal that stands: 404 answers the address.
+            if !crate::desk::exists(&bridge.home_path(), &slug) {
+                return write_reply(
+                    &mut stream,
+                    api(404, json!({ "error": format!("{slug} is not on the desk") })),
+                )
+                .await;
+            }
+            match crate::desk::end_desk(&bridge.home_path(), &slug) {
+                Ok(desk) => {
+                    write_reply(
+                        &mut stream,
+                        api(
+                            200,
+                            json!({
+                                "type": "desk",
+                                "ended": true,
+                                "project": crate::desk::project_json(&desk),
+                            }),
+                        ),
+                    )
+                    .await
+                }
+                Err(message) => write_reply(
+                    &mut stream,
+                    api(
+                        409,
+                        json!({
+                            "type": "desk",
+                            "ended": false,
+                            "error": message,
+                            "stands": crate::desk::load(&bridge.home_path(), &slug)
+                                .ok()
+                                .and_then(|desk| crate::desk::end_stands(&desk)),
+                        }),
+                    ),
+                )
+                .await,
+            }
+        }
+        // Remove a deliverable (the desk plan's C11). `desk::delete_project`
+        // existed and no route reached it, so a desk could be created and
+        // never removed. The removal is the one destructive act the desk
+        // owns, so the path is the act's own name and the reply reports
+        // what left the store.
+        ("POST", path) if path.starts_with("/api/desk/") && path.ends_with("/delete") => {
+            let slug = percent_decode(
+                path.trim_start_matches("/api/desk/")
+                    .trim_end_matches("/delete"),
+            );
+            if let Err(message) = read_body(&mut stream, &request, rest).await {
+                return write_reply(&mut stream, bad_request(&message)).await;
+            }
+            if !crate::desk::exists(&bridge.home_path(), &slug) {
+                return write_reply(
+                    &mut stream,
+                    api(
+                        404,
+                        json!({
+                            "error": format!("{slug} is not on the desk"),
+                            "deleted": null,
+                        }),
+                    ),
+                )
+                .await;
+            }
+            match crate::desk::delete_project(&bridge.home_path(), &slug) {
+                Ok(()) => {
+                    write_reply(
+                        &mut stream,
+                        api(200, json!({ "type": "desk", "deleted": slug })),
+                    )
+                    .await
+                }
+                Err(message) => write_reply(
+                    &mut stream,
+                    api(404, json!({ "error": message, "deleted": null })),
+                )
+                .await,
+            }
+        }
         // Break a phase out of a room (the huddles plan's C9): the path
         // names the parent room, the body the phase brief and any extra
         // bots. The child inherits its membership unless one is named.
@@ -1336,13 +1527,26 @@ async fn serve_connection(
         }
         // The desk shelf: every desk project as the store carries it —
         // the brief, the stages, the claim set's evidence status — the
-        // states read off the store, never from memory.
+        // states read off the store, never from memory. A project that
+        // fails to parse is a named row, not a silent absence: the face
+        // paints it beside the deliverables so a corrupt document is
+        // something the owner can see and remove (the desk plan's C12).
         ("GET", "/api/desk") => {
-            let projects: Vec<serde_json::Value> = crate::desk::projects(&bridge.home_path())
-                .iter()
-                .map(crate::desk::project_json)
-                .collect();
-            write_reply(&mut stream, api(200, json!({ "projects": projects }))).await
+            let mut projects: Vec<serde_json::Value> = Vec::new();
+            let mut unreadable: Vec<serde_json::Value> = Vec::new();
+            for row in crate::desk::project_rows(&bridge.home_path()) {
+                match row {
+                    Ok(desk) => projects.push(crate::desk::project_json(&desk)),
+                    Err((slug, error)) => {
+                        unreadable.push(json!({ "slug": slug, "error": error }))
+                    }
+                }
+            }
+            write_reply(
+                &mut stream,
+                api(200, json!({ "projects": projects, "unreadable": unreadable })),
+            )
+            .await
         }
         // One desk project: the deliverable's whole state — the stage
         // rail's marks, the claims with their sentences and verdicts,
@@ -2941,6 +3145,108 @@ fn origin_is_loopback(origin: &str) -> bool {
 mod tests {
     use super::*;
     use std::io::{Read, Write};
+
+    /// A home carrying one desk project, made through the store's own
+    /// writer so the document is the shape the routes will read back.
+    fn desk_home(slug: &str, claim: &str) -> std::path::PathBuf {
+        let home = fresh_home();
+        crate::desk::create(&home, slug, "A brief worth reading", "the beta cohort", claim, Vec::new(), None)
+            .expect("the desk store accepts a brief");
+        home
+    }
+
+    // The three verbs the face needed and the server did not have
+    // (the desk plan's C10/C11). Each is proven on a real socket against
+    // a real store: the route that answers 200 must have changed the
+    // document, and the route that refuses must leave it alone.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_desk_run_route_answers_a_slug_the_store_does_not_carry() {
+        let (token, port) = launch_at(desk_home("a-brief", "the fold earns its keep")).await;
+        let missing = post(port, "/api/desk/not-here/run", &token, "{}");
+        assert!(missing.starts_with("HTTP/1.1 404"), "{missing}");
+        assert!(missing.contains("not-here is not on the desk"), "{missing}");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_desk_end_route_refuses_a_deliverable_a_refusal_holds() {
+        // A refusal stands, so the end cannot: the route is the gate the
+        // face's disabled button mirrors, and it must refuse with the
+        // refusal's own words rather than a bare status.
+        let home = desk_home("held-one", "the fold earns its keep");
+        let mut desk = crate::desk::load(&home, "held-one").expect("the brief reads back");
+        desk.number_refusals = vec![crate::desk::UnsourcedNumber {
+            raw: "4.0%".to_string(),
+            canonical: 0.04,
+        }];
+        crate::desk::save(&home, &desk).expect("the refusal is written");
+        let (token, port) = launch_at(home.clone()).await;
+
+        let refused = post(port, "/api/desk/held-one/end", &token, "{}");
+        assert!(refused.starts_with("HTTP/1.1 409"), "{refused}");
+        assert!(refused.contains("unsourced number: 4.0%"), "{refused}");
+        assert!(refused.contains(r#""ended":false"#), "{refused}");
+        // The refusal is a reply, not a mutation: the record still holds.
+        let after = crate::desk::load(&home, "held-one").expect("still there");
+        assert_eq!(after.number_refusals.len(), 1);
+        assert!(after.digest.is_none(), "a refused end wrote a digest");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_desk_end_route_ends_a_clean_deliverable() {
+        let home = desk_home("clean-one", "the fold earns its keep");
+        let (token, port) = launch_at(home.clone()).await;
+        let ended = post(port, "/api/desk/clean-one/end", &token, "{}");
+        assert!(ended.starts_with("HTTP/1.1 200"), "{ended}");
+        assert!(ended.contains(r#""ended":true"#), "{ended}");
+        let after = crate::desk::load(&home, "clean-one").expect("still there");
+        assert!(
+            after
+                .stages
+                .iter()
+                .any(|(stage, state)| *stage == crate::desk::Stage::Knowledge
+                    && *state == crate::desk::StageState::Done),
+            "the knowledge stage is the end's own mark: {:?}",
+            after.stages
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_desk_delete_route_removes_the_deliverable_and_404s_an_absent_one() {
+        let home = desk_home("going-one", "the fold earns its keep");
+        let (token, port) = launch_at(home.clone()).await;
+        let absent = post(port, "/api/desk/never-was/delete", &token, "{}");
+        assert!(absent.starts_with("HTTP/1.1 404"), "{absent}");
+        assert!(absent.contains("never-was is not on the desk"), "{absent}");
+
+        let gone = post(port, "/api/desk/going-one/delete", &token, "{}");
+        assert!(gone.starts_with("HTTP/1.1 200"), "{gone}");
+        assert!(gone.contains(r#""deleted":"going-one""#), "{gone}");
+        assert!(
+            !crate::desk::exists(&home, "going-one"),
+            "the document is still on disk"
+        );
+    }
+
+    // C12, end to end: a project the store cannot parse is a NAMED row on
+    // the shelf, not a deliverable that silently vanishes from the count.
+    // `projects()` folds it away with `.ok()`; the route reads
+    // `project_rows` so the face can print slug and reason.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_corrupt_desk_is_named_on_the_shelf_route() {
+        let home = desk_home("good-one", "the fold earns its keep");
+        let bad = crate::desk::desk_root(&home).join("broken-one");
+        std::fs::create_dir_all(&bad).expect("the directory");
+        std::fs::write(bad.join("project.json"), "{ this is not json").expect("the damage");
+        assert!(crate::desk::projects(&home).len() == 1, "projects() folds it away — the premise");
+
+        let (token, port) = launch_at(home).await;
+        let shelf = get_within(port, "/api/desk", &token, Duration::from_secs(30));
+        assert!(shelf.starts_with("HTTP/1.1 200"), "{shelf}");
+        assert!(shelf.contains("good-one"), "{shelf}");
+        assert!(shelf.contains(r#""unreadable""#), "{shelf}");
+        assert!(shelf.contains("broken-one"), "the corrupt project is not named: {shelf}");
+        assert!(shelf.contains("does not parse"), "the reason is not carried: {shelf}");
+    }
 
     #[tokio::test]
     async fn an_oversized_body_is_refused_in_the_products_words() {

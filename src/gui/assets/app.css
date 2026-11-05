@@ -9460,3 +9460,736 @@ body[data-work="collapsed"] .room-back { display: grid; }
 }
 .room-recent:hover { background: var(--dsw-alias-surface-raised); color: var(--dsw-alias-ink); }
 .room-recent .when { margin-left: auto; font-family: var(--font-mono); font-size: 10px; color: var(--dsw-alias-ink-tertiary); }
+
+/* ============================================================ the desk ====
+   The desk's own surface: three zones on the shelf, the stage rail as five
+   real nodes, the gate first, the way out pinned.
+
+   Every value here is the mockup's, hand-copied from
+   `docs/plans/mockups/2026-11-05-desk-ux/desk.html` — that page's tokens are
+   themselves the ones this file declares, so this is a translation and not a
+   second opinion. The class prefix is `dk-` because `.gate`, `.composer`,
+   `.pill` and `.chip` are already taken by other surfaces and a bare name
+   would repaint them.
+
+   The shipped defect this repairs (KI-433): the previous painters emitted
+   `hsection`, `hrow-name`, `chip-ok`, `chip-warn`, `chip-down`, `serif`,
+   `mono`, `sub` — and not one of those had a rule, so every state chip in the
+   desk was the same grey and the five stages concatenated into a single run. */
+
+.dk-board {
+  display: block;
+  max-width: 1240px;
+  margin: 0 auto;
+}
+
+/* Shared tone words. Each carries a token AND a word (the pill's label), so
+   colour is never the only carrier — a colour-blind reader keeps the state. */
+.dk-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--dsw-alias-hairline-strong);
+  font-size: 10.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  color: var(--dsw-alias-ink-secondary);
+  background: transparent;
+}
+.dk-pill .dk-pd { width: 5px; height: 5px; border-radius: 50%; background: currentColor; flex: none; }
+.dk-pill.ok {
+  color: var(--dsw-alias-ok);
+  border-color: color-mix(in srgb, var(--dsw-alias-ok) 34%, transparent);
+  background: color-mix(in srgb, var(--dsw-alias-ok) 8%, transparent);
+}
+.dk-pill.warn {
+  color: var(--dsw-alias-warn);
+  border-color: color-mix(in srgb, var(--dsw-alias-warn) 34%, transparent);
+  background: color-mix(in srgb, var(--dsw-alias-warn) 9%, transparent);
+}
+.dk-pill.down {
+  color: var(--dsw-alias-down);
+  border-color: color-mix(in srgb, var(--dsw-alias-down) 34%, transparent);
+  background: color-mix(in srgb, var(--dsw-alias-down) 8%, transparent);
+}
+.dk-pill.acc {
+  color: var(--dsw-alias-accent);
+  border-color: color-mix(in srgb, var(--dsw-alias-accent) 34%, transparent);
+  background: var(--dsw-alias-accent-wash);
+}
+:root[data-theme="contrast"] .dk-pill.ok,
+:root[data-theme="contrast"] .dk-pill.warn,
+:root[data-theme="contrast"] .dk-pill.down,
+:root[data-theme="contrast"] .dk-pill.acc { background: transparent; }
+
+/* The three zones. A grid, and every child that must shrink carries
+   `minmax(0, 1fr)` — an implicit column sizes to max-content, which is how a
+   long source path once pushed a row 173px past a 390px edge. */
+.dk-zones {
+  display: grid;
+  grid-template-columns: 190px minmax(0, 1fr) 300px;
+  gap: 16px;
+  align-items: start;
+}
+
+/* --- zone 1: the rail --- */
+.dk-rail {
+  background: var(--dsw-alias-surface);
+  border: var(--card-hairline);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-1);
+  padding: 8px;
+  position: sticky;
+  top: 10px;
+}
+.dk-rail-h {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--dsw-alias-ink-tertiary);
+  padding: 10px 8px 6px;
+}
+.dk-rail-h:first-child { padding-top: 4px; }
+.dk-rrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 32px;
+  padding: 7px 8px;
+  border-radius: 8px;
+  border: 0;
+  background: transparent;
+  color: var(--dsw-alias-ink);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.dk-rrow:hover { background: var(--dsw-alias-surface-raised); }
+.dk-rrow.here { background: var(--dsw-alias-accent-wash); color: var(--dsw-alias-accent-deep); font-weight: 500; }
+:root[data-theme="console"] .dk-rrow.here,
+:root[data-theme="graphite"] .dk-rrow.here { color: var(--dsw-alias-accent); }
+.dk-rrow:focus-visible { outline: 2px solid var(--dsw-alias-accent); outline-offset: -2px; }
+.dk-rrow .cnt { margin-left: auto; color: var(--dsw-alias-ink-tertiary); font-size: 10.5px; }
+.dk-rrow .dot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
+/* Scoped to the rail: `dot` is also an icon name, and a bare `.dot.warn`
+   would repaint any other surface that ever wears that word. */
+.dk-rrow .dot.warn { background: var(--dsw-alias-down); }
+.dk-rrow .dot.ok { background: var(--dsw-alias-ok); }
+.dk-rrow .dot.idle { background: var(--dsw-alias-ink-tertiary); opacity: 0.5; }
+
+/* --- zone 2: the shelf --- */
+.dk-shelf { display: grid; gap: 12px; min-width: 0; }
+.dk-card {
+  display: block;
+  width: 100%;
+  background: var(--dsw-alias-surface);
+  border: var(--card-hairline);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-1);
+  padding: 16px 18px;
+  text-align: left;
+  font: inherit;
+  color: var(--dsw-alias-ink);
+  cursor: pointer;
+  border-left: 3px solid transparent;
+  transition: box-shadow var(--fast) var(--ease), border-color var(--fast) var(--ease);
+}
+.dk-card:hover { box-shadow: var(--shadow-2); border-color: var(--dsw-alias-hairline-strong); }
+.dk-card:focus-visible { outline: 2px solid var(--dsw-alias-accent); outline-offset: 2px; }
+/* the state edge: a refused desk is red without being opened */
+.dk-card.s-warn { border-left-color: var(--dsw-alias-down); }
+.dk-card.s-run { border-left-color: var(--dsw-alias-accent); }
+.dk-card.s-idle .dk-name { color: var(--dsw-alias-ink-secondary); }
+.dk-card.s-done .dk-name { color: var(--dsw-alias-ink-secondary); }
+.dk-card .top { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.dk-name {
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.dk-card .bind { margin-left: auto; color: var(--dsw-alias-ink-tertiary); font-size: 10.5px; }
+.dk-card .claimline { margin: 7px 0 12px; color: var(--dsw-alias-ink-secondary); font-size: 12.5px; line-height: 1.5; }
+.dk-card .claimline b { color: var(--dsw-alias-ink); font-weight: 500; }
+
+/* the evidence bar: one proportion, not three identical chips */
+.dk-evidence { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.dk-ebar {
+  display: flex;
+  height: 6px;
+  border-radius: 3px;
+  overflow: hidden;
+  flex: 1 1 120px;
+  min-width: 90px;
+  background: var(--dsw-alias-surface-raised);
+  gap: 2px;
+}
+.dk-ebar i { display: block; height: 100%; }
+.dk-ebar .a { background: var(--dsw-alias-ok); }
+.dk-ebar .c { background: var(--dsw-alias-warn); }
+.dk-ebar .u { background: var(--dsw-alias-down); }
+.dk-ecount { color: var(--dsw-alias-ink-secondary); font-size: 10.5px; white-space: nowrap; }
+.dk-ecount b { color: var(--dsw-alias-ink); font-weight: 600; }
+.dk-ecount .u { color: var(--dsw-alias-down); font-weight: 600; }
+.dk-ecount .c { color: var(--dsw-alias-warn); font-weight: 600; }
+.dk-upd { margin-left: auto; color: var(--dsw-alias-ink-tertiary); font-size: 10px; white-space: nowrap; }
+
+/* coverage: the field the shipped face computed and never read */
+.dk-cov {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 11px;
+  padding-top: 11px;
+  border-top: var(--card-hairline);
+  flex-wrap: wrap;
+}
+.dk-cov .cbar { display: flex; gap: 3px; }
+.dk-cov .cbar i { width: 14px; height: 4px; border-radius: 2px; background: var(--dsw-alias-surface-raised); }
+.dk-cov .cbar i.on { background: var(--dsw-alias-warn); }
+.dk-cov .ctext { font-size: 10.5px; color: var(--dsw-alias-ink-secondary); min-width: 0; }
+.dk-cov .flag { margin-left: auto; }
+
+/* --- zone 3: what the desk owes you --- */
+.dk-owed {
+  background: var(--dsw-alias-surface);
+  border: var(--card-hairline);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-1);
+  overflow: hidden;
+  position: sticky;
+  top: 10px;
+}
+.dk-owed-h { padding: 14px 16px 10px; border-bottom: var(--card-hairline); }
+.dk-owed-h .t { font-size: 12px; font-weight: 600; }
+.dk-owed-h .s { color: var(--dsw-alias-ink-tertiary); font-size: 10.5px; margin-top: 2px; }
+.dk-owe {
+  display: flex;
+  gap: 10px;
+  padding: 12px 16px;
+  border-bottom: var(--card-hairline);
+  align-items: flex-start;
+}
+.dk-owe:last-child { border-bottom: 0; }
+.dk-owe .mk { width: 7px; height: 7px; border-radius: 50%; margin-top: 6px; flex: none; }
+.dk-owe .mk.down { background: var(--dsw-alias-down); }
+.dk-owe .mk.warn { background: var(--dsw-alias-warn); }
+.dk-owe .mk.acc { background: var(--dsw-alias-accent); }
+.dk-owe .bd { min-width: 0; }
+.dk-owe .what { font-size: 12px; line-height: 1.45; }
+.dk-owe .what b { font-weight: 600; }
+.dk-owe .whom { color: var(--dsw-alias-ink-tertiary); font-size: 10.5px; margin-top: 3px; }
+.dk-go {
+  margin-top: 7px;
+  font: inherit;
+  font-size: 11px;
+  padding: 4px 9px;
+  min-height: 26px;
+  border-radius: 6px;
+  border: 1px solid var(--dsw-alias-hairline-strong);
+  background: var(--dsw-alias-surface-overlay);
+  color: var(--dsw-alias-ink);
+  cursor: pointer;
+}
+.dk-go:hover { border-color: var(--dsw-alias-accent); color: var(--dsw-alias-accent); }
+.dk-go:focus-visible { outline: 2px solid var(--dsw-alias-accent); outline-offset: 1px; }
+.dk-owed .quiet { padding: 14px 16px; color: var(--dsw-alias-ink-tertiary); font-size: 11.5px; }
+
+/* ---------- the deliverable ---------- */
+.dk-dhead { display: flex; align-items: flex-start; gap: 14px; flex-wrap: wrap; padding-bottom: 14px; }
+.dk-dhead .meta { min-width: 0; flex: 1 1 300px; }
+.dk-dhead h1 {
+  font-family: var(--font-display);
+  font-size: 27px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  margin: 0;
+}
+.dk-dhead .sub { color: var(--dsw-alias-ink-secondary); font-size: 12.5px; margin-top: 5px; }
+.dk-dhead .sub .sep { color: var(--dsw-alias-ink-tertiary); margin: 0 6px; }
+
+/* the stage rail: five nodes, each its own bead and label — never one run */
+.dk-stagerail { display: flex; align-items: flex-start; gap: 0; padding: 14px 0 18px; overflow-x: auto; }
+.dk-st { display: flex; align-items: center; gap: 0; flex: 1 1 0; min-width: 0; }
+.dk-st .node { display: flex; flex-direction: column; align-items: center; gap: 5px; min-width: 64px; }
+.dk-st .bead {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  border: 1.5px solid var(--dsw-alias-hairline-strong);
+  background: var(--dsw-alias-surface);
+  flex: none;
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--dsw-alias-ink-tertiary);
+}
+.dk-st.done .bead { background: var(--dsw-alias-ok); border-color: var(--dsw-alias-ok); color: #fff; }
+.dk-st.run .bead {
+  background: var(--dsw-alias-accent-wash);
+  border-color: var(--dsw-alias-accent);
+  color: var(--dsw-alias-accent);
+}
+.dk-st.refused .bead { background: var(--dsw-alias-down); border-color: var(--dsw-alias-down); color: #fff; }
+/* On a bright fill the glyph inverts: white on --ok measures 2.36:1 in the
+   dark themes, so a done bead's mark is dark ink there and white only on
+   paper. Measured, not guessed — the mockup's instrument caught this. */
+:root[data-theme="console"] .dk-st.done .bead,
+:root[data-theme="graphite"] .dk-st.done .bead,
+:root[data-theme="console"] .dk-st.refused .bead,
+:root[data-theme="graphite"] .dk-st.refused .bead { color: rgb(12, 14, 18); }
+.dk-st .slabel { font-size: 10px; color: var(--dsw-alias-ink-secondary); text-align: center; white-space: nowrap; }
+.dk-st.done .slabel { color: var(--dsw-alias-ink); }
+.dk-st.refused .slabel { color: var(--dsw-alias-down); font-weight: 600; }
+.dk-st .link {
+  flex: 1 1 auto;
+  height: 1.5px;
+  background: var(--dsw-alias-hairline);
+  margin: 0 -2px;
+  align-self: center;
+  transform: translateY(-9px);
+  min-width: 6px;
+}
+.dk-st.done .link { background: color-mix(in srgb, var(--dsw-alias-ok) 45%, transparent); }
+.dk-stage-reason {
+  font-size: 11px;
+  color: var(--dsw-alias-ink-secondary);
+  margin: -8px 0 14px;
+}
+
+/* the gate band: first, not last — the desk exists for what stands */
+.dk-gate {
+  border: 1px solid color-mix(in srgb, var(--dsw-alias-down) 32%, transparent);
+  background: color-mix(in srgb, var(--dsw-alias-down) 5%, var(--dsw-alias-surface));
+  border-radius: var(--radius-lg);
+  padding: 0;
+  overflow: hidden;
+  margin-bottom: 16px;
+}
+:root[data-theme="console"] .dk-gate,
+:root[data-theme="graphite"] .dk-gate {
+  background: color-mix(in srgb, var(--dsw-alias-down) 9%, var(--dsw-alias-surface));
+}
+.dk-gate-h { display: flex; align-items: baseline; gap: 10px; padding: 13px 16px 11px; flex-wrap: wrap; }
+.dk-gate-h .t { font-size: 13px; font-weight: 600; color: var(--dsw-alias-down); }
+.dk-gate-h .s { font-size: 11px; color: var(--dsw-alias-ink-secondary); }
+.dk-gate-h .n { margin-left: auto; font-size: 10.5px; color: var(--dsw-alias-ink-secondary); }
+.dk-gate-body { border-top: 1px solid color-mix(in srgb, var(--dsw-alias-down) 18%, transparent); }
+.dk-ref {
+  display: flex;
+  gap: 12px;
+  padding: 13px 16px;
+  border-bottom: 1px solid color-mix(in srgb, var(--dsw-alias-down) 12%, transparent);
+  align-items: flex-start;
+}
+.dk-ref:last-child { border-bottom: 0; }
+.dk-ref .kind { flex: none; width: 74px; padding-top: 1px; }
+.dk-ref .bd { min-width: 0; flex: 1 1 auto; }
+.dk-ref .assertion { font-size: 12.5px; line-height: 1.5; }
+.dk-ref .near {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-left: 2px solid var(--dsw-alias-hairline-strong);
+  background: var(--dsw-alias-surface);
+  border-radius: 0 6px 6px 0;
+}
+.dk-ref .near .nl {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--dsw-alias-ink-tertiary);
+}
+.dk-ref .near p { font-size: 12px; color: var(--dsw-alias-ink-secondary); margin-top: 3px; line-height: 1.5; }
+.dk-ref .near .ov { font-size: 10px; color: var(--dsw-alias-ink-tertiary); margin-top: 4px; }
+.dk-ref .fix { flex: none; }
+
+.dk-btn {
+  font: inherit;
+  font-size: 11.5px;
+  padding: 6px 11px;
+  min-height: 30px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--dsw-alias-hairline-strong);
+  background: var(--dsw-alias-surface-overlay);
+  color: var(--dsw-alias-ink);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.dk-btn:hover { border-color: var(--dsw-alias-accent); color: var(--dsw-alias-accent); }
+.dk-btn:focus-visible { outline: 2px solid var(--dsw-alias-accent); outline-offset: 1px; }
+.dk-btn.primary { background: var(--dsw-alias-accent); border-color: var(--dsw-alias-accent-deep); color: #fff; }
+.dk-btn.primary:hover { background: var(--dsw-alias-accent-deep); color: #fff; }
+.dk-btn[disabled] { opacity: 0.5; cursor: default; }
+.dk-btn[disabled]:hover { border-color: var(--dsw-alias-hairline-strong); color: var(--dsw-alias-ink); }
+:root[data-theme="console"] .dk-btn.primary,
+:root[data-theme="graphite"] .dk-btn.primary { color: rgb(12, 14, 18); }
+
+/* a section of the deliverable */
+.dk-sec {
+  background: var(--dsw-alias-surface);
+  border: var(--card-hairline);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-1);
+  margin-bottom: 14px;
+  overflow: hidden;
+}
+.dk-sec-h { display: flex; align-items: baseline; gap: 10px; padding: 13px 16px; border-bottom: var(--card-hairline); flex-wrap: wrap; }
+.dk-sec-h .t { font-size: 12px; font-weight: 600; }
+.dk-sec-h .s { font-size: 10.5px; color: var(--dsw-alias-ink-tertiary); }
+.dk-sec-h .n { margin-left: auto; font-size: 10.5px; color: var(--dsw-alias-ink-tertiary); white-space: nowrap; }
+.dk-sec-b { padding: 14px 16px; }
+
+/* the review: claims beside their sentences */
+.dk-claim {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  gap: 12px;
+  padding: 13px 16px;
+  border-bottom: var(--card-hairline);
+}
+.dk-claim:last-child { border-bottom: 0; }
+.dk-claim .side { display: grid; gap: 5px; justify-items: start; align-content: start; }
+.dk-claim .conf { font-size: 10px; color: var(--dsw-alias-ink-tertiary); }
+.dk-confbar { width: 56px; height: 3px; border-radius: 2px; background: var(--dsw-alias-surface-raised); overflow: hidden; }
+.dk-confbar i { display: block; height: 100%; background: var(--dsw-alias-ok); }
+.dk-confbar.warn i { background: var(--dsw-alias-warn); }
+.dk-claim .txt { font-size: 13px; line-height: 1.45; }
+.dk-claim .quote {
+  margin-top: 6px;
+  padding-left: 9px;
+  border-left: 2px solid var(--dsw-alias-hairline-strong);
+  color: var(--dsw-alias-ink-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.dk-claim .src { margin-top: 6px; color: var(--dsw-alias-ink-tertiary); font-size: 10px; }
+
+/* the outline, with the gap as a real hole */
+.dk-ol { display: grid; gap: 2px; }
+.dk-ol .olrow { display: flex; gap: 11px; padding: 7px 0; font-size: 13px; line-height: 1.5; }
+.dk-ol .num { color: var(--dsw-alias-ink-tertiary); font-size: 11px; width: 16px; flex: none; padding-top: 2px; }
+.dk-ol .gaprow {
+  border: 1px dashed color-mix(in srgb, var(--dsw-alias-warn) 45%, transparent);
+  border-radius: 8px;
+  padding: 9px 11px;
+  margin: 4px 0;
+  background: color-mix(in srgb, var(--dsw-alias-warn) 5%, transparent);
+}
+.dk-ol .gaprow .gl {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--dsw-alias-warn);
+}
+.dk-ol .gaprow .gt { font-size: 12.5px; margin-top: 3px; }
+.dk-ol .gaprow .go { margin-top: 7px; }
+
+/* the draft — the refused figure marked inline */
+.dk-draft {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  color: var(--dsw-alias-ink);
+  max-height: 360px;
+  overflow-y: auto;
+  margin: 0;
+}
+.dk-draft .bad {
+  background: color-mix(in srgb, var(--dsw-alias-down) 16%, transparent);
+  border-radius: 3px;
+  padding: 1px 3px;
+  text-decoration: underline wavy var(--dsw-alias-down);
+}
+
+/* the end band: the way out pins to the viewport bottom for the same reason
+   the composer's submit does — on a 700px screen the shipped face left its
+   end button 1252px down, where nobody looks. */
+.dk-endband {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 16px;
+  flex-wrap: wrap;
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  margin-top: 18px;
+  background: var(--dsw-alias-surface);
+  border: 1px solid var(--dsw-alias-hairline-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-2);
+}
+.dk-endband .say { font-size: 12px; color: var(--dsw-alias-ink-secondary); }
+.dk-endband .say b { color: var(--dsw-alias-ink); }
+.dk-endband .spacer { flex: 1 1 auto; }
+
+/* ---------- the composer ---------- */
+.dk-composer { display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 20px; align-items: start; }
+.dk-brief {
+  background: var(--dsw-alias-surface);
+  border: var(--card-hairline);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-1);
+  padding: 18px;
+}
+.dk-f { margin-bottom: 14px; }
+.dk-f:last-child { margin-bottom: 0; }
+.dk-f label { display: block; font-size: 11px; color: var(--dsw-alias-ink-secondary); margin-bottom: 5px; }
+.dk-f label .req { color: var(--dsw-alias-down); margin-left: 3px; }
+.dk-f input,
+.dk-f textarea {
+  width: 100%;
+  font: inherit;
+  font-size: 13.5px;
+  padding: 9px 11px;
+  min-height: 36px;
+  border-radius: 8px;
+  border: 1px solid var(--dsw-alias-hairline-strong);
+  background: var(--dsw-alias-surface-overlay);
+  color: var(--dsw-alias-ink);
+}
+.dk-f input::placeholder,
+.dk-f textarea::placeholder { color: var(--dsw-alias-ink-tertiary); opacity: 1; }
+.dk-f input:focus,
+.dk-f textarea:focus { outline: 2px solid var(--dsw-alias-accent); outline-offset: -1px; border-color: var(--dsw-alias-accent); }
+.dk-f .hint { font-size: 10.5px; color: var(--dsw-alias-ink-tertiary); margin-top: 4px; }
+.dk-f .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.dk-f.claim textarea { min-height: 76px; resize: vertical; }
+
+/* the sources: a real list, each with its kind */
+.dk-srcs { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
+.dk-srcrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  border: var(--card-hairline);
+  border-radius: 8px;
+  background: var(--dsw-alias-surface-overlay);
+  min-width: 0;
+}
+.dk-srcrow .kd { flex: none; }
+.dk-srcrow .path {
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.dk-srcrow .x { flex: none; }
+.dk-kindpill {
+  display: inline-flex;
+  align-items: center;
+  height: 19px;
+  padding: 0 7px;
+  border-radius: 5px;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.dk-kindpill.file { background: color-mix(in srgb, var(--dsw-alias-accent) 8%, transparent); color: var(--dsw-alias-accent); }
+.dk-kindpill.fact { background: color-mix(in srgb, var(--dsw-alias-ok) 10%, transparent); color: var(--dsw-alias-ok); }
+.dk-kindpill.url  { background: color-mix(in srgb, var(--dsw-alias-warn) 12%, transparent); color: var(--dsw-alias-warn); }
+.dk-addsrc { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; align-items: center; }
+.dk-addsrc .dk-btn { font-size: 11px; min-height: 28px; }
+.dk-addsrc input {
+  flex: 1 1 160px;
+  min-width: 0;
+  min-height: 30px;
+  font: inherit;
+  font-size: 12px;
+  padding: 5px 9px;
+  border-radius: 7px;
+  border: 1px solid var(--dsw-alias-hairline-strong);
+  background: var(--dsw-alias-surface-overlay);
+  color: var(--dsw-alias-ink);
+}
+.dk-framing {
+  margin-top: 12px;
+  padding: 9px 11px;
+  border-radius: 8px;
+  background: var(--dsw-alias-surface-raised);
+  color: var(--dsw-alias-ink-secondary);
+  font-size: 10.5px;
+  line-height: 1.5;
+}
+.dk-submitrow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  margin: 16px -18px -18px;
+  padding: 12px 18px 14px;
+  border-top: var(--card-hairline);
+  background: var(--dsw-alias-surface);
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+}
+.dk-submitrow .need { font-size: 11px; color: var(--dsw-alias-ink-secondary); }
+.dk-submitrow .need b { color: var(--dsw-alias-down); }
+
+.dk-aside {
+  background: var(--dsw-alias-surface);
+  border: var(--card-hairline);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-1);
+  padding: 15px;
+}
+.dk-aside h3 {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--dsw-alias-ink-tertiary);
+  margin: 0 0 9px;
+}
+.dk-aside .k { display: flex; gap: 9px; padding: 9px 0; border-bottom: var(--card-hairline); align-items: flex-start; }
+.dk-aside .k:last-child { border-bottom: 0; padding-bottom: 0; }
+.dk-aside .k .kt { font-size: 12px; }
+.dk-aside .k .ks { font-size: 10.5px; color: var(--dsw-alias-ink-tertiary); margin-top: 2px; }
+
+/* ---------- the empty state ---------- */
+.dk-emptywrap { display: grid; place-items: center; padding: 52px 20px 64px; text-align: center; }
+.dk-empty {
+  max-width: 520px;
+  background: var(--dsw-alias-surface);
+  border: var(--card-hairline);
+  border-radius: 16px;
+  box-shadow: var(--shadow-2);
+  padding: 30px 28px;
+}
+.dk-empty .glyph {
+  width: 46px;
+  height: 46px;
+  border-radius: 12px;
+  background: var(--dsw-alias-accent-wash);
+  display: grid;
+  place-items: center;
+  margin: 0 auto 14px;
+  color: var(--dsw-alias-accent);
+}
+.dk-empty h2 {
+  font-family: var(--font-display);
+  font-size: 21px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  margin: 0;
+}
+.dk-empty p { color: var(--dsw-alias-ink-secondary); font-size: 12.5px; line-height: 1.6; margin-top: 8px; }
+.dk-empty .steps { display: grid; gap: 8px; margin: 16px 0 18px; text-align: left; }
+.dk-empty .step { display: flex; gap: 10px; font-size: 12px; color: var(--dsw-alias-ink-secondary); align-items: flex-start; }
+.dk-empty .step .n {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--dsw-alias-surface-raised);
+  color: var(--dsw-alias-ink-secondary);
+  font-size: 9.5px;
+  font-weight: 700;
+  display: grid;
+  place-items: center;
+  margin-top: 1px;
+}
+.dk-empty .dk-btn { margin-top: 4px; }
+
+/* an unreadable desk project: named, never dropped */
+.dk-broken {
+  border: 1px solid color-mix(in srgb, var(--dsw-alias-down) 32%, transparent);
+  background: color-mix(in srgb, var(--dsw-alias-down) 5%, var(--dsw-alias-surface));
+  border-radius: var(--radius-lg);
+  padding: 13px 16px;
+  margin-bottom: 12px;
+}
+.dk-broken .t { font-size: 12.5px; font-weight: 600; color: var(--dsw-alias-down); }
+.dk-broken .why { font-size: 11.5px; color: var(--dsw-alias-ink-secondary); margin-top: 4px; }
+
+/* the deliverable's two head controls, and the remove's armed press */
+.dk-side { display: flex; gap: 6px; flex: none; align-items: flex-start; }
+.dk-btn.armed {
+  border-color: var(--dsw-alias-down);
+  color: var(--dsw-alias-down);
+  background: color-mix(in srgb, var(--dsw-alias-down) 7%, transparent);
+}
+
+/* the note line under the deliverable's head: silent until a verb speaks
+   through it, which is the only moment it has anything to say */
+.dk-note:empty { display: none; }
+.dk-note {
+  margin: 0 0 10px;
+  padding: 8px 11px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--dsw-alias-warn) 9%, transparent);
+  border: 1px solid color-mix(in srgb, var(--dsw-alias-warn) 30%, transparent);
+  color: var(--dsw-alias-ink);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+.dk-note.loud { border-color: color-mix(in srgb, var(--dsw-alias-down) 40%, transparent); }
+
+/* a composer field the submit is still waiting for */
+.dk-submitrow .need.missing { color: var(--dsw-alias-down); }
+
+/* the fourth source kind: a knowledge fact, not a file, not a page */
+.dk-kindpill.know {
+  background: color-mix(in srgb, var(--dsw-alias-ink-tertiary) 14%, transparent);
+  color: var(--dsw-alias-ink-secondary);
+}
+
+/* `mono` is the vocabulary the whole face already speaks for a value
+   read from the store; the desk's block declares it once here so a
+   font token, not a second name, carries it. */
+.dk-board .mono { font-family: var(--font-mono); font-size: 0.92em; }
+.dk-board .quiet { padding: 14px 16px; color: var(--dsw-alias-ink-tertiary); font-size: 11.5px; }
+
+/* ---------- responsive, keyed to the container's real width ---------- */
+@media (max-width: 1200px) {
+  .dk-zones { grid-template-columns: minmax(0, 1fr) 300px; }
+  .dk-rail {
+    grid-column: 1 / -1;
+    position: static;
+    display: flex;
+    gap: 4px;
+    overflow-x: auto;
+    padding: 6px;
+  }
+  .dk-rail-h { display: none; }
+  .dk-rrow { width: auto; flex: none; }
+}
+@media (max-width: 900px) {
+  .dk-zones { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .dk-rail { position: static; display: flex; gap: 4px; overflow-x: auto; padding: 6px; }
+  .dk-rrow { width: auto; flex: none; }
+  .dk-owed { position: static; order: 3; }
+  .dk-card .top { gap: 7px; }
+  .dk-card .bind { margin-left: 0; flex-basis: 100%; }
+  .dk-card .dk-name { font-size: 16.5px; }
+  .dk-upd { margin-left: 0; flex-basis: 100%; }
+  .dk-composer { grid-template-columns: minmax(0, 1fr); }
+  .dk-f .pair { grid-template-columns: 1fr; }
+  .dk-claim { grid-template-columns: minmax(0, 1fr); }
+  .dk-claim .side { display: flex; align-items: center; gap: 8px; }
+  .dk-ref { flex-wrap: wrap; }
+  .dk-ref .kind { width: auto; flex-basis: 100%; }
+  .dk-ref .fix { flex-basis: 100%; }
+  .dk-dhead h1 { font-size: 22px; }
+  .dk-st .node { min-width: 54px; }
+  .dk-st .slabel { font-size: 9px; }
+  .dk-endband { flex-direction: column; align-items: stretch; }
+  .dk-endband .dk-btn { width: 100%; }
+}

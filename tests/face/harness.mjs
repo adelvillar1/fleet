@@ -158,7 +158,12 @@ class El {
 
   }
   get textContent() {
-    if (this.children.length) return this.children.map((c) => c.textContent).join('');
+    // A real DOM's `el.textContent = 'x'` replaces the children with one
+    // text node, and a later appendChild lands AFTER it — the text is
+    // still there. The stub kept the two in separate slots, so a label
+    // written then given its required mark read as an empty label.
+    const joined = this.children.map((c) => c.textContent).join('');
+    if (this.children.length) return this._text + joined;
     return this._text;
   }
   set textContent(value) { this.children = []; this._text = String(value); }
@@ -9159,104 +9164,289 @@ async function theConnectCardSaysWhatHappened() {
   // the binding and the evidence status, and a deliverable's press opens
   // the stage rail and the review beside the claims' own sentences, the
   // end gate naming what stands. A stale slug names itself.
+  // The fixtures below are the store's own project_json shape (src/desk.rs):
+  // the fields the desk plan's C9 found computed and never read — coverage,
+  // figures, created, the source's title and capture moment, the claim's
+  // kind, the refused number's canonical form — all ride here, so a painter
+  // that stops reading one of them reddens this case.
+  const deskProject = () => ({
+    slug: 'landing-copy',
+    name: "The landing page's copy",
+    audience: 'the beta cohort',
+    claim: 'the fold earns its keep',
+    shape: 'presentation',
+    project: '/Users/someone/Projects/landing',
+    created: '2026-11-03 09:00',
+    figures: 3,
+    sources: [{
+      type: 'url', path: 'sources/brief.txt', url: 'https://example.com/brief',
+      title: 'the brief', fetched_at: '2026-11-03T09:02:00Z',
+    }],
+    stages: [
+      { stage: 'claims', state: 'done' },
+      { stage: 'outline', state: 'done' },
+      { stage: 'render', state: 'done' },
+      { stage: 'review', state: 'refused', reason: '1 unsourced number(s)' },
+      { stage: 'knowledge', state: 'pending' },
+    ],
+    claims: [
+      { text: 'the fold earns its keep on every screen', source: 'sources/brief.md',
+        sentence: 'The fold earns its keep on every screen the owner opens.',
+        confidence: 0.91, kind: 'claim', verdict: 'asserted' },
+      { text: 'the labs measured ninety milliseconds', source: 'sources/labs.txt',
+        sentence: 'The measured load sat at ninety milliseconds.',
+        confidence: 0.6, kind: 'claim', verdict: 'contested' },
+    ],
+    coverage: { score: 4, material_gap: false, off_brief: false, escalated: false, reason: '' },
+    outline: '1. The fold earns its keep',
+    draft: "# The landing page's copy\n\nA measured 4.0% lift, and no source behind it.\n",
+    refusals: [],
+    number_refusals: [{ raw: '4.0%', canonical: 0.04 }],
+    stands: 'unsourced number: 4.0%',
+    updated: '2026-11-04 16:40',
+  });
+
   async function theDeskCarriesTheBriefAndTheReview() {
+    // ---- the deliverable, opened by its address -----------------------
     const page = boot({
-      hash: '#/desk',
+      hash: '#/desk/landing-copy',
       documents: {
         desk: {
-          projects: [{
-            slug: 'landing-copy',
-            name: "The landing page's copy",
-            audience: 'the beta cohort',
-            claim: 'the fold earns its keep',
-            shape: 'presentation',
-            project: '/Users/someone/Projects/landing',
-            sources: [{ type: 'url', path: 'sources/brief.txt', url: 'https://example.com/brief' }],
-            stages: [
-              { stage: 'claims', state: 'done' },
-              { stage: 'outline', state: 'done' },
-              { stage: 'render', state: 'done' },
-              { stage: 'review', state: 'refused', reason: '1 unsourced number(s)' },
-              { stage: 'knowledge', state: 'pending' },
-            ],
-            claims: [
-              { text: 'the fold earns its keep on every screen', source: 'sources/brief.md',
-                sentence: 'The fold earns its keep on every screen the owner opens.',
-                confidence: 0.91, kind: 'claim', verdict: 'asserted' },
-              { text: 'the labs measured ninety milliseconds', source: 'sources/labs.txt',
-                sentence: 'The measured load sat at ninety milliseconds.',
-                confidence: 0.6, kind: 'claim', verdict: 'contested' },
-            ],
-            coverage: { score: 4, material_gap: false, off_brief: false, escalated: false, reason: '' },
-            outline: '1. The fold earns its keep',
-            draft: "# The landing page's copy",
-            refusals: [],
-            number_refusals: [{ raw: '4.0%', canonical: 0.04 }],
-            stands: 'unsourced number: 4.0%',
-            updated: '2026-11-04 16:40',
-          }],
+          projects: [deskProject()],
+          // C12: a project the server could not parse is a row the shelf
+          // shows by name, not a project that vanishes from the count.
+          unreadable: [{ slug: 'stale-one', error: 'the document is not valid JSON' }],
         },
       },
     });
     page.open();
     await flush();
 
-    const panel = page.el('panel-desk');
-    check('DESK the route opens a built panel', !panel.hidden, 'hidden=' + panel.hidden);
-    const shelf = page.text('desk-board');
+    check('DESK the route opens a built panel', !page.el('panel-desk').hidden,
+      'hidden=' + page.el('panel-desk').hidden);
+    // The refuse-to-end state is stated before the fold: the gate is a
+    // sibling of the review, not an ornament inside it (C5).
+    const board = page.el('desk-board');
+    const order = board.children.map((child) => child.className);
+    const gateAt = order.findIndex((one) => one.split(' ').includes('dk-gate'));
+    const reviewAt = order.findIndex((one) => one.split(' ').includes('dk-sec'));
+    check('DESK the refusals sit above the review (C5)', gateAt >= 0 && reviewAt > gateAt,
+      'gate=' + gateAt + ' review=' + reviewAt);
+    check('DESK the way out is pinned after everything (C6)',
+      order[order.length - 1].split(' ').includes('dk-endband'), order.join(' | ').slice(0, 160));
+
+    // C1, the headline defect — pinned on the whole painted tree. The
+    // shipped face emitted `hsection`, `hrow-name`, `chip-ok`, `chip-warn`,
+    // `chip-down`, `serif` and `sub`, and not one of them had a rule
+    // anywhere in the stylesheet, so every state chip was the same grey.
+    // Grepping a hand-written list of names would pass while a new painter
+    // invented another bare class; this walks what was actually painted.
+    const painted = [board].concat(board.find(() => true));
+    const classed = [];
+    painted.forEach((n) => String(n.className || '').split(/\s+/).forEach((c) => {
+      if (c) classed.push(c);
+    }));
+    const bare = Array.from(new Set(classed))
+      .filter((c) => !new RegExp('\\.' + c.replace(/[-]/g, '\\-') + '[^a-zA-Z0-9_-]').test(CSS));
+    check('DESK no class the desk paints is bare in the stylesheet (C1)',
+      bare.length === 0, bare.join(', '));
+    check('DESK the tree it walked is the painted one (C1)',
+      painted.length > 40 && classed.length > 60,
+      'elements=' + painted.length + ' classes=' + classed.length);
+
+    const detail = page.text('desk-board');
+    check('DESK the head names the deliverable and the binding',
+      detail.includes("The landing page's copy") && detail.includes('/Users/someone/Projects/landing'),
+      detail.slice(0, 160));
+    // C9: the computed fields the shipped face never read.
+    check('DESK the head reads created and updated (C9)',
+      detail.includes('created 2026-11-03 09:00') && detail.includes('updated 2026-11-04 16:40'),
+      'no stamps');
+    check('DESK the coverage meter reads its score (C9)', detail.includes('coverage 4 / 5'),
+      detail.slice(0, 200));
+
+    // Every stage is its own node with its own label: the shipped face
+    // concatenated them into `claims · doneoutline · donereview · done`
+    // (KI-435), so the labels are read one at a time.
+    const labels = page.rows('.dk-stagerail .slabel').map((one) => one.textContent);
+    check('DESK the stage rail draws five separate stages',
+      labels.join(',') === 'claims,outline,render,review,knowledge', labels.join(','));
+    check('DESK the refused stage carries its reason',
+      detail.includes('review \u2014 1 unsourced number(s)'), 'no reason line');
+
+    check('DESK the review renders the claim beside its sentence',
+      detail.includes('The fold earns its keep on every screen')
+        && detail.includes('p 0.91') && detail.includes('contested'), 'no claim card');
+    check('DESK the review names the kind each claim was read as (C9)',
+      detail.includes('sources/brief.md \u00b7 claim'), 'no kind line');
+
+    // The gate: what stands, in the store's words, with the way to close it.
+    check('DESK the gate says one refusal stands',
+      detail.includes('1 refusal stands') && detail.includes('review refused \u2014 1 unsourced number(s)'),
+      'no gate head');
+    check('DESK the refused figure carries its canonical form (C9)',
+      detail.includes('4.0%') && detail.includes('canonical 0.04')
+        && detail.includes('figures computed 3'), 'no number row');
+    const marked = page.rows('.dk-draft .bad');
+    check('DESK the draft marks the refused figure inline',
+      marked.length === 1 && marked[0].textContent === '4.0%',
+      'marks=' + marked.length);
+
+    // C8: every refusal ships the action that closes it, and the action
+    // hands the agent the refusal's own sentence.
+    const fix = page.rows('.dk-btn').find((one) => one.textContent === 'add the figure');
+    check('DESK the refusal carries its fix action (C8)', Boolean(fix), 'no fix button');
+
+    // C9: the source's own title and capture moment.
+    check('DESK the sources name their kind, title and capture (C9)',
+      detail.includes('the brief') && detail.includes('captured 2026-11-03T09:02:00Z'),
+      'no capture line');
+
+    const end = page.rows('.dk-btn').find((one) => one.textContent === 'end and write knowledge');
+    check('DESK the end band says what holds the deliverable (C6)',
+      detail.includes('Not ready to end.') && detail.includes('1 refusal stands and coverage is 4 of 5.'),
+      'no end band');
+    check('DESK the end button is refused with its reason on it',
+      end && end.disabled && end.title.includes('unsourced number: 4.0%'),
+      end ? 'disabled=' + end.disabled + ' title=' + end.title : 'no end button');
+
+    // The fix action opens the conversation holding the refusal. The
+    // composer's own value is read the moment the press lands: the route
+    // change fires inside ask() before it writes the sentence, so the
+    // written value is the last word and must be the refusal's.
+    fix.click();
+    const handed = page.el('task').value;
+    await flush();
+    check('DESK the fix action hands the agent the refusal (C8)',
+      handed.includes('4.0%') && handed.includes('Find the source'), handed.slice(0, 80));
+    check('DESK the fix action opens the conversation', page.window.location.hash === '#/chat',
+      page.window.location.hash);
+
+    // ---- the shelf and the brief --------------------------------------
+    const shelfPage = boot({
+      hash: '#/desk',
+      documents: {
+        desk: {
+          projects: [deskProject()],
+          unreadable: [{ slug: 'stale-one', error: 'the document is not valid JSON' }],
+        },
+      },
+    });
+    shelfPage.open();
+    await flush();
+
+    const shelf = shelfPage.text('desk-board');
     check('DESK the shelf greets the place', shelf.includes('The desk'), 'no greeting');
-    check('DESK the row carries the binding', shelf.includes('/Users/someone/Projects/landing'), 'no binding');
+    check('DESK the row carries the binding', shelf.includes('/Users/someone/Projects/landing'),
+      'no binding');
     check('DESK the row carries the evidence status',
       shelf.includes('1 asserted') && shelf.includes('1 contested') && shelf.includes('1 unsourced'),
       shelf.slice(0, 200));
+    check('DESK the row says which state it is in',
+      shelf.includes('1 refusal stands'), 'no state pill');
+    // C12: the unreadable project is a named row, never a silent absence.
+    check('DESK an unreadable project names itself (C12)',
+      shelf.includes('stale-one cannot be read') && shelf.includes('the document is not valid JSON'),
+      'no broken row');
+    // C13: the row is a real button, so Tab reaches it and Enter presses it.
+    const card = shelfPage.rows('.dk-card').find((one) =>
+      one.textContent.includes("The landing page's copy"));
+    check('DESK the shelf row is a real button (C13)',
+      Boolean(card) && card.name === 'button' && card.type === 'button',
+      card ? card.name + '/' + card.type : 'no card');
 
-    // The composer: the brief applies on submit — the POST carries the
-    // three fields and the sources, the composer closes, the repaint
-    // carries the new row.
-    const newButton = page.rows('.press').find((b) => b.textContent === 'new deliverable');
+    // The same walk over the shelf's paint and the brief's, so the pin
+    // covers every view the desk owns rather than the one it was written
+    // beside. A painter that invents a class no rule carries is the exact
+    // defect C1 names.
+    const deskBare = (root, label) => {
+      const nodes = [root].concat(root.find(() => true));
+      const names = [];
+      nodes.forEach((n) => String(n.className || '').split(/\s+/).forEach((c) => {
+        if (c) names.push(c);
+      }));
+      const uniq = Array.from(new Set(names));
+      const bareOnes = uniq.filter((c) => !new RegExp('\\.' + c.replace(/-/g, '\\-') + '[^a-zA-Z0-9_-]').test(CSS));
+      check('DESK no class the ' + label + ' paints is bare (C1)',
+        bareOnes.length === 0, bareOnes.slice(0, 8).join(', '));
+      return { nodes: nodes.length, classes: uniq.length };
+    };
+    const shelfWalk = deskBare(shelfPage.el('desk-board'), 'shelf and brief');
+    check('DESK the shelf walk covered the shelf and the brief (C1)',
+      shelfWalk.nodes > 60 && shelfWalk.classes > 40,
+      'elements=' + shelfWalk.nodes + ' classes=' + shelfWalk.classes);
+
+    // The composer: the brief applies on submit, and a submit missing a
+    // required field sends nothing and says what it waits for (C14).
+    const fresh = shelfPage;
+    const newButton = fresh.rows('.dk-btn').find((one) => one.textContent === 'new deliverable');
     newButton.click();
     await flush();
-    // The composer is the section carrying the submit — the toggle
-    // un-hid it, so "hidden" is the old state, not the marker.
-    const composer = page.rows('.hsection').find((one) =>
-      one.find((b) => b.textContent === 'open the desk').length);
-    check('DESK the composer shows on the press', composer && !composer.hidden, 'hidden');
-    const byLabel = (label) => composer.find((one) =>
-      one.name === 'label' && one.textContent === label)[0].parentNode.lastChild;
-    byLabel('name').value = 'the beta brief';
-    byLabel('the claim').value = 'the fold earns its keep';
-    composer.find((b) => b.textContent === 'open the desk')[0].click();
+    const composer = fresh.rows('.dk-brief')[0];
+    check('DESK the composer shows on the press', Boolean(composer) && !composer.hidden,
+      composer ? 'hidden' : 'no composer');
+    const submit = fresh.rows('.dk-btn').find((one) => one.textContent === 'read the sources');
+    check('DESK the composer submits by its own verb', Boolean(submit), 'no submit');
+    // C7: the claim is a real field with its own words, not a placeholder
+    // row — the shipped face asked for 'the claim' in a one-line input.
+    const claimField = composer.find((one) => one.id === 'dk-claim')[0];
+    check('DESK the claim has its own multi-line field (C7)',
+      Boolean(claimField) && claimField.name === 'textarea', claimField ? claimField.name : 'absent');
+    check('DESK the composer names the one claim it must make stand',
+      composer.textContent.includes('what it must make stand'), 'no label');
+    const composerWalk = deskBare(composer, 'brief');
+    check('DESK the brief walk covered every field it paints (C1)',
+      composerWalk.nodes > 20 && composerWalk.classes > 10,
+      'elements=' + composerWalk.nodes + ' classes=' + composerWalk.classes);
+
+    submit.click();
     await flush();
-    const posted = page.calls.filter((one) => one.url === '/api/desk' && one.method === 'POST');
+    const refused = fresh.calls.filter((one) => one.url === '/api/desk' && one.method === 'POST');
+    check('DESK an empty brief sends nothing (C14)', refused.length === 0,
+      'posts=' + refused.length);
+    check('DESK the empty submit names the fields it waits for (C14)',
+      fresh.text('desk-board').includes('not sent') && fresh.text('desk-board').includes('the name'),
+      'no need line');
+    check('DESK the empty submit moves the cursor to the field (C14)',
+      fresh.sandbox.document.activeElement === composer.find((one) => one.id === 'dk-name')[0],
+      'focus elsewhere');
+    check('DESK the empty submit leaves the composer open (C14)',
+      fresh.rows('.dk-brief').length === 1, 'composer gone');
+
+    const nameField = composer.find((one) => one.id === 'dk-name')[0];
+    nameField.value = 'the beta brief';
+    claimField.value = 'the fold earns its keep';
+    submit.click();
+    await flush();
+    const posted = fresh.calls.filter((one) => one.url === '/api/desk' && one.method === 'POST');
     check('DESK the brief POSTs on submit', posted.length === 1, 'posts=' + posted.length);
     const body = JSON.parse(posted[0].body);
     check('DESK the brief carries the three fields and the sources kind',
       body.name === 'the beta brief' && body.claim === 'the fold earns its keep'
         && Array.isArray(body.sources),
       JSON.stringify(body).slice(0, 120));
-    check('DESK the composer closed after the apply', composer.hidden, 'still open');
+    check('DESK the composer closed after the apply', fresh.rows('.dk-brief').length === 0,
+      'still open');
+    check('DESK the applied brief opens the deliverable it made',
+      fresh.text('desk-board').includes('the beta brief'), 'shelf only');
 
-    // The deliverable: the row's press opens the stage rail and the
-    // review beside the claims' own sentences.
-    // paintDesk binds each row's press in-closure (no data attribute to
-    // query): the card carrying the deliverable's serif name is the row.
-    const row = page.rows('.card').find((one) =>
-      one.find((child) => child.textContent === "The landing page's copy").length);
-    row.click();
+    // C11: the remove is held, not silent — the first press only arms it
+    // and says so, the second is the one that writes.
+    const remove = fresh.rows('.dk-btn').find((one) => one.textContent === 'remove');
+    check('DESK the deliverable offers a remove', Boolean(remove), 'no remove');
+    remove.click();
     await flush();
-    const detail = page.text('desk-board');
-    check('DESK the stage rail shows every state',
-      detail.includes('claims · done') && detail.includes('review · refused'), detail.slice(0, 200));
-    check('DESK the review renders the claim beside its sentence',
-      detail.includes('The fold earns its keep on every screen') && detail.includes('p 0.91'),
-      'no claim card');
-    check('DESK the contested claim ships marked', detail.includes('contested'), 'unmarked');
-    check('DESK the end gate names what stands',
-      detail.includes('unsourced number: 4.0%') && detail.includes('end — refusals stand'),
-      'no gate');
-    page.rows('.press').find((b) => b.textContent === 'the shelf').click();
+    check('DESK the first press only arms the remove (C11)',
+      remove.textContent === 'press again to remove' && remove.className.includes('armed'),
+      remove.textContent);
+    check('DESK nothing is deleted by the first press (C11)',
+      !fresh.calls.some((one) => one.url.endsWith('/delete')), 'deleted on the arm');
+    remove.click();
     await flush();
-    check('DESK the shelf returns', page.text('desk-board').includes('The desk'), 'no return');
+    const deletes = fresh.calls.filter((one) => one.url.endsWith('/delete') && one.method === 'POST');
+    check('DESK the second press removes the deliverable (C11)',
+      deletes.length === 1 && deletes[0].url === '/api/desk/the-beta-brief/delete',
+      'deletes=' + JSON.stringify(deletes.map((one) => one.url)));
 
     // A stale address names itself, never a blank surface: the fetch
     // 404s and the view carries the refusal's words.
@@ -9270,6 +9460,82 @@ async function theConnectCardSaysWhatHappened() {
     await flush();
     check('DESK a stale slug names itself', empty.text('desk-board').includes('not-here is not here'),
       empty.text('desk-board').slice(0, 120));
+
+    // C3/C4, compared rather than asserted on one desk: a refused
+    // deliverable must be distinguishable from a clean one WITHOUT opening
+    // it, a never-walked one from a finished one, and each state's tone must
+    // resolve to its own token with a word beside it — so the state survives
+    // a colour-blind reader and a monochrome print.
+    const clean = () => {
+      const d = deskProject();
+      d.slug = 'clean-one';
+      d.name = 'A clean deliverable';
+      d.number_refusals = [];
+      d.stands = '';
+      d.stages = [{ stage: 'review', state: 'done', reason: null }];
+      d.coverage = { score: 5, material_gap: false, off_brief: false, escalated: false, reason: '' };
+      return d;
+    };
+    const fresh2 = () => {
+      const d = deskProject();
+      d.slug = 'fresh-one';
+      d.name = 'A deliverable just made';
+      d.number_refusals = [];
+      d.refusals = [];
+      d.stands = '';
+      d.claims = [];
+      d.coverage = { score: 0, material_gap: false, off_brief: false, escalated: false, reason: '' };
+      d.stages = [
+        { stage: 'claims', state: 'pending' }, { stage: 'outline', state: 'pending' },
+        { stage: 'render', state: 'pending' }, { stage: 'review', state: 'pending' },
+        { stage: 'knowledge', state: 'pending' },
+      ];
+      return d;
+    };
+    const compare = boot({
+      hash: '#/desk',
+      documents: { desk: { projects: [deskProject(), clean(), fresh2()], unreadable: [] } },
+    });
+    compare.open();
+    await flush();
+    const byName = (needle) => compare.rows('.dk-card').find((one) => one.textContent.includes(needle));
+    const refusedCard = byName("The landing page's copy");
+    const cleanCard = byName('A clean deliverable');
+    const freshCard = byName('A deliverable just made');
+    check('DESK the refused, clean and fresh rows all stand (C3)',
+      Boolean(refusedCard) && Boolean(cleanCard) && Boolean(freshCard),
+      'cards=' + compare.rows('.dk-card').length);
+    const pillOf = (card) => card ? card.find((n) => String(n.className || '').split(' ').includes('dk-pill'))[0] : null;
+    const rp = pillOf(refusedCard), cp = pillOf(cleanCard), fp = pillOf(freshCard);
+    check('DESK a refused row is distinguishable without opening it (C3)',
+      Boolean(rp) && rp.textContent.includes('1 refusal stands')
+        && rp.className.includes('down') && !cp.textContent.includes('refusal'),
+      rp ? rp.textContent : 'no pill');
+    check('DESK a finished row says so and a never-walked row says so (C3)',
+      cp.textContent.includes('all five stages done') && fp.textContent.includes('not started')
+        && cp.className !== fp.className,
+      'clean=' + cp.textContent + ' fresh=' + fp.textContent);
+    check('DESK the refused row carries a different left edge than a clean one (C3)',
+      refusedCard.className.includes('s-warn') && cleanCard.className.includes('s-done')
+        && freshCard.className.includes('s-idle'),
+      refusedCard.className + ' | ' + cleanCard.className + ' | ' + freshCard.className);
+    // C4: each tone is its own token, and the word rides beside the dot.
+    const rule = (sel) => {
+      const at = CSS.indexOf(sel);
+      return at < 0 ? '' : CSS.slice(at, CSS.indexOf('}', at));
+    };
+    const okRule = rule('.dk-pill.ok'), warnRule = rule('.dk-pill.warn'), downRule = rule('.dk-pill.down');
+    check('DESK each pill tone resolves to its own token (C4)',
+      okRule.includes('var(--dsw-alias-ok)') && warnRule.includes('var(--dsw-alias-warn)')
+        && downRule.includes('var(--dsw-alias-down)'),
+      'ok=' + okRule.includes('var(--dsw-alias-ok)') + ' warn=' + warnRule.includes('var(--dsw-alias-warn)')
+        + ' down=' + downRule.includes('var(--dsw-alias-down)'));
+    check('DESK every state also carries a word, not a colour alone (C4)',
+      [rp, cp, fp].every((p) => p && p.textContent.replace(/\s+/g, ' ').trim().length > 6),
+      [rp, cp, fp].map((p) => p && p.textContent).join(' | '));
+    check('DESK the three tones are three different classes (C4)',
+      new Set([rp, cp, fp].map((p) => String(p.className).split(' ').filter((c) => c !== 'dk-pill').join(' '))).size >= 2,
+      [rp, cp, fp].map((p) => p.className).join(' | '));
   }
 
 
@@ -9458,7 +9724,6 @@ const cases = [
 
   ['DESK the desk carries the brief and the review', theDeskCarriesTheBriefAndTheReview],
   ['SEAM the room carries the desk and the hand', theRoomCarriesTheDeskAndTheHand],
-  ['DESK the desk carries the brief and the review', theDeskCarriesTheBriefAndTheReview],
 ];
 
 for (const [name, run] of cases) {
