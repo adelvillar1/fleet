@@ -1567,6 +1567,7 @@ pub async fn execute(
         // it, so no proposal is filed by a run nobody is watching.
         improve_home: None,
         goal_home: None,
+        goal_session: None,
         // The route home is the run's own home: a scheduled run's child
         // routes through prepare_child like any other child — the
         // router rules everything but nothing else was reaching it

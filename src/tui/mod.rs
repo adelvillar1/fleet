@@ -885,6 +885,7 @@ fn spawn_agent(config: AgentConfig) -> thread::JoinHandle<()> {
                             // improve apply` runs one.
                             improve_home: Some(home.clone()),
                         goal_home: None,
+                        goal_session: None,
                             route_home: None,
                             gui_prompt: None,
                             // The interactive surface has no forced-fold

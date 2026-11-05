@@ -1357,6 +1357,7 @@ async fn drive_over(
         scope: None,
         improve_home: None,
         goal_home: None,
+        goal_session: None,
         route_home: None,
         gui_prompt: None,
     };

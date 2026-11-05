@@ -853,6 +853,7 @@ impl Bridge {
                 "workspace": self.cwd.display().to_string(),
                 "folder": folder_value(state.effective_folder(session).as_deref(), &self.cwd),
             "goal": session_goal(&self.home, &key),
+            "goal_done": session_goal_done(&self.home, &key),
             // The room's members, when it is a room: an empty list on
             // an ordinary conversation keeps the head from rendering.
             "members": session_members(&self.home, &key),
@@ -903,6 +904,7 @@ impl Bridge {
             "workspace": self.cwd.display().to_string(),
             "folder": folder_value(state.effective_folder(session).as_deref(), &self.cwd),
             "goal": session_goal(&self.home, &key),
+            "goal_done": session_goal_done(&self.home, &key),
             // The room's members, when it is a room: an empty list on
             // an ordinary conversation keeps the head from rendering.
             "members": session_members(&self.home, &key),
@@ -4269,14 +4271,32 @@ impl Bridge {
         // the session the first send creates carries it (C6), which is
         // exactly the empty-key goal above, read by the pending path.
         let mut started = false;
-        if text.is_some() && session == self.launch() {
-            let driving = lock(&self.state).driving.is_some();
+        // A pending goal (no session named) never starts a run: it has no
+        // session to run in yet — the first send creates one and claims
+        // the objective (C6). A goal on an ordinary conversation starts
+        // its work at once. A room's goal does not: rooms drive their own
+        // turns (the plan's out of scope), and a goal set mid-room would
+        // otherwise start a turn nobody asked for.
+        let room = !session.is_empty() && !session_members(&self.home, &session).is_empty();
+        if text.is_some() && !session.is_empty() && !room {
+            // The state lock is read into locals and RELEASED before the
+            // start: `run_with` takes the same lock, and holding a guard
+            // across the call deadlocked the whole face (the live
+            // proof's own find — every endpoint wedged behind it).
+            let (driving, permissions, pin) = {
+                let state = lock(&self.state);
+                (
+                    state.driving.is_some(),
+                    state.permissions,
+                    state.provider_pin.clone(),
+                )
+            };
             if !driving {
                 match self.run_with(
                     &session,
                     text.as_deref().unwrap_or_default(),
-                    lock(&self.state).permissions,
-                    lock(&self.state).provider_pin.clone(),
+                    permissions,
+                    pin,
                     None,
                 ) {
                     Ok(()) => started = true,
@@ -5652,6 +5672,16 @@ fn save_goals(home: &std::path::Path, goals: &std::collections::HashMap<String, 
 /// One session's standing objective, when it has one.
 pub fn session_goal(home: &std::path::Path, session: &str) -> Option<String> {
     load_goals(home).remove(session)
+}
+
+/// The session's last completed goal, when one was completed: the
+/// `goal` tool's `complete` writes the objective into the done store,
+/// and the chip reads it as the done state. A completion is a fact the
+/// face shows, never an inference from the goal going absent.
+pub fn session_goal_done(home: &std::path::Path, session: &str) -> Option<String> {
+    let text = std::fs::read_to_string(home.join("sessions-goals-done.json")).ok()?;
+    let done: std::collections::BTreeMap<String, String> = serde_json::from_str(&text).ok()?;
+    done.get(session).cloned()
 }
 
 /// A room's knowledge for its head (the huddles plan's C15): what it
@@ -11482,6 +11512,7 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
                             // apply` runs one.
                             improve_home: Some(home.clone()),
                             goal_home: Some(home.clone()),
+                            goal_session: Some(driving.clone()),
                             route_home: None,
                             // The owner is in a browser, and the run says
                             // so: the prompt line is what tells the model
@@ -11646,6 +11677,94 @@ pub(crate) fn rank_with(
         })
         .collect();
     (ranked, degraded)
+}
+
+#[cfg(test)]
+mod goal_tests {
+    use super::*;
+
+    fn detached(home: &std::path::Path) -> Bridge {
+        let (bridge, _sources) =
+            Bridge::detached(home.to_path_buf(), "test-model".to_string(), None);
+        bridge
+    }
+
+    #[tokio::test]
+    async fn a_pending_goal_rides_the_empty_key() {
+        // C6: a goal set with no session named rides the pending key —
+        // the session the first send creates claims it. It never lands on
+        // the launch session (the defect the plan names).
+        let home = std::env::temp_dir().join(format!("fleet-goal-pending-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        let bridge = detached(&home);
+        let reply = bridge.set_goal("", Some("implement the plan")).unwrap();
+        assert_eq!(reply.get("started").and_then(|v| v.as_bool()), Some(false));
+        let goals = load_goals(&home);
+        assert_eq!(
+            goals.get("").map(String::as_str),
+            Some("implement the plan")
+        );
+        // The launch session is empty on a detached bridge, so the
+        // objective cannot have landed on a concrete conversation.
+        assert!(bridge.launch().is_empty());
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[tokio::test]
+    async fn a_goal_on_an_ordinary_session_attempts_its_run() {
+        // C4: the start path is taken for a non-room conversation. A
+        // detached bridge has no agent behind it, so the attempt is
+        // refused by name — the proof that set_goal REACHED the start
+        // and returned, and the deadlock the live proof found (a state
+        // guard held across run_with) cannot recur.
+        let home = std::env::temp_dir().join(format!("fleet-goal-start-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        let bridge = detached(&home);
+        let session = crate::session::Session::create(&home, "test-model").unwrap();
+        let sid = session.id().to_string();
+        let reply = bridge.set_goal(&sid, Some("the work")).unwrap();
+        // The refused reply carries the reason rather than a started
+        // flag: the start was attempted and the face has no agent.
+        assert!(
+            reply
+                .get("refused")
+                .and_then(|v| v.as_str())
+                .is_some_and(|r| r.contains("no agent")),
+            "{reply}"
+        );
+        // The goal still landed: the run's refusal does not lose the
+        // owner's objective.
+        assert_eq!(session_goal(&home, &sid).as_deref(), Some("the work"));
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[tokio::test]
+    async fn completing_a_goal_moves_it_to_the_done_store() {
+        // C5: the goal tool's completion is a fact the face reads — the
+        // objective leaves the goals store and lands complete, and the
+        // chip's done state comes from the store, never an inference.
+        let home = std::env::temp_dir().join(format!("fleet-goal-done-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        let bridge = detached(&home);
+        // A goal attaches to a real conversation: the store prunes an id
+        // with no session log.
+        let session = crate::session::Session::create(&home, "test-model").unwrap();
+        let s1 = session.id().to_string();
+        bridge.set_goal(&s1, Some("the work")).unwrap();
+        assert_eq!(session_goal(&home, &s1).as_deref(), Some("the work"));
+        let answer = crate::agent::run_goal_for_test(
+            Some(home.clone()),
+            Some(s1.clone()),
+            &serde_json::json!({"action": "complete"}),
+        );
+        assert!(answer.contains("completed"), "{answer}");
+        assert_eq!(session_goal(&home, &s1), None);
+        assert_eq!(session_goal_done(&home, &s1).as_deref(), Some("the work"));
+        let _ = std::fs::remove_dir_all(&home);
+    }
 }
 
 #[cfg(test)]
@@ -15249,10 +15368,15 @@ mod tests {
         let _door = bridge.connect();
 
         // A standing goal rides the session; the archive clears it — a
-        // goal on an ended session is debris.
-        bridge
-            .set_goal(&id, Some("the objective"))
-            .expect("goal set");
+        // goal on an ended session is debris. The goal is written
+        // through the store rather than `set_goal`: setting a goal on an
+        // idle conversation now STARTS its run (the unattended-goals
+        // plan's C4), and a run in flight is what archive refuses. The
+        // start has its own pins; this test's contract is the archive's
+        // clearing.
+        let mut goals = load_goals(&home);
+        goals.insert(id.clone(), "the objective".to_string());
+        save_goals(&home, &goals);
 
         let archived = bridge.session_archive(&id, true).expect("archived");
         assert_eq!(archived["archived"], true);

@@ -9694,6 +9694,54 @@ async function theConnectCardSaysWhatHappened() {
   }
 
 
+
+  // C7/C9 (the unattended-goals plan): the main loop is uncapped, so a
+  // `max-turns` finish is not a cap receipt — the card says finished
+  // with no continuation control. The goal chip reads the done state
+  // off the store: a completed goal wears "goal · done", never the
+  // unset affordance and never a stale active goal.
+  async function theGoalChipAndTheUncappedFinish() {
+    const doc = (state) => ({
+      sessions: {
+        type: 'sessions', read_at: 'now', current: '',
+        counts: { needs: 0, working: 0, background: 0, earlier: 1, total: 1 },
+        sessions: [row('goal-2', 'completed', { title: 'a conversation' })],
+      },
+      state: (asked) => ({ ...emptyState(asked), session: asked, ...state }),
+    });
+    // A completed goal: the store carries the done fact, the goal is
+    // gone from the active slot.
+    const page = boot({
+      width: 1440,
+      hash: '#/sessions/goal-2',
+      documents: doc({ goal: null, goal_done: 'ship the controls this week' }),
+    });
+    await flush();
+    page.open();
+    await flush();
+    check('GOAL the chip wears the completed state',
+      page.IDS['run-goal-btn'].classList.contains('done')
+        && page.text('run-goal-btn').indexOf('done') !== -1,
+      page.text('run-goal-btn') + ' ' + String(page.IDS['run-goal-btn'].className));
+    check('GOAL the completed chip is not the unset affordance',
+      !page.IDS['run-goal-btn'].classList.contains('unset'),
+      String(page.IDS['run-goal-btn'].className));
+    check('GOAL the completed chip names the objective',
+      String(page.IDS['run-goal-btn'].title || '').indexOf('ship the controls') !== -1,
+      String(page.IDS['run-goal-btn'].title));
+
+    // The uncapped finish: a max-turns reason (which the main loop can
+    // no longer produce) renders the ordinary finished card — no cap
+    // wording, no continue control.
+    page.push({ type: 'finished', reason: 'max-turns' });
+    await flush();
+    const transcript = page.text('log');
+    check('GOAL an uncapped finish wears no cap receipt',
+      transcript.indexOf('turn budget') === -1
+        && transcript.indexOf('continue the work') === -1,
+      transcript.slice(-160));
+  }
+
 const cases = [
   ['HEALTH the working line reads the health, not the turn', theWorkingLineReadsTheHealthNotTheTurn],
   ['HEALTH a reopened conversation seeds its health and the floor names itself', aReopenedConversationSeedsItsHealth],
@@ -9793,6 +9841,7 @@ const cases = [
   ['BUNDLE the plugin\u2019s own page mounts and relays its queries', theBundleMountsAndRelaysItsDeclaredQueries],
 
   ['DESK the desk carries the brief and the review', theDeskCarriesTheBriefAndTheReview],
+  ['GOAL the goal chip and the uncapped finish', theGoalChipAndTheUncappedFinish],
   ['DESK a refused verb keeps its reason (KI-447)', aRefusedVerbKeepsItsReason],
   ['SEAM the room carries the desk and the hand', theRoomCarriesTheDeskAndTheHand],
 ];

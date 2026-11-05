@@ -1724,6 +1724,40 @@ fn notice_once(progress: &mut dyn Write, line: String) {
 /// cap — and every one of them carries the child's log path once a log
 /// exists.
 ///
+/// Dispatch a plan node: the graph whose runtime file carries the node
+/// is found under the working directory's `docs/plans/`, the node moves
+/// to `Running`, and the re-dispatch ceiling is enforced by the graph
+/// itself. A node no plan carries is the named error.
+fn dispatch_node(node: &str) -> Result<(), String> {
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let plans = cwd.join("docs").join("plans");
+    let Ok(entries) = std::fs::read_dir(&plans) else {
+        return Err(format!(
+            "no plans directory at {} — the node `{node}` has no graph to dispatch",
+            plans.display()
+        ));
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("md") {
+            continue;
+        }
+        let Ok(mut graph) = crate::plan_graph::PlanGraph::load(&path) else {
+            continue;
+        };
+        if graph.graph.node(node).is_none() {
+            continue;
+        }
+        graph
+            .graph
+            .dispatch(node)
+            .map_err(|error| error.to_string())?;
+        graph.save(&path).map_err(|error| error.to_string())?;
+        return Ok(());
+    }
+    Err(format!("no plan carries the node `{node}`"))
+}
+
 /// Mark a plan node failed: the graph whose runtime file carries the
 /// node is found under the working directory's `docs/plans/` — the
 /// same scan the plan surface reads — and the node's transition is the
@@ -1731,7 +1765,7 @@ fn notice_once(progress: &mut dyn Write, line: String) {
 /// `PlanGraph::save`, so the execution record carries the failure. The
 /// first graph whose load succeeds and whose nodes name the id wins;
 /// a node no plan carries is the named error.
-fn mark_node_failed(reason: &str, node: &str) -> Result<(), String> {
+fn mark_node_failed(reason: &str, node: &str) -> Result<u32, String> {
     let cwd = std::env::current_dir().unwrap_or_default();
     let plans = cwd.join("docs").join("plans");
     let Ok(entries) = std::fs::read_dir(&plans) else {
@@ -1750,9 +1784,10 @@ fn mark_node_failed(reason: &str, node: &str) -> Result<(), String> {
             continue;
         }
         graph.graph.fail(node).map_err(|error| error.to_string())?;
+        let attempts = graph.graph.node(node).map(|n| n.dispatches()).unwrap_or(0);
         graph.save(&path).map_err(|error| error.to_string())?;
         let _ = reason;
-        return Ok(());
+        return Ok(attempts);
     }
     Err(last_error)
 }
@@ -1798,6 +1833,17 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
     // builds the child is not the module that composes the message, and
     // the parts are what the row, the label, and the delta read.
     let brief = Brief::parse(&goal);
+    // The supervision wiring's first half (the unattended-goals plan's
+    // C12): a child bound to a plan node dispatches it before the child
+    // runs, so the node is `Running` for the child's lifetime. A node
+    // past its re-dispatch ceiling is a named refusal — the parent
+    // hears it before a child is spent on work the graph has already
+    // given up on (C13).
+    if let Some(node_id) = &node {
+        if let Err(reason) = dispatch_node(node_id) {
+            return SubagentResult::refused(reason);
+        }
+    }
     // The role, when the brief named one: resolved against the owner's
     // home BEFORE anything is created, so an unknown role is a named
     // refusal the caller sees rather than a child that ran without its
@@ -2156,6 +2202,7 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
         // either way, so the declaration and the call agree.
         improve_home: None,
         goal_home: None,
+        goal_session: None,
         route_home: None,
         gui_prompt: None,
         compact_now: false,
@@ -2315,7 +2362,11 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
         } {
             let marked = mark_node_failed(&reason, node);
             result.reason = Some(match marked {
-                Ok(()) => format!("plan node `{node}` marked failed — {reason}"),
+                Ok(attempts) => format!(
+                    "plan node `{node}` marked failed after {attempts} attempt(s) — {reason}. \
+                     The work is yours to resolve: absorb it, respawn the node (until the \
+                     re-dispatch ceiling), or surface it to the owner by name."
+                ),
                 Err(mark_error) => {
                     format!("plan node `{node}` could not be marked: {mark_error} — {reason}")
                 }

@@ -3100,6 +3100,7 @@ async fn drive(
         // `fleet improve apply` runs one.
         improve_home: Some(home.to_path_buf()),
         goal_home: None,
+        goal_session: None,
         route_home: None,
         gui_prompt: None,
         compact_now,

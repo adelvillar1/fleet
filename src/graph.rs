@@ -157,6 +157,14 @@ pub enum Status {
     Failed,
 }
 
+/// The re-dispatch ceiling (the unattended-goals plan's C13): a node is
+/// attempted once and may be respawned at most this many times. Past it
+/// the node stays failed — the parent absorbs the work itself or
+/// surfaces the node to the owner, and a doomed node stops burning
+/// children. The quota-fire bound lives here, at the branch, since the
+/// main loop is uncapped.
+pub const MAX_NODE_REDISPATCHES: u32 = 2;
+
 /// A node stands where it was declared until the graph moves it, so
 /// the default is the declared state — which is also what a file that
 /// omits a node's status reads as.
@@ -271,6 +279,12 @@ pub struct Node {
     /// bar's denominator. Scores only fall, so the peak is the score at
     /// the graph's widest — a node's distance to its own minima.
     peak: u64,
+    /// How many times the node has been dispatched — the original run
+    /// plus its respawns. The re-dispatch ceiling reads it (the
+    /// unattended-goals plan's C13): a node that keeps failing past the
+    /// ceiling stays failed, and the parent absorbs the work or
+    /// surfaces it to the owner instead of burning children.
+    dispatches: u32,
 }
 
 impl Node {
@@ -287,7 +301,15 @@ impl Node {
             delta: None,
             status: Status::Pending,
             peak: 0,
+            dispatches: 0,
         }
+    }
+
+    /// How many times the node has been dispatched — the original run
+    /// plus its respawns. The supervision wiring reports it when a child
+    /// ends without its artifact, so the parent knows the bound's state.
+    pub fn dispatches(&self) -> u32 {
+        self.dispatches
     }
 
     /// The declared prerequisites.
@@ -463,6 +485,9 @@ pub enum GraphError {
     PathHeld { path: String, holder: String },
     /// A failure report against a node whose artifact is verified.
     AlreadyVerified(String),
+    /// A dispatch past the re-dispatch ceiling: the node has been
+    /// attempted `attempts` times and the bound is reached.
+    RedispatchExhausted { node: String, attempts: u32 },
     /// A second delta for a node that already carries one. Deltas land
     /// once so `diff_score` stays monotone; a re-report has to come
     /// through [`Graph::demote`], which records why.
@@ -498,6 +523,14 @@ impl fmt::Display for GraphError {
                 write!(
                     f,
                     "`{id}` already carries a landed delta: demote it to report again"
+                )
+            }
+            GraphError::RedispatchExhausted { node, attempts } => {
+                write!(
+                    f,
+                    "`{node}` has been attempted {attempts} times — past the \
+                     re-dispatch ceiling ({MAX_NODE_REDISPATCHES} respawns): the \
+                     node stays failed, and the work is absorbed or surfaced"
                 )
             }
         }
@@ -692,6 +725,17 @@ impl Graph {
                 holder: hold.holder,
             });
         }
+        // The re-dispatch ceiling: the original attempt plus the
+        // respawns the bound allows. Past it the node stays failed —
+        // the parent absorbs the work or surfaces it, and no more
+        // children are spent on a node that keeps failing.
+        if self.nodes[index].dispatches > MAX_NODE_REDISPATCHES {
+            return Err(GraphError::RedispatchExhausted {
+                node: id.to_string(),
+                attempts: self.nodes[index].dispatches,
+            });
+        }
+        self.nodes[index].dispatches += 1;
         self.nodes[index].status = Status::Running;
         Ok(())
     }
@@ -1983,6 +2027,11 @@ pub struct NodeFile {
     pub delta: Option<crate::subagents::Delta>,
     #[serde(default)]
     pub status: Status,
+    /// The dispatch count, so a respawn bound survives a restart: a
+    /// node demoted after its second respawn reads back still
+    /// exhausted.
+    #[serde(default)]
+    pub dispatches: u32,
     /// The highest score this node's closure has carried — the readiness
     /// bar's denominator. P1 C7: it rides the file. It used to be
     /// rebuilt by `load`'s all-`Pending` adds, so a cost revised up to 50
@@ -2025,6 +2074,7 @@ impl Graph {
                     approach: node.approach.clone(),
                     delta: node.delta.clone(),
                     status: node.status,
+                    dispatches: node.dispatches,
                     peak: node.peak,
                 })
                 .collect(),
@@ -2058,6 +2108,7 @@ impl Graph {
             // so the load restores it rather than re-declaring it.
             if let Some(added) = graph.nodes.iter_mut().find(|added| added.id == id) {
                 added.status = node.status;
+                added.dispatches = node.dispatches;
                 // And so does the delta: the diff score is derived from
                 // the nodes, so a graph that lost its deltas on save
                 // would read back as a tree that never deviated.
@@ -2533,3 +2584,57 @@ fn rail_lines_colored(text: &str, color: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod redispatch_tests {
+    use super::*;
+
+    #[test]
+    fn the_redispatch_ceiling_bounds_the_respawn_loop() {
+        // C13: the original attempt plus MAX_NODE_REDISPATCHES respawns;
+        // past it the node refuses by name and the parent absorbs or
+        // surfaces the work.
+        let mut graph = Graph::new();
+        graph.add(Node::new("the-node", 1)).unwrap();
+        // Attempt 1 (the original) and two respawns.
+        for _ in 0..=MAX_NODE_REDISPATCHES {
+            graph.dispatch("the-node").unwrap();
+            graph.fail("the-node").unwrap();
+            graph
+                .demote("the-node", "the work did not integrate")
+                .unwrap();
+        }
+        let error = graph.dispatch("the-node").unwrap_err();
+        match error {
+            GraphError::RedispatchExhausted { node, attempts } => {
+                assert_eq!(node, "the-node");
+                assert_eq!(attempts, 1 + MAX_NODE_REDISPATCHES);
+            }
+            other => panic!("expected the ceiling, got {other}"),
+        }
+        assert_eq!(graph.node("the-node").map(|n| n.dispatches()), Some(3));
+    }
+}
+
+#[cfg(test)]
+mod card_reason_tests {
+    use super::*;
+
+    #[test]
+    fn a_demoted_node_card_carries_the_reason() {
+        // C14: the graph card names a failed/demoted node's reason — the
+        // latest revision that named it.
+        let mut graph = Graph::new();
+        graph.add(Node::new("the-node", 1)).unwrap();
+        graph
+            .demote("the-node", "the child hit its 2-turn cap")
+            .unwrap();
+        let text = render(&graph);
+        // The summary card's revision line is the reason the owner reads.
+        assert!(text.contains("demoted `the-node`"), "{text}");
+        // The card wraps at the rail width, so the reason's words are
+        // asserted apart from their line break.
+        assert!(text.contains("the child hit its"), "{text}");
+        assert!(text.contains("2-turn cap"), "{text}");
+    }
+}

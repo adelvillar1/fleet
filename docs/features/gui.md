@@ -225,7 +225,11 @@ every visible `.tile`, `.badge`, `.rrow`, `.rank-row`, `.cal-cell`,
   and no kind is not a conversation at all. A conversation's **name is
   dynamic**: the owner's rename first — never overridden — then the
   standing goal (what the conversation is for; it moves when the work
-  moves), then the last plan's line, then the first message. The rung
+  moves), then the last plan's line, then the first message. The goal
+  chip reads the session's objective (`goal` on the state document) and
+  its **done** state (`goal_done`, the `goal` tool's completion written
+  to the store) — a completed goal wears `goal · done`, never the unset
+  affordance; the chip's press opens the popover either way. The rung
   that served rides `title_from`, and the header's tooltip says what
   named a conversation, so a derived name is marked as derived. A **probe** — verification
   traffic, birthed by `fleet run --probe` or marked by `fleet sessions
@@ -242,8 +246,8 @@ every visible `.tile`, `.badge`, `.rrow`, `.rank-row`, `.cal-cell`,
   compose, and the session is created when words are sent, so an
   abandoned compose leaves no shell in the archive.
   Sessions end only when the owner archives them: a run that stopped —
-  the model handed the conversation back, or the turn cap hit — reads
-  as open (`handed back`, `capped`), never as finished, and every row
+  the model handed the conversation back, or the owner stopped it — reads
+  as open (`handed back`, `stopped`), never as finished, and every row
   carries an **archive** chip (an archived row's chip reads
   **unarchive**). The conversation head carries the same verb for the
   session it anchors. Archiving a run in flight is refused by name —

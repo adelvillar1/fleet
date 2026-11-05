@@ -6,6 +6,17 @@ catalog stays out of the prompt until it is needed.
 Analysis and the full build order: `docs/architecture/tool-surface.md`
 and `docs/plans/2026-10-23-tool-surface-and-lane-resolution.md`.
 
+## The goal tool
+
+`goal` (show / complete / clear) rides every run that carries a home. It
+is the session's standing objective: `/goal <text>` sets it, every run in
+the session carries it in its prompt, and the tool is how the run
+**finishes** it. `complete` writes the objective into the session's done
+store — a logged fact the face reads back as the chip's `goal · done` —
+and the run's work is done; `clear` drops it. The completion is the
+model's explicit act, never inferred from the goal going absent: only a
+run whose tool results verify the goal's own words should complete it.
+
 ## The eleven built-ins
 
 | Tool | What it does | The guarantee |

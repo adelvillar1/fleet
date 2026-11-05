@@ -896,8 +896,12 @@ pub fn run_config(home: &Path) -> RunConfig {
         return config;
     };
     if let Some(turns) = delegation.max_turns {
+        // Config is authoritative for the child bound (the 2026-11-05
+        // ruling): the main loop is uncapped, so the clamp that once
+        // guarded a global ceiling has nothing to guard — the owner's
+        // value is the bound.
         if turns > 0 {
-            config.max_turns = turns.min(crate::agent::DEFAULT_MAX_TURNS);
+            config.max_turns = turns;
         }
     }
     config

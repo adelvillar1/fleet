@@ -125,10 +125,10 @@ pub const SETTINGS: &[Setting] = &[
                   detects your tailnet name, or falls back to this machine's address.",
     },
     Setting {
-        key: "runs.max_turns",
-        kind: Kind::CountTo(crate::agent::DEFAULT_MAX_TURNS as u64),
+        key: "delegation.max_turns",
+        kind: Kind::Count,
         file: File::Config,
-        summary: "The turn cap one run may loop under. Reaching it is a continuation                   receipt, not a dead stop; above this compiled ceiling is a change to                   the constant, not a config value.",
+        summary: "The turn bound a delegated child runs under. The main session is                   uncapped by turns (context health is the long-run bound); a child                   that outlived its parent's budget would spend turns on a run whose                   own answer is already written, so the delegation branch keeps its                   cap — the owner's value here is authoritative.",
     },
     Setting {
         key: "skills.retire_after_sessions",
@@ -537,8 +537,8 @@ pub fn compiled_default(key: &str) -> Option<String> {
         // the prompting mode, which the pin below checks rather than
         // trusting this comment (it caught the first draft's claim).
         "approvals" => Some(crate::approvals::resolve(None, None).label().to_string()),
-        // `agent::DEFAULT_MAX_TURNS`.
-        "runs.max_turns" => Some(crate::agent::DEFAULT_MAX_TURNS.to_string()),
+        // `agent::DEFAULT_MAX_TURNS` — the child bound's fallback.
+        "delegation.max_turns" => Some(crate::agent::DEFAULT_MAX_TURNS.to_string()),
         // `skills::DEFAULT_RETIRE_AFTER_SESSIONS`.
         "skills.retire_after_sessions" => {
             Some(crate::skills::DEFAULT_RETIRE_AFTER_SESSIONS.to_string())
@@ -731,12 +731,33 @@ fn read_env_file(path: &Path) -> BTreeMap<String, String> {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn the_child_bound_is_the_setting_and_runs_turn_cap_is_retired() {
+        // C3: the cap moved to the delegation scope. The write lands the
+        // nested shape `run_config` reads, and the retired key is not a
+        // setting any more.
+        let home =
+            std::env::temp_dir().join(format!("fleet-settings-deleg-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        assert!(find("delegation.max_turns").is_some());
+        assert!(find("runs.max_turns").is_none());
+        set(&home, "delegation.max_turns", "30").unwrap();
+        let read = crate::route::run_config(&home);
+        assert_eq!(read.max_turns, 30);
+        // Config is authoritative for the child bound: a value above the
+        // compiled default is the owner's, not clamped away.
+        set(&home, "delegation.max_turns", "500").unwrap();
+        assert_eq!(crate::route::run_config(&home).max_turns, 500);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
     fn every_compiled_default_is_the_constant_the_code_uses() {
         // settings-ux U2: the read's default is what a revert returns
         // the key to, so each entry is tied to the constant the code
         // itself falls back on — a copy that drifts fails here.
         assert_eq!(
-            compiled_default("runs.max_turns").as_deref(),
+            compiled_default("delegation.max_turns").as_deref(),
             Some(crate::agent::DEFAULT_MAX_TURNS.to_string().as_str())
         );
         assert_eq!(

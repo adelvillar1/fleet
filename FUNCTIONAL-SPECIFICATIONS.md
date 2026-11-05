@@ -459,11 +459,23 @@ head, the rail and the panels keep the measure they have.
   folded says so. The turn **number** is invisible on every main-session
   surface (the 2026-11-05 ruling): the transcript's marks, the working
   line, the run pane and its strip, the receipt, the delegation rows and
-  the terminal's progress line none of them print it. What remains is the
-  **cap** — `runs.max_turns` in the settings, and a run that used it up
-  says so and offers the continuation — and the internal keys: the log's
-  own `turn` records, the checkpoint paths, the rewind target and the
-  resumed position.
+  the terminal's progress line none of them print it. The main session is
+  **uncapped by turns** (the 2026-11-05 ruling): a run ends on its own
+  report, the owner's stop, a refusal, or an approval wait, and context
+  health — the budget following the serving model, the fold, the survival
+  check — is the long-run bound instead. The only turn bound left is the
+  **delegated child's** (`delegation.max_turns` in the settings, the
+  config value authoritative under the depth-stepped ceiling); the
+  internal keys remain the log's own `turn` records, the checkpoint
+  paths, the rewind target and the resumed position.
+- **A goal drives the work.** `/goal <text>` sets the session's standing
+  objective; on an ordinary conversation with no run in flight it
+  **starts the run** with the goal as the task. The run carries the goal
+  in its prompt, and the `goal` tool (show / complete / clear) lets the
+  model finish it explicitly — completion is a logged fact the face reads
+  back as the chip's done state. A goal set on the welcome rides the
+  pending key and attaches to the session the first send creates. A
+  room's goal does not start a turn: rooms drive their own.
 - A provider that runs out of quota mid-run hands the walk to the next
   candidate in the chain rather than failing the run: quota is a
   persistent state, and the order's tail exists for it.
@@ -517,7 +529,7 @@ served — the header's tooltip says what named a conversation.
 | `decode` | the response could not be parsed |
 | `tool` | a built-in or lane tool returned an `error:` result |
 | `approval` | a tool call was denied |
-| `max-turns` | the turn cap was reached |
+| `max-turns` | a delegated child's turn bound was reached (the main session is uncapped) |
 | `handed back` | the model handed an interactive conversation back — the session stays open, awaiting the owner |
 | `handed back without a report` | the run ended silently after tool work and the one repair ask did not land (interactive) |
 | `failed` | an unclassified terminal failure |

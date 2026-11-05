@@ -2470,60 +2470,14 @@
     // owner's own decision a failure would be the wrong card.
     var stopped = event.type === 'failed' && /stopped by the owner/i.test(event.reason || '');
     var failed = event.type === 'failed' && !stopped;
-    var capped = event.reason === 'max-turns' && face.turn > 0;
-    // The continuation receipt (the contract, D4): reaching the cap is
-    // not a dead stop - the card states where the run stands, and the
-    // continue control resumes this session with a hand-off that names
-    // the budget, so the model picks the work back up with its state
-    // carried. The hand-off is seeded from the transcript the face
-    // holds; the run's own report may name it better, and a real final
-    // message wins when the event carries one.
+    // The main session's loop is uncapped by turns (the 2026-11-05
+    // ruling: context health is the long-run bound), so `max-turns` is
+    // not a main-path ending and the continuation receipt that served it
+    // is gone. A run ends by its report, the owner's stop, or a failure.
     var el0 = card(failed ? 'failed' : 'finished', stopped ? '\u25a0' : failed ? '!' : '\u2713',
-      stopped ? 'stopped by you' : failed ? 'failed' : capped ? 'the turn budget ran out'
-        : 'finished', event.reason, null, null);
+      stopped ? 'stopped by you' : failed ? 'failed' : 'finished', event.reason, null, null);
     if (!stopped && !failed) {
       paintReceipt(el0, event);
-    }
-    if (capped) {
-      var note = el0.querySelector('.note');
-      note.hidden = false;
-      // The budget is the honest statement — the run used its room up —
-      // and the number of steps it took to do so is not the owner's
-      // measure of the work (the 2026-11-05 ruling).
-      note.textContent = 'the run used its whole turn budget - its state is carried in ' +
-        'this session. Continue and it picks the work back up; raise the budget first in ' +
-        'settings (runs.max_turns) if the task needs more room.';
-      var actions = node('div', 'receipt-actions');
-      var go = node('button', 'replay-button receipt-continue', 'continue the work');
-      go.type = 'button';
-      go.addEventListener('click', function () {
-        go.disabled = true;
-        go.textContent = 'continuing\u2026';
-        var runPath = '/api/run' + (face.session
-          ? '?session=' + encodeURIComponent(face.session) : '');
-        post(runPath, {
-          task: 'continue the previous task from where the turn budget stopped it. ' +
-            'The conversation above carries your state; finish the remaining work and ' +
-            'close with the result.',
-          mode: face.permissions,
-          pin: face.providerPin || null,
-          budget_turns: null
-        }).then(function (reply) {
-          if (reply.status === 200) {
-            face.running = true;
-            face.stop = null;
-            resetProcess(face.planMode ? 'plan' : 'run');
-            paint();
-            return;
-          }
-          go.disabled = false;
-          go.textContent = 'continue the work';
-          notice('the continue was refused',
-            (reply.body && reply.body.error) || 'the face said no without a reason');
-        });
-      });
-      actions.appendChild(go);
-      el0.appendChild(actions);
     }
     return row(el0, event);
   }
@@ -8550,6 +8504,7 @@
     // The room's standing goal and its members, from the same document:
     // a resumed room shows who is here without waiting for an event.
     face.goal = state.goal || null;
+    face.goalDone = state.goal_done || null;
     face.members = state.members || [];
     // The room's phases and knowledge, for its head (C9/C15).
     face.phases = state.phases || [];
@@ -9066,6 +9021,17 @@
   function paintGoal() {
     if (!el.runGoal || !el.runGoalBtn) return;
     el.runGoal.hidden = false;
+    if (!face.goal && face.goalDone) {
+      // A completed goal is a fact the chip shows: the run marked it
+      // done through the tool, the store carries the completion, and
+      // the face reads it back on every load.
+      el.runGoalBtn.classList.remove('unset');
+      el.runGoalBtn.classList.add('done');
+      el.runGoalBtn.textContent = 'goal \u00b7 done';
+      el.runGoalBtn.title = 'the completed goal: ' + face.goalDone;
+      return;
+    }
+    el.runGoalBtn.classList.remove('done');
     if (!face.goal) {
       el.runGoalBtn.textContent = 'goal';
       el.runGoalBtn.classList.add('unset');

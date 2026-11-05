@@ -542,6 +542,11 @@ pub struct AgentOptions {
     /// its completion is a logged fact. `None` is a run with no home:
     /// the tool answers the named absence.
     pub goal_home: Option<std::path::PathBuf>,
+    /// The conversation id the goals store keys by — the RAW session
+    /// id, not `session_id`, which is the wire-header UUID derived from
+    /// it. The goal tool read the wire id and found no goal on a
+    /// session that had one (the live proof's own find).
+    pub goal_session: Option<String>,
     /// The home a delegated child routes from, distinct from the
     /// improve home (KI-278): a scheduled run sets this to its own home
     /// so its child routes through `route::prepare_child` — the one
@@ -593,6 +598,7 @@ impl Default for AgentOptions {
         AgentOptions {
             goal: None,
             goal_home: None,
+            goal_session: None,
             model: crate::route::AUTO_MODEL.to_string(),
             max_turns: DEFAULT_MAX_TURNS,
             capped: false,
@@ -4542,7 +4548,7 @@ impl<'a> Agent<'a> {
                 Err(error) => settled(format!("error: arguments were not valid JSON: {error}")),
                 Ok(arguments) => Prepared::Ready(Work::Goal {
                     home: self.options.goal_home.clone(),
-                    session: self.options.session_id.clone(),
+                    session: self.options.goal_session.clone(),
                     arguments,
                 }),
             });
@@ -6391,6 +6397,16 @@ async fn run_builtin(
 /// completion is logged by the tool_result this returns (hard rule 5);
 /// the `goal-complete` UI event rides the ui channel when the run
 /// carries one, so the face names it without deriving anything.
+/** The `goal` tool's run, exposed for the pins. */
+#[cfg(test)]
+pub(crate) fn run_goal_for_test(
+    home: Option<std::path::PathBuf>,
+    session: Option<String>,
+    arguments: &serde_json::Value,
+) -> String {
+    run_goal(home, session, arguments)
+}
+
 fn run_goal(
     home: Option<std::path::PathBuf>,
     session: Option<String>,
@@ -9305,6 +9321,7 @@ mod tests {
             scope: None,
             improve_home: None,
             goal_home: None,
+            goal_session: None,
             route_home: None,
             gui_prompt: None,
             compact_now: false,
@@ -9354,6 +9371,7 @@ mod tests {
             scope: None,
             improve_home: None,
             goal_home: None,
+            goal_session: None,
             route_home: None,
             gui_prompt: None,
             compact_now: false,
@@ -9658,6 +9676,7 @@ mod tests {
             scope: None,
             improve_home: None,
             goal_home: None,
+            goal_session: None,
             route_home: None,
             gui_prompt: None,
             compact_now: false,
@@ -9749,6 +9768,7 @@ mod tests {
             scope: None,
             improve_home: None,
             goal_home: None,
+            goal_session: None,
             route_home: None,
             gui_prompt: None,
             compact_now: true,
@@ -9910,6 +9930,7 @@ mod tests {
             scope: None,
             improve_home: None,
             goal_home: None,
+            goal_session: None,
             route_home: None,
             gui_prompt: None,
             compact_now: false,
@@ -9982,6 +10003,7 @@ mod tests {
             scope: None,
             improve_home: None,
             goal_home: None,
+            goal_session: None,
             route_home: None,
             gui_prompt: None,
             compact_now: false,
@@ -10401,6 +10423,7 @@ mod tests {
             scope: None,
             improve_home: None,
             goal_home: None,
+            goal_session: None,
             route_home: None,
             gui_prompt: None,
             compact_now: false,
@@ -10548,6 +10571,7 @@ mod tests {
             scope: None,
             improve_home: None,
             goal_home: None,
+            goal_session: None,
             route_home: None,
             gui_prompt: None,
             compact_now: false,
@@ -10604,6 +10628,7 @@ mod tests {
             scope: None,
             improve_home: None,
             goal_home: None,
+            goal_session: None,
             route_home: None,
             gui_prompt: None,
             compact_now: false,
@@ -11032,6 +11057,7 @@ mod tests {
             scope: None,
             improve_home: None,
             goal_home: None,
+            goal_session: None,
             route_home: None,
             gui_prompt: None,
             compact_now: false,
@@ -11171,6 +11197,7 @@ mod tests {
                 scope: None,
                 improve_home: None,
                 goal_home: None,
+                goal_session: None,
                 route_home: None,
                 gui_prompt: None,
                 compact_now: false,
@@ -11298,6 +11325,7 @@ mod tests {
             scope: None,
             improve_home: None,
             goal_home: None,
+            goal_session: None,
             route_home: None,
             gui_prompt: None,
             compact_now: false,
@@ -11359,6 +11387,7 @@ mod tests {
             scope: None,
             improve_home: None,
             goal_home: None,
+            goal_session: None,
             route_home: None,
             gui_prompt: None,
             compact_now: false,
@@ -11437,6 +11466,7 @@ mod tests {
             AgentOptions {
                 capped: false,
                 goal_home: None,
+                goal_session: None,
                 model: "m".to_string(),
                 ..AgentOptions::default()
             },
@@ -11483,6 +11513,7 @@ mod tests {
             let options = AgentOptions {
                 capped: false,
                 goal_home: None,
+                goal_session: None,
                 session_id: None,
                 goal: None,
                 model: "m".to_string(),
@@ -11506,6 +11537,7 @@ mod tests {
             let options = AgentOptions {
                 capped: false,
                 goal_home: None,
+                goal_session: None,
                 goal: Some("ship the picker before Thursday".to_string()),
                 model: "m".to_string(),
                 ..AgentOptions::default()
@@ -11560,6 +11592,7 @@ mod tests {
                 scope: None,
                 improve_home: None,
                 goal_home: None,
+                goal_session: None,
                 route_home: None,
                 gui_prompt: None,
                 compact_now: false,
@@ -11633,6 +11666,7 @@ You are auditing a change. Read the diff before you judge it.
             scope: None,
             improve_home: None,
             goal_home: None,
+            goal_session: None,
             route_home: None,
             gui_prompt: None,
             compact_now: false,
@@ -11682,6 +11716,7 @@ You are auditing a change. Read the diff before you judge it.
             scope: None,
             improve_home: None,
             goal_home: None,
+            goal_session: None,
             route_home: None,
             gui_prompt: None,
             compact_now: false,
@@ -11749,6 +11784,7 @@ You are auditing a change. Read the diff before you judge it.
             scope: None,
             improve_home: None,
             goal_home: None,
+            goal_session: None,
             route_home: None,
             gui_prompt: Some(line.clone()),
             compact_now: false,
@@ -11789,6 +11825,7 @@ You are auditing a change. Read the diff before you judge it.
             scope: None,
             improve_home: None,
             goal_home: None,
+            goal_session: None,
             route_home: None,
             gui_prompt: None,
             compact_now: false,
@@ -11843,6 +11880,7 @@ You are auditing a change. Read the diff before you judge it.
             scope: None,
             improve_home: None,
             goal_home: None,
+            goal_session: None,
             route_home: None,
             gui_prompt: None,
             compact_now: false,
@@ -11897,6 +11935,7 @@ You are auditing a change. Read the diff before you judge it.
             scope: None,
             improve_home: None,
             goal_home: None,
+            goal_session: None,
             route_home: None,
             gui_prompt: None,
             compact_now: false,
@@ -12023,6 +12062,7 @@ You are auditing a change. Read the diff before you judge it.
             scope: None,
             improve_home: None,
             goal_home: None,
+            goal_session: None,
             route_home: None,
             gui_prompt: None,
             compact_now: false,
@@ -12095,6 +12135,7 @@ You are auditing a change. Read the diff before you judge it.
             scope: None,
             improve_home: None,
             goal_home: None,
+            goal_session: None,
             route_home: None,
             gui_prompt: None,
             compact_now: false,
@@ -12207,6 +12248,7 @@ You are auditing a change. Read the diff before you judge it.
             scope: None,
             improve_home: None,
             goal_home: None,
+            goal_session: None,
             route_home: None,
             gui_prompt: None,
             compact_now: false,
@@ -12346,6 +12388,7 @@ You are auditing a change. Read the diff before you judge it.
             scope: None,
             improve_home: None,
             goal_home: None,
+            goal_session: None,
             route_home: None,
             gui_prompt: None,
             compact_now: false,
@@ -12433,6 +12476,7 @@ You are auditing a change. Read the diff before you judge it.
             scope: None,
             improve_home: None,
             goal_home: None,
+            goal_session: None,
             route_home: None,
             gui_prompt: None,
             compact_now: false,
@@ -12959,6 +13003,7 @@ You are auditing a change. Read the diff before you judge it.
             scope: None,
             improve_home: None,
             goal_home: None,
+            goal_session: None,
             route_home: None,
             gui_prompt: None,
             compact_now: true,
@@ -13020,6 +13065,7 @@ You are auditing a change. Read the diff before you judge it.
             scope: None,
             improve_home: None,
             goal_home: None,
+            goal_session: None,
             route_home: None,
             gui_prompt: None,
             compact_now: false,
@@ -13091,6 +13137,7 @@ You are auditing a change. Read the diff before you judge it.
             scope: None,
             improve_home: None,
             goal_home: None,
+            goal_session: None,
             route_home: None,
             gui_prompt: None,
             compact_now: false,
@@ -13150,6 +13197,7 @@ You are auditing a change. Read the diff before you judge it.
             scope: None,
             improve_home: None,
             goal_home: None,
+            goal_session: None,
             route_home: None,
             gui_prompt: None,
             compact_now: false,
@@ -13317,6 +13365,7 @@ You are auditing a change. Read the diff before you judge it.
             scope: None,
             improve_home: None,
             goal_home: None,
+            goal_session: None,
             route_home: None,
             gui_prompt: None,
             compact_now: false,
@@ -13722,6 +13771,7 @@ You are auditing a change. Read the diff before you judge it.
             scope: None,
             improve_home: None,
             goal_home: None,
+            goal_session: None,
             route_home: None,
             gui_prompt: None,
             compact_now: false,
@@ -14376,6 +14426,7 @@ You are auditing a change. Read the diff before you judge it.
         let scheduled = AgentOptions {
             capped: false,
             goal_home: None,
+            goal_session: None,
             route_home: Some(std::path::PathBuf::from("/tmp/fleet-home")),
             ..Default::default()
         };
@@ -14388,6 +14439,7 @@ You are auditing a change. Read the diff before you judge it.
             capped: false,
             improve_home: Some(std::path::PathBuf::from("/tmp/fleet-home")),
             goal_home: None,
+            goal_session: None,
             ..Default::default()
         };
         assert_eq!(
