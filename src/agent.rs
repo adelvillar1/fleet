@@ -3804,12 +3804,10 @@ impl<'a> Agent<'a> {
         pair: &str,
         hash: &str,
     ) -> Option<crate::route_cache::CurateVerdict> {
-        // The KI-044 gate, one seam over: an unconfigured judgment lane
-        // costs no spawn. The answer is taken once per process, shared
-        // with the route's own gate.
-        if !crate::route::sys1_judges() {
-            return None;
-        }
+        // The judgment is sys1's, attempted through the lane: its own
+        // answer — a verdict, or the named error of a lane that cannot
+        // decide — is the signal. The old vendor-key gate was a second,
+        // stale source of truth about sys1's providers.
         let spec = self.lanes.spec_for("sys1").ok()?;
         let key = crate::route_cache::Cache::key_for(&spec);
         let home = crate::home::fleet_home(

@@ -2448,56 +2448,14 @@ pub fn resolve_model_pin(home: &Path, id: &str) -> Result<String, String> {
 ///
 /// The second element says which happened, because a cached judgment
 /// is still a judgment the row must attribute honestly.
-/// The sys1 lane's decision providers' key env names. The lane's own
-/// chain draws on these; when none of them resolves, sys1's classify
-/// fails open with `error` and the route falls back to the declared
-/// HEAD, so the spawn is a cost paid for a decision the keys already
-/// made (KI-044).
-const SYS1_DECISION_KEYS: &[&str] = &[
-    "FASTINO_API_KEY",
-    "TYPESAFE_API_KEY",
-    "DREX_API_KEY",
-    "SUPERSONIC_API_KEY",
-    "LIQUID_API_KEY",
-    "CLM_API_KEY",
-    "OPENJEV_API_KEY",
-    "KEV_API_KEY",
-    "TOGETHER_API_KEY",
-    "LAYA_API_KEY",
-];
-
-/// Whether any of `names` resolves through `lookup` — the rule the
-/// fleet-home resolution uses: present and non-empty.
-fn any_key_resolves(names: &[&str], lookup: impl Fn(&str) -> Option<String>) -> bool {
-    names
-        .iter()
-        .any(|name| lookup(name).is_some_and(|value| !value.is_empty()))
-}
-
-/// Whether sys1 can judge at all, resolved once per process. A machine
-/// whose sys1 decision providers are unconfigured paid the spawn plus
-/// the failed classify on every session's first judgment — about 1.2
-/// seconds for a fallback the absent keys had already decided
-/// (KI-044). The answer rarely changes within a process's life, so it
-/// is taken once.
-pub(crate) fn sys1_judges() -> bool {
-    static AVAILABLE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *AVAILABLE.get_or_init(|| {
-        let home = crate::home::fleet_home(
-            std::env::var("FLEET_HOME").ok().as_deref(),
-            std::env::var("HOME").ok().as_deref(),
-        );
-        let dotenv = home
-            .map(|home| crate::home::read_dotenv_with_process_vault(&home))
-            .unwrap_or_default();
-        any_key_resolves(SYS1_DECISION_KEYS, |name| {
-            std::env::var(name)
-                .ok()
-                .or_else(|| dotenv.get(name).cloned())
-        })
-    })
-}
-
+///
+/// The judgment is sys1's and is attempted through the lane: sys1
+/// abstracts the System One providers, so deciding "can anything
+/// judge?" from a hand-copied vendor-key list was a second and stale
+/// source of truth — the lane's own answer (a verdict, or its named
+/// error) is the authority. Reaching this path when nothing is
+/// configured costs one lane spawn the first time, which is the price
+/// of asking the abstraction instead of guessing at its internals.
 async fn judge(
     task: &str,
     specs: &HashMap<String, ServerSpec>,
@@ -2544,9 +2502,12 @@ async fn judge(
             }
         }
     }
-    if !sys1_judges() {
-        return (None, JudgedFrom::None);
-    }
+    // The judgment is sys1's, attempted through the lane: sys1 answers
+    // with its own verdict or its own named error (no provider key, a
+    // dead lane), and both are the route's fallback signal. The
+    // vendor-key list that used to gate this was a second, stale
+    // source of truth about which providers sys1 has — the lane's own
+    // answer is the authority (the owner's 2026-11-05 ruling).
     let server = match McpServer::spawn(&spec) {
         Ok(server) => server,
         Err(_) => return (None, JudgedFrom::None),
@@ -2580,11 +2541,16 @@ async fn judge(
 /// is the tool's own schema (`tools/list`): `sys1_classify` takes `text`
 /// (required) and `task` (the registered task name).
 async fn judge_live(server: &McpServer, task: &str) -> Option<RouteJudgment> {
-    server.initialize().await.ok()?;
-    let call = server
+    if server.initialize().await.is_err() {
+        return None;
+    }
+    let call = match server
         .call_tool("sys1_classify", json!({ "task": JUDGE_TASK, "text": task }))
         .await
-        .ok()?;
+    {
+        Ok(call) => call,
+        Err(_) => return None,
+    };
     parse_workload(&call.text())
 }
 
@@ -4021,30 +3987,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&home);
     }
 
-    /// KI-044: a machine whose sys1 decision providers are all
-    /// unconfigured resolves as "sys1 cannot judge", so the route skips
-    /// the spawn; one configured key resolves as "it can".
-    #[test]
-    fn sys1s_availability_is_the_keys_resolution() {
-        let none: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-        assert!(!any_key_resolves(SYS1_DECISION_KEYS, |name| none
-            .get(name)
-            .cloned()));
-        let one = std::collections::HashMap::from([(
-            "TYPESAFE_API_KEY".to_string(),
-            "sk-live".to_string(),
-        )]);
-        assert!(any_key_resolves(SYS1_DECISION_KEYS, |name| one
-            .get(name)
-            .cloned()));
-        // An empty value is an unset key, the fleet-home rule.
-        let empty =
-            std::collections::HashMap::from([("FASTINO_API_KEY".to_string(), String::new())]);
-        assert!(!any_key_resolves(SYS1_DECISION_KEYS, |name| empty
-            .get(name)
-            .cloned()));
-    }
-
     #[test]
     fn every_model_the_roster_serves_has_its_window_declared_or_named_absent() {
         // The table's whole point is that a budget can be derived for the
@@ -4446,7 +4388,7 @@ mod tests {
         assert_eq!(parse_workload("not json"), None);
     }
 
-    /// KI-230: the cache answers BEFORE the `sys1_judges` check. The
+    /// KI-230: the cache answers BEFORE the lane is attempted. The
     /// comment above the check has always claimed the cache answers
     /// first, but the early return executed ahead of the lookup, so on a
     /// machine with no resolvable decision key a recorded verdict was
@@ -6637,7 +6579,7 @@ mod tests {
             "the overlay answers with the sealed value"
         );
         // The router's own resolution, over the overlay: the stepfun
-        // candidate reads as keyed, which is what `sys1_judges` and the
+        // candidate reads as keyed, which is what the lane attempt and the
         // roster walk consult.
         let resolved = resolve(&default_roster(), &overlaid);
         let stepfun = resolved
