@@ -1,0 +1,333 @@
+<!doctype html>
+<html lang="en" data-theme="paper">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>the goal's tasks — a pane card</title>
+<style>
+/* The face's own tokens, hand-copied from src/gui/assets/app.css so the
+   implementation is a translation and not a reinvention. Nothing here
+   invents a colour or a size. The one new family is prefixed gp- (goal
+   pane) so it can never collide with an owned .pane/.card/.field name. */
+:root, :root[data-theme="paper"] {
+  --page: rgb(246,244,239); --surface: rgb(252,251,248); --raised: rgb(239,236,230);
+  --hairline: rgb(24 26 29 / 10%); --hairline-strong: rgb(24 26 29 / 17%);
+  --ink: rgb(24,26,29); --ink-2: rgb(82,88,96); --ink-3: rgb(94,102,112);
+  --accent: rgb(47,95,208); --accent-lift: rgb(37,78,176); --accent-wash: rgb(47 95 208 / 10%);
+  --ok: rgb(22,110,46); --down: rgb(176,36,32);
+  --shadow-1: 0 1px 2px rgb(24 26 29 / 6%), 0 1px 1px rgb(24 26 29 / 4%);
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
+}
+:root[data-theme="console"] {
+  --page: rgb(14,15,18); --surface: rgb(20,22,26); --raised: rgb(28,31,36);
+  --hairline: rgb(255 255 255 / 8%); --hairline-strong: rgb(255 255 255 / 15%);
+  --ink: rgb(235,231,228); --ink-2: rgb(166,175,188); --ink-3: rgb(138,148,163);
+  --accent: rgb(96,143,255); --accent-lift: rgb(143,178,255); --accent-wash: rgb(96 143 255 / 14%);
+  --ok: rgb(74,190,110); --down: rgb(240,106,99);
+  --shadow-1: 0 1px 2px rgb(0 0 0 / 30%);
+}
+:root[data-theme="graphite"] {
+  --page: rgb(10,12,16); --surface: rgb(15,18,23); --raised: rgb(21,25,31);
+  --hairline: rgb(255 255 255 / 8%); --hairline-strong: rgb(255 255 255 / 15%);
+  --ink: rgb(232,238,244); --ink-2: rgb(160,170,184); --ink-3: rgb(132,144,160);
+  --accent: rgb(94,148,255); --accent-lift: rgb(143,178,255); --accent-wash: rgb(94 148 255 / 14%);
+  --ok: rgb(74,190,110); --down: rgb(240,106,99);
+  --shadow-1: 0 1px 2px rgb(0 0 0 / 32%);
+}
+:root[data-theme="contrast"] {
+  --page: #fff; --surface: #fff; --raised: rgb(238,238,238);
+  --hairline: rgb(0 0 0 / 22%); --hairline-strong: rgb(0 0 0 / 45%);
+  --ink: #000; --ink-2: rgb(38,38,38); --ink-3: rgb(70,70,70);
+  --accent: rgb(24,66,160); --accent-lift: rgb(20,60,150); --accent-wash: rgb(24 66 160 / 10%);
+  --ok: rgb(0,104,32); --down: rgb(176,20,20);
+  --shadow-1: 0 1px 2px rgb(0 0 0 / 12%);
+}
+
+* { box-sizing: border-box; margin: 0; }
+body {
+  background: var(--page); color: var(--ink);
+  font: 13.5px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  padding: 0 0 40px; min-height: 100vh;
+}
+
+/* ---------- the review rack: not part of the screen ---------- */
+.rack {
+  display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
+  padding: 10px 16px; background: rgb(24,26,30);
+  position: sticky; top: 0; z-index: 10;
+}
+.rack .grp { display: flex; align-items: center; gap: 6px; }
+.rack .lbl { color: #7d8590; text-transform: uppercase; letter-spacing: .08em; font-size: 9.5px; }
+.rack button {
+  font: 11px/1 -apple-system, BlinkMacSystemFont, sans-serif; color: #cdd3dc;
+  background: #2a2e36; border: 1px solid #3a3f49; border-radius: 7px;
+  padding: 5px 9px; cursor: pointer;
+}
+.rack button[aria-pressed="true"] { background: #3d6fd8; border-color: #3d6fd8; color: #fff; }
+.rack .why { margin-left: auto; color: #7d8590; font-size: 11px; }
+
+/* ---------- the pane, at the grip's width -------------------------- */
+.screen { padding: 24px; }
+.pane {
+  position: relative; display: flex; flex-direction: column;
+  width: var(--pane-w, 440px); height: 700px;
+  border-left: 1px solid var(--hairline);
+  background: var(--surface);
+  box-shadow: 0 18px 40px -24px rgb(0 0 0 / 30%);
+}
+.pane-grip-line { position: absolute; left: 0; top: 0; bottom: 0; width: 1px; background: var(--hairline); }
+
+.pane-head {
+  display: flex; align-items: center; gap: 8px; flex: 0 0 auto;
+  padding: 9px 12px; border-bottom: 1px solid var(--hairline);
+}
+.pane-tabs { display: flex; gap: 2px; padding: 2px; border-radius: 9px; background: var(--raised); }
+.pane-tab {
+  padding: 5px 11px; border: 0; border-radius: 7px; background: transparent;
+  color: var(--ink-3); font-size: 11.5px; font-weight: 500; cursor: pointer;
+}
+.pane-tab.active { background: var(--surface); color: var(--ink); box-shadow: var(--shadow-1); }
+.pane-close {
+  display: grid; place-items: center; width: 30px; height: 30px; margin-left: auto;
+  padding: 0; border: 0; border-radius: 8px; background: transparent;
+  color: var(--ink-3); font-size: 16px; cursor: pointer;
+}
+.pane-body { overflow-y: auto; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+#pane-run { padding: 8px 12px; gap: 10px; }
+
+.pane .card {
+  padding: 16px; border: 1px solid var(--hairline);
+  border-radius: 12px; background: var(--surface);
+}
+
+.card-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; margin-bottom: 10px;
+}
+.card-head h2 {
+  margin: 0; color: var(--ink-3); font-size: 9.5px; font-weight: 600;
+  letter-spacing: 0.11em; text-transform: uppercase;
+}
+.count {
+  min-width: 20px; padding: 1px 7px; border-radius: 999px;
+  background: var(--raised); color: var(--ink-2);
+  font-size: 10.5px; font-variant-numeric: tabular-nums; text-align: center;
+}
+.count[data-state="working"] { background: var(--accent-wash); color: var(--accent-lift); }
+.count[data-state="done"] { color: var(--ok); }
+
+/* the run card: the pane's existing stepper, hand-copied */
+.process-body { display: grid; gap: 10px; }
+.process-head-row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.process-state { color: var(--ink); font-size: 12px; font-weight: 600; }
+.process-state[data-state="working"] { color: var(--accent-lift); }
+.process-state[data-state="done"] { color: var(--ok); }
+.process-elapsed { color: var(--ink-3); font-family: var(--mono); font-size: 10px; font-variant-numeric: tabular-nums; }
+.process-steps { display: grid; margin-top: 2px; }
+.process-step {
+  position: relative; display: grid; grid-template-columns: 14px minmax(0, 1fr);
+  gap: 9px; padding: 3px 0 13px;
+}
+.process-step:last-child { padding-bottom: 0; }
+.process-step::before {
+  content: ""; position: absolute; left: 4px; top: 15px; bottom: 1px;
+  width: 1px; background: var(--hairline);
+}
+.process-step:last-child::before { display: none; }
+.process-dot {
+  width: 9px; height: 9px; margin-top: 3px;
+  border: 1.5px solid var(--hairline-strong); border-radius: 50%; background: var(--surface);
+}
+.process-step[data-state="done"] .process-dot { border-color: var(--accent); background: var(--accent); }
+.process-step[data-state="current"] .process-dot {
+  border-color: var(--accent); background: var(--accent-wash);
+  box-shadow: 0 0 0 3px var(--accent-wash);
+}
+.process-label { display: block; color: var(--ink-2); font-size: 11.5px; font-weight: 600; line-height: 1.35; }
+
+/* ---------- the goal's tasks: the new card ------------------------- */
+.gp-goal { display: grid; gap: 6px; }
+.gp-goal-text { color: var(--ink); font-size: 13.5px; font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; }
+.gp-tasks { list-style: none; margin: 4px 0 0; padding: 0; display: grid; }
+.gp-task {
+  display: grid; grid-template-columns: 14px minmax(0, 1fr); gap: 9px;
+  align-items: start; padding: 7px 0;
+}
+.gp-dot {
+  width: 9px; height: 9px; margin-top: 4px;
+  border: 1.5px solid var(--hairline-strong); border-radius: 50%; background: var(--surface);
+}
+.gp-task[data-status="in_progress"] .gp-dot {
+  border-color: var(--accent); background: var(--accent-wash);
+  box-shadow: 0 0 0 3px var(--accent-wash);
+}
+.gp-task[data-status="completed"] .gp-dot { border-color: var(--accent); background: var(--accent); }
+.gp-step { color: var(--ink-2); font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
+.gp-task[data-status="in_progress"] .gp-step { color: var(--ink); font-weight: 600; }
+.gp-task[data-status="completed"] .gp-step { color: var(--ink-3); }
+.gp-tasks.scroll { max-height: 264px; overflow-y: auto; padding-right: 6px; }
+.gp-note {
+  margin-top: 10px; padding: 8px 10px; border-radius: 8px;
+  background: var(--raised); color: var(--ink-2); font-size: 12px; line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+</style>
+</head>
+<body>
+<div class="rack">
+  <div class="grp"><span class="lbl">state</span>
+    <button data-k="state" data-v="running">running</button>
+    <button data-k="state" data-v="done">done</button>
+    <button data-k="state" data-v="long">long</button>
+    <button data-k="state" data-v="empty">empty</button>
+  </div>
+  <div class="grp"><span class="lbl">pane</span>
+    <button data-k="w" data-v="300">300</button>
+    <button data-k="w" data-v="440">440</button>
+    <button data-k="w" data-v="720">720</button>
+  </div>
+  <div class="grp"><span class="lbl">theme</span>
+    <button data-k="theme" data-v="paper">paper</button>
+    <button data-k="theme" data-v="console">console</button>
+    <button data-k="theme" data-v="graphite">graphite</button>
+    <button data-k="theme" data-v="contrast">contrast</button>
+  </div>
+  <span class="why">review furniture — not part of the screen · the pane is shown at the grip's min / default / max (300 / 440 / 720)</span>
+</div>
+
+<div class="screen">
+<aside class="pane" id="pane" aria-label="the pane: the run, files, preview, web">
+  <div class="pane-grip-line"></div>
+  <header class="pane-head">
+    <div class="pane-tabs" role="tablist" aria-label="pane view">
+      <button class="pane-tab active" type="button" role="tab" aria-selected="true">run</button>
+      <button class="pane-tab" type="button" role="tab" aria-selected="false">files</button>
+      <button class="pane-tab" type="button" role="tab" aria-selected="false">preview</button>
+      <button class="pane-tab" type="button" role="tab" aria-selected="false">web</button>
+    </div>
+    <button class="pane-close" type="button" aria-label="close the pane"><span aria-hidden="true">›</span></button>
+  </header>
+
+  <div class="pane-body" id="pane-run" role="tabpanel">
+    <section class="card process-card">
+      <header class="card-head">
+        <h2>the run</h2>
+        <span class="count" id="run-state" data-state="working">running</span>
+      </header>
+      <div class="process-body">
+        <div class="process-head-row">
+          <span class="process-state" data-state="working" id="run-word">working</span>
+          <span class="process-elapsed" id="run-elapsed">2m 14s</span>
+        </div>
+        <div class="process-steps">
+          <div class="process-step" data-state="done"><span class="process-dot"></span><span class="process-label">route</span></div>
+          <div class="process-step" data-state="done"><span class="process-dot"></span><span class="process-label">think</span></div>
+          <div class="process-step" data-state="current"><span class="process-dot"></span><span class="process-label">act</span></div>
+          <div class="process-step" data-state="pending"><span class="process-dot"></span><span class="process-label">verify</span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- the goal's tasks: the card this mockup proposes -->
+    <section class="card gp-card" id="gp-card">
+      <header class="card-head">
+        <h2>the goal&rsquo;s tasks</h2>
+        <span class="count" id="gp-count" data-state="working">2 of 5</span>
+      </header>
+      <div class="gp-goal">
+        <span class="process-state gp-goal-state" data-state="working" id="gp-state">active</span>
+        <p class="gp-goal-text">Draft the release notes for 0.3.0-beta, then verify every linked issue still exists on the tracker.</p>
+      </div>
+      <ol class="gp-tasks" id="gp-tasks"></ol>
+      <p class="gp-note" id="gp-note" hidden></p>
+    </section>
+  </div>
+</aside>
+</div>
+
+<script>
+const GOAL = "Draft the release notes for 0.3.0-beta, then verify every linked issue still exists on the tracker.";
+const NOTE = "Release notes drafted at docs/release-notes-0.3.0.md; all seven linked issues verified live on the tracker.";
+const LIST = [
+  "Walk the merged commits since 0.3.0 and list the changes",
+  "Draft the release notes under docs/",
+  "Verify every linked issue still exists on the tracker",
+  "Check the issue numbers cited in the notes against the tracker",
+  "Hand the draft back for review",
+];
+const LONG = [
+  "Walk the merged commits since 0.3.0 and list the changes",
+  "Draft the release notes under docs/",
+  "Verify every linked issue still exists on the tracker",
+  "Check the issue numbers cited in the notes against the tracker",
+  "Bump the version constants to 0.3.0-beta",
+  "Rebuild the release binary and quote its size",
+  "Update the README's what-ships list",
+  "Log the two follow-ups the walk found",
+  "Hand the draft back for review",
+];
+
+function rows(items, doneCount, currentIdx) {
+  return items.map((step, i) => {
+    const status = i < doneCount ? "completed" : (i === currentIdx ? "in_progress" : "pending");
+    return `<li class="gp-task" data-status="${status}"><span class="gp-dot"></span><span class="gp-step">${step}</span></li>`;
+  }).join("");
+}
+
+function paint(state) {
+  const card = document.getElementById("gp-card");
+  const tasks = document.getElementById("gp-tasks");
+  const count = document.getElementById("gp-count");
+  const stateEl = document.getElementById("gp-state");
+  const note = document.getElementById("gp-note");
+  const runWord = document.getElementById("run-word");
+  const runState = document.getElementById("run-state");
+  const runElapsed = document.getElementById("run-elapsed");
+  card.hidden = state === "empty";
+  if (state === "empty") return;
+  if (state === "running") {
+    tasks.className = "gp-tasks"; tasks.innerHTML = rows(LIST, 2, 2);
+    count.textContent = "2 of 5"; count.dataset.state = "working";
+    stateEl.textContent = "active"; stateEl.dataset.state = "working";
+    note.hidden = true;
+    runWord.textContent = "working"; runWord.dataset.state = "working";
+    runState.textContent = "running"; runState.dataset.state = "working";
+    runElapsed.textContent = "2m 14s";
+  } else if (state === "done") {
+    tasks.className = "gp-tasks"; tasks.innerHTML = rows(LIST, 5, -1);
+    for (const step of document.querySelectorAll(".process-step")) step.dataset.state = "done";
+    count.textContent = "5 of 5"; count.dataset.state = "done";
+    stateEl.textContent = "done"; stateEl.dataset.state = "done";
+    note.hidden = false; note.textContent = NOTE;
+    runWord.textContent = "done"; runWord.dataset.state = "done";
+    runState.textContent = "done"; runState.dataset.state = "done";
+    runElapsed.textContent = "6m 02s";
+  } else if (state === "long") {
+    tasks.className = "gp-tasks scroll"; tasks.innerHTML = rows(LONG, 3, 3);
+    count.textContent = "3 of 9"; count.dataset.state = "working";
+    stateEl.textContent = "active"; stateEl.dataset.state = "working";
+    note.hidden = true;
+    runWord.textContent = "working"; runWord.dataset.state = "working";
+    runState.textContent = "running"; runState.dataset.state = "working";
+    runElapsed.textContent = "11m 40s";
+  }
+}
+
+const q = new URLSearchParams(location.search);
+const state = q.get("state") || "running";
+const w = q.get("w") || "440";
+const theme = q.get("theme") || "paper";
+document.documentElement.dataset.theme = theme;
+document.getElementById("pane").style.setProperty("--pane-w", w + "px");
+paint(state);
+for (const b of document.querySelectorAll(".rack button")) {
+  b.setAttribute("aria-pressed", String(b.dataset.v === ({ state, w, theme })[b.dataset.k]));
+  b.addEventListener("click", () => {
+    const next = new URLSearchParams({ state, w, theme });
+    next.set(b.dataset.k, b.dataset.v);
+    location.search = next.toString();
+  });
+}
+</script>
+</body>
+</html>
