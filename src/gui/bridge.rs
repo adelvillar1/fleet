@@ -184,7 +184,6 @@ pub struct GuiState {
     /// The next run's turn budget: the home's config by default, the
     /// run body's override when the composer named one for this run.
     /// Serial like the pair beside it; 0 means the config value.
-    turn_budget: usize,
     /// Each attached chat's working folder, keyed the way sessions are:
     /// the launch session's pending key is the empty string until the
     /// thread names the log, then it moves with it (see
@@ -404,7 +403,6 @@ impl Bridge {
             driving: None,
             permissions: crate::approvals::Mode::Ask,
             provider_pin: None,
-            turn_budget: 0,
             workdirs: load_workdirs(&home),
         }));
         let rules = Arc::new(Mutex::new(crate::settings::approval_rules(&home)));
@@ -879,7 +877,6 @@ impl Bridge {
                 // conversation shows its health instead of a zero.
                 "context": context,
                 "folds": folds,
-                "turn_budget": crate::route::run_config(&self.home).max_turns,
                 "gate": {
                     "name": "sys1",
                     "informs_failover": gate.informs_failover,
@@ -3895,9 +3892,11 @@ impl Bridge {
         folder: Option<&str>,
         budget: Option<usize>,
     ) -> Result<(), RunError> {
-        if let Some(turns) = budget {
-            lock(&self.state).turn_budget = turns.min(crate::agent::DEFAULT_MAX_TURNS);
-        }
+        // The per-run budget override is retired with the cap it served
+        // (the 2026-11-05 ruling): the main loop is uncapped by turns,
+        // and the accepted `budget` argument is read nowhere — the
+        // signature stays so the face's run body stays wire-compatible.
+        let _ = budget;
         self.run_with(session, task, mode, pin, folder)
     }
 
@@ -11368,20 +11367,12 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
                                 continue;
                             }
                         };
-                        // The turn budget: the home's config value,
-                        // tightened by the face's per-run override when
-                        // the run body named one. The pair is cleared
-                        // after it is read — a budget is this run's
-                        // choice, not the chat's new standing policy.
-                        let mut turn_budget = crate::route::run_config(&home).max_turns;
-                        {
-                            let state = lock(&state);
-                            let named = state.turn_budget;
-                            if named > 0 {
-                                turn_budget = named;
-                            }
-                        }
-                        lock(&state).turn_budget = 0;
+                        // The main session's loop is uncapped by turns
+                        // (the 2026-11-05 ruling): the option's value is
+                        // the subagent path's fallback ceiling, not a
+                        // bound on this run. The face's per-run budget
+                        // override is retired with the cap it served.
+                        let turn_budget = crate::route::run_config(&home).max_turns;
                         // The registry's enabled servers seed the run's
                         // lane specs, so the run pre-joins them before
                         // its first request (D2). A name the env chain
@@ -15580,7 +15571,6 @@ mod tests {
             driving: Some("s".to_string()),
             permissions: crate::approvals::Mode::Ask,
             provider_pin: None,
-            turn_budget: 0,
             workdirs: Default::default(),
         });
         let (events, mut seen) = broadcast::channel(4);
@@ -15604,7 +15594,6 @@ mod tests {
             driving: None,
             permissions: crate::approvals::Mode::Ask,
             provider_pin: None,
-            turn_budget: 0,
             workdirs: Default::default(),
         });
         record(&empty, &events, "", json!({"type": "token", "text": "hi"}));
@@ -15628,7 +15617,6 @@ mod tests {
             driving: Some("s".to_string()),
             permissions: crate::approvals::Mode::Ask,
             provider_pin: None,
-            turn_budget: 0,
             workdirs: Default::default(),
         });
         let (events, mut seen) = broadcast::channel(4);

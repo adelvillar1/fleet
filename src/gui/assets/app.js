@@ -2498,7 +2498,7 @@
             'close with the result.',
           mode: face.permissions,
           pin: face.providerPin || null,
-          budget_turns: face.turnBudget || null
+          budget_turns: null
         }).then(function (reply) {
           if (reply.status === 200) {
             face.running = true;
@@ -8532,7 +8532,6 @@
     face.budget = Number(state.budget) || 0;
     face.budgetModel = state.budget_model || '';
     face.budgetDeclared = state.budget_declared !== false;
-    face.turnBudget = Number(state.turn_budget) || 0;
     face.running = !!state.running;
     // The session the bridge is executing, which is not always this one:
     // a run in another conversation is a fact about that row, not a

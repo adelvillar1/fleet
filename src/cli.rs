@@ -1119,9 +1119,11 @@ fn parse_desk(rest: &[String]) -> Result<Command, String> {
                     .ok_or_else(|| "--run names a desk project".to_string())?;
                 run = Some(value.clone());
             }
-            other => return Err(format!(
+            other => {
+                return Err(format!(
                 "`fleet desk` takes no positional arguments and knows --run <slug>, not `{other}`"
-            )),
+            ))
+            }
         }
         index += 1;
     }

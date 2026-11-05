@@ -138,12 +138,12 @@ pub fn end_stop_word(kind: Option<&str>, no_report: bool) -> &'static str {
 ///
 /// 25 was the silent wall the chat-UX contract (D4) ruled against: a
 /// real task outlived it and the run died mid-work with nothing but an
-/// end card. 100 is the shipped default — enough for a long task to
-/// finish — and it is a knob, not a law: `runs.max_turns` in
-/// config.json lowers or raises it per machine, the face's run body
-/// carries a per-run override, and hitting it produces a continuation
-/// receipt instead of a dead stop. The cap still exists: an unbounded
-/// loop is a quota fire, not an agent.
+/// end card. The main session's loop is uncapped by turns now (the
+/// 2026-11-05 ruling: context health is the long-run bound, not a turn
+/// count) — this constant is the SUBAGENT path's fallback ceiling,
+/// sourced through `delegation.max_turns`, where the quota-fire bound
+/// is technical: a child that outlived its parent's budget would spend
+/// turns on a run whose own answer is already written.
 pub const DEFAULT_MAX_TURNS: usize = 100;
 
 /// The soft cap on how many skills one run declares in its system
@@ -2939,7 +2939,14 @@ impl<'a> Agent<'a> {
         self.push_message(Message::text(Role::User, task))?;
         // The next request is the repair ask, when it is.
         let mut repair_next = false;
-        while self.turns < self.options.max_turns as u64 {
+        // The main session is uncapped by turns (the 2026-11-05 ruling):
+        // the loop runs to its natural end — the model's report, the
+        // owner's stop, a refusal, an approval wait. Context health
+        // carries the long run (the fold, the budget following the
+        // model); the turn counter is bookkeeping the log and the
+        // checkpoints key on, not a bound. Delegation keeps its cap —
+        // `src/subagents.rs`'s inheritance is the technical bound.
+        loop {
             self.turns += 1;
             self.emit(UiEvent::Turn(self.turns));
             // The terminal's progress line marks the model's turn without
@@ -3158,10 +3165,7 @@ impl<'a> Agent<'a> {
                 // assistant turn would poison a resume); the ask rides
                 // the next request's system prompt, and the report it
                 // returns is the ordinary assistant turn.
-                if self.repairs == 0
-                    && self.turns < self.options.max_turns as u64
-                    && is_silent_stop(&content, self.tool_calls_run > 0)
-                {
+                if self.repairs == 0 && is_silent_stop(&content, self.tool_calls_run > 0) {
                     self.repairs += 1;
                     repair_next = true;
                     let _ = writeln!(
@@ -3272,23 +3276,17 @@ impl<'a> Agent<'a> {
             self.maybe_compact(&boundary, task).await?;
         }
 
-        let turns = self.turns;
-        self.record(&Record::End {
-            stop_reason: "max-turns".to_string(),
-            turns,
-            served_model: self.served_model(),
-        })?;
-        self.emit(UiEvent::Finished {
-            stop_reason: "max-turns".to_string(),
-        });
-        Ok(RunReport {
-            stop_reason: StopReason::MaxTurns,
-            turns,
-            usage: self.usage.clone(),
-            final_message: None,
-            compactions: self.compactions,
-            turn_curve: self.turn_curve.clone(),
-        })
+        // Unreachable on the main path: every end is a natural return
+        // inside the loop (the report, the owner's stop, a refusal, an
+        // approval wait). The turn cap no longer exits the loop — the
+        // 2026-11-05 ruling — so this tail exists only for the type
+        // checker; the loop never falls through.
+        // The unreachable marker: the loop's every exit returns, so
+        // control never reaches here — and the compiler knows it.
+        #[allow(unreachable_code)]
+        {
+            unreachable!("the main loop ends by return, not by falling through")
+        }
     }
 
     /// The window check, run between turns: after the last response landed

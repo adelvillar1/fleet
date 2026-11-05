@@ -1019,7 +1019,10 @@ async fn serve_connection(
             if !crate::desk::exists(&home, &slug) {
                 return write_reply(
                     &mut stream,
-                    api(404, json!({ "error": format!("{slug} is not on the desk") })),
+                    api(
+                        404,
+                        json!({ "error": format!("{slug} is not on the desk") }),
+                    ),
                 )
                 .await;
             }
@@ -1075,21 +1078,23 @@ async fn serve_connection(
                 // A stage that refused is a 409 carrying what the store
                 // now says: the refusal is a state of the deliverable,
                 // not a broken request.
-                Ok(Err(message)) => write_reply(
-                    &mut stream,
-                    api(
-                        409,
-                        json!({
-                            "type": "desk",
-                            "walked": false,
-                            "error": message,
-                            "project": crate::desk::load(&bridge.home_path(), &slug)
-                                .ok()
-                                .map(|desk| crate::desk::project_json(&desk)),
-                        }),
-                    ),
-                )
-                .await,
+                Ok(Err(message)) => {
+                    write_reply(
+                        &mut stream,
+                        api(
+                            409,
+                            json!({
+                                "type": "desk",
+                                "walked": false,
+                                "error": message,
+                                "project": crate::desk::load(&bridge.home_path(), &slug)
+                                    .ok()
+                                    .map(|desk| crate::desk::project_json(&desk)),
+                            }),
+                        ),
+                    )
+                    .await
+                }
                 Err(message) => {
                     write_reply(&mut stream, api(500, json!({ "error": message }))).await
                 }
@@ -1112,7 +1117,10 @@ async fn serve_connection(
             if !crate::desk::exists(&bridge.home_path(), &slug) {
                 return write_reply(
                     &mut stream,
-                    api(404, json!({ "error": format!("{slug} is not on the desk") })),
+                    api(
+                        404,
+                        json!({ "error": format!("{slug} is not on the desk") }),
+                    ),
                 )
                 .await;
             }
@@ -1131,21 +1139,23 @@ async fn serve_connection(
                     )
                     .await
                 }
-                Err(message) => write_reply(
-                    &mut stream,
-                    api(
-                        409,
-                        json!({
-                            "type": "desk",
-                            "ended": false,
-                            "error": message,
-                            "stands": crate::desk::load(&bridge.home_path(), &slug)
-                                .ok()
-                                .and_then(|desk| crate::desk::end_stands(&desk)),
-                        }),
-                    ),
-                )
-                .await,
+                Err(message) => {
+                    write_reply(
+                        &mut stream,
+                        api(
+                            409,
+                            json!({
+                                "type": "desk",
+                                "ended": false,
+                                "error": message,
+                                "stands": crate::desk::load(&bridge.home_path(), &slug)
+                                    .ok()
+                                    .and_then(|desk| crate::desk::end_stands(&desk)),
+                            }),
+                        ),
+                    )
+                    .await
+                }
             }
         }
         // Remove a deliverable (the desk plan's C11). `desk::delete_project`
@@ -1182,11 +1192,13 @@ async fn serve_connection(
                     )
                     .await
                 }
-                Err(message) => write_reply(
-                    &mut stream,
-                    api(404, json!({ "error": message, "deleted": null })),
-                )
-                .await,
+                Err(message) => {
+                    write_reply(
+                        &mut stream,
+                        api(404, json!({ "error": message, "deleted": null })),
+                    )
+                    .await
+                }
             }
         }
         // Break a phase out of a room (the huddles plan's C9): the path
@@ -1537,14 +1549,15 @@ async fn serve_connection(
             for row in crate::desk::project_rows(&bridge.home_path()) {
                 match row {
                     Ok(desk) => projects.push(crate::desk::project_json(&desk)),
-                    Err((slug, error)) => {
-                        unreadable.push(json!({ "slug": slug, "error": error }))
-                    }
+                    Err((slug, error)) => unreadable.push(json!({ "slug": slug, "error": error })),
                 }
             }
             write_reply(
                 &mut stream,
-                api(200, json!({ "projects": projects, "unreadable": unreadable })),
+                api(
+                    200,
+                    json!({ "projects": projects, "unreadable": unreadable }),
+                ),
             )
             .await
         }
@@ -3150,8 +3163,16 @@ mod tests {
     /// writer so the document is the shape the routes will read back.
     fn desk_home(slug: &str, claim: &str) -> std::path::PathBuf {
         let home = fresh_home();
-        crate::desk::create(&home, slug, "A brief worth reading", "the beta cohort", claim, Vec::new(), None)
-            .expect("the desk store accepts a brief");
+        crate::desk::create(
+            &home,
+            slug,
+            "A brief worth reading",
+            "the beta cohort",
+            claim,
+            Vec::new(),
+            None,
+        )
+        .expect("the desk store accepts a brief");
         home
     }
 
@@ -3237,15 +3258,24 @@ mod tests {
         let bad = crate::desk::desk_root(&home).join("broken-one");
         std::fs::create_dir_all(&bad).expect("the directory");
         std::fs::write(bad.join("project.json"), "{ this is not json").expect("the damage");
-        assert!(crate::desk::projects(&home).len() == 1, "projects() folds it away — the premise");
+        assert!(
+            crate::desk::projects(&home).len() == 1,
+            "projects() folds it away — the premise"
+        );
 
         let (token, port) = launch_at(home).await;
         let shelf = get_within(port, "/api/desk", &token, Duration::from_secs(30));
         assert!(shelf.starts_with("HTTP/1.1 200"), "{shelf}");
         assert!(shelf.contains("good-one"), "{shelf}");
         assert!(shelf.contains(r#""unreadable""#), "{shelf}");
-        assert!(shelf.contains("broken-one"), "the corrupt project is not named: {shelf}");
-        assert!(shelf.contains("does not parse"), "the reason is not carried: {shelf}");
+        assert!(
+            shelf.contains("broken-one"),
+            "the corrupt project is not named: {shelf}"
+        );
+        assert!(
+            shelf.contains("does not parse"),
+            "the reason is not carried: {shelf}"
+        );
     }
 
     #[tokio::test]

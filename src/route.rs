@@ -831,17 +831,33 @@ struct ConfigFile {
     #[serde(default)]
     skills: Option<SkillsEntry>,
     #[serde(default)]
+    #[allow(dead_code)]
     runs: Option<RunsEntry>,
+    #[serde(default)]
+    delegation: Option<DelegationEntry>,
 }
 
-/// The `runs` section of config.json: the knobs a run reads at launch.
+/// The `runs` section of config.json — retired from the main path:
+/// the main session's loop is uncapped by turns (the 2026-11-05
+/// ruling). The section stays parseable so an old config file does
+/// not refuse to load; the value reads nowhere.
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RunsEntry {
-    /// The turn cap this machine runs under, at or below the compiled
-    /// default — config can only lower, the way `FLEET_CONCURRENCY`
-    /// lowers the fan-out. Zero or a malformed number leaves the
-    /// default standing.
+    /// Kept parseable, read nowhere: the main loop is uncapped and the
+    /// child bound reads the delegation section.
+    #[serde(default)]
+    #[allow(dead_code)]
+    max_turns: Option<usize>,
+}
+
+/// The `delegation` section of config.json: the child bound's knob.
+/// The main session's loop is uncapped by turns (the 2026-11-05
+/// ruling); the delegation branch keeps its cap because it is
+/// technical — a child that outlived its parent's budget would spend
+/// turns on a run whose own answer is already written.
+#[derive(Debug, Default, Deserialize)]
+struct DelegationEntry {
     #[serde(default)]
     max_turns: Option<usize>,
 }
@@ -874,10 +890,12 @@ pub fn run_config(home: &Path) -> RunConfig {
     let Ok(file) = serde_json::from_str::<ConfigFile>(&text) else {
         return config;
     };
-    let Some(runs) = file.runs else {
+    // The child bound reads the delegation section; the retired `runs`
+    // section keeps parsing (an old config must load) but reads nowhere.
+    let Some(delegation) = file.delegation else {
         return config;
     };
-    if let Some(turns) = runs.max_turns {
+    if let Some(turns) = delegation.max_turns {
         if turns > 0 {
             config.max_turns = turns.min(crate::agent::DEFAULT_MAX_TURNS);
         }
@@ -5811,45 +5829,46 @@ mod tests {
     }
 
     #[test]
-    fn the_config_runs_section_names_the_turn_budget() {
-        let home = std::env::temp_dir().join(format!("fleet-runs-cfg-{}", std::process::id()));
+    fn the_delegation_section_names_the_child_bound() {
+        let home = std::env::temp_dir().join(format!("fleet-deleg-cfg-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&home);
         std::fs::create_dir_all(&home).unwrap();
-        // Absent is the compiled-in default.
+        // Absent is the compiled default.
         assert_eq!(run_config(&home), RunConfig::default());
         assert_eq!(run_config(&home).max_turns, crate::agent::DEFAULT_MAX_TURNS);
-        // A named value lowers the cap.
+        // The owner names the child bound: config is authoritative
+        // here (the 2026-11-05 ruling — the main loop is uncapped, the
+        // delegation branch keeps its cap as the technical bound).
         std::fs::write(
             home.join("config.json"),
-            r#"{ "runs": { "max_turns": 30 } }"#,
+            r#"{ "delegation": { "max_turns": 30 } }"#,
         )
         .unwrap();
         assert_eq!(run_config(&home).max_turns, 30);
-        // A value above the compiled default clamps to it: config can
-        // only lower, the way the fan-out bound does.
+        // Zero is not a bound anyone asked for; the default stands.
         std::fs::write(
             home.join("config.json"),
-            r#"{ "runs": { "max_turns": 5000 } }"#,
+            r#"{ "delegation": { "max_turns": 0 } }"#,
         )
         .unwrap();
         assert_eq!(run_config(&home).max_turns, crate::agent::DEFAULT_MAX_TURNS);
-        // Zero is not a cap anyone asked for; the default stands.
+        // The retired runs section still parses — an old config must
+        // load — and reads nowhere.
         std::fs::write(
             home.join("config.json"),
-            r#"{ "runs": { "max_turns": 0 } }"#,
+            r#"{ "runs": { "max_turns": 30 }, "delegation": { "max_turns": 12 } }"#,
         )
         .unwrap();
-        assert_eq!(run_config(&home).max_turns, crate::agent::DEFAULT_MAX_TURNS);
+        assert_eq!(run_config(&home).max_turns, 12);
         // A misspelled key is rejected loud, the way a provider's is.
         std::fs::write(
             home.join("config.json"),
-            r#"{ "runs": { "max_turn": 30 } }"#,
+            r#"{ "delegation": { "max_turn": 30 } }"#,
         )
         .unwrap();
         assert_eq!(run_config(&home), RunConfig::default());
         let _ = std::fs::remove_dir_all(&home);
     }
-
     #[test]
     fn the_config_skills_section_names_the_curation_knobs() {
         let home = std::env::temp_dir().join(format!("fleet-skills-cfg-{}", std::process::id()));
