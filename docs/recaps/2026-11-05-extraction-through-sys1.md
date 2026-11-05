@@ -97,6 +97,7 @@ sys1's own `python3 -m unittest discover -s tests -t .` 17/17.
   (kind labels), not the entity verb. That is its own shape and the
   floors it applies are the same constants; using LOCATE there would be
   a different design and is not this plan.
-- The suite's lib half measured 80 s in this run against 36–43 s in
-  earlier ones on the same machine — load, not a new slow test (no test
-  reported a long duration); worth a look if it holds at three digits.
+- The suite's lib half measured 80 s in one run against 36–43 s in the
+  others — load, not a new slow test: the re-run after the follow-up
+  fixes measured 32.5 s with the same 1,865 tests, so there is nothing
+  to chase.

@@ -2090,10 +2090,9 @@ impl Gate {
 }
 
 /// The once-per-process gate: the same answer for every caller in one
-/// process, the way `sys1_extracts()` gates its own keys. A machine
-/// that resolves the CLI once keeps resolving it; a machine that
-/// cannot names the same absence to every caller, and no caller
-/// retries per call.
+/// process, so a resolution is paid once. A machine that resolves the
+/// CLI once keeps resolving it; a machine that cannot names the same
+/// absence to every caller, and no caller retries per call.
 /// The gate, resolved FRESH per call: the ambient environment decides
 /// (the operator's `FLEET_LAYERFS_BIN`, else the sealed bundle), and no
 /// process cache can hand one caller's CLI to another's world — the

@@ -51,7 +51,7 @@ VERIFY_SPEC=$(jq -n '{
 # One session, three requests: the handshake, then the leg's two passes.
 # `provider: "all"` is the leg's adjudication shape — every provider the
 # lane holds answers, and the probe shows which of them did.
-{
+if ! {
   printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}'
   jq -nc --argjson args "$LOCATE_ARGS" \
     '{jsonrpc:"2.0", id:2, method:"tools/call", params:{name:"sys1_extract", arguments:$args}}'
@@ -59,12 +59,41 @@ VERIFY_SPEC=$(jq -n '{
     '{jsonrpc:"2.0", id:3, method:"tools/call", params:{name:"sys1_classify", arguments:{text:$text, task_spec:$spec, provider:"all"}}}'
 } | SYS1_PYTHONPATH="$ROOT/services/sys1/src" \
     python3 "$ROOT/services/sys1/service/mcp_server.py" \
-    > "$OUT/replies.jsonl" 2> "$OUT/stderr.log"
+    > "$OUT/replies.jsonl" 2> "$OUT/stderr.log"; then
+  echo "the sys1 lane could not be driven — its stderr:" >&2
+  tail -3 "$OUT/stderr.log" >&2
+  exit 1
+fi
+
+# A missing or refused reply must stop the probe by name: printing
+# nothing and exiting 0 would read as a pass on a call that never
+# happened.
+reply() {
+  local id="$1" label="$2"
+  local line
+  line=$(jq -c "select(.id==$id)" "$OUT/replies.jsonl")
+  if [[ -z "$line" ]]; then
+    echo "$label: the lane sent no reply — see $OUT/stderr.log" >&2
+    exit 1
+  fi
+  if [[ "$(jq -r 'has("error")' <<<"$line")" == "true" ]]; then
+    echo "$label: the lane refused — $(jq -r '.error.message' <<<"$line")" >&2
+    exit 1
+  fi
+  jq -c '.result.content[0].text | fromjson' <<<"$line"
+}
 
 echo "=== pass 1: locate (sys1_extract → the lane's entity vendor) ==="
-jq -c 'select(.id==2) | .result.content[0].text | fromjson' "$OUT/replies.jsonl" | jq .
+LOCATE_REPLY=$(reply 2 locate)
+if [[ "$(jq -r '.ok' <<<"$LOCATE_REPLY")" != "true" ]]; then
+  echo "locate: the verb answered not-ok — $(jq -r '.code // "?"' <<<"$LOCATE_REPLY"): $(jq -r '.reason // ""' <<<"$LOCATE_REPLY")" >&2
+  exit 1
+fi
+jq . <<<"$LOCATE_REPLY"
+
 echo "=== pass 3: verify (sys1_classify + task_spec, every provider) ==="
-jq -c 'select(.id==3) | .result.content[0].text | fromjson' "$OUT/replies.jsonl" | jq '{verdict, provider, providers_used, escalated, answers, latency_ms}'
+VERIFY_REPLY=$(reply 3 verify)
+jq '{verdict, provider, providers_used, escalated, answers, latency_ms}' <<<"$VERIFY_REPLY"
 
 echo "---"
 echo "Raw replies: $OUT/replies.jsonl (stderr: $OUT/stderr.log)."
