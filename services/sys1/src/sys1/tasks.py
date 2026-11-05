@@ -722,21 +722,26 @@ _DESK_COVERAGE = Task(
         "a filled hole: this task is the judgment that names it."
     ),
     heads=[
-        make_score(
-            "A brief and its claim set are given. How completely does the "
-            "claim set carry the evidence the brief's claim needs? Anchor "
-            "on the count: a claim set that answers every material "
-            "sub-question the claim implies scores 5; one that answers "
-            "most of them scores 4; half scores 3; a scattered minority "
-            "scores 2; one that answers nothing the claim needs scores 1.",
+        # The coverage score, built directly rather than through
+        # make_score: that helper zips its legend with strict=True, a
+        # 3.10+ call, and this module imports on the system Python the
+        # lane's own tests pin (3.9) - the blend1 startup guard's class.
+        # A legend whose length misses the level count raises here, the
+        # loud failure the strict zip would have given.
+        Head(
             id="coverage",
-            legend=[
-                "1 - nothing the claim needs is answered",
-                "2 - a scattered minority of the claim's needs answered",
-                "3 - about half the claim's needs answered",
-                "4 - most of the claim's needs answered",
-                "5 - every material sub-question the claim implies answered",
-            ],
+            kind="score",
+            task="desk_coverage",
+            labels=[str(i) for i in range(1, 6)],
+            descriptions={
+                "1": "1 - nothing the claim needs is answered",
+                "2": "2 - a scattered minority of the claim's needs answered",
+                "3": "3 - about half the claim's needs answered",
+                "4": "4 - most of the claim's needs answered",
+                "5": "5 - every material sub-question the claim implies answered",
+            },
+            score_min=1,
+            score_max=5,
         ),
         make_noul(
             "The same pair. Is a material sub-question of the brief's "
