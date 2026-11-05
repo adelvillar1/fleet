@@ -435,6 +435,13 @@ pub struct AgentOptions {
     pub goal: Option<String>,
     pub model: String,
     pub max_turns: usize,
+    /// Whether this run's loop is bounded by `max_turns` — the
+    /// delegation branch's runs are (a child that outlived its
+    /// parent's budget would spend turns on a run whose own answer is
+    /// already written), the main session is not (the 2026-11-05
+    /// ruling: context health is the long-run bound, not a turn
+    /// count). The turn counter is bookkeeping either way.
+    pub capped: bool,
     /// The run's resolved `{session}` value — `Prepared.session_id` — so
     /// a mid-run re-route re-seeds the same id and the conversation's
     /// gateway affinity bucket survives the provider switch. `None` for
@@ -530,6 +537,11 @@ pub struct AgentOptions {
     /// apply`, through the same gate, so a session can propose a change
     /// to the harness but never apply one.
     pub improve_home: Option<std::path::PathBuf>,
+    /// The fleet home whose goals store the `goal` tool reads and
+    /// writes — the session's standing objective is the owner's, and
+    /// its completion is a logged fact. `None` is a run with no home:
+    /// the tool answers the named absence.
+    pub goal_home: Option<std::path::PathBuf>,
     /// The home a delegated child routes from, distinct from the
     /// improve home (KI-278): a scheduled run sets this to its own home
     /// so its child routes through `route::prepare_child` — the one
@@ -580,8 +592,10 @@ impl Default for AgentOptions {
     fn default() -> AgentOptions {
         AgentOptions {
             goal: None,
+            goal_home: None,
             model: crate::route::AUTO_MODEL.to_string(),
             max_turns: DEFAULT_MAX_TURNS,
+            capped: false,
             session_id: None,
             identity: None,
             ui_tx: None,
@@ -2267,6 +2281,13 @@ impl<'a> Agent<'a> {
             specs.push(tools::remember_spec());
             specs.push(tools::supersede_spec());
         }
+        // The goal tool rides every run that carries a home: the
+        // session's standing objective is the owner's, and completing
+        // it is the model's explicit act — the fact the unattended
+        // path's end gate reads.
+        if self.options.goal_home.is_some() && admitted(tools::GOAL_TOOL) {
+            specs.push(tools::goal_spec());
+        }
         // `subagent` is declared on every run that is not itself a
         // subagent: delegation is part of the tool set this crate ships,
         // not a capability a run opts into. A child's scope never admits
@@ -2946,7 +2967,9 @@ impl<'a> Agent<'a> {
         // model); the turn counter is bookkeeping the log and the
         // checkpoints key on, not a bound. Delegation keeps its cap —
         // `src/subagents.rs`'s inheritance is the technical bound.
-        loop {
+        // The delegation branch's runs are bounded by their cap; the
+        // main session is not. The counter is bookkeeping either way.
+        while !self.options.capped || self.turns < self.options.max_turns as u64 {
             self.turns += 1;
             self.emit(UiEvent::Turn(self.turns));
             // The terminal's progress line marks the model's turn without
@@ -3276,17 +3299,29 @@ impl<'a> Agent<'a> {
             self.maybe_compact(&boundary, task).await?;
         }
 
-        // Unreachable on the main path: every end is a natural return
-        // inside the loop (the report, the owner's stop, a refusal, an
-        // approval wait). The turn cap no longer exits the loop — the
-        // 2026-11-05 ruling — so this tail exists only for the type
-        // checker; the loop never falls through.
-        // The unreachable marker: the loop's every exit returns, so
-        // control never reaches here — and the compiler knows it.
-        #[allow(unreachable_code)]
-        {
-            unreachable!("the main loop ends by return, not by falling through")
-        }
+        // The loop fell through — only a CAPPED run can: the main
+        // session's loop is uncapped and every one of its ends returns
+        // inside (the report, the owner's stop, a refusal, an approval
+        // wait). The capped child's ending is the ordinary partial
+        // ending the cap contract always produced: the log's max-turns
+        // record, the partial answer carried.
+        let turns = self.turns;
+        self.record(&Record::End {
+            stop_reason: "max-turns".to_string(),
+            turns,
+            served_model: self.served_model(),
+        })?;
+        self.emit(UiEvent::Finished {
+            stop_reason: "max-turns".to_string(),
+        });
+        Ok(RunReport {
+            stop_reason: StopReason::MaxTurns,
+            turns,
+            usage: self.usage.clone(),
+            final_message: None,
+            compactions: self.compactions,
+            turn_curve: self.turn_curve.clone(),
+        })
     }
 
     /// The window check, run between turns: after the last response landed
@@ -4498,6 +4533,20 @@ impl<'a> Agent<'a> {
                         derived: trajectory_phrases(&self.messages),
                     }),
                 },
+            });
+        }
+        if name == tools::GOAL_TOOL {
+            // The goal is the owner's standing objective; show is a
+            // read, complete and clear are side effects through the
+            // same approval gate every write crosses — the summary
+            // names the action and the goal's own words.
+            return Ok(match serde_json::from_str(&call.function.arguments) {
+                Err(error) => settled(format!("error: arguments were not valid JSON: {error}")),
+                Ok(arguments) => Prepared::Ready(Work::Goal {
+                    home: self.options.goal_home.clone(),
+                    session: self.options.session_id.clone(),
+                    arguments,
+                }),
             });
         }
         if name == tools::SUPERSEDE_TOOL {
@@ -5742,6 +5791,15 @@ enum Work {
         arguments: serde_json::Value,
         derived: Vec<String>,
     },
+    /// The goal tool: show, complete, or clear the session's standing
+    /// objective. The home and the session ride the work because the
+    /// goals store is the bridge's own file, and the completion's log
+    /// record needs both.
+    Goal {
+        home: Option<std::path::PathBuf>,
+        session: Option<String>,
+        arguments: serde_json::Value,
+    },
     /// One extraction pass over the extraction leg (KI: the sys1
     /// extraction leg, E2): the arguments ride whole because the tool
     /// parses and validates them itself, and the leg's own client does
@@ -5966,6 +6024,17 @@ async fn run_work(work: Work) -> (String, bool) {
         } => {
             let outcome = tools::bound(ToolOutcome {
                 output: land_remember(&memory, &arguments, &derived),
+                truncated: false,
+            });
+            (outcome.output, outcome.truncated)
+        }
+        Work::Goal {
+            home,
+            session,
+            arguments,
+        } => {
+            let outcome = tools::bound(ToolOutcome {
+                output: run_goal(home, session, &arguments),
                 truncated: false,
             });
             (outcome.output, outcome.truncated)
@@ -6316,6 +6385,90 @@ async fn run_builtin(
 /// Land one `remember` call against its corpus: the model-visible
 /// confirmation or the typed refusal, in the same shape a built-in's
 /// output takes — a failure is a value the model can read and react to.
+/// The goal tool's run: show, complete, or clear the session's
+/// standing objective. The goals store is the bridge's own
+/// `sessions-goals.json` — the same file `/goal` writes — so the
+/// model's completion and the owner's setting meet in one place. The
+/// completion is logged by the tool_result this returns (hard rule 5);
+/// the `goal-complete` UI event rides the ui channel when the run
+/// carries one, so the face names it without deriving anything.
+fn run_goal(
+    home: Option<std::path::PathBuf>,
+    session: Option<String>,
+    arguments: &serde_json::Value,
+) -> String {
+    use serde_json::json;
+    let Some(home) = home else {
+        return "error: no home is wired in this run, so there is no goal store".to_string();
+    };
+    let action = arguments
+        .get("action")
+        .and_then(|a| a.as_str())
+        .unwrap_or("show");
+    let goals_path = home.join("sessions-goals.json");
+    let read = || -> std::collections::BTreeMap<String, String> {
+        std::fs::read_to_string(&goals_path)
+            .ok()
+            .and_then(|text| serde_json::from_str(&text).ok())
+            .unwrap_or_default()
+    };
+    let key = session.unwrap_or_default();
+    match action {
+        "show" | "" => {
+            let goals = read();
+            match goals.get(&key) {
+                Some(goal) => json!({ "goal": goal, "done": false }).to_string(),
+                None => "no goal is set on this session".to_string(),
+            }
+        }
+        "clear" => {
+            let mut goals = read();
+            match goals.remove(&key) {
+                Some(_) => {
+                    let _ = serde_json::to_string_pretty(&goals)
+                        .map(|text| std::fs::write(&goals_path, text));
+                    "the goal is cleared".to_string()
+                }
+                None => "no goal is set on this session".to_string(),
+            }
+        }
+        "complete" => {
+            let mut goals = read();
+            match goals.get(&key).cloned() {
+                Some(goal) => {
+                    goals.remove(&key);
+                    // The completion lands in a sibling store, not the
+                    // goals file: a done goal is a fact, not an
+                    // objective — the face reads it, the log carries
+                    // this tool_result, and the next session starts
+                    // clean.
+                    let done_path = home.join("sessions-goals-done.json");
+                    let mut done: std::collections::BTreeMap<String, String> =
+                        std::fs::read_to_string(&done_path)
+                            .ok()
+                            .and_then(|text| serde_json::from_str(&text).ok())
+                            .unwrap_or_default();
+                    done.insert(key.clone(), goal.clone());
+                    let _ = serde_json::to_string_pretty(&done)
+                        .map(|text| std::fs::write(&done_path, text));
+                    let _ = serde_json::to_string_pretty(&goals)
+                        .map(|text| std::fs::write(&goals_path, text));
+                    json!({
+                        "goal": goal,
+                        "completed": true,
+                        "note": "the goal is marked complete — its work is verified by this session's tool results"
+                    })
+                    .to_string()
+                }
+                None => "no goal is set on this session — nothing to complete".to_string(),
+            }
+        }
+        other => format!("`{other}` is not a goal action — show, complete, or clear"),
+    }
+}
+
+/// The goals store is the bridge's own file — one read helper the tool
+/// and the face share, so the two cannot drift.
 fn land_remember(memory: &Memory, arguments: &serde_json::Value, derived: &[String]) -> String {
     match memory::Remember::parse(arguments) {
         Err(error) => format!("error: {error}"),
@@ -6691,7 +6844,11 @@ fn writer_of(prepared: &Prepared) -> Option<String> {
             }
         }
         Prepared::Ready(work) => match work {
-            Work::Remember { .. } | Work::Supersede { .. } => Some("memory".to_string()),
+            // The goal's complete/clear write the goals store — one
+            // writer held apart like the memory writer.
+            Work::Goal { .. } | Work::Remember { .. } | Work::Supersede { .. } => {
+                Some("memory".to_string())
+            }
             Work::Improve { .. } => Some("proposals".to_string()),
             Work::Deck { .. } => Some("deck".to_string()),
             Work::Vision { .. } => Some("vision".to_string()),
@@ -9139,6 +9296,7 @@ mod tests {
             model: "m".to_string(),
             identity: None,
             max_turns: 3,
+            capped: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -9147,6 +9305,7 @@ mod tests {
             memory: None,
             scope: None,
             improve_home: None,
+            goal_home: None,
             route_home: None,
             gui_prompt: None,
             compact_now: false,
@@ -9186,6 +9345,7 @@ mod tests {
             model: model.to_string(),
             identity: None,
             max_turns: 3,
+            capped: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -9194,6 +9354,7 @@ mod tests {
             memory: None,
             scope: None,
             improve_home: None,
+            goal_home: None,
             route_home: None,
             gui_prompt: None,
             compact_now: false,
@@ -9488,6 +9649,7 @@ mod tests {
             model: "m".to_string(),
             identity: None,
             max_turns: 3,
+            capped: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -9496,6 +9658,7 @@ mod tests {
             memory: None,
             scope: None,
             improve_home: None,
+            goal_home: None,
             route_home: None,
             gui_prompt: None,
             compact_now: false,
@@ -9577,6 +9740,7 @@ mod tests {
             model: "m".to_string(),
             identity: None,
             max_turns: 1,
+            capped: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -9585,6 +9749,7 @@ mod tests {
             memory: None,
             scope: None,
             improve_home: None,
+            goal_home: None,
             route_home: None,
             gui_prompt: None,
             compact_now: true,
@@ -9736,6 +9901,7 @@ mod tests {
             model: "m".to_string(),
             identity: None,
             max_turns: 1,
+            capped: false,
             ui_tx: None,
             lane_specs: None,
             calib: Some(stream.clone()),
@@ -9744,6 +9910,7 @@ mod tests {
             memory: Some(memory),
             scope: None,
             improve_home: None,
+            goal_home: None,
             route_home: None,
             gui_prompt: None,
             compact_now: false,
@@ -9806,6 +9973,7 @@ mod tests {
             model: "m".to_string(),
             identity: None,
             max_turns: 1,
+            capped: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -9814,6 +9982,7 @@ mod tests {
             memory: None,
             scope: None,
             improve_home: None,
+            goal_home: None,
             route_home: None,
             gui_prompt: None,
             compact_now: false,
@@ -10223,6 +10392,7 @@ mod tests {
             model: "m".to_string(),
             identity: None,
             max_turns: 1,
+            capped: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -10231,6 +10401,7 @@ mod tests {
             memory: None,
             scope: None,
             improve_home: None,
+            goal_home: None,
             route_home: None,
             gui_prompt: None,
             compact_now: false,
@@ -10368,6 +10539,7 @@ mod tests {
             model: "m".to_string(),
             identity: None,
             max_turns: 1,
+            capped: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -10376,6 +10548,7 @@ mod tests {
             memory: None,
             scope: None,
             improve_home: None,
+            goal_home: None,
             route_home: None,
             gui_prompt: None,
             compact_now: false,
@@ -10422,6 +10595,7 @@ mod tests {
             model: "m".to_string(),
             identity: None,
             max_turns: 1,
+            capped: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -10430,6 +10604,7 @@ mod tests {
             memory: None,
             scope: None,
             improve_home: None,
+            goal_home: None,
             route_home: None,
             gui_prompt: None,
             compact_now: false,
@@ -10848,6 +11023,7 @@ mod tests {
             model: "m".to_string(),
             identity: None,
             max_turns: 1,
+            capped: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -10856,6 +11032,7 @@ mod tests {
             memory: Some(memory),
             scope: None,
             improve_home: None,
+            goal_home: None,
             route_home: None,
             gui_prompt: None,
             compact_now: false,
@@ -10985,6 +11162,7 @@ mod tests {
                 model: "m".to_string(),
                 identity: None,
                 max_turns: 1,
+                capped: false,
                 ui_tx: None,
                 lane_specs: None,
                 calib: None,
@@ -10993,6 +11171,7 @@ mod tests {
                 memory: Some(memory),
                 scope: None,
                 improve_home: None,
+                goal_home: None,
                 route_home: None,
                 gui_prompt: None,
                 compact_now: false,
@@ -11110,6 +11289,7 @@ mod tests {
             model: "m".to_string(),
             identity: None,
             max_turns: 1,
+            capped: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -11118,6 +11298,7 @@ mod tests {
             memory: None,
             scope: None,
             improve_home: None,
+            goal_home: None,
             route_home: None,
             gui_prompt: None,
             compact_now: false,
@@ -11169,6 +11350,7 @@ mod tests {
             model: "m".to_string(),
             identity: None,
             max_turns: 1,
+            capped: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -11177,6 +11359,7 @@ mod tests {
             memory: None,
             scope: None,
             improve_home: None,
+            goal_home: None,
             route_home: None,
             gui_prompt: None,
             compact_now: false,
@@ -11253,6 +11436,8 @@ mod tests {
         let mut agent = Agent::new(
             &run_client,
             AgentOptions {
+                capped: false,
+                goal_home: None,
                 model: "m".to_string(),
                 ..AgentOptions::default()
             },
@@ -11297,6 +11482,8 @@ mod tests {
         let none = {
             let mut progress = Vec::new();
             let options = AgentOptions {
+                capped: false,
+                goal_home: None,
                 session_id: None,
                 goal: None,
                 model: "m".to_string(),
@@ -11318,6 +11505,8 @@ mod tests {
         let set = {
             let mut progress = Vec::new();
             let options = AgentOptions {
+                capped: false,
+                goal_home: None,
                 goal: Some("ship the picker before Thursday".to_string()),
                 model: "m".to_string(),
                 ..AgentOptions::default()
@@ -11362,6 +11551,7 @@ mod tests {
                 model: "m".to_string(),
                 identity: Some(identity.to_string()),
                 max_turns: 1,
+                capped: false,
                 ui_tx: None,
                 lane_specs: None,
                 calib: None,
@@ -11370,6 +11560,7 @@ mod tests {
                 memory: None,
                 scope: None,
                 improve_home: None,
+                goal_home: None,
                 route_home: None,
                 gui_prompt: None,
                 compact_now: false,
@@ -11433,6 +11624,7 @@ You are auditing a change. Read the diff before you judge it.
             model: "m".to_string(),
             identity: None,
             max_turns: 1,
+            capped: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -11441,6 +11633,7 @@ You are auditing a change. Read the diff before you judge it.
             memory: None,
             scope: None,
             improve_home: None,
+            goal_home: None,
             route_home: None,
             gui_prompt: None,
             compact_now: false,
@@ -11480,6 +11673,7 @@ You are auditing a change. Read the diff before you judge it.
             model: "m".to_string(),
             identity: None,
             max_turns: 1,
+            capped: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -11488,6 +11682,7 @@ You are auditing a change. Read the diff before you judge it.
             memory: None,
             scope: None,
             improve_home: None,
+            goal_home: None,
             route_home: None,
             gui_prompt: None,
             compact_now: false,
@@ -11545,6 +11740,7 @@ You are auditing a change. Read the diff before you judge it.
             model: "m".to_string(),
             identity: None,
             max_turns: 1,
+            capped: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -11553,6 +11749,7 @@ You are auditing a change. Read the diff before you judge it.
             memory: None,
             scope: None,
             improve_home: None,
+            goal_home: None,
             route_home: None,
             gui_prompt: Some(line.clone()),
             compact_now: false,
@@ -11583,6 +11780,7 @@ You are auditing a change. Read the diff before you judge it.
             model: "m".to_string(),
             identity: None,
             max_turns: 1,
+            capped: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -11591,6 +11789,7 @@ You are auditing a change. Read the diff before you judge it.
             memory: None,
             scope: None,
             improve_home: None,
+            goal_home: None,
             route_home: None,
             gui_prompt: None,
             compact_now: false,
@@ -11635,6 +11834,7 @@ You are auditing a change. Read the diff before you judge it.
             model: "m".to_string(),
             identity: None,
             max_turns: 1,
+            capped: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -11643,6 +11843,7 @@ You are auditing a change. Read the diff before you judge it.
             memory: None,
             scope: None,
             improve_home: None,
+            goal_home: None,
             route_home: None,
             gui_prompt: None,
             compact_now: false,
@@ -11687,6 +11888,7 @@ You are auditing a change. Read the diff before you judge it.
             model: "m".to_string(),
             identity: Some("You are the owner's own voice.".to_string()),
             max_turns: 1,
+            capped: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -11695,6 +11897,7 @@ You are auditing a change. Read the diff before you judge it.
             memory: None,
             scope: None,
             improve_home: None,
+            goal_home: None,
             route_home: None,
             gui_prompt: None,
             compact_now: false,
@@ -11811,6 +12014,7 @@ You are auditing a change. Read the diff before you judge it.
             model: "m".to_string(),
             identity: None,
             max_turns: 1,
+            capped: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -11819,6 +12023,7 @@ You are auditing a change. Read the diff before you judge it.
             memory: None,
             scope: None,
             improve_home: None,
+            goal_home: None,
             route_home: None,
             gui_prompt: None,
             compact_now: false,
@@ -11881,6 +12086,7 @@ You are auditing a change. Read the diff before you judge it.
             model: "m".to_string(),
             identity: None,
             max_turns: 1,
+            capped: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -11889,6 +12095,7 @@ You are auditing a change. Read the diff before you judge it.
             memory: None,
             scope: None,
             improve_home: None,
+            goal_home: None,
             route_home: None,
             gui_prompt: None,
             compact_now: false,
@@ -11991,6 +12198,7 @@ You are auditing a change. Read the diff before you judge it.
             model: "m".to_string(),
             identity: None,
             max_turns: 1,
+            capped: false,
             ui_tx: None,
             lane_specs: None,
             calib: Some(stream.clone()),
@@ -11999,6 +12207,7 @@ You are auditing a change. Read the diff before you judge it.
             memory: Some(memory),
             scope: None,
             improve_home: None,
+            goal_home: None,
             route_home: None,
             gui_prompt: None,
             compact_now: false,
@@ -12128,6 +12337,7 @@ You are auditing a change. Read the diff before you judge it.
             model: "m".to_string(),
             identity: None,
             max_turns: 1,
+            capped: false,
             ui_tx: None,
             lane_specs: None,
             calib: Some(stream.clone()),
@@ -12136,6 +12346,7 @@ You are auditing a change. Read the diff before you judge it.
             memory: Some(memory),
             scope: None,
             improve_home: None,
+            goal_home: None,
             route_home: None,
             gui_prompt: None,
             compact_now: false,
@@ -12213,6 +12424,7 @@ You are auditing a change. Read the diff before you judge it.
             model: "m".to_string(),
             identity: None,
             max_turns: 1,
+            capped: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -12221,6 +12433,7 @@ You are auditing a change. Read the diff before you judge it.
             memory: None,
             scope: None,
             improve_home: None,
+            goal_home: None,
             route_home: None,
             gui_prompt: None,
             compact_now: false,
@@ -12737,6 +12950,7 @@ You are auditing a change. Read the diff before you judge it.
             model: "m".to_string(),
             identity: None,
             max_turns: 1,
+            capped: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -12745,6 +12959,7 @@ You are auditing a change. Read the diff before you judge it.
             memory: None,
             scope: None,
             improve_home: None,
+            goal_home: None,
             route_home: None,
             gui_prompt: None,
             compact_now: true,
@@ -12796,6 +13011,7 @@ You are auditing a change. Read the diff before you judge it.
             model: "m".to_string(),
             identity: None,
             max_turns: 1,
+            capped: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -12804,6 +13020,7 @@ You are auditing a change. Read the diff before you judge it.
             memory: None,
             scope: None,
             improve_home: None,
+            goal_home: None,
             route_home: None,
             gui_prompt: None,
             compact_now: false,
@@ -12865,6 +13082,7 @@ You are auditing a change. Read the diff before you judge it.
             model: "step-5-preview".to_string(),
             identity: None,
             max_turns: 1,
+            capped: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -12873,6 +13091,7 @@ You are auditing a change. Read the diff before you judge it.
             memory: None,
             scope: None,
             improve_home: None,
+            goal_home: None,
             route_home: None,
             gui_prompt: None,
             compact_now: false,
@@ -12922,6 +13141,7 @@ You are auditing a change. Read the diff before you judge it.
             model: "m".to_string(),
             identity: None,
             max_turns: 1,
+            capped: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -12930,6 +13150,7 @@ You are auditing a change. Read the diff before you judge it.
             memory: None,
             scope: None,
             improve_home: None,
+            goal_home: None,
             route_home: None,
             gui_prompt: None,
             compact_now: false,
@@ -13087,6 +13308,7 @@ You are auditing a change. Read the diff before you judge it.
             model: "m".to_string(),
             identity: None,
             max_turns: 1,
+            capped: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -13095,6 +13317,7 @@ You are auditing a change. Read the diff before you judge it.
             memory: None,
             scope: None,
             improve_home: None,
+            goal_home: None,
             route_home: None,
             gui_prompt: None,
             compact_now: false,
@@ -13490,6 +13713,7 @@ You are auditing a change. Read the diff before you judge it.
             model: "m".to_string(),
             identity: None,
             max_turns: 1,
+            capped: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -13498,6 +13722,7 @@ You are auditing a change. Read the diff before you judge it.
             memory: None,
             scope: None,
             improve_home: None,
+            goal_home: None,
             route_home: None,
             gui_prompt: None,
             compact_now: false,
@@ -14150,6 +14375,8 @@ You are auditing a change. Read the diff before you judge it.
         // improve home, resolves the same home it always handed its
         // child.
         let scheduled = AgentOptions {
+            capped: false,
+            goal_home: None,
             route_home: Some(std::path::PathBuf::from("/tmp/fleet-home")),
             ..Default::default()
         };
@@ -14159,7 +14386,9 @@ You are auditing a change. Read the diff before you judge it.
         );
 
         let interactive = AgentOptions {
+            capped: false,
             improve_home: Some(std::path::PathBuf::from("/tmp/fleet-home")),
+            goal_home: None,
             ..Default::default()
         };
         assert_eq!(

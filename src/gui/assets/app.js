@@ -446,9 +446,18 @@
           if (reply.status === 200) {
             face.goal = reply.body.text || null;
             paintGoal();
-            notice(clearing ? 'the goal is cleared' : 'the goal is set',
-              clearing ? 'every run in this session goes back to the task alone'
-                : 'carried by every run in this session \u00b7 the chip names it');
+            if (reply.body.started) {
+              // The goal started the work itself (C4): the run is in
+              // flight on this session — say so, not the passive carry.
+              notice('the goal is set — and it is running',
+                'the session is working on it now \u00b7 the chip names it');
+            } else if (clearing) {
+              notice('the goal is cleared',
+                'every run in this session goes back to the task alone');
+            } else {
+              notice('the goal is set',
+                'carried by every run in this session \u00b7 the chip names it');
+            }
             return;
           }
           notice('the goal was refused', reply.body.error || 'the face said no without a reason');

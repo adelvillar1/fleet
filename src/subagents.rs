@@ -2095,6 +2095,11 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
     };
 
     let options = AgentOptions {
+        // The child run is the capped one: its cap is the technical
+        // bound the delegation branch keeps — a child that outlived
+        // its parent's budget would spend turns on a run whose own
+        // answer is already written.
+        capped: true,
         session_id: None,
         goal: None,
         model: child_route.model,
@@ -2111,6 +2116,7 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
         // home to file proposals into. The scope excludes `improve`
         // either way, so the declaration and the call agree.
         improve_home: None,
+        goal_home: None,
         route_home: None,
         gui_prompt: None,
         compact_now: false,

@@ -4221,14 +4221,15 @@ impl Bridge {
     pub const GOAL_MAX_CHARS: usize = 2_000;
 
     pub fn set_goal(&self, session: &str, asked: Option<&str>) -> Result<Value, String> {
-        // A goal set before the first run rides the pending key, the
-        // workdirs' own shape: the thread names the launch session on the
-        // first task and the goal moves with it.
-        let session = if session.is_empty() {
-            self.launch()
-        } else {
-            session.to_string()
-        };
+        // A goal set on the welcome — no session named, none open — is
+        // the PENDING goal: it rides the empty key, and the session the
+        // first send creates claims it (C6 of the unattended-goals
+        // plan). Mapping it to the launch session put the objective on
+        // whatever conversation the owner had last — a goal about the
+        // next piece of work landing on an old one. The pending goal's
+        // ride is the pending path's own rule, mirrored from the
+        // workdirs.
+        let session = session.to_string();
         let text = asked
             .map(str::trim)
             .filter(|text| !text.is_empty())
@@ -4259,10 +4260,42 @@ impl Bridge {
             &session,
             json!({"type": "goal", "text": text, "session": session}),
         );
+        // The goal starts work (the unattended-goals plan's C4): a goal
+        // set on a session with no run in flight is the owner handing
+        // the session its task — the run starts with the goal as the
+        // task, the ordinary run path. With a run in flight the goal
+        // rides every run's prompt as it does today, and the reply says
+        // so. A goal set with no session named rides the pending key —
+        // the session the first send creates carries it (C6), which is
+        // exactly the empty-key goal above, read by the pending path.
+        let mut started = false;
+        if text.is_some() && session == self.launch() {
+            let driving = lock(&self.state).driving.is_some();
+            if !driving {
+                match self.run_with(
+                    &session,
+                    text.as_deref().unwrap_or_default(),
+                    lock(&self.state).permissions,
+                    lock(&self.state).provider_pin.clone(),
+                    None,
+                ) {
+                    Ok(()) => started = true,
+                    Err(error) => {
+                        return Ok(json!({
+                            "type": "goal",
+                            "session": session,
+                            "text": text,
+                            "refused": error.to_string(),
+                        }))
+                    }
+                }
+            }
+        }
         Ok(json!({
             "type": "goal",
             "session": session,
             "text": text,
+            "started": started,
         }))
     }
 
@@ -11431,6 +11464,7 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
                             goal: session_goal(&home, &driving),
                             model: model.clone(),
                             max_turns: turn_budget,
+                            capped: false,
                             // The run's resolved `{session}` value, so a
                             // mid-run re-route re-seeds the same id.
                             session_id: Some(prepared.session_id.clone()),
@@ -11447,6 +11481,7 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
                             // proposal, and only the owner's `fleet improve
                             // apply` runs one.
                             improve_home: Some(home.clone()),
+                            goal_home: Some(home.clone()),
                             route_home: None,
                             // The owner is in a browser, and the run says
                             // so: the prompt line is what tells the model

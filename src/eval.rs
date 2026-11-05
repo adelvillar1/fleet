@@ -1338,6 +1338,7 @@ async fn drive_over(
 ) -> Result<RunReport, AgentError> {
     let client = Client::new(mock.url(), "test-key");
     let options = AgentOptions {
+        capped: false,
         session_id: None,
         goal: None,
         model: "test-model".to_string(),
@@ -1355,6 +1356,7 @@ async fn drive_over(
         memory,
         scope: None,
         improve_home: None,
+        goal_home: None,
         route_home: None,
         gui_prompt: None,
     };

@@ -3077,6 +3077,7 @@ async fn drive(
         Err(error) => return Err(AgentError::Registry(error)),
     };
     let options = AgentOptions {
+        capped: false,
         goal: None,
         model,
         max_turns,
@@ -3098,6 +3099,7 @@ async fn drive(
         // home: a session can file a proposal, and only the owner's
         // `fleet improve apply` runs one.
         improve_home: Some(home.to_path_buf()),
+        goal_home: None,
         route_home: None,
         gui_prompt: None,
         compact_now,

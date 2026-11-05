@@ -867,6 +867,7 @@ fn spawn_agent(config: AgentConfig) -> thread::JoinHandle<()> {
                             goal: None,
                             model: model.clone(),
                             max_turns: DEFAULT_MAX_TURNS,
+                            capped: false,
                             // The re-route's seed: the same resolved id
                             // this preparation carries.
                             session_id: Some(prepared.session_id.clone()),
@@ -883,6 +884,7 @@ fn spawn_agent(config: AgentConfig) -> thread::JoinHandle<()> {
                             // proposal, and only the owner's `fleet
                             // improve apply` runs one.
                             improve_home: Some(home.clone()),
+                        goal_home: None,
                             route_home: None,
                             gui_prompt: None,
                             // The interactive surface has no forced-fold

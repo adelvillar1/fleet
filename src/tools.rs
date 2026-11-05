@@ -48,6 +48,9 @@ pub const USE_SKILL_TOOL: &str = "use_skill";
 /// semantics belong to `crate::memory`, with the name kept here so
 /// every tool has one home.
 pub const REMEMBER_TOOL: &str = "remember";
+/// The model-visible name of the goal tool: the session's standing
+/// objective, shown, completed, or cleared by the run itself.
+pub const GOAL_TOOL: &str = "goal";
 /// Read the harness's own memory and skill library on demand.
 pub const RECALL_TOOL: &str = "recall";
 /// Read an MCP server's resources.
@@ -1325,6 +1328,24 @@ pub fn recall_spec() -> ToolSpec {
                 },
             },
             "required": ["instruction"],
+        }),
+    )
+}
+
+pub fn goal_spec() -> ToolSpec {
+    ToolSpec::function(
+        GOAL_TOOL,
+        "Show, complete, or clear this session's standing objective — the owner's goal. `show` returns it as set. `complete` marks it done: call it when the goal's own words are satisfied and verified by your tool results — the completion is a logged fact, the run ends its work there, and the face names it. Do not complete a goal whose criteria you have not verified; `clear` drops the goal. Absent `action` shows.",
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["show", "complete", "clear"],
+                    "description": "What to do with the goal: show (the default), complete (mark it done — only when the goal's own words are tool-verified), or clear (drop it)."
+                }
+            },
+            "required": []
         }),
     )
 }

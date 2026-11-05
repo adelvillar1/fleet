@@ -1551,6 +1551,7 @@ pub async fn execute(
         goal: None,
         model: model.clone(),
         max_turns: DEFAULT_MAX_TURNS,
+        capped: false,
         identity: crate::home::read_soul(home),
         ui_tx: None,
         lane_specs,
@@ -1565,6 +1566,7 @@ pub async fn execute(
         // owner is present; an unattended scheduled run does not carry
         // it, so no proposal is filed by a run nobody is watching.
         improve_home: None,
+        goal_home: None,
         // The route home is the run's own home: a scheduled run's child
         // routes through prepare_child like any other child — the
         // router rules everything but nothing else was reaching it
