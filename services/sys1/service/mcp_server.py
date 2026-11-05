@@ -22,10 +22,28 @@ def _add_sys1_src_to_path() -> None:
         sys.path.insert(0, env_path)
 
 
+def task_for_arguments(arguments: dict, task_from_spec):
+    """The task a `sys1_classify` call asks for: an inline spec, or a name.
+
+    An inline `task_spec` (id + heads) is the HTTP face's own seam and IS
+    the task — a caller's dynamic heads ride the same routing and cascade
+    a registered name gets. `task` is ignored then. A dict without an id
+    is not a spec (the caller's shape is wrong, not the task), so the
+    registered name stands. Pulled out of `main()` so the seam is
+    testable without a stdio session.
+    """
+    spec = arguments.get("task_spec")
+    if isinstance(spec, dict) and spec.get("id"):
+        return task_from_spec(spec)
+    return arguments.get("task", "change")
+
+
 def main() -> None:
     _add_sys1_src_to_path()
     from sys1.api import classify
     from sys1.config import load_config
+    from sys1.extraction import extract
+    from sys1.tasks import task_from_spec
 
     try:
         # Fleet's carry: the documents session's Perception tool rides the
@@ -92,8 +110,48 @@ def main() -> None:
                                         "Omit or leave empty to route per policy (providers.route); an explicit value bypasses routing."
                                     ),
                                 },
+                                "task_spec": {
+                                    "type": "object",
+                                    "description": (
+                                        "An inline task (id + heads), the HTTP face's own seam: when present it IS "
+                                        "the task, so a caller's per-call heads ride the same routing and cascade as "
+                                        "a registered task. `task` is ignored then."
+                                    ),
+                                },
                             },
                             "required": ["text"],
+                        },
+                    },
+                    {
+                        "name": "sys1_extract",
+                        "description": (
+                            "Read entity spans out of a text with the extraction-class GLiNER (the "
+                            "Decide classifier's sibling), through the vendor sys1 already holds. "
+                            "Every span carries its offsets and confidence; a span whose offsets do "
+                            "not slice back is dropped and named, and a field with no candidate is "
+                            "declined by name."
+                        ),
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "text": {
+                                    "type": "string",
+                                    "description": "The document text to read.",
+                                },
+                                "fields": {
+                                    "type": "array",
+                                    "description": "The entity fields to read for.",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "name": {"type": "string"},
+                                            "description": {"type": "string"},
+                                        },
+                                        "required": ["name"],
+                                    },
+                                },
+                            },
+                            "required": ["text", "fields"],
                         },
                     },
                     *(
@@ -144,12 +202,40 @@ def main() -> None:
                 })
                 continue
 
+            if tool_name == "sys1_extract":
+                # The entity pass through the lane: the vendor call is
+                # sys1's, the offsets and the declines are named.
+                text = arguments.get("text")
+                fields = arguments.get("fields")
+                if not isinstance(text, str) or not text.strip():
+                    error(req_id, -32602, "`text` must be a non-empty string.")
+                    continue
+                if not isinstance(fields, list) or not fields:
+                    error(req_id, -32602, "`fields` must be a non-empty array.")
+                    continue
+                try:
+                    result = extract(text, fields, cfg)
+                except Exception as exc:  # pragma: no cover — transport boundary
+                    result = {"ok": False, "code": "internal", "reason": str(exc)}
+                respond(req_id, {
+                    "content": [{"type": "text", "text": json.dumps(result)}],
+                })
+                continue
+
             if tool_name != "sys1_classify":
                 error(req_id, -32601, f"Unknown tool: {tool_name}")
                 continue
 
             text = arguments.get("text", "")
-            task = arguments.get("task", "change")
+            # An inline task spec — the HTTP face's own seam — IS the
+            # task: a caller's dynamic heads ride the same routing and
+            # cascade a registered name gets, with no vendored task
+            # added per shape.
+            try:
+                task = task_for_arguments(arguments, task_from_spec)
+            except Exception as exc:  # pragma: no cover — caller's shape
+                error(req_id, -32602, f"`task_spec` was refused: {exc}")
+                continue
             # An absent or empty `provider` passes through unset: classify then
             # routes per policy (providers.route), so the MCP surface never
             # coerces a caller into pinning one vendor. An explicit id, alias,

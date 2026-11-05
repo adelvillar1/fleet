@@ -62,7 +62,8 @@ use crate::calib::{
     self, ReadRow, RouteJudgedRow, Row, OP_ROUTE, OP_ROUTE_JUDGED, OP_TURN, VERDICT_INSUFFICIENT,
     VERDICT_RIGHT, VERDICT_WRONG,
 };
-use crate::mcp::{CallResult, McpServer, ServerSpec};
+pub(crate) use crate::lanes::{lane_spec, LaneSource};
+use crate::mcp::{CallResult, McpServer};
 use crate::skills::wrap_detail;
 
 /// The lane that answers: the vendored sys1 core — the same lane
@@ -151,38 +152,6 @@ const AVAILABILITY_CLASSES: [&str; 7] = [
     "timeout",
     "network",
 ];
-
-/// Where the ask's lane comes from: the vendored registry on the real
-/// path, or an injected spec a test or the eval corpus scripts. The seam
-/// is the same one either way — [`crate::mcp::ServerSpec`] through the
-/// MCP client, exactly as the agent's lane roster resolves one. Both
-/// beats ([`crate::delegate`] included) resolve through this one enum —
-/// one lane source, one session, not a second loop (C0).
-#[derive(Debug, Clone)]
-pub enum LaneSource {
-    /// The vendored sys1 lane, resolved through [`crate::lanes::spec_for`].
-    Vendored,
-    /// A scripted lane: the spec a caller built, so no paid call and no
-    /// live service stands between the beat and its grade.
-    Scripted(ServerSpec),
-    /// The counting session: a scripted lane that records its own
-    /// open/ask/close events instead of spawning a process, so a test
-    /// can pin one open, N asks, one close. Test-only — the counting
-    /// seam C0's tests pin the beats through.
-    #[cfg(test)]
-    Counting(Arc<Mutex<CountingLog>>),
-}
-
-/// The counting session's shared log: the events in order, and whether
-/// the session is scripted to refuse its open (the second half of the
-/// C0 seam — a lane that fails to open refuses every row by name
-/// without a second spawn).
-#[cfg(test)]
-#[derive(Debug, Default)]
-pub struct CountingLog {
-    pub events: Vec<&'static str>,
-    pub fail_open: bool,
-}
 
 /// One judgment batch's request.
 #[derive(Debug, Clone)]
@@ -612,19 +581,6 @@ fn string_field(object: &serde_json::Map<String, Value>, key: &str) -> Option<St
         .filter(|s| !s.is_empty())
 }
 
-/// The lane's spec for this request: the vendored registry's, or the
-/// injected one. A registry that cannot resolve the lane names its
-/// reason — that is the fail-open, not a silent absence. Both beats
-/// resolve through this one function, each with its own lane name.
-pub(crate) fn lane_spec(source: &LaneSource, lane: &str) -> Result<ServerSpec, String> {
-    match source {
-        LaneSource::Vendored => crate::lanes::spec_for(lane),
-        LaneSource::Scripted(spec) => Ok(spec.clone()),
-        #[cfg(test)]
-        LaneSource::Counting(_) => Err("the counting session resolves no spec".to_string()),
-    }
-}
-
 /// One lane session (C0): open once — resolve, spawn, handshake, tools
 /// check — ask per row, close once. The beats' loop opens lazily before
 /// the first row that will ask and closes on its one exit path; an open
@@ -637,7 +593,7 @@ pub struct LaneSession {
     tool: &'static str,
     task: &'static str,
     #[cfg(test)]
-    counting: Option<Arc<Mutex<CountingLog>>>,
+    counting: Option<Arc<Mutex<crate::lanes::CountingLog>>>,
 }
 
 impl LaneSession {

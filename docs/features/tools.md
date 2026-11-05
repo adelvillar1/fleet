@@ -37,6 +37,27 @@ run whose tool results verify the goal's own words should complete it.
 under a one-line change, and an anchor that no longer matches fails
 loudly instead of corrupting the file.
 
+### The document and extraction paths
+
+Two paths turn a document into values, and they split on who owns the
+reading:
+
+- **`read_document`** parses a local file (pdf, docx, xlsx, images) with
+  the vendored documents service's own parsers. It is local, keyless,
+  and names the parser it used.
+- **`extract`** reads named fields out of text a source named, through
+  the **sys1 lane**. Fleet resolves no vendor key and posts to no vendor
+  host: `sys1_extract` runs the entity pass (span text, character
+  offsets, confidence; a span whose offsets do not slice back is
+  dropped and named; an empty field is declined by name) and
+  `sys1_classify` with an inline `task_spec` verifies each candidate
+  (one noul head per field, the same routing a registered task gets).
+  The leg keeps its own judgment: segmentation, the accept/veto floors
+  0.85/0.35, a bounded adjudication across every provider the lane
+  walked, and absence as a named fact — an answer is span TEXT with its
+  quote, never a normalized value. A machine with no lane gets the named
+  absence, not a failed run.
+
 ## Resolving a call
 
 1. **Exact name.** A declared tool runs as named.

@@ -729,7 +729,10 @@ pub struct ExtractFieldRequest {
 /// report as model-readable text — values with spans, confidence, the
 /// quote, and the named absence. A machine with no extraction key gets
 /// the named absence in the result, never a failed run.
-pub fn run_extract(arguments: &serde_json::Value) -> Result<ToolOutcome, String> {
+pub async fn run_extract(
+    source: &crate::lanes::LaneSource,
+    arguments: &serde_json::Value,
+) -> Result<ToolOutcome, String> {
     let state = arguments
         .get("state")
         .and_then(|value| value.as_str())
@@ -748,30 +751,14 @@ pub fn run_extract(arguments: &serde_json::Value) -> Result<ToolOutcome, String>
             truncated: false,
         });
     }
-    if !crate::extract::sys1_extracts() {
-        return Ok(ToolOutcome {
-            output: "the extraction leg is unavailable — set FASTINO_API_KEY (env or ~/.fleet/.env) and call again; nothing was spent".to_string(),
-            truncated: false,
-        });
-    }
-    let (client, missing) = crate::extract::ExtractClient::from_env()
-        .ok_or("the extraction leg is not configured: set FASTINO_API_KEY")?;
-    if !missing.is_empty() {
-        return Ok(ToolOutcome {
-            output: format!(
-                "the extraction leg is unavailable — set {} and call again; nothing was spent",
-                missing.join(", ")
-            ),
-            truncated: false,
-        });
-    }
     let specs: Vec<(String, crate::extract::FieldSpec)> = requested
         .iter()
         .map(|field| (field.name.clone(), spec_of(field)))
         .collect();
-    let report = client
-        .run(state, &specs)
-        .map_err(|error| format!("error: {error}"))?;
+    // The leg is a sys1 lane client: the vendor, the key and the chain
+    // are the lane's. A lane that cannot answer is a value the model
+    // reads (`error: ...`), never a blocked run (E2-C3).
+    let report = crate::extract::run(source, state, &specs).await?;
     let mut output = format!(
         "extracted {} field(s) in {} ms on {} ({} segment(s), {} verify call(s), {} adjudication(s)):\n",
         report.answers.len(),

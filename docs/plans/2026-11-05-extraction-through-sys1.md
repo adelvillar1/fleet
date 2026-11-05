@@ -1,8 +1,9 @@
 ---
-status: draft
+status: completed
 created: 2026-11-05
 updated: 2026-11-05
 slug: extraction-through-sys1
+completed: 2026-11-05
 ---
 
 # Plan: the extraction leg goes through sys1
@@ -107,39 +108,39 @@ absence semantics — the leg's own judgment — stay in Rust, unchanged.
 
 ## Acceptance criteria
 
-- [ ] **C1 — the extraction verb.** sys1 serves `sys1_extract` (text +
+- [x] **C1 — the extraction verb.** sys1 serves `sys1_extract` (text +
       fields): the entity call against the configured vendor, spans
       parsed with offsets and confidence, a mismatched offset declined
       and named, an empty field declined. Its own tests cover the
       parse and the decline.
-- [ ] **C2 — the classify seam.** `sys1_classify` accepts an optional
+- [x] **C2 — the classify seam.** `sys1_classify` accepts an optional
       `task_spec` and builds the task from it (the HTTP face's
       `task_from_spec`), with the same routing as a registered task.
       Pinned by a test over the MCP handler.
-- [ ] **C3 — the leg is a lane client.** `src/extract.rs` makes no
+- [x] **C3 — the leg is a lane client.** `src/extract.rs` makes no
       vendor HTTP call and resolves no vendor key: LOCATE rides
       `sys1_extract`, VERIFY rides `sys1_classify` with a per-field
       `task_spec`. `ExtractConfig` carries the lane, not a base/key.
       Proven by the absence of any `api.fastino.ai` / `drex.nace.ai` /
       `api.typesafe.ai` string in the leg and by the gate.
-- [ ] **C4 — the behaviour is unchanged.** The floors (0.85/0.35), the
+- [x] **C4 — the behaviour is unchanged.** The floors (0.85/0.35), the
       segmentation constants, the budgets, the absence semantics and
       the quote rule are byte-identical; the existing pins pass against
       the lane.
-- [ ] **C5 — the availability is an attempt.** `sys1_extracts()` no
+- [x] **C5 — the availability is an attempt.** `sys1_extracts()` no
       longer gates on a key list: the leg attempts the lane and reads
       its answer or its named error.
-- [ ] **C6 — the tests.** The leg's stub tests are mock-mcp scripted;
+- [x] **C6 — the tests.** The leg's stub tests are mock-mcp scripted;
       the suite is green.
-- [ ] **C7 — the live proof.** On a scratch home: a real document
+- [x] **C7 — the live proof.** On a scratch home: a real document
       extracted through the lane, the claims and quotes quoted in the
       recap, the floors demonstrably applied, and the extraction's own
       telemetry line read from the sys1 lane's log.
-- [ ] **C8 — the docs.** `docs/architecture/lanes.md` (the extraction
+- [x] **C8 — the docs.** `docs/architecture/lanes.md` (the extraction
       leg as a sys1 client), `docs/features/tools.md` (the
       `read_document`/extract path), and the service's own README note
       the verb.
-- [ ] **C9 — the gate.** fmt, clippy `-D warnings`, release build,
+- [x] **C9 — the gate.** fmt, clippy `-D warnings`, release build,
       `cargo test` — exit codes read directly; the service's Python
       tests (its own) run.
 
@@ -167,8 +168,10 @@ absence semantics — the leg's own judgment — stay in Rust, unchanged.
 ## Verification
 
 ```sh
-# the service's own tests
-cd services/sys1 && python3 -m pytest -q
+# the service's own tests (stdlib unittest — pytest is NOT installed on
+# this machine; the tests are written to run either way, and the runner
+# below is the one that was actually executed)
+cd services/sys1 && python3 -m unittest discover -s tests -t .
 
 # the leg's pins and the gate
 cargo test
@@ -181,6 +184,62 @@ The live proof drives the release binary on a scratch home (the
 machine's keys in the environment, nothing on disk), extracts a real
 document, and reads the lane's own log for the vendor call — the proof
 that the call is sys1's.
+
+## What the landing found (2026-11-05)
+
+Four defects surfaced while making the move — three in the desk's own
+store, one the move itself introduced and the live walk caught:
+
+1. **`metric_numbers` stepped bytes** (`src/desk.rs`): `at += 1` landed
+   inside a multi-byte glyph (an em dash in a real draft) and the scan
+   sliced mid-character — a panic in the review stage. Now it steps one
+   character; pinned by `the_number_scan_walks_characters_not_bytes`.
+2. **A relative source was silently skipped** (`source_text`): a brief's
+   `sources/brief.txt` resolved against the process CWD, not the desk
+   project, so a correct brief read as zero claims with the stage
+   `done`. Relative paths now resolve under the desk project, and an
+   unreadable source is a NAMED refusal — pinned by
+   `a_relative_source_resolves_under_the_desk_project` and
+   `a_missing_source_is_a_named_refusal_not_a_silent_zero`.
+3. **`mark_stage` no-opped on a store without the entry**: a whole walk
+   could run with no stage landing anywhere. It now inserts in walk
+   order; pinned by `marking_a_stage_the_store_lacks_lands_it_in_walk_order`.
+4. **The provider-keyed `answers` reply broke the desk's two readers**
+   (introduced here, caught by the live walk reading `0.0` for every
+   head): the reply is provider-keyed, and serde_json sorts keys, so
+   "the first map" was never "the provider that answered". `provider_map`
+   reads the answering provider; `verdicts` and both desk readers use
+   it; pinned by `provider_map_reads_the_answering_provider_not_the_sorted_first`.
+   The report also stopped listing the empty provider name an escalated
+   answer carries (`record_model`).
+
+**The live proof** (2026-11-05, the scratch home, the machine's keys):
+
+- `fleet desk --run brief` — all five stages done on a real invoice
+  brief; claims carried real probabilities (0.503 / 0.045 / 0.425) with
+  their kind labels.
+- The leg through the VENDORED lane
+  (`the_extraction_leg_reads_a_real_document_through_the_vendored_lane`,
+  `--ignored` because it spends vendor credit): `invoice_id`
+  `INV-2026-114` at p 0.9939, `total_due` `$12,480.00` at p 0.9929,
+  `due_date` `2026-11-11` at p 0.9984, and `credit_note_total` ABSENT by
+  name ("no candidate span above the entity threshold"). Stats: 5
+  segments, 4 verify calls, 1 vetoed, 0 adjudications; models
+  `fastino/gliner2.5-multi-v1`, `glide`, `drex`, `jev` — the lane chose
+  the chain.
+- The lane's own line, read from sys1's JSONL log — the proof the call
+  is sys1's, not Fleet's:
+  `{"op": "extract", "ok": true, "model": "fastino/gliner2.5-multi-v1",
+  "input_chars": 393, "spans": 4, "declined": ["credit_note_total"],
+  "fields": ["due_date", "invoice_id", "total_due"], "latency_ms": 276,
+  "http_status": 200}`.
+- The desk's claim pass keeps its own shape: it asks the lane's choice
+  head per segment (kind labels), not the entity verb — the extraction
+  verb serves the `extract` tool and the leg, which is what C3 covers.
+
+**Gate on the pushed tree**: fmt 0, clippy 0, release 0, `cargo test`
+lib 1,865/0, integration 168/0 (4 ignored, one of them the live proof),
+sys1's own 17/17.
 
 ## Linked artifacts
 

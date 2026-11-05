@@ -37,6 +37,12 @@ DEFAULTS: dict = {
         "decide_api_url": "https://api.fastino.ai/v1/chat/completions",
         "decide_model": "fastino/GLiNER2.5-Decide",
         "decide_api_key_env": "FASTINO_API_KEY",
+        # Fastino's extraction-class GLiNER (the Decide classifier's
+        # sibling): the entity pass Fleet's extraction leg rides through
+        # the lane. Same vendor, same key, a different model.
+        "extract_api_url": "https://api.fastino.ai/v1/chat/completions",
+        "extract_model": "fastino/gliner2.5-multi-v1",
+        "extract_api_key_env": "FASTINO_API_KEY",
         # TypeSafe Jev (/v1/systemone, the SDK shape).
         "jev_api_url": "https://api.typesafe.ai/v1/systemone",
         "jev_model": "jev-1.13.0",

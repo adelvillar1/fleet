@@ -12913,7 +12913,7 @@ async fn the_desk_figure_leg_answers_one_sdm1_call_and_parses_the_table_result()
         task_type: "classification".to_string(),
     };
     let figure =
-        fleet::desk::figure_ask(&fleet::judge::LaneSource::Scripted(fake.spec()), &request)
+        fleet::desk::figure_ask(&fleet::lanes::LaneSource::Scripted(fake.spec()), &request)
             .await
             .expect("the figure");
     assert_eq!(figure.computed_by, "sdm1");
@@ -12992,10 +12992,10 @@ async fn the_desk_stage_runner_walks_claims_to_knowledge_over_scripted_lanes() {
     fleet::desk::save(&home, &desk).unwrap();
 
     let desk = fleet::desk::run_stages(
-        &fleet::judge::LaneSource::Scripted(fake.spec()),
+        &fleet::lanes::LaneSource::Scripted(fake.spec()),
         &home,
         "runner-walk",
-        None,
+        true,
     )
     .await
     .expect("the walk");
@@ -13019,4 +13019,258 @@ async fn the_desk_stage_runner_walks_claims_to_knowledge_over_scripted_lanes() {
     // The end gate is clean.
     assert_eq!(fleet::desk::end_stands(&desk), None);
     std::fs::remove_dir_all(&home).ok();
+}
+
+#[tokio::test]
+async fn the_extraction_leg_reads_through_the_sys1_lane() {
+    // The leg is a sys1 client (the extraction-through-sys1 plan): the
+    // entity pass is the lane's `sys1_extract`, the verify battery is
+    // `sys1_classify` with an inline task spec, and the vendor is never
+    // named in Rust. The floors and the absence stay the leg's own.
+    let state = "For the record, invoice INV-1 is due on 2026-11-30. The total amount due on that invoice is $4,180.00.";
+    let invoice_at = state.find("INV-1").unwrap();
+    let total_at = state.find("$4,180.00").unwrap();
+    let locate = serde_json::json!({
+        "ok": true,
+        "model": "gliner-test",
+        "spans": [
+            {"field": "invoice_id", "text": "INV-1", "start": invoice_at, "end": invoice_at + 5, "confidence": 0.93},
+            {"field": "total_due", "text": "$4,180.00", "start": total_at, "end": total_at + 9, "confidence": 0.88}
+        ],
+        "declined": ["due_date"],
+        "problems": []
+    })
+    .to_string();
+    let verify_invoice = r#"{"verdict":"pass","provider":"glide","providers_used":["glide"],"answers":{"glide":{"invoice_id":{"noul":0.93}}}}"#;
+    let verify_total = r#"{"verdict":"pass","provider":"glide","providers_used":["glide"],"answers":{"glide":{"total_due":{"noul":0.88}}}}"#;
+    let fake = FakeMcp::start(vec![
+        serde_json::json!({ "reply": initialize_reply() }),
+        serde_json::json!({ "reply": tools_list_reply(serde_json::json!([
+            { "name": "sys1_extract", "description": "read entities", "inputSchema": { "type": "object" } },
+            { "name": "sys1_classify", "description": "judge", "inputSchema": { "type": "object" } }
+        ])) }),
+        serde_json::json!({ "reply": call_reply(&locate) }),
+        serde_json::json!({ "reply": call_reply(verify_invoice) }),
+        serde_json::json!({ "reply": call_reply(verify_total) }),
+    ]);
+    let fields = vec![
+        (
+            "invoice_id".to_string(),
+            fleet::extract::FieldSpec::of(fleet::extract::FieldKind::Text),
+        ),
+        (
+            "total_due".to_string(),
+            fleet::extract::FieldSpec::of(fleet::extract::FieldKind::Number),
+        ),
+        (
+            "due_date".to_string(),
+            fleet::extract::FieldSpec::of(fleet::extract::FieldKind::Date),
+        ),
+    ];
+    let report = fleet::extract::run(
+        &fleet::lanes::LaneSource::Scripted(fake.spec()),
+        state,
+        &fields,
+    )
+    .await
+    .expect("the leg's run");
+
+    assert_eq!(report.answers.len(), 3);
+    let invoice = &report.answers[0];
+    assert_eq!(invoice.value, serde_json::json!("INV-1"));
+    assert!(invoice.confidence.is_some_and(|c| (c - 0.93).abs() < 1e-9));
+    assert!(
+        invoice.quote.contains("invoice INV-1 is due"),
+        "{}",
+        invoice.quote
+    );
+    assert!(!invoice.contested);
+    let total = &report.answers[1];
+    assert_eq!(total.value, serde_json::json!("$4,180.00"));
+    // A field the locate pass declined is ABSENT by name, never filled.
+    let due = &report.answers[2];
+    assert_eq!(due.value, serde_json::Value::Null);
+    assert!(
+        due.absent_reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("no candidate span")),
+        "{:?}",
+        due.absent_reason
+    );
+    assert!(report.models.iter().any(|model| model == "gliner-test"));
+    assert!(report.models.iter().any(|model| model == "glide"));
+    // An escalated answer names no single provider; the empty string is
+    // never a model the report lists.
+    assert!(
+        report.models.iter().all(|model| !model.is_empty()),
+        "{:?}",
+        report.models
+    );
+}
+
+#[tokio::test]
+async fn the_extraction_legs_floors_veto_and_adjudicate_through_the_lane() {
+    // The measured floors are the leg's own: a veto removes the claim and
+    // names the absence; a contested reading asks the lane once more
+    // across every provider and the stronger evidence wins.
+    let state = "The alpha reading measured by the lab sat at nine hundred units. The beta reading measured by the same lab sat at one thousand units.";
+    let alpha_at = state.find("nine hundred").unwrap();
+    let beta_at = state.find("one thousand").unwrap();
+    let locate = serde_json::json!({
+        "ok": true,
+        "model": "gliner-test",
+        "spans": [
+            {"field": "alpha", "text": "nine hundred", "start": alpha_at, "end": alpha_at + 12, "confidence": 0.9},
+            {"field": "beta", "text": "one thousand", "start": beta_at, "end": beta_at + 12, "confidence": 0.9}
+        ],
+        "declined": [],
+        "problems": []
+    })
+    .to_string();
+    // The state is two segments, one span each. Segment 1's verify vetoes
+    // alpha (0.2); segment 2's reads beta contested (0.6); then the
+    // adjudication across every provider finds beta at 0.91 on drex.
+    let first = r#"{"verdict":"pass","provider":"glide","providers_used":["glide"],"answers":{"glide":{"alpha":{"noul":0.2}}}}"#;
+    let beta_contested = r#"{"verdict":"pass","provider":"glide","providers_used":["glide"],"answers":{"glide":{"beta":{"noul":0.6}}}}"#;
+    let second = r#"{"verdict":"pass","provider":"drex","providers_used":["glide","drex"],"answers":{"glide":{"alpha":{"noul":0.2},"beta":{"noul":0.6}},"drex":{"alpha":{"noul":0.2},"beta":{"noul":0.91}}}}"#;
+    let fake = FakeMcp::start(vec![
+        serde_json::json!({ "reply": initialize_reply() }),
+        serde_json::json!({ "reply": tools_list_reply(serde_json::json!([
+            { "name": "sys1_extract", "description": "read entities", "inputSchema": { "type": "object" } },
+            { "name": "sys1_classify", "description": "judge", "inputSchema": { "type": "object" } }
+        ])) }),
+        serde_json::json!({ "reply": call_reply(&locate) }),
+        serde_json::json!({ "reply": call_reply(first) }),
+        serde_json::json!({ "reply": call_reply(beta_contested) }),
+        serde_json::json!({ "reply": call_reply(second) }),
+    ]);
+    let fields = vec![
+        (
+            "alpha".to_string(),
+            fleet::extract::FieldSpec::of(fleet::extract::FieldKind::Text),
+        ),
+        (
+            "beta".to_string(),
+            fleet::extract::FieldSpec::of(fleet::extract::FieldKind::Text),
+        ),
+    ];
+    let report = fleet::extract::run(
+        &fleet::lanes::LaneSource::Scripted(fake.spec()),
+        state,
+        &fields,
+    )
+    .await
+    .expect("the leg's run");
+    let alpha = &report.answers[0];
+    assert_eq!(alpha.value, serde_json::Value::Null);
+    assert!(
+        alpha
+            .absent_reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("verify floors")),
+        "{:?}",
+        alpha.absent_reason
+    );
+    let beta = &report.answers[1];
+    assert_eq!(beta.value, serde_json::json!("one thousand"));
+    assert!(beta.confidence.is_some_and(|c| (c - 0.91).abs() < 1e-9));
+    assert!(!beta.contested);
+    assert_eq!(report.stats.vetoed, 1);
+    assert_eq!(report.stats.adjudications, 1);
+}
+
+/// The live leg: a real document through the VENDORED sys1 lane, with
+/// the machine's own keys. The proof that the vendor call is the lane's
+/// is the sys1 log's own `op: "extract"` line, not anything this test
+/// can see from Rust.
+///
+/// Ignored by default because it spends the owner's vendor credit; a
+/// machine without FASTINO_API_KEY skips loudly rather than passing
+/// quietly on a fact it never measured.
+#[tokio::test]
+#[ignore = "live extraction through the sys1 lane; needs FASTINO_API_KEY in the env (and network)"]
+async fn the_extraction_leg_reads_a_real_document_through_the_vendored_lane() {
+    if std::env::var("FASTINO_API_KEY").is_err() {
+        panic!(
+            "SKIPPED: FASTINO_API_KEY is not in this process's environment — \
+             the lane's own passthrough needs it, and this test measures a real read"
+        );
+    }
+    let document = "Northwind Supply Co. delivered invoice INV-2026-114 on 2026-10-12. \
+The invoice total is $12,480.00, payable within thirty days. \
+Payment is due on 2026-11-11. The account manager is Priya Raman. \
+The invoice covers six pallets of industrial fasteners shipped to the Riverside \
+warehouse on 2026-10-10. No credit notes were issued against this invoice, and the \
+purchase order reference is PO-8841.";
+    let fields = vec![
+        (
+            "invoice_id".to_string(),
+            fleet::extract::FieldSpec::of(fleet::extract::FieldKind::Text),
+        ),
+        (
+            "total_due".to_string(),
+            fleet::extract::FieldSpec::of(fleet::extract::FieldKind::Number),
+        ),
+        (
+            "due_date".to_string(),
+            fleet::extract::FieldSpec::of(fleet::extract::FieldKind::Date),
+        ),
+        // A field the document does not carry: the leg must ABSENT it by
+        // name, never invent one.
+        (
+            "credit_note_total".to_string(),
+            fleet::extract::FieldSpec::of(fleet::extract::FieldKind::Number),
+        ),
+    ];
+    let report = fleet::extract::run(&fleet::lanes::LaneSource::Vendored, document, &fields)
+        .await
+        .expect("the leg's live run");
+    for answer in &report.answers {
+        eprintln!(
+            "{}: {:?} (p {:?}, contested={}, absent={:?}): {:?}",
+            answer.name,
+            answer.value,
+            answer.confidence,
+            answer.contested,
+            answer.absent_reason,
+            answer.quote
+        );
+    }
+    eprintln!(
+        "stats: {:?} | models: {:?} | {} ms",
+        report.stats, report.models, report.latency_ms
+    );
+    let by = |name: &str| {
+        report
+            .answers
+            .iter()
+            .find(|answer| answer.name == name)
+            .unwrap_or_else(|| panic!("{name} is in the report"))
+    };
+    let invoice = by("invoice_id");
+    assert_eq!(invoice.value, serde_json::json!("INV-2026-114"));
+    assert!(invoice.confidence.unwrap_or(0.0) >= fleet::extract::ACCEPT_FLOOR);
+    assert!(invoice.quote.contains("INV-2026-114"), "{}", invoice.quote);
+    // The leg's value is the span TEXT, never a normalized number: the
+    // quote is the evidence, and rewriting `$12,480.00` into 12480.0
+    // would be the leg editing the document.
+    let total = by("total_due");
+    assert_eq!(total.value, serde_json::json!("$12,480.00"));
+    let due = by("due_date");
+    assert_eq!(due.value, serde_json::json!("2026-11-11"));
+    let absent = by("credit_note_total");
+    assert_eq!(absent.value, serde_json::Value::Null);
+    assert!(
+        absent
+            .absent_reason
+            .as_deref()
+            .is_some_and(|r| !r.is_empty()),
+        "{:?}",
+        absent.absent_reason
+    );
+    assert!(
+        report.models.iter().any(|model| model.contains("gliner")),
+        "{:?}",
+        report.models
+    );
 }

@@ -613,7 +613,7 @@ pub const BLEND1_SEED_TOOL: &str = "seed";
 /// search answers carry. An unbound project is a named skip: the corpus
 /// keys by project, and unbound desk work has none.
 pub async fn seed_corpus(
-    source: &crate::judge::LaneSource,
+    source: &crate::lanes::LaneSource,
     desk: &DeskProject,
 ) -> Result<(), String> {
     let Some(key) = desk.project.as_deref().and_then(crate::canvas::project_key) else {
@@ -676,7 +676,7 @@ pub async fn seed_corpus(
 // carries its source and its sentence; a declined answer reads as a
 // veto at 0.0 — a named absence, never a fabricated claim.
 
-use crate::extract::{ExtractClient, ExtractError, Segment, Verifier};
+use crate::extract::{ExtractError, ExtractSession, Segment};
 
 /// The batched narrowing's floor. A probability over many segments in
 /// one state rides lower than the per-segment margin's — the jobhound
@@ -718,9 +718,8 @@ fn probability_of(pairs: &[(String, f64)], label: &str) -> f64 {
 /// `CLAIM_BATCH_CHUNK` segments — the state renders the chunk numbered,
 /// one noul head per segment — and a head under the batched floor drops
 /// its segment by name.
-fn narrow_claims(
-    client: &ExtractClient,
-    verifier: &Verifier,
+async fn narrow_claims(
+    session: &ExtractSession,
     segments: &[Segment],
 ) -> Result<Vec<usize>, ExtractError> {
     let mut kept: Vec<(usize, f64)> = Vec::new();
@@ -737,22 +736,23 @@ fn narrow_claims(
             })
             .collect::<Vec<_>>()
             .join("\n\n");
-        let mut questions = serde_json::Map::new();
-        for i in 0..chunk.len() {
-            questions.insert(
-                format!("seg-{i}"),
+        let questions: Vec<serde_json::Value> = (0..chunk.len())
+            .map(|i| {
                 serde_json::json!({
-                    "type": "noul",
-                    "instructions": "Does this segment state a claim a deliverable could stand on, with its evidence in the segment's own words?",
-                    "criteria": {
+                    "id": format!("seg-{i}"),
+                    "kind": "noul",
+                    "task": "Does this segment state a claim a deliverable could stand on, with its evidence in the segment's own words?",
+                    "descriptions": {
                         "true": "Yes, the segment states such a claim.",
                         "false": "No, it is support, background, or boilerplate.",
                     },
-                    "id": format!("seg-{i}"),
-                }),
-            );
-        }
-        let answers = client.answers(verifier, &state, serde_json::Value::Object(questions))?;
+                })
+            })
+            .collect();
+        let (answers, provider, _chain) = session
+            .answers(&state, serde_json::Value::Array(questions), None, "narrow")
+            .await?;
+        let answers = crate::extract::provider_map(&answers, &provider);
         for i in 0..chunk.len() {
             let p = answers
                 .get(format!("seg-{i}").as_str())
@@ -773,41 +773,37 @@ fn narrow_claims(
 /// extraction leg's own (`ACCEPT_FLOOR` / `VETO_FLOOR`); the kind is
 /// the choice head's argmax, so background and boilerplate land
 /// somewhere honest instead of passing as claims.
-pub fn claims_from_source(
-    client: &ExtractClient,
-    verifier: &Verifier,
+pub async fn claims_from_source(
+    session: &ExtractSession,
     source: &str,
     text: &str,
 ) -> Result<Vec<Claim>, ExtractError> {
     let segments = crate::extract::segments(text);
     let carrying: Vec<usize> = if segments.len() > crate::extract::MAX_CARRYING_SEGMENTS {
-        narrow_claims(client, verifier, &segments)?
+        narrow_claims(session, &segments).await?
     } else {
         (0..segments.len()).collect()
     };
     let mut claims = Vec::new();
     for at in carrying {
         let segment = &segments[at];
-        let mut questions = serde_json::Map::new();
-        let mut head = serde_json::json!({
-            "type": "choice",
-            "instructions": "What is this text? One label.",
-            "criteria": {
+        // The lane's choice head: one label per carrying segment, so
+        // background and boilerplate land somewhere honest.
+        let head = serde_json::json!([{
+            "id": "kind",
+            "kind": "choice",
+            "task": "What is this text? One label.",
+            "labels": ["claim", "support", "background", "boilerplate"],
+            "descriptions": {
                 "claim": "A statement a deliverable could stand on, with its evidence in the text.",
                 "support": "Evidence for a claim stated elsewhere, not itself the claim.",
                 "background": "Context that carries no claim.",
                 "boilerplate": "Furniture: company blurb, footers, disclaimers.",
             },
-        });
-        if verifier.state_object {
-            head["id"] = serde_json::Value::String("kind".to_string());
-        }
-        questions.insert("kind".to_string(), head);
-        let answers = client.answers(
-            verifier,
-            &segment.text,
-            serde_json::Value::Object(questions),
-        )?;
+        }]);
+        let (answers, provider, _chain) =
+            session.answers(&segment.text, head, None, "claims").await?;
+        let answers = crate::extract::provider_map(&answers, &provider);
         let pairs = choice_probabilities(&answers, "kind").unwrap_or_default();
         let (kind_label, _) = pairs
             .first()
@@ -1008,7 +1004,7 @@ pub fn coverage_state(desk: &DeskProject) -> String {
 /// gap question stays open, and the deliverable's outline renders it as
 /// one.
 pub async fn coverage_ask(
-    source: &crate::judge::LaneSource,
+    source: &crate::lanes::LaneSource,
     home: &Path,
     desk: &DeskProject,
 ) -> Result<Coverage, String> {
@@ -1106,7 +1102,7 @@ pub fn parse_figure(text: &str, request: &FigureRequest) -> Result<Figure, Strin
 /// names — the judge beats' lane-source seam, resolved the same way.
 /// Open once, ask once, close; every failure is a named absence.
 pub async fn figure_ask(
-    source: &crate::judge::LaneSource,
+    source: &crate::lanes::LaneSource,
     request: &FigureRequest,
 ) -> Result<Figure, String> {
     let spec = crate::judge::lane_spec(source, "sdm1")?;
@@ -1212,7 +1208,10 @@ pub fn metric_numbers(draft: &str) -> Vec<(String, f64)> {
             }
             at += end;
         } else {
-            at += 1;
+            // No number formed here: step one CHARACTER, not one byte —
+            // a byte step lands inside a multi-byte glyph (an em dash in
+            // a real draft) and the slice above panics.
+            at += rest.chars().next().map_or(1, char::len_utf8);
         }
     }
     found
@@ -1371,8 +1370,16 @@ fn mark_stage(
     stage: Stage,
     state: StageState,
 ) -> Result<(), String> {
-    if let Some(entry) = desk.stages.iter_mut().find(|(s, _)| *s == stage) {
-        entry.1 = state;
+    match desk.stages.iter_mut().find(|(s, _)| *s == stage) {
+        Some(entry) => entry.1 = state,
+        // A store that predates this stage (a hand-written project, an
+        // older document) gains the entry in walk order. A silent no-op
+        // here once made a whole walk report nothing: the stage ran, the
+        // state had nowhere to land, and the store read `pending`.
+        None => {
+            desk.stages.push((stage, state));
+            desk.stages.sort_by_key(|(s, _)| *s);
+        }
     }
     desk.updated = crate::calib::stamp();
     save(home, desk)
@@ -1382,7 +1389,7 @@ fn mark_stage(
 /// asserted claims ride one composed ask — the answer is the outline,
 /// where a named gap renders as a gap because the prompt says so.
 pub async fn outline_ask(
-    source: &crate::judge::LaneSource,
+    source: &crate::lanes::LaneSource,
     desk: &DeskProject,
     coverage: Option<&CoverageRecord>,
 ) -> Result<String, String> {
@@ -1543,38 +1550,52 @@ pub fn end_desk(home: &Path, slug: &str) -> Result<DeskProject, String> {
 }
 
 /// One source's text for the claim pass: files read from disk, URL
-/// captures read from the desk project's sources directory. A source
-/// that names no readable text is a named skip.
-fn source_text(home: &Path, desk: &DeskProject, source: &Source) -> Option<String> {
-    let _ = desk;
-    match source.kind {
-        SourceKind::Url => std::fs::read_to_string(desk_root(home).join(&source.path)).ok(),
-        SourceKind::File => std::fs::read_to_string(&source.path).ok(),
-        // A fact's text rides the assembled context, not the claim
-        // pass: the fact is already a corpus sentence with its own
-        // provenance.
-        SourceKind::Fact => None,
-    }
+/// captures read from the desk project's sources directory.
+///
+/// A relative path is the desk project's own — `create` names sources
+/// the way the brief words them (`sources/brief.pdf`), and resolving
+/// them against the process CWD made a correct brief read as zero
+/// claims in silence. An unreadable file is a named refusal, never a
+/// skip: a brief whose source vanished must stop its stage by name.
+/// Only a fact is a by-design absence — its text rides the assembled
+/// context, not the claim pass.
+fn source_text(home: &Path, desk: &DeskProject, source: &Source) -> Result<Option<String>, String> {
+    let path = match source.kind {
+        SourceKind::Url => desk_root(home).join(&source.path),
+        SourceKind::File => {
+            let given = Path::new(&source.path);
+            if given.is_absolute() {
+                given.to_path_buf()
+            } else {
+                desk_root(home).join(&desk.slug).join(given)
+            }
+        }
+        SourceKind::Fact => return Ok(None),
+    };
+    std::fs::read_to_string(&path)
+        .map(Some)
+        .map_err(|error| format!("the source {} could not be read: {error}", path.display()))
 }
 
-/// The walk. `extract` carries the extraction spine's client and its
-/// first verifier when the claims stage should read; `None` means the
-/// store's claim set stands (a resume). Every stage marks the store as
-/// it lands; a stage that fails marks refused and returns the error.
+/// The walk. `read_claims` says whether the claims stage should read (a
+/// resumed store with its claim set stands, and passes `false`). Every
+/// stage marks the store as it lands; a stage that fails marks refused
+/// and returns the error. The claim pass is a sys1 lane client: the
+/// vendor is the lane's, and the leg's judgment rides its answers.
 pub async fn run_stages(
-    source: &crate::judge::LaneSource,
+    source: &crate::lanes::LaneSource,
     home: &Path,
     slug: &str,
-    extract: Option<(&crate::extract::ExtractClient, &crate::extract::Verifier)>,
+    read_claims: bool,
 ) -> Result<DeskProject, String> {
     let mut desk = load(home, slug)?;
 
     // Claims.
     if desk.claims.is_empty() {
         mark_stage(home, &mut desk, Stage::Claims, StageState::Running)?;
-        let Some((client, verifier)) = extract else {
+        if !read_claims {
             let error =
-                "the claims stage has no extractor and the store holds no claims".to_string();
+                "the claims stage was not given the lane and the store holds no claims".to_string();
             mark_stage(
                 home,
                 &mut desk,
@@ -1585,12 +1606,39 @@ pub async fn run_stages(
             )?;
             return Err(error);
         };
+        let session = match crate::extract::ExtractSession::open(source).await {
+            Ok(session) => session,
+            Err(error) => {
+                let reason = format!("the claims stage could not reach sys1: {error}");
+                mark_stage(
+                    home,
+                    &mut desk,
+                    Stage::Claims,
+                    StageState::Refused {
+                        reason: reason.clone(),
+                    },
+                )?;
+                return Err(reason);
+            }
+        };
         let mut claims = Vec::new();
         for source_desc in &desk.sources {
-            let Some(text) = source_text(home, &desk, source_desc) else {
-                continue;
+            let text = match source_text(home, &desk, source_desc) {
+                Ok(Some(text)) => text,
+                Ok(None) => continue,
+                Err(reason) => {
+                    mark_stage(
+                        home,
+                        &mut desk,
+                        Stage::Claims,
+                        StageState::Refused {
+                            reason: reason.clone(),
+                        },
+                    )?;
+                    return Err(reason);
+                }
             };
-            match claims_from_source(client, verifier, &source_desc.path, &text) {
+            match claims_from_source(&session, &source_desc.path, &text).await {
                 Ok(mut found) => claims.append(&mut found),
                 Err(error) => {
                     let reason = format!("the claim pass failed on {}: {error}", source_desc.path);
@@ -1852,369 +1900,6 @@ mod tests {
         }
     }
 
-    // --- the claim pass ------------------------------------------------------
-
-    use std::io::{Read, Write};
-    use std::sync::{Arc, Mutex};
-
-    /// A stub systemone endpoint that routes by marker: the first body
-    /// whose marker appears in the request wins, else the default. The
-    /// desk's claim pass makes two shapes of call — the batched
-    /// narrowing (its state carries `[SEGMENT`) and the per-segment
-    /// kind choice — and the stub answers each in its own voice.
-    fn stub_by_marker(
-        routes: Vec<(&'static str, String)>,
-        default: String,
-    ) -> (u16, Arc<Mutex<Vec<String>>>) {
-        let routes: Arc<Vec<(&'static str, String)>> = Arc::new(routes);
-        let default = Arc::new(default);
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = listener.local_addr().unwrap().port();
-        let seen: Arc<Mutex<Vec<String>>> = Arc::default();
-        let seen_writer = Arc::clone(&seen);
-        std::thread::spawn(move || {
-            for mut stream in listener.incoming().flatten() {
-                let mut request: Vec<u8> = Vec::new();
-                let mut chunk = [0u8; 8192];
-                loop {
-                    let read = stream.read(&mut chunk).unwrap_or(0);
-                    if read == 0 {
-                        break;
-                    }
-                    request.extend_from_slice(&chunk[..read]);
-                    if request.windows(4).any(|w| w == b"\r\n\r\n") {
-                        let head_end =
-                            request.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
-                        let head =
-                            String::from_utf8_lossy(&request[..head_end]).to_ascii_lowercase();
-                        let declared: usize = head
-                            .lines()
-                            .find_map(|line| line.strip_prefix("content-length:"))
-                            .and_then(|value| value.trim().parse().ok())
-                            .unwrap_or(0);
-                        if request.len() >= head_end + declared {
-                            break;
-                        }
-                    }
-                }
-                let request = String::from_utf8_lossy(&request).into_owned();
-                if let Some(body_at) = request.find("\r\n\r\n") {
-                    seen_writer
-                        .lock()
-                        .unwrap()
-                        .push(request[body_at + 4..].to_string());
-                }
-                let body = routes
-                    .iter()
-                    .find(|(marker, _)| request.contains(marker))
-                    .map(|(_, body)| body.clone())
-                    .unwrap_or_else(|| (*default).clone());
-                let reply = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                    body.len(),
-                    body
-                );
-                let _ = stream.write_all(reply.as_bytes());
-            }
-        });
-        (port, seen)
-    }
-
-    fn kind_body(p_claim: f64) -> String {
-        serde_json::json!({
-            "answers": {
-                "kind": {
-                    "label": if p_claim >= 0.5 { "claim" } else { "background" },
-                    "probabilities": {
-                        "claim": p_claim,
-                        "support": (1.0 - p_claim) * 0.3,
-                        "background": (1.0 - p_claim) * 0.5,
-                        "boilerplate": (1.0 - p_claim) * 0.2,
-                    }
-                }
-            }
-        })
-        .to_string()
-    }
-
-    /// The first verifier, glide: always present in a resolved config,
-    /// state_object false — the plain-string state.
-    fn glide_at(port: u16) -> Verifier {
-        Verifier {
-            name: "glide".to_string(),
-            url: format!("http://127.0.0.1:{port}/v1/systemone"),
-            model: "fastino/glide".to_string(),
-            key: "test-key".to_string(),
-            state_object: false,
-        }
-    }
-
-    fn client_at(port: u16) -> ExtractClient {
-        ExtractClient::new(crate::extract::ExtractConfig {
-            base_url: format!("http://127.0.0.1:{port}"),
-            entity_model: "fastino/gliner2.5-multi-v1".to_string(),
-            token: "test-key".to_string(),
-            verifiers: vec![glide_at(port)],
-        })
-    }
-
-    #[test]
-    fn a_desk_project_round_trips_through_the_store() {
-        let home = temp_home("round-trip");
-        let desk = sample();
-        save(&home, &desk).unwrap();
-        let read = load(&home, "landing-copy").unwrap();
-        assert_eq!(read, desk);
-        assert!(exists(&home, "landing-copy"));
-    }
-
-    #[test]
-    fn a_second_project_with_a_lived_slug_is_refused_by_name() {
-        let home = temp_home("collision");
-        create(&home, "landing-copy", "one", "a", "c", vec![], None).unwrap();
-        let error = create(&home, "landing-copy", "two", "a", "c", vec![], None).unwrap_err();
-        assert!(error.contains("already exists"), "{error}");
-        assert!(error.contains("supersede"), "{error}");
-    }
-
-    #[test]
-    fn the_binding_keys_the_digest_by_the_folders_final_segment() {
-        let home = temp_home("binding");
-        save(&home, &sample()).unwrap();
-        let path = digest_path(&home, "landing", "landing-copy");
-        assert!(path.is_file(), "the digest lands at {}", path.display());
-        let text = std::fs::read_to_string(&path).unwrap();
-        assert!(text.contains("# The landing page's copy"));
-        assert!(text.contains("claims: 1 asserted"));
-    }
-
-    #[test]
-    fn an_unbound_project_keeps_no_digest() {
-        let home = temp_home("unbound");
-        let mut desk = sample();
-        desk.project = None;
-        save(&home, &desk).unwrap();
-        assert!(!desk_root(&home).join(DIGESTS_DIR).exists());
-    }
-
-    #[test]
-    fn the_document_law_admits_a_sourced_assertion() {
-        let desk = sample();
-        let claim =
-            check_assertion("the fold earns its keep on every screen", &desk.claims).unwrap();
-        assert_eq!(claim.source, "sources/brief-source.txt");
-    }
-
-    #[test]
-    fn the_document_law_refuses_and_names_the_near_miss() {
-        let desk = sample();
-        let error =
-            check_assertion("the footer converts at four percent", &desk.claims).unwrap_err();
-        assert_eq!(error.near_miss, "The fold earns its keep on every screen.");
-        assert!(error.near_miss_source.contains("brief-source"));
-        assert!(error.overlap < ASSERTION_MATCH_FLOOR);
-    }
-
-    #[test]
-    fn a_vetoed_claim_never_carries_an_assertion() {
-        let mut desk = sample();
-        desk.claims[0].verdict = ClaimVerdict::Vetoed;
-        assert!(check_assertion("the fold earns its keep", &desk.claims).is_err());
-    }
-
-    #[test]
-    fn the_context_section_is_bounded_and_one_line_per_deliverable() {
-        let home = temp_home("context");
-        for n in 0..(DESK_CONTEXT_MAX + 2) {
-            let mut desk = sample();
-            desk.slug = format!("deliverable-{n}");
-            desk.name = format!("Deliverable {n}");
-            save(&home, &desk).unwrap();
-        }
-        let section = desk_context_section(&home, "landing").unwrap();
-        assert!(section.starts_with("## Desk"));
-        assert_eq!(section.lines().count() - 2, DESK_CONTEXT_MAX);
-        // Newest first, so the bound cuts the oldest two.
-        assert!(section.contains("Deliverable 9"));
-        assert!(!section.contains("Deliverable 0"));
-    }
-
-    #[test]
-    fn the_claim_pass_asserts_vetoes_and_labels_by_the_floors() {
-        let text = "The fold earns its keep on every screen the owner opens. \
-The footer carries the usual legal furniture and nothing more. \
-Independent labs measured the load at ninety milliseconds.";
-        // Three sentences, three segments; each gets its own kind call.
-        let (port, seen) = stub_by_marker(
-            vec![
-                ("The fold earns its keep", kind_body(0.91)),
-                ("legal furniture", kind_body(0.10)),
-                ("ninety milliseconds", kind_body(0.60)),
-            ],
-            kind_body(0.0),
-        );
-        let client = client_at(port);
-        let verifier = glide_at(port);
-        let claims = claims_from_source(&client, &verifier, "sources/brief.txt", text).unwrap();
-        assert_eq!(claims.len(), 3, "{claims:?}");
-        assert_eq!(claims[0].verdict, ClaimVerdict::Asserted);
-        assert_eq!(claims[0].kind, ClaimKind::Claim);
-        assert_eq!(claims[1].verdict, ClaimVerdict::Vetoed);
-        assert_eq!(claims[2].verdict, ClaimVerdict::Contested);
-        assert!(claims.iter().all(|c| c.source == "sources/brief.txt"));
-        // No batched call ran: a short source carries every segment.
-        assert!(seen
-            .lock()
-            .unwrap()
-            .iter()
-            .all(|body| !body.contains("[SEGMENT")));
-    }
-
-    #[test]
-    fn a_long_source_narrows_in_chunks_before_it_verifies() {
-        // 30 sentence-segments: over the carrying cap, so the
-        // narrowing rides first — 3 chunks of <= 14.
-        let mut text = String::new();
-        for i in 0..30 {
-            text.push_str(&format!(
-                "Sentence number {i} states a measured fact about the system. "
-            ));
-        }
-        let batched = serde_json::json!({
-            "answers": {
-                "seg-0": {"noul": 0.9},
-                "seg-1": {"noul": 0.8},
-            }
-        })
-        .to_string();
-        let (port, seen) = stub_by_marker(vec![("[SEGMENT", batched)], kind_body(0.95));
-        let client = client_at(port);
-        let verifier = glide_at(port);
-        let claims = claims_from_source(&client, &verifier, "sources/long.txt", &text).unwrap();
-        let bodies = seen.lock().unwrap();
-        let batched_calls = bodies
-            .iter()
-            .filter(|body| body.contains("[SEGMENT"))
-            .count();
-        assert_eq!(batched_calls, 3, "30 segments narrow in 3 chunks of <= 14");
-        // Only the narrowed survivors cost a kind call: two per chunk
-        // (seg-0 and seg-1 clear the batched floor), so six.
-        let kind_calls = bodies
-            .iter()
-            .filter(|body| !body.contains("[SEGMENT"))
-            .count();
-        assert_eq!(kind_calls, 6, "{kind_calls}");
-        assert_eq!(claims.len(), 6);
-        assert!(claims.iter().all(|c| c.verdict == ClaimVerdict::Asserted));
-    }
-
-    #[test]
-    fn parse_coverage_reads_the_provider_keyed_heads() {
-        let answer = serde_json::json!({
-            "verdict": "pass",
-            "reason": "the lane's own reading",
-            "answers": {
-                "glide": {
-                    "coverage": {"score": 4, "confidence": 0.9},
-                    "material_gap": {"noul": 0.15},
-                    "off_brief": {"noul": 0.05}
-                }
-            }
-        });
-        let coverage = parse_coverage(&answer).unwrap();
-        assert_eq!(coverage.score, 4.0);
-        assert!(!coverage.material_gap);
-        assert!(!coverage.off_brief);
-        assert!(!coverage.escalated);
-        assert_eq!(coverage.provider.as_deref(), Some("glide"));
-    }
-
-    #[test]
-    fn an_escalated_coverage_stays_unresolved_and_names_its_reason() {
-        let answer = serde_json::json!({
-            "verdict": "escalate",
-            "reason": "a head answered under its floor",
-            "answers": {"glide": {"coverage": {"score": 2, "confidence": 0.4}}}
-        });
-        let coverage = parse_coverage(&answer).unwrap();
-        assert!(coverage.escalated);
-        assert!(coverage.reason.contains("floor"));
-        // A noul the answer never carried reads as a gap — the named
-        // absence, never a clean bill.
-        assert!(coverage.material_gap);
-    }
-
-    #[test]
-    fn a_malformed_answer_is_a_named_error() {
-        let error = parse_coverage(&serde_json::json!({"verdict": "pass"})).unwrap_err();
-        assert!(error.contains("answers"), "{error}");
-    }
-
-    #[test]
-    fn the_coverage_state_carries_the_brief_first_and_skips_vetoed() {
-        let mut desk = sample();
-        desk.claims.push(Claim {
-            text: "a vetoed non-claim".to_string(),
-            source: "sources/other.txt".to_string(),
-            sentence: "x".to_string(),
-            confidence: 0.2,
-            kind: ClaimKind::Background,
-            verdict: ClaimVerdict::Vetoed,
-        });
-        let state = coverage_state(&desk);
-        assert!(state.starts_with("BRIEF"));
-        assert!(state.contains("claim: the fold earns its keep"));
-        assert!(state.contains("1 asserted, 0 contested, 1 vetoed"));
-        assert!(!state.contains("a vetoed non-claim"));
-        assert!(state.len() <= COVERAGE_STATE_CHARS);
-    }
-
-    #[tokio::test]
-    async fn the_coverage_beat_refuses_over_budget_before_it_opens() {
-        let home = temp_home("budget");
-        crate::calib::record_spend(&home, DESK_SPEND_LEDGER, Some(DESK_COVERAGE_BUDGET_USD_DAY));
-        let log = Arc::new(Mutex::new(crate::judge::CountingLog::default()));
-        let error = coverage_ask(
-            &crate::judge::LaneSource::Counting(log.clone()),
-            &home,
-            &sample(),
-        )
-        .await
-        .unwrap_err();
-        assert!(error.contains("budget"), "{error}");
-        // Refused before the lane: no open, no ask.
-        assert!(
-            log.lock().unwrap().events.is_empty(),
-            "{:?}",
-            log.lock().unwrap().events
-        );
-    }
-
-    #[tokio::test]
-    async fn the_coverage_beat_opens_asks_and_closes_without_spending_on_a_failed_ask() {
-        let home = temp_home("counting");
-        let log = Arc::new(Mutex::new(crate::judge::CountingLog::default()));
-        let error = coverage_ask(
-            &crate::judge::LaneSource::Counting(log.clone()),
-            &home,
-            &sample(),
-        )
-        .await
-        .unwrap_err();
-        // The counting lane's scripted answer is the workload shape, not
-        // the coverage shape — the parse names it, and no spend lands.
-        assert!(
-            error.contains("coverage") || error.contains("answers"),
-            "{error}"
-        );
-        let events = log.lock().unwrap().events.clone();
-        assert_eq!(events, vec!["open", "ask", "close"], "{events:?}");
-        assert_eq!(
-            crate::calib::sidecar_spend(&home, DESK_SPEND_LEDGER, "2026-11-04"),
-            0.0
-        );
-    }
-
     #[test]
     fn metric_numbers_canonicalize_their_shapes() {
         let numbers = metric_numbers("92.4% of $4,180.00 across 12 runs, at 0.924 and 90ms");
@@ -2224,6 +1909,62 @@ Independent labs measured the load at ninety milliseconds.";
             vec![0.924, 4180.0, 12.0, 0.924, 90.0],
             "{numbers:?}"
         );
+    }
+
+    #[test]
+    fn the_number_scan_walks_characters_not_bytes() {
+        // A real draft carries multi-byte glyphs (em dashes, curly
+        // quotes); a byte step through one used to panic the scan.
+        let numbers = metric_numbers("the total — as agreed — was $4,180.00");
+        assert_eq!(numbers, vec![("$4,180.00".to_string(), 4180.0)]);
+        assert!(metric_numbers("— — —").is_empty());
+    }
+
+    #[test]
+    fn a_relative_source_resolves_under_the_desk_project() {
+        let home = temp_home("source-relative");
+        let mut desk = sample();
+        desk.slug = "brief".to_string();
+        desk.sources = vec![Source {
+            kind: SourceKind::File,
+            path: "sources/brief-source.txt".to_string(),
+            url: None,
+            fetched_at: None,
+            title: None,
+        }];
+        let dir = desk_root(&home).join("brief").join("sources");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("brief-source.txt"), "The fold earns its keep.").unwrap();
+        let text = source_text(&home, &desk, &desk.sources[0]).unwrap();
+        assert_eq!(text.as_deref(), Some("The fold earns its keep."));
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn a_missing_source_is_a_named_refusal_not_a_silent_zero() {
+        // The silent skip this replaces made a correct brief read as
+        // zero claims: the stage said done, the claim set was empty.
+        let home = temp_home("source-missing");
+        let desk = sample();
+        let error = source_text(&home, &desk, &desk.sources[0]).unwrap_err();
+        assert!(error.contains("could not be read"), "{error}");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn marking_a_stage_the_store_lacks_lands_it_in_walk_order() {
+        let home = temp_home("stage-insert");
+        let mut desk = sample();
+        desk.stages = Vec::new();
+        save(&home, &desk).unwrap();
+        mark_stage(&home, &mut desk, Stage::Render, StageState::Running).unwrap();
+        let stored = load(&home, "landing-copy").unwrap();
+        assert_eq!(
+            stored.stages,
+            vec![(Stage::Render, StageState::Running)],
+            "a stage the store lacks must land, not vanish"
+        );
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     #[test]
@@ -2280,7 +2021,7 @@ Independent labs measured the load at ninety milliseconds.";
         let mut desk = sample();
         desk.project = None;
         let error = seed_corpus(
-            &crate::judge::LaneSource::Scripted(crate::mcp::ServerSpec {
+            &crate::lanes::LaneSource::Scripted(crate::mcp::ServerSpec {
                 program: "true".to_string(),
                 args: vec![],
                 env: Vec::new(),

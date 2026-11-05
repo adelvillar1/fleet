@@ -218,7 +218,7 @@ pub const OUTCOME_INTERRUPTED: &str = "interrupted";
 /// the routing beat's one source and one session ([`crate::judge::
 /// LaneSource`], [`crate::judge::LaneSession`]) — the two beats are one
 /// loop by design, and the lane plumbing is not a second loop (C0).
-pub use crate::judge::LaneSource;
+pub use crate::lanes::LaneSource;
 
 /// One judgment batch's request.
 #[derive(Debug, Clone)]

@@ -596,11 +596,11 @@ mod tests {
                 &route("c", "fallback", "same"),
             ],
         );
-        let judge_log = Arc::new(Mutex::new(crate::judge::CountingLog {
+        let judge_log = Arc::new(Mutex::new(crate::lanes::CountingLog {
             events: Vec::new(),
             fail_open: false,
         }));
-        let explain_log = Arc::new(Mutex::new(crate::judge::CountingLog {
+        let explain_log = Arc::new(Mutex::new(crate::lanes::CountingLog {
             events: Vec::new(),
             fail_open: false,
         }));

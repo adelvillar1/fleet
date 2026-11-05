@@ -25,7 +25,9 @@ artifact it produces.
    (`src/extract.rs`): segment in Rust, one batched narrowing call per
    14-segment chunk when the source is long (floor 0.70), one decision
    call per carrying segment (the floors 0.85 / 0.35), the kind labels
-   claim / support / background / boilerplate. A claim carries its
+   claim / support / background / boilerplate. Every call is the sys1
+   lane's — the spine resolves no vendor key and posts to no vendor
+   host, so the same floors judge whatever provider the lane routed. A claim carries its
    source, the sentence it was read from, its confidence, and its
    verdict. Contested ships marked — never dropped, never fabricated.
 3. **Coverage.** One sys1 judgment (the vendored `desk_coverage` task)

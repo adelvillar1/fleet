@@ -4479,12 +4479,21 @@ impl<'a> Agent<'a> {
             });
         }
         if name == tools::EXTRACT_TOOL {
-            // The leg is an HTTPS call with its own timeout: the
-            // executor runs it off the async worker. The named absence
-            // is a result the model reads, never a failed run (E2-C3).
+            // The leg is a sys1 lane client: the lane is resolved here,
+            // where the roster is in hand, and the vendor facts ride it.
+            // A machine with no lane is the named absence the model
+            // reads, never a failed run (E2-C3).
+            let lane = match self.lanes.spec_for("sys1") {
+                Ok(spec) => spec,
+                Err(error) => {
+                    return Ok(settled(format!(
+                        "the extraction leg is unavailable — {error}; nothing was spent"
+                    )))
+                }
+            };
             return Ok(match serde_json::from_str(&call.function.arguments) {
                 Err(error) => settled(format!("error: arguments were not valid JSON: {error}")),
-                Ok(arguments) => Prepared::Ready(Work::Extract { arguments }),
+                Ok(arguments) => Prepared::Ready(Work::Extract { lane, arguments }),
             });
         }
         if name == tools::VISION_TOOL {
@@ -5807,9 +5816,13 @@ enum Work {
     },
     /// One extraction pass over the extraction leg (KI: the sys1
     /// extraction leg, E2): the arguments ride whole because the tool
-    /// parses and validates them itself, and the leg's own client does
-    /// the HTTP.
-    Extract { arguments: serde_json::Value },
+    /// parses and validates them itself. The lane spec rides too — the
+    /// leg is a sys1 client, and the lane is resolved where the roster
+    /// is in hand.
+    Extract {
+        lane: crate::mcp::ServerSpec,
+        arguments: serde_json::Value,
+    },
     /// One live-source ask: blend1's web leg, spawned for the call and
     /// torn down after it. The spec rides the work because it is
     /// resolved where the launch is known, the way the judge's is.
@@ -6161,20 +6174,16 @@ async fn run_work(work: Work) -> (String, bool) {
             });
             (outcome.output, outcome.truncated)
         }
-        Work::Extract { arguments } => {
-            // The leg is an HTTPS call with its own timeout: off the
-            // async worker, the way the web fetch runs. The named
-            // absence is a result the model reads, never a failed run
-            // (E2-C3).
-            let read = tokio::task::spawn_blocking(move || tools::run_extract(&arguments));
-            let outcome = match read.await {
-                Ok(Ok(outcome)) => outcome,
-                Ok(Err(error)) => ToolOutcome {
-                    output: format!("error: {error}"),
-                    truncated: false,
-                },
+        Work::Extract { lane, arguments } => {
+            // The leg is a sys1 lane client (the vendor is the lane's,
+            // resolved where the roster was in hand): the call is async
+            // like every other lane's, and a lane that cannot answer is a
+            // result the model reads.
+            let source = crate::lanes::LaneSource::Scripted(lane);
+            let outcome = match tools::run_extract(&source, &arguments).await {
+                Ok(outcome) => outcome,
                 Err(error) => ToolOutcome {
-                    output: format!("error: the extraction task failed: {error}"),
+                    output: format!("error: {error}"),
                     truncated: false,
                 },
             };

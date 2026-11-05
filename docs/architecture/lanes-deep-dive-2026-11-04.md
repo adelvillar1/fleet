@@ -18,13 +18,20 @@ Two transports, both already in the crate:
    (`src/lanes.rs:100-260`). Fleet uses a subset: sem1's
    `sem1_embed`/`sem1_probe`, blend1's `ask`/`doctor`
    (`src/lane_client.rs:28` names `ASK_TOOL = "ask"`).
-2. **Direct HTTP to the hosted sys1 tier**: the extraction leg
-   (`src/extract.rs`) is its own client — LOCATE on Fastino's
-   `fastino/gliner2.5-multi-v1` (`extract.rs:54`), VERIFY walking the
-   glide → drex → jev chain with the keys resolved from the home env
-   (`extract.rs:308-314`), the measured floors 0.85/0.35 as constants
-   (`extract.rs:68-69`). No MCP in that path by design: it predates
-   nothing, it is the shape the leg's plan chose.
+2. **The extraction leg, through the vendored sys1 lane.** Read as
+   observed on 2026-11-04, the leg (`src/extract.rs`) was its own
+   client: LOCATE straight to Fastino's `fastino/gliner2.5-multi-v1`,
+   VERIFY walking glide → drex → jev with the keys resolved in Rust. The
+   owner's 2026-11-05 ruling made that a violation — sys1 exists to
+   abstract the System One providers, so no caller may talk to a vendor
+   directly — and the leg became a lane client
+   (`docs/plans/2026-11-05-extraction-through-sys1.md`): `sys1_extract`
+   for the entity pass and `sys1_classify` with an inline `task_spec`
+   for VERIFY, with the floors (0.85/0.35), the segmentation and the
+   absence semantics still in Rust. The paragraph as originally written
+   ("No MCP in that path by design") was an observation of the code, not
+   a ruling, and it is superseded: the observation stands as history,
+   the design it implied does not.
 
 **Vendored drift to know about** (from sys1's own repo at
 `feature/plan-surface`): Fleet's vendored sys1 copy predates the `clef`

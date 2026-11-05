@@ -1596,32 +1596,14 @@ fn desk_run_command(slug: Option<&str>) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    // The extraction spine resolves from the environment chain the rest
-    // of the crate reads; its absence is the named refusal the stage
-    // marks, not a silent skip.
-    let extract = fleet::extract::ExtractConfig::resolve(
-        std::env::var("FLEET_HOME").ok().as_deref(),
-        std::env::var("HOME").ok().as_deref(),
-        None,
-        None,
-    )
-    .map(|(config, missing)| {
-        if !missing.is_empty() {
-            eprintln!(
-                "the extraction spine is missing {} — the claim pass will refuse by name",
-                missing.join(", ")
-            );
-        }
-        let client = fleet::extract::ExtractClient::new(config.clone());
-        (client, config.verifiers[0].clone())
-    });
+    // The claim pass is a sys1 lane client: the walk names the lane
+    // source and the leg asks sys1 — no vendor key is resolved here. A
+    // lane that cannot answer is the stage's named refusal.
     let walked = runtime.block_on(fleet::desk::run_stages(
-        &fleet::judge::LaneSource::Vendored,
+        &fleet::lanes::LaneSource::Vendored,
         &home,
         slug,
-        extract
-            .as_ref()
-            .map(|(client, verifier)| (client, verifier)),
+        true,
     ));
     match walked {
         Ok(desk) => {
@@ -2418,7 +2400,7 @@ fn calib_command(options: &cli::CalibOptions) -> ExitCode {
             .block_on(fleet::anomalies::pass(
                 &root,
                 &day,
-                &fleet::judge::LaneSource::Vendored,
+                &fleet::lanes::LaneSource::Vendored,
                 &fleet::explain::LaneSource::Vendored,
                 options.dry_run,
             ));
@@ -2889,7 +2871,7 @@ async fn judge_command(options: &cli::JudgeOptions) -> ExitCode {
         home: &home,
         day: day.clone(),
         dry_run: options.dry_run,
-        lane: fleet::judge::LaneSource::Vendored,
+        lane: fleet::lanes::LaneSource::Vendored,
     })
     .await;
     print!("{}", outcome.card);

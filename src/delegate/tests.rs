@@ -428,7 +428,7 @@ async fn the_delegate_beat_opens_the_shared_session_once() {
         .collect();
     write_day(&root, &day, &rows);
 
-    let log = std::sync::Arc::new(std::sync::Mutex::new(crate::judge::CountingLog {
+    let log = std::sync::Arc::new(std::sync::Mutex::new(crate::lanes::CountingLog {
         events: Vec::new(),
         fail_open: false,
     }));

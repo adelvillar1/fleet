@@ -660,7 +660,6 @@ impl Row {
             Row::Lifecycle(_) => OP_LIFECYCLE,
             Row::ToolScreen(_) => OP_TOOL_SCREEN,
             Row::Turn(_) => OP_TURN,
-            Row::Shape(_) => OP_SHAPE,
             Row::RecallHit(_) => OP_RECALL_HIT,
             Row::Verify(_) => OP_VERIFY,
             Row::Consolidate(_) => OP_CONSOLIDATE,
@@ -671,6 +670,7 @@ impl Row {
             Row::Curate(_) => OP_CURATE,
             Row::Delegation(_) => OP_DELEGATION,
             Row::EmbedTiming(_) => OP_EMBED_TIMING,
+            Row::Shape(_) => OP_SHAPE,
         }
     }
 

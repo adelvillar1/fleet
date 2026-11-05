@@ -1037,25 +1037,14 @@ async fn serve_connection(
                     Ok(runtime) => runtime,
                     Err(error) => return Err(format!("the walk needs a runtime: {error}")),
                 };
-                let extract = crate::extract::ExtractConfig::resolve(
-                    std::env::var("FLEET_HOME").ok().as_deref(),
-                    std::env::var("HOME").ok().as_deref(),
-                    None,
-                    None,
-                )
-                .map(|(config, _missing)| {
-                    (
-                        crate::extract::ExtractClient::new(config.clone()),
-                        config.verifiers[0].clone(),
-                    )
-                });
+                // The walk's claim pass rides the sys1 lane like every
+                // other lane call: the desk names the lane source, and the
+                // leg asks sys1 — no vendor key is resolved here.
                 runtime.block_on(crate::desk::run_stages(
-                    &crate::judge::LaneSource::Vendored,
+                    &crate::lanes::LaneSource::Vendored,
                     &home,
                     &walked_slug,
-                    extract
-                        .as_ref()
-                        .map(|(client, verifier)| (client, verifier)),
+                    true,
                 ))
             })
             .await

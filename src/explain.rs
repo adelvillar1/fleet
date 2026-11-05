@@ -168,7 +168,7 @@ pub enum LaneSource {
     /// process, so a test can pin the anomaly pass's lane asks
     /// (the usage plan's C4, the judge's seam shape). Test-only.
     #[cfg(test)]
-    Counting(Arc<Mutex<crate::judge::CountingLog>>),
+    Counting(Arc<Mutex<crate::lanes::CountingLog>>),
 }
 
 /// One explanation request.

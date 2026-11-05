@@ -5,6 +5,7 @@
 //! synchronous path reaches this module.
 
 use super::*;
+use crate::mcp::ServerSpec;
 
 use std::path::PathBuf;
 
@@ -2497,8 +2498,8 @@ fn read_judged_value(
 // --- C0: one lane per beat run (the counting seam) ----------------------
 
 /// The counting session's log, shared with the beat under test.
-fn counting_log(fail_open: bool) -> std::sync::Arc<std::sync::Mutex<CountingLog>> {
-    std::sync::Arc::new(std::sync::Mutex::new(CountingLog {
+fn counting_log(fail_open: bool) -> std::sync::Arc<std::sync::Mutex<crate::lanes::CountingLog>> {
+    std::sync::Arc::new(std::sync::Mutex::new(crate::lanes::CountingLog {
         events: Vec::new(),
         fail_open,
     }))

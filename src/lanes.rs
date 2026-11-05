@@ -2363,3 +2363,45 @@ mod tests {
         assert_eq!(wrap_detail("", 40), vec![""]);
     }
 }
+
+/// Where a lane ask's spec comes from: the vendored registry on the real
+/// path, or an injected spec a test or the eval corpus scripts. The seam
+/// is the same one either way — [`crate::mcp::ServerSpec`] through the
+/// MCP client, exactly as the agent's own lane roster resolves one. Every
+/// lane caller (the beats, the route judge, the desk's claim pass, the
+/// extraction leg) resolves through this one enum — one lane source, one
+/// session, not a second loop.
+#[derive(Debug, Clone)]
+pub enum LaneSource {
+    /// The vendored sys1 lane, resolved through [`crate::lanes::spec_for`].
+    Vendored,
+    /// A scripted lane: the spec a caller built, so no paid call and no
+    /// live service stands between the beat and its grade.
+    Scripted(ServerSpec),
+    /// The counting session: a scripted lane that records its own
+    /// open/ask/close events instead of spawning a process, so a test
+    /// can pin one open, N asks, one close. Test-only — the counting
+    /// seam C0's tests pin the beats through.
+    #[cfg(test)]
+    Counting(std::sync::Arc<std::sync::Mutex<CountingLog>>),
+}
+
+/// The counting session's shared log: the events in order, and whether
+/// the session is scripted to refuse its open (the second half of the
+/// C0 seam — a lane that fails to open refuses every row by name
+/// without a second spawn).
+#[cfg(test)]
+#[derive(Debug, Default)]
+pub struct CountingLog {
+    pub events: Vec<&'static str>,
+    pub fail_open: bool,
+}
+
+pub(crate) fn lane_spec(source: &LaneSource, lane: &str) -> Result<ServerSpec, String> {
+    match source {
+        LaneSource::Vendored => crate::lanes::spec_for(lane),
+        LaneSource::Scripted(spec) => Ok(spec.clone()),
+        #[cfg(test)]
+        LaneSource::Counting(_) => Err("the counting session resolves no spec".to_string()),
+    }
+}

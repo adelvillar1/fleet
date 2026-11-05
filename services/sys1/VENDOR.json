@@ -37,6 +37,30 @@
         "what": "the `curate` task — three heads over one call: needs_recall (yes/no), focus (the corpus's 7 structure + 6 failure shapes + none), staleness (fresh/stale) — the memory curator's judgment",
         "why": "fleet's mid-run memory curation composes this verdict with its cosine drift floor; the text contract is a two-part pair (last-curated instruction + new steer) because the judgment is of the move, not one text",
         "since": "2026-10-30"
+      },
+      {
+        "file": "src/sys1/extraction.py",
+        "what": "the extraction verb — the entity pass over a text through the configured vendor (entity schema, threshold, offsets + confidence), returning spans, per-field declines and named problems; plus `_log_extract`'s own `op: \"extract\"` JSONL line",
+        "why": "the owner's 2026-11-05 ruling: sys1 abstracts the System One providers, so Fleet's extraction leg may not post to a vendor itself. LOCATE and its vendor/key now live behind this verb; the leg keeps its floors, segmentation and absence semantics in Rust",
+        "since": "2026-11-05"
+      },
+      {
+        "file": "src/sys1/config.py",
+        "what": "providers.extract_api_url / extract_model / extract_api_key_env (default https://api.fastino.ai/v1/chat/completions, fastino/gliner2.5-multi-v1, FASTINO_API_KEY)",
+        "why": "the extraction vendor is configured where the other vendors are; `_settings` reads exactly these entries, so a deployment configures the extraction vendor once",
+        "since": "2026-11-05"
+      },
+      {
+        "file": "service/mcp_server.py",
+        "what": "the `sys1_extract` tool (text + fields) and an optional `task_spec` on `sys1_classify` (the HTTP face's `task_from_spec` seam), with `task_for_arguments` pulled out so the seam is testable without a stdio session",
+        "why": "the leg calls LOCATE through `sys1_extract` and VERIFY through `sys1_classify` with a per-field inline task — a caller's dynamic heads must ride the same routing and cascade a registered task gets",
+        "since": "2026-11-05"
+      },
+      {
+        "file": "tests/test_extraction.py",
+        "what": "the lane's own tests (stdlib unittest): the span parse and its wrong-offset drop, the per-field decline, the no-key/parse/empty failures, the extract log line, the `extract_*` settings, the `task_spec` seam, and a stdio drive of the handler's refusals",
+        "why": "the vendored tree excludes upstream tests; these are Fleet's own pins for the additions above — run with `python3 -m unittest discover -s tests -t .` from services/sys1",
+        "since": "2026-11-05"
       }
     ]
   }

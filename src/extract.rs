@@ -44,23 +44,24 @@
 //! cannot even be requested (E3-C3's refusal, now structural — the
 //! Clairic enum carried the variants; this one does not).
 
-/// The hosted default base: the tier's own vendor, the key the decision
-/// gates already resolve. Config, not code.
-pub const EXTRACT_BASE_DEFAULT: &str = "https://api.fastino.ai";
+/// The lane's entity verb: the extraction-class GLiNER, called by sys1
+/// on whichever vendor sys1 has configured. The leg names no vendor.
+pub const EXTRACT_TOOL: &str = "sys1_extract";
 
-/// The hosted default entity model (the extraction-class GLiNER, per
-/// the vendor docs; the Decide model is its classification sibling and
-/// stays the `decide` provider's business).
-pub const ENTITY_MODEL_DEFAULT: &str = "fastino/gliner2.5-multi-v1";
+/// The lane's decision verb: the verify battery rides it with an inline
+/// task spec, so the leg's per-field heads get sys1's routing and
+/// cascade as any registered task does.
+pub const CLASSIFY_TOOL: &str = "sys1_classify";
+
+/// The verify task's inline id: the name the lane's answer carries, so
+/// a recorded judgment says what was judged.
+pub const VERIFY_TASK: &str = "extract-verify";
 
 /// The entity pass's input cap (the vendor's own documented ceiling —
 /// longer inputs are the async endpoint's job, which the leg does not
-/// grow until a caller needs it).
-pub const ENTITY_INPUT_CAP: usize = 50_000;
-
-/// One HTTP call's timeout (either pass). The bound binds a cold or
-/// loaded endpoint, not a warm one — the embedder's reading.
-pub const EXTRACT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+/// grow until a caller needs it). The lane enforces the same bound; the
+/// leg bounds what it sends.
+pub const EXTRACT_INPUT_CAP: usize = 50_000;
 
 /// The measured reconcile floors (jobhound's requirement_pass: genuine
 /// claims scored 0.85+; the wrong verdicts sat at 0.40–0.55, and a veto
@@ -210,551 +211,517 @@ impl std::fmt::Display for ExtractError {
 
 impl std::error::Error for ExtractError {}
 
-/// One verifier in the decision chain: sys1's own systemone endpoints,
-/// shaped per provider (jev takes a `{"text": ..}` state and an `id` on
-/// every question; glide and drex take the plain-string state).
+/// One head the leg asks the lane: the id the answer keys by, and the
+/// question in plain language.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Verifier {
-    pub name: String,
-    pub url: String,
-    pub model: String,
-    pub key: String,
-    pub state_object: bool,
+pub struct HeadQuestion {
+    pub id: String,
+    pub question: String,
 }
 
-impl Verifier {
-    fn glide(key: &str, base_url: &str) -> Verifier {
-        Verifier {
-            name: "glide".to_string(),
-            url: format!("{base_url}/v1/systemone"),
-            model: "fastino/glide".to_string(),
-            key: key.to_string(),
-            state_object: false,
-        }
-    }
-
-    fn drex(key: &str) -> Option<Verifier> {
-        let key = key.trim();
-        if key.is_empty() {
-            return None;
-        }
-        Some(Verifier {
-            name: "drex".to_string(),
-            url: "https://drex.nace.ai/v1/systemone".to_string(),
-            model: "drex-v1.5".to_string(),
-            key: key.to_string(),
-            state_object: false,
-        })
-    }
-
-    fn jev(key: &str) -> Option<Verifier> {
-        let key = key.trim();
-        if key.is_empty() {
-            return None;
-        }
-        Some(Verifier {
-            name: "jev".to_string(),
-            url: "https://api.typesafe.ai/v1/systemone".to_string(),
-            model: "jev-1.13.0".to_string(),
-            key: key.to_string(),
-            state_object: true,
-        })
-    }
+/// The leg's lane session: one sys1 lane, opened once per extraction and
+/// closed at the end — the judge beat's own shape. Every vendor fact
+/// (the base, the key, the chain) lives inside the lane; the leg names
+/// none of it.
+pub struct ExtractSession {
+    server: crate::mcp::McpServer,
 }
 
-/// The resolved credentials and endpoints. The fastino key is required
-/// (it serves both the locate pass and the glide verifier); the drex and
-/// jev keys extend the verify chain when present. No key value ever
-/// formats into anything but its own header.
-#[derive(Debug, Clone)]
-pub struct ExtractConfig {
-    pub base_url: String,
-    pub entity_model: String,
-    pub token: String,
-    pub verifiers: Vec<Verifier>,
-}
-
-impl ExtractConfig {
-    /// Resolve from the environment chain the roster keys use: the
-    /// process environment first, then the fleet home's dotenv with the
-    /// vault overlay. `Some` always; the missing list names what a
-    /// complete configuration still needs (the named absence — the
-    /// caller shows it instead of retrying per call).
-    pub fn resolve(
-        fleet_home_env: Option<&str>,
-        user_home: Option<&str>,
-        base_url: Option<&str>,
-        entity_model: Option<&str>,
-    ) -> Option<(ExtractConfig, Vec<String>)> {
-        let home = crate::home::fleet_home(fleet_home_env, user_home).ok()?;
-        let dotenv = crate::home::read_dotenv_with_process_vault(&home);
-        let resolve = |name: &str| {
-            std::env::var(name)
-                .ok()
-                .filter(|value| !value.trim().is_empty())
-                .or_else(|| dotenv.get(name).cloned().filter(|v| !v.trim().is_empty()))
-        };
-        let token = resolve("FASTINO_API_KEY").unwrap_or_default();
-        let mut missing = Vec::new();
-        if token.is_empty() {
-            missing.push("FASTINO_API_KEY".to_string());
+impl ExtractSession {
+    /// Open the lane and confirm it serves the entity verb. A lane that
+    /// cannot start, refuses the handshake, or lacks the tool is a named
+    /// error — never a quiet fallback to a vendor.
+    pub async fn open(source: &crate::lanes::LaneSource) -> Result<ExtractSession, String> {
+        let spec = crate::judge::lane_spec(source, "sys1")?;
+        let server = crate::mcp::McpServer::spawn(&spec)
+            .map_err(|error| format!("the extraction lane could not start: {error}"))?;
+        if let Err(error) = server.initialize().await {
+            server.close().await.ok();
+            return Err(format!("the extraction lane's handshake failed: {error}"));
         }
-        let base_url = base_url
-            .map(str::to_string)
-            .unwrap_or_else(|| EXTRACT_BASE_DEFAULT.to_string());
-        let entity_model = entity_model
-            .map(str::to_string)
-            .unwrap_or_else(|| ENTITY_MODEL_DEFAULT.to_string());
-        let mut verifiers = vec![Verifier::glide(&token, &base_url)];
-        if let Some(drex) = Verifier::drex(&resolve("DREX_API_KEY").unwrap_or_default()) {
-            verifiers.push(drex);
-        }
-        if let Some(jev) = Verifier::jev(&resolve("TYPESAFE_API_KEY").unwrap_or_default()) {
-            verifiers.push(jev);
-        }
-        Some((
-            ExtractConfig {
-                base_url,
-                entity_model,
-                token,
-                verifiers,
-            },
-            missing,
-        ))
-    }
-}
-
-/// The extraction availability gate, once per process over its own key
-/// (KI-044's pattern): a machine with the fastino key reads and
-/// verifies; a machine without answers the named absence without a
-/// per-call retry of the resolution.
-pub fn sys1_extracts() -> bool {
-    static AVAILABLE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *AVAILABLE.get_or_init(|| {
-        ExtractConfig::resolve(
-            std::env::var("FLEET_HOME").ok().as_deref(),
-            std::env::var("HOME").ok().as_deref(),
-            None,
-            None,
-        )
-        .is_some_and(|(config, missing)| missing.is_empty() && !config.token.is_empty())
-    })
-}
-
-/// The client: resolved config plus its own agent (the pooled
-/// connection whose staleness the one-retry absorbs).
-pub struct ExtractClient {
-    config: ExtractConfig,
-    agent: ureq::Agent,
-}
-
-impl ExtractClient {
-    /// The client over resolved config, at the leg's timeout.
-    pub fn new(config: ExtractConfig) -> ExtractClient {
-        ExtractClient {
-            config,
-            agent: ureq::AgentBuilder::new().timeout(EXTRACT_TIMEOUT).build(),
-        }
-    }
-
-    /// The client from the ambient environment chain. `None` names the
-    /// missing variables; the caller shows them (the named absence).
-    pub fn from_env() -> Option<(ExtractClient, Vec<String>)> {
-        let (config, missing) = ExtractConfig::resolve(
-            std::env::var("FLEET_HOME").ok().as_deref(),
-            std::env::var("HOME").ok().as_deref(),
-            None,
-            None,
-        )?;
-        Some((ExtractClient::new(config), missing))
-    }
-
-    /// The host an endpoint names in errors — never the full URL with
-    /// credentials.
-    fn host_of(url: &str) -> String {
-        let rest = url.split_once("://").map(|(_, rest)| rest).unwrap_or(url);
-        rest.split('/').next().unwrap_or(rest).to_string()
-    }
-
-    /// One POST of JSON, one retry, transport-only (KI-243's mechanism:
-    /// the failed attempt burned the stale pooled connection, the
-    /// second rides a fresh one). An HTTP answer — any status — is
-    /// final and is never retried. The key value is masked out of any
-    /// rendered text.
-    fn post_json(
-        &self,
-        url: &str,
-        key: &str,
-        body: &serde_json::Value,
-        pass: &str,
-    ) -> Result<serde_json::Value, ExtractError> {
-        let host = Self::host_of(url);
-        let mask = |text: String| text.replace(key, "<key>");
-        let payload = body.to_string();
-        let attempt = || -> Result<serde_json::Value, ExtractError> {
-            let fail = |reason: String| ExtractError {
-                host: host.clone(),
-                pass: pass.to_string(),
-                reason: mask(reason),
-            };
-            match self
-                .agent
-                .post(url)
-                .set("Authorization", &format!("Bearer {key}"))
-                .set("Content-Type", "application/json")
-                .send_string(&payload)
-            {
-                Ok(response) => {
-                    let text = response
-                        .into_string()
-                        .map_err(|error| fail(format!("the reply could not be read: {error}")))?;
-                    serde_json::from_str(&text)
-                        .map_err(|error| fail(format!("the reply is not JSON: {error}")))
-                }
-                Err(ureq::Error::Status(code, response)) => {
-                    let text = response.into_string().unwrap_or_default();
-                    Err(fail(format!(
-                        "HTTP {code}: {}",
-                        text.chars().take(200).collect::<String>()
-                    )))
-                }
-                Err(error) => Err(fail(format!(
-                    "the request did not reach the endpoint: {error}"
-                ))),
+        let tools = match server.list_tools().await {
+            Ok(tools) => tools,
+            Err(error) => {
+                server.close().await.ok();
+                return Err(format!("the extraction lane's tool list failed: {error}"));
             }
         };
-        let first = attempt();
-        match first {
-            Err(error) if error.reason.contains("did not reach the endpoint") => {
-                attempt().map_err(|second| ExtractError {
-                    reason: format!("{second} (the first attempt: {})", error.reason),
-                    ..second
-                })
-            }
-            other => other,
+        if !tools.iter().any(|tool| tool.name == EXTRACT_TOOL) {
+            server.close().await.ok();
+            return Err(format!(
+                "lane `sys1` declares no `{EXTRACT_TOOL}` tool — it cannot serve the extraction leg"
+            ));
         }
+        Ok(ExtractSession { server })
     }
 
-    /// Pass 1 — the entity call. The requested fields ride the schema
-    /// as entity names; the reply's `choices[0].message.content` is a
-    /// JSON string carrying the spans.
-    fn locate(
+    /// Pass 1 — the entity read. Answers the spans (offsets, confidence)
+    /// and the model that served them; a refused or failed read is the
+    /// lane's own named error.
+    pub async fn locate(
         &self,
-        state: &str,
+        text: &str,
         fields: &[(String, FieldSpec)],
-    ) -> Result<Vec<Located>, ExtractError> {
-        let url = format!(
-            "{}/v1/chat/completions",
-            self.config.base_url.trim_end_matches('/')
-        );
-        let state = take_chars(state, ENTITY_INPUT_CAP);
-        let mut entities = Vec::new();
-        for (name, spec) in fields {
-            entities.push(serde_json::json!({
-                "name": name,
-                "description": spec.description(name),
-            }));
-        }
-        let body = serde_json::json!({
-            "model": self.config.entity_model,
-            "messages": [{"role": "user", "content": state}],
-            "schema": {"entities": entities},
-            "threshold": 0.5,
-            "include_confidence": true,
-            "include_spans": true,
-            "store": false,
-        });
-        let reply = self.post_json(&url, &self.config.token, &body, "locate")?;
-        let content = reply
-            .pointer("/choices/0/message/content")
-            .and_then(|content| content.as_str())
-            .ok_or_else(|| ExtractError {
-                host: Self::host_of(&url),
-                pass: "locate".to_string(),
-                reason: "the reply carries no choices[0].message.content".to_string(),
-            })?;
-        Ok(parse_entity_content(content))
-    }
-
-    /// Pass 3 — one verify call over one segment: one noul head per
-    /// distinct field carrying a candidate there. Returns p(true) per
-    /// field asked. The desk's claim pass composes this same call — the
-    /// wire shape is the seam, and there is one of it.
-    pub fn verify(
-        &self,
-        verifier: &Verifier,
-        segment_text: &str,
-        heads: &[(String, String)],
-        pass: &str,
-    ) -> Result<Vec<(String, f64)>, ExtractError> {
-        let mut questions = serde_json::Map::new();
-        for (name, description) in heads {
-            let mut head = serde_json::json!({
-                "type": "noul",
-                "instructions": format!("Does this text state {description}?"),
-                "criteria": {
-                    "true": format!("Yes, {description} is stated here."),
-                    "false": "No.",
-                },
-            });
-            if verifier.state_object {
-                head["id"] = serde_json::Value::String(name.clone());
-            }
-            questions.insert(name.clone(), head);
-        }
-        let state = if verifier.state_object {
-            serde_json::json!({ "text": segment_text })
-        } else {
-            serde_json::Value::String(segment_text.to_string())
-        };
-        let body = serde_json::json!({
-            "model": verifier.model,
-            "state": state,
-            "questions": questions,
-        });
-        let reply = self.post_json(&verifier.url, &verifier.key, &body, pass)?;
-        // The systemone family answers at `answers.{id}`; the
-        // chat-completions wrapping is tolerated, the same read sys1's
-        // own parsers make.
-        let answers = unwrap_content(&reply)
-            .and_then(|inner| inner.get("answers").cloned())
-            .or_else(|| reply.get("answers").cloned())
-            .unwrap_or(serde_json::Value::Null);
-        Ok(heads
+    ) -> Result<(Vec<Located>, String), ExtractError> {
+        let list: Vec<serde_json::Value> = fields
             .iter()
-            .map(|(name, _)| {
-                let p = answers.get(name).and_then(p_true).unwrap_or(0.0);
-                (name.clone(), p)
+            .map(|(name, spec)| {
+                serde_json::json!({
+                    "name": name,
+                    "description": spec.description(name),
+                })
             })
-            .collect())
-    }
-
-    /// One systemone call's answers, raw — the seam the desk's claim
-    /// pass composes when a head is a choice rather than a noul: the
-    /// call and the answer envelope are the one wire; the head shapes
-    /// are the caller's business, shaped per provider like `verify`
-    /// does. A reply that carries no answers block answers `Null`, and
-    /// every head reads as declined.
-    pub fn answers(
-        &self,
-        verifier: &Verifier,
-        state_text: &str,
-        questions: serde_json::Value,
-    ) -> Result<serde_json::Value, ExtractError> {
-        let state = if verifier.state_object {
-            serde_json::json!({ "text": state_text })
-        } else {
-            serde_json::Value::String(state_text.to_string())
-        };
-        let body = serde_json::json!({
-            "model": verifier.model,
-            "state": state,
-            "questions": questions,
-        });
-        let reply = self.post_json(&verifier.url, &verifier.key, &body, "answers")?;
-        Ok(unwrap_content(&reply)
-            .and_then(|inner| inner.get("answers").cloned())
-            .or_else(|| reply.get("answers").cloned())
-            .unwrap_or(serde_json::Value::Null))
-    }
-
-    /// The pipeline: locate, segment, verify, reconcile. Every
-    /// requested field is answered — with its value and quote, or by
-    /// name with the reason it is absent.
-    pub fn run(
-        &self,
-        state: &str,
-        fields: &[(String, FieldSpec)],
-    ) -> Result<ExtractReport, ExtractError> {
-        let started = std::time::Instant::now();
-        let located = self.locate(state, fields)?;
-        let asked: std::collections::HashSet<&str> =
-            fields.iter().map(|(name, _)| name.as_str()).collect();
-        let candidates: Vec<&Located> = located
-            .iter()
-            .filter(|span| asked.contains(span.field.as_str()))
             .collect();
-        let mut stats = ExtractStats::default();
-        let mut used_verifiers: Vec<String> = Vec::new();
-        if candidates.is_empty() {
-            // Nothing above the entity threshold: every field answers
-            // absent, and the verify pass costs nothing.
-            let answers = fields
-                .iter()
-                .map(|(name, _)| Answer {
-                    name: name.clone(),
-                    value: serde_json::Value::Null,
-                    confidence: None,
-                    spans: Vec::new(),
-                    quote: String::new(),
-                    contested: false,
-                    absent_reason: Some("no candidate span above the entity threshold".to_string()),
-                })
-                .collect();
-            return Ok(ExtractReport {
-                answers,
-                latency_ms: started.elapsed().as_millis(),
-                models: vec![self.config.entity_model.clone()],
-                stats,
+        let arguments = serde_json::json!({
+            "text": take_chars(text, EXTRACT_INPUT_CAP),
+            "fields": list,
+        });
+        let call = self
+            .server
+            .call_tool(EXTRACT_TOOL, arguments)
+            .await
+            .map_err(|error| ExtractError {
+                host: "sys1".to_string(),
+                pass: "locate".to_string(),
+                reason: error.to_string(),
+            })?;
+        if call.is_error {
+            return Err(ExtractError {
+                host: "sys1".to_string(),
+                pass: "locate".to_string(),
+                reason: call.text(),
             });
         }
-
-        // Pass 2 — segments; only the ones carrying a candidate cost a
-        // call, bounded by the budget.
-        let segs = segments(state);
-        stats.segments = segs.len();
-        let mut carrying: Vec<(&Segment, Vec<&Located>)> = Vec::new();
-        for segment in &segs {
-            let spans: Vec<&Located> = candidates
-                .iter()
-                .filter(|span| segment.start <= span.start && span.end <= segment.end)
-                .copied()
-                .collect();
-            if !spans.is_empty() {
-                carrying.push((segment, spans));
-            }
-        }
-        carrying.truncate(MAX_CARRYING_SEGMENTS);
-
-        // Pass 3 + 4 — verify per segment, adjudicate contested spans.
-        let mut survivors: Vec<(Located, f64, bool)> = Vec::new();
-        let mut adjudications = 0usize;
-        for (segment, spans) in carrying.iter() {
-            let mut head_list: Vec<(String, String)> = Vec::new();
-            for span in spans {
-                if !head_list.iter().any(|(name, _)| name == &span.field) {
-                    let spec = fields
-                        .iter()
-                        .find(|(name, _)| name == &span.field)
-                        .map(|(_, spec)| spec)
-                        .expect("candidates are filtered to asked fields");
-                    head_list.push((span.field.clone(), spec.description(&span.field)));
-                }
-            }
-            // A segment reads at most MAX_SEGMENT_CHARS — the measured
-            // claim size; the budget, not the state, bounds the rest.
-            let read = take_chars(&segment.text, MAX_SEGMENT_CHARS);
-            let primary = &self.config.verifiers[0];
-            let verdicts = self.verify(primary, read, &head_list, "verify")?;
-            stats.verify_calls += 1;
-            if !used_verifiers.contains(&primary.name) {
-                used_verifiers.push(primary.name.clone());
-            }
-            let p_of = |field: &str| {
-                verdicts
-                    .iter()
-                    .find(|(name, _)| name == field)
-                    .map(|(_, p)| *p)
-                    .unwrap_or(0.0)
-            };
-            for span in spans {
-                let p = p_of(&span.field);
-                if p >= ACCEPT_FLOOR {
-                    survivors.push(((*span).clone(), p, false));
-                    continue;
-                }
-                if p <= VETO_FLOOR {
-                    // A veto only removes a claim; the field's absence
-                    // is named downstream, never filled.
-                    stats.vetoed += 1;
-                    continue;
-                }
-                // Contested: one adjudication to the next verifier in
-                // the chain, capped. Still unsettled, the span ships
-                // marked, with the stronger of the two evidences.
-                let (p_final, contested) =
-                    if adjudications < MAX_ADJUDICATIONS && self.config.verifiers.len() > 1 {
-                        adjudications += 1;
-                        let second = &self.config.verifiers[1];
-                        let second_p = self
-                            .verify(second, read, &head_list, "verify")?
-                            .iter()
-                            .find(|(name, _)| name == &span.field)
-                            .map(|(_, p)| *p)
-                            .unwrap_or(0.0);
-                        if !used_verifiers.contains(&second.name) {
-                            used_verifiers.push(second.name.clone());
-                        }
-                        if second_p >= ACCEPT_FLOOR {
-                            (second_p, false)
-                        } else {
-                            (p.max(second_p), true)
-                        }
-                    } else {
-                        (p, true)
-                    };
-                if contested {
-                    stats.contested += 1;
-                }
-                survivors.push(((*span).clone(), p_final, contested));
-            }
-        }
-        stats.adjudications = adjudications;
-        let mut models = vec![self.config.entity_model.clone()];
-        models.extend(used_verifiers);
-
-        // Pass 4's other half — assemble the answers: every requested
-        // field, best survivor first; the absence named when nothing
-        // survived.
-        let mut answers = Vec::new();
-        for (name, spec) in fields {
-            let mut mine: Vec<&(Located, f64, bool)> = survivors
-                .iter()
-                .filter(|(span, _, _)| &span.field == name)
-                .collect();
-            mine.sort_by(|(a, pa, _), (b, pb, _)| {
-                pb.partial_cmp(pa)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-                    .then(a.start.cmp(&b.start))
+        let reply: serde_json::Value =
+            serde_json::from_str(call.text().as_str()).map_err(|error| ExtractError {
+                host: "sys1".to_string(),
+                pass: "locate".to_string(),
+                reason: format!("the lane's answer was not the entity JSON it promises: {error}"),
+            })?;
+        if reply.get("ok").and_then(|ok| ok.as_bool()) != Some(true) {
+            let code = reply
+                .get("code")
+                .and_then(|code| code.as_str())
+                .unwrap_or("refused");
+            let reason = reply
+                .get("reason")
+                .and_then(|reason| reason.as_str())
+                .unwrap_or("the entity read was refused without a reason");
+            return Err(ExtractError {
+                host: "sys1".to_string(),
+                pass: "locate".to_string(),
+                reason: format!("{code}: {reason}"),
             });
-            if mine.is_empty() {
-                let reason = if candidates.iter().any(|span| &span.field == name) {
-                    "no candidate cleared the verify floors"
-                } else {
-                    "no candidate span above the entity threshold"
+        }
+        let model = reply
+            .get("model")
+            .and_then(|model| model.as_str())
+            .unwrap_or("gliner")
+            .to_string();
+        let mut located = Vec::new();
+        if let Some(spans) = reply.get("spans").and_then(|spans| spans.as_array()) {
+            for span in spans {
+                let (Some(field), Some(value), Some(start), Some(end)) = (
+                    span.get("field").and_then(|field| field.as_str()),
+                    span.get("text").and_then(|text| text.as_str()),
+                    span.get("start").and_then(|start| start.as_u64()),
+                    span.get("end").and_then(|end| end.as_u64()),
+                ) else {
+                    continue;
                 };
-                answers.push(Answer {
-                    name: name.clone(),
-                    value: serde_json::Value::Null,
-                    confidence: None,
-                    spans: Vec::new(),
-                    quote: String::new(),
-                    contested: false,
-                    absent_reason: Some(reason.to_string()),
+                located.push(Located {
+                    field: field.to_string(),
+                    text: value.to_string(),
+                    start: start as usize,
+                    end: end as usize,
+                    confidence: span
+                        .get("confidence")
+                        .and_then(|value| value.as_f64())
+                        .unwrap_or(0.0),
                 });
+            }
+        }
+        Ok((located, model))
+    }
+
+    /// One decision battery over one text, with the caller's own heads:
+    /// the answering provider's head map, the provider's name, and the
+    /// chain the lane walked. `provider` names a chain to walk (`"all"`
+    /// for the adjudication's second opinion); `None` is the lane's
+    /// routing. The desk's claim pass rides this for its choice heads;
+    /// `verdicts` wraps it for the leg's nouls.
+    pub async fn answers(
+        &self,
+        text: &str,
+        heads: serde_json::Value,
+        provider: Option<&str>,
+        pass: &str,
+    ) -> Result<(serde_json::Value, String, Vec<String>), ExtractError> {
+        let mut arguments = serde_json::json!({
+            "text": take_chars(text, MAX_SEGMENT_CHARS),
+            "task_spec": {
+                "id": VERIFY_TASK,
+                // The leg applies its own floors; the lane's gate stays
+                // neutral so every probability comes back.
+                "confidence_floor": 0.0,
+                "heads": heads,
+            },
+        });
+        if let Some(provider) = provider {
+            arguments["provider"] = serde_json::Value::String(provider.to_string());
+        }
+        let call = self
+            .server
+            .call_tool(CLASSIFY_TOOL, arguments)
+            .await
+            .map_err(|error| ExtractError {
+                host: "sys1".to_string(),
+                pass: pass.to_string(),
+                reason: error.to_string(),
+            })?;
+        if call.is_error {
+            return Err(ExtractError {
+                host: "sys1".to_string(),
+                pass: pass.to_string(),
+                reason: call.text(),
+            });
+        }
+        let reply: serde_json::Value =
+            serde_json::from_str(call.text().as_str()).map_err(|error| ExtractError {
+                host: "sys1".to_string(),
+                pass: pass.to_string(),
+                reason: format!("the lane's answer was not the JSON it promises: {error}"),
+            })?;
+        let provider_used = reply
+            .get("provider")
+            .and_then(|provider| provider.as_str())
+            .unwrap_or("sys1")
+            .to_string();
+        let chain: Vec<String> = reply
+            .get("providers_used")
+            .and_then(|used| used.as_array())
+            .map(|used| {
+                used.iter()
+                    .filter_map(|name| name.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+        // The answers map is keyed by provider. The routing's answer rides
+        // the provider that answered, and the adjudication's rides every
+        // provider the lane walked — so the caller gets the whole map and
+        // decides (the primary reads its own provider's entry; the
+        // adjudication takes the strongest across them). serde_json's map
+        // is sorted, so "the first entry" is never "the provider".
+        let answers = reply
+            .get("answers")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+        Ok((answers, provider_used, chain))
+    }
+
+    /// Pass 3 — one decision battery over one segment: one `noul` head per
+    /// field, asked through an inline task spec. Answers the p(true) per
+    /// head, the provider that answered, and the chain the lane walked.
+    pub async fn verdicts(
+        &self,
+        segment_text: &str,
+        heads: &[HeadQuestion],
+        provider: Option<&str>,
+        pass: &str,
+    ) -> Result<(Vec<(String, f64)>, String, Vec<String>), ExtractError> {
+        let head_list: Vec<serde_json::Value> = heads
+            .iter()
+            .map(|head| {
+                serde_json::json!({
+                    "id": head.id,
+                    "kind": "noul",
+                    "task": head.question,
+                    "descriptions": {
+                        "true": "Yes, it is stated here.",
+                        "false": "No.",
+                    },
+                })
+            })
+            .collect();
+        let (answers, provider_used, chain) = self
+            .answers(
+                segment_text,
+                serde_json::Value::Array(head_list),
+                provider,
+                pass,
+            )
+            .await?;
+        let heads_map = provider_map(&answers, &provider_used);
+        let verdicts = heads
+            .iter()
+            .map(|head| {
+                let p = heads_map.get(&head.id).and_then(p_true).unwrap_or(0.0);
+                (head.id.clone(), p)
+            })
+            .collect();
+        Ok((verdicts, provider_used, chain))
+    }
+
+    /// The adjudication's reading: per head, the strongest probability any
+    /// provider the lane walked returned. One call across every provider
+    /// (`provider: "all"`); the leg's own floors decide what the number
+    /// means.
+    pub async fn strongest(
+        &self,
+        segment_text: &str,
+        heads: &[HeadQuestion],
+    ) -> Result<(Vec<(String, f64)>, String, Vec<String>), ExtractError> {
+        let head_list: Vec<serde_json::Value> = heads
+            .iter()
+            .map(|head| {
+                serde_json::json!({
+                    "id": head.id,
+                    "kind": "noul",
+                    "task": head.question,
+                    "descriptions": { "true": "Yes, it is stated here.", "false": "No." },
+                })
+            })
+            .collect();
+        let (answers, provider_used, chain) = self
+            .answers(
+                segment_text,
+                serde_json::Value::Array(head_list),
+                Some("all"),
+                "adjudicate",
+            )
+            .await?;
+        let verdicts = heads
+            .iter()
+            .map(|head| {
+                let p = answers
+                    .as_object()
+                    .map(|providers| {
+                        providers
+                            .values()
+                            .filter_map(|map| map.get(&head.id).and_then(p_true))
+                            .fold(0.0_f64, f64::max)
+                    })
+                    .unwrap_or(0.0);
+                (head.id.clone(), p)
+            })
+            .collect();
+        Ok((verdicts, provider_used, chain))
+    }
+
+    /// Torn down after the leg's last call — the judge beat's own order.
+    pub async fn close(self) {
+        self.server.close().await.ok();
+    }
+}
+
+/// The pipeline: locate, segment, verify, reconcile. Every requested
+/// field is answered — with its value and quote, or by name with the
+/// reason it is absent. The vendor is sys1's; the judgment here is the
+/// leg's own.
+pub async fn run(
+    source: &crate::lanes::LaneSource,
+    state: &str,
+    fields: &[(String, FieldSpec)],
+) -> Result<ExtractReport, String> {
+    let session = ExtractSession::open(source).await?;
+    let report = run_in(&session, state, fields).await;
+    session.close().await;
+    report.map_err(|error| error.to_string())
+}
+
+async fn run_in(
+    session: &ExtractSession,
+    state: &str,
+    fields: &[(String, FieldSpec)],
+) -> Result<ExtractReport, ExtractError> {
+    let started = std::time::Instant::now();
+    let (located, locate_model) = session.locate(state, fields).await?;
+    let asked: std::collections::HashSet<&str> =
+        fields.iter().map(|(name, _)| name.as_str()).collect();
+    let candidates: Vec<&Located> = located
+        .iter()
+        .filter(|span| asked.contains(span.field.as_str()))
+        .collect();
+    let mut stats = ExtractStats::default();
+    let mut used: Vec<String> = Vec::new();
+    if candidates.is_empty() {
+        // Nothing above the entity threshold: every field answers
+        // absent, and the verify pass costs nothing.
+        let answers = fields
+            .iter()
+            .map(|(name, _)| Answer {
+                name: name.clone(),
+                value: serde_json::Value::Null,
+                confidence: None,
+                spans: Vec::new(),
+                quote: String::new(),
+                contested: false,
+                absent_reason: Some("no candidate span above the entity threshold".to_string()),
+            })
+            .collect();
+        return Ok(ExtractReport {
+            answers,
+            latency_ms: started.elapsed().as_millis(),
+            models: vec![locate_model],
+            stats,
+        });
+    }
+
+    // Pass 2 — segments; only the ones carrying a candidate cost a call,
+    // bounded by the budget.
+    let segs = segments(state);
+    stats.segments = segs.len();
+    let mut carrying: Vec<(&Segment, Vec<&Located>)> = Vec::new();
+    for segment in &segs {
+        let spans: Vec<&Located> = candidates
+            .iter()
+            .filter(|span| segment.start <= span.start && span.end <= segment.end)
+            .copied()
+            .collect();
+        if !spans.is_empty() {
+            carrying.push((segment, spans));
+        }
+    }
+    carrying.truncate(MAX_CARRYING_SEGMENTS);
+
+    // Pass 3 + 4 — verify per segment, adjudicate contested spans.
+    let mut survivors: Vec<(Located, f64, bool)> = Vec::new();
+    let mut adjudications = 0usize;
+    for (segment, spans) in carrying.iter() {
+        let mut head_list: Vec<HeadQuestion> = Vec::new();
+        for span in spans {
+            if !head_list.iter().any(|head| head.id == span.field) {
+                let spec = fields
+                    .iter()
+                    .find(|(name, _)| name == &span.field)
+                    .map(|(_, spec)| spec)
+                    .expect("candidates are filtered to asked fields");
+                head_list.push(HeadQuestion {
+                    id: span.field.clone(),
+                    question: format!("Does this text state {}?", spec.description(&span.field)),
+                });
+            }
+        }
+        let read = take_chars(&segment.text, MAX_SEGMENT_CHARS);
+        let (verdicts, provider, chain) =
+            session.verdicts(read, &head_list, None, "verify").await?;
+        stats.verify_calls += 1;
+        record_model(&mut used, &provider);
+        for name in chain {
+            record_model(&mut used, &name);
+        }
+        let p_of = |field: &str| {
+            verdicts
+                .iter()
+                .find(|(name, _)| name == field)
+                .map(|(_, p)| *p)
+                .unwrap_or(0.0)
+        };
+        for span in spans {
+            let p = p_of(&span.field);
+            if p >= ACCEPT_FLOOR {
+                survivors.push(((*span).clone(), p, false));
                 continue;
             }
-            let (best, confidence, contested) = &mine[0];
-            let spans = mine
-                .iter()
-                .map(|(span, _, _)| (span.start, span.end))
-                .collect();
-            let value = if spec.kind == FieldKind::List {
-                serde_json::Value::Array(
-                    mine.iter()
-                        .map(|(span, _, _)| serde_json::Value::String(span.text.clone()))
-                        .collect(),
-                )
+            if p <= VETO_FLOOR {
+                // A veto only removes a claim; the field's absence is
+                // named downstream, never filled.
+                stats.vetoed += 1;
+                continue;
+            }
+            // Contested: one adjudication across every provider the lane
+            // has (bounded), and the stronger evidence wins; still
+            // unsettled, the span ships marked.
+            let (p_final, contested) = if adjudications < MAX_ADJUDICATIONS {
+                adjudications += 1;
+                let (second, second_provider, second_chain) =
+                    session.strongest(read, &head_list).await?;
+                for name in std::iter::once(second_provider).chain(second_chain) {
+                    record_model(&mut used, &name);
+                }
+                let second_p = second
+                    .iter()
+                    .find(|(name, _)| name == &span.field)
+                    .map(|(_, p)| *p)
+                    .unwrap_or(0.0);
+                if second_p >= ACCEPT_FLOOR {
+                    (second_p, false)
+                } else {
+                    (p.max(second_p), true)
+                }
             } else {
-                serde_json::Value::String(best.text.clone())
+                (p, true)
+            };
+            if contested {
+                stats.contested += 1;
+            }
+            survivors.push(((*span).clone(), p_final, contested));
+        }
+    }
+    stats.adjudications = adjudications;
+    let mut models = vec![locate_model];
+    models.extend(used);
+
+    // Pass 4's other half — assemble the answers: every requested field,
+    // best survivor first; the absence named when nothing survived.
+    let mut answers = Vec::new();
+    for (name, spec) in fields {
+        let mut mine: Vec<&(Located, f64, bool)> = survivors
+            .iter()
+            .filter(|(span, _, _)| &span.field == name)
+            .collect();
+        mine.sort_by(|(a, pa, _), (b, pb, _)| {
+            pb.partial_cmp(pa)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(a.start.cmp(&b.start))
+        });
+        if mine.is_empty() {
+            let reason = if candidates.iter().any(|span| &span.field == name) {
+                "no candidate cleared the verify floors"
+            } else {
+                "no candidate span above the entity threshold"
             };
             answers.push(Answer {
                 name: name.clone(),
-                value,
-                confidence: Some(*confidence),
-                spans,
-                quote: quote_at(state, best.start, best.end),
-                contested: *contested,
-                absent_reason: None,
+                value: serde_json::Value::Null,
+                confidence: None,
+                spans: Vec::new(),
+                quote: String::new(),
+                contested: false,
+                absent_reason: Some(reason.to_string()),
             });
+            continue;
         }
-        Ok(ExtractReport {
-            answers,
-            latency_ms: started.elapsed().as_millis(),
-            models,
-            stats,
-        })
+        let (best, confidence, contested) = &mine[0];
+        let spans = mine
+            .iter()
+            .map(|(span, _, _)| (span.start, span.end))
+            .collect();
+        let value = if spec.kind == FieldKind::List {
+            serde_json::Value::Array(
+                mine.iter()
+                    .map(|(span, _, _)| serde_json::Value::String(span.text.clone()))
+                    .collect(),
+            )
+        } else {
+            serde_json::Value::String(best.text.clone())
+        };
+        answers.push(Answer {
+            name: name.clone(),
+            value,
+            confidence: Some(*confidence),
+            spans,
+            quote: quote_at(state, best.start, best.end),
+            contested: *contested,
+            absent_reason: None,
+        });
     }
+    Ok(ExtractReport {
+        answers,
+        latency_ms: started.elapsed().as_millis(),
+        models,
+        stats,
+    })
 }
 
 /// The entity reply's content is a JSON string; unwrap it into the
@@ -795,17 +762,30 @@ pub fn parse_entity_content(content: &str) -> Vec<Located> {
     out
 }
 
-/// The systemone family may wrap its answers object in the
-/// chat-completions content shape; unwrap the string when present (the
-/// read sys1's own parsers make).
-fn unwrap_content(reply: &serde_json::Value) -> Option<serde_json::Value> {
-    let content = reply
-        .get("choices")?
-        .get(0)?
-        .get("message")?
-        .get("content")?;
-    let text = content.as_str()?;
-    serde_json::from_str(text).ok()
+/// The answering provider's heads map out of an [`ExtractSession`]
+/// `answers()` reply. The reply is provider-keyed (the adjudication
+/// needs every provider's read), so a caller asking ONE question reads
+/// the entry of the provider that answered — falling back to the first
+/// map only when the reply names a provider it did not answer with.
+/// serde_json's maps are sorted, so "the first entry" is never
+/// "the provider".
+pub fn provider_map(answers: &serde_json::Value, provider: &str) -> serde_json::Value {
+    answers
+        .get(provider)
+        .or_else(|| answers.as_object().and_then(|map| map.values().next()))
+        .cloned()
+        .unwrap_or(serde_json::Value::Null)
+}
+
+/// Record a provider or model name the lane walked — once, and never
+/// an empty one. An escalated answer can come back with no single
+/// provider named; the empty string is not a model the report should
+/// list as if it were.
+fn record_model(used: &mut Vec<String>, name: &str) {
+    if name.is_empty() || used.iter().any(|seen| seen == name) {
+        return;
+    }
+    used.push(name.to_string());
 }
 
 /// p(true) from a noul answer entry, across the family's shapes:
@@ -949,346 +929,28 @@ pub fn take_chars(text: &str, cap: usize) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::{Read as _, Write as _};
-    use std::sync::{Arc, Mutex};
 
-    /// One stub endpoint: serves `body` for every POST, recording the
-    /// request bodies it received. The first `refuse_first` connections
-    /// are dropped — the stale pooled connection the one-retry absorbs.
-    /// The request is read head-then-declared-length before replying:
-    /// replying with unread request bytes sends RST, and an RST
-    /// discards the reply from the client's receive queue (KI-149's
-    /// class, met from the serving side).
-    fn stub_endpoint(body: &'static str, refuse_first: usize) -> (u16, Arc<Mutex<Vec<String>>>) {
-        stub_endpoint_with_status(body, refuse_first, 200)
-    }
+    // The transport pins (the locate/verify wire, the floors, the
+    // absence) live in `tests/integration.rs`: they drive the mock-mcp
+    // lane, and the mock binary is built for the integration tests, not
+    // the lib. These are the pure halves.
 
-    fn stub_endpoint_with_status(
-        body: &'static str,
-        refuse_first: usize,
-        status: u16,
-    ) -> (u16, Arc<Mutex<Vec<String>>>) {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = listener.local_addr().unwrap().port();
-        let seen: Arc<Mutex<Vec<String>>> = Arc::default();
-        let seen_writer = Arc::clone(&seen);
-        std::thread::spawn(move || {
-            let mut refused = 0usize;
-            for mut stream in listener.incoming().flatten() {
-                if refused < refuse_first {
-                    refused += 1;
-                    drop(stream);
-                    continue;
-                }
-                let mut request: Vec<u8> = Vec::new();
-                let mut chunk = [0u8; 4096];
-                let head_end = loop {
-                    let read = stream.read(&mut chunk).unwrap_or(0);
-                    if read == 0 {
-                        break request.len();
-                    }
-                    request.extend_from_slice(&chunk[..read]);
-                    if let Some(at) = request.windows(4).position(|w| w == b"\r\n\r\n") {
-                        break at + 4;
-                    }
-                };
-                let head = String::from_utf8_lossy(&request[..head_end.min(request.len())])
-                    .to_ascii_lowercase();
-                let declared: usize = head
-                    .lines()
-                    .find_map(|line| line.strip_prefix("content-length:"))
-                    .and_then(|value| value.trim().parse().ok())
-                    .unwrap_or(0);
-                while request.len() < head_end + declared {
-                    let read = stream.read(&mut chunk).unwrap_or(0);
-                    if read == 0 {
-                        break;
-                    }
-                    request.extend_from_slice(&chunk[..read]);
-                }
-                let request = String::from_utf8_lossy(&request).into_owned();
-                if let Some(body_at) = request.find("\r\n\r\n") {
-                    seen_writer
-                        .lock()
-                        .unwrap()
-                        .push(request[body_at + 4..].to_string());
-                }
-                let reply = format!(
-                    "HTTP/1.1 {status} OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                    body.len(),
-                    body
-                );
-                let _ = stream.write_all(reply.as_bytes());
-            }
+    #[test]
+    fn provider_map_reads_the_answering_provider_not_the_sorted_first() {
+        // The reply is provider-keyed and serde_json sorts the keys, so
+        // "drex" lands before "glide" whatever the routing chose. A
+        // caller asking one question must read the provider that
+        // answered — reading the first map is how a claim pass read 0.0
+        // for every head while the lane answered perfectly.
+        let nested = serde_json::json!({
+            "drex": {"alpha": {"noul": 0.2}},
+            "glide": {"alpha": {"noul": 0.93}},
         });
-        (port, seen)
-    }
-
-    const STATE: &str = "Invoice INV-2026-0042 is due on 2026-11-30. The total due is $4,180.00 payable within 30 days. Late fees apply after the due date at 1.5 percent monthly.";
-
-    /// The entity reply's content string: candidates in three fields.
-    fn entity_body() -> String {
-        let content = serde_json::json!({
-            "entities": {
-                "invoice_id": [
-                    {"text": "INV-2026-0042", "confidence": 0.93, "start": 8, "end": 22}
-                ],
-                "total_due": [
-                    {"text": "$4,180.00", "confidence": 0.88, "start": 57, "end": 66}
-                ],
-                "due_date": [
-                    {"text": "2026-11-30", "confidence": 0.57, "start": 31, "end": 41}
-                ]
-            }
-        })
-        .to_string();
-        serde_json::json!({
-            "choices": [{"message": {"role": "assistant", "content": content}}]
-        })
-        .to_string()
-    }
-
-    /// A verify reply in the glide shape: noul carries the probability.
-    fn verify_body(p_invoice: f64, p_total: f64, p_date: f64) -> String {
-        serde_json::json!({
-            "answers": {
-                "invoice_id": {"type": "noul", "noul": p_invoice},
-                "total_due": {"type": "noul", "noul": p_total},
-                "due_date": {"type": "noul", "noul": p_date}
-            }
-        })
-        .to_string()
-    }
-
-    fn leak(text: String) -> &'static str {
-        Box::leak(text.into_boxed_str())
-    }
-
-    fn config_at(entity_port: u16, verify_port: u16) -> ExtractConfig {
-        ExtractConfig {
-            base_url: format!("http://127.0.0.1:{entity_port}"),
-            entity_model: ENTITY_MODEL_DEFAULT.to_string(),
-            token: "test-token".to_string(),
-            verifiers: vec![Verifier {
-                name: "glide".to_string(),
-                url: format!("http://127.0.0.1:{verify_port}/v1/systemone"),
-                model: "fastino/glide".to_string(),
-                key: "test-token".to_string(),
-                state_object: false,
-            }],
-        }
-    }
-
-    fn sample_fields() -> Vec<(String, FieldSpec)> {
-        vec![
-            ("invoice_id".to_string(), FieldSpec::of(FieldKind::Text)),
-            ("total_due".to_string(), FieldSpec::of(FieldKind::Number)),
-            ("due_date".to_string(), FieldSpec::of(FieldKind::Date)),
-            ("net_terms".to_string(), FieldSpec::of(FieldKind::Duration)),
-        ]
-    }
-
-    #[test]
-    fn the_pipeline_carries_span_confidence_quote_and_absence() {
-        // The locate pass declares the fields as entities; the verify
-        // pass asks one noul per field over the carrying segment; the
-        // answers carry span text (never normalized), the quote, the
-        // confidence — and the named absence for the field with no
-        // candidate at all.
-        let (entity_port, entity_seen) = stub_endpoint(leak(entity_body()), 0);
-        let (verify_port, verify_seen) = stub_endpoint(leak(verify_body(0.93, 0.90, 0.90)), 0);
-        let client = ExtractClient::new(config_at(entity_port, verify_port));
-        let report = client
-            .run(STATE, &sample_fields())
-            .expect("the run answers");
-        assert_eq!(report.answers.len(), 4, "{report:?}");
-        let invoice = report
-            .answers
-            .iter()
-            .find(|a| a.name == "invoice_id")
-            .expect("the invoice answer");
-        assert_eq!(invoice.value, serde_json::json!("INV-2026-0042"));
-        assert_eq!(invoice.spans, vec![(8, 22)]);
-        assert_eq!(invoice.confidence, Some(0.93));
-        assert!(!invoice.contested);
-        assert!(
-            invoice.quote.contains("Invoice INV-2026-0042"),
-            "{:?}",
-            invoice.quote
-        );
-        let net_terms = report
-            .answers
-            .iter()
-            .find(|a| a.name == "net_terms")
-            .expect("the net terms answer");
-        assert_eq!(net_terms.value, serde_json::Value::Null);
-        assert_eq!(
-            net_terms.absent_reason.as_deref(),
-            Some("no candidate span above the entity threshold")
-        );
-        // The locate body declares the fields as entities with their
-        // descriptions; the store-off and confidence flags ride it.
-        let sent: serde_json::Value =
-            serde_json::from_str(&entity_seen.lock().unwrap()[0].clone()).unwrap();
-        assert_eq!(sent["model"], ENTITY_MODEL_DEFAULT);
-        assert_eq!(sent["schema"]["entities"][0]["name"], "invoice_id");
-        assert!(sent["schema"]["entities"][0]["description"]
-            .as_str()
-            .is_some());
-        assert_eq!(sent["store"], false);
-        assert_eq!(sent["include_spans"], true);
-        // The verify body is the systemone shape: model, state, noul
-        // questions with true/false criteria — one call per carrying
-        // segment (the fixture state carries candidates in two).
-        assert_eq!(verify_seen.lock().unwrap().len(), 2, "one per segment");
-        let sent: serde_json::Value =
-            serde_json::from_str(&verify_seen.lock().unwrap()[0].clone()).unwrap();
-        assert_eq!(sent["model"], "fastino/glide");
-        assert!(sent["state"].is_string(), "{sent}");
-        assert_eq!(sent["questions"]["invoice_id"]["type"], "noul");
-        assert!(
-            sent["questions"]["invoice_id"]["criteria"]["true"]
-                .as_str()
-                .is_some(),
-            "{sent}"
-        );
-    }
-
-    #[test]
-    fn the_floors_reconcile_asymmetrically_and_adjudicate_once() {
-        // accept at 0.85; veto at 0.35; between the floors the span is
-        // contested and adjudicated once against the chain's next
-        // verifier — the second opinion asserts, the span survives
-        // marked by the deciding evidence.
-        let entity_port = stub_endpoint(leak(entity_body()), 0).0;
-        let (primary_port, primary_seen) = stub_endpoint(leak(verify_body(0.93, 0.10, 0.60)), 0);
-        let (second_port, second_seen) = stub_endpoint(leak(verify_body(0.93, 0.10, 0.90)), 0);
-        let mut config = config_at(entity_port, primary_port);
-        config.verifiers.push(Verifier {
-            name: "drex".to_string(),
-            url: format!("http://127.0.0.1:{second_port}/v1/systemone"),
-            model: "drex-v1.5".to_string(),
-            key: "test-token".to_string(),
-            state_object: false,
-        });
-        let client = ExtractClient::new(config);
-        let report = client
-            .run(STATE, &sample_fields())
-            .expect("the run answers");
-        let invoice = report
-            .answers
-            .iter()
-            .find(|a| a.name == "invoice_id")
-            .expect("invoice asserted");
-        assert_eq!(invoice.confidence, Some(0.93));
-        // Vetoed: the total's noul was 0.10 — the span is gone and the
-        // field is absent BY NAME, with the reason that says the verify
-        // floors did it.
-        let total = report
-            .answers
-            .iter()
-            .find(|a| a.name == "total_due")
-            .expect("total answered");
-        assert_eq!(total.value, serde_json::Value::Null);
-        assert_eq!(
-            total.absent_reason.as_deref(),
-            Some("no candidate cleared the verify floors")
-        );
-        // Contested at 0.60, adjudicated, the second opinion's 0.90
-        // asserts it.
-        let date = report
-            .answers
-            .iter()
-            .find(|a| a.name == "due_date")
-            .expect("date answered");
-        assert!(!date.contested);
-        assert_eq!(date.confidence, Some(0.90));
-        assert_eq!(report.stats.adjudications, 1, "{:?}", report.stats);
-        assert!(report.stats.vetoed >= 1);
-        // Two carrying segments: sentence one (invoice + date), sentence
-        // two (the total). The adjudication rode the chain's second
-        // verifier exactly once.
-        assert_eq!(primary_seen.lock().unwrap().len(), 2, "one per segment");
-        assert_eq!(second_seen.lock().unwrap().len(), 1, "one adjudication");
-    }
-
-    #[test]
-    fn list_kind_returns_the_survivors_in_reading_order() {
-        let content = serde_json::json!({
-            "entities": {
-                "milestone": [
-                    {"text": "kickoff", "confidence": 0.9, "start": 0, "end": 7},
-                    {"text": "handover", "confidence": 0.9, "start": 22, "end": 30}
-                ]
-            }
-        })
-        .to_string();
-        let entity_body =
-            leak(serde_json::json!({"choices": [{"message": {"content": content}}]}).to_string());
-        let verify_body = leak(
-            serde_json::json!({
-                "answers": {"milestone": {"type": "noul", "noul": 0.95}}
-            })
-            .to_string(),
-        );
-        let entity_port = stub_endpoint(entity_body, 0).0;
-        let verify_port = stub_endpoint(verify_body, 0).0;
-        let client = ExtractClient::new(config_at(entity_port, verify_port));
-        let fields = vec![("milestone".to_string(), FieldSpec::of(FieldKind::List))];
-        let report = client
-            .run("kickoff on Monday, handover on Friday", &fields)
-            .expect("the run answers");
-        let answer = &report.answers[0];
-        assert_eq!(
-            answer.value,
-            serde_json::json!(["kickoff", "handover"]),
-            "reading order, both survivors"
-        );
-        assert_eq!(answer.spans, vec![(0, 7), (22, 30)]);
-    }
-
-    #[test]
-    fn one_retry_absorbs_a_dead_first_connection() {
-        let entity_port = stub_endpoint(leak(entity_body()), 1).0;
-        let verify_port = stub_endpoint(leak(verify_body(0.93, 0.93, 0.93)), 0).0;
-        let client = ExtractClient::new(config_at(entity_port, verify_port));
-        let report = client
-            .run(STATE, &sample_fields())
-            .expect("the retry lands");
-        assert_eq!(report.answers.len(), 4);
-    }
-
-    #[test]
-    fn errors_name_the_host_and_pass_never_the_token() {
-        let (port, _seen) = stub_endpoint_with_status(r#"{"error":{"message":"bad key"}}"#, 0, 401);
-        let mut config = config_at(port, port);
-        config.token = "sk-secret-token-value".to_string();
-        config.verifiers[0].key = "sk-secret-token-value".to_string();
-        let client = ExtractClient::new(config);
-        let error = client
-            .run(STATE, &sample_fields())
-            .expect_err("a 401 is an error");
-        let rendered = format!("{error}");
-        assert!(rendered.contains("HTTP 401"), "{rendered}");
-        assert!(rendered.contains("127.0.0.1"), "{rendered}");
-        assert!(rendered.contains("locate"), "{rendered}");
-        assert!(
-            !rendered.contains("sk-secret-token-value"),
-            "the token never renders: {rendered}"
-        );
-    }
-
-    #[test]
-    fn the_named_absence_names_the_key() {
-        let resolved = ExtractConfig::resolve(
-            Some("/tmp/fleet-extract-absent-home"),
-            Some("/tmp/fleet-extract-absent-user"),
-            None,
-            None,
-        );
-        let (config, missing) = resolved.expect("the resolve names what it found");
-        assert_eq!(missing, vec!["FASTINO_API_KEY".to_string()], "{missing:?}");
-        assert!(config.token.is_empty());
+        assert_eq!(provider_map(&nested, "glide")["alpha"]["noul"], 0.93);
+        assert_eq!(provider_map(&nested, "drex")["alpha"]["noul"], 0.2);
+        // A reply naming a provider it did not answer with falls back to
+        // the only map there is.
+        assert_eq!(provider_map(&nested, "liquid")["alpha"]["noul"], 0.2);
     }
 
     #[test]
@@ -1337,17 +999,5 @@ mod tests {
         for segment in &segs {
             assert_eq!(&text[segment.start..segment.end], segment.text);
         }
-    }
-
-    #[test]
-    fn the_entity_reply_tolerates_missing_labels_and_bad_content() {
-        assert!(parse_entity_content("not json at all").is_empty());
-        let spans = parse_entity_content(r#"{"entities": {"due_date": []}}"#);
-        assert!(spans.is_empty());
-        let spans = parse_entity_content(
-            r#"{"entities": {"x": [{"text": "v", "confidence": 0.9, "start": 1, "end": 2}]}}"#,
-        );
-        assert_eq!(spans.len(), 1);
-        assert_eq!(spans[0].field, "x");
     }
 }
