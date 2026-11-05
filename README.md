@@ -263,8 +263,11 @@ owner's own work that predates and feeds this harness. What grew from them is it
   sequencing, and the module reference.
 - [FUNCTIONAL-SPECIFICATIONS.md](FUNCTIONAL-SPECIFICATIONS.md) — what
   the product does, surface by surface, in the user's terms.
+- [docs/features/desk.md](docs/features/desk.md) · the desk: where
+  knowledge work happens — the brief, the claims with their sentences,
+  the coverage that names its gaps, the end gate that names what stands.
 - [docs/architecture/surfaces.md](docs/architecture/surfaces.md) · the
-  what and why of all fourteen destinations.
+  what and why of the destinations.
   [docs/architecture/lanes.md](docs/architecture/lanes.md) — the five-lane
   case.
 - `CLAUDE.md` — the house rules, the pointer index, and the session
