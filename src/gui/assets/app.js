@@ -22651,6 +22651,7 @@
       markRail();
       setWork(false);
       Object.keys(PANEL_EL).forEach(function (key) {
+        if (!PANEL_EL[key]) return;
         PANEL_EL[key].hidden = key !== 'chat';
       });
       el.panelLater.hidden = true;
@@ -22684,6 +22685,11 @@
     markRail();
     setWork(work);
     Object.keys(PANEL_EL).forEach(function (key) {
+      // A panel the served page lacks binds null (a real browser
+      // tolerates it; only the harness refuses). One null must not
+      // abort the dispatch mid-loop — the failure mode is the whole
+      // route going dead: nothing detaches, nothing opens.
+      if (!PANEL_EL[key]) return;
       PANEL_EL[key].hidden = work ? key !== 'chat' : key !== address;
     });
     var panelHere = PANEL_EL[address] || (work ? el.panelChat : null);
