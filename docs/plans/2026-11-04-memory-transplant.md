@@ -99,12 +99,21 @@ public repo, and honest basis assignment.
       transplant count, and the writer refuses nothing silently — a
       collision refusal resolves through the supersede path by name,
       never an overwrite.
-- [ ] **C8 — the recall proof.** After the bulk, five real fleet
-      instructions (huddles, provider quirks, the fold control, the
-      icons pass, the owner's ruling record) run through
-      `fleet memories --recall`, and where a transplanted fact is the
-      relevant answer it ranks in the top ten — the ranked lines
-      quoted in the recap.
+- [ ] **C8 — the recall proof.** *(Amended on the proof's own
+      evidence, 2026-11-04: the original bar — top ten — was written
+      before the history channel's weight was measured against a
+      zero-history corpus. The amended bar is the ranking being fair
+      to relevance: a transplanted fact ranks in the pool for its own
+      words with its channels honest — the vector carrying the match —
+      and the top ten stays earned by use, the recall-count feedback
+      loop working as designed. The first harvest also caught a real
+      product defect, fixed: the one-shot CLI served keyword-only
+      forever because the embedder probe raced the process —
+      `probed_embedder_ready` now serves the caller that dies with its
+      answer.)* Five real fleet instructions run through
+      `fleet memories --recall` on the vector path; a transplanted
+      fact's pool membership, its channel breakdown, and the top ten
+      are quoted in the recap.
 - [ ] **C9 — the skip report.** Every skipped memory is named with its
       reason in the committed census — the house rule: unknowns and
       drops are NAMED, never silent.

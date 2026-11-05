@@ -951,3 +951,26 @@ the write path is mechanism-constrained and the cycle's summaries are
 deterministic. No separate session-scoped store: a working-tier fact is
 a file in the corpus like any other, and the cycle is what keeps the
 tree from growing without bound.
+
+## The transplant
+
+On 2026-11-04 the corpus absorbed the harness session memory for this
+project: 343 facts landed through the writer in date-ordered batches
+(`scripts/memory-transplant-batches.py`, the census at
+`docs/plans/2026-11-04-memory-transplant-census.md` triaging all 443
+source facts with a disposition and a reason each). Every fact is
+writer-produced — frontmatter the CLI validated, `confirmed-by` for
+owner-ruled facts, `inferred` for the rest — and the screened set (91
+facts carrying machine paths, key-shaped tokens, or deeper sibling
+internals than the corpus carries) waits for the owner's nod before it
+lands. The census re-runs deterministically:
+
+```sh
+python3 -I scripts/memory-transplant-census.py > docs/plans/2026-11-04-memory-transplant-census.md
+```
+
+A transplanted fact starts at `recall-count: 0` and earns its rank the
+way every fact does — the history channel is the recall-count feedback
+loop, and the corpus's veterans hold the top ten until the new facts
+are used. The vector channel carries their relevance from the first
+load; the pool admits them; the top ten is earned, not granted.

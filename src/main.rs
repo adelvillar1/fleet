@@ -1603,7 +1603,14 @@ fn memories_command(options: &cli::MemoriesOptions) -> ExitCode {
     }
     // The corpus is loaded after the cycle, so the cards show what the
     // pass left behind — the new summary in, the archived facts out.
-    let memory = fleet::memory::Memory::load(&root);
+    // The embedder is waited for, not raced: a one-shot CLI process
+    // would otherwise exit before the background probe lands, and
+    // `--recall` would serve keyword-only forever (the transplanted
+    // corpus's first real vector build rode on this line).
+    let memory = fleet::memory::Memory::load_with(
+        &root,
+        fleet::memory::probed_embedder_ready(std::time::Duration::from_secs(5)),
+    );
     if let Some(instruction) = &options.recall {
         print!("{}", fleet::memory::render_recall(&memory, instruction));
     } else {

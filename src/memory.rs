@@ -2291,11 +2291,13 @@ pub fn probed_embedder() -> Box<dyn Embedder> {
 ///
 /// This is the seam for a caller that needs the live answer rather than
 /// the degradation — the suite's live-embed tests, which hold the embed
-/// gate and then assert against the real backend. Production code never
-/// waits: a request that arrives before the probe reads keyword-only and
-/// the next one reads the vector path.
-#[cfg(test)]
-pub(crate) fn probed_embedder_ready(timeout: Duration) -> Box<dyn Embedder> {
+/// gate and then assert against the real backend. A long-lived process
+/// never waits — a request that arrives before the probe reads
+/// keyword-only and the next one reads the vector path — but a one-shot
+/// CLI process has no next request: `fleet memories --recall` waited on
+/// nothing and served keyword-only forever, so the caller that dies
+/// with its answer waits here.
+pub fn probed_embedder_ready(timeout: Duration) -> Box<dyn Embedder> {
     let deadline = std::time::Instant::now() + timeout;
     loop {
         let mut probing = false;
