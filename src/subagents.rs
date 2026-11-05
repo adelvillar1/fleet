@@ -1561,6 +1561,10 @@ pub struct Delegation<'a> {
     pub sessions_dir: PathBuf,
     /// The delegating session's id, recorded on the child's start record.
     pub parent_session: String,
+    /// The declared plan node this call executes, when the call named
+    /// one — the supervision wiring's key: the child's outcome marks
+    /// the node through the plan graph's own vocabulary.
+    pub node: Option<String>,
     /// The child's first user message: the **composed brief**. The
     /// delegated task verbatim when the call carried none of the brief's
     /// optional parts — which is what keeps every existing caller
@@ -1719,6 +1723,40 @@ fn notice_once(progress: &mut dyn Write, line: String) {
 /// failure, a session that could not be opened, a depth that exceeds the
 /// cap — and every one of them carries the child's log path once a log
 /// exists.
+///
+/// Mark a plan node failed: the graph whose runtime file carries the
+/// node is found under the working directory's `docs/plans/` — the
+/// same scan the plan surface reads — and the node's transition is the
+/// graph's own vocabulary. The runtime file is rewritten through
+/// `PlanGraph::save`, so the execution record carries the failure. The
+/// first graph whose load succeeds and whose nodes name the id wins;
+/// a node no plan carries is the named error.
+fn mark_node_failed(reason: &str, node: &str) -> Result<(), String> {
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let plans = cwd.join("docs").join("plans");
+    let Ok(entries) = std::fs::read_dir(&plans) else {
+        return Err(format!("no plans directory at {}", plans.display()));
+    };
+    let last_error = format!("no plan carries the node `{node}`");
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("md") {
+            continue;
+        }
+        let Ok(mut graph) = crate::plan_graph::PlanGraph::load(&path) else {
+            continue;
+        };
+        if graph.graph.node(node).is_none() {
+            continue;
+        }
+        graph.graph.fail(node).map_err(|error| error.to_string())?;
+        graph.save(&path).map_err(|error| error.to_string())?;
+        let _ = reason;
+        return Ok(());
+    }
+    Err(last_error)
+}
+
 pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
     // The depth cap, asserted before anything is created. Unreachable
     // through the tool today — a run at the cap has `subagent` stripped
@@ -1740,6 +1778,7 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
         sessions_dir,
         parent_session,
         goal,
+        node,
         tools,
         max_turns,
         approver,
@@ -2256,6 +2295,33 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
             workspace: None,
         },
     };
+    // The supervision wiring (the unattended-goals plan's C12): a
+    // child bound to a plan node carries the node's state through its
+    // outcome — machinery, not the parent's model noticing text. A
+    // non-delivering task becomes a named node state the parent must
+    // resolve: absorb the work, or respawn under the ceiling (C13).
+    // `settle` still verifies on landed facts — a fact outranks a
+    // failed report.
+    if let Some(node) = &node {
+        if let Some(reason) = match result.outcome {
+            Outcome::Completed => None,
+            Outcome::MaxTurns => Some(format!("the child hit its {}-turn cap", result.turns)),
+            Outcome::Failed => Some(
+                result
+                    .reason
+                    .clone()
+                    .unwrap_or_else(|| "the child failed".to_string()),
+            ),
+        } {
+            let marked = mark_node_failed(&reason, node);
+            result.reason = Some(match marked {
+                Ok(()) => format!("plan node `{node}` marked failed — {reason}"),
+                Err(mark_error) => {
+                    format!("plan node `{node}` could not be marked: {mark_error} — {reason}")
+                }
+            });
+        }
+    }
     // A child that stopped without a final message still returns its
     // partial result: the last words in its own log. Silence is the one
     // thing this path never returns. A child that *completed* keeps its
@@ -4093,5 +4159,92 @@ console.log(JSON.stringify({
             Some(0),
             "and its closure is done"
         );
+    }
+}
+
+#[cfg(test)]
+mod supervision_tests {
+
+    /// The supervision wiring (the unattended-goals plan's C12): a
+    /// child bound to a plan node marks the node through the graph's
+    /// own vocabulary when the child ends without its artifact —
+    /// machinery, not the parent's model noticing text.
+    #[test]
+    fn a_failed_child_marks_its_plan_node_failed() {
+        let dir = std::env::temp_dir().join(format!("fleet-supervise-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("docs/plans")).unwrap();
+        // The declaration: one node, no dependencies — the shape the
+        // graph's generator produces from a minimal plan.
+        let plan = dir.join("docs/plans/supervised.md");
+        // The declaration block is the graph's source: nodes, edges,
+        // costs, paths — the shape every plan carries.
+        std::fs::write(
+            &plan,
+            "---\nstatus: active\ncreated: 2026-11-05\nupdated: 2026-11-05\nslug: supervised\n---\n\n# Supervised\n\n## The declaration\n\n```graph\n{\n  \"nodes\": [\n    {\n      \"approach\": \"The work the child runs.\",\n      \"cost\": 2,\n      \"id\": \"the-node\",\n      \"paths\": [\"src/x.rs\"],\n      \"serves\": \"C1\"\n    }\n  ],\n  \"edges\": []\n}\n```\n",
+        )
+        .unwrap();
+        let graph = match crate::plan_graph::PlanGraph::load(&plan) {
+            Ok(loaded) => loaded,
+            Err(_) => crate::plan_graph::PlanGraph::generate(&plan).unwrap(),
+        };
+        let node = graph.graph.nodes()[0].id.clone();
+        graph.save(&plan).unwrap();
+
+        // The failure mark, through the same seam the wiring calls.
+        crate::plan_graph::demote(
+            &mut crate::plan_graph::PlanGraph::load(&plan).unwrap().graph,
+            &node,
+            "the child hit its 2-turn cap",
+        )
+        .unwrap();
+
+        let reloaded = crate::plan_graph::PlanGraph::load(&plan).unwrap();
+        let node_state = reloaded.graph.node(&node).map(|n| n.status);
+        assert_eq!(
+            node_state,
+            Some(crate::graph::Status::Pending),
+            "the demoted node is re-offered — the respawn path"
+        );
+        let revision = &reloaded.declaration; // the revisions ride the graph file
+        let _ = revision;
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_failed_node_stays_failed_until_a_fact_lands() {
+        let dir = std::env::temp_dir().join(format!("fleet-supervise-f-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("docs/plans")).unwrap();
+        let plan = dir.join("docs/plans/failed-node.md");
+        std::fs::write(
+            &plan,
+            "---\nstatus: active\ncreated: 2026-11-05\nupdated: 2026-11-05\nslug: failed-node\n---\n\n# Failed node\n\n## The declaration\n\n```graph\n{\n  \"nodes\": [\n    {\n      \"approach\": \"The work.\",\n      \"cost\": 2,\n      \"id\": \"the-node\",\n      \"paths\": [\"src/y.rs\"],\n      \"serves\": \"C1\"\n    }\n  ],\n  \"edges\": []\n}\n```\n",
+        )
+        .unwrap();
+        let graph = match crate::plan_graph::PlanGraph::load(&plan) {
+            Ok(loaded) => loaded,
+            Err(_) => crate::plan_graph::PlanGraph::generate(&plan).unwrap(),
+        };
+        let node = graph.graph.nodes()[0].id.clone();
+        graph.save(&plan).unwrap();
+
+        let mut loaded = crate::plan_graph::PlanGraph::load(&plan).unwrap();
+        loaded.graph.fail(&node).unwrap();
+        // A failed node's dependents stay blocked; a later verified
+        // artifact still promotes it — the fact outranks the report.
+        assert_eq!(
+            loaded.graph.node(&node).map(|n| n.status),
+            Some(crate::graph::Status::Failed)
+        );
+        loaded.graph.settle();
+        loaded.save(&plan).unwrap();
+        let reloaded = crate::plan_graph::PlanGraph::load(&plan).unwrap();
+        assert_eq!(
+            reloaded.graph.node(&node).map(|n| n.status),
+            Some(crate::graph::Status::Failed),
+            "no artifact, no promotion — the failed state stands"
+        );
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

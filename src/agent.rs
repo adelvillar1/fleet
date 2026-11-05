@@ -5112,6 +5112,7 @@ impl<'a> Agent<'a> {
             sessions_dir,
             parent_session,
             goal: request.goal,
+            node: request.node,
             tools: request.tools,
             max_turns: request.max_turns,
             approver: &mut *self.approver,
