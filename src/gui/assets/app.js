@@ -7942,6 +7942,22 @@
     loadDraft();
   }
 
+  // The conversation the face is showing, remembered across reloads
+  // (the reload-reattach plan): written wherever a real conversation
+  // binds, cleared by the deliberate detach — so a reload re-opens what
+  // was showing, and a welcome the owner chose stays a welcome.
+  function storeOpenSession(id) {
+    try {
+      if (id) window.localStorage.setItem('fleet-open-session', id);
+      else window.localStorage.removeItem('fleet-open-session');
+    } catch (error) { }
+  }
+
+  function storedOpenSession() {
+    try { return window.localStorage.getItem('fleet-open-session') || ''; }
+    catch (error) { return ''; }
+  }
+
   function ask(text) {
     if (window.location.hash !== '#/chat') window.location.hash = '#/chat';
     el.task.value = text;
@@ -8052,6 +8068,7 @@
           // stealing the view.
           if (!face.session) {
             face.session = created;
+            storeOpenSession(created);
             face.focus = { panel: 'sessions', id: created };
             face.panel = 'sessions';
             try {
@@ -8572,6 +8589,16 @@
     // a resumed room shows who is here without waiting for an event.
     face.goal = state.goal || null;
     face.goalDone = state.goal_done || null;
+    // The task list rides the state document too (the reload-reattach
+    // plan's C4): the log's last `tasks` record, tail-scanned by the
+    // bridge — the live event log's cap may have dropped it, the
+    // document cannot. The replayed events then keep it current.
+    face.tasks = Array.isArray(state.tasks)
+      ? state.tasks.map(function (item) {
+          return { step: item.step || '', status: item.status || 'pending' };
+        })
+      : [];
+    paintGpCard();
     face.members = state.members || [];
     // The room's phases and knowledge, for its head (C9/C15).
     face.phases = state.phases || [];
@@ -12520,6 +12547,7 @@
     // The draft swaps with the conversation (D2): the outgoing one keeps
     // its sentence, the incoming one restores its own.
     swapDraft(face.session, id);
+    storeOpenSession(id);
     face.focus = { panel: 'sessions', id: id };
     if (!options.keepHash) {
       try {
@@ -12586,6 +12614,7 @@
     swapDraft(face.session || '', face.pendingNew ? 'new' : '');
     face.session = null;
     face.focus = null;
+    storeOpenSession(null);
     face.running = false;
     face.driving = '';
     face.seat = null;
@@ -12633,6 +12662,7 @@
         window.localStorage.removeItem('fleet-draft-new');
         face.pendingNew = false;
         face.session = reply.body.id;
+        storeOpenSession(reply.body.id);
         readSessions(true);
         return reply.body.id;
       }
@@ -23807,8 +23837,18 @@
         swapDraft(face.session, face.pendingNew ? 'new' : '');
         face.session = null;
         face.focus = null;
+        storeOpenSession(null);
         el.log.hidden = true;
         el.empty.hidden = false;
+      }
+      // A reload is the same address again (the reload-reattach plan):
+      // the conversation the face held comes back through the same seed
+      // the work row runs. A deliberate detach cleared the key, so the
+      // welcome the owner chose stays a welcome across reloads.
+      var storedOpen = storedOpenSession();
+      if (storedOpen) {
+        openWork(storedOpen, { keepHash: true });
+        return;
       }
       readHome(false).then(function () {
         paintHome();
@@ -25064,6 +25104,7 @@
   function openPane() {
     el.pane.hidden = false;
     document.body.dataset.pane = 'open';
+    try { window.localStorage.setItem('fleet-pane', 'open'); } catch (error) { }
     showPaneTab(face.paneTab || 'run');
     if (!face.tree) readTree('', true);
   }
@@ -25071,10 +25112,12 @@
   function closePane() {
     el.pane.hidden = true;
     document.body.dataset.pane = 'closed';
+    try { window.localStorage.setItem('fleet-pane', 'closed'); } catch (error) { }
   }
 
   function showPaneTab(which) {
     face.paneTab = which;
+    try { window.localStorage.setItem('fleet-pane-tab', which); } catch (error) { }
     var run = which === 'run';
     var files = which === 'files';
     var preview = which === 'preview';
@@ -25750,6 +25793,16 @@
       if (lastPanel && PANEL_EL[lastPanel]) window.location.hash = '#/' + lastPanel;
     } catch (error) { }
   }
+  // The pane returns with the reload (the reload-reattach plan's C5):
+  // the active tab and the open state are the owner's, applied before
+  // the first paint so the tasks card is where they left it.
+  try {
+    var storedTab = window.localStorage.getItem('fleet-pane-tab');
+    if (storedTab) face.paneTab = storedTab;
+  } catch (error) { }
+  try {
+    if (window.localStorage.getItem('fleet-pane') === 'open') openPane();
+  } catch (error) { }
   showRoute();
   // gui-revamp C9: the app opens on the conversation with the composer
   // focused, so the first keystroke is already the owner's words — the

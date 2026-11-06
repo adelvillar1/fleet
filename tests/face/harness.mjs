@@ -4063,6 +4063,182 @@ async function aQueuedFlushNamesItsOwnConversation() {
     JSON.stringify(runs.map((c) => c.url)));
 }
 
+// RE (the reload-reattach plan): a reload restores what was showing.
+// The conversation the face held is remembered across reloads — written
+// wherever a real conversation binds, cleared by the deliberate detach —
+// and the chat address re-attaches through the same seed the work row
+// runs.
+async function theOpenConversationIsRemembered() {
+  const doc = {
+    sessions: {
+      type: 'sessions', read_at: 'now', current: 'held-1',
+      counts: { needs: 0, working: 0, background: 0, earlier: 1, total: 1 },
+      sessions: [row('held-1', 'completed', { title: 'the held conversation' })],
+    },
+    state: (asked) => ({ ...emptyState(asked), session: asked }),
+  };
+  const page = boot({
+    width: 1440, hash: '#/sessions/held-1', documents: doc, newId: 'mint-1',
+  });
+  await flush();
+  page.open();
+  await flush(80);
+  const key = () => page.window.localStorage.getItem('fleet-open-session');
+  check('RE the open conversation is remembered', key() === 'held-1', String(key()));
+  // The + mints and rebinds the memory to the minted conversation.
+  page.fireOn('conv-new', 'click');
+  await flush(80);
+  check('RE the mint rebinds the memory', key() === 'mint-1', String(key()));
+  // Opening the older conversation rebinds again.
+  page.window.location.hash = '#/sessions/held-1';
+  await flush(80);
+  check('RE opening rebinds the memory', key() === 'held-1', String(key()));
+  // The deliberate home walk clears it: the welcome the owner chose
+  // stays a welcome across reloads.
+  page.window.location.hash = '#/chat';
+  await flush(80);
+  check('RE the deliberate detach clears the memory', key() === null, String(key()));
+}
+
+async function aReloadAtTheChatAddressReattaches() {
+  const doc = {
+    sessions: {
+      type: 'sessions', read_at: 'now', current: 'held-1',
+      counts: { needs: 0, working: 1, background: 0, earlier: 1, total: 2 },
+      sessions: [row('held-1', 'working', { title: 'the goal conversation' })],
+    },
+    state: (asked) => ({
+      ...emptyState(asked), session: asked, goal: 'the standing goal',
+      tasks: [
+        { step: 'ship the fix', status: 'in_progress' },
+        { step: 'verify the links', status: 'pending' },
+      ],
+    }),
+  };
+  const page = boot({
+    width: 1440, hash: '#/chat', documents: doc,
+    storage: { 'fleet-open-session': 'held-1' },
+  });
+  await flush();
+  page.open();
+  await flush(80);
+  const resumes = page.calls.filter((c) => c.url.startsWith('/api/resume'));
+  check('RE the boot resumes the stored conversation',
+    resumes.length === 1 && resumes[0].body.includes('held-1'),
+    JSON.stringify(resumes.map((c) => c.body)));
+  check('RE the address stays the chat page',
+    page.window.location.hash === '#/chat', page.window.location.hash);
+  check('RE the chip carries the standing goal',
+    page.text('run-goal-btn') === 'the standing goal', page.text('run-goal-btn'));
+  const rows = page.rows('#gp-tasks .gp-task');
+  check('RE the tasks card rebuilds from the state document',
+    rows.length === 2 && rows[0].dataset.status === 'in_progress' &&
+      rows[1].dataset.status === 'pending',
+    JSON.stringify(rows.map((r) => r.dataset.status)));
+  // The chip never names an unshown conversation: the re-attach's own
+  // state read names the conversation it opened.
+  const states = page.calls.filter((c) => String(c.url).startsWith('/api/state'));
+  check('RE the shown conversation\u2019s read names it',
+    states.some((c) => String(c.url).includes('session=held-1')),
+    JSON.stringify(states.map((c) => c.url)));
+}
+
+async function thePaneReturnsWithTheReload() {
+  const doc = {
+    sessions: {
+      type: 'sessions', read_at: 'now', current: '',
+      counts: { needs: 0, working: 0, background: 0, earlier: 0, total: 0 },
+      sessions: [],
+    },
+    state: (asked) => ({ ...emptyState(asked), session: asked }),
+  };
+  const open = boot({
+    width: 1440, hash: '#/chat', documents: doc,
+    storage: { 'fleet-pane': 'open', 'fleet-pane-tab': 'files' },
+  });
+  await flush();
+  open.open();
+  await flush(80);
+  check('RE the pane returns open', open.body.dataset.pane === 'open',
+    String(open.body.dataset.pane));
+  check('RE the pane returns at its tab',
+    open.IDS['tab-files'].getAttribute('aria-selected') === 'true',
+    open.IDS['tab-files'].getAttribute('aria-selected'));
+  const closed = boot({
+    width: 1440, hash: '#/chat', documents: doc,
+    storage: { 'fleet-pane': 'closed' },
+  });
+  await flush();
+  closed.open();
+  await flush(80);
+  check('RE a deliberately closed pane stays closed',
+    closed.body.dataset.pane !== 'open', String(closed.body.dataset.pane));
+}
+
+async function aDeliberateDetachStaysDetached() {
+  const doc = {
+    sessions: {
+      type: 'sessions', read_at: 'now', current: 'held-1',
+      counts: { needs: 0, working: 0, background: 0, earlier: 1, total: 1 },
+      sessions: [row('held-1', 'completed', { title: 'the held conversation' })],
+    },
+    state: (asked) => ({ ...emptyState(asked), session: asked }),
+  };
+  // First boot: the re-attach runs, then the owner walks home.
+  const first = boot({
+    width: 1440, hash: '#/chat', documents: doc,
+    storage: { 'fleet-open-session': 'held-1' },
+  });
+  await flush();
+  first.open();
+  await flush(80);
+  check('RE the first boot re-attaches',
+    first.calls.some((c) => c.url.startsWith('/api/resume')), 'no resume');
+  first.window.location.hash = '#/sessions/held-1';
+  await flush(80);
+  first.window.location.hash = '#/chat';
+  await flush(80);
+  check('RE the home walk clears the memory',
+    first.window.localStorage.getItem('fleet-open-session') === null,
+    String(first.window.localStorage.getItem('fleet-open-session')));
+  // The reload after the deliberate detach: the welcome stands, nothing
+  // resumes.
+  const second = boot({
+    width: 1440, hash: '#/chat', documents: doc,
+    storage: {},
+  });
+  await flush();
+  second.open();
+  await flush(80);
+  check('RE the reload after a deliberate detach shows the welcome',
+    second.IDS.empty.hidden === false &&
+      !second.calls.some((c) => c.url.startsWith('/api/resume')),
+    'empty hidden: ' + second.IDS.empty.hidden);
+}
+
+async function aVanishedConversationIsNamed() {
+  const doc = {
+    sessions: {
+      type: 'sessions', read_at: 'now', current: '',
+      counts: { needs: 0, working: 0, background: 0, earlier: 0, total: 0 },
+      sessions: [],
+    },
+    state: (asked) => ({ ...emptyState(asked), session: asked }),
+    resume: { status: 409, body: { error: 'gone-1 is not in the archive' } },
+  };
+  const page = boot({
+    width: 1440, hash: '#/chat', documents: doc,
+    storage: { 'fleet-open-session': 'gone-1' },
+  });
+  await flush();
+  page.open();
+  await flush(80);
+  check('RE the refused id still attempted the seed',
+    page.calls.some((c) => c.url.startsWith('/api/resume')), 'no resume');
+  check('RE the welcome stands when the conversation is gone',
+    page.IDS.empty.hidden === false, 'empty hidden: ' + page.IDS.empty.hidden);
+}
+
 // N3: the rail's badge says where the work is — needs plus working on
 // the sessions count, hidden when the archive is quiet, click-through
 // by being the link's own child.
@@ -10144,6 +10320,11 @@ const cases = [
   ['NEW New mints at the press and the send names it', newMintsImmediatelyAndTheSendNamesIt],
   ['REG a send beside a working run mints and names its own conversation', aSendBesideARunMintsAndNamesItsOwnConversation],
   ['REG a queued flush names its own conversation', aQueuedFlushNamesItsOwnConversation],
+  ['RE the open conversation is remembered', theOpenConversationIsRemembered],
+  ['RE a reload at the chat address re-attaches', aReloadAtTheChatAddressReattaches],
+  ['RE the pane returns with the reload', thePaneReturnsWithTheReload],
+  ['RE a deliberate detach stays detached across reloads', aDeliberateDetachStaysDetached],
+  ['RE a vanished conversation is named', aVanishedConversationIsNamed],
   ['N3 the rail badge says where the work is', theRailBadgeSaysWhereTheWorkIs],
   ['Q the queued messages carry their actions', theQueuedMessagesCarryTheirActions],
   ['REV the diff offers both verdicts per hunk', theDiffOffersBothVerdictsPerHunk],
