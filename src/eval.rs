@@ -391,7 +391,9 @@ fn sibling_binary(name: &str, compile_time_exe: Option<&str>) -> Option<PathBuf>
     if let Some(found) = walking_up(exe.parent(), &file) {
         return Some(found);
     }
-    let manifest = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/debug").join(&file);
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("target/debug")
+        .join(&file);
     manifest.exists().then_some(manifest)
 }
 
@@ -5521,10 +5523,8 @@ mod tests {
     fn a_target_dir_tree(tag: &str) -> PathBuf {
         static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let serial = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let root = std::env::temp_dir().join(format!(
-            "fleet-eval-{tag}-{}-{serial}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("fleet-eval-{tag}-{}-{serial}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("deps")).unwrap();
         root
@@ -5579,8 +5579,16 @@ mod tests {
         // never wedge the resolver onto a path that is not there.
         let missing = root.join("never-built");
         let from_stale = sibling_binary("mock-server", Some(&missing.display().to_string()));
-        assert_ne!(from_stale.as_deref(), Some(missing.as_path()), "{from_stale:?}");
-        assert_eq!(from_stale, sibling_binary("mock-server", None), "{from_stale:?}");
+        assert_ne!(
+            from_stale.as_deref(),
+            Some(missing.as_path()),
+            "{from_stale:?}"
+        );
+        assert_eq!(
+            from_stale,
+            sibling_binary("mock-server", None),
+            "{from_stale:?}"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 

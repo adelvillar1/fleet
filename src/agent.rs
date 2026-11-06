@@ -14682,7 +14682,10 @@ You are auditing a change. Read the diff before you judge it.
         }
         for (path, content) in [
             // The `Usage` struct: the term's own identifier.
-            ("src/api.rs", "pub struct Usage {\n    pub tokens: u64,\n}\n"),
+            (
+                "src/api.rs",
+                "pub struct Usage {\n    pub tokens: u64,\n}\n",
+            ),
             // A font family in a plugin's markup.
             (
                 "plugins/telemetry/index.html",
@@ -14704,7 +14707,10 @@ You are auditing a change. Read the diff before you judge it.
                 "#[derive(Deserialize)]\npub struct Widget {\n    pub label: String,\n}\n",
             ),
         ] {
-            let guard = write_guard(&root, &serde_json::json!({"path": path, "content": content}));
+            let guard = write_guard(
+                &root,
+                &serde_json::json!({"path": path, "content": content}),
+            );
             assert_eq!(guard, WriteGuard::Clean, "{path}: {guard:?}");
         }
         // KI-428's surface: a patch carries the same names, and the guard
@@ -14749,7 +14755,10 @@ You are auditing a change. Read the diff before you judge it.
             crate::nomenclature::SPELLING_CONVENTION_FILES
         );
         let content = "pub static CODE: &str = \"SF Mono\";\n";
-        let guard = write_guard(&root, &serde_json::json!({"path":"src/x.rs","content":content}));
+        let guard = write_guard(
+            &root,
+            &serde_json::json!({"path":"src/x.rs","content":content}),
+        );
         assert!(
             matches!(guard, WriteGuard::Refused { .. }),
             "a spelling one file wrote is still policed: {guard:?}"
@@ -14772,7 +14781,10 @@ You are auditing a change. Read the diff before you judge it.
             "two files is the bar: {}",
             crate::nomenclature::SPELLING_CONVENTION_FILES
         );
-        let guard = write_guard(&root, &serde_json::json!({"path":"src/x.rs","content":content}));
+        let guard = write_guard(
+            &root,
+            &serde_json::json!({"path":"src/x.rs","content":content}),
+        );
         assert_eq!(guard, WriteGuard::Clean, "{guard:?}");
         let _ = std::fs::remove_dir_all(&root);
     }

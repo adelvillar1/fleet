@@ -825,7 +825,11 @@ fn every_class_the_walk_advances_on_grades_as_availability() {
     let reply =
         JudgeReply::parse(&serde_json::from_str::<Value>(&lane_reply("hard", 0.9)).unwrap());
     let judgment = grade(&route, None, &reply);
-    assert_eq!(judgment.verdict, VERDICT_INSUFFICIENT, "{}", judgment.reason);
+    assert_eq!(
+        judgment.verdict, VERDICT_INSUFFICIENT,
+        "{}",
+        judgment.reason
+    );
     assert!(
         judgment.reason.contains("account-state"),
         "{}",

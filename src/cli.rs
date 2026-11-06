@@ -2390,7 +2390,8 @@ fn parse_reload(args: &[String]) -> Result<Command, String> {
                     .map_err(|_| format!("`--port {value}` is not a port"))?;
                 if parsed == 0 {
                     return Err(
-                        "`--port 0` names no address: the reload's proof reads the port".to_string(),
+                        "`--port 0` names no address: the reload's proof reads the port"
+                            .to_string(),
                     );
                 }
                 port = parsed;

@@ -3963,10 +3963,7 @@ fn reload_command(options: &cli::ReloadOptions) -> ExitCode {
     let install = options.from.as_ref().map(std::path::PathBuf::from);
     if let Some(path) = install.as_ref() {
         if !path.is_file() {
-            eprintln!(
-                "fleet: reload: --from {} is not a file",
-                path.display()
-            );
+            eprintln!("fleet: reload: --from {} is not a file", path.display());
             return ExitCode::from(2);
         }
     }

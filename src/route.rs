@@ -4301,8 +4301,7 @@ mod tests {
     fn the_model_arm_wins_over_the_account_arm_and_names_its_own_fact() {
         let both = ClientError::Api(crate::api::ApiError {
             status: 400,
-            message: "You have no active plan subscription; model is unavailable"
-                .to_string(),
+            message: "You have no active plan subscription; model is unavailable".to_string(),
             request_id: None,
         });
         assert_eq!(failure_class(&both), "model-availability");
@@ -4622,7 +4621,7 @@ mod tests {
                 candidate: Candidate {
                     id: "stand-in".into(),
                     models_url: None,
-            base_url: "http://127.0.0.1:1/v1".into(),
+                    base_url: "http://127.0.0.1:1/v1".into(),
                     key_env: "STAND_IN_TOKEN".into(),
                     models: vec!["auto".into()],
                     billing: Billing::Plan,
@@ -4642,7 +4641,7 @@ mod tests {
                 candidate: Candidate {
                     id: "zai-coding-plan".into(),
                     models_url: None,
-            base_url: "https://api.z.ai".into(),
+                    base_url: "https://api.z.ai".into(),
                     key_env: "ZAI_CODING_API_KEY".into(),
                     models: vec!["GLM-5.3-Flash".into()],
                     billing: Billing::Plan,
@@ -5524,7 +5523,7 @@ mod tests {
             candidate: Candidate {
                 id: id.to_string(),
                 models_url: None,
-            base_url: "http://127.0.0.1:1/v1".to_string(),
+                base_url: "http://127.0.0.1:1/v1".to_string(),
                 key_env: "STAND_IN_TOKEN".to_string(),
                 models: vec!["auto".to_string()],
                 billing: Billing::Plan,
@@ -5912,7 +5911,7 @@ mod tests {
             candidate: Candidate {
                 id: id.to_string(),
                 models_url: None,
-            base_url: "http://127.0.0.1:1/v1".to_string(),
+                base_url: "http://127.0.0.1:1/v1".to_string(),
                 key_env: format!("{}_KEY", id.to_uppercase().replace('-', "_")),
                 models: vec![format!("{id}-model")],
                 billing: Billing::Plan,
