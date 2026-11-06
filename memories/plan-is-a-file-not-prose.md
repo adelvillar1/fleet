@@ -1,6 +1,6 @@
 ---
 name: plan-is-a-file-not-prose
-description: "owner correction 2026-10-21 — "you are not using the project methodology convention for feature plans": a plan is docs/plans/YYYY-MM-DD-<slug>.md with frontmatter + criteria, gated by dev-decisions plan-surface and plan-gate, not plan-shaped chat prose"
+description: "owner correction 2026-10-21 — \"you are not using the project methodology convention for feature plans\": a plan is docs/plans/YYYY-MM-DD-<slug>.md with frontmatter + criteria, gated by dev-decisions plan-surface and plan-gate, not plan-shaped chat prose"
 type: feedback
 date: 2026-11-05
 basis: confirmed-by

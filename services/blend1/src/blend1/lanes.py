@@ -31,6 +31,15 @@ import urllib.request
 
 # ── route lane: sys1 + Liquid d1 ─────────────────────────────────────────────
 
+# How long the doctor's semantic probe may spend, in seconds. The
+# doctor answers a `tools/call`, which fleet's client bounds at 60 s; a
+# probe that spends its provider's whole retry chain (184 s at the 60 s
+# default) returns nothing at all, and the lane's report then reads
+# "endpoint unreachable" when the truth is "the probe outlived the call
+# that asked" (KI-452). Twenty seconds is the probe's ceiling and the
+# rest of the report has the remainder.
+DOCTOR_PROBE_DEADLINE = 20.0
+
 ROUTE_TASK_ID = "blend_route"
 ROUTE_FLOOR = 0.70  # needs_generation noul floor; below → direct path
 
@@ -919,7 +928,15 @@ def lane_report() -> dict:
     try:
         import sem1
 
-        p = sem1.probe("llama-server")
+        # The doctor is itself a tool call, and fleet's client bounds
+        # one at `CALL_TIMEOUT` (60 s). The semantic probe underneath
+        # is a retry chain whose own worst case is 184 s, so an
+        # endpoint that accepts a connection and never answers would
+        # spend the chain and the doctor would answer nothing at all
+        # (KI-452 — measured at 184 s exactly). The deadline is what
+        # the doctor's budget can actually pay, leaving the rest of
+        # the report its room.
+        p = sem1.probe("llama-server", deadline=DOCTOR_PROBE_DEADLINE)
         report["semantic"] = {
             "available": bool(p.get("reachable")),
             "reason": f"{p.get('dims')}d, {p.get('latency_ms')}ms" if p.get("reachable") else "endpoint unreachable",

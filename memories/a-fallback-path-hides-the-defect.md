@@ -1,6 +1,6 @@
 ---
 name: a-fallback-path-hides-the-defect
-description: "feedback 2026-10-19 — a designed graceful-degradation path is indistinguishable from a defect that triggers it; the type-ahead's zeros looked exactly like the documented no-backend fallback, so every surface check confirmed "working as designed" while a dead keep-alive connection was disabling the feature"
+description: "feedback 2026-10-19 — a designed graceful-degradation path is indistinguishable from a defect that triggers it; the type-ahead's zeros looked exactly like the documented no-backend fallback, so every surface check confirmed \"working as designed\" while a dead keep-alive connection was disabling the feature"
 type: feedback
 date: 2026-11-04
 basis: inferred

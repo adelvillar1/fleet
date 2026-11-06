@@ -1,6 +1,6 @@
 ---
 name: a-chained-setting-completes-on-one-surface
-description: "feedback 2026-11-01 — the owner's settings verdict was not about rows or gaps but about CHAINS; I had no add/edit/reorder/remove flow for a provider or a lane, and once shown one they generalised it to every chained setting ("that philosophy should permeate to every surface that has chained settings, the flow should help the user get things done")"
+description: "feedback 2026-11-01 — the owner's settings verdict was not about rows or gaps but about CHAINS; I had no add/edit/reorder/remove flow for a provider or a lane, and once shown one they generalised it to every chained setting (\"that philosophy should permeate to every surface that has chained settings, the flow should help the user get things done\")"
 type: feedback
 date: 2026-11-04
 basis: confirmed-by

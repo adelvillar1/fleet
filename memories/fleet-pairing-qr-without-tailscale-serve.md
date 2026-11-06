@@ -1,6 +1,6 @@
 ---
 name: fleet-pairing-qr-without-tailscale-serve
-description: "2026-10-20 — the pairing QR card works, but with no `tailscale serve` config the URL it mints is plain-HTTP LAN, so the owner's phone installed the app WITHOUT the PWA worker; serve is blocked on an account gate the owner must open, and the face now runs under a LaunchAgent (com.fleet.gui) rather than nohup — which means the agent, not the session, can restart the face, so "did you restart it?" needs a named trigger; 2026-10-28 the bot experience's access URL is the LAN origin http://192.168.68.70:3080 (pai…"
+description: "2026-10-20 — the pairing QR card works, but with no `tailscale serve` config the URL it mints is plain-HTTP LAN, so the owner's phone installed the app WITHOUT the PWA worker; serve is blocked on an account gate the owner must open, and the face now runs under a LaunchAgent (com.fleet.gui) rather than nohup — which means the agent, not the session, can restart the face, so \"did you restart it?\" needs a named trigger; 2026-10-28 the bot experience's access URL is the LAN origin http://192.168.68.70:3080 (pai…"
 type: project
 date: 2026-11-05
 basis: confirmed-by

@@ -266,6 +266,15 @@ fn model_setting<T>(
 pub struct Candidate {
     pub id: String,
     pub base_url: String,
+    /// Where this provider's model listing lives, when it is not
+    /// `{base_url}/models`. Most OpenAI-compatible providers serve both
+    /// from one base; OpenCode's chat is `…/inference/openai/v1` while
+    /// its listing is `…/inference/v1/models`, and a gateway that
+    /// publishes no listing at the chat prefix cannot be configured
+    /// without this (KI-423). Carried on the candidate — not only on the
+    /// file entry — so the settings read can hand it back to the card
+    /// that must preserve it.
+    pub models_url: Option<String>,
     /// The environment variable NAME holding this candidate's key. The
     /// value is resolved at runtime from the environment or
     /// `<home>/.env` — never stored here, and never read from another
@@ -399,6 +408,7 @@ pub fn default_roster() -> Vec<Candidate> {
     vec![
         Candidate {
             id: "zai-coding-plan".into(),
+            models_url: None,
             base_url: "https://api.z.ai/api/coding/paas/v4".into(),
             key_env: "ZAI_CODING_API_KEY".into(),
             models: vec!["GLM-5.3-Flash".into()],
@@ -415,6 +425,7 @@ pub fn default_roster() -> Vec<Candidate> {
         },
         Candidate {
             id: "xiaomi-mimo".into(),
+            models_url: None,
             base_url: "https://token-plan-sgp.xiaomimimo.com/v1".into(),
             key_env: "XIAOMI_MIMO_API_KEY".into(),
             models: vec![
@@ -436,6 +447,7 @@ pub fn default_roster() -> Vec<Candidate> {
         },
         Candidate {
             id: "stepfun".into(),
+            models_url: None,
             base_url: "https://api.stepfun.ai/step_plan/v1".into(),
             key_env: "STEPFUN_API_KEY".into(),
             models: vec![
@@ -457,6 +469,7 @@ pub fn default_roster() -> Vec<Candidate> {
         },
         Candidate {
             id: "token-plan".into(),
+            models_url: None,
             base_url: "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1"
                 .into(),
             key_env: "TOKEN_PLAN_API_KEY".into(),
@@ -474,6 +487,7 @@ pub fn default_roster() -> Vec<Candidate> {
         },
         Candidate {
             id: "deepseek".into(),
+            models_url: None,
             base_url: crate::api::DEFAULT_BASE_URL.into(),
             key_env: "DEEPSEEK_API_KEY".into(),
             models: vec![crate::api::DEEPSEEK_MODEL.into()],
@@ -500,6 +514,7 @@ pub fn default_roster() -> Vec<Candidate> {
         // serves both the d1 router and the 24B generative lane.
         Candidate {
             id: "liquid".into(),
+            models_url: None,
             base_url: "https://api.liquid.ai/openai/v1".into(),
             key_env: "LIQUID_API_KEY".into(),
             models: vec!["lfm2.5-24b-a2b".into()],
@@ -523,6 +538,7 @@ pub fn default_roster() -> Vec<Candidate> {
         // The `composed` workload targets it; no other workload does.
         Candidate {
             id: "blend1".into(),
+            models_url: None,
             base_url: "http://127.0.0.1:8420".into(),
             key_env: "BLEND1_BEARER_TOKEN".into(),
             models: vec!["blend1".into()],
@@ -544,6 +560,7 @@ pub fn default_roster() -> Vec<Candidate> {
         // (`OLLAMA_API_KEY`), never from another harness's config.
         Candidate {
             id: "ollama-cloud".into(),
+            models_url: None,
             base_url: "https://ollama.com/v1".into(),
             key_env: "OLLAMA_API_KEY".into(),
             models: vec!["gemma4:31b".into()],
@@ -1315,6 +1332,12 @@ fn merge(
             if let Some(value) = &entry.base_url {
                 existing.base_url = value.clone();
             }
+            // KI-423: the listing URL rides the entry like every other
+            // field. Without this the roster resolved it into nothing and
+            // the card that must preserve it had nothing to render.
+            if let Some(value) = &entry.models_url {
+                existing.models_url = Some(value.clone());
+            }
             if let Some(value) = &entry.key_env {
                 existing.key_env = value.clone();
             }
@@ -1372,6 +1395,7 @@ fn merge(
                 (Some(base_url), Some(key_env)) => candidates.push(Candidate {
                     id: entry.id.clone(),
                     base_url: base_url.clone(),
+                    models_url: entry.models_url.clone(),
                     key_env: key_env.clone(),
                     models: models.clone().unwrap_or_default(),
                     billing: entry.billing.unwrap_or(Billing::Plan),
@@ -2649,10 +2673,22 @@ pub struct WalkReport {
 
 /// Map a client error onto a failure class. 400/404 are client errors —
 /// every candidate would fail them the same way — so they do not failover;
-/// everything else does. The one exception is a 400/404 whose body names
-/// the *model* as unavailable on this provider: the same model on the next
-/// candidate's provider answers fine, so the walk advances (the opencode
-/// Go gateway's `This Go model requires Global regions` is exactly this).
+/// everything else does. Two exceptions, both 400/404, both read off the
+/// body because the status alone cannot tell them apart from a malformed
+/// request:
+///
+/// - [`names_model_unavailable`] — the *model* is unavailable on this
+///   provider, so the same model on the next candidate's provider answers
+///   fine (the opencode Go gateway's `This Go model requires Global
+///   regions` is exactly this).
+/// - [`names_account_state`] — this candidate's *account* is exhausted, out
+///   of credit, or without a plan; the next candidate's account is its own
+///   (KI-451: `you have no active step plan subscription` ended a whole
+///   turn on the walk's first candidate while the reserve served the same
+///   request immediately).
+///
+/// Everything else stays a client error, so a genuinely malformed request
+/// still ends the walk instead of spending every candidate on it.
 pub fn failure_class(error: &ClientError) -> &'static str {
     match error {
         ClientError::Api(api) => match api.status {
@@ -2665,6 +2701,8 @@ pub fn failure_class(error: &ClientError) -> &'static str {
             400 | 404 => {
                 if names_model_unavailable(&api.message) {
                     "model-availability"
+                } else if names_account_state(&api.message) {
+                    "account-state"
                 } else {
                     "client-error"
                 }
@@ -2703,9 +2741,55 @@ fn names_model_unavailable(message: &str) -> bool {
         || lowered.contains("unknown model")
 }
 
+/// Whether an API error's body names the *candidate's own account state* —
+/// KI-451. The premise that made 400/404 non-failover was "every candidate
+/// would fail it the same way", and that premise is false for this class: an
+/// exhausted subscription on the first candidate says nothing about the
+/// next one's account. The instance that filed the row — `API error 400: you
+/// have no active step plan subscription` — killed a whole turn on the
+/// walk's first candidate while the reserve served the identical request
+/// immediately.
+///
+/// The phrases are the providers' own refusal wording for their billing
+/// state: a plan/subscription that is inactive, expired, unpaid, out of
+/// credit, or over its cap. They are narrow on purpose — a malformed request
+/// must keep failing over to nothing, because re-sending it to every
+/// candidate in the chain costs the whole walk and still fails.
+fn names_account_state(message: &str) -> bool {
+    let lowered = message.to_lowercase();
+    // The status is the provider's, so the words cluster: the plan and the
+    // subscription are the two nouns, and each carries its own state
+    // words. Both halves of a phrase must appear, so a bare `plan` in a
+    // request-validation message does not qualify.
+    let plan = lowered.contains("plan");
+    let subscription = lowered.contains("subscri");
+    let account = lowered.contains("account");
+    let exhausted = [
+        "no active",
+        "inactive",
+        "not active",
+        "expired",
+        "unpaid",
+        "out of credit",
+        "insufficient",
+        "quota exceeded",
+        "credits",
+        "billing",
+        "payment",
+        "suspended",
+        "deactivated",
+        "recharge",
+        "top up",
+    ]
+    .iter()
+    .any(|state| lowered.contains(state));
+    exhausted && (plan || subscription || account)
+}
+
 /// Whether a failure class advances the walk. Everything but a client error
-/// (400/404) does — and a 400/404 that names the model as unavailable is
-/// not a client error but a `model-availability` one, so it advances too.
+/// (400/404) does — and a 400/404 that names the model as unavailable or the
+/// candidate's account as exhausted is neither: those are
+/// `model-availability` and `account-state`, so they advance too.
 fn failover_eligible_class(class: &str) -> bool {
     class != "client-error"
 }
@@ -4154,6 +4238,76 @@ mod tests {
         )));
     }
 
+    /// KI-451's pin. The row's own instance first, then the class of
+    /// bodies a provider writes when ITS account is the problem, then the
+    /// negative half that keeps the class narrow: a malformed REQUEST
+    /// must still end the walk, and so must a request-validation message
+    /// that merely mentions a plan parameter.
+    #[test]
+    fn an_account_state_400_fails_over_instead_of_ending_the_walk() {
+        let body = |status: u16, message: &str| {
+            ClientError::Api(crate::api::ApiError {
+                status,
+                message: message.to_string(),
+                request_id: None,
+            })
+        };
+        // The live instance: stepfun's first-candidate refusal that ended
+        // the turn while the deepseek tail served it immediately.
+        let instance = body(400, "you have no active step plan subscription");
+        assert_eq!(failure_class(&instance), "account-state");
+        assert!(failover_eligible(&instance));
+
+        // The class of bodies, both statuses a provider uses for it.
+        for (status, message) in [
+            (400u16, "You have no active step plan subscription"),
+            (400, "subscription expired — renew at the console"),
+            (400, "Your account is suspended: unpaid balance"),
+            (404, "this key's account has no active subscription"),
+            (400, "Insufficient credits in your account"),
+            (402, "out of credit"), // still quota by status, not this arm
+        ] {
+            let error = body(status, message);
+            let class = failure_class(&error);
+            if message == "out of credit" {
+                // A 402 is quota regardless of prose — the status already
+                // says it, and the body adds nothing.
+                assert_eq!(class, "quota", "{message}");
+            } else {
+                assert_eq!(class, "account-state", "{status} {message}");
+            }
+            assert!(failover_eligible(&error), "{status} {message}");
+        }
+
+        // The narrow half: a request problem is still a request problem.
+        for (status, message) in [
+            (400u16, "invalid request: `max_tokens` must be positive"),
+            (400, "missing required parameter: messages"),
+            (404, "no such endpoint /v2/chat"),
+            // Mentions the noun but names no state: a plan *parameter*.
+            (400, "invalid value for plan: expected one of free|pro"),
+            (404, "workspace plan endpoint not found"),
+        ] {
+            let error = body(status, message);
+            assert_eq!(failure_class(&error), "client-error", "{message}");
+            assert!(!failover_eligible(&error), "{message}");
+        }
+    }
+
+    /// The two body-read arms must not shadow each other: a gateway that
+    /// refuses a *model* is a different fact from an account that cannot
+    /// pay, and the class the surface prints is what tells them apart.
+    #[test]
+    fn the_model_arm_wins_over_the_account_arm_and_names_its_own_fact() {
+        let both = ClientError::Api(crate::api::ApiError {
+            status: 400,
+            message: "You have no active plan subscription; model is unavailable"
+                .to_string(),
+            request_id: None,
+        });
+        assert_eq!(failure_class(&both), "model-availability");
+    }
+
     // --- the chain walk ---
 
     #[test]
@@ -4236,6 +4390,30 @@ mod tests {
         );
         assert_eq!(served, None);
         assert_eq!(attempts.len(), 1);
+    }
+
+    /// KI-451 at the walk's own level: the criterion says the walk
+    /// reaches the next candidate, so the walk is driven, not just the
+    /// classifier. The first candidate refuses on its own account state;
+    /// the reserve serves. Under the old classification this returned
+    /// `None` after one attempt — the turn died on the head while the
+    /// tail was reachable the whole time.
+    #[test]
+    fn an_account_state_failure_lets_the_walk_reach_the_next_candidate() {
+        let (served, attempts) = simulate_walk(
+            0,
+            &[
+                WalkOutcome::Failed {
+                    class: "account-state",
+                    streamed: false,
+                },
+                WalkOutcome::Served,
+            ],
+        );
+        assert_eq!(served, Some(1), "{attempts:?}");
+        assert_eq!(attempts.len(), 2);
+        assert_eq!(attempts[0].class, Some("account-state"));
+        assert_eq!(attempts[1].outcome, "served");
     }
 
     #[test]
@@ -4443,7 +4621,8 @@ mod tests {
             Resolved {
                 candidate: Candidate {
                     id: "stand-in".into(),
-                    base_url: "http://127.0.0.1:1/v1".into(),
+                    models_url: None,
+            base_url: "http://127.0.0.1:1/v1".into(),
                     key_env: "STAND_IN_TOKEN".into(),
                     models: vec!["auto".into()],
                     billing: Billing::Plan,
@@ -4462,7 +4641,8 @@ mod tests {
             Resolved {
                 candidate: Candidate {
                     id: "zai-coding-plan".into(),
-                    base_url: "https://api.z.ai".into(),
+                    models_url: None,
+            base_url: "https://api.z.ai".into(),
                     key_env: "ZAI_CODING_API_KEY".into(),
                     models: vec!["GLM-5.3-Flash".into()],
                     billing: Billing::Plan,
@@ -5343,7 +5523,8 @@ mod tests {
         Resolved {
             candidate: Candidate {
                 id: id.to_string(),
-                base_url: "http://127.0.0.1:1/v1".to_string(),
+                models_url: None,
+            base_url: "http://127.0.0.1:1/v1".to_string(),
                 key_env: "STAND_IN_TOKEN".to_string(),
                 models: vec!["auto".to_string()],
                 billing: Billing::Plan,
@@ -5730,7 +5911,8 @@ mod tests {
         Resolved {
             candidate: Candidate {
                 id: id.to_string(),
-                base_url: "http://127.0.0.1:1/v1".to_string(),
+                models_url: None,
+            base_url: "http://127.0.0.1:1/v1".to_string(),
                 key_env: format!("{}_KEY", id.to_uppercase().replace('-', "_")),
                 models: vec![format!("{id}-model")],
                 billing: Billing::Plan,

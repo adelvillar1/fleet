@@ -1,6 +1,6 @@
 ---
 name: a-cheap-partial-fix-leaves-the-line-in-the-description
-description: "feedback 2026-10-23 — a plan criterion that could be written two ways ("attach the image or fix the sentence") gets the cheap half done and is then immune to re-audit, because the grep the earlier audit used no longer finds the lie; choose the fix that makes the claim TRUE, and when auditing, re-derive each criterion from the code rather than re-running the old check"
+description: "feedback 2026-10-23 — a plan criterion that could be written two ways (\"attach the image or fix the sentence\") gets the cheap half done and is then immune to re-audit, because the grep the earlier audit used no longer finds the lie; choose the fix that makes the claim TRUE, and when auditing, re-derive each criterion from the code rather than re-running the old check"
 type: feedback
 date: 2026-11-04
 basis: inferred

@@ -153,7 +153,13 @@ Trunk is `master` → `origin/master`, the branch that ships. A working branch (
 
 ## Session protocol
 
-warmup (this file → latest recap → active plans) → plan (`docs/plans/`) → build (run the gate locally) → recap (`docs/recaps/` — the ledger must be well-formed before the document is generated: `python3 scripts/ki_ledger.py docs/known-issues.md` reports zero problems, since a malformed row shifts its cells and misreports the open count; then `scripts/cache-sweep.sh`, the recap step's closing sweep, because cargo never prunes: KI-279, 159 GiB of dead test binaries — automated daily by `scripts/daily-maintenance.sh` (the LaunchAgent), so a missed recap no longer means an unbounded target) → commit with explicit paths.
+warmup (this file → latest recap → active plans) → plan (`docs/plans/`) → build (run the gate locally) → recap (`docs/recaps/` — the ledger must be well-formed before the document is generated: `python3 scripts/ki_ledger.py docs/known-issues.md` reports zero problems, since a malformed row shifts its cells and misreports the open count; then `scripts/cache-sweep.sh`, the recap step's closing sweep, because cargo never prunes: KI-279, 159 GiB of dead test binaries — automated daily by `scripts/daily-maintenance.sh` (the LaunchAgent), so a missed recap no longer means an unbounded target) → commit with explicit paths. The one-command form of the pre-push checks:
+`python3 scripts/ki_ledger.py` (the ledger is well-formed) and
+`python3 scripts/plan_check.py` (no completed plan carries an unticked
+criterion — KI-398). The second is also a `.githooks/pre-commit` hook
+(enabled with `git config core.hooksPath .githooks`), because it guards a
+DOCS change and a docs-only commit skips the four-leg gate; the hook runs
+only when a plan file is staged, so a code commit pays nothing for it.
 
 ## Ecosystem at a glance
 

@@ -1,6 +1,6 @@
 ---
 name: ki-ledger-second-pass-method
-description: "feedback 2026-10-25 — a closed KI row's status text is a claim to re-verify against the code, not a record to trust; the word "open" in a row's body is not the row's status"
+description: "feedback 2026-10-25 — a closed KI row's status text is a claim to re-verify against the code, not a record to trust; the word \"open\" in a row's body is not the row's status"
 type: feedback
 date: 2026-11-04
 basis: inferred

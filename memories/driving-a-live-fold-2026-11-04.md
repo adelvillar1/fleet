@@ -1,6 +1,6 @@
 ---
 name: driving-a-live-fold-2026-11-04
-description: "feedback 2026-11-04 — the reliable recipe for proving a compaction fold live: models dodge tool-call puzzles (three one-turn answers), so force the two-turn shape with bash chaining and the owner's {"fold": true} control file; the usage event is readable on GET /events, not /api/stream"
+description: "feedback 2026-11-04 — the reliable recipe for proving a compaction fold live: models dodge tool-call puzzles (three one-turn answers), so force the two-turn shape with bash chaining and the owner's {\"fold\": true} control file; the usage event is readable on GET /events, not /api/stream"
 type: feedback
 date: 2026-11-04
 basis: confirmed-by

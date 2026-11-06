@@ -1,6 +1,6 @@
 ---
 name: rust-toolchain-moved-to-199-and-clippy-red
-description: "project 2026-11-02 — the owner ruled "aim for the latest stable rust 1.99.1"; the machine moved 1.89.0→1.99.1 (rustup update stable), fmt passes, clippy -D warnings fails with 41 errors (39 mechanical new lints, 2 result_large_err needing a call), and the move is a shared-default change that also moves a co-tenant session's gate"
+description: "project 2026-11-02 — the owner ruled \"aim for the latest stable rust 1.99.1\"; the machine moved 1.89.0→1.99.1 (rustup update stable), fmt passes, clippy -D warnings fails with 41 errors (39 mechanical new lints, 2 result_large_err needing a call), and the move is a shared-default change that also moves a co-tenant session's gate"
 type: project
 date: 2026-11-04
 basis: confirmed-by

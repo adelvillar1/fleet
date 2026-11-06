@@ -1,6 +1,6 @@
 ---
 name: a-compacted-transcript-reads-as-lost-work
-description: "feedback 2026-10-20 — the owner said part of the conversation "disappeared from this session" after compaction folded older turns; the work was committed and live. Answer with the commit and the live address, and read the second signal underneath (the design round they were enjoying was skipped)"
+description: "feedback 2026-10-20 — the owner said part of the conversation \"disappeared from this session\" after compaction folded older turns; the work was committed and live. Answer with the commit and the live address, and read the second signal underneath (the design round they were enjoying was skipped)"
 type: feedback
 date: 2026-11-04
 basis: confirmed-by

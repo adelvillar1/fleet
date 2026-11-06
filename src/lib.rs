@@ -64,6 +64,7 @@ pub mod plugins;
 pub mod processes;
 pub mod recall;
 pub mod recall_graph;
+pub mod reload;
 pub mod remote;
 pub mod repo_map;
 pub mod roles;

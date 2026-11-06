@@ -1,6 +1,6 @@
 ---
 name: fleet-privacy-claim-must-name-the-recipients
-description: "feedback 2026-10-21 — the owner rejected "nothing leaves this machine" as a premise, because every turn already goes to a hosted model; state egress per recipient (the provider that serves the turn, each service enabled, each parsed document), never as a machine-wide promise"
+description: "feedback 2026-10-21 — the owner rejected \"nothing leaves this machine\" as a premise, because every turn already goes to a hosted model; state egress per recipient (the provider that serves the turn, each service enabled, each parsed document), never as a machine-wide promise"
 type: feedback
 date: 2026-11-04
 basis: confirmed-by

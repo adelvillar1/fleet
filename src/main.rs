@@ -180,6 +180,7 @@ fn dispatch_sync(args: &[String]) -> ExitCode {
         Ok(Command::Doctor(options)) => doctor_command(&options),
         Ok(Command::Ki(options)) => ki_command(&options),
         Ok(Command::Install(options)) => install_command(&options),
+        Ok(Command::Reload(options)) => reload_command(&options),
         Err(message) => {
             eprintln!("fleet: {message}");
             eprint!("{}", cli::HELP);
@@ -3942,6 +3943,63 @@ fn doctor_checks() -> ExitCode {
 /// named line and the install carries on. The command ends on the
 /// doctor's own checks — the install adds no new check — and its exit
 /// code is the doctor's: green 0, a named failure nonzero.
+/// `fleet reload`: deliver a binary (when one was named), restart the
+/// agent, and prove the face is serving before saying so.
+///
+/// The exit code follows the PROOF, not the commands: a run whose
+/// launchctl verbs all succeeded but whose port never answered is a
+/// failure, because the owner's question is whether the face is up and
+/// not whether the shell lines ran. That is KI-431's whole lesson —
+/// the runbook printed what it did and the face was down.
+fn reload_command(options: &cli::ReloadOptions) -> ExitCode {
+    let user_home = match std::env::var("HOME") {
+        Ok(home) => std::path::PathBuf::from(home),
+        Err(_) => {
+            eprintln!("fleet: reload: HOME is not set, so the agent's plist cannot be named");
+            return ExitCode::from(2);
+        }
+    };
+    let uid = unsafe { libc_getuid() };
+    let install = options.from.as_ref().map(std::path::PathBuf::from);
+    if let Some(path) = install.as_ref() {
+        if !path.is_file() {
+            eprintln!(
+                "fleet: reload: --from {} is not a file",
+                path.display()
+            );
+            return ExitCode::from(2);
+        }
+    }
+    let report = fleet::reload::reload(
+        uid,
+        &user_home,
+        &options.host,
+        options.port,
+        install.as_deref(),
+    );
+    print!("{}", report.render(&options.host, options.port));
+    if report.serving() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
+}
+
+/// The invoking user's uid, for the `gui/<uid>` launchd domain.
+///
+/// `std::process::id()` is not it, and the crate carries no libc
+/// dependency; the syscall is one line and the alternative is parsing
+/// `id -u` out of a child. macOS and Linux both expose it at number 24
+/// on the platforms fleet builds for, and a wrong answer here is
+/// caught by the reload's own proof (the domain read comes back empty
+/// and the run reports the face down rather than claiming success).
+unsafe fn libc_getuid() -> u32 {
+    unsafe extern "C" {
+        fn getuid() -> u32;
+    }
+    getuid()
+}
+
 fn install_command(options: &cli::InstallOptions) -> ExitCode {
     let home = match fleet_home() {
         Ok(home) => home,

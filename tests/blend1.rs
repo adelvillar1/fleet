@@ -680,3 +680,93 @@ fn both_lane_tables_carry_blend1_as_the_fifth_entry() {
     }
     assert!(!registry.passthrough.contains(&"DEEPSEEK_API_KEY"));
 }
+
+/// A measurement, not a gate: what the real blend1 probe costs on this
+/// machine, so the doctor tests' budgets can be sized against the
+/// mechanism rather than guessed. Run with `--ignored --nocapture`.
+#[tokio::test]
+#[ignore]
+async fn measure_the_real_blend1_probe() {
+    if !python3_available() {
+        return;
+    }
+    let started = std::time::Instant::now();
+    let health = lanes::probe_lane(&lane("blend1")).await;
+    eprintln!(
+        "MEASURE blend1 probe: {} ms (lane {})",
+        started.elapsed().as_millis(),
+        health.elapsed_ms
+    );
+    let server = McpServer::spawn(&blend1_spec()).expect("spawn");
+    let t0 = std::time::Instant::now();
+    server.initialize().await.expect("initialize");
+    eprintln!("MEASURE blend1 initialize: {} ms", t0.elapsed().as_millis());
+    let t1 = std::time::Instant::now();
+    server.call_tool("doctor", serde_json::json!({})).await.expect("doctor");
+    eprintln!("MEASURE blend1 doctor: {} ms", t1.elapsed().as_millis());
+    server.close().await.expect("close");
+}
+
+
+/// DIAGNOSTIC (ignored, not a gate): what the probe reports when the
+/// lane's `doctor` call REFUSES — the fail-open the row's second
+/// failure line points at. The stub lane is a Python MCP server that
+/// handshakes and then answers every `tools/call` with a JSON-RPC
+/// error, which is what a health tool does when its own work throws.
+#[tokio::test]
+#[ignore]
+async fn diagnose_a_doctor_that_refuses() {
+    let dir = std::env::temp_dir().join(format!("fleet-doctor-refuses-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("scratch");
+    let script = dir.join("refusing.py");
+    std::fs::write(
+        &script,
+        r#"import json, sys
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    req = json.loads(line)
+    method = req.get("method")
+    rid = req.get("id")
+    if rid is None:
+        continue
+    if method == "initialize":
+        out = {"protocolVersion": "2024-11-05", "capabilities": {"tools": {}},
+               "serverInfo": {"name": "refusing", "version": "9.9.9"}}
+    elif method == "tools/list":
+        out = {"tools": [{"name": "doctor", "description": "refuses",
+                          "inputSchema": {"type": "object"}}]}
+    elif method == "tools/call":
+        sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": rid,
+            "error": {"code": -32603, "message": "health tool threw"}}) + "\n")
+        sys.stdout.flush()
+        continue
+    else:
+        out = {}
+    sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": rid, "result": out}) + "\n")
+    sys.stdout.flush()
+"#,
+    )
+    .expect("stub written");
+    let spec = ServerSpec {
+        program: "python3".to_string(),
+        args: vec!["-u".to_string(), script.display().to_string()],
+        env: Vec::new(),
+        passthrough: Vec::new(),
+        cwd: None,
+    };
+    let server = McpServer::spawn_with(
+        &spec,
+        fleet::mcp::Timeouts {
+            initialize: std::time::Duration::from_secs(10),
+            list: std::time::Duration::from_secs(10),
+            call: std::time::Duration::from_secs(10),
+        },
+    )
+    .expect("spawn the refusing stub");
+    server.initialize().await.expect("initialize");
+    let refusal = server.call_tool("doctor", serde_json::json!({})).await;
+    eprintln!("DIAGNOSE doctor that refuses: {:?}", refusal.err());
+    server.close().await.expect("close");
+}

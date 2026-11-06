@@ -1,6 +1,6 @@
 ---
 name: a-green-gate-covers-what-was-built-not-what-was-left-out
-description: "feedback 2026-10-19 — naming a gap honestly is the right move in a recap and the wrong move in a delivery; the completion verifier refused a green-gate objective because two increments were reported as "deferred and named" rather than built"
+description: "feedback 2026-10-19 — naming a gap honestly is the right move in a recap and the wrong move in a delivery; the completion verifier refused a green-gate objective because two increments were reported as \"deferred and named\" rather than built"
 type: feedback
 date: 2026-11-04
 basis: inferred

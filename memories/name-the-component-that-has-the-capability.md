@@ -1,6 +1,6 @@
 ---
 name: name-the-component-that-has-the-capability
-description: "when a capability spans components, say which component has it rather than declaring the system lacks it — the owner corrected "fleet has no browser engine so there is no screenshot" when the app is the server and the browser is the rasterizer"
+description: "when a capability spans components, say which component has it rather than declaring the system lacks it — the owner corrected \"fleet has no browser engine so there is no screenshot\" when the app is the server and the browser is the rasterizer"
 type: feedback
 date: 2026-11-04
 basis: confirmed-by

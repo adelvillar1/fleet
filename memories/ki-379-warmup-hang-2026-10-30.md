@@ -1,6 +1,6 @@
 ---
 name: ki-379-warmup-hang-2026-10-30
-description: "KI-379 (closed into KI-380) — the ~30-min warmup "hang" was an invisible approval seat behind a zombie page; the embed-flap diagnosis was a red herring; sample the pid first, and check /api/state's seat before any server theory"
+description: "KI-379 (closed into KI-380) — the ~30-min warmup \"hang\" was an invisible approval seat behind a zombie page; the embed-flap diagnosis was a red herring; sample the pid first, and check /api/state's seat before any server theory"
 type: project
 date: 2026-11-04
 basis: inferred

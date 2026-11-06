@@ -1,6 +1,6 @@
 ---
 name: verification-depth-matches-the-change
-description: "feedback 2026-10-29 — the owner cancelled a full 1,700-test cargo run started as over-thorough pre-restart verification and asked "why are you stuck on this?"; match the gate's depth to the change, and long suites go to the background or don't run"
+description: "feedback 2026-10-29 — the owner cancelled a full 1,700-test cargo run started as over-thorough pre-restart verification and asked \"why are you stuck on this?\"; match the gate's depth to the change, and long suites go to the background or don't run"
 type: feedback
 date: 2026-11-04
 basis: confirmed-by

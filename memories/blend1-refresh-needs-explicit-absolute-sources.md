@@ -1,6 +1,6 @@
 ---
 name: blend1-refresh-needs-explicit-absolute-sources
-description: "blend1 refresh over MCP needs explicit ABSOLUTE sources globs — the default docs set resolves against the lane-home cwd and derives nothing (action "no-source")"
+description: "blend1 refresh over MCP needs explicit ABSOLUTE sources globs — the default docs set resolves against the lane-home cwd and derives nothing (action \"no-source\")"
 type: project
 date: 2026-10-26
 basis: inferred

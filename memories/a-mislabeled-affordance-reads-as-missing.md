@@ -1,6 +1,6 @@
 ---
 name: a-mislabeled-affordance-reads-as-missing
-description: "feedback 2026-10-22 — the owner asked for a way to continue a session from the sessions page and the action already existed under the label "resume this session here"; when the owner asks for X, check whether X exists under another name before building, and ship labels in the owner's words"
+description: "feedback 2026-10-22 — the owner asked for a way to continue a session from the sessions page and the action already existed under the label \"resume this session here\"; when the owner asks for X, check whether X exists under another name before building, and ship labels in the owner's words"
 type: feedback
 date: 2026-11-04
 basis: confirmed-by

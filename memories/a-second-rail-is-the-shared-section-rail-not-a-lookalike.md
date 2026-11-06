@@ -1,6 +1,6 @@
 ---
 name: a-second-rail-is-the-shared-section-rail-not-a-lookalike
-description: "feedback 2026-10-31 — told "a rail like sessions does", I hand-wrote a bespoke .design-rail with work-row rows and a head picker; the owner corrected it to "the same design language of this and the other pages that have the second rail" — a page with a second rail renders the shared sectionRail(), never a twin"
+description: "feedback 2026-10-31 — told \"a rail like sessions does\", I hand-wrote a bespoke .design-rail with work-row rows and a head picker; the owner corrected it to \"the same design language of this and the other pages that have the second rail\" — a page with a second rail renders the shared sectionRail(), never a twin"
 type: —
 date: 2026-11-04
 basis: confirmed-by

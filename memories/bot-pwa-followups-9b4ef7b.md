@@ -1,6 +1,6 @@
 ---
 name: bot-pwa-followups-9b4ef7b
-description: "2026-10-28 follow-up commit 9b4ef7b ("let's address the issues") — per-turn persona stamps in Assistant records, the owner's goal verb admitted remotely with a bot affordance, KI-329 closed (absolute-path seed + cron seed reconcile), KI-340 closed (signal over clock); gate 1,770 tests, ledger 17 open"
+description: "2026-10-28 follow-up commit 9b4ef7b (\"let's address the issues\") — per-turn persona stamps in Assistant records, the owner's goal verb admitted remotely with a bot affordance, KI-329 closed (absolute-path seed + cron seed reconcile), KI-340 closed (signal over clock); gate 1,770 tests, ledger 17 open"
 type: project
 date: 2026-11-05
 basis: confirmed-by

@@ -139,11 +139,12 @@ const PROVIDER_CAP: usize = 24;
 
 /// The failure classes that mean "the provider was unavailable" rather
 /// than "the provider was wrong for this workload": a key, a balance, a
-/// permission, throttling, an outage, a timeout, an unreachable host. A
+/// permission, throttling, an outage, a timeout, an unreachable host, a
+/// model this provider does not carry, or its own account state. A
 /// candidate that failed on one of these and was covered by a later one
 /// was the *right* choice that could not serve — the judgment grades the
 /// selection, not the provider's uptime.
-const AVAILABILITY_CLASSES: [&str; 7] = [
+const AVAILABILITY_CLASSES: [&str; 8] = [
     "auth",
     "quota",
     "forbidden",
@@ -151,6 +152,10 @@ const AVAILABILITY_CLASSES: [&str; 7] = [
     "server",
     "timeout",
     "network",
+    // KI-451: a 400/404 naming the candidate's own account, plan or
+    // subscription state. The walk advances on it, so a walk covered by
+    // a later candidate failed for want of availability, not judgment.
+    "account-state",
 ];
 
 /// One judgment batch's request.

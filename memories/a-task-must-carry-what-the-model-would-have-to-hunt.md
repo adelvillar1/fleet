@@ -1,6 +1,6 @@
 ---
 name: a-task-must-carry-what-the-model-would-have-to-hunt
-description: "feedback 2026-10-31 — an "ask about the board" task made the design run browse the console with tools for minutes to count its own pages; the task now carries the board's inventory (each frame's name/id/size/model/pins/review) and the same ask answers in one line and hands back"
+description: "feedback 2026-10-31 — an \"ask about the board\" task made the design run browse the console with tools for minutes to count its own pages; the task now carries the board's inventory (each frame's name/id/size/model/pins/review) and the same ask answers in one line and hands back"
 type: feedback
 date: 2026-11-04
 basis: inferred

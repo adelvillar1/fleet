@@ -894,3 +894,114 @@ fn the_proof_the_vocabulary_is_bounded_and_reports_itself() {
         "a clock stop does not make the tree too large"
     );
 }
+
+// --- the spelling admission (KI-395, KI-415, KI-428) -----------------------
+
+#[test]
+fn a_spelling_two_files_wrote_is_admitted_and_one_file_is_drift() {
+    let root = scratch("spelling-admission");
+    // `judge_route` established by four files, and `judgeRoute` written
+    // by one — the shape of this crate's own guard tests, which write
+    // the variant as the example of a refusal.
+    write(&root, "src/a.rs", "pub fn judge_route() {}\n");
+    write(&root, "src/b.rs", "pub fn judge_route_again() { judge_route() }\n");
+    write(&root, "src/c.rs", "pub fn judge_route_three() {}\n");
+    write(&root, "src/d.rs", "pub fn judge_route_four() {}\n");
+    write(&root, "src/e.rs", "pub fn x() { let judgeRoute = 1; }\n");
+    let vocabulary = derive(&root);
+    let entry = vocabulary
+        .get("judge_Route")
+        .expect("the camel split establishes judge_Route");
+    assert_eq!(
+        entry.spellings().iter().find(|s| s.written == "judgeRoute").map(|s| s.files),
+        Some(1),
+        "one file wrote the camel form"
+    );
+    assert!(
+        !entry.writes_spelling("judgeRoute"),
+        "a form one file wrote is drift, not a convention: it is indistinguishable \
+         from a typo, and admitting it would disarm the guard inside the module that pins it"
+    );
+    assert!(
+        entry.writes_spelling("judge_Route"),
+        "the term itself is never a variant of itself"
+    );
+
+    // The same form, written by a second independent file: now it is
+    // the project's own spelling and the guard admits it.
+    write(&root, "src/f.rs", "pub fn y() { let judgeRoute = 2; }\n");
+    let vocabulary = derive(&root);
+    let entry = vocabulary
+        .get("judge_Route")
+        .expect("the camel split establishes judge_Route");
+    assert_eq!(
+        entry.spellings().iter().find(|s| s.written == "judgeRoute").map(|s| s.files),
+        Some(2),
+        "two files wrote the camel form"
+    );
+    assert!(
+        entry.writes_spelling("judgeRoute"),
+        "two independent files is the bar: {} is what the admission states",
+        SPELLING_CONVENTION_FILES
+    );
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn the_real_tree_writes_the_canonical_spellings_the_guard_refused() {
+    let Some(vocabulary) = real_tree_vocabulary() else {
+        return;
+    };
+    // KI-395 and KI-415's instances, against this repository's own
+    // vocabulary: each is a canonical spelling the derivation indexed,
+    // and each is carried by independent files — so each is a form of
+    // the term, never a variant of it. The counts are asserted as "at
+    // least the bar", not as literals, because the tree grows.
+    for (token, term) in [
+        ("Usage", "usage"),
+        ("One", "one"),
+        ("Mono", "mono"),
+        ("Deserialize", "deserialize"),
+        ("Projects", "projects"),
+    ] {
+        let entry = vocabulary
+            .get(term)
+            .unwrap_or_else(|| panic!("`{term}` is an established term"));
+        let spelled = entry
+            .spellings()
+            .iter()
+            .find(|spelling| spelling.written == token)
+            .unwrap_or_else(|| panic!("this tree writes `{token}` for `{term}`"));
+        assert!(
+            spelled.files >= SPELLING_CONVENTION_FILES,
+            "`{token}` is carried by {} files of `{term}` — at or above the bar of {}",
+            spelled.files,
+            SPELLING_CONVENTION_FILES
+        );
+        assert!(
+            entry.writes_spelling(token),
+            "`{token}` is admitted as a form of `{term}`"
+        );
+    }
+    // And the drift the guard exists for is still one file's work: the
+    // camel form appears only where the refusal is being demonstrated.
+    let entry = vocabulary
+        .get("judge_Route")
+        .expect("the camel split establishes judge_Route");
+    let spelled = entry
+        .spellings()
+        .iter()
+        .find(|spelling| spelling.written == "judgeRoute")
+        .expect("this tree writes `judgeRoute`");
+    assert!(
+        spelled.files < SPELLING_CONVENTION_FILES,
+        "`judgeRoute` is carried by {} file(s), below the bar of {} — which is what keeps \
+         the refusal alive",
+        spelled.files,
+        SPELLING_CONVENTION_FILES
+    );
+    assert!(
+        !entry.writes_spelling("judgeRoute"),
+        "the guard still refuses the camel form"
+    );
+}

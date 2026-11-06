@@ -1,6 +1,6 @@
 ---
 name: doc-preview-research-2026-10-29
-description: "project 2026-10-29 — the pane's preview renders md/pdf/docx/ pptx/xlsx/drawio/svg now: the plan (docs/plans/2026-10-29-the-preview-formats.md) was implemented in full as 2c59652 via "/goal implement plan as designed"; the fence, per-format paths, the five vendored libs with provenance, the recorded PDF-frame amendment, and the proofs live here"
+description: "project 2026-10-29 — the pane's preview renders md/pdf/docx/ pptx/xlsx/drawio/svg now: the plan (docs/plans/2026-10-29-the-preview-formats.md) was implemented in full as 2c59652 via \"/goal implement plan as designed\"; the fence, per-format paths, the five vendored libs with provenance, the recorded PDF-frame amendment, and the proofs live here"
 type: project
 date: 2026-11-04
 basis: inferred

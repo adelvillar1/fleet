@@ -1,6 +1,6 @@
 ---
 name: plan-brainstorming-before-development
-description: "owner direction (recorded 2026-10-16/19, restated in the editorial-desk redesign) — before development, brainstorm and write a plan first; the owner has corrected this twice ("you should have created a plan first instead of jumping into development", "I need as part of the plan mockups of the ui"); for UI work the plan must carry mockups; 2026-10-20 an approved mockup applies the whole grammar, not just the picked screen"
+description: "owner direction (recorded 2026-10-16/19, restated in the editorial-desk redesign) — before development, brainstorm and write a plan first; the owner has corrected this twice (\"you should have created a plan first instead of jumping into development\", \"I need as part of the plan mockups of the ui\"); for UI work the plan must carry mockups; 2026-10-20 an approved mockup applies the whole grammar, not just the picked screen"
 type: feedback
 date: 2026-11-04
 basis: confirmed-by

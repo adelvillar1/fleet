@@ -1,6 +1,6 @@
 ---
 name: claude-desktop-leftovers-2026-10-27
-description: "2026-10-27 — the owner said Claude Desktop is NOT on this machine ("haven't used it in many, many months") yet it had left 10 GB behind; verified absent (no bundle, no process, no keychain), the whole Application Support/Claude moved to Trash and the prefs plist deleted; fleet's mcp.json source.harness "claude-desktop" means a scanned CONFIG FILE, not the app"
+description: "2026-10-27 — the owner said Claude Desktop is NOT on this machine (\"haven't used it in many, many months\") yet it had left 10 GB behind; verified absent (no bundle, no process, no keychain), the whole Application Support/Claude moved to Trash and the prefs plist deleted; fleet's mcp.json source.harness \"claude-desktop\" means a scanned CONFIG FILE, not the app"
 type: project
 date: 2026-11-05
 basis: confirmed-by

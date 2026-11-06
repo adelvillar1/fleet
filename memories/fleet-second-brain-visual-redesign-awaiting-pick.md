@@ -1,6 +1,6 @@
 ---
 name: fleet-second-brain-visual-redesign-awaiting-pick
-description: "owner 2026-10-20 — the second-brain panel was "rather underwhelming"; two mockups (Ledger, Atlas) on real tower_data.json; the owner picked Atlas and it shipped as a85472e (attention queue, project pulse, commit ribbon, method band)"
+description: "owner 2026-10-20 — the second-brain panel was \"rather underwhelming\"; two mockups (Ledger, Atlas) on real tower_data.json; the owner picked Atlas and it shipped as a85472e (attention queue, project pulse, commit ribbon, method band)"
 type: project
 date: 2026-11-05
 basis: confirmed-by

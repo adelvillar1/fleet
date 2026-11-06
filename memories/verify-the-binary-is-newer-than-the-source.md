@@ -1,6 +1,6 @@
 ---
 name: verify-the-binary-is-newer-than-the-source
-description: "feedback 2026-10-18/20/30 — when a fix "doesn't take," check the artifact before theorizing (shared CARGO_TARGET_DIR, an asserting patch script, the ~/.local/bin symlink, a long-running gui serving its launch build, stale SPA tabs); 2026-10-30 added the sharpest form — the face ran the PREVIOUS build for 20+ minutes because every rebuild command was CANCELLED before the restart, so an interrupted build+restart ships nothing and only the served bytes / a visible build stamp prove otherwise"
+description: "feedback 2026-10-18/20/30 — when a fix \"doesn't take,\" check the artifact before theorizing (shared CARGO_TARGET_DIR, an asserting patch script, the ~/.local/bin symlink, a long-running gui serving its launch build, stale SPA tabs); 2026-10-30 added the sharpest form — the face ran the PREVIOUS build for 20+ minutes because every rebuild command was CANCELLED before the restart, so an interrupted build+restart ships nothing and only the served bytes / a visible build stamp prove otherwise"
 type: feedback
 date: 2026-11-05
 basis: inferred

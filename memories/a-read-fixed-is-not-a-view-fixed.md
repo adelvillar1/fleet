@@ -1,6 +1,6 @@
 ---
 name: a-read-fixed-is-not-a-view-fixed
-description: "feedback 2026-10-22 — the sessions "open" fix anchored the face's state READ to the opened session but left /api/run and /api/plan posting session-less, so a follow-up ran in the launch session; when a view is anchored to an object, every write it issues must name that object too, and the owner finding the twin is the second-instance signal"
+description: "feedback 2026-10-22 — the sessions \"open\" fix anchored the face's state READ to the opened session but left /api/run and /api/plan posting session-less, so a follow-up ran in the launch session; when a view is anchored to an object, every write it issues must name that object too, and the owner finding the twin is the second-instance signal"
 type: feedback
 date: 2026-11-04
 basis: confirmed-by

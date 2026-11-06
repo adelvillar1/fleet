@@ -102,6 +102,10 @@ pub enum Command {
     /// The install: the idempotent home layout, the config scaffold,
     /// the optional heavy-lane venvs, and the doctor gate.
     Install(InstallOptions),
+    /// The delivery: put a built binary in the serving binary's home,
+    /// restart the agent, and verify the face's post-state — repairing
+    /// the domain by name when it lacks the service (KI-431).
+    Reload(ReloadOptions),
     /// The eval corpus: run the fixed, graded suite headless and land a
     /// row, or read the last run back with `--last`.
     Eval(EvalOptions),
@@ -423,6 +427,22 @@ pub struct InstallOptions {
     /// Bootstrap the heavy-lane venvs: per-lane, idempotent, and
     /// degrade-without — a lane that cannot build is skipped by name.
     pub lanes: bool,
+}
+
+/// Options for `fleet reload`. The bare command restarts the agent and
+/// proves the face is serving; `--from <path>` installs that binary
+/// first, through a new inode (KI-418); `--host`/`--port` name the
+/// address the proof reads, defaulting to the face's own.
+#[derive(Debug, PartialEq, Eq)]
+pub struct ReloadOptions {
+    /// A built binary to install before the restart. Absent is the
+    /// plain restart, which is the runbook's second half on its own.
+    pub from: Option<String>,
+    /// The address whose port answers the "is it serving" question.
+    pub host: String,
+    /// The port beside it. `--port 0` picks nothing: the proof needs a
+    /// real number, so zero is refused at the parser.
+    pub port: u16,
 }
 
 /// Options for `fleet eval`. The bare command runs the whole corpus and
@@ -808,6 +828,7 @@ usage:
   fleet remember --name <name> --description \"<fact>\" --basis confirmed-by|inferred
                                 [--type <kind>] [--shape a,b] [--tier working|durable]
                                 [--valid-until <date>] [--body \"<text>\"]
+                                [--description-file <path>] [--body-file <path>]
                                 [--phrases \"a,b\"] [--missing \"a,b\"]
                                 write one fact into the memory corpus — the CLI
                                 form of the remember tool; basis is required, and
@@ -815,7 +836,11 @@ usage:
                                 --phrases carries the resolution's own vocabulary
                                 (the direction channel's input, the largest term
                                 in the ranking) and --missing the companions an
-                                incomplete trajectory lacked
+                                incomplete trajectory lacked.
+                                --description-file and --body-file read the value
+                                out of a file verbatim, so a reply quoted as JSON
+                                or a multi-line transcript files without any shell
+                                escaping at all
   fleet doctor                   check credentials, home, API, shell, roster,
                                 ledger, and the MCP cores; a broken layer is
                                 named with its reason
@@ -862,6 +887,13 @@ usage:
                                 under <home>/venvs/<lane>/ (per-lane,
                                 idempotent, degrade-without: a lane that
                                 cannot build is skipped by name, never fatal)
+  fleet reload [--from <path>] [--host <addr>] [--port <n>]
+                                restart the face's LaunchAgent and PROVE the
+                                post-state: a pid from launchctl print and the
+                                port answering. A domain that lacks the service
+                                is bootstrapped by name, so a restart cannot
+                                leave the face down (KI-431). --from installs a
+                                built binary first, through a new inode (KI-418)
   fleet version                  print the version
   fleet help                     print this help
 
@@ -944,6 +976,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "doctor" => parse_doctor(rest),
         "ki" => parse_ki(rest),
         "install" => parse_install(rest),
+        "reload" => parse_reload(rest),
         "eval" => parse_eval(rest),
         "explain" => parse_explain(rest),
         "gui" => parse_gui(rest),
@@ -2108,6 +2141,8 @@ fn parse_remember(args: &[String]) -> Result<Command, String> {
     let mut tier: Option<String> = None;
     let mut valid_until: Option<String> = None;
     let mut body: Option<String> = None;
+    let mut description_file: Option<String> = None;
+    let mut body_file: Option<String> = None;
     let mut phrases: Option<String> = None;
     let mut missing: Option<String> = None;
     let mut index = 0;
@@ -2123,6 +2158,25 @@ fn parse_remember(args: &[String]) -> Result<Command, String> {
             "--tier" => tier = Some(take_value(args, &mut index, arg)?),
             "--valid-until" => valid_until = Some(take_value(args, &mut index, arg)?),
             "--body" => body = Some(take_value(args, &mut index, arg)?),
+            // A value that is a JSON blob, a transcript, or anything else
+            // a shell would mangle: read it out of a file the caller
+            // wrote, the way `fleet graph --file` reads a plan. A caller
+            // that has the text in hand should never have to guess which
+            // quoting layer the argument rides through.
+            "--description-file" => {
+                let path = take_value(args, &mut index, arg)?;
+                if description_file.is_some() {
+                    return Err("`--description-file` was given twice".to_string());
+                }
+                description_file = Some(path);
+            }
+            "--body-file" => {
+                let path = take_value(args, &mut index, arg)?;
+                if body_file.is_some() {
+                    return Err("`--body-file` was given twice".to_string());
+                }
+                body_file = Some(path);
+            }
             // The trajectory's own vocabulary and the stall's absent
             // companions: the two list fields the direction channel
             // reads, so the CLI speaks the writer's whole shape rather
@@ -2136,6 +2190,27 @@ fn parse_remember(args: &[String]) -> Result<Command, String> {
         }
         index += 1;
     }
+    // A file and a literal are two ways to say the same thing; naming
+    // both is a caller who does not know which one won, so it is
+    // refused rather than silently preferring one.
+    let description = match (description, description_file) {
+        (Some(_), Some(_)) => {
+            return Err(
+                "remember takes `--description` or `--description-file`, not both".to_string(),
+            )
+        }
+        (Some(value), None) => Some(value),
+        (None, Some(path)) => Some(read_flag_file(&path, "--description-file")?),
+        (None, None) => None,
+    };
+    let body = match (body, body_file) {
+        (Some(_), Some(_)) => {
+            return Err("remember takes `--body` or `--body-file`, not both".to_string())
+        }
+        (Some(value), None) => Some(value),
+        (None, Some(path)) => Some(read_flag_file(&path, "--body-file")?),
+        (None, None) => None,
+    };
     let (Some(name), Some(description), Some(basis)) = (name, description, basis) else {
         return Err(
             "remember needs --name, --description, and --basis (see `fleet help`)".to_string(),
@@ -2287,6 +2362,51 @@ fn parse_install(args: &[String]) -> Result<Command, String> {
         index += 1;
     }
     Ok(Command::Install(InstallOptions { lanes }))
+}
+
+/// `fleet reload`: the delivery's own verb. The bare form restarts the
+/// agent and proves the face is serving; `--from` installs a built
+/// binary first. The address defaults to the face's own, so the common
+/// case names nothing.
+fn parse_reload(args: &[String]) -> Result<Command, String> {
+    let mut from: Option<String> = None;
+    let mut host = crate::gui::DEFAULT_HOST.to_string();
+    let mut port = crate::gui::DEFAULT_PORT;
+    let mut index = 0;
+    while index < args.len() {
+        let arg = args[index].as_str();
+        match arg {
+            "--help" | "-h" => return Ok(Command::Help),
+            "--from" => from = Some(take_value(args, &mut index, arg)?),
+            "--host" => {
+                let value = take_value(args, &mut index, arg)?;
+                crate::gui::server::loopback_address(&value)?;
+                host = value;
+            }
+            "--port" => {
+                let value = take_value(args, &mut index, arg)?;
+                let parsed = value
+                    .parse::<u16>()
+                    .map_err(|_| format!("`--port {value}` is not a port"))?;
+                if parsed == 0 {
+                    return Err(
+                        "`--port 0` names no address: the reload's proof reads the port".to_string(),
+                    );
+                }
+                port = parsed;
+            }
+            _ if arg.starts_with('-') && arg != "-" => {
+                return Err(format!("unknown reload option `{arg}`"));
+            }
+            _ => {
+                return Err(format!(
+                    "`{arg}` takes no value here; reload takes --from, --host, and --port (see `fleet help`)"
+                ));
+            }
+        }
+        index += 1;
+    }
+    Ok(Command::Reload(ReloadOptions { from, host, port }))
 }
 
 /// `fleet eval`: the bare command runs the whole corpus and lands a row;
@@ -2883,6 +3003,19 @@ fn no_flags(args: &[String], command: Command) -> Result<Command, String> {
         None => Ok(command),
         Some(arg) => Err(format!("`{arg}` takes no options here")),
     }
+}
+
+/// Read a flag's value out of a file: the route for a value a shell
+/// would mangle — a JSON blob, a diff, a transcript.
+///
+/// The bytes are the value, verbatim: no trimming, no quote stripping,
+/// no newline normalisation. A value read from a file is the one a
+/// caller did not have to escape, so the only transformation fleet is
+/// allowed to apply is none. A path that cannot be read is a named
+/// error carrying the flag that named it, never a silent empty value.
+fn read_flag_file(path: &str, flag: &str) -> Result<String, String> {
+    std::fs::read_to_string(path)
+        .map_err(|error| format!("{flag} could not read `{path}`: {error}"))
 }
 
 fn take_value(args: &[String], index: &mut usize, flag: &str) -> Result<String, String> {
@@ -3569,6 +3702,46 @@ mod tests {
     }
 
     #[test]
+    fn reload_parses_the_restart_the_delivery_and_the_address() {
+        // The bare form is the restart plus the proof, naming no file:
+        // the runbook's second half on its own.
+        assert_eq!(
+            parse(&args(&["reload"])).unwrap(),
+            Command::Reload(ReloadOptions {
+                from: None,
+                host: "127.0.0.1".to_string(),
+                port: 3080,
+            })
+        );
+        assert_eq!(
+            parse(&args(&[
+                "reload",
+                "--from",
+                "target/release/fleet",
+                "--port",
+                "3099",
+            ]))
+            .unwrap(),
+            Command::Reload(ReloadOptions {
+                from: Some("target/release/fleet".to_string()),
+                host: "127.0.0.1".to_string(),
+                port: 3099,
+            })
+        );
+        // The proof reads a port, so zero names nothing and is refused
+        // at the parser rather than read as "any port".
+        let error = parse(&args(&["reload", "--port", "0"])).unwrap_err();
+        assert!(error.contains("names no address"), "{error}");
+        // A non-loopback host is refused by the face's own rule.
+        assert!(parse(&args(&["reload", "--host", "192.168.1.50"])).is_err());
+        assert!(parse(&args(&["reload", "--port", "http"])).is_err());
+        assert!(parse(&args(&["reload", "--from"])).is_err());
+        assert!(parse(&args(&["reload", "extra"])).is_err());
+        assert!(parse(&args(&["reload", "--lanes"])).is_err());
+        assert_eq!(parse(&args(&["reload", "--help"])).unwrap(), Command::Help);
+    }
+
+    #[test]
     fn eval_parses_the_bare_run_and_the_last_query() {
         assert_eq!(
             parse(&args(&["eval"])).unwrap(),
@@ -4071,6 +4244,101 @@ mod tests {
         );
     }
 
+    /// A temp directory under the machine's own temp root, unique per
+    /// call so a parallel suite cannot collide.
+    fn scratch_dir(tag: &str) -> std::path::PathBuf {
+        let serial = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let dir = std::env::temp_dir().join(format!("fleet-cli-{tag}-{serial}"));
+        std::fs::create_dir_all(&dir).expect("a scratch directory");
+        dir
+    }
+
+    #[test]
+    fn a_json_blob_reaches_the_writer_through_a_file_with_no_shell_in_the_way() {
+        // The shape the row was filed for: a reply the caller has as
+        // JSON. Through a file it arrives byte for byte, so nothing the
+        // shell would have done to it can be blamed for a refusal.
+        let dir = scratch_dir("remember-blob");
+        let blob = r#"the reply was {"project": "sem1", "items": 72, "note": "a \ b"}"#;
+        let path = dir.join("blob.json");
+        std::fs::write(&path, format!("{blob}\n")).expect("the blob file");
+        let command = parse(&args(&[
+            "remember",
+            "--name",
+            "a-blob",
+            "--description-file",
+            path.to_str().expect("a utf-8 path"),
+            "--basis",
+            "inferred",
+        ]))
+        .expect("the file route parses");
+        let Command::Remember(options) = command else {
+            panic!("remember parses as its own command");
+        };
+        // The file's bytes are the value, verbatim including the newline
+        // the caller did not have to escape.
+        assert_eq!(options.description, format!("{blob}\n"));
+        assert!(options.description.contains(r#""project": "sem1""#));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_file_route_names_the_path_it_could_not_read_and_refuses_its_own_double() {
+        let dir = scratch_dir("remember-missing");
+        let missing = dir.join("not-there.json");
+        let error = parse(&args(&[
+            "remember",
+            "--name",
+            "x",
+            "--description-file",
+            missing.to_str().expect("a utf-8 path"),
+            "--basis",
+            "inferred",
+        ]))
+        .unwrap_err();
+        // The flag and the path both appear: a caller reading the error
+        // knows which of several file flags failed and on what.
+        assert!(error.contains("--description-file"), "{error}");
+        assert!(error.contains("not-there.json"), "{error}");
+        // Naming both routes is a caller who does not know which one
+        // won, so it is a refusal rather than a silent preference.
+        let both = parse(&args(&[
+            "remember",
+            "--name",
+            "x",
+            "--description",
+            "a literal",
+            "--description-file",
+            missing.to_str().expect("a utf-8 path"),
+            "--basis",
+            "inferred",
+        ]))
+        .unwrap_err();
+        assert!(both.contains("not both"), "{both}");
+        // The same flag twice is caught by the flag's own rule.
+        let path = dir.join("body.txt");
+        std::fs::write(&path, "body").expect("the body file");
+        let twice = parse(&args(&[
+            "remember",
+            "--name",
+            "x",
+            "--description",
+            "d",
+            "--body-file",
+            path.to_str().expect("a utf-8 path"),
+            "--body-file",
+            path.to_str().expect("a utf-8 path"),
+            "--basis",
+            "inferred",
+        ]))
+        .unwrap_err();
+        assert!(twice.contains("given twice"), "{twice}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn remember_parses_its_structured_flags() {
         let command = parse(&args(&[
@@ -4404,6 +4672,22 @@ mod tests {
     /// Every command the parser accepts is named in the help: `fleet
     /// channels` shipped in the code and was absent from `fleet help`,
     /// which made the terminal door to the service undiscoverable.
+    ///
+    /// The reload is the same door one iteration on, and the reason it
+    /// matters more here is that the owner's own delivery ran from a
+    /// runbook nobody could invoke: `fleet reload` is the delivery's
+    /// verb, and a verb the help does not name is one the next
+    /// deployment will not find either.
+    #[test]
+    fn the_help_names_the_delivery_verb() {
+        assert!(HELP.contains("fleet reload"), "{HELP}");
+        assert!(HELP.contains("--from <path>"), "{HELP}");
+        // The proof is the point of the command, so the help says so
+        // rather than leaving it to be inferred from the flags.
+        assert!(HELP.contains("post-state"), "{HELP}");
+        assert!(HELP.contains("KI-431"), "{HELP}");
+    }
+
     #[test]
     fn the_help_names_the_channel_service() {
         assert!(HELP.contains("fleet channels [pending]"), "{HELP}");

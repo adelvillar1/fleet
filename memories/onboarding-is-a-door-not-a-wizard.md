@@ -1,6 +1,6 @@
 ---
 name: onboarding-is-a-door-not-a-wizard
-description: "owner direction 2026-10-29 — first-run must be frictionless, explain the benefit before the mechanism, and abstract every unnecessary complexity away; the accepted design is two states of the home (a benefit-language door only when fleet cannot answer, then the work home with one quiet optional "set up more"), proven by the product answering rather than by checkmarks"
+description: "owner direction 2026-10-29 — first-run must be frictionless, explain the benefit before the mechanism, and abstract every unnecessary complexity away; the accepted design is two states of the home (a benefit-language door only when fleet cannot answer, then the work home with one quiet optional \"set up more\"), proven by the product answering rather than by checkmarks"
 type: feedback
 date: 2026-11-04
 basis: confirmed-by

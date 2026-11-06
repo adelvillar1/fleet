@@ -1,6 +1,6 @@
 ---
 name: huddles-ux-redesign-2026-11-04
-description: "project 2026-11-04 — the owner called the shipped huddle UI "horrible" and asked for a Slack-level interface in the app's own rail grammar; the plan is docs/plans/2026-11-04-huddles-ux.md (C1–C14), Phase 0's five mockups are drawn, measured and committed (a60713b), and the code phases await the owner's read"
+description: "project 2026-11-04 — the owner called the shipped huddle UI \"horrible\" and asked for a Slack-level interface in the app's own rail grammar; the plan is docs/plans/2026-11-04-huddles-ux.md (C1–C14), Phase 0's five mockups are drawn, measured and committed (a60713b), and the code phases await the owner's read"
 type: project
 date: 2026-11-04
 basis: confirmed-by

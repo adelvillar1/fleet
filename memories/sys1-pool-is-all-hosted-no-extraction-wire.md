@@ -1,6 +1,6 @@
 ---
 name: sys1-pool-is-all-hosted-no-extraction-wire
-description: "Verified 2026-10-24 by doctor run — every usable sys1 provider is hosted API; the "local venv" GLiNER providers are dead code on this machine; no sys1 wire does span extraction"
+description: "Verified 2026-10-24 by doctor run — every usable sys1 provider is hosted API; the \"local venv\" GLiNER providers are dead code on this machine; no sys1 wire does span extraction"
 type: feedback
 date: 2026-11-05
 basis: inferred

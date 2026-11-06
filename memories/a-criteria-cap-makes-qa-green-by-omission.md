@@ -1,6 +1,6 @@
 ---
 name: a-criteria-cap-makes-qa-green-by-omission
-description: "feedback 2026-11-01 — the plan gates silently capped a plan's own shape (criteria at 12 in plan-gate/evidence-gate/plan-surface and sys1's parse_criteria, sections at 14, arch-gate claims at 12), so criteria past the cap were never judged; the owner ruled "a plan needs however many criteria it needs to pass" — the caps are removed, and a cap you cannot see is a cap you have not measured"
+description: "feedback 2026-11-01 — the plan gates silently capped a plan's own shape (criteria at 12 in plan-gate/evidence-gate/plan-surface and sys1's parse_criteria, sections at 14, arch-gate claims at 12), so criteria past the cap were never judged; the owner ruled \"a plan needs however many criteria it needs to pass\" — the caps are removed, and a cap you cannot see is a cap you have not measured"
 type: feedback
 date: 2026-11-04
 basis: confirmed-by

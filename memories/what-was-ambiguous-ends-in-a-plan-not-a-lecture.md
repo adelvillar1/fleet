@@ -1,6 +1,6 @@
 ---
 name: what-was-ambiguous-ends-in-a-plan-not-a-lecture
-description: "feedback 2026-10-26 — after a delivery, the owner's "what part was ambiguous?" was a probe for what remains, not a request for a retrospective; the five-ranked-judgment-calls answer was read as a lecture and corrected with "plan whatever is left"
+description: "feedback 2026-10-26 — after a delivery, the owner's \"what part was ambiguous?\" was a probe for what remains, not a request for a retrospective; the five-ranked-judgment-calls answer was read as a lecture and corrected with \"plan whatever is left"
 type: feedback
 date: 2026-11-04
 basis: confirmed-by

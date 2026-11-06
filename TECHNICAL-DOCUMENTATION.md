@@ -390,6 +390,17 @@ the judged workload's own; gates can promote the default workload as
 2026-10-16 ruling removed the precursor from the roster; the chain
 starts at `zai-coding-plan`.
 
+The walk advances on every failure class but a client error. A 400/404 is the
+client error by premise — every candidate would fail a malformed request the
+same way — with two exceptions read off the body because the status cannot
+tell them apart from one: `model-availability` (the model is absent on this
+provider, so the next one may serve it) and `account-state` (this
+candidate's own plan, subscription, or balance is exhausted, which says
+nothing about the next one's). Both advance; a genuinely malformed request
+still ends the walk rather than spending every candidate on it. The judge's
+availability table carries the same classes, so a walk covered by a later
+candidate grades as an unavailable provider rather than a wrong selection.
+
 #### `route_cache.rs`
 One recorded judgment per task, keyed to the judging lane. The cache prevents
 redundant sys1 judgments across identical tasks, across sessions — it is a
@@ -473,7 +484,13 @@ still needs a decision.
 
 #### `nomenclature.rs`
 The canonical identifier vocabulary and the `convention` lookup. It names the
-project's established terms and warns on drift.
+project's established terms and holds a write that introduces one of them in a
+case or separator variant. The guard returns three verdicts, and each reads
+differently in the tool result: **Refused** — the write does not land, and the
+reason names the variant and the established term it drifts from
+(`src/agent.rs:8304-8310`); **Flagged** — the write lands, and a note naming
+the canonical near-neighbour rides the result the model already reads;
+**Clean** — nothing the file introduces is new, and nothing is said.
 
 ### The LayerFS substrate
 
@@ -583,6 +600,7 @@ batch-only by construction.
 | `settings.rs` | `docs/features/settings` behavior surfaced through `src/cli.rs`; `docs/architecture/deep-dive-2026-10-15.md` |
 | `boards.rs` | `docs/features/boards.md`; `docs/architecture/deep-dive-2026-10-15.md` |
 | `install.rs` | `docs/features/install.md`; `docs/architecture/overview.md` |
+| `reload.rs` | `docs/features/install.md` (the reload block); KI-431, KI-418 |
 | `doctor.rs` | `docs/architecture/overview.md`; `docs/architecture/deep-dive-2026-10-15.md` |
 | `net.rs` | `docs/architecture/overview.md` |
 | `tui/` | `docs/architecture/deep-dive-2026-10-15.md`; `docs/architecture/overview.md` |
@@ -638,6 +656,17 @@ snapshot visible and names why.
 #### `install.rs`
 Home layout creation, config scaffold, and optional lane venv bootstrap. The
 install is idempotent; doctor is its gate.
+
+#### `reload.rs`
+The delivery verb: install the built binary through a new inode, restart the
+agent, and verify the post-state before calling the face up. The state is
+whatever the machine's own records say — a pid from `launchctl print` and a
+TCP connect on the port — never what an earlier step assumed. The two pure
+decisions (`post_state`, `repair_for`) are tested; the shell-outs are one
+`launchctl` call each. A domain holding no service is bootstrapped by name,
+a failed first repair escalates to the bootout/bootstrap pair, and the exit
+code follows the proof: commands that all succeeded over a port that never
+answered is a failure that says `the face is DOWN` (KI-431).
 
 #### `doctor.rs`
 Startup checks as pure evaluators over gathered facts. A broken layer is named

@@ -1,6 +1,6 @@
 ---
 name: chat-excel-direction-2026-10-23
-description: "2026-10-23 the owner asked "what would make the chat and composer excel"; the thesis, friction inventory, and the plan (nine increments, twelve criteria, audit layer folded in) — then IMPLEMENTED TO COMPLETION the same day: c204791 (goal chip) + ee5b305 (composer/stream packs) + f813b63 (audit layer), plan completed, gate 1436 lib / 1591 total, 215 face checks"
+description: "2026-10-23 the owner asked \"what would make the chat and composer excel\"; the thesis, friction inventory, and the plan (nine increments, twelve criteria, audit layer folded in) — then IMPLEMENTED TO COMPLETION the same day: c204791 (goal chip) + ee5b305 (composer/stream packs) + f813b63 (audit layer), plan completed, gate 1436 lib / 1591 total, 215 face checks"
 type: project
 date: 2026-11-04
 basis: confirmed-by

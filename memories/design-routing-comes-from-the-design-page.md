@@ -1,6 +1,6 @@
 ---
 name: design-routing-comes-from-the-design-page
-description: "Owner ruling 2026-10-31 ("both") — design is a special workload with 3 designated models, and the router must NOT walk them: the design page names the model per run and sends a provider/model pair pin"
+description: "Owner ruling 2026-10-31 (\"both\") — design is a special workload with 3 designated models, and the router must NOT walk them: the design page names the model per run and sends a provider/model pair pin"
 type: feedback
 date: 2026-11-04
 basis: confirmed-by

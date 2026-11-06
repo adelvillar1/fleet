@@ -1,6 +1,6 @@
 ---
 name: workspace-history-visuals-true-to-layerfs
-description: "project 2026-10-29 — the honesty pass over Workspace History: a head-null merged branch keeps its lane/Work row/ring-graft, forks sit at forkedFrom not base, lanes follow parent chains, counts say "the newest N", lww parses objects"
+description: "project 2026-10-29 — the honesty pass over Workspace History: a head-null merged branch keeps its lane/Work row/ring-graft, forks sit at forkedFrom not base, lanes follow parent chains, counts say \"the newest N\", lww parses objects"
 type: project
 date: 2026-11-04
 basis: inferred

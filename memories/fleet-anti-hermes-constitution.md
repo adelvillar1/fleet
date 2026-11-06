@@ -1,6 +1,6 @@
 ---
 name: fleet-anti-hermes-constitution
-description: "The owner's named anti-goal for fleet (2026-10-23, restated 2026-11-01) — never become Hermes Agent, a harness they enjoyed deeply but that became so convoluted and difficult to configure they stopped using it; the guards are structural, the standing test per addition is "does the owner need to know this knob exists?", and a surface is judged by whether the TASK finishes on it"
+description: "The owner's named anti-goal for fleet (2026-10-23, restated 2026-11-01) — never become Hermes Agent, a harness they enjoyed deeply but that became so convoluted and difficult to configure they stopped using it; the guards are structural, the standing test per addition is \"does the owner need to know this knob exists?\", and a surface is judged by whether the TASK finishes on it"
 type: feedback
 date: 2026-11-05
 basis: confirmed-by

@@ -1,6 +1,6 @@
 ---
 name: fleet-memory-and-skills-knowledge-tables
-description: "2026-10-20 — owner: memory and skills "also look meh" and "there are no actions in the cards"; both rebuilt as knowledge tables with per-row actions and a rail (e7e36c2), sharing the Atlas head/strip/rail classes; the file action forced a real pane-containment fix"
+description: "2026-10-20 — owner: memory and skills \"also look meh\" and \"there are no actions in the cards\"; both rebuilt as knowledge tables with per-row actions and a rail (e7e36c2), sharing the Atlas head/strip/rail classes; the file action forced a real pane-containment fix"
 type: project
 date: 2026-11-05
 basis: confirmed-by

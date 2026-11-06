@@ -1,6 +1,6 @@
 ---
 name: a-factored-composition-must-keep-the-exact-texts
-description: "feedback 2026-10-23 — factoring a prompt builder into a shared function "for reuse" paraphrased two of its arms and dropped a cap, and only the existing tests caught it; when extracting shared code, move the strings verbatim from the original, and let the suite's red rows name what the refactor silently changed"
+description: "feedback 2026-10-23 — factoring a prompt builder into a shared function \"for reuse\" paraphrased two of its arms and dropped a cap, and only the existing tests caught it; when extracting shared code, move the strings verbatim from the original, and let the suite's red rows name what the refactor silently changed"
 type: feedback
 date: 2026-11-04
 basis: inferred

@@ -1,6 +1,6 @@
 ---
 name: a-new-plan-must-answer-the-past-plans
-description: "feedback 2026-11-02 — the owner asked whether a drafted plan is "in line with what we have done in the past"; a new plan that presents its shape as obvious must name the past plans it reopens and argue the difference, not just the fit"
+description: "feedback 2026-11-02 — the owner asked whether a drafted plan is \"in line with what we have done in the past\"; a new plan that presents its shape as obvious must name the past plans it reopens and argue the difference, not just the fit"
 type: feedback
 date: 2026-11-04
 basis: confirmed-by

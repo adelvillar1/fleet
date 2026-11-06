@@ -1,6 +1,6 @@
 ---
 name: plugins-ux-plan-drafted-2026-11-03
-description: "project 2026-11-03 — the owner's "the plugin UI is atrocious" verdict became docs/plans/2026-11-03-plugins-ux.md, gated, then the owner demanded mockups before any build — three HTML mockups in the face's own idiom — then approved them ("implement as designed") and the plan was IMPLEMENTED and COMPLETED whole (5f56b86, gate 2,012/0, harness 703/0 across 67 cases): the built-ins as three grouped status-first sections, every row carrying its press, the install door, the trust disclosure, the rail badge"
+description: "project 2026-11-03 — the owner's \"the plugin UI is atrocious\" verdict became docs/plans/2026-11-03-plugins-ux.md, gated, then the owner demanded mockups before any build — three HTML mockups in the face's own idiom — then approved them (\"implement as designed\") and the plan was IMPLEMENTED and COMPLETED whole (5f56b86, gate 2,012/0, harness 703/0 across 67 cases): the built-ins as three grouped status-first sections, every row carrying its press, the install door, the trust disclosure, the rail badge"
 type: project
 date: 2026-11-04
 basis: confirmed-by

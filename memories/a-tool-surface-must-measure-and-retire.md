@@ -1,6 +1,6 @@
 ---
 name: a-tool-surface-must-measure-and-retire
-description: "feedback 2026-10-23 — after drafting a plan that only ADDED ten tools, the owner's amendment was "we need to measure and retire the tools that don't make sense to keep"; a surface needs a lifecycle (declaration record, usage economics, a trial window, DISABLE-not-delete) or it only grows"
+description: "feedback 2026-10-23 — after drafting a plan that only ADDED ten tools, the owner's amendment was \"we need to measure and retire the tools that don't make sense to keep\"; a surface needs a lifecycle (declaration record, usage economics, a trial window, DISABLE-not-delete) or it only grows"
 type: feedback
 date: 2026-11-04
 basis: confirmed-by

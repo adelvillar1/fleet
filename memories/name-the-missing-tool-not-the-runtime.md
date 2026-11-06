@@ -1,6 +1,6 @@
 ---
 name: name-the-missing-tool-not-the-runtime
-description: "owner correction 2026-10-18 — "What do you mean by no python on this machine. Of course there is python" — I wrote "no pytest on the machine" and it read as "no python"; python3 was present and in use all session"
+description: "owner correction 2026-10-18 — \"What do you mean by no python on this machine. Of course there is python\" — I wrote \"no pytest on the machine\" and it read as \"no python\"; python3 was present and in use all session"
 type: feedback
 date: 2026-11-04
 basis: confirmed-by

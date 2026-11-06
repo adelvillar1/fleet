@@ -1,6 +1,6 @@
 ---
 name: bot-pwa-b2-b3-landed-2026-10-26
-description: "bot-PWA plan state — B2 (the inbox read) and B3 (new conversation admitted on the remote face) LANDED 2026-10-26 in 7d2c81e while the plan file still said "fully pending"; the archived-drift it named is CLOSED (P4) and the whole plan was implemented 2026-10-28 as 2976098 — this memory survives as the lesson that a landed increment does not update its plan file"
+description: "bot-PWA plan state — B2 (the inbox read) and B3 (new conversation admitted on the remote face) LANDED 2026-10-26 in 7d2c81e while the plan file still said \"fully pending\"; the archived-drift it named is CLOSED (P4) and the whole plan was implemented 2026-10-28 as 2976098 — this memory survives as the lesson that a landed increment does not update its plan file"
 type: project
 date: 2026-11-04
 basis: inferred

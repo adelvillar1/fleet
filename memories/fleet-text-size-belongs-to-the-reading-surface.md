@@ -1,6 +1,6 @@
 ---
 name: fleet-text-size-belongs-to-the-reading-surface
-description: "2026-10-23 (KI-307, c96d729 + 10b8bd6) — I built the owner's "font size" ask on the composer field (25a93f8) and they corrected it within the day: "what I really wanted was the font size of the chat above the composer". The conversation carries an 85–170% MULTIPLIER (--chat-scale on the log) so a reply, its headings and its code keep their ratios; then the run's own telemetry — thought rows, command cards and their detail, receipts, the run line — joined it, while card furniture and everything outside the t…"
+description: "2026-10-23 (KI-307, c96d729 + 10b8bd6) — I built the owner's \"font size\" ask on the composer field (25a93f8) and they corrected it within the day: \"what I really wanted was the font size of the chat above the composer\". The conversation carries an 85–170% MULTIPLIER (--chat-scale on the log) so a reply, its headings and its code keep their ratios; then the run's own telemetry — thought rows, command cards and their detail, receipts, the run line — joined it, while card furniture and everything outside the t…"
 type: feedback
 date: 2026-11-04
 basis: confirmed-by

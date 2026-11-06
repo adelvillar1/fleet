@@ -4610,13 +4610,33 @@ mod tests {
         );
         assert!(unjustified.starts_with("HTTP/1.1 409"), "{unjustified}");
         assert!(unjustified.contains("justification"), "{unjustified}");
-        // The click carries the approval: an inferred fact supersedes on
-        // the recorded justification.
-        let landed = post_within(
+        // A replacement argument with no `replacement` is the silent
+        // forget: the description would be dropped and the fact killed
+        // under a sentence that reads as a reword. It is refused, and the
+        // refusal names the argument it found.
+        let unmodified = post_within(
             port,
             "/api/fact/supersede",
             &token,
             r#"{"name":"a-fact","justification":"superseded from the face: the sentence moved on","description":"the replacement sentence"}"#,
+            budget,
+        );
+        assert!(unmodified.starts_with("HTTP/1.1 409"), "{unmodified}");
+        assert!(unmodified.contains("`replacement`"), "{unmodified}");
+        assert!(
+            std::fs::read_to_string(corpus.join("a-fact.md"))
+                .expect("the fact file")
+                .contains("superseded-by:\n"),
+            "the refused call retired the fact anyway"
+        );
+        // The click carries the approval: an inferred fact supersedes on
+        // the recorded justification, and the replacement it names is
+        // the fact the old one folds into.
+        let landed = post_within(
+            port,
+            "/api/fact/supersede",
+            &token,
+            r#"{"name":"a-fact","justification":"superseded from the face: the sentence moved on","replacement":"a-fact-reworded","description":"the replacement sentence"}"#,
             budget,
         );
         assert!(landed.starts_with("HTTP/1.1 200"), "{landed}");
@@ -4624,8 +4644,13 @@ mod tests {
         let document: serde_json::Value = serde_json::from_str(body).expect("a JSON document");
         assert_eq!(document["type"], "fact_superseded");
         assert_eq!(document["from"], "a-fact");
+        assert_eq!(document["into"], "a-fact-reworded");
         let on_disk = std::fs::read_to_string(corpus.join("a-fact.md")).expect("the fact file");
-        assert!(on_disk.contains("superseded-by:"), "{on_disk}");
+        assert!(
+            on_disk.contains("superseded-by: a-fact-reworded"),
+            "{on_disk}"
+        );
+        assert!(corpus.join("a-fact-reworded.md").exists(), "the replacement");
         // One consolidation pass on demand: the pass runs and names what
         // it did — here, nothing, which is itself the honest answer.
         let pass = post_within(port, "/api/memories/consolidate", &token, "{}", budget);

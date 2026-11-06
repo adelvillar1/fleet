@@ -1,6 +1,6 @@
 ---
 name: a-ledger-row-can-name-the-wrong-cause
-description: "a KI row's stated mechanism can be false — KI-285 blamed "a counter instead of reading the table" when the writer already derived max+1 from the table and the real defect was an unlocked read-modify-write; read the code before acting on a row's next-action, and check whether the repo already fixed that shape elsewhere"
+description: "a KI row's stated mechanism can be false — KI-285 blamed \"a counter instead of reading the table\" when the writer already derived max+1 from the table and the real defect was an unlocked read-modify-write; read the code before acting on a row's next-action, and check whether the repo already fixed that shape elsewhere"
 type: feedback
 date: 2026-11-04
 basis: inferred

@@ -1,6 +1,6 @@
 ---
 name: shell-stub-traps-echo-and-controlled-path
-description: "feedback 2026-10-26 — stub scripts on a controlled PATH fail three quiet ways: /bin/sh echo interprets `\n` and splits a JSON answer across lines (use printf '%s\n'), bare mkdir/dirname don't resolve on the controlled PATH (absolute /bin/mkdir, /usr/bin/dirname), and `git clone --quiet <url> <dir>` puts the target in $4 not $3"
+description: "feedback 2026-10-26 — stub scripts on a controlled PATH fail three quiet ways: /bin/sh echo interprets `\\n` and splits a JSON answer across lines (use printf '%s\\n'), bare mkdir/dirname don't resolve on the controlled PATH (absolute /bin/mkdir, /usr/bin/dirname), and `git clone --quiet <url> <dir>` puts the target in $4 not $3"
 type: feedback
 date: 2026-11-04
 basis: inferred

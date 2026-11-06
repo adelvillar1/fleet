@@ -1,6 +1,6 @@
 ---
 name: bots-surface-mints-the-bot-pairing-card
-description: "project 2026-10-29/30 — #/bots gives the bot experience the console's own pairing pattern (POST /api/pair/window {"face":"bot"} → relay origin + #k fragment, or LAN with a plain-HTTP note), and after the owner twice said he saw NOTHING the row became its OWN CARD under the page head (measured rowTop 369, above the fold at 700px) while the counters strip gained "build <hash>"; commit 17b176d, harness 393/43"
+description: "project 2026-10-29/30 — #/bots gives the bot experience the console's own pairing pattern (POST /api/pair/window {\"face\":\"bot\"} → relay origin + #k fragment, or LAN with a plain-HTTP note), and after the owner twice said he saw NOTHING the row became its OWN CARD under the page head (measured rowTop 369, above the fold at 700px) while the counters strip gained \"build <hash>\"; commit 17b176d, harness 393/43"
 type: project
 date: 2026-11-04
 basis: confirmed-by

@@ -1,6 +1,6 @@
 ---
 name: ki-372-the-owners-screen-is-class-yours
-description: "project 2026-10-30 (KI-372, 4753d13) — the paired phone's bot inbox listed 13 scheduled corpus-refresh runs as "needs you" because inbox_document skipped the class predicate every other owner surface applies; fixed to exactly class == yours, live 50 rows → 8, pinned by the_inbox_keeps_the_owners_rows_and_only_those"
+description: "project 2026-10-30 (KI-372, 4753d13) — the paired phone's bot inbox listed 13 scheduled corpus-refresh runs as \"needs you\" because inbox_document skipped the class predicate every other owner surface applies; fixed to exactly class == yours, live 50 rows → 8, pinned by the_inbox_keeps_the_owners_rows_and_only_those"
 type: project
 date: 2026-11-04
 basis: confirmed-by

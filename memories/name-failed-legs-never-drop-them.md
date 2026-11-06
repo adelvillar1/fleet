@@ -1,6 +1,6 @@
 ---
 name: name-failed-legs-never-drop-them
-description: "in a fan-out pipeline a failed leg must be NAMED, not dropped to an empty string — `except Exception: return ""` lets silence flow downstream as content and produces confidently wrong output; the fix is per-leg status, not error-handling middleware"
+description: "in a fan-out pipeline a failed leg must be NAMED, not dropped to an empty string — `except Exception: return \"\"` lets silence flow downstream as content and produces confidently wrong output; the fix is per-leg status, not error-handling middleware"
 type: feedback
 date: 2026-11-04
 basis: inferred

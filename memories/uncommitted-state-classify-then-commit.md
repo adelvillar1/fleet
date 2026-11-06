@@ -1,6 +1,6 @@
 ---
 name: uncommitted-state-classify-then-commit
-description: "feedback 2026-10-30 — owner instruction mid-turn, "whatever is uncommitted should be committed": classify before committing — real artifacts land in their named homes, harness debris moves to tmp/ (never deleted), .lock files are runtime state per the KI-062 precedent — and the tree ends clean without committing "hello"
+description: "feedback 2026-10-30 — owner instruction mid-turn, \"whatever is uncommitted should be committed\": classify before committing — real artifacts land in their named homes, harness debris moves to tmp/ (never deleted), .lock files are runtime state per the KI-062 precedent — and the tree ends clean without committing \"hello"
 type: feedback
 date: 2026-11-04
 basis: confirmed-by

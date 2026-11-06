@@ -1,6 +1,6 @@
 ---
 name: a-ruling-has-to-name-what-the-check-can-see
-description: "feedback 2026-11-02 — O1's ruling described validating a relay join against "the relay's own minted-session store", but relay-sessions.json is the FACE's home file and the deployed relay cannot read it, so the check as ruled was unbuildable; the owner amended the ruling instead. Before building a ruled mechanism, verify the artifact it names exists on the side that would run it — otherwise bring the owner the amendment, not a substitute"
+description: "feedback 2026-11-02 — O1's ruling described validating a relay join against \"the relay's own minted-session store\", but relay-sessions.json is the FACE's home file and the deployed relay cannot read it, so the check as ruled was unbuildable; the owner amended the ruling instead. Before building a ruled mechanism, verify the artifact it names exists on the side that would run it — otherwise bring the owner the amendment, not a substitute"
 type: feedback
 date: 2026-11-04
 basis: confirmed-by

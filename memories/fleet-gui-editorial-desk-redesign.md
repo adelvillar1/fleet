@@ -1,6 +1,6 @@
 ---
 name: fleet-gui-editorial-desk-redesign
-description: "owner direction 2026-10-19/20 — the GUI is an editorial desk (paper-first, NOT dark-by-default), a home briefing answering four questions from real reads, a "no dead objects" interaction contract, a live route/think/act/verify process card, and a docked selected-object inspector with embedding-ranked related objects; COMPLETE 2026-10-20 — 497b60b (slice) then ddb8724 + cd8ad1a (completion plan), pushed, gate 1286"
+description: "owner direction 2026-10-19/20 — the GUI is an editorial desk (paper-first, NOT dark-by-default), a home briefing answering four questions from real reads, a \"no dead objects\" interaction contract, a live route/think/act/verify process card, and a docked selected-object inspector with embedding-ranked related objects; COMPLETE 2026-10-20 — 497b60b (slice) then ddb8724 + cd8ad1a (completion plan), pushed, gate 1286"
 type: project
 date: 2026-11-05
 basis: confirmed-by

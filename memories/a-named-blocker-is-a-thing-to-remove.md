@@ -1,6 +1,6 @@
 ---
 name: a-named-blocker-is-a-thing-to-remove
-description: "feedback 2026-10-26 — when I name a blocker or diagnose a defect, the owner expects it removed, not documented; "why do we have to wait? you should be able to trigger it" and "why are you fighting something that's clearly wrong"
+description: "feedback 2026-10-26 — when I name a blocker or diagnose a defect, the owner expects it removed, not documented; \"why do we have to wait? you should be able to trigger it\" and \"why are you fighting something that's clearly wrong"
 type: feedback
 date: 2026-11-04
 basis: confirmed-by

@@ -2134,6 +2134,222 @@ mod router_tests {
         let _ = fs::remove_dir_all(&home);
     }
 
+    /// KI-423: saving any other field of a provider erased its custom
+    /// listing URL, because the entry the card wrote carried no
+    /// `models_url` — and nothing downstream could carry it either: the
+    /// roster's `Candidate` had no such field, so the read could not hand
+    /// the card the value it was supposed to preserve.
+    ///
+    /// The round trip is the whole criterion: what the file holds comes
+    /// back from the roster read, the entry the card writes carries it,
+    /// and the file after the save still names the same listing.
+    #[test]
+    fn a_custom_listing_url_survives_the_round_trip_a_card_makes() {
+        let home = scratch("listing-round-trip");
+        let listing = "https://opencode.ai/inference/v1/models";
+        set_provider(
+            &home,
+            &serde_json::json!({
+                "id": "opencode",
+                "base_url": "https://opencode.ai/inference/openai/v1",
+                "models_url": listing,
+                "key_env": "OPENCODE_API_KEY",
+                "models": ["big-pickle"],
+                "key_required": false,
+            })
+            .to_string(),
+        )
+        .expect("the provider saves");
+        // The READ half: the roster the settings surface renders.
+        let config = router_config(&home, &dotenv(&home));
+        let read = config
+            .roster
+            .iter()
+            .find(|entry| entry.id == "opencode")
+            .expect("the provider is on the roster");
+        assert_eq!(
+            read.models_url.as_deref(),
+            Some(listing),
+            "the roster read must hand the card the listing url"
+        );
+        // The WRITE half: exactly the entry the card's save body carries,
+        // built from what the read supplied plus a change to another field.
+        let saved = serde_json::json!({
+            "id": read.id,
+            "base_url": read.base_url,
+            "models_url": read.models_url,
+            "key_env": read.key_env,
+            "models": read.models,
+            "enabled": read.enabled,
+            "key_required": read.key_required,
+        });
+        set_provider(&home, &saved.to_string()).expect("the save lands");
+        let document = read_json(&home.join("config.json")).unwrap();
+        let written = document["providers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|provider| provider["id"] == "opencode")
+            .expect("the provider")
+            .clone();
+        assert_eq!(
+            written["models_url"],
+            serde_json::Value::String(listing.to_string()),
+            "a save that carries the read's own fields keeps the listing url: {written}"
+        );
+        // The other half of the same defect: a provider the roster already
+        // CARRIES is merged over the compiled-in candidate, and that arm
+        // dropped the field too — an override naming a custom listing was
+        // resolved into nothing, so the read handed the card `None` and
+        // the next save erased the value for good.
+        let override_listing = "https://opencode.ai/inference/v1/models";
+        set_provider(
+            &home,
+            &serde_json::json!({ "id": "stepfun", "models_url": override_listing }).to_string(),
+        )
+        .expect("an override saves");
+        let config = router_config(&home, &dotenv(&home));
+        let overridden = config
+            .roster
+            .iter()
+            .find(|entry| entry.id == "stepfun")
+            .expect("the compiled-in provider is still on the roster");
+        assert_eq!(
+            overridden.models_url.as_deref(),
+            Some(override_listing),
+            "an override's listing url reaches the read through the merge"
+        );
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    /// The class KI-423 belongs to: `set_provider` replaced the stored
+    /// entry WHOLESALE, so every field the calling surface had no control
+    /// for was erased by the save that carried the others. The card
+    /// renders nine of the entry's fields; its "disable it" press sends
+    /// fewer still. Proven here on the two the card never renders —
+    /// `protocol` and `model_protocols`, the mixed gateway's shape.
+    #[test]
+    fn a_save_that_does_not_name_a_field_does_not_erase_it() {
+        let home = scratch("save-preserves-unnamed");
+        set_provider(
+            &home,
+            &serde_json::json!({
+                "id": "themixed",
+                "base_url": "http://127.0.0.1:9/v1",
+                "models_url": "http://127.0.0.1:9/listing/models",
+                "key_env": "THEMIXED_API_KEY",
+                "models": ["chat-one", "resp-one"],
+                "protocol": "responses",
+                "model_protocols": { "chat-one": "chat" },
+                "headers": { "x-opencode-session": "{session}" },
+                "key_required": false,
+            })
+            .to_string(),
+        )
+        .expect("the provider saves");
+        // Exactly what the card's "disable it" press carries today, plus
+        // what its save carries: no `protocol`, no `model_protocols`.
+        set_provider(
+            &home,
+            &serde_json::json!({
+                "id": "themixed",
+                "base_url": "http://127.0.0.1:9/v1",
+                "models_url": "http://127.0.0.1:9/listing/models",
+                "key_env": "THEMIXED_API_KEY",
+                "models": ["chat-one", "resp-one"],
+                "enabled": false,
+            })
+            .to_string(),
+        )
+        .expect("the toggle saves");
+        let document = read_json(&home.join("config.json")).unwrap();
+        let stored = document["providers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|provider| provider["id"] == "themixed")
+            .expect("the provider")
+            .clone();
+        // What the save DID name landed.
+        assert_eq!(stored["enabled"], serde_json::Value::Bool(false), "{stored}");
+        // What it did not name is still the owner's.
+        assert_eq!(
+            stored["protocol"],
+            serde_json::Value::String("responses".to_string()),
+            "a field the surface does not render is not the save's to erase: {stored}"
+        );
+        assert_eq!(
+            stored["model_protocols"],
+            serde_json::json!({ "chat-one": "chat" }),
+            "the per-model dialects survive too: {stored}"
+        );
+        assert_eq!(
+            stored["headers"],
+            serde_json::json!({ "x-opencode-session": "{session}" }),
+            "so do the headers the toggle does not carry: {stored}"
+        );
+        // And a field the save DOES name explicitly still wins — the
+        // clear path: an empty listing url is a clearing, not a gap.
+        set_provider(
+            &home,
+            &serde_json::json!({
+                "id": "themixed",
+                "models_url": "",
+            })
+            .to_string(),
+        )
+        .expect("the clear saves");
+        let document = read_json(&home.join("config.json")).unwrap();
+        let stored = document["providers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|provider| provider["id"] == "themixed")
+            .expect("the provider")
+            .clone();
+        assert_eq!(
+            stored["models_url"],
+            serde_json::Value::String(String::new()),
+            "a named field is the save's to set, empty included: {stored}"
+        );
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    /// KI-423's other half: the discovery asks the entry's own listing
+    /// URL, not `{base}/models`. Without this the preserved value would
+    /// be cosmetic — the field would survive the save and still be
+    /// ignored by the read that needs it.
+    #[test]
+    fn the_discovery_reads_the_entries_listing_not_the_bases_models() {
+        let (addr, seen) = listing_stub("own-listing", "200 OK", r#"{"data":[{"id":"listed"}]}"#);
+        let home = scratch("own-listing-home");
+        fs::write(home.join(".env"), "OWNLISTING_API_KEY=the-key\n").unwrap();
+        set_provider(
+            &home,
+            &serde_json::json!({
+                "id": "ownlisting",
+                "base_url": format!("http://{addr}/inference/openai/v1"),
+                "models_url": format!("http://{addr}/inference/v1/models"),
+                "key_env": "OWNLISTING_API_KEY",
+                "key_required": false,
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let discovery = rediscover_provider(&home, "ownlisting").expect("the re-list answers");
+        assert!(discovery.ok, "{:?}", discovery.error);
+        let wire = seen.lock().unwrap().join(" | ");
+        assert!(
+            wire.contains("GET /inference/v1/models"),
+            "the entry's own listing is what was asked: {wire}"
+        );
+        assert!(
+            !wire.contains("GET /inference/openai/v1/models"),
+            "the base's models path was not asked: {wire}"
+        );
+        let _ = fs::remove_dir_all(&home);
+    }
+
     /// A provider declared with no models is not silently usable: the
     /// discovery that later succeeds fills the list, and the same entry is
     /// carried through without a second write.
@@ -2508,6 +2724,11 @@ pub struct TierConfig {
 pub struct RosterEntry {
     pub id: String,
     pub base_url: String,
+    /// Where this provider's model listing lives, when it is not
+    /// `{base_url}/models` (KI-423). The card edits this field, so the
+    /// read must carry it — a card that cannot see the value cannot
+    /// preserve it, and a save that omits it erases what the file had.
+    pub models_url: Option<String>,
     pub models: Vec<String>,
     pub kind: &'static str,
     pub billing: &'static str,
@@ -2610,6 +2831,7 @@ fn roster_entry(
     RosterEntry {
         id: entry.id().to_string(),
         base_url: entry.candidate.base_url.clone(),
+        models_url: entry.candidate.models_url.clone(),
         models: entry.candidate.models.clone(),
         kind: match entry.candidate.kind {
             crate::route::CandidateKind::Http => "http",
@@ -3584,11 +3806,21 @@ pub fn set_provider(home: &Path, entry: &str) -> Result<String, String> {
         .ok_or_else(|| "`providers` is not a list".to_string())?;
     // Replace in place when the id is already there, so a re-configuration
     // does not reorder the file underneath its owner.
+    //
+    // The replacement is a MERGE, not an overwrite: a save carries the
+    // fields its surface renders, and a surface that renders nine of an
+    // entry's eleven fields must not erase the other two. KI-423 is what
+    // the overwrite cost — the provider card had no listing-URL field, so
+    // editing any other field silently deleted a custom listing and the
+    // provider's discovery 404'd from then on. The same shape erased
+    // `protocol` and `model_protocols`, which no surface renders at all.
+    // A field the save NAMES is the save's to set, empty string included:
+    // naming a field is how a value is cleared.
     let position = array
         .iter()
         .position(|existing| existing.get("id").and_then(|id| id.as_str()) == Some(id.as_str()));
     match position {
-        Some(index) => array[index] = value,
+        Some(index) => array[index] = merge_unnamed_fields(&array[index], value),
         None => array.push(value),
     }
     write_atomic(
@@ -3596,6 +3828,24 @@ pub fn set_provider(home: &Path, entry: &str) -> Result<String, String> {
         &serde_json::to_string_pretty(&document).map_err(|error| error.to_string())?,
     )?;
     Ok(id)
+}
+
+/// Lay `incoming` over `existing`, keeping every field of the stored entry
+/// that `incoming` does not name.
+///
+/// One level deep, deliberately: a named field replaces wholesale, so the
+/// card that renders `headers` sets them, and the card that renders none
+/// leaves them alone. `id` always comes from `incoming` — the merge is
+/// addressed by it.
+fn merge_unnamed_fields(existing: &Value, incoming: Value) -> Value {
+    let (Some(stored), Some(fresh)) = (existing.as_object(), incoming.as_object()) else {
+        return incoming;
+    };
+    let mut merged = stored.clone();
+    for (key, value) in fresh {
+        merged.insert(key.clone(), value.clone());
+    }
+    Value::Object(merged)
 }
 
 /// Remove one provider override. The destructive rule, and the reason

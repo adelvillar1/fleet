@@ -6,7 +6,7 @@ date: 2026-10-26
 basis: inferred
 tier: durable
 shape: [foreign-root, resolved]
-phrases: [/tmp/blend1_refresh_driver.py, blend1_refresh_ci.py, action: no-source, cruiserintelligence, unique driver name, date +%Y%m%dT%H%M%S_$$]
+phrases: [/tmp/blend1_refresh_driver.py, blend1_refresh_ci.py, "action: no-source", cruiserintelligence, unique driver name, date +%Y%m%dT%H%M%S_$$]
 missing: []
 recall-count: 0
 superseded-by:

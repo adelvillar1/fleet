@@ -1,6 +1,6 @@
 ---
 name: completed-plan-unticked-criteria-census-2026-11-02
-description: "project 2026-11-02 — the "what else was left behind?" sweep, CORRECTED against git and the tree (8 completed plans / 61 unticked criteria under Acceptance criteria, not 17/107), SWEPT the same day (25 ticked with path:line, 34 residuals), then CONSOLIDATED into docs/plans/2026-11-02-open-work-closeout.md (C1–C22, six increments) on the owner's "create a plan to address all residuals except session parity"; the residuals plan is cancelled; KI-399 filed for O1's ruled-mechanism divergence; pushed 0cecba0"
+description: "project 2026-11-02 — the \"what else was left behind?\" sweep, CORRECTED against git and the tree (8 completed plans / 61 unticked criteria under Acceptance criteria, not 17/107), SWEPT the same day (25 ticked with path:line, 34 residuals), then CONSOLIDATED into docs/plans/2026-11-02-open-work-closeout.md (C1–C22, six increments) on the owner's \"create a plan to address all residuals except session parity\"; the residuals plan is cancelled; KI-399 filed for O1's ruled-mechanism divergence; pushed 0cecba0"
 type: project
 date: 2026-11-04
 basis: confirmed-by

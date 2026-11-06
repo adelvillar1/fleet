@@ -1,6 +1,6 @@
 ---
 name: audit-claims-pinned-against-captured-bytes
-description: "feedback 2026-10-23 — "what the model saw" is only honest if it IS the loop's own composer (one shared function, no second implementation), trimmed to the last request's edge, hold-backs named — and pinned byte-equal against the CAPTURED provider request bodies; a tool re-run's answer lands in the drawer and NEVER in the session log, because the log is the model's context"
+description: "feedback 2026-10-23 — \"what the model saw\" is only honest if it IS the loop's own composer (one shared function, no second implementation), trimmed to the last request's edge, hold-backs named — and pinned byte-equal against the CAPTURED provider request bodies; a tool re-run's answer lands in the drawer and NEVER in the session log, because the log is the model's context"
 type: feedback
 date: 2026-11-04
 basis: inferred

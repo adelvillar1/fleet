@@ -1,6 +1,6 @@
 ---
 name: an-undefined-call-hides-in-a-branch-nothing-exercises
-description: "a call to a function that does not exist throws only when its branch runs — the receipt's "ask what is next" called askFace (never defined) and no test could catch it; grep the app for bare calls with no definition rather than relying on a syntax check or on the surrounding code looking right"
+description: "a call to a function that does not exist throws only when its branch runs — the receipt's \"ask what is next\" called askFace (never defined) and no test could catch it; grep the app for bare calls with no definition rather than relying on a syntax check or on the surrounding code looking right"
 type: feedback
 date: 2026-11-04
 basis: inferred

@@ -1,6 +1,6 @@
 ---
 name: fleet-settings-abstraction-search
-description: "2026-10-23 the owner deferred settings simplification ("I haven't found the right abstraction yet"); 2026-10-29 he supplied it across five planning turns (the rail, card density, the pane idea, the whole rewrite, sectionRail extraction); the build then SHIPPED 2026-10-30 (S1–S10 green — the plan's status is completed); on 2026-11-01 the owner called the shipped UX "atrocious", launching a NEW research+plan layer above the bones — see [[settings-ux-plan-2026-11-01]]"
+description: "2026-10-23 the owner deferred settings simplification (\"I haven't found the right abstraction yet\"); 2026-10-29 he supplied it across five planning turns (the rail, card density, the pane idea, the whole rewrite, sectionRail extraction); the build then SHIPPED 2026-10-30 (S1–S10 green — the plan's status is completed); on 2026-11-01 the owner called the shipped UX \"atrocious\", launching a NEW research+plan layer above the bones — see [[settings-ux-plan-2026-11-01]]"
 type: project
 date: 2026-11-04
 basis: confirmed-by

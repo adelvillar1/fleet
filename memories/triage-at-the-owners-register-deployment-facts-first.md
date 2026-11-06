@@ -1,6 +1,6 @@
 ---
 name: triage-at-the-owners-register-deployment-facts-first
-description: "Owner feedback 2026-10-30 — stop consumer-grade triage (reloads, caches, browser pedagogy); answer "is it deployed" with process-start vs binary-mtime and the page's build stamp, measure the real viewport, and make the product name its build"
+description: "Owner feedback 2026-10-30 — stop consumer-grade triage (reloads, caches, browser pedagogy); answer \"is it deployed\" with process-start vs binary-mtime and the page's build stamp, measure the real viewport, and make the product name its build"
 type: feedback
 date: 2026-11-04
 basis: confirmed-by

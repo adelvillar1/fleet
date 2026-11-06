@@ -1,6 +1,6 @@
 ---
 name: the-gate-runs-only-for-code-changes
-description: "owner ruling 2026-11-01 — the four-leg fleet gate runs before every push that carries CODE changes (Rust, JS, CSS, HTML, scripts, tests); a docs-only push skips it (no compile surface); hard rule 2 amended, the exit-code rule stands for every run that runs, and the owner asks "does it make sense to re-run?" when the change has no compile surface"
+description: "owner ruling 2026-11-01 — the four-leg fleet gate runs before every push that carries CODE changes (Rust, JS, CSS, HTML, scripts, tests); a docs-only push skips it (no compile surface); hard rule 2 amended, the exit-code rule stands for every run that runs, and the owner asks \"does it make sense to re-run?\" when the change has no compile surface"
 type: feedback
 date: 2026-11-04
 basis: confirmed-by

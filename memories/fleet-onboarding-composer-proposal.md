@@ -1,6 +1,6 @@
 ---
 name: fleet-onboarding-composer-proposal
-description: "2026-10-23 owner proposal — a composer-interface onboarding screen that pitches lanes by name ("setup a system one model like jev, julia1, d1, glider, glide, typellm and you could get this — give me the API key and I'll set it up for you"), the just-in-time-configuration candidate first artifact of the settings abstraction"
+description: "2026-10-23 owner proposal — a composer-interface onboarding screen that pitches lanes by name (\"setup a system one model like jev, julia1, d1, glider, glide, typellm and you could get this — give me the API key and I'll set it up for you\"), the just-in-time-configuration candidate first artifact of the settings abstraction"
 type: project
 date: 2026-11-04
 basis: confirmed-by

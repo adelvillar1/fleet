@@ -1,6 +1,6 @@
 ---
 name: composed-joins-the-judged-set
-description: "owner ruling 2026-11-02 — "you can do it if I give you permission to do it, and you have it": `composed` joins the judged set on BOTH sides (fleet's JUDGED_WORKLOADS and the vendored sys1 lane's ROUTE_WORKLOAD_LABELS), and C18 was proven live — the real lane answered `composed` at 0.892 and the walk landed on blend1; the earlier "C18 needs the owner's ruling" was wrong, because the ruling had already been given"
+description: "owner ruling 2026-11-02 — \"you can do it if I give you permission to do it, and you have it\": `composed` joins the judged set on BOTH sides (fleet's JUDGED_WORKLOADS and the vendored sys1 lane's ROUTE_WORKLOAD_LABELS), and C18 was proven live — the real lane answered `composed` at 0.892 and the walk landed on blend1; the earlier \"C18 needs the owner's ruling\" was wrong, because the ruling had already been given"
 type: project
 date: 2026-11-04
 basis: confirmed-by

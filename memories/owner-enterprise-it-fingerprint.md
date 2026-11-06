@@ -1,6 +1,6 @@
 ---
 name: owner-enterprise-it-fingerprint
-description: "The owner has 30 years of enterprise IT baked into fleet's design instincts; fleet is already open-sourced with a no-expectation posture, and the philosophy is "the tool I wanted for my workflows, not the other way around"
+description: "The owner has 30 years of enterprise IT baked into fleet's design instincts; fleet is already open-sourced with a no-expectation posture, and the philosophy is \"the tool I wanted for my workflows, not the other way around"
 type: user
 date: 2026-11-04
 basis: confirmed-by

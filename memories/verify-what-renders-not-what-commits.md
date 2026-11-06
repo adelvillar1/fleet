@@ -1,6 +1,6 @@
 ---
 name: verify-what-renders-not-what-commits
-description: "2026-10-19/20 — when the owner distrusts shipped work, commit history and a serving binary do not refute them; the rail was committed/served/not what was approved, and the port's "verified live in Chromium" ran only at desktop widths. Render the real artifact at the widths the feature is FOR, and check the gate's actual steps"
+description: "2026-10-19/20 — when the owner distrusts shipped work, commit history and a serving binary do not refute them; the rail was committed/served/not what was approved, and the port's \"verified live in Chromium\" ran only at desktop widths. Render the real artifact at the widths the feature is FOR, and check the gate's actual steps"
 type: feedback
 date: 2026-11-04
 basis: confirmed-by

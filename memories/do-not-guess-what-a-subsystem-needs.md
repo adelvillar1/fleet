@@ -1,6 +1,6 @@
 ---
 name: do-not-guess-what-a-subsystem-needs
-description: "feedback 2026-11-03 — the owner rebuked confident guesses stated as facts about fleet's own subsystems ("for fucks sake, fleet uses sys1 extensively! why are you asking for a key there"); read the subsystem before claiming what it needs, and never present an assumption as a blocker"
+description: "feedback 2026-11-03 — the owner rebuked confident guesses stated as facts about fleet's own subsystems (\"for fucks sake, fleet uses sys1 extensively! why are you asking for a key there\"); read the subsystem before claiming what it needs, and never present an assumption as a blocker"
 type: feedback
 date: 2026-11-04
 basis: confirmed-by

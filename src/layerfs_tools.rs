@@ -80,6 +80,16 @@ const CONTROL_BUDGET: Duration = Duration::from_secs(120);
 /// process through the gate.
 const VERSION_BUDGET: Duration = Duration::from_secs(10);
 
+/// How many `--version` attempts one resolution makes — KI-426's
+/// lesson in the unit the mechanism actually meters. A `--version` is
+/// idempotent and costs one fork, so an attempt that never got its
+/// child started under a loaded machine was being reported as "the
+/// CLI is absent": a wall-clock budget standing where an attempt
+/// count belongs. The read is read-only, so every attempt is safe to
+/// spend; a CLI that is genuinely gone fails its spawn on the first
+/// one and pays nothing for attempts that never run.
+const VERSION_ATTEMPTS: usize = 3;
+
 /// How much of a CLI answer rides inside an error before it is cut:
 /// enough to diagnose, bounded so a garbage answer cannot flood the
 /// model's context through a refusal.
@@ -1405,8 +1415,17 @@ pub fn view_path(raw: &str) -> Result<String, String> {
 /// fact it is (the plan's C2).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MergeOutcome {
-    /// The merge landed; the value is the CLI's own answer.
+    /// The merge landed and `main` moved; the value is the CLI's own
+    /// answer.
     Merged(serde_json::Value),
+    /// The merge landed on the integration branch but publishing it to
+    /// `main` was refused, so NO trunk moved. KI-327: the old shape
+    /// reported this as `Merged` because the local merge succeeded, and
+    /// the header then printed `merged to main` over a `main` that never
+    /// moved — the reason is the CLI's own refusal, carried verbatim,
+    /// and the integration branch is named because it is where the work
+    /// is.
+    NotPublished { integration: String, reason: String },
     /// Two commits changed the same file and no `.lww` rule covers it.
     /// The paths are the CLI's conflict list, bounded; the child's
     /// branch is kept so the parent can resolve there.
@@ -1463,6 +1482,17 @@ impl Gate {
             .map(String::as_str)
             .chain(args.iter().copied())
             .collect()
+    }
+
+    /// The CLI as an operator types it: the executable, then the
+    /// bundle's script when this gate resolves one. It is what a
+    /// rendered report puts in front of `fs read` so the parent reads a
+    /// child's work back in one step, and it is derived from the gate
+    /// that actually spawned rather than from a constant, because the
+    /// two routes (`FLEET_LAYERFS_BIN`, the sealed bundle) are the same
+    /// CLI and different command lines (KI-320).
+    pub fn command_line(&self) -> String {
+        program_line(&self.cli, &self.prefix)
     }
 
     /// A Gate over any executable, for the surfaces' tests: nothing
@@ -2104,20 +2134,89 @@ pub fn gate() -> Result<Gate, String> {
     Gate::resolve()
 }
 
+/// The CLI as an operator types it — one pure rendering, so the two
+/// resolution routes (an executable, and the bundle's script under
+/// `node`) produce one command line and a pin can drive both without
+/// spawning either (KI-320). A part carrying a space is quoted, because
+/// a path with a space in it is common and an unquoted one produces a
+/// command the parent would paste and watch fail.
+pub fn program_line(cli: &std::ffi::OsStr, prefix: &[String]) -> String {
+    let quote = |part: &str| {
+        if part.contains(' ') {
+            format!("\"{part}\"")
+        } else {
+            part.to_string()
+        }
+    };
+    let mut line = quote(&cli.to_string_lossy());
+    for arg in prefix {
+        line.push(' ');
+        line.push_str(&quote(arg));
+    }
+    line
+}
+
 /// Read the CLI's wire version: the last `x.y.z` token of its first
 /// `--version` line. A CLI that answers nothing version-shaped is an
 /// absence, named.
 fn run_version(cli: &OsString, prefix: &[String]) -> Result<String, String> {
+    run_version_with(cli, prefix, VERSION_BUDGET, VERSION_ATTEMPTS)
+}
+
+/// [`run_version`] with its budget and its attempt count as arguments,
+/// so the retry has one seam a test can drive without a clock.
+fn run_version_with(
+    cli: &OsString,
+    prefix: &[String],
+    budget: Duration,
+    attempts: usize,
+) -> Result<String, String> {
     let mut argv: Vec<&str> = prefix.iter().map(String::as_str).collect();
     argv.push("--version");
-    let body = spawn(cli, "--version", &argv, VERSION_BUDGET).map_err(|error| match error {
-        Error::Spawn(reason) => format!("the CLI could not be spawned: {reason}"),
-        Error::Timeout { .. } => format!(
-            "the CLI did not answer --version within {}s",
-            VERSION_BUDGET.as_secs()
-        ),
-        other => other.to_string(),
-    })?;
+    let body = retry_version(attempts, || spawn(cli, "--version", &argv, budget))?;
+    parse_version(&body)
+}
+
+/// Spend up to `attempts` tries at one read, and retry only the
+/// failures a busy machine produces.
+///
+/// This is KI-426's cure, and the unit is the point: a `--version` is
+/// idempotent and costs one fork, so the thing a loaded machine takes
+/// away is an ATTEMPT, not the CLI. Under the full parallel suite a
+/// child that never started inside its budget was reported as "the
+/// CLI is absent" — a wall-clock budget standing where an attempt
+/// count belongs. [`VERSION_ATTEMPTS`] is that count, and the budget
+/// still bounds each try, so a genuinely hung CLI is still a named
+/// timeout.
+///
+/// A refusal or a decode is the CLI's OWN answer: no attempt count
+/// changes what it said, so those return on the first try. Only the
+/// two classes that mean "the read did not happen" — a spawn that
+/// never started and a budget that expired — are retried.
+fn retry_version(
+    attempts: usize,
+    mut attempt: impl FnMut() -> Result<String, Error>,
+) -> Result<String, String> {
+    let mut last = String::new();
+    for _ in 0..attempts.max(1) {
+        match attempt() {
+            Ok(body) => return Ok(body),
+            Err(Error::Spawn(reason)) => last = format!("the CLI could not be spawned: {reason}"),
+            Err(Error::Timeout { budget, .. }) => {
+                last = format!(
+                    "the CLI did not answer --version within {}s",
+                    budget.as_secs()
+                )
+            }
+            // The CLI answered, and what it said is not going to change.
+            Err(other) => return Err(other.to_string()),
+        }
+    }
+    Err(last)
+}
+
+/// The wire version out of one `--version` body, or a named absence.
+fn parse_version(body: &str) -> Result<String, String> {
     body.lines()
         .next()
         .unwrap_or_default()
@@ -2134,7 +2233,7 @@ fn run_version(cli: &OsString, prefix: &[String]) -> Result<String, String> {
         .ok_or_else(|| {
             format!(
                 "the CLI answered no version the driver knows: {}",
-                bounded(&body)
+                bounded(body)
             )
         })
 }
@@ -2326,6 +2425,11 @@ pub struct HomeApply {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct WorkspaceReport {
+    /// The LayerFS project the child's branch lives in — the name a
+    /// reader needs to reach the work through the store. KI-320: the
+    /// header named the branch and never the project, so a parent
+    /// holding a sandbox path had no address to verify against.
+    pub project: String,
     /// The child's branch — kept whether or not the merge landed, so
     /// a conflict can be resolved there.
     pub branch: String,
@@ -2481,6 +2585,7 @@ impl WorkspaceSession {
             Ok(gate) => gate,
             Err(reason) => {
                 return WorkspaceReport {
+                    project: self.project.clone(),
                     branch: self.branch,
                     ws: self.mount.ws,
                     sandbox: self.sandbox,
@@ -2490,6 +2595,7 @@ impl WorkspaceSession {
             }
         };
         let mut report = WorkspaceReport {
+            project: self.project.clone(),
             branch: self.branch.clone(),
             ws: self.mount.ws.clone(),
             sandbox: self.sandbox.clone(),
@@ -2557,18 +2663,33 @@ fn merge_back(gate: &Gate, project: &str, branch: &str, report: &mut WorkspaceRe
             match outcome {
                 Ok(_) => report.merge = Some(MergeOutcome::Merged(serde_json::Value::Null)),
                 Err(error) => {
+                    // KI-327: a refused publish is NOT a merge to main.
+                    // The old arm recorded `Merged` here — the local
+                    // merge had succeeded, so the header said `merged
+                    // to main` over a `main` that never moved, and the
+                    // parent trusted an address that did not exist.
                     report.notes.push(format!(
-                        "the merge landed on `{integration}` but the publish to main failed: {error}                      — the integration branch is kept"
+                        "the merge landed on `{integration}` but the publish to main failed: {error} — the integration branch is kept"
                     ));
-                    report.merge = Some(MergeOutcome::Merged(serde_json::Value::Null));
+                    report.merge = Some(MergeOutcome::NotPublished {
+                        integration: integration.clone(),
+                        reason: error.to_string(),
+                    });
                 }
             }
         }
         Ok(conflict @ MergeOutcome::Conflict { .. }) => {
             report.notes.push(format!(
-                "main moved while the child worked — the merge was refused as a Conflict and                  `{branch}` is kept for resolution; nothing was overwritten"
+                "main moved while the child worked — the merge was refused as a Conflict and `{branch}` is kept for resolution; nothing was overwritten"
             ));
             report.merge = Some(conflict);
+        }
+        // Unreachable through any answer: `merge` never answers with a
+        // publish outcome. It is matched rather than caught by a
+        // wildcard so a future verb that could answer this way is a
+        // compile error here instead of a silent `merge: …` note.
+        Ok(not_published @ MergeOutcome::NotPublished { .. }) => {
+            report.merge = Some(not_published);
         }
         Err(error) => report.notes.push(format!("merge: {error}")),
     }
@@ -2585,6 +2706,7 @@ impl WorkspaceHandle {
     /// gate is still the only door to `main`.
     pub fn close(self, keep: bool) -> WorkspaceReport {
         let mut report = WorkspaceReport {
+            project: self.project.clone(),
             branch: self.branch.clone(),
             ws: String::new(),
             sandbox: self.sandbox.clone(),
@@ -2626,7 +2748,17 @@ impl WorkspaceHandle {
         // for resolution, and applying its work to the host would walk
         // around the very conflict the merge named.
         match (&home, &report.merge) {
+            // A merge that never reached main brings nothing home: the
+            // work is on the child's branch (and, for a refused publish,
+            // on the integration branch), and writing it into the host
+            // would put a file on the owner's disk that main does not
+            // have. The note names which of the two it was.
             (Some(home), Some(MergeOutcome::Merged(_))) => report.home = Some(home.clone()),
+            (Some(_), Some(MergeOutcome::NotPublished { .. })) => report.notes.push(
+                "main never moved (the publish was refused), so nothing was applied home — the \
+                 work is on the integration branch the header names"
+                    .to_string(),
+            ),
             (Some(_), _) => report.notes.push(
                 "the merge did not land, so nothing was applied home — the branch is kept for \
                  resolution"
@@ -2931,6 +3063,125 @@ esac
             error.contains("1.0.0") && error.contains(SUPPORTED_WIRE),
             "{error}"
         );
+    }
+
+    /// KI-426's real assertion, with no clock and no stub in it: a
+    /// read that FAILS TO HAPPEN is retried, and the resolution only
+    /// calls the CLI absent once its attempts are spent.
+    ///
+    /// The counter is the point. A seam that answered on its first
+    /// call could not tell a retry from a single attempt, so the unit
+    /// mismatch KI-426 names would sail through this test exactly as
+    /// it sailed through the suite.
+    #[test]
+    fn a_version_read_that_misses_an_attempt_is_retried_not_absent() {
+        let mut tries = 0;
+        let answered = retry_version(VERSION_ATTEMPTS, || {
+            tries += 1;
+            if tries < VERSION_ATTEMPTS {
+                // Not an answer: the child never started. This is the
+                // shape a loaded machine produces.
+                Err(Error::Timeout {
+                    call: "--version".to_string(),
+                    budget: VERSION_BUDGET,
+                })
+            } else {
+                Ok("1.1.0\n".to_string())
+            }
+        })
+        .expect("the last attempt answers");
+        assert_eq!(answered.trim(), "1.1.0");
+        assert_eq!(
+            tries, VERSION_ATTEMPTS,
+            "every attempt was spent before the answer"
+        );
+    }
+
+    /// The other half of the same law: the attempts are BOUNDED, so a
+    /// CLI that never answers is reported absent rather than retried
+    /// forever. Without this pin, "retry" could quietly become "hang".
+    #[test]
+    fn a_version_read_that_never_answers_is_absent_after_its_attempts() {
+        let mut tries = 0;
+        let error = retry_version(VERSION_ATTEMPTS, || {
+            tries += 1;
+            // Named the instant the budget is overrun, rather than
+            // hanging: an unbounded retry must RED this pin, and a
+            // loop that never returns would only stall the run — a
+            // hang is a failure, but it is not evidence.
+            assert!(
+                tries <= VERSION_ATTEMPTS,
+                "the retry went past its budget: try {tries} of {VERSION_ATTEMPTS}"
+            );
+            Err(Error::Timeout {
+                call: "--version".to_string(),
+                budget: VERSION_BUDGET,
+            })
+        })
+        .expect_err("no answer is an absence");
+        assert!(
+            error.contains("did not answer --version"),
+            "the absence names the version read: {error}"
+        );
+        assert_eq!(tries, VERSION_ATTEMPTS, "the attempts are bounded");
+    }
+
+    /// And the WIRING, which the seam pins above cannot see: it drives
+    /// the real `run_version`, so a call site that passes a literal in
+    /// place of `VERSION_ATTEMPTS` reds here and nowhere else. A guard
+    /// placed beside the work it guards passes while the work is
+    /// wrong, and the seam pins are exactly such a guard.
+    ///
+    /// The failure has to be produced at `VERSION_BUDGET`, because that
+    /// is the budget the production entry reads — the stub overruns the
+    /// 10 s budget on its first try and answers on its second, so this
+    /// pin costs one budget and buys the only proof the call site is
+    /// wired.
+    #[test]
+    fn the_real_version_read_spends_its_attempts_not_a_literal() {
+        let _lock = crate::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let script = stub(
+            "wiredretry",
+            r#"case "$*" in
+  *--version*)
+    tries=$(( $(cat "$(dirname "$0")/tries" 2>/dev/null || echo 0) + 1 ))
+    printf '%s' "$tries" > "$(dirname "$0")/tries"
+    if [ "$tries" -lt 2 ]; then sleep 30; exit 0; fi
+    echo "1.1.0" ;;
+esac
+"#,
+        );
+        let answered = run_version(&script.clone().into_os_string(), &[])
+            .expect("the second attempt answers inside its own budget");
+        assert_eq!(answered, "1.1.0");
+        let tries = std::fs::read_to_string(script.parent().unwrap().join("tries"))
+            .expect("the stub counted its tries");
+        assert_eq!(
+            tries.trim(),
+            "2",
+            "the resolution retried: one attempt would have left it at 1"
+        );
+    }
+
+    /// And the third: an answer the CLI actually gave is NOT retried.
+    /// A refusal re-spawned three times would triple the cost of every
+    /// wrong wire version and report the same thing at the end.
+    #[test]
+    fn an_answer_the_cli_gave_is_never_retried() {
+        let mut tries = 0;
+        let error = retry_version(VERSION_ATTEMPTS, || {
+            tries += 1;
+            Err(Error::Failed {
+                call: "--version".to_string(),
+                exit: 2,
+                stderr: "usage: layerfs".to_string(),
+            })
+        })
+        .expect_err("a usage line is a failure");
+        assert!(error.contains("usage: layerfs"), "{error}");
+        assert_eq!(tries, 1, "the CLI answered, so no attempt count helps");
     }
 
     #[test]
@@ -3727,6 +3978,119 @@ esac
         assert_eq!(
             std::fs::read_to_string(folder.join("childs.txt")).unwrap(),
             "base\n"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// KI-327's pin on the settlement side. The local merge lands and
+    /// the PUBLISH is refused, so `main` never moves. The old arm
+    /// recorded `Merged` here — the header then read `merged to main`
+    /// over a trunk that had not moved, and the parent trusted an
+    /// address that did not exist. The refusal is `NotPublished` now,
+    /// it names the integration branch that holds the work, and the
+    /// home apply is withheld for the same reason a Conflict's is.
+    #[test]
+    fn a_refused_publish_is_carried_as_its_own_outcome_and_applies_nothing_home() {
+        let _lock = crate::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let root = std::env::temp_dir().join(format!(
+            "fleet-layerfs-unpub-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let folder = root.join("repo");
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join("childs.txt"), "base\n").unwrap();
+        let git = |args: &[&str]| {
+            let status = std::process::Command::new("git")
+                .arg("-C")
+                .arg(&folder)
+                .args(args)
+                .env("GIT_AUTHOR_NAME", "t")
+                .env("GIT_AUTHOR_EMAIL", "t@t")
+                .env("GIT_COMMITTER_NAME", "t")
+                .env("GIT_COMMITTER_EMAIL", "t@t")
+                .status()
+                .expect("git runs");
+            assert!(status.success(), "git {args:?}");
+        };
+        git(&["init", "-q"]);
+        git(&["add", "-A"]);
+        git(&["commit", "-qm", "one file"]);
+        let digests = content_hashes(&folder).expect("the snapshot");
+        // The merge lands (`branch merge` answers ok); the publish is
+        // refused twice — the retry is part of the arm, so both calls
+        // must answer the refusal for the outcome to be the real one.
+        let script = stub(
+            "unpub",
+            r#"case "$*" in
+  *--version*) echo "1.1.0" ;;
+  *"branch fork"*) echo '{"name":"ok"}' ;;
+  *"sandbox create"*) echo '{"sandbox":"1","image":"sha256:x"}' ;;
+  *"branch diff_branches"*)
+    echo '{"items":[{"path":"/childs.txt","kind":"Modified"}],"hasMore":false}' ;;
+  *"fs read"*) printf '%s\n' '{"kind":"ok","text":"the child wrote this\n"}' ;;
+  *"sandbox close"*) echo '{}' ;;
+  *"branch merge"*) echo '{"merge":"m-1"}' ;;
+  *"branch publish"*)
+    echo '{"code":"NoCommit","message":"it has no saved Commit to publish"}' >&2
+    exit 125 ;;
+  *) echo '{}' ;;
+esac
+"#,
+        );
+        let _env = EnvGuard::set(CLI_ENV, &script);
+        let handle = WorkspaceHandle {
+            project: "shop".to_string(),
+            branch: "fleet-child-20261026t010000z-abc123".to_string(),
+            sandbox: "1".to_string(),
+            digests: Some(digests),
+            folder: Some(folder.clone()),
+            sync: None,
+        };
+        let report = handle.close(true);
+        match &report.merge {
+            Some(MergeOutcome::NotPublished {
+                integration,
+                reason,
+            }) => {
+                assert_eq!(
+                    integration,
+                    "merge-fleet-child-20261026t010000z-abc123",
+                    "{report:?}"
+                );
+                assert!(reason.contains("NoCommit"), "{reason}");
+            }
+            other => panic!("a refused publish is not a merge to main: {other:?}"),
+        }
+        // main never moved, so the home apply is withheld — the same
+        // conclusion the Conflict arm reaches, for the same reason.
+        assert!(report.home.is_none(), "{report:?}");
+        assert!(
+            report
+                .notes
+                .iter()
+                .any(|note| note.contains("the publish to main failed")),
+            "{:?}",
+            report.notes
+        );
+        assert!(
+            report
+                .notes
+                .iter()
+                .any(|note| note.contains("main never moved")),
+            "the apply guard says why nothing landed home: {:?}",
+            report.notes
+        );
+        assert_eq!(
+            std::fs::read_to_string(folder.join("childs.txt")).unwrap(),
+            "base\n",
+            "nothing was applied home through a publish that was refused"
         );
         let _ = std::fs::remove_dir_all(&root);
     }

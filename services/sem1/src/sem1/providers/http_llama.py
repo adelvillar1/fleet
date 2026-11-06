@@ -94,8 +94,47 @@ def _request(url: str, body: dict, api_key: str | None, timeout: float) -> dict:
         raise ProviderUnavailableError(_absent(url, e)) from e
 
 
+# The retry chain's own ceiling, in seconds. KI-452: the busy-retry is
+# three attempts of `timeout` each plus the backoff, so its worst case
+# is `timeout * (RETRIES + 1) + sum(BACKOFF_SECONDS)` — for the 60 s
+# default that is 184 s. A caller that bounds this call in SECONDS (a
+# client's tools/call budget, a doctor probe racing a UI) cannot know
+# that 184 s is what it is really up against, and a black-holed endpoint
+# spends the whole chain before the caller gives up. The chain therefore
+# reports its own worst case, so a caller can size the budget to the
+# mechanism instead of guessing at it.
+def worst_case_seconds(timeout: float) -> float:
+    """The most wall time one `embed` call can spend, named so a caller
+    can bound it in the unit the caller meters."""
+    return timeout * (RETRIES + 1) + sum(BACKOFF_SECONDS)
+
+
+def _deadline_spent(deadline: float, timeout: float) -> str:
+    """The error for a chain the CALLER's budget stopped (KI-452).
+
+    Distinct from `_busy` on purpose: "up but busy" invites a retry, and
+    there is no retry here — the call it belonged to has already been
+    abandoned. It names the chain's own worst case beside the deadline
+    so an operator sizing a budget sees the two numbers that disagree."""
+    return (
+        f"llama-server did not answer within the caller's {deadline:g}s "
+        f"deadline; this provider's retry chain alone can spend "
+        f"{worst_case_seconds(timeout):g}s ({RETRIES + 1} attempts of "
+        f"{timeout:g}s + backoff), so the deadline is what stopped it — "
+        f"not congestion. Size the caller's budget to the chain, or pass "
+        f"a smaller `timeout`."
+    )
+
+
 def embed(items, *, model: str | None = None, endpoint: str | None = None,
-          api_key: str | None = None, timeout: float = 60.0, **_kw) -> EmbedResult:
+          api_key: str | None = None, timeout: float = 60.0,
+          deadline: float | None = None, **_kw) -> EmbedResult:
+    """... `deadline` is the caller's own wall-clock ceiling in seconds
+    for THIS call (KI-452). The retry chain never runs past it: a
+    caller that must answer within 60 s cannot be made to wait 184 s by
+    a provider whose per-attempt timeout happens to be 60 s too. When
+    the deadline is what stops the chain, the error says so, naming
+    both numbers."""
     from ..types import normalize_items
     norm = normalize_items(items)
     texts = []
@@ -115,15 +154,44 @@ def embed(items, *, model: str | None = None, endpoint: str | None = None,
         body["model"] = model
     t = Timed()
     attempt = 0
+    # The deadline is measured from the call's own start, so it bounds
+    # the WHOLE chain — attempts and backoff together — rather than each
+    # try separately. Without it a 60 s per-attempt timeout composes
+    # into 184 s, which is longer than most callers' budget for the call
+    # itself (KI-452: blend1's doctor answers inside a 60 s tools/call).
+    started = time.monotonic()
     while True:
+        # Never start an attempt the deadline cannot pay for: a try that
+        # begins with no time left spends a whole `timeout` and returns
+        # a busy error that reads like congestion, when the truth is
+        # that the caller's budget is gone.
+        if deadline is not None:
+            left = deadline - (time.monotonic() - started)
+            if left <= 0:
+                raise ProviderBusyError(
+                    _deadline_spent(deadline, timeout)
+                )
+            budget = min(timeout, left)
+        else:
+            budget = timeout
         try:
-            data = _request(url, body, api_key, timeout)
+            data = _request(url, body, api_key, budget)
             break
         except ProviderBusyError:
             # KI-346/KI-325's remedy: a busy one-slot endpoint is
             # retried with bounded backoff instead of surfacing an
             # absence — saturation degrades to retry-later, never to
             # "start the server that is already running" (KI-354).
+            # KI-452's addition: the chain still stops at the CALLER's
+            # deadline, and when the deadline is what stopped it the
+            # error says so — retrying past it would answer a call
+            # nobody is listening for anymore.
+            if deadline is not None:
+                pause = BACKOFF_SECONDS[min(attempt, len(BACKOFF_SECONDS) - 1)]
+                if (time.monotonic() - started) + pause >= deadline:
+                    raise ProviderBusyError(
+                        _deadline_spent(deadline, timeout)
+                    ) from None
             if attempt >= RETRIES:
                 raise
             time.sleep(BACKOFF_SECONDS[min(attempt, len(BACKOFF_SECONDS) - 1)])

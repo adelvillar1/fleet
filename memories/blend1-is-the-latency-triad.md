@@ -1,6 +1,6 @@
 ---
 name: blend1-is-the-latency-triad
-description: "2026-10-17 — the owner proposed building an ultra-low-latency agentic triad (EmbeddingGemma 2 vectors + Jev/GLiDE System-1 deterministic decisioning + a small LLM for System-2 text) with five visual use cases; the triad ALREADY EXISTS as blend1; the "layout geometry is the gap" claim I made three times was wrong — deck::review already measures it"
+description: "2026-10-17 — the owner proposed building an ultra-low-latency agentic triad (EmbeddingGemma 2 vectors + Jev/GLiDE System-1 deterministic decisioning + a small LLM for System-2 text) with five visual use cases; the triad ALREADY EXISTS as blend1; the \"layout geometry is the gap\" claim I made three times was wrong — deck::review already measures it"
 type: project
 date: 2026-11-04
 basis: confirmed-by

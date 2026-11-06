@@ -1,6 +1,6 @@
 ---
 name: rust-unicode-escapes-break-in-python-heredocs
-description: "patching Rust source through a python heredoc — a Rust `\u{XXXX}` escape inside a double-quoted python string is read as python's own (invalid) \uXXXX escape and the patch dies with a unicodeescape SyntaxError; single-quote the python string"
+description: "patching Rust source through a python heredoc — a Rust `\\u{XXXX}` escape inside a double-quoted python string is read as python's own (invalid) \\uXXXX escape and the patch dies with a unicodeescape SyntaxError; single-quote the python string"
 type: feedback
 date: 2026-11-04
 basis: inferred

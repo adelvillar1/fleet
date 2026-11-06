@@ -1,6 +1,6 @@
 ---
 name: huddle-surface-ideation-2026-11-03
-description: "project 2026-11-03 — the owner's ideation ask for a "huddle" section in the fleet app, sharpened across three turns to a Slack-shaped channel (members exchange messages, a bot addresses one with @name, deliverables post in-line, the existing right pane previews them; active/inactive/ended; one session per huddle; breakout huddles; bots bring their skills; sys1 judges destructiveness; the composer's ask/autonomous/full-access modes stay) plus three rulings — a bot's NAME is free and its AVATAR is optional, a…"
+description: "project 2026-11-03 — the owner's ideation ask for a \"huddle\" section in the fleet app, sharpened across three turns to a Slack-shaped channel (members exchange messages, a bot addresses one with @name, deliverables post in-line, the existing right pane previews them; active/inactive/ended; one session per huddle; breakout huddles; bots bring their skills; sys1 judges destructiveness; the composer's ask/autonomous/full-access modes stay) plus three rulings — a bot's NAME is free and its AVATAR is optional, a…"
 type: project
 date: 2026-11-04
 basis: confirmed-by

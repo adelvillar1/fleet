@@ -1940,6 +1940,7 @@ fn stage(proposal: &Proposal, ctx: &Apply<'_>) -> Result<Landed, Hold> {
                 body: String::new(),
                 fact_type: None,
                 shape: None,
+                phrases: None,
                 missing: None,
                 valid_until: None,
             },
@@ -2088,7 +2089,7 @@ fn stage_memory(
                 memory::Superseded::Forgotten { fact } => (
                     vec![format!("{MEMORIES_DIR}/{fact}.md")],
                     format!(
-                        "forgot the fact `{fact}` (proposal `{}`) \u{2014} expired, and the cycle archives the file",
+                        "forgot the fact `{fact}` (proposal `{}`) \u{2014} the name `{fact}` is dead: its validity ended and it is retired from recall, with the reason noted in its body. Nothing was deleted; the consolidation cycle archives the file",
                         proposal.name
                     ),
                 ),

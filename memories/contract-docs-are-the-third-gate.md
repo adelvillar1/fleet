@@ -1,6 +1,6 @@
 ---
 name: contract-docs-are-the-third-gate
-description: "feedback 2026-10-31 — code landed, tested, and pushed while FUNCTIONAL-SPECIFICATIONS/surfaces.md/README still described the pre-change app; a user asking "update all relevant docs" found the destinations count, a whole missing surface passage, and a stale section count to fix"
+description: "feedback 2026-10-31 — code landed, tested, and pushed while FUNCTIONAL-SPECIFICATIONS/surfaces.md/README still described the pre-change app; a user asking \"update all relevant docs\" found the destinations count, a whole missing surface passage, and a stale section count to fix"
 type: feedback
 date: 2026-11-04
 basis: inferred

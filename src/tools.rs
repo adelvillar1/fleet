@@ -1209,6 +1209,24 @@ pub fn convention_result(root: &std::path::Path, arguments: &serde_json::Value) 
                     site_lines(&entry.sites),
                 ),
                 None => match crate::nomenclature::near_exact_term(&vocabulary, &concept) {
+                    // A spelling this project writes is a form of its
+                    // term, not drift, and the write-time guard admits it
+                    // — so this surface must not advise renaming one.
+                    // `RunOptions` is carried by three files while the
+                    // separator form is carried by one, and advice
+                    // against that evidence would be the surface
+                    // disagreeing with its own rule (KI-395, KI-415,
+                    // KI-428). The rule is the shared one, so the two
+                    // surfaces cannot answer it differently.
+                    Some(entry) if crate::nomenclature::spelling_is_written(&vocabulary, &concept) => {
+                        format!(
+                            "`{concept}` is a spelling this project writes of the established \
+                             term `{}` \u{2014} a form of it, not drift; the write-time guard \
+                             admits it unrenamed\nsites:\n{}",
+                            entry.term,
+                            site_lines(&entry.sites),
+                        )
+                    }
                     Some(entry) => format!(
                         "`{concept}` is a case or separator variant of the established term `{}` \
                          \u{2014} rename to the established term\nsites:\n{}",
@@ -1401,7 +1419,7 @@ pub fn remember_spec() -> ToolSpec {
 pub fn supersede_spec() -> ToolSpec {
     ToolSpec::function(
         SUPERSEDE_TOOL,
-        "Retire a fact from memory. justification is required and recorded in the calibration row and the replacement's body. With replacement: a new fact is written (description required) and the old one folded into it, on disk and out of recall. Without: the fact is expired with the retirement noted in its body, and the cycle archives its file. A confirmed-by fact needs the user's approval, which the harness asks for; an inferred one is supersedable on your justification. The replacement inherits the superseded fact's phrases, its missing companions, its type, its shape, and its valid-until when you omit them: omit `missing` to keep the companions the trajectory was missing, pass an explicit empty list to clear them because they arrived, or pass a list to state the new ones. A replacement is always inferred — a supersession is a proposal until someone confirms it.",
+        "Retire a fact from memory. justification is required and recorded in the calibration row and the replacement's body. With replacement: a new fact is written (description required) and the old one folded into it, on disk and out of recall. Without: the fact is FORGOTTEN — its name left dead (expired, retired from recall, archived by the cycle) — so use `replacement` to correct a fact rather than kill it; a call carrying another replacement argument and no `replacement` is refused by name. A confirmed-by fact needs the user's approval; an inferred one is supersedable on your justification. The replacement inherits the superseded fact's phrases, missing companions, type, shape, and valid-until when you omit them; omit `phrases` or `missing` to inherit, `[]` to clear, a list to state new ones. A replacement is always inferred — a supersession is a proposal until someone confirms it.",
         serde_json::json!({
             "type": "object",
             "properties": {
@@ -1415,7 +1433,7 @@ pub fn supersede_spec() -> ToolSpec {
                 },
                 "replacement": {
                     "type": "string",
-                    "description": "The new fact's name, for the modify path. Omit to forget.",
+                    "description": "The new fact's name, for the modify path. Omit it only to forget: the name is left dead. Another replacement-only argument with this absent is refused by name.",
                 },
                 "description": {
                     "type": "string",
@@ -1432,6 +1450,11 @@ pub fn supersede_spec() -> ToolSpec {
                 "shape": {
                     "type": "string",
                     "description": "The replacement's shapes — structure, failure, or outcome; defaults to the superseded fact's own.",
+                },
+                "phrases": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "The replacement's phrases \u{2014} the vocabulary its resolution drove with. Omit it to inherit the superseded fact's own; pass `[]` to clear them; pass a list to state the new ones.",
                 },
                 "missing": {
                     "type": "array",
@@ -4164,6 +4187,43 @@ mod tests {
             "{variant}"
         );
 
+        // A spelling the project itself writes is admitted rather than
+        // renamed: `JudgeRoute` above is one file's drift, but the same
+        // concept written by two independent files is the project's own
+        // spelling, and the answer must not tell the author to rename a
+        // form the write-time guard accepts (KI-395, KI-415, KI-428).
+        write(
+            &root,
+            "src/second.rs",
+            "pub fn also() -> u8 { let JudgeRoute = 1; JudgeRoute }\n",
+        );
+        write(
+            &root,
+            "src/third.rs",
+            "pub fn more() -> u8 { let JudgeRoute = 2; JudgeRoute }\n",
+        );
+        // The vocabulary is derived once per root and cached, so a
+        // fixture that grows its tree after a lookup must invalidate it —
+        // otherwise the read answers from the tree as it was, and this
+        // pin would assert against evidence it never added.
+        crate::nomenclature::invalidate(&root);
+        let written = convention_result(&root, &serde_json::json!({ "concept": "JudgeRoute" }));
+        assert!(
+            written.contains("is a spelling this project writes"),
+            "{written}"
+        );
+        assert!(
+            !written.contains("rename to the established term"),
+            "a form the guard admits is never told to rename: {written}"
+        );
+        // The one-file case keeping the rename advice is already pinned
+        // above by `variant` (`JudgeRoute`, one file, advised to rename).
+        // It is deliberately NOT re-pinned with the real tree's own drift
+        // spelling: a string in this test file is identifier evidence for
+        // the vocabulary, so naming it here would raise that spelling's
+        // file count to two and admit it out of the very test that proves
+        // it is refused.
+
         // An honest miss: a first-class answer, not a failure. The
         // concept's words are deliberate nonsense — a code file's
         // string literals are identifier evidence for the vocabulary,
@@ -4620,16 +4680,13 @@ mod tests {
             .unwrap()
             .contains("confirmed-by"));
         // The third vector's inherit-or-clear rule is stated where the
-        // model reads it: omit `missing` to keep the companions, pass an
-        // empty list to clear them.
+        // model reads it: omit `missing` (or `phrases`) to keep them, pass
+        // an empty list to clear them.
         assert!(parameters["properties"].get("missing").is_some());
+        assert!(parameters["properties"].get("phrases").is_some());
         let description = spec["function"]["description"].as_str().unwrap();
         assert!(
-            description.contains("omit `missing` to keep the companions"),
-            "{description}"
-        );
-        assert!(
-            description.contains("explicit empty list to clear them"),
+            description.contains("omit `phrases` or `missing` to inherit, `[]` to clear"),
             "{description}"
         );
     }

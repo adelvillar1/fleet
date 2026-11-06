@@ -1,6 +1,6 @@
 ---
 name: a-one-item-fixture-let-the-switch-check-pass
-description: "feedback 2026-10-31 — the design rail's "pressing a row opens that board" check passed comfortably against a ONE-board fixture (the only assertion it could make was "some read happened"); a switch needs two items, a stub that answers per key, and a check on the key the press sent"
+description: "feedback 2026-10-31 — the design rail's \"pressing a row opens that board\" check passed comfortably against a ONE-board fixture (the only assertion it could make was \"some read happened\"); a switch needs two items, a stub that answers per key, and a check on the key the press sent"
 type: feedback
 date: 2026-11-04
 basis: inferred

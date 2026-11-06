@@ -1,6 +1,6 @@
 ---
 name: a-kernel-is-not-the-product
-description: "feedback 2026-10-31 — I built the design canvas's kernel and reported it as the integration; the owner's correction ("missing a lot … just distilled the very basics … I want the whole shebang") means a port is judged against the source's full product surface, not against the minimum that works"
+description: "feedback 2026-10-31 — I built the design canvas's kernel and reported it as the integration; the owner's correction (\"missing a lot … just distilled the very basics … I want the whole shebang\") means a port is judged against the source's full product surface, not against the minimum that works"
 type: feedback
 date: 2026-11-04
 basis: inferred

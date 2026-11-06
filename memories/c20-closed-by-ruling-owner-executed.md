@@ -1,6 +1,6 @@
 ---
 name: c20-closed-by-ruling-owner-executed
-description: "owner ruling 2026-11-02 — "C20 is my manual task, so it's been overtaken by events. Close it so that we can complete the plan": the beta gate (pass three) is the owner's own use, and closing it by ruling — not by a recorded pass — is the correct close; C22 then closed on the empty queue"
+description: "owner ruling 2026-11-02 — \"C20 is my manual task, so it's been overtaken by events. Close it so that we can complete the plan\": the beta gate (pass three) is the owner's own use, and closing it by ruling — not by a recorded pass — is the correct close; C22 then closed on the empty queue"
 type: project
 date: 2026-11-04
 basis: confirmed-by

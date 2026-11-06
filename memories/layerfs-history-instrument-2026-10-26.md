@@ -1,6 +1,6 @@
 ---
 name: layerfs-history-instrument-2026-10-26
-description: "2026-10-26/27 — the owner called fleet's layerfs graph "really underwhelming"; the measured comparison (upstream ships NO visual; the reference is the separate dsh-layerfs plugin) and the history-instrument plan IMPLEMENTED C0–C5 (472df99…6e3f062): one 8ms get_history read replaced a 4.8s fan-out, the tree in the reference's vocabulary, the live feed, the files instruments, the storage accounting — plus the pin that caught the spawn_with pipe-buffer deadlock"
+description: "2026-10-26/27 — the owner called fleet's layerfs graph \"really underwhelming\"; the measured comparison (upstream ships NO visual; the reference is the separate dsh-layerfs plugin) and the history-instrument plan IMPLEMENTED C0–C5 (472df99…6e3f062): one 8ms get_history read replaced a 4.8s fan-out, the tree in the reference's vocabulary, the live feed, the files instruments, the storage accounting — plus the pin that caught the spawn_with pipe-buffer deadlock"
 type: project
 date: 2026-11-04
 basis: confirmed-by

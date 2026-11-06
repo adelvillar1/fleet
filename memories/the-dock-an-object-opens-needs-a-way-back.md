@@ -1,6 +1,6 @@
 ---
 name: the-dock-an-object-opens-needs-a-way-back
-description: "feedback 2026-10-20 — clicking a card at desk width opened the right dock and the object's "clear" only hid the object, leaving a column the owner never asked for; an inspector that opens itself must close itself, and remember whether the owner had it open already"
+description: "feedback 2026-10-20 — clicking a card at desk width opened the right dock and the object's \"clear\" only hid the object, leaving a column the owner never asked for; an inspector that opens itself must close itself, and remember whether the owner had it open already"
 type: feedback
 date: 2026-11-04
 basis: confirmed-by

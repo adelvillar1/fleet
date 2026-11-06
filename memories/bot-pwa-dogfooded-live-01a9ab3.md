@@ -1,6 +1,6 @@
 ---
 name: bot-pwa-dogfooded-live-01a9ab3
-description: "2026-10-28 — the owner's "we have not used persona (bot) mode because you just built it" forced a live dogfood as a paired device; four defects found by using it (the mode-word alias, the remote run policy never parsed, the catch-up restart storm KI-350, the persona's voice) — all fixed and committed 01a9ab3, gate 1,771 green, the whole loop verified over HTTP"
+description: "2026-10-28 — the owner's \"we have not used persona (bot) mode because you just built it\" forced a live dogfood as a paired device; four defects found by using it (the mode-word alias, the remote run policy never parsed, the catch-up restart storm KI-350, the persona's voice) — all fixed and committed 01a9ab3, gate 1,771 green, the whole loop verified over HTTP"
 type: project
 date: 2026-11-04
 basis: confirmed-by

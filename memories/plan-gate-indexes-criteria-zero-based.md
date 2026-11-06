@@ -1,6 +1,6 @@
 ---
 name: plan-gate-indexes-criteria-zero-based
-description: "feedback 2026-10-24 — dev-decisions plan-gate indexes criteria 0-based (C0..Cn) while plan authors label theirs 1-based; section headings asserting "C2 is this increment's deliverable" cross-wire the small coverage judge and slide failing heads DOWN, and a close-out criterion needs its own body section to pass"
+description: "feedback 2026-10-24 — dev-decisions plan-gate indexes criteria 0-based (C0..Cn) while plan authors label theirs 1-based; section headings asserting \"C2 is this increment's deliverable\" cross-wire the small coverage judge and slide failing heads DOWN, and a close-out criterion needs its own body section to pass"
 type: feedback
 date: 2026-11-04
 basis: inferred

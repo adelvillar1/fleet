@@ -1,6 +1,6 @@
 ---
 name: a-deferred-action-is-an-error-to-the-owner
-description: "owner ruling 2026-11-03 — a composer action that applies only later ("the next run", "the next model call") is the equivalent of an error in the owner's eyes; every composer control must take effect when the owner submits it, or say so where it stands"
+description: "owner ruling 2026-11-03 — a composer action that applies only later (\"the next run\", \"the next model call\") is the equivalent of an error in the owner's eyes; every composer control must take effect when the owner submits it, or say so where it stands"
 type: feedback
 date: 2026-11-04
 basis: confirmed-by

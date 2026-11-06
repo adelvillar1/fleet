@@ -6,7 +6,7 @@ date: 2026-10-16
 basis: confirmed-by
 tier: durable
 shape: [change, docs]
-phrases: [per deliverable, commit only after proper testing, verifiable document, stop when a finding changes the plan's premises, rows: 218 open: 85 PROBLEMS (8), turns end on raw tool output with no verdict]
+phrases: [per deliverable, commit only after proper testing, verifiable document, "stop when a finding changes the plan's premises, rows: 218 open: 85 PROBLEMS (8), turns end on raw tool output with no verdict"]
 missing: []
 recall-count: 0
 superseded-by:

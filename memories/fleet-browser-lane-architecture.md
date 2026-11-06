@@ -1,6 +1,6 @@
 ---
 name: fleet-browser-lane-architecture
-description: "owner-directed 2026-10-17 — a browser belongs in fleet as the sixth LANE (a Python MCP child driving Chrome over CDP), not as an embedded engine; SHIPPED as 342467e with three tools, no third-party packages, and one browser per server; "everything is a plugin" is the running architecture"
+description: "owner-directed 2026-10-17 — a browser belongs in fleet as the sixth LANE (a Python MCP child driving Chrome over CDP), not as an embedded engine; SHIPPED as 342467e with three tools, no third-party packages, and one browser per server; \"everything is a plugin\" is the running architecture"
 type: project
 date: 2026-11-04
 basis: confirmed-by

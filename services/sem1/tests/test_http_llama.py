@@ -57,7 +57,14 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(raw)))
         self.end_headers()
-        self.wfile.write(raw)
+        try:
+            self.wfile.write(raw)
+        except BrokenPipeError:
+            # The client's own budget retired first — the answer this
+            # stub was late with has nobody to reach. That is the case
+            # some of these pins exist to prove, so it is not an error
+            # here; it is the measurement landing.
+            pass
 
     def log_message(self, *args):  # keep the test output clean
         pass
@@ -127,6 +134,110 @@ def test_busy_then_answer_lands_on_the_retry():
         server.shutdown()
 
 
+class _BlackHole:
+    """Accepts the connection and never answers — the endpoint that is
+    up but whose answer never comes. This is the shape KI-452 was
+    measured against: no timeout short of the client's own retires it."""
+
+    def __init__(self):
+        self.sock = socket.socket()
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.sock.bind(("127.0.0.1", 0))
+        self.sock.listen(8)
+        self.port = self.sock.getsockname()[1]
+        self.conns = []
+        threading.Thread(target=self._accept, daemon=True).start()
+
+    def _accept(self):
+        while True:
+            try:
+                conn, _ = self.sock.accept()
+            except OSError:
+                return
+            self.conns.append(conn)
+
+    def close(self):
+        self.sock.close()
+        for conn in self.conns:
+            conn.close()
+
+
+def test_a_deadline_bounds_the_chain_the_caller_is_paying_for():
+    """KI-452: a per-attempt timeout composes into a chain far longer
+    than a caller's budget for the CALL. `deadline` is that budget in
+    the unit the caller metered — and the chain must stop when it is
+    spent, not when its own worst case is.
+
+    Measured, not asserted from the formula: a 3.0 s per-attempt
+    timeout with a 1.5 s deadline answers in ~1.5 s, and the error
+    names both numbers so an operator can tell "the caller's budget
+    ran out" apart from "the endpoint is busy"."""
+    hole = _BlackHole()
+    try:
+        started = time.monotonic()
+        try:
+            http_llama.embed(
+                ["x"],
+                endpoint=f"http://127.0.0.1:{hole.port}",
+                timeout=3.0,
+                deadline=1.5,
+            )
+        except ProviderUnavailableError as error:
+            message = str(error)
+            elapsed = time.monotonic() - started
+            assert elapsed < 3.0, (
+                f"the deadline did not bound the chain: {elapsed:.1f}s spent "
+                f"on a 1.5s deadline (the chain's own worst case is "
+                f"{http_llama.worst_case_seconds(3.0):.0f}s)"
+            )
+            assert "caller's 1.5s deadline" in message, message
+            # The reason names the chain's own cost beside the deadline:
+            # the two numbers an operator needs to size a budget rather
+            # than guess at it. And it must NOT read "up but busy" —
+            # that invites a retry towards a caller that has already
+            # given up.
+            assert "retry chain alone can spend 13s" in message, message
+            assert "up but busy" not in message, message
+        else:
+            raise AssertionError("a black-holed endpoint must not answer")
+    finally:
+        hole.close()
+
+
+def test_the_named_worst_case_is_the_chain_it_describes():
+    """`worst_case_seconds` exists so a caller can size a budget to the
+    mechanism. A number that is not derived from the constants would
+    be a comment dressed as arithmetic, so this drives the REAL chain
+    with no deadline and checks the named figure is what it spent."""
+    server, port = _serve(delay=5.0, slow=99)
+    per_attempt = 0.2
+    try:
+        started = time.monotonic()
+        try:
+            http_llama.embed(
+                ["x"], endpoint=f"http://127.0.0.1:{port}", timeout=per_attempt
+            )
+        except ProviderUnavailableError:
+            pass
+        else:
+            raise AssertionError("a saturated endpoint must eventually raise")
+        spent = time.monotonic() - started
+        named = http_llama.worst_case_seconds(per_attempt)
+        # The chain spends its attempts plus its backoff and nothing
+        # more; a tenth of headroom absorbs the stub's own scheduling.
+        assert spent <= named + 0.5, (
+            f"the chain spent {spent:.1f}s against a named worst case of "
+            f"{named:.1f}s — the figure is not the mechanism"
+        )
+        # And the figure is the composition, not a literal that happens
+        # to fit: 3 attempts + 1 s + 3 s of backoff.
+        assert named == per_attempt * (http_llama.RETRIES + 1) + sum(
+            http_llama.BACKOFF_SECONDS
+        ), named
+    finally:
+        server.shutdown()
+
+
 if __name__ == "__main__":
     test_a_refused_endpoint_is_absent_not_busy()
     print("ok: a refused endpoint is absent, not busy")
@@ -134,4 +245,8 @@ if __name__ == "__main__":
     print("ok: a timeout is busy, retried, and never told to start")
     test_busy_then_answer_lands_on_the_retry()
     print("ok: busy then answer lands on the retry")
+    test_a_deadline_bounds_the_chain_the_caller_is_paying_for()
+    print("ok: a deadline bounds the chain the caller is paying for")
+    test_the_named_worst_case_is_the_chain_it_describes()
+    print("ok: the named worst case is the chain it describes")
     print("all passed")

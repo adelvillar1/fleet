@@ -1,6 +1,6 @@
 ---
 name: a-setting-nobody-asked-for-is-onboarding-debt
-description: "feedback 2026-11-02 — the owner's vault had 10 sealed entries and no one had ever been asked for a passphrase; the fix was not a recovery path but a MISSING ONBOARDING STEP ("there is nothing in that vault that I cannot recover, but the onboarding or lack of it is what matters")"
+description: "feedback 2026-11-02 — the owner's vault had 10 sealed entries and no one had ever been asked for a passphrase; the fix was not a recovery path but a MISSING ONBOARDING STEP (\"there is nothing in that vault that I cannot recover, but the onboarding or lack of it is what matters\")"
 type: feedback
 date: 2026-11-04
 basis: confirmed-by

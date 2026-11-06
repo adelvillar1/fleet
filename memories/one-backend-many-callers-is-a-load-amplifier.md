@@ -1,6 +1,6 @@
 ---
 name: one-backend-many-callers-is-a-load-amplifier
-description: "feedback 2026-10-29 — a saturated shared backend answers "absent", not "busy": the deck tool reported "no embedding backend" and the rank route returned an EMPTY reply (blank panics) purely because 8901 was queueing; serialize live-embed tests behind one gate"
+description: "feedback 2026-10-29 — a saturated shared backend answers \"absent\", not \"busy\": the deck tool reported \"no embedding backend\" and the rank route returned an EMPTY reply (blank panics) purely because 8901 was queueing; serialize live-embed tests behind one gate"
 type: feedback
 date: 2026-11-04
 basis: inferred

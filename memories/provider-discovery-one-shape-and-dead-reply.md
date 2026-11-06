@@ -1,6 +1,6 @@
 ---
 name: provider-discovery-one-shape-and-dead-reply
-description: "project 2026-11-03 — the connect flow's model discovery accepts ONLY {"data":[{"id":…}]}, its Discovery reply hardcoded models:[] and settings_written:0, and disabled_models are stripped from the picker entirely (so a provider's model list can be silently empty); the dead reply and the pasted-endpoint trap are FIXED (980e350), the escape hatches landed (521724c — models_url + the owner's models field), the shape restriction and the disabled-models half are still open"
+description: "project 2026-11-03 — the connect flow's model discovery accepts ONLY {\"data\":[{\"id\":…}]}, its Discovery reply hardcoded models:[] and settings_written:0, and disabled_models are stripped from the picker entirely (so a provider's model list can be silently empty); the dead reply and the pasted-endpoint trap are FIXED (980e350), the escape hatches landed (521724c — models_url + the owner's models field), the shape restriction and the disabled-models half are still open"
 type: project
 date: 2026-11-04
 basis: confirmed-by

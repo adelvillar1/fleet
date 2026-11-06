@@ -1,6 +1,6 @@
 ---
 name: assistant-record-field-cascade
-description: "feedback 2026-10-28/30 — adding a field to a heavily-constructed log Record enum cascades to every literal (E0063) and every destructuring pattern (E0004); adding a NEW VARIANT breaks every exhaustive match arm across the crate (the compiler finds them all); and `tools::declarations(&lanes)` ALWAYS includes the 11 built-ins, so "empty lane declarations" asserts len()==11"
+description: "feedback 2026-10-28/30 — adding a field to a heavily-constructed log Record enum cascades to every literal (E0063) and every destructuring pattern (E0004); adding a NEW VARIANT breaks every exhaustive match arm across the crate (the compiler finds them all); and `tools::declarations(&lanes)` ALWAYS includes the 11 built-ins, so \"empty lane declarations\" asserts len()==11"
 type: feedback
 date: 2026-11-04
 basis: inferred

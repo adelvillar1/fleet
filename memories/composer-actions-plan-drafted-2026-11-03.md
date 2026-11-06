@@ -1,6 +1,6 @@
 ---
 name: composer-actions-plan-drafted-2026-11-03
-description: "project 2026-11-03 — docs/plans/2026-11-03-composer-actions-apply-on-submit.md COMPLETED (b2a4f9f, C0–C6 all ticked, gate 2,012/0, harness 698/67 after the C1/CA3/CA4 pins, pushed origin/master at 29b5187 with the provider work, the Tauri app rebuilt): F1 the approval wait polls the control file non-consumingly so a stop ends the wait, F2 opening a run in flight loads its view (the resume refusal had skipped the state read), F5 the queue rows keyed like the seat, F3/F4 the scope wording; the F3 "go live" di…"
+description: "project 2026-11-03 — docs/plans/2026-11-03-composer-actions-apply-on-submit.md COMPLETED (b2a4f9f, C0–C6 all ticked, gate 2,012/0, harness 698/67 after the C1/CA3/CA4 pins, pushed origin/master at 29b5187 with the provider work, the Tauri app rebuilt): F1 the approval wait polls the control file non-consumingly so a stop ends the wait, F2 opening a run in flight loads its view (the resume refusal had skipped the state read), F5 the queue rows keyed like the seat, F3/F4 the scope wording; the F3 \"go live\" di…"
 type: project
 date: 2026-11-04
 basis: inferred

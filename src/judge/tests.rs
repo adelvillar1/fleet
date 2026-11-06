@@ -257,6 +257,8 @@ fn intern_class(class: &Option<String>) -> Option<&'static str> {
         Some("decode") => Some("decode"),
         Some("api") => Some("api"),
         Some("client-error") => Some("client-error"),
+        Some("model-availability") => Some("model-availability"),
+        Some("account-state") => Some("account-state"),
         Some("no-key") => Some("no-key"),
         Some("disabled") => Some("disabled"),
         Some("calibration") => Some("calibration"),
@@ -764,6 +766,68 @@ fn the_grade_is_wrong_when_a_different_candidate_served_and_the_required_one_was
     assert_eq!(judgment.verdict, VERDICT_WRONG);
     assert!(
         judgment.reason.contains("skipped (no-key)"),
+        "{}",
+        judgment.reason
+    );
+}
+
+/// The availability table must carry every class the walk actually
+/// advances on, or the grade contradicts the walk: a candidate that
+/// failed on a class the router fails over from, and was covered by a
+/// later one, drove TOWARD the minima and stalled for want of that
+/// provider's availability — that is `insufficient`, not `wrong`.
+///
+/// KI-451 is the instance that proves the coupling: before it, a 400
+/// naming the candidate's own account state ended the walk as a
+/// `client-error`; after it, the walk advances on `account-state`. Left
+/// out of this table, the very walk the router now completes would be
+/// graded as a wrong selection.
+#[test]
+fn every_class_the_walk_advances_on_grades_as_availability() {
+    for class in [
+        "auth",
+        "quota",
+        "forbidden",
+        "rate-limit",
+        "server",
+        "timeout",
+        "network",
+        "account-state",
+    ] {
+        assert!(
+            AVAILABILITY_CLASSES.contains(&class),
+            "`{class}` advances the walk, so a covered failure on it is the provider's \
+             availability and the grade must say so"
+        );
+    }
+    // And the two that must NOT be here: a client error is the request's
+    // own shape, and an unclassified one says nothing.
+    for class in ["client-error", "model-availability"] {
+        assert!(
+            !AVAILABILITY_CLASSES.contains(&class),
+            "`{class}` must not read as the provider's availability"
+        );
+    }
+
+    // Driven end to end on the new class, so the table is not the only
+    // thing pinned: the required candidate failed on `account-state`,
+    // another served, and the verdict is insufficient naming that class.
+    let route = route_row(
+        "2026-11-05T12:00:00Z",
+        "xiaomi-mimo",
+        "hard",
+        &[
+            (hard_target(), "failed", Some("account-state")),
+            ("xiaomi-mimo", "served", None),
+        ],
+        "a1b2c3d4e5f60718",
+    );
+    let reply =
+        JudgeReply::parse(&serde_json::from_str::<Value>(&lane_reply("hard", 0.9)).unwrap());
+    let judgment = grade(&route, None, &reply);
+    assert_eq!(judgment.verdict, VERDICT_INSUFFICIENT, "{}", judgment.reason);
+    assert!(
+        judgment.reason.contains("account-state"),
         "{}",
         judgment.reason
     );

@@ -1,6 +1,6 @@
 ---
 name: fleet-remote-access-implemented
-description: "2026-10-18/20 — the remote-access plan (docs/plans/2026-10-18-remote-access-lanes.md) is COMPLETE: 14 commits on the unmerged branch `remote-access`, R0-R8 + the QR + the KI-022 merge, 1257 tests green; the phone pairing was enabled and verified live (66c9817 closed the two gaps the live pass found). The owner then ruled "port it to what we have in master now, plan first" — the port plan is committed on master (docs/plans/2026-10-20-remote-access-port.md, 4afc653, P0-P6) and NOT yet implemented; the branch …"
+description: "2026-10-18/20 — the remote-access plan (docs/plans/2026-10-18-remote-access-lanes.md) is COMPLETE: 14 commits on the unmerged branch `remote-access`, R0-R8 + the QR + the KI-022 merge, 1257 tests green; the phone pairing was enabled and verified live (66c9817 closed the two gaps the live pass found). The owner then ruled \"port it to what we have in master now, plan first\" — the port plan is committed on master (docs/plans/2026-10-20-remote-access-port.md, 4afc653, P0-P6) and NOT yet implemented; the branch …"
 type: project
 date: 2026-11-04
 basis: confirmed-by

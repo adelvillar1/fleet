@@ -78,6 +78,19 @@ def split_cells(line: str):
     return out
 
 
+def join_cells(cells):
+    """The inverse of `split_cells`: one row line, pipes inside cells escaped.
+
+    `split_cells` hands back cells with their `\\|` already turned into `|`, so
+    re-joining them with a bare `|` silently un-escapes a row whose own text
+    quotes a markdown table. Measured on KI-317, whose evidence cell quotes two
+    rows: the rebuilt line read 11 cells against the header's 6, and the checker
+    reported "an unescaped pipe is shifting this row" about a row the writer had
+    just shifted. Every write goes through here, so the escaping has one owner.
+    """
+    return "| " + " | ".join(cell.replace("|", "\\|") for cell in cells) + " |"
+
+
 def status_word(status: str) -> str:
     """The leading word of a status cell, markdown emphasis and gloss aside.
 

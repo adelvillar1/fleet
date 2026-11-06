@@ -5232,6 +5232,7 @@ fn resolved(id: &str, base_url: String, key_required: bool, key: Option<&str>) -
         candidate: Candidate {
             id: id.to_string(),
             base_url,
+            models_url: None,
             key_env: format!("{}_KEY", id.to_uppercase().replace('-', "_")),
             models: vec![format!("{id}-model")],
             billing: fleet::route::Billing::Plan,
@@ -11418,9 +11419,12 @@ async fn a_layerfs_child_walks_the_coherence_sequence() {
     // The parent reads its branch and the merge back.
     let parent_records = session::replay(session.path()).unwrap();
     let (read_back, _) = tool_result(&parent_records, "subagent");
+    // The header names the project as well as the branch, so a parent
+    // reads the child's work back through the store instead of
+    // restating a sandbox path as a host one (KI-320).
     assert!(
-        read_back.contains("workspace: branch fleet-child-"),
-        "the branch rides the result: {read_back}"
+        read_back.contains("workspace: project shop \u{b7} branch fleet-child-"),
+        "the project and branch ride the result: {read_back}"
     );
     assert!(read_back.contains("merged to main"), "{read_back}");
 

@@ -1,6 +1,6 @@
 ---
 name: docs-are-write-time-snapshots
-description: "Owner instruction 2026-10-17 — "check your assertions against git history, the documents might be stale": recaps, plan checkboxes and memory SHAs are write-time snapshots; re-derive state from git before quoting them"
+description: "Owner instruction 2026-10-17 — \"check your assertions against git history, the documents might be stale\": recaps, plan checkboxes and memory SHAs are write-time snapshots; re-derive state from git before quoting them"
 type: feedback
 date: 2026-11-04
 basis: confirmed-by

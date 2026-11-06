@@ -1,6 +1,6 @@
 ---
 name: right-fixes-not-easy-fixes-beyond-the-plan
-description: "feedback 2026-11-02 — the owner stopped the closeout run with "we have to do the right fixes not the cheap fixes" after I wired three shortcuts (a coordinate-splicing accept_hunk, a schema validator silent about the keywords it skips, a compiled_default that nulls all but one key) and had already ticked a criterion on the strength of the weak one; a tick must describe the fix that landed, not the criterion's ideal"
+description: "feedback 2026-11-02 — the owner stopped the closeout run with \"we have to do the right fixes not the cheap fixes\" after I wired three shortcuts (a coordinate-splicing accept_hunk, a schema validator silent about the keywords it skips, a compiled_default that nulls all but one key) and had already ticked a criterion on the strength of the weak one; a tick must describe the fix that landed, not the criterion's ideal"
 type: feedback
 date: 2026-11-04
 basis: confirmed-by

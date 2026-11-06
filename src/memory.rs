@@ -530,8 +530,8 @@ fn parse_frontmatter(text: &str) -> Result<Document, String> {
                 index + 1
             ));
         }
-        let value = unquote(value.trim()).to_string();
-        if fields.iter().any(|(seen, _)| seen == key) {
+        let value = unquote(value.trim());
+        if fields.iter().any(|(seen, _)| seen == &key) {
             return Err(format!("frontmatter key `{key}` appears twice"));
         }
         fields.push((key.to_string(), value));
@@ -544,14 +544,184 @@ fn parse_frontmatter(text: &str) -> Result<Document, String> {
     Ok(Document { fields, body })
 }
 
-/// Strip one layer of matching surrounding quotes.
-fn unquote(value: &str) -> &str {
+/// Strip one layer of matching surrounding quotes and undo the escapes
+/// this writer emits inside them.
+///
+/// The unescape is deliberately narrow: `\\` and `\"` are the only
+/// sequences [`quote_scalar`] produces, so a hand-edited fact carrying
+/// any other backslash pair — a Windows path, a regex, the `\n` in a
+/// note about escapes — reads back as its literal text rather than
+/// being reinterpreted. The pair is what makes the round trip
+/// byte-equal for every description the writer itself renders.
+fn unquote(value: &str) -> String {
     for quote in ['"', '\''] {
         if value.len() >= 2 && value.starts_with(quote) && value.ends_with(quote) {
-            return &value[1..value.len() - 1];
+            let inner = &value[1..value.len() - 1];
+            if quote == '\'' {
+                // A single-quoted scalar is YAML's literal form: no
+                // escapes, `''` is one quote.
+                return inner.replace("''", "'");
+            }
+            let mut out = String::with_capacity(inner.len());
+            let mut chars = inner.chars();
+            while let Some(character) = chars.next() {
+                if character != '\\' {
+                    out.push(character);
+                    continue;
+                }
+                match chars.next() {
+                    Some('\\') => out.push('\\'),
+                    Some('"') => out.push('"'),
+                    // Not a sequence this writer emits: the backslash
+                    // and whatever follows it are literal text.
+                    Some(other) => {
+                        out.push('\\');
+                        out.push(other);
+                    }
+                    None => out.push('\\'),
+                }
+            }
+            return out;
         }
     }
-    value
+    value.to_string()
+}
+
+/// Render `text` as a double-quoted YAML scalar that any standard
+/// reader accepts: `\` and `"` are escaped, and a control character
+/// that would end the line is folded to a space.
+///
+/// The escaped form is what makes a fact a document rather than a file
+/// only this crate can read. Before it, 116 of the live corpus's 584
+/// descriptions were refused by `yaml.safe_load` outright — the writer
+/// emitted `description: "he said "hi""`, which is not YAML — so the
+/// corpus could not be round-tripped through a standard writer or read
+/// by a script. Fleet's own reader survived on [`unquote`]'s hand
+/// unquoting, which is why nothing reddened.
+fn quote_scalar(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 2);
+    out.push('"');
+    for character in text.chars() {
+        match character {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' | '\r' | '\t' => out.push(' '),
+            other if other.is_control() => out.push(' '),
+            other => out.push(other),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// Render one item of a YAML flow sequence (`[a, b, c]`), quoted only
+/// when a plain scalar would change meaning.
+///
+/// The rule is measured against `yaml.safe_load`, not guessed. A plain
+/// flow item ends at a comma and `#` starts a comment, so an item
+/// carrying either — or a bracket, or an item that is only
+/// leading/trailing space — must be quoted or the sequence changes
+/// shape. Measured over the live corpus before this: 55 flow lines
+/// carried such an item, and the 12 facts whose item carried `#` were
+/// refused by a strict reader.
+///
+/// An apostrophe or a double quote INSIDE an item is plain: YAML reads
+/// `[it's, c]` and `[a"b, c]` as the two items written, so quoting them
+/// is noise. A colon is only special as `": "` (a mapping) — `[a:b]` is
+/// the scalar `a:b`. An item opening with `%`, `|`, `>`, `@` or a
+/// backtick is a scanner error unquoted, and one opening with `&`/`*`
+/// is an anchor or alias, so those open quoted. An item with an
+/// interior ` #` is a comment start and must be quoted.
+///
+/// The earlier version refused any item containing `'`, `"` or `:` and
+/// so quoted `literal X's` — and the reader beside it then read that
+/// quote as an opening apostrophe and swallowed the rest of the line,
+/// collapsing three phrases into one (KI-461).
+fn flow_scalar(text: &str) -> String {
+    let opens_unsafe = text.starts_with(['%', '|', '>', '@', '`', '&', '*', '!']);
+    let plain = !text.is_empty()
+        && text.trim() == text
+        && !opens_unsafe
+        && !text
+            .chars()
+            .any(|c| matches!(c, ',' | '#' | '[' | ']' | '{' | '}'))
+        && !text.contains(": ")
+        && !text.contains(" #");
+    if plain {
+        text.to_string()
+    } else {
+        quote_scalar(text)
+    }
+}
+
+/// Split a flow sequence's inner text on the commas that SEPARATE
+/// items — never on a comma inside a quoted item.
+///
+/// A quote only OPENS an item when it is the item's first character;
+/// anywhere else it is an ordinary character. That is YAML's own rule
+/// (a plain scalar may carry `'` and `"` freely — `[it's, c]` is two
+/// items), and honouring it is what keeps the reader and
+/// [`flow_scalar`]'s writer agreeing on the same text. The earlier
+/// version opened a quote at any quote character, so a plain item like
+/// `literal X's` swallowed everything after it and three phrases
+/// collapsed into one (KI-461).
+///
+/// Inside a quoted item the separator comma is data: [`flow_scalar`]
+/// quotes an item carrying a comma precisely so the sequence keeps its
+/// shape, so a naive `split(',')` would read `["a, b", c]` as three
+/// items. Items come back trimmed and still quoted; [`unquote`] strips
+/// the quote.
+fn split_flow(inner: &str) -> Vec<String> {
+    let mut items: Vec<String> = Vec::new();
+    let mut current = String::new();
+    let mut quote: Option<char> = None;
+    let mut chars = inner.chars();
+    while let Some(character) = chars.next() {
+        match quote {
+            Some(active) => {
+                current.push(character);
+                if character == '\\' && active == '"' {
+                    // An escaped character rides inside the item as its
+                    // own pair; consume it so `\"` cannot close the
+                    // quote.
+                    if let Some(next) = chars.next() {
+                        current.push(next);
+                    }
+                    continue;
+                }
+                if character == active {
+                    quote = None;
+                }
+            }
+            None => {
+                if character == ',' {
+                    items.push(current.trim().to_string());
+                    current = String::new();
+                } else {
+                    if current.trim().is_empty() && (character == '"' || character == '\'') {
+                        // The quote opens the item it begins.
+                        quote = Some(character);
+                    }
+                    current.push(character);
+                }
+            }
+        }
+    }
+    if !current.trim().is_empty() || !items.is_empty() {
+        items.push(current.trim().to_string());
+    }
+    items.retain(|item| !item.is_empty());
+    items
+}
+
+/// Render a list field's flow sequence: `[]` when empty, otherwise
+/// `[a, "b, c"]` with each item through [`flow_scalar`].
+fn flow_list(items: &[String]) -> String {
+    if items.is_empty() {
+        return "[]".to_string();
+    }
+    let rendered: Vec<String> = items.iter().map(|item| flow_scalar(item)).collect();
+    format!("[{}]", rendered.join(", "))
 }
 
 /// The `shape` field reads as a bracketed list — `[deploy, build]` — the
@@ -571,8 +741,8 @@ fn shape_tags(value: Option<&str>) -> Vec<String> {
     else {
         return Vec::new();
     };
-    inner
-        .split(',')
+    split_flow(inner)
+        .iter()
         .map(|tag| unquote(tag.trim()).trim().to_ascii_lowercase())
         .filter(|tag| !tag.is_empty())
         .collect()
@@ -599,9 +769,9 @@ fn phrase_list(value: Option<&str>) -> Vec<String> {
     else {
         return Vec::new();
     };
-    inner
-        .split(',')
-        .map(|phrase| sanitize_line(unquote(phrase.trim()), MAX_PHRASE_CHARS))
+    split_flow(inner)
+        .iter()
+        .map(|phrase| sanitize_line(&unquote(phrase.trim()), MAX_PHRASE_CHARS))
         .filter(|phrase| !phrase.is_empty())
         .take(MAX_PHRASES)
         .collect()
@@ -627,9 +797,9 @@ fn missing_list(value: Option<&str>) -> Vec<String> {
     else {
         return Vec::new();
     };
-    inner
-        .split(',')
-        .map(|entry| sanitize_line(unquote(entry.trim()), MAX_MISSING_CHARS))
+    split_flow(inner)
+        .iter()
+        .map(|entry| sanitize_line(&unquote(entry.trim()), MAX_MISSING_CHARS))
         .filter(|entry| !entry.is_empty())
         .take(MAX_MISSING)
         .collect()
@@ -951,6 +1121,15 @@ const PROBE_RETRY_PAUSE: Duration = Duration::from_millis(750);
 /// nobody's to promise.
 const PROBE_RETRIES: usize = 2;
 
+/// How many TCP attempts one `HttpEmbedder::embed` call makes: the
+/// immediate retry that absorbs a pooled connection the server closed
+/// while it was idle. Named because the probe's whole attempt budget is
+/// derived from it — a fixture that sizes itself against a literal
+/// connection count is the KI-405 defect, and this constant is what such
+/// a fixture reads instead.
+const EMBED_ATTEMPTS_PER_CALL: usize = 2;
+
+
 /// A steady-state embed's budget, for the load-time index build — the
 /// same measured tail as the probe's above (60 rows over
 /// 2026-10-26 → 2026-11-02, median 83 ms, p95 5,921 ms, max 9,107 ms),
@@ -1059,6 +1238,9 @@ impl Embedder for HttpEmbedder {
         // race: the failed attempt burned the dead connection, and the
         // second rides a fresh one. A backend that is genuinely down
         // pays one extra failed attempt per embed and answers the same.
+        // The count is EMBED_ATTEMPTS_PER_CALL, so the probe's own
+        // connection budget derives from this loop rather than restating
+        // it as a literal (KI-405).
         let attempt = || {
             let response = self
                 .agent
@@ -1078,7 +1260,17 @@ impl Embedder for HttpEmbedder {
                 .collect::<Option<Vec<_>>>()?;
             (!vector.is_empty()).then_some(vector)
         };
-        attempt().or_else(attempt)
+        // Each attempt is one connection; the count is stated once, in
+        // EMBED_ATTEMPTS_PER_CALL, so a fixture can size its refusal
+        // against what the probe may actually spend.
+        let mut dims = None;
+        for _ in 0..EMBED_ATTEMPTS_PER_CALL {
+            dims = attempt();
+            if dims.is_some() {
+                break;
+            }
+        }
+        dims
     }
 
     fn name(&self) -> &'static str {
@@ -3660,6 +3852,12 @@ pub enum WriteError {
     Body(String),
     /// The justification is missing.
     Justification(String),
+    /// A replacement-only argument arrived with no `replacement` — a
+    /// caller that meant the modify path and lost its key. The refusal
+    /// is the whole point: the forget path retires the fact, and a
+    /// modify that silently retired the name instead is the wrong act
+    /// under the right intent (KI-402).
+    Replacement(String),
     /// A fact of this name already exists — `remember` never
     /// overwrites; the modify path is `supersede`.
     Exists(String),
@@ -3694,6 +3892,7 @@ impl std::fmt::Display for WriteError {
             WriteError::ValidUntil(reason) => write!(f, "{reason}"),
             WriteError::Body(reason) => write!(f, "{reason}"),
             WriteError::Justification(reason) => write!(f, "{reason}"),
+            WriteError::Replacement(reason) => write!(f, "{reason}"),
             WriteError::Exists(reason) => write!(f, "{reason}"),
             WriteError::UnknownFact(reason) => write!(f, "{reason}"),
             WriteError::Retired(reason) => write!(f, "{reason}"),
@@ -4248,26 +4447,17 @@ fn parse_phrases(value: &Option<Vec<String>>) -> Result<Vec<String>, WriteError>
 fn render_document(request: &Remember, today: &str) -> String {
     let mut out = String::from("---\n");
     out.push_str(&format!("name: {}\n", request.name));
-    out.push_str(&format!("description: \"{}\"\n", request.description));
+    out.push_str(&format!(
+        "description: {}\n",
+        quote_scalar(&request.description)
+    ));
     out.push_str(&format!("type: {}\n", request.fact_type));
     out.push_str(&format!("date: {today}\n"));
     out.push_str(&format!("basis: {}\n", request.basis.label()));
     out.push_str(&format!("tier: {}\n", request.tier.label()));
-    if request.shape.is_empty() {
-        out.push_str("shape: []\n");
-    } else {
-        out.push_str(&format!("shape: [{}]\n", request.shape.join(", ")));
-    }
-    if request.phrases.is_empty() {
-        out.push_str("phrases: []\n");
-    } else {
-        out.push_str(&format!("phrases: [{}]\n", request.phrases.join(", ")));
-    }
-    if request.missing.is_empty() {
-        out.push_str("missing: []\n");
-    } else {
-        out.push_str(&format!("missing: [{}]\n", request.missing.join(", ")));
-    }
+    out.push_str(&format!("shape: {}\n", flow_list(&request.shape)));
+    out.push_str(&format!("phrases: {}\n", flow_list(&request.phrases)));
+    out.push_str(&format!("missing: {}\n", flow_list(&request.missing)));
     out.push_str("recall-count: 0\n");
     out.push_str("superseded-by:\n");
     if request.valid_until.is_empty() {
@@ -4410,7 +4600,12 @@ pub struct Supersede {
     pub name: String,
     pub justification: String,
     /// The replacement fact's name, for the modify path. Omit it to
-    /// forget: the fact is expired, and the cycle archives it.
+    /// forget: the fact is expired, and the cycle archives it. Omission
+    /// is read as a forget only when NO other replacement-only argument
+    /// arrived — a `description`, `body`, `type`, `shape`, `phrases`,
+    /// `missing` or `valid-until` with no `replacement` is a caller that
+    /// meant the modify path and lost the key, so [`Supersede::parse`]
+    /// refuses it by name rather than retiring the fact (KI-402).
     pub replacement: Option<String>,
     /// The replacement's one-sentence fact; required with a
     /// replacement.
@@ -4431,6 +4626,15 @@ pub struct Supersede {
     /// There is no way to say "unknown" — an absent argument is an
     /// inheritance, and a list is a statement.
     pub missing: Option<Vec<String>>,
+    /// The replacement's phrases — the vocabulary the new fact's
+    /// trajectory drove with. **Inherit-or-clear**, the `missing`
+    /// argument's own rule: omitted, the replacement keeps the
+    /// superseded fact's phrases (a reworded fact does not lose the
+    /// direction that worked); an explicit empty list CLEARS them; a
+    /// list states the new ones. KI-402: the field did not exist, so a
+    /// call carrying `phrases` was silently dropped — neither an error
+    /// nor an effect.
+    pub phrases: Option<Vec<String>>,
     /// The replacement's `valid-until`; defaults to the superseded
     /// fact's own, and is required when that is a working fact with
     /// none.
@@ -4490,6 +4694,15 @@ impl Supersede {
         let missing = string_array_argument(arguments, "missing")?
             .map(|list| parse_missing(&Some(list)))
             .transpose()?;
+        // The phrases ride the same inherit-or-clear rule as the
+        // companions: absent keeps the superseded fact's own direction,
+        // an explicit empty list clears it, a list states the new one.
+        // KI-402(c): the argument used to reach no field at all, so a
+        // call carrying it was answered with neither a refusal nor an
+        // effect.
+        let phrases = string_array_argument(arguments, "phrases")?
+            .map(|list| parse_phrases(&Some(list)))
+            .transpose()?;
         let valid_until = match string_argument(arguments, "valid-until")? {
             Some(text) => {
                 if !crate::cli::valid_calendar_day(&text) {
@@ -4508,6 +4721,48 @@ impl Supersede {
                 body.len()
             )));
         }
+        // KI-402(a): the forget path RETIRES the fact — expiry, a
+        // retirement note, an audit row, and the name left dead on disk
+        // until the cycle archives it. Every argument below is a
+        // replacement's own, so a call carrying one and no `replacement`
+        // is a caller that meant the modify path and lost its key. The
+        // old parse could not tell the two apart and retired the fact
+        // under the right intent, which is the worst shape of the
+        // wrong act: nothing refused, nothing named, the name gone.
+        if replacement.is_none() {
+            let mut carried: Vec<&str> = Vec::new();
+            if !description.is_empty() {
+                carried.push("description");
+            }
+            if !body.is_empty() {
+                carried.push("body");
+            }
+            if fact_type.is_some() {
+                carried.push("type");
+            }
+            if shape.is_some() {
+                carried.push("shape");
+            }
+            if phrases.is_some() {
+                carried.push("phrases");
+            }
+            if missing.is_some() {
+                carried.push("missing");
+            }
+            if valid_until.is_some() {
+                carried.push("valid-until");
+            }
+            if !carried.is_empty() {
+                return Err(WriteError::Replacement(format!(
+                    "this call carries {} but no `replacement`, and every one of those arguments describes a replacement: without a name they would be dropped and `{name}` would be FORGOTTEN \u{2014} expired, archived, and its name left dead. Name the replacement fact in `replacement` to modify it; to retire `{name}` on purpose, send `name` and `justification` alone",
+                    carried
+                        .iter()
+                        .map(|key| format!("`{key}`"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )));
+            }
+        }
         Ok(Supersede {
             name,
             justification,
@@ -4516,6 +4771,7 @@ impl Supersede {
             body,
             fact_type,
             shape,
+            phrases,
             missing,
             valid_until,
         })
@@ -4620,9 +4876,13 @@ impl Memory {
                     // A modify keeps the direction the superseded fact
                     // recorded: the vocabulary that worked does not
                     // change because the fact's sentence did. A
-                    // supersession that needs a new direction writes a
-                    // new fact rather than editing this one's.
-                    phrases: fact.phrases.clone(),
+                    // supersession that needs a new direction states it
+                    // in `phrases`, and an explicit empty list clears it
+                    // — the companions' own inherit-or-clear rule.
+                    phrases: match &request.phrases {
+                        Some(list) => list.clone(),
+                        None => fact.phrases.clone(),
+                    },
                     // The companions follow the same inherit-or-clear
                     // rule with one addition: an omitted argument
                     // inherits them (a reworded fact does not unmiss
@@ -6074,18 +6334,76 @@ mod tests {
         );
     }
 
+    /// KI-405's real assertion, MEASURED rather than restated: one
+    /// `embed` call spends exactly `EMBED_ATTEMPTS_PER_CALL`
+    /// connections. That count is what the flap fixture below sizes its
+    /// refusal against, so this pin and that fixture are the two halves
+    /// of one law — the fixture may refuse as many connections as one
+    /// call can spend, and the probe's paused retries supply the rest.
+    ///
+    /// It is a measurement, not a tautology: the earlier draft of this
+    /// pin asserted a derived constant was greater than its own
+    /// multiplier, which cannot fail. A listener that counts is the
+    /// only thing that can say whether the loop spends the count the
+    /// fixture assumes.
+    #[test]
+    fn one_embed_call_spends_exactly_its_attempt_count() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let spent = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = Arc::clone(&spent);
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let stream = match stream {
+                    Ok(stream) => stream,
+                    Err(_) => break,
+                };
+                counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                // Refused, never answered: the call must exhaust its
+                // own attempts and return None.
+                drop(stream);
+            }
+        });
+        let embedder = HttpEmbedder {
+            endpoint: format!("http://127.0.0.1:{port}/v1/embeddings"),
+            dims: 3,
+            agent: ureq::AgentBuilder::new()
+                .timeout(Duration::from_millis(200))
+                .build(),
+        };
+        // One call, not the probe: the probe's paused retries would
+        // multiply this and the measurement would be of the probe.
+        assert!(
+            Embedder::embed(&embedder, PROBE_TEXT).is_none(),
+            "every attempt was refused"
+        );
+        assert_eq!(
+            spent.load(std::sync::atomic::Ordering::SeqCst),
+            EMBED_ATTEMPTS_PER_CALL,
+            "the call spends its own attempt count and no more — the \
+             fixture sizes its refusal against exactly this"
+        );
+    }
+
     #[test]
     fn the_probe_retries_after_a_pause_so_a_flap_is_not_a_missing_backend() {
         // KI-296: the machine's endpoint flaps — a request hangs past
         // every budget, an identical one answers in 37 ms between them,
         // and a restart window refuses outright. A probe that reads one
         // failure as "no backend" degrades a healthy machine for a
-        // whole process. The double refuses the first four connections
-        // — the embed's own immediate retry and the probe's first
-        // paused retry among them — and answers within the second,
-        // which is also the margin a loaded suite needs: a try can fail
-        // before it ever reaches the backend, and the probe's own
-        // retry count is the bound the double is sized against.
+        // whole process. The double refuses exactly the embed's own
+        // immediate retry — EMBED_ATTEMPTS_PER_CALL connections — so the
+        // probe cannot clear the flap WITHOUT the paused retry this test
+        // exists for. The refusal is sized against the one measured
+        // fact the sibling pin establishes (one call spends its own
+        // attempt count), never against a literal: a try can also fail
+        // before it reaches this listener, and such an attempt costs
+        // the probe a connection while advancing nothing here, so a
+        // double sized to the whole budget starves a healthy probe as
+        // soon as the machine is loaded. It was a literal four once,
+        // against a probe entitled to six; the fifth and sixth
+        // connections then went to nothing and the probe read a healthy
+        // endpoint as dead (KI-405).
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         std::thread::spawn(move || {
@@ -6094,7 +6412,7 @@ mod tests {
                     Ok(stream) => stream,
                     Err(_) => break,
                 };
-                if index < 4 {
+                if index < EMBED_ATTEMPTS_PER_CALL {
                     drop(stream);
                     continue;
                 }
@@ -10255,6 +10573,187 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
     }
 
+    /// A reader that is not fleet: the frontmatter parsed by a strict
+    /// YAML reader, the way any script, editor, or doc pipeline sees a
+    /// fact. This is the second reader KI-458 was filed for — before the
+    /// escaping, 116 of 584 live facts were refused here while fleet's
+    /// own `unquote` survived, so nothing in the suite reddened.
+    ///
+    /// Hand-rolled on purpose: the crate carries no YAML dependency, and
+    /// what the pin has to prove is narrow — that a double-quoted scalar
+    /// carrying `\` and `"` is read back as the same text, and that a
+    /// flow sequence keeps its item count. A parser that speaks only
+    /// those two forms is exactly the check, and adding a dependency to
+    /// assert it would be the tail wagging the dog.
+    fn strict_yaml_double_quoted(line: &str) -> Option<String> {
+        let rest = line.strip_prefix("description: ")?;
+        let inner = rest.strip_prefix('"')?.strip_suffix('"')?;
+        let mut out = String::new();
+        let mut chars = inner.chars();
+        while let Some(character) = chars.next() {
+            if character != '\\' {
+                out.push(character);
+                continue;
+            }
+            match chars.next()? {
+                '"' => out.push('"'),
+                '\\' => out.push('\\'),
+                other => return Some(format!("UNSUPPORTED ESCAPE \\{other}")),
+            }
+        }
+        Some(out)
+    }
+
+    #[test]
+    fn the_written_frontmatter_is_a_document_a_strict_reader_accepts() {
+        // A description carrying what a real reply carries: a JSON
+        // object's quotes, a Windows-looking path's backslashes, and a
+        // `#` that a flow sequence would read as a comment.
+        let root = scratch("yaml-strict");
+        let memory = Memory::load_with(&root, Box::new(KeywordOnly));
+        let description = r#"the reply was {"project": "sem1", "path": "C:\tmp\x"} #done"#;
+        let request = Remember::parse(&serde_json::json!({
+            "name": "a-strict-document",
+            "description": description,
+            "basis": "confirmed-by",
+            "phrases": ["a, b", "hash #tag", "the \"x\" case"],
+            "shape": "build",
+        }))
+        .expect("a description and phrases carrying quotes parse");
+        let written = memory.remember(&request).expect("the write lands");
+        let text = fs::read_to_string(&written.path).expect("the fact file");
+        let frontmatter = text
+            .strip_prefix("---\n")
+            .and_then(|rest| rest.split_once("\n---\n"))
+            .map(|(fence, _)| fence)
+            .expect("a closed frontmatter fence");
+
+        // 1. The description line parses under the strict reader, and it
+        //    parses back to the text the caller supplied.
+        let line = frontmatter
+            .lines()
+            .find(|line| line.starts_with("description: "))
+            .expect("a description line");
+        assert_eq!(
+            strict_yaml_double_quoted(line).as_deref(),
+            Some(description),
+            "the description line is not a scalar a standard reader accepts: {line}"
+        );
+        // 2. Every escaped quote on that line is escaped, never bare: a
+        //    bare `"` inside the scalar is what closed it early before.
+        let inner = line
+            .strip_prefix("description: \"")
+            .and_then(|rest| rest.strip_suffix('"'))
+            .expect("an outer quoted scalar");
+        assert!(
+            !inner.contains("\"") || inner.contains("\\\""),
+            "the description carries an unescaped quote: {line}"
+        );
+        // 3. The phrase line is a sequence a standard reader can split:
+        //    an item carrying a comma or a `#` is quoted, so the
+        //    separator is the only comma at the top level. Read here as
+        //    YAML reads it — a bare `#` in a plain item starts a comment,
+        //    which is what refused 12 live facts.
+        let phrase_line = frontmatter
+            .lines()
+            .find(|line| line.starts_with("phrases: "))
+            .expect("a phrases line");
+        let sequence = phrase_line
+            .strip_prefix("phrases: [")
+            .and_then(|rest| rest.strip_suffix(']'))
+            .expect("a flow sequence");
+        assert!(
+            sequence.contains("\"a, b\""),
+            "an item carrying a comma must be quoted or the sequence splits it in two: {phrase_line}"
+        );
+        assert!(
+            sequence.contains("\"hash #tag\""),
+            "an item carrying `#` must be quoted or a standard reader drops it as a comment: {phrase_line}"
+        );
+        // 4. And the round trip is byte-equal through FLEET's reader, on
+        //    the phrases as well as the description: the reloaded fact —
+        //    not the request — is what the file said.
+        let reloaded = Memory::load(&root);
+        let facts = reloaded.facts();
+        let fact = facts
+            .iter()
+            .find(|fact| fact.name == "a-strict-document")
+            .expect("the fact reloads");
+        assert_eq!(fact.description, description);
+        assert_eq!(
+            fact.phrases,
+            vec![
+                "a, b".to_string(),
+                "hash #tag".to_string(),
+                "the \"x\" case".to_string()
+            ],
+            "the phrases did not survive the flow-sequence round trip"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// KI-461's pin. A plain flow item may carry an apostrophe or a
+    /// double quote — YAML reads `[it's, c]` and `[a"b, c]` as the two
+    /// items written — so the writer must not quote them and the reader
+    /// must not treat a mid-item quote as opening one. The earlier
+    /// pair did both, and the writer's quote plus the reader's
+    /// apostrophe rule collapsed three phrases into one: the live
+    /// corpus lost `shared /tmp filename` and `driver collision` from
+    /// `bsd-mktemp-suffix-trap` on the C5 repair.
+    #[test]
+    fn a_plain_item_keeps_its_apostrophe_and_its_item_count() {
+        // The writer leaves an interior apostrophe plain (what YAML
+        // wants) and still quotes what actually changes meaning.
+        assert_eq!(flow_scalar("literal X's"), "literal X's");
+        assert_eq!(flow_scalar(r#"the "x" case"#), r#"the "x" case"#);
+        assert_eq!(flow_scalar("a:b"), "a:b");
+        assert_eq!(flow_scalar("a, b"), "\"a, b\"");
+        assert_eq!(flow_scalar("hash #tag"), "\"hash #tag\"");
+        assert_eq!(flow_scalar("a: b"), "\"a: b\"");
+        assert_eq!(flow_scalar("a #b"), "\"a #b\"");
+        assert_eq!(flow_scalar("&anchor"), "\"&anchor\"");
+        assert_eq!(flow_scalar(" padded"), "\" padded\"");
+
+        // The reader agrees on the same text: three items stay three.
+        let items = split_flow("mktemp, XXXXXX, literal X's, shared /tmp filename, driver collision");
+        assert_eq!(
+            items,
+            vec![
+                "mktemp",
+                "XXXXXX",
+                "literal X's",
+                "shared /tmp filename",
+                "driver collision"
+            ],
+            "a mid-item apostrophe is data, not the start of a quoted item"
+        );
+        // A quote that really does open an item still protects its comma.
+        assert_eq!(
+            split_flow("\"a, b\", c"),
+            vec!["\"a, b\"".to_string(), "c".to_string()],
+            "a leading quote still opens the item it begins"
+        );
+        // And the round trip: flow_list -> split_flow -> unquote is the
+        // list it was handed, apostrophes and all.
+        let phrases = vec![
+            "literal X's".to_string(),
+            "shared /tmp filename".to_string(),
+            "a, b".to_string(),
+        ];
+        let rendered = flow_list(&phrases);
+        let back: Vec<String> = split_flow(
+            rendered
+                .trim()
+                .strip_prefix('[')
+                .and_then(|v| v.strip_suffix(']'))
+                .expect("a flow sequence"),
+        )
+        .iter()
+        .map(|item| unquote(item.trim()))
+        .collect();
+        assert_eq!(back, phrases, "the flow sequence round trip: {rendered}");
+    }
+
     #[test]
     fn the_writer_bounds_and_sanitizes_the_description() {
         // KI-060: a description carrying newlines, tabs, an escape
@@ -10345,6 +10844,175 @@ mod tests {
         );
         // Nothing landed: a refused write leaves no file behind.
         assert!(load_facts(&root).is_empty());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    // --- KI-402: the forget path says so, and the modify path is asked for ---
+
+    /// The three defects KI-402 names, each pinned the way it bit: a
+    /// call that meant a modify and lost `replacement` must be REFUSED
+    /// (not silently retired), a genuine forget must still work with
+    /// only `name` and `justification`, and `phrases` must reach the
+    /// replacement instead of falling on the floor.
+    #[test]
+    fn a_replacement_argument_with_no_replacement_is_refused_rather_than_retiring_the_fact() {
+        let root = scratch("supersede-missing-replacement");
+        let memory = Memory::load_with(&root, Box::new(KeywordOnly));
+        let request = Remember::parse(&serde_json::json!({
+            "name": "corpus-snapshot",
+            "description": "the corpus snapshot as of this morning",
+            "basis": "inferred",
+            "phrases": ["the corpus refresh ran"],
+        }))
+        .unwrap();
+        memory.remember(&request).unwrap();
+
+        // The exact shape the row's session wrote: a description, a
+        // body, and phrases — and no `replacement` key. Before the fix
+        // this call took the forget branch and left the name dead.
+        let error = Supersede::parse(&serde_json::json!({
+            "name": "corpus-snapshot",
+            "justification": "the first write mis-framed the run",
+            "description": "the corpus snapshot, framed correctly",
+            "body": "The corrected account of the refresh.",
+            "phrases": ["the corpus refresh ran"],
+        }))
+        .unwrap_err();
+        let WriteError::Replacement(message) = &error else {
+            panic!("a replacement-only argument with no `replacement` is a Replacement refusal: {error:?}");
+        };
+        // The refusal NAMES the missing key and every argument that
+        // asked for it — a refusal that does not say which key was
+        // missing is the silence it replaces.
+        assert!(message.contains("`replacement`"), "{message}");
+        for named in ["`description`", "`body`", "`phrases`"] {
+            assert!(
+                message.contains(named),
+                "{named} carried and unnamed in: {message}"
+            );
+        }
+        assert!(message.contains("FORGOTTEN"), "{message}");
+        // Nothing moved: the fact is still live and recallable, which is
+        // the whole difference between a refusal and the retirement the
+        // old parse performed under the same arguments.
+        let live = load_facts(&root);
+        let fact = live
+            .iter()
+            .find(|fact| fact.name == "corpus-snapshot")
+            .expect("the fact is still there");
+        assert!(fact.valid_until.is_empty(), "{}", fact.valid_until);
+        assert!(memory
+            .recall("the corpus snapshot as of this morning")
+            .iter()
+            .any(|hit| hit.fact.name == "corpus-snapshot"));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_genuine_forget_carries_name_and_justification_and_still_retires() {
+        // The refusal must not cost the forget path its own shape: the
+        // two arguments the spec requires are enough, and the file is
+        // retired exactly as before.
+        let root = scratch("supersede-genuine-forget");
+        let memory = Memory::load_with(&root, Box::new(KeywordOnly));
+        let request = Remember::parse(&serde_json::json!({
+            "name": "a-wrong-guess",
+            "description": "an inferred guess that turned out wrong",
+            "basis": "inferred",
+        }))
+        .unwrap();
+        memory.remember(&request).unwrap();
+        let forget = Supersede::parse(&serde_json::json!({
+            "name": "a-wrong-guess",
+            "justification": "it was wrong",
+        }))
+        .expect("name and justification alone are a forget");
+        assert_eq!(forget.replacement, None);
+        assert!(
+            memory.supersede(&forget, false, None).is_ok(),
+            "a genuine forget still retires the fact"
+        );
+        let text = fs::read_to_string(root.join("a-wrong-guess.md")).unwrap();
+        assert!(
+            text.contains(&format!("valid-until: {}", days_ago(1))),
+            "{text}"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_replacement_inherits_or_clears_the_phrases_the_superseded_fact_recorded() {
+        // KI-402(c): `phrases` reached no field at all — the argument was
+        // ignored, so a caller got neither an error nor an effect. It now
+        // rides the inheritance rule the companions use, and the three
+        // states stay three: omitted inherits, `[]` clears, a list
+        // replaces.
+        let root = scratch("supersede-phrases");
+        let memory = Memory::load_with(&root, Box::new(KeywordOnly));
+        let request = Remember::parse(&serde_json::json!({
+            "name": "a-settled-question",
+            "description": "the port the service answers on",
+            "basis": "inferred",
+            "phrases": ["it answers on 8902", "the probe reached 8902"],
+        }))
+        .unwrap();
+        memory.remember(&request).unwrap();
+
+        // Inherit: a reworded fact keeps the vocabulary that worked.
+        let inherit = Supersede::parse(&serde_json::json!({
+            "name": "a-settled-question",
+            "justification": "the sentence was wrong",
+            "replacement": "a-settled-question-v2",
+            "description": "the port the service answers on, restated",
+        }))
+        .unwrap();
+        assert!(inherit.phrases.is_none(), "absent is an inheritance");
+        memory.supersede(&inherit, false, None).unwrap();
+        let kept = load_facts(&root)
+            .into_iter()
+            .find(|fact| fact.name == "a-settled-question-v2")
+            .expect("the replacement was written");
+        assert_eq!(
+            kept.phrases,
+            vec![
+                "it answers on 8902".to_string(),
+                "the probe reached 8902".to_string()
+            ]
+        );
+
+        // A list is a statement: the new direction rides the new fact.
+        let stated = Supersede::parse(&serde_json::json!({
+            "name": "a-settled-question-v2",
+            "justification": "the port moved",
+            "replacement": "a-settled-question-v3",
+            "description": "the port the service answers on, moved",
+            "phrases": ["it answers on 8903"],
+        }))
+        .unwrap();
+        memory.supersede(&stated, false, None).unwrap();
+        let moved = load_facts(&root)
+            .into_iter()
+            .find(|fact| fact.name == "a-settled-question-v3")
+            .expect("the second replacement was written");
+        assert_eq!(moved.phrases, vec!["it answers on 8903".to_string()]);
+
+        // An explicit empty list clears: the vocabulary no longer
+        // applies, and the parser must let the caller say so.
+        let cleared = Supersede::parse(&serde_json::json!({
+            "name": "a-settled-question-v3",
+            "justification": "the phrases no longer describe this fact",
+            "replacement": "a-settled-question-v4",
+            "description": "the port the service answers on, with no recorded direction",
+            "phrases": [],
+        }))
+        .unwrap();
+        assert_eq!(cleared.phrases, Some(Vec::new()));
+        memory.supersede(&cleared, false, None).unwrap();
+        let bare = load_facts(&root)
+            .into_iter()
+            .find(|fact| fact.name == "a-settled-question-v4")
+            .expect("the third replacement was written");
+        assert!(bare.phrases.is_empty(), "{:?}", bare.phrases);
         let _ = fs::remove_dir_all(&root);
     }
 

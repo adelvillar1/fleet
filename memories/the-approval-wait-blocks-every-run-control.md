@@ -1,6 +1,6 @@
 ---
 name: the-approval-wait-blocks-every-run-control
-description: "project 2026-11-03 — the face's run controls (stop, steer, pause, fold, pin, resume) all wrote one control file that the agent loop read only before a model call, so while an approval seat was pending NONE of them could act — a stop was accepted, the card said "stopping", and the run hung until the seat was answered (proven live); FIXED in F1 (b2a4f9f) — the approval wait polls the control file without consuming it, and the bridge resolves the seat, naming the stop as the reason"
+description: "project 2026-11-03 — the face's run controls (stop, steer, pause, fold, pin, resume) all wrote one control file that the agent loop read only before a model call, so while an approval seat was pending NONE of them could act — a stop was accepted, the card said \"stopping\", and the run hung until the seat was answered (proven live); FIXED in F1 (b2a4f9f) — the approval wait polls the control file without consuming it, and the bridge resolves the seat, naming the stop as the reason"
 type: project
 date: 2026-11-04
 basis: inferred

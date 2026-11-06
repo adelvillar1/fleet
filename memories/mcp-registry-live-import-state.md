@@ -1,6 +1,6 @@
 ---
 name: mcp-registry-live-import-state
-description: "2026-10-23 evening — the owner said "import them": all 13 available scanned servers are in the LIVE ~/.fleet/mcp.json; 6 probe ok (49 tools), 7 failed with named reasons (4 env-unresolved via the vault, computer-use has no cwd field, fli crashes, vizro times out); dappier's URL-embedded key is the one registry residual; 2026-10-26 — the imported servers are ballast fleet never uses, and github's unset token refuses every headless run"
+description: "2026-10-23 evening — the owner said \"import them\": all 13 available scanned servers are in the LIVE ~/.fleet/mcp.json; 6 probe ok (49 tools), 7 failed with named reasons (4 env-unresolved via the vault, computer-use has no cwd field, fli crashes, vizro times out); dappier's URL-embedded key is the one registry residual; 2026-10-26 — the imported servers are ballast fleet never uses, and github's unset token refuses every headless run"
 type: project
 date: 2026-11-05
 basis: confirmed-by

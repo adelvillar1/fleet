@@ -1,6 +1,6 @@
 ---
 name: settings-ux-plan-2026-11-01
-description: "project 2026-11-01/02 — the "settings UX is atrocious" plan (G1–G11, U1–U11) is COMPLETE: its own Status pass — 2026-11-02 table audited all eleven against the code and found every one built (U1–U10 landed across 36c5754/b03520b/5a65a6a/d13ca29/d816704/d5f7416, U11 the gate green for that pass); the plan file still carries status: active, so read its status-pass table and not the frontmatter or the boxes"
+description: "project 2026-11-01/02 — the \"settings UX is atrocious\" plan (G1–G11, U1–U11) is COMPLETE: its own Status pass — 2026-11-02 table audited all eleven against the code and found every one built (U1–U10 landed across 36c5754/b03520b/5a65a6a/d13ca29/d816704/d5f7416, U11 the gate green for that pass); the plan file still carries status: active, so read its status-pass table and not the frontmatter or the boxes"
 type: project
 date: 2026-11-05
 basis: inferred

@@ -1,6 +1,6 @@
 ---
 name: a-top-level-surface-needs-an-address
-description: "feedback 2026-10-21 — the owner asked "there should be a vault settings section so that a vault can be onboarded" after the onboarding form had already shipped inside Settings; a capability that lives only as a card deep in a long page does not exist to someone looking for its own section — give significant capabilities a rail destination, and build it from the page's own card so there is one implementation"
+description: "feedback 2026-10-21 — the owner asked \"there should be a vault settings section so that a vault can be onboarded\" after the onboarding form had already shipped inside Settings; a capability that lives only as a card deep in a long page does not exist to someone looking for its own section — give significant capabilities a rail destination, and build it from the page's own card so there is one implementation"
 type: feedback
 date: 2026-11-04
 basis: confirmed-by

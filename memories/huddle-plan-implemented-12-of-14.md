@@ -1,6 +1,6 @@
 ---
 name: huddle-plan-implemented-12-of-14
-description: "project 2026-11-04 — docs/plans/2026-11-03-huddles.md at 12 of 14 ticked (C1–C12), 28 commits on face-plugin-host, gate green; C14 was RUN and proved five of seven steps live, exposing KI-410 (no role admits send_file, so a scoped bot cannot deliver); the owner then widened "delivery" past files, reframed a capability gap as a hiring decision (landed, e15a4a7), asked "why wouldn't you just spin up a persona" (re-cut the card by kind, see [[not-every-gap-is-a-persona]]), and closed it with a domain example —…"
+description: "project 2026-11-04 — docs/plans/2026-11-03-huddles.md at 12 of 14 ticked (C1–C12), 28 commits on face-plugin-host, gate green; C14 was RUN and proved five of seven steps live, exposing KI-410 (no role admits send_file, so a scoped bot cannot deliver); the owner then widened \"delivery\" past files, reframed a capability gap as a hiring decision (landed, e15a4a7), asked \"why wouldn't you just spin up a persona\" (re-cut the card by kind, see [[not-every-gap-is-a-persona]]), and closed it with a domain example —…"
 type: project
 date: 2026-11-04
 basis: confirmed-by

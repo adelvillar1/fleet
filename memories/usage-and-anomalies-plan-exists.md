@@ -7,7 +7,7 @@ basis: inferred
 tier: durable
 shape: [change, docs]
 phrases: [super agent, router and worker sessions, delegation-first prompt, dsh-superagent, offloop article, scheduling experiment]
-missing: [per-provider confirmation of which usage fields the five lanes actually return — Increment A's live verification leg, the implementation itself: the plan is status: draft, C0-C6 unbuilt]
+missing: ["per-provider confirmation of which usage fields the five lanes actually return — Increment A's live verification leg, the implementation itself: the plan is status: draft, C0-C6 unbuilt"]
 recall-count: 2
 superseded-by:
 valid-until:

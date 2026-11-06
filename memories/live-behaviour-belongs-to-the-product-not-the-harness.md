@@ -1,6 +1,6 @@
 ---
 name: live-behaviour-belongs-to-the-product-not-the-harness
-description: "owner ruling 2026-11-02 — "the beta pass I will do through the own fleet application, it doesn't make much sense to do it through zcode"; a live behaviour (a real run, a real seat, a real rewind) is verified in the product itself, and a session must not press or claim it"
+description: "owner ruling 2026-11-02 — \"the beta pass I will do through the own fleet application, it doesn't make much sense to do it through zcode\"; a live behaviour (a real run, a real seat, a real rewind) is verified in the product itself, and a session must not press or claim it"
 type: feedback
 date: 2026-11-04
 basis: confirmed-by

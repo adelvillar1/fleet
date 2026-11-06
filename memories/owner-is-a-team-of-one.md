@@ -1,6 +1,6 @@
 ---
 name: owner-is-a-team-of-one
-description: "The owner builds fleet alone — "a team of one building something that takes teams of people months in less than a couple of weeks" — and the velocity is real (repo born 2026-10-12; 487 commits, 253 in the last 7 days ≈ 36/day, all through the gate)"
+description: "The owner builds fleet alone — \"a team of one building something that takes teams of people months in less than a couple of weeks\" — and the velocity is real (repo born 2026-10-12; 487 commits, 253 in the last 7 days ≈ 36/day, all through the gate)"
 type: user
 date: 2026-11-04
 basis: confirmed-by

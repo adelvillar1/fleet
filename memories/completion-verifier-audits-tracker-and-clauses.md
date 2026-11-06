@@ -1,6 +1,6 @@
 ---
 name: completion-verifier-audits-tracker-and-clauses
-description: "feedback 2026-10-30 — the completion verifier refused a landed implementation for two things the artifacts didn't show — a stale todo list contradicting the transcript, and a criterion checked [x] while one of its own clauses ("at least one real session replayed") was unmet; close the tracker out and never check a criterion whose every clause isn't evidenced"
+description: "feedback 2026-10-30 — the completion verifier refused a landed implementation for two things the artifacts didn't show — a stale todo list contradicting the transcript, and a criterion checked [x] while one of its own clauses (\"at least one real session replayed\") was unmet; close the tracker out and never check a criterion whose every clause isn't evidenced"
 type: feedback
 date: 2026-11-04
 basis: inferred

@@ -1,6 +1,6 @@
 ---
 name: pairing-at-an-origin-arms-the-transport
-description: "feedback 2026-10-29 (KI-368) — a phone that opens a relayed origin without the entry URL's fragment and pairs by typing a code paired UNSEALED (console: "stream down", bot: 403); the transport's arming path can never depend on a route the user happens to take, so the relay-marked redemption now hands the phone the secret itself"
+description: "feedback 2026-10-29 (KI-368) — a phone that opens a relayed origin without the entry URL's fragment and pairs by typing a code paired UNSEALED (console: \"stream down\", bot: 403); the transport's arming path can never depend on a route the user happens to take, so the relay-marked redemption now hands the phone the secret itself"
 type: feedback
 date: 2026-11-04
 basis: inferred

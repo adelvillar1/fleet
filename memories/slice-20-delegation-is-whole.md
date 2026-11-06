@@ -6,7 +6,7 @@ date: 2026-10-15
 basis: confirmed-by
 tier: durable
 shape: [change]
-phrases: [propose and dispose: the drafter files and the owner's gate applies; the diff score prices a contradicted report above every category; a chosen improvement is a…]
+phrases: ["propose and dispose: the drafter files and the owner's gate applies; the diff score prices a contradicted report above every category; a chosen improvement is a…"]
 missing: []
 recall-count: 581
 superseded-by:

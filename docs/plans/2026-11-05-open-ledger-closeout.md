@@ -251,61 +251,423 @@ lands.
 Each criterion is a verifiable assertion; the work is done when every box is
 checked. **Order is identity** — never reorder after gating.
 
-- [ ] C0 — all 28 open rows (the original 25 plus KI-454/KI-455/KI-456) are
+- [x] C0 — all 28 open rows (the original 25 plus KI-454/KI-455/KI-456) are
       re-verified against the code and recorded in this plan's Progress table
       as confirmed-open / already-fixed / not-fleets-code / a-decision, the
       ledger corrected for every row found fixed, and KI-454's doc sentence
-      corrected to the guard's three verdicts.
-- [ ] C1 — the three load-sensitive fixtures (`the_probe_retries_after_a_pause…`,
+      corrected to the guard's three verdicts. **Two rows were already fixed**
+      (KI-326, and KI-454's doc sentence) and were closed here rather than
+      rebuilt. KI-454's close also corrected the entry's own citation: it
+      pointed at `src/agent.rs:8286-8291`, the Refused precondition, not at the
+      return; `WriteGuard::Refused` is constructed at `:8304-8310`.
+- [x] C1 — the three load-sensitive fixtures (`the_probe_retries_after_a_pause…`,
       the layerfs stub trio, the blend1 doctor pair) each bound their
       observable in attempts or polls rather than wall-clock seconds, and each
       is proven green with four CPU burners running beside the suite.
-- [ ] C2 — the mock server resolves from `CARGO_BIN_EXE_mock-server`, then from
+      **Landed:** `EMBED_ATTEMPTS_PER_CALL = 2` in `src/memory.rs` with the pin
+      `one_embed_call_spends_exactly_its_attempt_count`; `VERSION_BUDGET = 10s`
+      with `VERSION_ATTEMPTS = 3` and `run_version_with`/`retry_version`/
+      `parse_version` in `src/layerfs_tools.rs`, four pins including a ~10.13 s
+      real read; and KI-452, whose load-sensitivity diagnosis measured FALSE —
+      the real mechanism was a busy-retry in `http_llama.embed` taking 184 s
+      against `src/mcp.rs`'s `CALL_TIMEOUT` of 60 s, now bounded by
+      `DOCTOR_PROBE_DEADLINE = 20.0` in sem1 and blend1, measured 184.1 s → 20.0 s.
+## Acceptance criteria (C2–C3)
+
+- [x] C2 — the mock server resolves from `CARGO_BIN_EXE_mock-server`, then from
       the directory the test binary lives in, and only then the
-      manifest-relative path, and the eleven `agent::tests` cases pass under a
-      `CARGO_TARGET_DIR` outside the manifest.
-- [ ] C3 — a `write_file` naming an exact canonical spelling the vocabulary
+      manifest-relative path, and the `agent::tests` cases that spawn it pass
+      under a `CARGO_TARGET_DIR` outside the manifest. **Landed:** step 1
+      cannot carry the unit tests — cargo stamps no `CARGO_BIN_EXE` into a lib
+      test target — so step 2 is the load-bearing one; the failing set was
+      twelve spawned, eleven red, and the row had missed
+      `the_run_report_carries_the_per_turn_curve`. Detached worktree at
+      `62814a4`, `CARGO_TARGET_DIR` outside it: red 97/11 failed, green
+      108/0.
+- [x] C3 — a `write_file` naming an exact canonical spelling the vocabulary
       indexed is admitted, and the KI-415 instances (the SF font family's mono
       variant, `One`, `Deserialize`) and the KI-428 `apply_patch` case are
       pinned as admitted, so the guard refuses no canonical form of itself.
-## Acceptance criteria (C4–C6)
+      LANDED 2026-11-05: one shared rule, `nomenclature::spelling_is_written`,
+      asked by both surfaces — the write guard (`src/agent.rs`) skips the
+      token, and `convention` (`src/tools.rs`) answers "is a spelling this
+      project writes" in its near-exact arm instead of "rename". The bar is
+      MEASURED, not chosen: a spelling written by at least
+      `SPELLING_CONVENTION_FILES` = 2 distinct files is a canonical form of
+      its own term (real tree: `Usage` 22, `One` 34, `Mono` 4, `Deserialize`
+      31, `Projects` 40 — every KI-415 instance clears it); it is 2 and not 1
+      because the drift spelling sits in exactly one file, a guard-test module
+      built to prove the refusal. Five pins, two of which read their premise
+      back before asserting; three red-proofs
+      (delete the guard call; the bar at 1; `if false &&` in `tools.rs`).
+      A single-word case exemption was added, measured, found to admit
+      `Projects` in a language-keyword fixture, and removed.
+## Acceptance criteria (C4–C5)
 
-- [ ] C4 — a `supersede` call carrying a `description` and no `replacement` is
+- [x] C4 — a `supersede` call carrying a `description` and no `replacement` is
       refused by name as the modify path it meant, rather than taking the
       forget path, and a forget's result sentence says the name is dead rather
-      than "expired with its retirement noted".
-- [ ] C5 — `fleet remember` can file a fact whose `--body` or `--description`
-      carries a bare double-quoted JSON object, pinned in `tests/cli.rs` beside
-      `remember_parses_its_structured_flags`.
-- [ ] C6 — the reload path verifies the agent's post-state (a pid from
+      than "expired with its retirement noted". LANDED 2026-11-05:
+      `Supersede::parse` refuses a call carrying any replacement-shaped
+      argument with no `replacement`, through the new
+      `WriteError::Replacement`, and the message names what it found and what
+      would have happened. A forget's own result says the name is DEAD, that
+      `remember` is refused while it is taken, and that a correction wants
+      `supersede` with `replacement`. Both sentences read out of a replayed
+      session, not the source. `phrases` joined the row's third defect as a
+      real field and a declared property with the companions' inherit-or-clear
+      rule. Every caller in the tree was carried: `src/improve.rs`,
+      `src/gui/bridge.rs` (whose delete path was passing a replacement-only
+      `description` with no replacement — the exact silent forget, now
+      refused), and `src/gui/server.rs`'s management-verb test, which had
+      asserted `superseded-by:` against a frontmatter field that stands empty
+      on every live fact, so the check never proved a stamp. Five pins, three
+      red-proofs. The token bound was measured, not raised: the additions
+      pushed the surface to 10,018 against `MAX_DEFINITION_TOKENS = 10_000`
+      and tiered `apply_patch` behind `tool_search`; the text was trimmed.
+- [x] C5 — `fleet remember` can file a fact whose `--body` or `--description`
+      carries a bare double-quoted JSON object. LANDED 2026-11-06, and the
+      criterion's own file did not exist: `tests/cli.rs` is not in this tree
+      and never was (`remember_parses_its_structured_flags` lives in
+      `src/cli.rs mod tests`), so the pin landed beside it there. The row's
+      shell diagnosis was measured and does not reproduce — a single-quoted
+      outer with JSON inside files and reads back — but the gap it names was
+      real: there was no shell-safe route, so a caller had to guess how many
+      quoting layers a blob sat behind. Two now exist: `--description-file
+      <path>` and `--body-file <path>` read the value VERBATIM out of a file
+      (modelled on `fleet graph --file`, with duplicate detection, a "not
+      both" refusal against the literal flag, and a named error carrying the
+      flag and the path). Underneath sat a worse defect, filed as KI-458 and
+      fixed here: the writer emitted INVALID YAML for those same values —
+      `description: "he said "hi""` — so 128 of 625 live facts were refused by
+      any standard reader while fleet's own hand unquoter survived and nothing
+      reddened. `quote_scalar` escapes `\` and `"`, `flow_scalar` quotes any
+      item a plain scalar would misread, `split_flow` reads them back
+      quote-aware, and `unquote` unescapes exactly what the writer emits. The
+      corpus was repaired through the same rules: 192 facts rewritten,
+      625/625 strict-parseable, and fleet's view of all 625 byte-identical
+      across the repair. Three pins, three red-proofs (one of which exposed a
+      vacuous assertion of my own — `written.phrases` came from the request,
+      not the file — and was rewritten to read the reloaded fact).
+## Acceptance criteria (C6)
+
+- [x] C6 — the reload path verifies the agent's post-state (a pid from
       `launchctl print`, the port answering) and re-bootstraps by name when the
       domain lacks the service, so a restart cannot leave the face down.
-## Acceptance criteria (C7–C8)
+      LANDED 2026-11-06, and the criterion's premise had to be built first:
+      the tree had NO reload path in code at all, only the runbook block in
+      `docs/features/install.md` and a scratch `tmp/deploy447.sh` — which is
+      precisely how KI-431 happened, because a sequence of shell lines a reader
+      must complete is not a path that can verify anything. It is now a verb:
+      `fleet reload [--from <path>] [--host] [--port]` in the new `src/reload.rs`,
+      wired through `src/cli.rs` and `src/main.rs`, with the install doc's
+      block rewritten to invoke it. The post-state is decided from the two
+      facts the machine can be asked (a pid, and a TCP connect on the port)
+      by the pure `post_state`; `repair_for` picks the verb the observed world
+      calls for (bootstrap when the domain lacks the service, restart when it
+      holds one); a first repair that does not take escalates to the
+      bootout/bootstrap pair. The EXIT CODE follows the proof, not the
+      commands — the old failure was that every line succeeded while the face
+      was down. `--from` installs through a new inode (KI-418's rule, now code
+      instead of prose) and refuses a source with no exec bit by name, since
+      installing one produces exactly the face-stays-down shape this row is
+      about. Proved LIVE against a scratch agent (`com.fleet.reloadprobe`,
+      :55454) driven from KI-431's own precondition — bootout run,
+      `Could not find service` from `launchctl print` — which the reload
+      bootstrapped to `state = running pid 50987` with the port answering 200,
+      confirmed independently of the tool's own report; the owner's face was
+      never touched (pid 94983, :3080 200 throughout) and the scratch plist is
+      removed. Two red-proofs: bootstrap disabled → the escalation caught it;
+      both disabled → the run printed `the face is DOWN` and exited non-zero,
+      the old outcome. Eleven module pins, one parser pin, one help pin.
 
-- [ ] C7 — a child result's render carries its project name and the
+## Acceptance criteria (C7-C8)
+
+- [x] C7 — a child result's render carries its project name and the
       `fs read main /<path>` command that reads its work back, so no parent
       restates a sandbox path as a host one.
-- [ ] C8 — a 400/404 whose body names account, subscription, or plan state is
+
+      **What landed.** Two rows, one surface. KI-320: `WorkspaceReport`
+      gained `project` as its first field, so the store address the parent
+      needs is a reported fact instead of archaeology — a child's tools
+      resolve relative paths against its *sandbox*, and a path in its answer
+      is not a host path. `render_workspace` now opens with
+      `workspace: project {p}` and closes with the command that reads it back
+      (`subagents.rs`: `read_back_cli`, `read_back_command`,
+      `render_workspace_with`). The CLI half resolves through the gate
+      (`Gate::command_line` → the new pure `program_line`), so a machine that
+      runs the bundle prints `node "<bundle>/…/layerfs.js"` with the
+      space-bearing path quoted — the old `Gate::command_line` joined parts
+      unquoted, which splits the moment a path has a space in it.
+
+      KI-327: a publish the store *refuses* never moved `main`, but the old
+      arm recorded `Merged` because the local merge had succeeded — the header
+      printed `merged to main` over a trunk that never moved. `MergeOutcome`
+      gained `NotPublished { integration, reason }`; `merge_back`'s error arm
+      sets it, `settle` matches it explicitly (not by wildcard, so a future
+      verb is a compile error rather than a silent note), the render prints
+      `NOT merged to main (the publish to the integration branch was refused: …)`,
+      and `apply_home` withholds the home apply with the same reasoning a
+      Conflict gets — nothing is walked home through a publish that did not
+      happen. `read_back_command` points at the child's branch, not `main`,
+      whenever the work did not land.
+
+      Pins: `subagents::tests::the_workspace_header_names_the_project_and_the_command_that_reads_it_back`
+      (merged → `main`, unmerged → the branch, empty project → no command at
+      all), `a_refused_publish_is_not_a_merge_to_main`,
+      `the_read_back_command_names_the_cli_this_machine_runs` (bare exe and
+      the space-bearing bundle path), and
+      `layerfs_tools::tests::a_refused_publish_is_carried_as_its_own_outcome_and_applies_nothing_home`
+      (a live settlement against a stub store that lands the merge and
+      refuses both publish attempts).
+
+      Red-proofs, each watched by name: `Merged(serde_json::Value::Null)`
+      restored in `merge_back`'s error arm →
+      `a refused publish is not a merge to main: Some(Merged(Null))`, and the
+      settlement pin fails the same way; `holds_the_work` hardcoded to `main`
+      → `the unmerged child is read from its branch: … read back: layerfs
+      --project shop fs read main /<path>`; the empty-project guard dropped →
+      the same pin fails on the fabricated address. Restored, and both pin
+      groups re-verified green (49 subagents, 1 settlement).
+- [x] C8 — a 400/404 whose body names account, subscription, or plan state is
       classified failover-eligible and the routing walk continues to the next
       candidate instead of ending at its first.
+
+      **What landed.** `src/route.rs`: `names_account_state` sits beside
+      `names_model_unavailable`, and the 400/404 arm of `failure_class` reads
+      it into a new `account-state` class. The predicate is two-sided on
+      purpose — a plan/subscription/account noun AND a state word
+      (`no active`, `inactive`, `expired`, `unpaid`, `out of credit`,
+      `insufficient`, `suspended`, `deactivated`, …) — so a request-validation
+      message that merely mentions a `plan` parameter stays a client error.
+      The model arm keeps precedence over the account arm when a body says
+      both, since which one is wrong is what the surface prints.
+
+      The change is not only the classifier. `judge.rs` had the coupling
+      problem: `AVAILABILITY_CLASSES` lists the classes that mean "the
+      provider could not serve", and a class the walk advances on but the
+      table omits grades a covered walk as a *wrong selection* — the exact
+      inverse of what happened. `account-state` joined the table (now 8), and
+      `judge::tests::intern_class` learned both `account-state` and the
+      pre-existing `model-availability`, which it had been reading as `None`
+      (a route row read back through it lost its class entirely).
+
+      Pins: `route::tests::an_account_state_400_fails_over_instead_of_ending_the_walk`
+      (the live instance, six account-state bodies across 400 and 404, and
+      five negatives including a `plan` *parameter* validation message),
+      `the_model_arm_wins_over_the_account_arm_and_names_its_own_fact`,
+      `an_account_state_failure_lets_the_walk_reach_the_next_candidate` (the
+      criterion's own sentence, driven through the real
+      `failover_eligible_class` decision), and
+      `judge::tests::every_class_the_walk_advances_on_grades_as_availability`
+      (the table, its two deliberate omissions, and a full `grade` on an
+      account-state-covered walk).
+
+      Red-proofs, each watched by name: the `names_account_state` arm removed
+      → `left: "client-error", right: "account-state"`; the two-sided gate
+      replaced with `true` → `invalid request: \`max_tokens\` must be positive`
+      graded `account-state`; `account-state` dropped from
+      `AVAILABILITY_CLASSES` → "`account-state` advances the walk, so a
+      covered failure on it is the provider's availability". Restored, and
+      the full lib suite re-verified: **1914 passed, 0 failed, 3 ignored**.
+
+      Corpus and docs corrected with the code: the memory fact
+      `fleet-vs-opencode-missing-session-header` argued the blanket
+      "400 is not failover-eligible" position and now names the two narrowed
+      exceptions, and `TECHNICAL-DOCUMENTATION.md`'s `route.rs` section
+      states the class table rather than leaving it to the code.
+
 ## Acceptance criteria (C9–C13)
 
-- [ ] C9 — `scripts/plan_check.py` runs as part of a named check the session
+- [x] C9 — `scripts/plan_check.py` runs as part of a named check the session
       actually executes before calling a plan complete, so a completed plan
       with an unticked criterion cannot be committed silently.
-- [ ] C10 — KI-403 and KI-252 are recorded as documented perpetuity in the
-      ledger with their re-check trigger named (a stable-toolchain update; a
-      corpus crossing 500 facts), so neither reads as work waiting to start.
-- [ ] C11 — KI-396 and KI-456 are filed against `~/Projects/dev-decisions`
+
+      **What landed.** Two enforcement points and the instruction that names
+      them. (1) `docs/plans/README.md` (the file that already owns the
+      `active → completed` rule) now carries the run-before-complete step and
+      the one-per-clone `git config core.hooksPath .githooks`. (2)
+      `.githooks/pre-commit` (new, executable) runs the checker only when a
+      `docs/plans/*.md` path is staged — a code commit pays nothing — and on a
+      non-zero exit prints the KI-398 message and returns 1. `CLAUDE.md`'s
+      session protocol names both one-line checks beside the ledger's.
+
+      **The checker itself was widened, because two holes made it a no-op in
+      the shapes that matter.** `open_criteria` read only `line.startswith(
+      "- [ ] ")`, so a nested `  - [ ]` criterion under an
+      `## Acceptance criteria` heading — a shape a plan uses for sub-criteria
+      — was invisible; it now matches column 0 through six spaces and the
+      three list markers, skipping fenced spans. And a plan with no `status:`
+      line was skipped outright, which is KI-398's defect with the cell empty
+      instead of wrong; it now reports a statusless plan that still carries
+      open criteria. Measured against the real corpus before and after: 0 live
+      offenders either way, so the widening changed no verdict on today's
+      plans — it closes shapes that were never exercised.
+
+      **Proofs, all watched.** Planted `- [ ]` under a completed plan's
+      criteria → `git commit` refused, exit 1, HEAD unchanged at `9b2d660`,
+      message naming the plan and the criterion. Same plant as an indented
+      box → refused. `sh -x` on a code-only staged tree → the checker never
+      invoked, exit 0. The real plan staged as-is → "every completed plan's
+      acceptance criteria are ticked", exit 0. Fixture set under
+      `/tmp/pchole{,2}`: a fenced `- [ ]` inside the section does not count; a
+      `## Use cases` box does not count; a nested box does; a statusless plan
+      with an open box is named.
+- [x] C10 — every row this plan calls perpetuity names its re-check trigger,
+      and the trigger was READ rather than assumed. KI-403 is recorded as
+      documented perpetuity with its trigger (any stable-toolchain update) and
+      was re-verified live on 2026-11-06 — `otool -L` shows `@rpath/libLLVM.dylib`,
+      `otool -l` the two-levels-deeper rpath, `readlink` the repair in place.
+      KI-252's trigger FIRED (the corpus crossed 500 facts), so its perpetuity
+      was falsified and re-measured instead of re-deferred: recall@10 agreement
+      is 1.000 at this size, the cost half is unreadable and filed as KI-459,
+      and the row was narrowed to the one piece genuinely unbuilt — semantic
+      clustering — with the setting left DEFAULT OFF. The criterion's original
+      wording ("so neither reads as work waiting to start") was false for
+      KI-252, which is why it is rewritten here rather than ticked as it stood.
+- [x] C11 — KI-396 and KI-456 are filed against `~/Projects/dev-decisions`
       (`scripts/devdec/gates.py:228,418` and `:256-266`) with fleet's ledger
-      pointing at them, since neither gate is fleet's code.
+      pointing at them, since neither gate is fleet's code. That repo had no
+      defect surface at all, so the filing opened one — `docs/known-issues.md`
+      there, in the same table shape, with D-001 (the silent section cap) and
+      D-002 (the criteria index). Both were MEASURED with that repo's own
+      parsers before being written down, not restated from fleet's rows:
+      D-001 by driving `_parse_plan_sections` and assembling the state the way
+      `:418` does (a 2098-char section carrying a sentinel at char 2048 produces
+      a state with no sentinel and no truncation note), D-002 by running
+      `_parse_plan_criteria` on this very plan (19 returned for 14 declared,
+      `C0..C4` being the use cases, `C13` being the author's C8). Committed
+      `fb6b456` on branch `fix/plan-gate-truncation-and-criteria-index`, pushed.
+      Fleet's KI-396/KI-455/KI-456 now name D-001/D-002 in their next-action.
 - [ ] C12 — the four decision rows (KI-406, KI-412, KI-404, KI-414) each carry
       a written recommendation with its default named, are presented to the
       owner as one block, and each is built or explicitly deferred on the
       answer.
-- [ ] C13 — every row that closes carries its evidence read out of the code or
+
+      **The block, with each recommendation's evidence read out of the code.**
+      Presented 2026-11-06 to the owner; the box ticks when the answers land.
+
+      **KI-412 — deliver the built binary, defaulting to reconcile on install.**
+      *Recommend:* `fleet install` (and `fleet reload`, which already exists)
+      copies `target/release/fleet` over `~/.fleet/bin/fleet` — `reload.rs`'s
+      `install_binary` already does the copy, the executable-bit check, and the
+      atomic staged rename, and `reload()` wires it. A correction read out of
+      the code before putting this to the owner: `grep -n "LaunchAgent\|plist\|
+      launchctl" src/install.rs` returns nothing — install owns layout, config,
+      lane wiring, venvs and layerfs, while `src/reload.rs` is the only module
+      that names a plist or calls launchctl. So the gap is not "install forgot a
+      line": install has no part in the service's lifecycle at all, and the
+      reconcile step is the first one. Two shapes fit — install ends by
+      calling `reload::install_binary` then `reload::reload()` (one command,
+      what the owner would expect from "install"), or install only reconciles
+      the binary and leaves the restart to the documented `fleet reload`. The
+      recommendation is the first, because a copied binary that the running
+      service has not re-executed is the KI-431 symptom one step earlier.
+      *Reject:* pointing the LaunchAgent at the worktree's
+      `target/release/fleet` — a `cargo clean`, a branch switch, or a second
+      worktree leaves the service pointing at a path that no longer exists, and
+      the symptom (the face is down) is the one KI-431 just fixed.
+      *Default if the owner says nothing:* reconcile. *Half done already:*
+      `fleet reload` is the manual seam, and `docs/features/install.md` now
+      names it. *Measured while putting this to the owner:* the gap is latent
+      today, not biting — `md5 -q ~/.fleet/bin/fleet target/release/fleet` is
+      `1e3fcebf9ef0a13cb3f087de59c7d391` for both, and
+      `launchctl print gui/$(id -u)/com.fleet.gui` reports
+      `program = /Users/alejandrodelvillar/.fleet/bin/fleet`, `pid = 94983`. The
+      two agree because the copy was made by hand on 2026-11-05; the next
+      `cargo build --release` breaks the agreement with no signal, which is the
+      KI-412 symptom exactly.
+
+      **KI-404 — bind a board to the project it was created in.** *Recommend:*
+      a board created from the face's canvas inherits the cwd's project key, so
+      `refresh_digest` (`src/canvas.rs:476-479`) stops returning early on the
+      `None` its own `create` writes at `:592`. The seam is one field: `create`
+      takes a `home` and a name and knows neither cwd nor request, so the
+      caller supplies the binding — the GUI's `"create"` op (`src/gui/bridge.rs:8812`)
+      and the CLI's board verb both know the folder. *Reject:* writing the
+      digest unkeyed and dropping the jobs' glob — that deletes K6's whole
+      read path (`design_context_section`, `src/canvas.rs:507`) rather than
+      feeding it. *Default:* bind. This is the only one of the four where the
+      row's own "until then" is a real daily cost: every board on this machine
+      is unbound, so K6 reads nothing at all.
+
+      **KI-406 — accept the HTTP API as the shell's test surface, and say so.**
+      *Recommend:* the honest option, because the alternative needs a private
+      API. Read out of the pinned crates rather than asserted: `wry 0.57.1`
+      sets `isInspectable` only under `#[cfg(any(debug_assertions, feature =
+      "devtools"))]` AND only after `attributes.devtools` is true
+      (`wry-0.57.1/src/wkwebview/mod.rs:579-589`), and its own comment says the
+      inspector route is Safari's Web Inspector, not an in-process handle a
+      harness can drive; tauri's `devtools()` (`tauri-2.12.5/src/webview/mod.rs:1192`)
+      documents that "macOS: This will call private functions". So a debugging
+      path exists, but it hands the owner a human inspector — not a driver the
+      face harness or Computer Use can script. *Default:* HTTP API as the
+      tested surface, with the window declared a thin view over it in
+      `FUNCTIONAL-SPECIFICATIONS.md`. What that costs: a regression in the
+      window's own rendering (a Tauri-only CSP, a webview quirk) has no
+      automated witness — and it is bounded, because the window loads the same
+      served origin the browser does.
+
+      **KI-414 — keep the `srcdoc` mount; already the built shape.**
+      *Recommend:* no work. The row is an environmental constraint recorded so
+      the next mount does not rediscover it, and the mount was built the right
+      way: `src/gui/assets/app.js:17108` sets `frame.srcdoc = html` on a frame
+      with `sandbox="allow-scripts"`, and the bundle route still sends
+      `frame-ancestors 'none'` (`src/gui/server.rs:1923`, the bundle route's own
+      head at `:1902-1927` — the same phrase at `:1775`/`:1846` belongs to the
+      design routes, a correction the first draft of this paragraph got wrong).
+      *Default:* keep as is; close it as recorded-below-the-line rather than
+      open work. **The default was taken (C13):** KI-414 is closed on that
+      record, with the measured line numbers in its status cell.
+- [x] C13 — every row that closes carries its evidence read out of the code or
       a live run in its status cell, and `python3 scripts/ki_ledger.py` exits 0
       with fewer open rows than the 25 originally open before this plan.
+
+      **Landed 2026-11-06.** The ledger reads `rows: 461   open: 8` and exits 0,
+      with `zero rows missing ID/severity/status/next-action; all cell counts
+      agree with the header` — 25 open before this plan, 8 now, and every closed
+      row's status cell names what was read to close it (a line range for a
+      code claim, a command and its output for a live one).
+
+      **The gate, on the tree being committed:** `cargo build --all-targets` exit
+      0 with zero warnings; `cargo test` exit 0, `1915 passed; 0 failed; 3
+      ignored` in the lib and `168 passed; 0 failed; 4 ignored` in the
+      integration binary; `node tests/face/harness.mjs` 945 checks across 105
+      cases; `python3 scripts/ki_ledger.py` exit 0; `python3
+      scripts/plan_check.py` exit 0.
+
+      **The gate earned its keep on this criterion.** The first full run reddened
+      one integration pin: `a_layerfs_child_walks_the_coherence_sequence`
+      asserted the pre-C7 header (`workspace: branch fleet-child-`) against a
+      render C7 had changed to carry the project, and C7 had been ticked on an
+      integration run recorded BEFORE that change reached `subagents.rs`. Filed
+      as KI-460, fixed, red-proofed by reverting the needle, and closed.
+
+      **A second defect came out of the same audit, and it is the more serious
+      one.** C5's YAML repair had silently collapsed the phrase list of
+      `memories/bsd-mktemp-suffix-trap.md` from five items to three — the file
+      parsed, carried the field, and had lost data, which is invisible to the
+      strict-parse check that repair was judged by. Root cause: `flow_scalar`
+      quoted a plain `literal X's`, and `split_flow` opened a quoted item at any
+      quote character, so the quote the writer added ate the rest of the line.
+      Measured against `yaml.safe_load` (an interior quote is plain data) and
+      swept across all 132 C5-touched facts for fields where the two readers
+      disagree — exactly one, the repaired one. Fixed on both sides, the fact
+      restored, the 23 over-quoted fields rewritten as the shipped writer now
+      writes them, pinned and red-proofed. Filed as KI-461 and closed.
+
+      **Two rows closed on the record rather than on a build,** each with its
+      own reason stated in the row: KI-323 (the plan-evidence convention now
+      written under Rules in `docs/plans/README.md`) and KI-414 (the `srcdoc`
+      mount is already the shape its constraint forces; the row is a recorded
+      constraint, not open work).
+
+      **What remains open is the owner's:** KI-412, KI-404, KI-406 carry
+      recommendations with named defaults in C12 and wait on the call. KI-252,
+      KI-396, KI-455, KI-456 and KI-459 are open on purpose — KI-252 is narrowed
+      to the one piece genuinely unbuilt, the gate rows are dev-decisions' to
+      fix (D-001/D-002), and KI-459 is the instrument that makes KI-252's next
+      measurement meaningful.
 
 ## Files to be touched
 

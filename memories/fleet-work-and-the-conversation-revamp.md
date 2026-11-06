@@ -1,6 +1,6 @@
 ---
 name: fleet-work-and-the-conversation-revamp
-description: "owner request 2026-10-23, SHIPPED the same day (b0d4530 … bb0cd25) — the sessions surface mixed owner and background work, opening a session was a coin toss, there was no exit/switcher/new, and replies were plain text; the archive is now a "work" list by attention with the app's own runs behind one hidden line, one open verb, a conversation head, a real POST /api/session/new, and anything asserted about the face now lives in a committed harness run by cargo test"
+description: "owner request 2026-10-23, SHIPPED the same day (b0d4530 … bb0cd25) — the sessions surface mixed owner and background work, opening a session was a coin toss, there was no exit/switcher/new, and replies were plain text; the archive is now a \"work\" list by attention with the app's own runs behind one hidden line, one open verb, a conversation head, a real POST /api/session/new, and anything asserted about the face now lives in a committed harness run by cargo test"
 type: project
 date: 2026-11-04
 basis: confirmed-by

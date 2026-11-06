@@ -1,6 +1,6 @@
 ---
 name: fleet-work-column-follows-the-rail
-description: "2026-10-23 (ae70ca5) — the work column was anchored to the expanded rail's width so folding the nav to icons left a 170px gutter, and it could not be folded at all; it now reads its left edge from the rail mode and folds to a 48px strip (way back + needs count), remembered in localStorage["fleet-work"]. Also records why no control fits the composer's 794px footer, where the size pair went instead, and the two gate failures this shift produced (KI-287's half-split flag, KI-308's literal `sk-` scan)"
+description: "2026-10-23 (ae70ca5) — the work column was anchored to the expanded rail's width so folding the nav to icons left a 170px gutter, and it could not be folded at all; it now reads its left edge from the rail mode and folds to a 48px strip (way back + needs count), remembered in localStorage[\"fleet-work\"]. Also records why no control fits the composer's 794px footer, where the size pair went instead, and the two gate failures this shift produced (KI-287's half-split flag, KI-308's literal `sk-` scan)"
 type: project
 date: 2026-11-04
 basis: inferred

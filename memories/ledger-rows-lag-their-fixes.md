@@ -1,6 +1,6 @@
 ---
 name: ledger-rows-lag-their-fixes
-description: "feedback 2026-10-24 — KI-190's designed fix landed 2026-10-15 (e1796da, 412 commits before its row closed) and the row never closed; my own audit note ("the blocker is lifted, the fix is ordinary work now") was itself stale — verify rows against commit history, including the audit's own conclusions"
+description: "feedback 2026-10-24 — KI-190's designed fix landed 2026-10-15 (e1796da, 412 commits before its row closed) and the row never closed; my own audit note (\"the blocker is lifted, the fix is ordinary work now\") was itself stale — verify rows against commit history, including the audit's own conclusions"
 type: feedback
 date: 2026-11-04
 basis: inferred

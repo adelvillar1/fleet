@@ -7365,7 +7365,9 @@ async function theSettingsRailCarriesOneSectionAtATime() {
       { workload: 'unjudged-shape', candidates: ['a/one'], resolved: 'a/one', reverts: false }],
       min_confidence: 0.5, default_workload: 'quick',
       allow_api_models: false,
-      roster: [{ id: 'alpha', base_url: 'http://127.0.0.1:9/v1', models: ['m-one', 'm-two'],
+      roster: [{ id: 'alpha', base_url: 'http://127.0.0.1:9/v1',
+        models_url: 'http://127.0.0.1:9/inference/v1/models',
+        models: ['m-one', 'm-two'],
         kind: 'http', billing: 'plan', enabled: true, key_present: true,
         key_required: true, key_env: 'ALPHA_API_KEY', disabled_reason: null,
         disabled_models: ['m-two'],
@@ -7375,6 +7377,7 @@ async function theSettingsRailCarriesOneSectionAtATime() {
         known: true, enabled: true, key_present: true, billing: 'plan', kind: 'http' }],
       providers: [{ id: 'alpha', kind: 'http', billing: 'plan', enabled: true,
       key_present: true, key_env: 'ALPHA_API_KEY', disabled_reason: null,
+      models_url: 'http://127.0.0.1:9/inference/v1/models',
       models: ['m-one', 'm-two'], disabled_models: ['m-two'],
       headers: { 'x-opencode-session': '{session}' },
       model_settings: { 'm-one': { context_window: 262144,
@@ -7498,6 +7501,16 @@ async function theSettingsRailCarriesOneSectionAtATime() {
   check('PM the key field is a write-only password input',
     !!keyField && keyField.placeholder.includes('never shown'),
     keyField ? keyField.placeholder : 'no field');
+  // KI-423: the listing URL is a field on the card, and it carries the
+  // value the read supplied. A card that cannot see the value cannot
+  // preserve it — the save that omitted it erased a custom listing.
+  const listingField = pane.find((one) => one.name === 'input' &&
+    one.getAttribute && one.getAttribute('aria-label') === 'the listing')[0] || null;
+  check('\u00a7KI-423 the card carries the listing field, filled from the read',
+    !!listingField && listingField.value === 'http://127.0.0.1:9/inference/v1/models',
+    listingField ? String(listingField.value) : 'no listing field',
+    JSON.stringify(pane.find((one) => one.name === 'input').map((one) =>
+      one.getAttribute ? one.getAttribute('aria-label') : '')));
   const catalogRows = pane.find((one) => one.className === 'cfg-fallback')
     .filter((one) => !(one.dataset && String(one.dataset.role || '').startsWith('walk')));
   check('PM the catalog lists the enabled model and the off one',
@@ -7626,6 +7639,31 @@ async function theSettingsRailCarriesOneSectionAtATime() {
     String(c.body).includes('{session}'));
   check('W4 the save writes the entry\u2019s headers object',
     headerWrites.length === 1, JSON.stringify(providers.calls.map((c) => c.body)));
+  // KI-423: the save that carries the card's fields must carry the
+  // listing URL too, or editing any other field erases it.
+  const listingCarried = providers.calls.filter((c) => c.method === 'POST' &&
+    c.url === '/api/settings' && String(c.body).includes('"op":"provider"') &&
+    String(c.body).includes('inference/v1/models'));
+  check('\u00a7KI-423 the save body carries the listing url the card showed',
+    listingCarried.length === 1,
+    JSON.stringify(providers.calls.map((c) => c.body).slice(-3)));
+  // The card's OTHER press writes the same entry: a toggle that built its
+  // own body from a variable only the save could see threw on the first
+  // press and wrote nothing at all.
+  const callsBeforeToggle = providers.calls.length;
+  const toggle = pane.find((one) => one.name === 'button' &&
+    String(one.textContent || '').trim() === 'disable it')[0];
+  check('\u00a7KI-423 the card carries its enable toggle', !!toggle, String(!!toggle));
+  if (toggle) toggle.click();
+  await flush(80);
+  const toggleWrites = providers.calls.slice(callsBeforeToggle).filter((c) => c.method === 'POST' &&
+    c.url === '/api/settings' && String(c.body).includes('"op":"provider"'));
+  check('\u00a7KI-423 the toggle press writes the card\u2019s whole entry',
+    toggleWrites.length === 1 &&
+      String(toggleWrites[0].body).includes('inference/v1/models') &&
+      String(toggleWrites[0].body).includes('x-opencode-session') &&
+      String(toggleWrites[0].body).includes('\\"enabled\\":false'),
+    JSON.stringify(toggleWrites.map((c) => c.body)));
   providers.fireOn('dock-object-close', 'click');
   await flush(40);
 

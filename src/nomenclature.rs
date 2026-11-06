@@ -80,6 +80,23 @@ pub const MAX_TERMS: usize = 20_000;
 /// the site list.
 pub const MAX_SITES_PER_TERM: usize = 12;
 
+/// How many as-written spellings one term's entry keeps — `usage` also
+/// keeping `Usage` and `USAGE`, `judge_route` keeping only itself.
+pub const MAX_SPELLINGS_PER_TERM: usize = 8;
+
+/// How many distinct files must write a spelling before the guard reads
+/// it as a form this project writes, rather than as a one-off.
+///
+/// The bar is a convention's bar, and it is measured rather than
+/// plucked: one file writing `judgeRoute` is a fixture demonstrating
+/// the drift the guard refuses — and `src/agent.rs`'s own test module
+/// writes exactly that, thirteen times, as its example of the refusal.
+/// An admission keyed on "the tree wrote it somewhere" would therefore
+/// disarm the guard inside its own module. Two files is the same
+/// spelling reached by independent authors, which is what a convention
+/// is.
+pub const SPELLING_CONVENTION_FILES: usize = 2;
+
 /// Wall-clock budget for one derivation. On exhaustion the walk stops
 /// where it is: the walk is sorted, so a truncated vocabulary is a
 /// deterministic prefix of the full one, and the caller can see it in
@@ -183,10 +200,32 @@ pub struct Entry {
     pub doc_files: usize,
     /// Its sites, bounded by [`MAX_SITES_PER_TERM`].
     pub sites: Vec<Site>,
+    /// The spellings the tree actually wrote for this term, as written,
+    /// each with how many distinct files carried it — `usage` keeping
+    /// `usage` and `Usage`, `judge_route` keeping only itself. Bounded by
+    /// [`MAX_SPELLINGS_PER_TERM`], best-attested first.
+    ///
+    /// This is what makes the guard's refusal honest: a spelling the
+    /// project writes is a canonical form of its own term and no variant
+    /// of anything (KI-395, KI-415, KI-428), while a spelling one file
+    /// wrote — `judgeRoute`, whose single author is the test module
+    /// demonstrating the refusal — is drift.
+    spellings: Vec<Spelling>,
     /// The term's newest carrying file's age, in days — the recency
     /// multiplier's input. `None` when no carrying file's stamp could
     /// be read, which takes the most conservative recency step.
     newest_days: Option<u64>,
+}
+
+/// One as-written spelling of a term, with the evidence for calling it
+/// this project's own form of the word.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Spelling {
+    /// The spelling exactly as the tree wrote it: `Usage`, `USAGE`,
+    /// `usage`, `judge_route`, `mcp_sem1`.
+    pub written: String,
+    /// How many distinct files wrote it, through either channel.
+    pub files: usize,
 }
 
 impl Entry {
@@ -207,6 +246,56 @@ impl Entry {
     /// carrying file's stamp could be read.
     pub fn newest_days(&self) -> Option<u64> {
         self.newest_days
+    }
+
+    /// Whether this project writes `candidate` as a form of its own term
+    /// — the admission that keeps the guard from refusing a canonical
+    /// spelling (KI-395, KI-415, KI-428).
+    ///
+    /// The term itself is never a variant of itself, however few files
+    /// carry it. Every other form has to earn the admission with
+    /// evidence, and the evidence is [`SPELLING_CONVENTION_FILES`]: the
+    /// number of distinct files that wrote it. Measured on this tree,
+    /// which is what fixes the bar at two —
+    ///
+    /// | spelling | files | verdict |
+    /// |---|---|---|
+    /// | `Usage` of `usage` | 22 | canonical (KI-395) |
+    /// | `One` of `one` | 33 | canonical (KI-415) |
+    /// | `Mono` of `mono` | 3 | canonical (KI-415) |
+    /// | `Deserialize` of `deserialize` | 30 | canonical (KI-415) |
+    /// | `RunOptions` of `Run_Options` | 3 | canonical |
+    /// | `judgeRoute` of `judge_Route` | 1 | **drift, refused** |
+    ///
+    /// `judgeRoute`'s one file is this crate's own guard tests, which
+    /// write the variant as the example of a refusal. A bar of one file
+    /// would therefore admit it — the guard would disarm itself inside
+    /// the module that pins it — so the count, not the mere presence of
+    /// a write, is the evidence. The residual this leaves is honest: a
+    /// canonical form exactly one file wrote is indistinguishable from
+    /// drift, and stays policed.
+    pub fn writes_spelling(&self, candidate: &str) -> bool {
+        if candidate == self.term {
+            return true;
+        }
+        // The count is the whole rule, for compounds and single words
+        // alike. Grammar was not a usable shortcut: excusing "a
+        // single-word term's capital" admitted `Projects` in a fixture
+        // where the tree had written that exact capital once, which is
+        // precisely the drift the guard exists to refuse — and the
+        // measured tree did not need the shortcut, because every KI-395
+        // and KI-415 spelling already clears the bar on its own evidence
+        // (`Usage` 22 files, `One` 34, `Mono` 4, `Deserialize` 31,
+        // `Projects` 40).
+        self.spellings.iter().any(|spelling| {
+            spelling.written == candidate && spelling.files >= SPELLING_CONVENTION_FILES
+        })
+    }
+
+    /// The spellings the tree wrote for this term, best-attested first,
+    /// bounded by [`MAX_SPELLINGS_PER_TERM`].
+    pub fn spellings(&self) -> &[Spelling] {
+        &self.spellings
     }
 
     /// The one-line form the surfaces render: `term (N files)`.
@@ -474,6 +563,10 @@ struct TermState {
     doc_files: Vec<String>,
     sites: Vec<Site>,
     newest: Option<u64>,
+    /// Each spelling the tree wrote for this term, in first-seen order,
+    /// with the distinct files that wrote it. The count is what the
+    /// admission rule reads ([`SPELLING_CONVENTION_FILES`]).
+    spellings: Vec<(String, Vec<String>)>,
 }
 
 impl Sink {
@@ -487,7 +580,13 @@ impl Sink {
     /// recorded only through the identifier channel: a doc span naming
     /// `the_redacted_row` must not establish a compound the code never
     /// wrote, and a compound is the project's own multi-token name.
-    fn push(&mut self, term: &str, site: Site, days: Option<u64>) {
+    ///
+    /// `written` is the spelling as the tree wrote it — the whole
+    /// identifier for a compound, the part for a single token — so the
+    /// entry can answer "is `Usage` a form of this project's `usage`?"
+    /// with the file count behind the answer, rather than refusing the
+    /// canonical case form it indexed (KI-395, KI-415, KI-428).
+    fn push(&mut self, term: &str, written: &str, site: Site, days: Option<u64>) {
         let state = self.per_term.entry(term.to_string()).or_default();
         let files = match site.kind {
             Kind::Identifier => &mut state.ident_files,
@@ -495,6 +594,20 @@ impl Sink {
         };
         if !files.iter().any(|seen| seen == &site.file) {
             files.push(site.file.clone());
+        }
+        match state
+            .spellings
+            .iter_mut()
+            .find(|(spelling, _)| spelling == written)
+        {
+            Some((_, carriers)) => {
+                if !carriers.iter().any(|seen| seen == &site.file) {
+                    carriers.push(site.file.clone());
+                }
+            }
+            None => state
+                .spellings
+                .push((written.to_string(), vec![site.file.clone()])),
         }
         // Every site is collected; the bound and the ordering are
         // applied at fold time, where the identifier channel's sites
@@ -518,10 +631,10 @@ impl Sink {
             .cloned()
             .collect();
         if site.kind == Kind::Identifier && (2..=3).contains(&kept.len()) {
-            self.push(&kept.join("_"), site.clone(), days);
+            self.push(&kept.join("_"), word, site.clone(), days);
         }
         for part in kept {
-            self.push(&part.to_lowercase(), site.clone(), days);
+            self.push(&part.to_lowercase(), &part, site.clone(), days);
         }
     }
 
@@ -548,11 +661,31 @@ impl Sink {
                     .sites
                     .dedup_by(|left, right| left.file == right.file && left.line == right.line);
                 state.sites.truncate(MAX_SITES_PER_TERM);
+                // The spellings, best-attested first and bounded: the
+                // admission reads the count, and a tie breaks on the
+                // spelling itself so the answer never depends on the
+                // walk.
+                let mut spellings: Vec<Spelling> = state
+                    .spellings
+                    .into_iter()
+                    .map(|(written, files)| Spelling {
+                        written,
+                        files: files.len(),
+                    })
+                    .collect();
+                spellings.sort_by(|left, right| {
+                    right
+                        .files
+                        .cmp(&left.files)
+                        .then_with(|| left.written.cmp(&right.written))
+                });
+                spellings.truncate(MAX_SPELLINGS_PER_TERM);
                 Entry {
                     term,
                     ident_files: state.ident_files.len(),
                     doc_files: state.doc_files.len(),
                     sites: state.sites,
+                    spellings,
                     newest_days: state.newest,
                 }
             })
@@ -1257,6 +1390,38 @@ pub fn near_exact_term<'a>(vocabulary: &'a Vocabulary, candidate: &str) -> Optio
             .then_with(|| left.term.cmp(&right.term))
     });
     found.into_iter().next()
+}
+
+/// Whether this project writes `candidate` as a spelling of an
+/// established term — the admission that keeps the guard from refusing
+/// a canonical form of itself (KI-395, KI-415, KI-428).
+///
+/// One implementation because two surfaces ask it: the write-time guard,
+/// which must not refuse a form the tree writes, and `convention`, which
+/// must not tell an author to rename one. They disagreed while each
+/// derived the question its own way — the guard found the camel-split
+/// entry that writes `JudgeRoute`, and the establishment-ordered scan
+/// found `judge_route`, which does not — so the answer is stated here
+/// once, over the same spelling pair the guard looks up.
+pub fn spelling_is_written(vocabulary: &Vocabulary, candidate: &str) -> bool {
+    let parts = split_identifier(candidate);
+    if parts.is_empty() {
+        return false;
+    }
+    let spellings = [
+        parts.join("_"),
+        parts
+            .iter()
+            .map(|part| part.to_lowercase())
+            .collect::<Vec<_>>()
+            .join("_"),
+    ];
+    spellings.iter().any(|spelling| {
+        vocabulary
+            .get(spelling)
+            .map(|entry| entry.writes_spelling(candidate))
+            .unwrap_or(false)
+    })
 }
 
 /// Whether an entry's claimed established form is actually written at

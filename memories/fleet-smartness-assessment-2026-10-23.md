@@ -1,6 +1,6 @@
 ---
 name: fleet-smartness-assessment-2026-10-23
-description: "2026-10-23 the owner asked "how smart is fleet?" — my assessment: a solidly current-gen agent loop inside an unusually smart institution (self-measurement); the harness buys ~15–25% effective capability; and the proposed A/B benchmark that would convert the essay into a number"
+description: "2026-10-23 the owner asked \"how smart is fleet?\" — my assessment: a solidly current-gen agent loop inside an unusually smart institution (self-measurement); the harness buys ~15–25% effective capability; and the proposed A/B benchmark that would convert the essay into a number"
 type: project
 date: 2026-11-04
 basis: confirmed-by

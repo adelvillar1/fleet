@@ -1,6 +1,6 @@
 ---
 name: a-correct-order-makes-difference-negative
-description: "feedback 2026-11-01 — a first fix on signed-difference code inverted the guard: days(earlier) − days(later) is NEGATIVE for a correct pair, so "non-negative means valid" returned None on every real call and reddened eight existing pins in one run; read the existing pins' direction before writing the sign check"
+description: "feedback 2026-11-01 — a first fix on signed-difference code inverted the guard: days(earlier) − days(later) is NEGATIVE for a correct pair, so \"non-negative means valid\" returned None on every real call and reddened eight existing pins in one run; read the existing pins' direction before writing the sign check"
 type: feedback
 date: 2026-11-04
 basis: inferred

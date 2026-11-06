@@ -1,6 +1,6 @@
 ---
 name: the-relay-session-is-durable-ki-370
-description: "project 2026-10-30 (KI-370, 48b3805) — the relay session/secret was minted per Listener::bind, so EVERY face restart stranded every paired phone (all /api/ 403 at the gate, cards render empty, which reads as "the option isn't there"); it now lives in <FLEET_HOME>/relay-sessions.json, one entry per face, 0600, atomic; phones paired before the fix need one re-pair"
+description: "project 2026-10-30 (KI-370, 48b3805) — the relay session/secret was minted per Listener::bind, so EVERY face restart stranded every paired phone (all /api/ 403 at the gate, cards render empty, which reads as \"the option isn't there\"); it now lives in <FLEET_HOME>/relay-sessions.json, one entry per face, 0600, atomic; phones paired before the fix need one re-pair"
 type: project
 date: 2026-11-04
 basis: inferred

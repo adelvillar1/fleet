@@ -1,6 +1,6 @@
 ---
 name: huddle-mockups-measured-not-read
-description: "project/feedback 2026-11-03 — the four huddle mockups were verified by in-page measurement (overflow, clipping, 44 px targets, mark contrast) rather than by reading the PNG, because the session's model cannot see images; the method caught three real defects, and the owner has since READ them — "not particularly blown away, but we will iterate later" (C1 ticked, iteration deferred to the owner)"
+description: "project/feedback 2026-11-03 — the four huddle mockups were verified by in-page measurement (overflow, clipping, 44 px targets, mark contrast) rather than by reading the PNG, because the session's model cannot see images; the method caught three real defects, and the owner has since READ them — \"not particularly blown away, but we will iterate later\" (C1 ticked, iteration deferred to the owner)"
 type: feedback
 date: 2026-11-04
 basis: confirmed-by

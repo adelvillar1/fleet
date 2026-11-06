@@ -6,7 +6,7 @@ date: 2026-10-28
 basis: inferred
 tier: durable
 shape: [state-sync]
-phrases: [action: no-source, missing_sources, sources derived from the store manifest keys, docs/**/*.md plus the three root contract docs, BLEND1_SEM1_PYTHONPATH, seed_task]
+phrases: ["action: no-source", missing_sources, sources derived from the store manifest keys, docs/**/*.md plus the three root contract docs, BLEND1_SEM1_PYTHONPATH, seed_task]
 missing: []
 recall-count: 11
 superseded-by:

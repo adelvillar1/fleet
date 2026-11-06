@@ -353,28 +353,58 @@ fn wait_for_port(port_path: &Path, child: &mut Child) -> Result<u16, String> {
 /// The mock-server binary beside the fleet executable. `None` when it
 /// cannot be resolved, which the caller names rather than guessing at.
 pub fn mock_server_binary() -> Option<PathBuf> {
-    sibling_binary("mock-server")
+    sibling_binary("mock-server", option_env!("CARGO_BIN_EXE_mock-server"))
 }
 
-/// A sibling cargo binary by name, resolved beside the current executable
-/// and then one directory up: cargo lays bin targets out at the profile
-/// root (`target/debug/mock-server`) and the test binaries that ask for
-/// them one directory down in `deps/`, so a corpus driven from a test
-/// binary finds the same child a `fleet eval` subprocess does. `None`
-/// when neither holds it, which the caller names rather than guessing at.
-fn sibling_binary(name: &str) -> Option<PathBuf> {
+/// A sibling cargo binary by name. Three steps, in this order, because
+/// each one answers a case the previous cannot:
+///
+/// 1. the compile-time `CARGO_BIN_EXE_<name>` cargo stamps into an
+///    integration-test crate — the exact path that run built;
+/// 2. the directory the current executable lives in, and its ancestors —
+///    cargo lays bin targets out at the profile root
+///    (`target/debug/mock-server`) and the binaries that ask for them one
+///    directory down in `deps/`, so a *unit* test binary resolves the same
+///    child an integration test and a `fleet eval` subprocess do. This
+///    step is the one that follows whatever `CARGO_TARGET_DIR` cargo was
+///    actually given; step 1 cannot, because cargo stamps no
+///    `CARGO_BIN_EXE` into a lib unit-test crate (measured: `None` at
+///    compile time and absent at run time, KI-446);
+/// 3. the manifest-relative `target/debug/<name>` last, for a binary
+///    launched from somewhere the walk above cannot reach.
+///
+/// `None` when no step holds it, which the caller names rather than
+/// guessing at.
+fn sibling_binary(name: &str, compile_time_exe: Option<&str>) -> Option<PathBuf> {
     let file = if cfg!(windows) {
         format!("{name}.exe")
     } else {
         name.to_string()
     };
+    if let Some(stamped) = compile_time_exe {
+        let path = PathBuf::from(stamped);
+        if path.exists() {
+            return Some(path);
+        }
+    }
     let exe = std::env::current_exe().ok()?;
-    let mut dir = exe.parent().map(Path::to_path_buf);
-    // Three ancestors covers `deps/` under either profile and a binary
-    // launched from a nested directory, without an unbounded walk.
+    if let Some(found) = walking_up(exe.parent(), &file) {
+        return Some(found);
+    }
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/debug").join(&file);
+    manifest.exists().then_some(manifest)
+}
+
+/// The nearest ancestor of `dir` holding `file`, climbing at most three
+/// levels — enough for `deps/` under either profile and for a binary
+/// launched from a nested directory, without an unbounded walk. Split out
+/// so a pin can drive the walk over a tree of its own rather than trusting
+/// the machine it runs on (KI-446).
+fn walking_up(dir: Option<&Path>, file: &str) -> Option<PathBuf> {
+    let mut dir = dir.map(Path::to_path_buf);
     for _ in 0..3 {
         let Some(candidate) = dir.clone() else { break };
-        let path = candidate.join(&file);
+        let path = candidate.join(file);
         if path.exists() {
             return Some(path);
         }
@@ -388,7 +418,7 @@ fn sibling_binary(name: &str) -> Option<PathBuf> {
 /// [`mock_server_binary`] is, and `None` when it cannot be, which the
 /// scenario grades as its own named failure rather than guessing at.
 pub fn mock_mcp_binary() -> Option<PathBuf> {
-    sibling_binary("mock-mcp")
+    sibling_binary("mock-mcp", option_env!("CARGO_BIN_EXE_mock-mcp"))
 }
 
 // --- the scripted lane child -----------------------------------------------
@@ -3099,6 +3129,7 @@ fn calibration_roster() -> Vec<route::Resolved> {
         candidate: route::Candidate {
             id: id.to_string(),
             base_url: base_url.to_string(),
+            models_url: None,
             key_env: key_env.to_string(),
             models: models.iter().map(|model| model.to_string()).collect(),
             billing: route::Billing::Plan,
@@ -5481,6 +5512,97 @@ async fn blend1_corpus_recall(mock_bin: PathBuf) -> ScenarioOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // --- KI-446: the mock child follows wherever cargo built ---------------
+
+    /// A scratch tree: `<root>/deps/` for a unit-test binary and
+    /// `<root>/mock-server` beside it, the layout cargo produces under
+    /// whatever `CARGO_TARGET_DIR` it was given.
+    fn a_target_dir_tree(tag: &str) -> PathBuf {
+        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let serial = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!(
+            "fleet-eval-{tag}-{}-{serial}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("deps")).unwrap();
+        root
+    }
+
+    #[test]
+    fn the_walk_finds_the_binary_at_the_profile_root_from_the_deps_directory() {
+        // The unit-test binary lives in `deps/`; the bin target lives one
+        // level up at the profile root. This is the whole of KI-446's fix:
+        // a run whose target dir is elsewhere still finds its child.
+        let root = a_target_dir_tree("walk-root");
+        let bin = root.join("mock-server");
+        std::fs::write(&bin, b"#!/bin/sh").unwrap();
+        let found = walking_up(Some(&root.join("deps")), "mock-server");
+        assert_eq!(found.as_deref(), Some(bin.as_path()), "{found:?}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_walk_prefers_the_nearer_directory_and_gives_up_after_three_levels() {
+        // Nearest wins, so a binary beside the test binary is never
+        // shadowed by one further up...
+        let root = a_target_dir_tree("walk-near");
+        let near = root.join("deps").join("mock-server");
+        std::fs::write(&near, b"#!/bin/sh").unwrap();
+        std::fs::write(root.join("mock-server"), b"#!/bin/sh").unwrap();
+        let found = walking_up(Some(&root.join("deps")), "mock-server");
+        assert_eq!(found.as_deref(), Some(near.as_path()), "{found:?}");
+        // ...and the climb is bounded: from four levels down a binary at
+        // the root is out of reach, so the walk returns None rather than
+        // walking an unbounded tree.
+        let deep = root.join("a").join("b").join("c").join("d");
+        std::fs::create_dir_all(&deep).unwrap();
+        assert_eq!(walking_up(Some(&deep), "mock-server"), None);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_compile_time_path_is_used_when_it_exists_and_ignored_when_it_does_not() {
+        // Step 1 is the exact path an integration-test crate's cargo
+        // stamped: used when it holds, skipped when it does not, so a
+        // stale stamp cannot wedge the walk.
+        let root = a_target_dir_tree("stamped");
+        let stamped = root.join("mock-server");
+        std::fs::write(&stamped, b"#!/bin/sh").unwrap();
+        assert_eq!(
+            sibling_binary("mock-server", Some(&stamped.display().to_string())),
+            Some(stamped.clone())
+        );
+        // A stamp that no longer holds is skipped, and skipping it leaves
+        // exactly the answer the walk alone gives — so a stale stamp can
+        // never wedge the resolver onto a path that is not there.
+        let missing = root.join("never-built");
+        let from_stale = sibling_binary("mock-server", Some(&missing.display().to_string()));
+        assert_ne!(from_stale.as_deref(), Some(missing.as_path()), "{from_stale:?}");
+        assert_eq!(from_stale, sibling_binary("mock-server", None), "{from_stale:?}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_mock_binaries_resolve_from_a_unit_test_binary_under_a_foreign_target_dir() {
+        // The live half, and the one that would have caught KI-446: this
+        // runs from the lib unit-test binary, where cargo stamps no
+        // `CARGO_BIN_EXE` (measured: `option_env!` is None here), so the
+        // only way this can resolve is the walk from `current_exe()`. It
+        // passes under any `CARGO_TARGET_DIR`, which is the criterion's
+        // sentence; the CI-shaped proof is the detached-worktree run.
+        for named in [mock_server_binary(), mock_mcp_binary()] {
+            let found = named.expect("the mock child resolves from a unit-test binary");
+            assert!(found.exists(), "{found:?} does not exist");
+            // Beside the test binary's own profile root, never the
+            // manifest's — the resolver must not fall back to
+            // `CARGO_MANIFEST_DIR/target/debug` when a sibling exists.
+            let exe = std::env::current_exe().expect("the test binary's path");
+            let profile = exe.parent().and_then(Path::parent).expect("deps/ parent");
+            assert_eq!(found.parent(), Some(profile), "{found:?}");
+        }
+    }
 
     fn outcome(name: &str, passed: bool) -> ScenarioOutcome {
         ScenarioOutcome {

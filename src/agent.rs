@@ -6878,9 +6878,17 @@ fn land_supersede(
             ),
             false,
         ),
+        // KI-402(b): the forget's own sentence, in the forget's own
+        // terms. The old text ("expired with its retirement noted")
+        // read as a modify and named no state, so the model that called
+        // it had no signal that the name was now dead — and its next
+        // `remember` on that name was refused with "already exists"
+        // while the route it was pointed at was the one that had just
+        // broken. A forget says what a caller needs: the name is dead,
+        // nothing is deleted, and the file is archived by the cycle.
         Ok(memory::Superseded::Forgotten { fact }) => (
             format!(
-                "forgot `{fact}` \u{2014} expired with its retirement noted; the cycle archives the file"
+                "forgot `{fact}` \u{2014} the name `{fact}` is DEAD: its validity ended and the file was retired from recall, with the reason noted in its body. Nothing was deleted; the consolidation cycle archives the file, and until it does, `remember` on `{fact}` is refused because the name is still taken. To correct a fact rather than retire it, call `supersede` with `replacement` naming the new fact."
             ),
             false,
         ),
@@ -8257,6 +8265,16 @@ fn guard_content(root: &std::path::Path, path: &str, content: &str) -> WriteGuar
                 .collect::<Vec<_>>()
                 .join("_"),
         ];
+        // A spelling this project already writes is a canonical form of
+        // its own term, never a variant of anything: the guard indexed
+        // `Usage` and then refused the word it had just counted, which is
+        // the guard policing its own vocabulary rather than drift
+        // (KI-395, KI-415, KI-428). Asked of the shared rule rather than
+        // re-derived here, because `convention` asks the same question
+        // and the two must not answer it differently.
+        if crate::nomenclature::spelling_is_written(&vocabulary, &token) {
+            continue;
+        }
         let mut established = false;
         let mut unwritten_claim = false;
         for spelling in spellings {
@@ -9328,23 +9346,23 @@ mod tests {
         .to_string();
         std::fs::write(scratch.join("script.jsonl"), format!("{frame}\n")).unwrap();
         let stderr_file = std::fs::File::create(scratch.join("mock-stderr.log")).unwrap();
-        let mut child = std::process::Command::new(
-            std::env::var("CARGO_BIN_EXE_mock-server").unwrap_or_else(|_| {
-                format!(
-                    "{}",
-                    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                        .join("target/debug/mock-server")
-                        .display()
-                )
-            }),
-        )
-        .arg(scratch.join("script.jsonl"))
-        .arg(scratch.join("requests.jsonl"))
-        .arg(scratch.join("port"))
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::from(stderr_file))
-        .spawn()
-        .expect("spawn the mock-server child");
+        // KI-446: one resolver for every mock child, so a test run whose
+        // `CARGO_TARGET_DIR` lives outside the manifest finds the binary
+        // cargo actually built. This site used to hardcode
+        // `CARGO_MANIFEST_DIR/target/debug/mock-server`.
+        let mock_bin = crate::eval::mock_server_binary().unwrap_or_else(|| {
+            panic!(
+                "the mock-server binary was not found beside the test binary or under the manifest"
+            )
+        });
+        let mut child = std::process::Command::new(mock_bin)
+            .arg(scratch.join("script.jsonl"))
+            .arg(scratch.join("requests.jsonl"))
+            .arg(scratch.join("port"))
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::from(stderr_file))
+            .spawn()
+            .expect("spawn the mock-server child");
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         let port = loop {
             if let Ok(text) = std::fs::read_to_string(scratch.join("port")) {
@@ -12857,6 +12875,78 @@ You are auditing a change. Read the diff before you judge it.
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// KI-402(b): the forget's result sentence is the only signal the
+    /// model that called it ever sees. "Expired with its retirement
+    /// noted" reads as a modify and names no state, so the caller went
+    /// on to `remember` the same name and was refused — while the route
+    /// it was pointed at was the one that had just broken it. A forget
+    /// says the name is dead.
+    #[tokio::test]
+    async fn a_forget_s_result_says_the_name_is_dead_and_that_a_modify_wants_a_replacement() {
+        let home = scratch("forget-sentence");
+        let root = corpus(
+            "forget-sentence-corpus",
+            &[(
+                "a-guess",
+                &inferred("a-guess", "an inferred guess about the deploy"),
+            )],
+        );
+        let mut agent = agent_over(&home, &root, Box::new(ApproveAll));
+        agent
+            .execute_call(&call(
+                "c1",
+                "supersede",
+                r#"{"name":"a-guess","justification":"the guess was wrong"}"#,
+            ))
+            .await
+            .unwrap();
+        let records = crate::session::replay(&session_path_of(&home)).unwrap();
+        let output = records
+            .iter()
+            .find_map(|record| match record {
+                Record::ToolResult { name, output, .. } if name == "supersede" => {
+                    Some(output.clone())
+                }
+                _ => None,
+            })
+            .expect("the supersede tool_result");
+        // The name's death is the sentence's subject, and the forgotten
+        // name is on the record.
+        assert!(output.contains("`a-guess` is DEAD"), "{output}");
+        assert!(output.contains("remember"), "{output}");
+        // A call that meant a modify is refused by name, and the
+        // refusal is model-visible: the tool_result carries it, and
+        // nothing was retired. A second home, because each agent writes
+        // its own session log and `session_path_of` reads the directory's
+        // first entry.
+        let home2 = scratch("forget-sentence-refusal");
+        let mut agent = agent_over(&home2, &root, Box::new(ApproveAll));
+        agent
+            .execute_call(&call(
+                "c2",
+                "supersede",
+                r#"{"name":"a-guess","justification":"the sentence was wrong","description":"the guess, restated"}"#,
+            ))
+            .await
+            .unwrap();
+        let records = crate::session::replay(&session_path_of(&home2)).unwrap();
+        let refusal = records
+            .iter()
+            .filter_map(|record| match record {
+                Record::ToolResult { name, output, .. } if name == "supersede" => {
+                    Some(output.clone())
+                }
+                _ => None,
+            })
+            .next_back()
+            .expect("the second supersede tool_result");
+        assert!(refusal.starts_with("error:"), "{refusal}");
+        assert!(refusal.contains("`replacement`"), "{refusal}");
+        let _ = std::fs::remove_dir_all(&home);
+        let _ = std::fs::remove_dir_all(&home2);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[tokio::test]
     async fn a_remember_call_writes_the_fact_the_loader_reads_back() {
         let home = scratch("remember-tool");
@@ -14498,6 +14588,192 @@ You are auditing a change. Read the diff before you judge it.
             }
             other => panic!("expected a refusal, got {other:?}"),
         }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A project root that writes each canonical spelling KI-395/415 was
+    /// refused for, in TWO independent files each — the lowercase
+    /// identifier establishes the term and the capitalized form is the
+    /// spelling the guard used to refuse. The bar is
+    /// [`crate::nomenclature::SPELLING_CONVENTION_FILES`], and the test
+    /// reads it back, so a fixture that stopped clearing it cannot pass
+    /// silently.
+    ///
+    /// Each carrier is a real one for its channel: a struct name, a
+    /// derive name, and a string literal. A `///` comment would NOT work —
+    /// the guard strips Rust comments before tokenizing (KI-219's rule),
+    /// so a doc-comment carrier is a fixture that exercises nothing.
+    fn vocabulary_root_with_canonical_spellings(tag: &str) -> std::path::PathBuf {
+        let root = vocabulary_root(tag);
+        for (file, text) in [
+            (
+                "src/usage.rs",
+                "pub struct Usage {\n    pub tokens: u64,\n}\npub fn usage() -> Usage {\n    Usage { tokens: 1 }\n}\n",
+            ),
+            (
+                "src/accounting.rs",
+                "pub fn tally() -> usize {\n    let Usage { tokens } = crate::usage();\n    tokens as usize\n}\n",
+            ),
+            (
+                "src/prose.rs",
+                "pub static LABEL: &str = \"One pane per face\";\n",
+            ),
+            (
+                "src/panes.rs",
+                "pub static NOTE: &str = \"One face per pane, and the reverse\";\n",
+            ),
+            (
+                "src/wire.rs",
+                "#[derive(Deserialize)]\npub struct Face {\n    pub name: String,\n}\n",
+            ),
+            (
+                "src/serde_face.rs",
+                "#[derive(Deserialize)]\npub struct Pane {\n    pub width: u8,\n}\n",
+            ),
+            (
+                "src/fonts.rs",
+                "pub static FACE: &str = \"SF Mono\";\n",
+            ),
+            (
+                "src/mono_font.rs",
+                "pub static CODE: &str = \"SF Mono\";\n",
+            ),
+        ] {
+            std::fs::write(root.join(file), text).unwrap();
+        }
+        root
+    }
+
+    #[test]
+    fn a_canonical_spelling_the_tree_writes_is_never_a_variant_of_itself() {
+        // KI-395 and KI-415, all four instances, through the real guard:
+        // `Usage` (a struct whose name is the established term's canonical
+        // form), `SF Mono`'s `Mono` (a font family), `One` at a sentence
+        // start, and a serde derive's `Deserialize`. Each is a spelling
+        // this project writes in independent files, so each is a form of
+        // its term rather than drift — and each was refused, which sent
+        // content-constrained writes around the guard through bash.
+        let root = vocabulary_root_with_canonical_spellings("guard-canonical");
+        // The premise, pinned: each term is established AND each refused
+        // spelling is recorded at or above the admission's bar. Without
+        // this the test would pass on a tree where the tokens are merely
+        // novel, which is not the case it claims to cover.
+        let vocabulary = crate::nomenclature::vocabulary(&root);
+        for (token, term) in [
+            ("Usage", "usage"),
+            ("One", "one"),
+            ("Mono", "mono"),
+            ("Deserialize", "deserialize"),
+        ] {
+            let entry = vocabulary
+                .get(term)
+                .unwrap_or_else(|| panic!("the fixture establishes `{term}`"));
+            let spelled = entry
+                .spellings()
+                .iter()
+                .find(|spelling| spelling.written == token)
+                .unwrap_or_else(|| panic!("the fixture writes `{token}`"));
+            assert!(
+                spelled.files >= crate::nomenclature::SPELLING_CONVENTION_FILES,
+                "`{token}` is carried by {} files, at or above the bar",
+                spelled.files
+            );
+            assert!(entry.writes_spelling(token), "`{token}` is admitted");
+        }
+        for (path, content) in [
+            // The `Usage` struct: the term's own identifier.
+            ("src/api.rs", "pub struct Usage {\n    pub tokens: u64,\n}\n"),
+            // A font family in a plugin's markup.
+            (
+                "plugins/telemetry/index.html",
+                "<p>body { font-family: \"SF Mono\", monospace; }</p>\n",
+            ),
+            // A capitalised word at a sentence start, in a string the
+            // code carries (a `///` comment would be stripped, so it
+            // would prove nothing).
+            (
+                "src/plugins/face.rs",
+                "pub static NOTE: &str = \"One plugin per pane\";\n",
+            ),
+            // A derive name: the language's own, spelled as it spells it.
+            // The struct is deliberately a name this tree never wrote
+            // (`Widget`), so the case isolates the derive and does not
+            // smuggle in a genuine one-file variant of its own.
+            (
+                "src/plugins/face.rs",
+                "#[derive(Deserialize)]\npub struct Widget {\n    pub label: String,\n}\n",
+            ),
+        ] {
+            let guard = write_guard(&root, &serde_json::json!({"path": path, "content": content}));
+            assert_eq!(guard, WriteGuard::Clean, "{path}: {guard:?}");
+        }
+        // KI-428's surface: a patch carries the same names, and the guard
+        // over a patch is the guard over a single write.
+        let patch = "*** Begin Patch\n*** Add File: src/api.rs\n+pub struct Usage {\n+    pub tokens: u64,\n+}\n*** End Patch\n";
+        let guard = patch_guard(&root, &serde_json::json!({ "patch": patch }));
+        assert_eq!(
+            guard,
+            WriteGuard::Clean,
+            "the patch writes a canonical form: {guard:?}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_guard_still_refuses_a_variant_no_second_file_wrote() {
+        // The admission's boundary at the guard, on KI-415's own shape: a
+        // single word whose capitalized form a font family spells. With
+        // ONE file writing it, the guard refuses — the form is
+        // indistinguishable from drift — and a second independent file is
+        // what admits it. Lowering `SPELLING_CONVENTION_FILES` to one
+        // makes the refusal here disappear, which is the red-proof.
+        let root = vocabulary_root("guard-variant-one-file");
+        std::fs::write(
+            root.join("src/font.rs"),
+            "pub fn mono() -> u8 { 1 }\npub static FACE: &str = \"SF Mono\";\n",
+        )
+        .unwrap();
+        let vocabulary = crate::nomenclature::vocabulary(&root);
+        let entry = vocabulary
+            .get("mono")
+            .expect("the fixture establishes mono");
+        let spelled = entry
+            .spellings()
+            .iter()
+            .find(|spelling| spelling.written == "Mono")
+            .expect("the fixture writes the capitalized form");
+        assert_eq!(spelled.files, 1, "exactly one file wrote it");
+        assert!(
+            !entry.writes_spelling("Mono"),
+            "one file is below the bar of {}",
+            crate::nomenclature::SPELLING_CONVENTION_FILES
+        );
+        let content = "pub static CODE: &str = \"SF Mono\";\n";
+        let guard = write_guard(&root, &serde_json::json!({"path":"src/x.rs","content":content}));
+        assert!(
+            matches!(guard, WriteGuard::Refused { .. }),
+            "a spelling one file wrote is still policed: {guard:?}"
+        );
+
+        // A second independent file, and the same content is admitted:
+        // the project writes this spelling, so it is not drift.
+        std::fs::write(
+            root.join("src/telemetry.rs"),
+            "pub static BODY: &str = \"font-family: SF Mono\";\n",
+        )
+        .unwrap();
+        crate::nomenclature::invalidate(&root);
+        let vocabulary = crate::nomenclature::vocabulary(&root);
+        let entry = vocabulary
+            .get("mono")
+            .expect("the fixture establishes mono");
+        assert!(
+            entry.writes_spelling("Mono"),
+            "two files is the bar: {}",
+            crate::nomenclature::SPELLING_CONVENTION_FILES
+        );
+        let guard = write_guard(&root, &serde_json::json!({"path":"src/x.rs","content":content}));
+        assert_eq!(guard, WriteGuard::Clean, "{guard:?}");
         let _ = std::fs::remove_dir_all(&root);
     }
 

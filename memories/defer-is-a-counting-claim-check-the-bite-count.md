@@ -1,6 +1,6 @@
 ---
 name: defer-is-a-counting-claim-check-the-bite-count
-description: "feedback 2026-11-01 — I recommended deferring KI-369's spawn route on "it bites twice first" while the ledger rows I had already read listed three bites (KI-221/224) plus that morning's KI-387; the owner's "why defer?" exposed it — a defer recommendation is a factual claim that the evidence accumulated so far does not yet pay for the work, so count the ledger, don't count recent-green days"
+description: "feedback 2026-11-01 — I recommended deferring KI-369's spawn route on \"it bites twice first\" while the ledger rows I had already read listed three bites (KI-221/224) plus that morning's KI-387; the owner's \"why defer?\" exposed it — a defer recommendation is a factual claim that the evidence accumulated so far does not yet pay for the work, so count the ledger, don't count recent-green days"
 type: feedback
 date: 2026-11-04
 basis: confirmed-by

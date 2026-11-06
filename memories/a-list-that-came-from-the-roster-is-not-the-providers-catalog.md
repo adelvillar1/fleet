@@ -1,6 +1,6 @@
 ---
 name: a-list-that-came-from-the-roster-is-not-the-providers-catalog
-description: "feedback 2026-11-01 — I shipped "all the models" as the roster's compiled copy (1 for zai where the provider lists 11) and never asked whether the list had ever been DISCOVERED; the reload that would have discovered it refused every compiled provider, so seven of eight catalogs could never be the provider's own"
+description: "feedback 2026-11-01 — I shipped \"all the models\" as the roster's compiled copy (1 for zai where the provider lists 11) and never asked whether the list had ever been DISCOVERED; the reload that would have discovered it refused every compiled provider, so seven of eight catalogs could never be the provider's own"
 type: —
 date: 2026-11-05
 basis: inferred

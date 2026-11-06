@@ -1,6 +1,6 @@
 ---
 name: a-relocated-child-loses-the-ancestor-that-styled-it
-description: "feedback 2026-10-30 (KI-373) — moving the dock's cards into the pane dropped the `class="dock rail"` ancestor, so `.rail .card`'s padding stopped applying and the text rendered flush against the frame and under the resize grip; when dissolving a container, inventory every style rule that keyed off it, and measure the moved element's box"
+description: "feedback 2026-10-30 (KI-373) — moving the dock's cards into the pane dropped the `class=\"dock rail\"` ancestor, so `.rail .card`'s padding stopped applying and the text rendered flush against the frame and under the resize grip; when dissolving a container, inventory every style rule that keyed off it, and measure the moved element's box"
 type: feedback
 date: 2026-11-04
 basis: inferred

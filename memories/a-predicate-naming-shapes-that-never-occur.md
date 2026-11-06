@@ -1,6 +1,6 @@
 ---
 name: a-predicate-naming-shapes-that-never-occur
-description: "feedback 2026-10-22 — the sessions "open" fix (d4199f3) hid every resumed history behind the empty state because a predicate named event types that never occur; a check written against an imagined vocabulary hides everything silently, and a feature that works live but not on replay means the two paths' vocabularies have diverged"
+description: "feedback 2026-10-22 — the sessions \"open\" fix (d4199f3) hid every resumed history behind the empty state because a predicate named event types that never occur; a check written against an imagined vocabulary hides everything silently, and a feature that works live but not on replay means the two paths' vocabularies have diverged"
 type: feedback
 date: 2026-11-04
 basis: inferred

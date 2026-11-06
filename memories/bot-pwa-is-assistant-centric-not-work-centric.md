@@ -1,6 +1,6 @@
 ---
 name: bot-pwa-is-assistant-centric-not-work-centric
-description: "owner ruling 2026-10-28 — the bot-PWA surface must be ASSISTANT-centric (personas are the axis), not a condensed work-centric console; the inbox now groups by persona, the workspace left the list, dispatch asks "who takes it"; and the blocking dependency it exposes — a session records no persona, only roles.rs exists and only inside a delegation"
+description: "owner ruling 2026-10-28 — the bot-PWA surface must be ASSISTANT-centric (personas are the axis), not a condensed work-centric console; the inbox now groups by persona, the workspace left the list, dispatch asks \"who takes it\"; and the blocking dependency it exposes — a session records no persona, only roles.rs exists and only inside a delegation"
 type: feedback
 date: 2026-11-04
 basis: confirmed-by

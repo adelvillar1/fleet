@@ -8730,14 +8730,19 @@ fn remember_board_at(
             .map_err(|error| format!("the board fact could not be written: {error}"));
     };
     if event == "delete" {
+        // A forget, and a forget carries no replacement's arguments:
+        // the description here is the LIVE fact's own, not a
+        // replacement's, and `Supersede::parse` now refuses a
+        // replacement-only argument with no `replacement` (KI-402).
         let request = crate::memory::Supersede {
             name: fact.name.clone(),
             justification: format!("the board `{slug}` was deleted"),
             replacement: None,
-            description: fact.description.clone(),
+            description: String::new(),
             body: String::new(),
             fact_type: None,
             shape: None,
+            phrases: None,
             missing: None,
             valid_until: None,
         };
@@ -8771,6 +8776,7 @@ fn remember_board_at(
         body,
         fact_type: None,
         shape: None,
+        phrases: None,
         missing: None,
         valid_until: None,
     };
@@ -9351,6 +9357,7 @@ fn router_document(config: &crate::settings::RouterConfig) -> Value {
         "roster": config.roster.iter().map(|entry| json!({
             "id": entry.id,
             "base_url": entry.base_url,
+            "models_url": entry.models_url,
             "models": entry.models,
             "kind": entry.kind,
             "billing": entry.billing,
@@ -9387,6 +9394,7 @@ fn catalog_document(catalog: &crate::settings::Catalog) -> Value {
             "key_present": entry.key_present,
             "key_env": entry.key_env,
             "disabled_reason": entry.disabled_reason,
+            "models_url": entry.models_url,
             "models": entry.models,
             "disabled_models": entry.disabled_models,
             "model_settings": entry.model_settings,

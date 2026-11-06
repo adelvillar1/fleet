@@ -1,6 +1,6 @@
 ---
 name: fleet-unlock-signal-is-arithmetic-not-a-judgment
-description: "2026-10-19 — the owner asked how the "unlocked" signal is generated and whether sys1 could produce it; it is not generated at all today (nothing calls the scheduling API), and when wired it is a function return rather than an event, because the score is derived on every read. sys1 would be the wrong tool — it is a classifier, the unlock signal is three booleans, and using a reporter to generate a fact inverts the repo's own "facts gate, reports corroborate" law. sys1's legitimate role is the functional half…"
+description: "2026-10-19 — the owner asked how the \"unlocked\" signal is generated and whether sys1 could produce it; it is not generated at all today (nothing calls the scheduling API), and when wired it is a function return rather than an event, because the score is derived on every read. sys1 would be the wrong tool — it is a classifier, the unlock signal is three booleans, and using a reporter to generate a fact inverts the repo's own \"facts gate, reports corroborate\" law. sys1's legitimate role is the functional half…"
 type: project
 date: 2026-11-04
 basis: confirmed-by

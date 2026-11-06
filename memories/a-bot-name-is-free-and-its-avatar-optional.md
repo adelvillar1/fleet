@@ -1,6 +1,6 @@
 ---
 name: a-bot-name-is-free-and-its-avatar-optional
-description: "owner ruling 2026-11-03 — a bot's NAME is free (rename the designer bot to "bob") and its AVATAR is optional and owner-supplied; the owner's own framing is "that doesn't change what fleet is", reopening the 2026-10-20 "no portraits" ruling"
+description: "owner ruling 2026-11-03 — a bot's NAME is free (rename the designer bot to \"bob\") and its AVATAR is optional and owner-supplied; the owner's own framing is \"that doesn't change what fleet is\", reopening the 2026-10-20 \"no portraits\" ruling"
 type: feedback
 date: 2026-11-04
 basis: confirmed-by

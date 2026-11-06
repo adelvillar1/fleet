@@ -253,21 +253,37 @@ dead lanes rather than a failed boot.
 **The serving binary has one home.** The LaunchAgent that keeps the face
 up (`com.fleet.gui`) runs `~/.fleet/bin/fleet` — never a worktree's own
 `target/`, which goes stale the moment a session works elsewhere and the
-served face lags the pushed one (KI-408). The reload is two commands and
-a restart of the agent:
+served face lags the pushed one (KI-408). The reload is one command:
 
 ```sh
 cargo build --release
-cp target/release/fleet ~/.fleet/bin/fleet.new && mv -f ~/.fleet/bin/fleet.new ~/.fleet/bin/fleet
-launchctl bootout gui/$(id -u)/com.fleet.gui
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.fleet.gui.plist
+fleet reload --from target/release/fleet
 ```
 
-The `mv` is not cosmetic: the running daemon has the installed file mapped,
-and an in-place `cp` over it leaves a binary whose every later exec is
-killed with SIGKILL (exit 137) while the running process keeps serving —
-the installed copy is replaced through a new inode, never rewritten in
-place (KI-418).
+`fleet reload` is the delivery, not a sequence of shell lines that a
+reader is trusted to complete. It installs the binary through a new
+inode, restarts the agent, and then **proves the post-state** before it
+says the face is up: a pid from `launchctl print` and the port
+answering. When the domain does not hold the service it is bootstrapped
+by name from its plist, and when a first repair does not take, the
+bootout/bootstrap pair runs together. The exit code follows that proof
+rather than the commands — a run whose `launchctl` verbs all succeeded
+but whose port never answered exits 1 and prints `the face is DOWN`,
+because "the commands ran" is the assumption that took the face down in
+the first place (KI-431).
+
+The bare `fleet reload` is the restart and the proof with nothing to
+install, which is the right call when the installed binary is already
+the build you want; `--host`/`--port` point the proof at another
+address.
+
+The inode swap is not cosmetic: the running daemon has the installed
+file mapped, and an in-place `cp` over it leaves a binary whose every
+later exec is killed with SIGKILL (exit 137) while the running process
+keeps serving — the installed copy is replaced through a new inode,
+never rewritten in place (KI-418). `fleet reload` does the staged
+`copy` + `rename` itself, and refuses a source that is not executable
+rather than installing a binary launchd cannot exec.
 
 Killing the agent's PID works too — `KeepAlive` re-execs the installed
 binary. Verify by diffing the served `/app.js` against

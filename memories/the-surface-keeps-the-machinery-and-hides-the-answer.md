@@ -1,6 +1,6 @@
 ---
 name: the-surface-keeps-the-machinery-and-hides-the-answer
-description: "feedback 2026-11-01 — the settings review's whole point was to REMOVE complexity; I shipped ten interaction-gap fixes plus a models mockup that still opened on workload tiers, candidate chains, budget dashboards and billing classes; the owner named the bar ("more like zcode, deepseek harness, less like hermes") and cut the money section outright — then closed the relocation too ("they can fork the harness and add it")"
+description: "feedback 2026-11-01 — the settings review's whole point was to REMOVE complexity; I shipped ten interaction-gap fixes plus a models mockup that still opened on workload tiers, candidate chains, budget dashboards and billing classes; the owner named the bar (\"more like zcode, deepseek harness, less like hermes\") and cut the money section outright — then closed the relocation too (\"they can fork the harness and add it\")"
 type: —
 date: 2026-11-04
 basis: confirmed-by

@@ -1,6 +1,6 @@
 ---
 name: fleet-repo-garbage-taxonomy-2026-10-26
-description: "2026-10-26 the owner asked "why do we have so much garbage in the repo?" — the measured taxonomy (target/ 35 GB, tmp/ 20 MB with no retirement rule, memory churn that is bookkeeping) and the for-good fix landed the same day (4612e8d): daily-maintenance.sh on a LaunchAgent, generated/ corrected to the refresh driver and committed, 21 GiB freed"
+description: "2026-10-26 the owner asked \"why do we have so much garbage in the repo?\" — the measured taxonomy (target/ 35 GB, tmp/ 20 MB with no retirement rule, memory churn that is bookkeeping) and the for-good fix landed the same day (4612e8d): daily-maintenance.sh on a LaunchAgent, generated/ corrected to the refresh driver and committed, 21 GiB freed"
 type: project
 date: 2026-11-04
 basis: confirmed-by

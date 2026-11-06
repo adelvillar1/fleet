@@ -1,6 +1,6 @@
 ---
 name: fleet-persona-bots-fit-as-bot-profiles
-description: "2026-10-20 owner asked whether OpenMausBot-style persona bots ("talk to a named agent per contact") make sense in fleet; research verdict — the interaction model fits and is mostly configuration of an existing run, but it needs a new "bot profile" object and a naming split from the Bots (access) surface; 2026-10-20 update — the owner then proposed a separate fleet bot GUI reached over the Tailscale they already run, same backend, so the surface has moved toward fleet's own UI (second shell over one bridge, …"
+description: "2026-10-20 owner asked whether OpenMausBot-style persona bots (\"talk to a named agent per contact\") make sense in fleet; research verdict — the interaction model fits and is mostly configuration of an existing run, but it needs a new \"bot profile\" object and a naming split from the Bots (access) surface; 2026-10-20 update — the owner then proposed a separate fleet bot GUI reached over the Tailscale they already run, same backend, so the surface has moved toward fleet's own UI (second shell over one bridge, …"
 type: project
 date: 2026-11-04
 basis: confirmed-by

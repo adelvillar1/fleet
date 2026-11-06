@@ -19044,6 +19044,19 @@
     base.value = detail;
     base.placeholder = 'the provider\u2019s own endpoint, when it overrides the compiled one';
     base.setAttribute('aria-label', 'the endpoint');
+    // KI-423: where this provider publishes its model listing, when that
+    // is not `{endpoint}/models`. Some providers serve chat and listing
+    // from different prefixes (OpenCode's chat is `…/inference/openai/v1`,
+    // its listing `…/inference/v1/models`). The field is on the card
+    // because the save that omits it ERASES what the file carried: the
+    // entry then discovers against `{endpoint}/models`, 404s, and the
+    // card reports "this provider publishes no listing at that address"
+    // while the real listing URL is gone.
+    var listing = node('input', 'knob-box');
+    listing.type = 'text';
+    listing.value = provider.models_url || '';
+    listing.placeholder = 'where the model listing lives, when it is not {endpoint}/models';
+    listing.setAttribute('aria-label', 'the listing');
     var key = node('input', 'knob-box');
     key.type = 'password';
     key.placeholder = 'paste the key \u2014 it is stored, never shown';
@@ -19123,25 +19136,31 @@
       headerRows.appendChild(add);
     }
     paintHeaders();
+    // The entry every press on this card writes: the card's own nine
+    // fields, read once from the surface the owner is looking at, so the
+    // save and the toggle cannot disagree about what the card holds (and
+    // so neither reads a variable it cannot see — KI-423's shape).
+    function cardEntry(enabled) {
+      var headers = {};
+      headerPairs.forEach(function (pair) {
+        if (pair.name) headers[pair.name] = pair.value;
+      });
+      return JSON.stringify({
+        id: provider.id,
+        base_url: base.value.trim(),
+        models_url: listing.value.trim() || undefined,
+        key_env: provider.key_env || '',
+        models: provider.models || [],
+        disabled_models: disabled,
+        model_settings: declared,
+        headers: headers,
+        enabled: enabled,
+        key_required: provider.key_required !== false
+      });
+    }
     var save = cfgCardActs([{
       label: 'save the provider', primary: true, run: function () {
-        var headers = {};
-        headerPairs.forEach(function (pair) {
-          if (pair.name) headers[pair.name] = pair.value;
-        });
-        var body = {
-          entry: JSON.stringify({
-            id: provider.id,
-            base_url: base.value.trim(),
-            key_env: provider.key_env || '',
-            models: provider.models || [],
-            disabled_models: disabled,
-            model_settings: declared,
-            headers: headers,
-            enabled: provider.enabled,
-            key_required: provider.key_required !== false
-          })
-        };
+        var body = { entry: cardEntry(provider.enabled) };
         if (key.value.trim()) body.key = key.value.trim();
         // The write's own answer names the key's store and the discovery:
         // `writeSettings` answers with the settings read, not the write.
@@ -19165,13 +19184,7 @@
     }, {
       label: provider.enabled ? 'disable it' : 'enable it', run: function () {
         writeSettings('provider', {
-          entry: JSON.stringify({
-            id: provider.id,
-            base_url: detail,
-            key_env: provider.key_env || '',
-            models: provider.models || [],
-            enabled: !provider.enabled
-          })
+          entry: cardEntry(!provider.enabled)
         }, function () { settingsNotice('the provider is ' +
           (provider.enabled ? 'disabled' : 'enabled'), provider.id); });
       }
@@ -19364,6 +19377,7 @@
         (provider.key_present ? ' \u00b7 a key resolves' : ' \u00b7 no key resolves'))],
       ['the key', key],
       ['the endpoint', base],
+      ['the listing', listing],
       ['the headers its requests carry', headerRows],
       ['the models this provider serves', catalogRows],
       ['the walks it serves', walksSection],

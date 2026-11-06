@@ -1,6 +1,6 @@
 ---
 name: a-plan-never-ticked-is-not-a-status
-description: "feedback 2026-11-02 — a plan whose criteria were never ticked as the work landed is stale in BOTH directions (things that shipped read as open, and the owner's "did you leave U9 open?" is answered wrongly either way); audit each criterion against the code, write verdict + evidence per line, and tick at the moment of landing"
+description: "feedback 2026-11-02 — a plan whose criteria were never ticked as the work landed is stale in BOTH directions (things that shipped read as open, and the owner's \"did you leave U9 open?\" is answered wrongly either way); audit each criterion against the code, write verdict + evidence per line, and tick at the moment of landing"
 type: feedback
 date: 2026-11-04
 basis: confirmed-by

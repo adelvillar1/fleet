@@ -1,6 +1,6 @@
 ---
 name: not-every-gap-is-a-persona
-description: "owner question 2026-11-04 — "if you have the ability to spin up any persona you need why wouldn't you do it"; I had collapsed three different gaps into one hiring card, and the owner's question exposes the collapse"
+description: "owner question 2026-11-04 — \"if you have the ability to spin up any persona you need why wouldn't you do it\"; I had collapsed three different gaps into one hiring card, and the owner's question exposes the collapse"
 type: feedback
 date: 2026-11-04
 basis: confirmed-by

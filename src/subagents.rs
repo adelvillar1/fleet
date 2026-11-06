@@ -1487,14 +1487,76 @@ impl SubagentResult {
     }
 }
 
-/// The workspace block of a rendered result — the branch the child
-/// stood on, whether its changes were captured, how the merge back
-/// into main landed, and whatever cleanup had to be named. Conflict
-/// paths stop at four and then count, so a ten-path collision is
-/// still one bounded line.
+/// The CLI a rendered report puts in front of `fs read`. It comes from
+/// the gate that actually spawned, so the command is the one this
+/// machine would run — the sealed bundle's `node <script>` route or an
+/// operator's own executable — rather than a constant that names
+/// neither. A machine that cannot resolve a gate falls back to the
+/// bare verb, and the report says nothing about a program it does not
+/// know.
+fn read_back_cli() -> String {
+    crate::layerfs_tools::gate()
+        .map(|gate| gate.command_line())
+        .unwrap_or_else(|_| "layerfs".to_string())
+}
+
+/// The one command that reads a child's work back through the store —
+/// KI-320's remedy (b), and the reason the workspace block names its
+/// project at all.
+///
+/// The ref is the branch that actually holds the work: `main` for a
+/// child whose merge landed, its own branch for one that did not. A
+/// command pointing at `main` for unmerged work is the same fabricated
+/// address in a different form, so the choice follows the merge rather
+/// than assuming it. `None` when the report knows no project or no
+/// branch: a command with a blank field is worse than no command.
+fn read_back_command(
+    report: &crate::layerfs_tools::WorkspaceReport,
+    cli: &str,
+) -> Option<String> {
+    if report.project.is_empty() || report.branch.is_empty() {
+        return None;
+    }
+    let holds_the_work = match &report.merge {
+        Some(crate::layerfs_tools::MergeOutcome::Merged(_)) => "main",
+        _ => report.branch.as_str(),
+    };
+    Some(format!(
+        "  read back: {cli} --project {project} fs read {holds_the_work} /<path>",
+        project = report.project,
+    ))
+}
+
+/// The workspace block of a rendered result — the project and branch
+/// the child stood on, whether its changes were captured, how the merge
+/// back into main landed, the command that reads a path back through
+/// the store, and whatever cleanup had to be named. Conflict paths stop
+/// at four and then count, so a ten-path collision is still one bounded
+/// line.
+///
+/// The project and the read-back command are KI-320's remedy (b): a
+/// child's tools resolve relative paths against its sandbox, so a path
+/// in its answer is not a host path and never was. Naming the store
+/// address and the one command that reads it turns that into a fact the
+/// parent can act on instead of archaeology it has to reconstruct.
 fn render_workspace(report: &crate::layerfs_tools::WorkspaceReport) -> String {
+    render_workspace_with(report, &read_back_cli())
+}
+
+/// [`render_workspace`] with the CLI as an argument: the production
+/// call resolves it once from the gate, and a pin names it, so neither
+/// the assertion nor the block depends on what this machine happens to
+/// have provisioned.
+fn render_workspace_with(
+    report: &crate::layerfs_tools::WorkspaceReport,
+    cli: &str,
+) -> String {
     use crate::layerfs_tools::MergeOutcome;
-    let mut line = format!("workspace: branch {}", report.branch);
+    let mut line = if report.project.is_empty() {
+        format!("workspace: branch {}", report.branch)
+    } else {
+        format!("workspace: project {} \u{b7} branch {}", report.project, report.branch)
+    };
     line.push_str(if report.committed {
         " \u{b7} committed"
     } else {
@@ -1505,6 +1567,15 @@ fn render_workspace(report: &crate::layerfs_tools::WorkspaceReport) -> String {
     }
     match &report.merge {
         Some(MergeOutcome::Merged(_)) => line.push_str(" \u{b7} merged to main"),
+        // KI-327: a refused publish never moved main, and the header
+        // must not say it did. The integration branch is named because
+        // it is the one branch holding the work.
+        Some(MergeOutcome::NotPublished {
+            integration,
+            reason,
+        }) => line.push_str(&format!(
+            " \u{b7} NOT merged to main (the publish to `{integration}` was refused: {reason})"
+        )),
         Some(MergeOutcome::Conflict { paths }) => {
             let shown: Vec<&str> = paths.iter().take(4).map(String::as_str).collect();
             let more = paths.len().saturating_sub(shown.len());
@@ -1521,6 +1592,13 @@ fn render_workspace(report: &crate::layerfs_tools::WorkspaceReport) -> String {
             ));
         }
         None => {}
+    }
+    // The read-back line: only for a report that knows its project,
+    // because a command with a blank project is a fabricated address —
+    // exactly what this remedy exists to stop.
+    if let Some(read_back) = read_back_command(report, cli) {
+        line.push('\n');
+        line.push_str(&read_back);
     }
     for note in report.notes.iter().take(3) {
         line.push_str(&format!("\n  {note}"));
@@ -3976,6 +4054,9 @@ console.log(JSON.stringify({
     fn the_workspace_rides_the_row_and_the_render() {
         use crate::layerfs_tools::{MergeOutcome, WorkspaceReport};
         let report = WorkspaceReport {
+            // KI-320's remedy: the project the branch lives in, so the
+            // header carries a store address and not only a branch.
+            project: "shop".to_string(),
             branch: "fleet-child-1".to_string(),
             ws: "1:/workspaces/1".to_string(),
             sandbox: "1".to_string(),
@@ -3999,7 +4080,10 @@ console.log(JSON.stringify({
             workspace: Some(report),
         };
         let text = result.render_report();
-        assert!(text.contains("workspace: branch fleet-child-1"), "{text}");
+        assert!(
+            text.contains("workspace: project shop \u{b7} branch fleet-child-1"),
+            "{text}"
+        );
         assert!(text.contains("committed"), "{text}");
         assert!(
             text.contains("CONFLICT with main on 2 paths: src/lib.rs, src/agent.rs"),
@@ -4045,6 +4129,124 @@ console.log(JSON.stringify({
         );
         assert_eq!(plain_row.workspace_branch, "");
         assert_eq!(plain_row.workspace, "");
+    }
+
+    /// C7's pin — KI-320's remedy (b) itself. A child's tools resolve
+    /// relative paths against its SANDBOX, so a path in its answer is
+    /// not a host path; the header must therefore carry the address the
+    /// store answers at plus the one command that reads a path back,
+    /// or a parent has archaeology instead of a fact.
+    ///
+    /// The ref is the half that is easy to get wrong: a merged child's
+    /// work is on `main`, and an unmerged one's is on its own branch.
+    /// A command naming `main` for unmerged work is the same fabricated
+    /// address in a different form, so both shapes are driven here.
+    #[test]
+    fn the_workspace_header_names_the_project_and_the_command_that_reads_it_back() {
+        use crate::layerfs_tools::{MergeOutcome, WorkspaceReport};
+        let report = WorkspaceReport {
+            project: "shop".to_string(),
+            branch: "fleet-child-abc".to_string(),
+            sandbox: "1".to_string(),
+            committed: true,
+            merge: Some(MergeOutcome::Merged(serde_json::Value::Null)),
+            ..WorkspaceReport::default()
+        };
+        let text = render_workspace_with(&report, "layerfs");
+        assert!(
+            text.contains("workspace: project shop \u{b7} branch fleet-child-abc"),
+            "{text}"
+        );
+        assert!(
+            text.contains("read back: layerfs --project shop fs read main /<path>"),
+            "the merged child's work is read from main: {text}"
+        );
+
+        // Unmerged: the header must not claim main, and the command
+        // must not point at it either.
+        let kept = WorkspaceReport {
+            merge: Some(MergeOutcome::Conflict {
+                paths: vec!["src/lib.rs".to_string()],
+            }),
+            ..report.clone()
+        };
+        let text = render_workspace_with(&kept, "layerfs");
+        assert!(!text.contains("\u{b7} merged to main"), "{text}");
+        assert!(
+            text.contains("read back: layerfs --project shop fs read fleet-child-abc /<path>"),
+            "an unmerged child is read from its own branch: {text}"
+        );
+
+        // A report that knows no project prints no command: a blank
+        // project is a fabricated address, and that is the defect.
+        let unknown = WorkspaceReport {
+            branch: "fleet-child-abc".to_string(),
+            ..WorkspaceReport::default()
+        };
+        let text = render_workspace_with(&unknown, "layerfs");
+        assert!(!text.contains("read back:"), "{text}");
+        assert!(text.starts_with("workspace: branch fleet-child-abc"), "{text}");
+    }
+
+    /// KI-327's pin. A publish that is REFUSED never moved `main`, and
+    /// the old arm recorded that as `Merged` because the local merge
+    /// had succeeded — so the header printed `merged to main` over a
+    /// trunk that never moved, on a child that in the reported instance
+    /// had not written anything at all. The refusal is an outcome of
+    /// its own now, and the render says so.
+    #[test]
+    fn a_refused_publish_is_not_a_merge_to_main() {
+        use crate::layerfs_tools::{MergeOutcome, WorkspaceReport};
+        let report = WorkspaceReport {
+            project: "shop".to_string(),
+            branch: "fleet-child-abc".to_string(),
+            committed: true,
+            merge: Some(MergeOutcome::NotPublished {
+                integration: "merge-fleet-child-abc".to_string(),
+                reason: "layerfs refused [NoCommit]: it has no saved Commit to publish"
+                    .to_string(),
+            }),
+            ..WorkspaceReport::default()
+        };
+        let text = render_workspace_with(&report, "layerfs");
+        assert!(
+            !text.contains("\u{b7} merged to main"),
+            "the trunk did not move, so the block must not carry the merged marker: {text}"
+        );
+        assert!(
+            text.contains("NOT merged to main (the publish to `merge-fleet-child-abc` was refused"),
+            "{text}"
+        );
+        assert!(text.contains("no saved Commit to publish"), "{text}");
+        // And main is not where this work is, so the command is not
+        // pointed there either.
+        assert!(
+            text.contains("fs read fleet-child-abc /<path>"),
+            "the unmerged child is read from its branch: {text}"
+        );
+    }
+
+    /// The command line both resolution routes produce. Driven through
+    /// the pure rendering rather than a resolved gate, so the bundle
+    /// route (which needs a provisioned machine to spawn) is pinned
+    /// here: `node <bundle>/…/layerfs.js` is the production command,
+    /// and a report that printed only `layerfs` would hand the parent a
+    /// command that does not exist on that machine.
+    #[test]
+    fn the_read_back_command_names_the_cli_this_machine_runs() {
+        use std::ffi::OsStr;
+        assert_eq!(
+            crate::layerfs_tools::program_line(OsStr::new("/usr/local/bin/layerfs"), &[]),
+            "/usr/local/bin/layerfs"
+        );
+        assert_eq!(
+            crate::layerfs_tools::program_line(
+                OsStr::new("node"),
+                &["/Users/someone/Library/Application Support/fleet/bundle/api/agent/cli/src/layerfs.js".to_string()],
+            ),
+            "node \"/Users/someone/Library/Application Support/fleet/bundle/api/agent/cli/src/layerfs.js\"",
+            "a path with a space is quoted, or the pasted command splits"
+        );
     }
 
     #[test]

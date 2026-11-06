@@ -6,7 +6,7 @@ date: 2026-10-13
 basis: confirmed-by
 tier: durable
 shape: []
-phrases: ["the shape partitions the pool and the words rank within it", "direction outranks proximity", "the recall index is keyed by a digest of the indexed text", "one bounded hop over the frontmatter's own edges"]
+phrases: [the shape partitions the pool and the words rank within it, direction outranks proximity, the recall index is keyed by a digest of the indexed text, one bounded hop over the frontmatter's own edges]
 missing: []
 recall-count: 588
 superseded-by:

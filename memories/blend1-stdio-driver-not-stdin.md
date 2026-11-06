@@ -6,9 +6,9 @@ date: 2026-11-01
 basis: inferred
 tier: durable
 shape: [fail-open]
-phrases: [mcp_server.py < driver.py, JSONDecodeError continue, silent exit 0, Popen spawn pipes, result.content[0].text]
+phrases: [mcp_server.py < driver.py, JSONDecodeError continue, silent exit 0, Popen spawn pipes, "result.content[0].text"]
 missing: []
-recall-count: 7
+recall-count: 10
 superseded-by:
 valid-until:
 ---

@@ -1,6 +1,6 @@
 ---
 name: a-page-set-report-needs-the-union-not-the-intersection
-description: "Feedback 2026-10-31 — the coherence report computed "missing tokens" over the intersection of the set's tokens, so it could only ever be empty; a gap report must iterate the union. Two sibling forms in the same phase — a write op answering an envelope, and a raw string closed by a "#."
+description: "Feedback 2026-10-31 — the coherence report computed \"missing tokens\" over the intersection of the set's tokens, so it could only ever be empty; a gap report must iterate the union. Two sibling forms in the same phase — a write op answering an envelope, and a raw string closed by a \"#."
 type: feedback
 date: 2026-11-04
 basis: inferred

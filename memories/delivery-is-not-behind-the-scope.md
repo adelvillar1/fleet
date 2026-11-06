@@ -1,6 +1,6 @@
 ---
 name: delivery-is-not-behind-the-scope
-description: "project/feedback 2026-11-04 — KI-410 closed: the comment said "declared on every run" while the code gated both the document reader and the hand-over on the speaker's scope, so a scoped bot could write a file and had no way to hand it over; delivery is now declared on every run, and the owner's wider point is that a huddle's OUTCOMES (not just its files) are what the surface should count"
+description: "project/feedback 2026-11-04 — KI-410 closed: the comment said \"declared on every run\" while the code gated both the document reader and the hand-over on the speaker's scope, so a scoped bot could write a file and had no way to hand it over; delivery is now declared on every run, and the owner's wider point is that a huddle's OUTCOMES (not just its files) are what the surface should count"
 type: project
 date: 2026-11-04
 basis: confirmed-by

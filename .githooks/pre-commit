@@ -1,0 +1,22 @@
+#!/bin/sh
+# The plan-completion check (KI-398, C9 of the open-ledger closeout).
+#
+# A plan is the source of truth for "is this done", and it moves to
+# `completed` only when every acceptance criterion is confirmed met. The
+# defect this guards against is the other shape: work that shipped with its
+# boxes never ticked, so the plan answered neither question. That is a DOCS
+# change, and a docs-only commit skips the four-leg gate — which is exactly
+# why this runs here rather than in `cargo test`.
+#
+# Only fires when a plan file is staged: a code commit pays nothing for it.
+set -u
+staged=$(git diff --cached --name-only --diff-filter=ACMR -- 'docs/plans/*.md')
+[ -z "$staged" ] && exit 0
+if ! python3 scripts/plan_check.py; then
+    echo "" >&2
+    echo "pre-commit: a completed plan carries unticked acceptance criteria (KI-398)." >&2
+    echo "Tick what shipped with its evidence, or record the residual and its owner." >&2
+    echo "A plan still in flight keeps status: active — the check only reads completed ones." >&2
+    exit 1
+fi
+exit 0
