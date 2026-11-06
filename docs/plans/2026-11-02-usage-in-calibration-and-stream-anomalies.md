@@ -1,5 +1,5 @@
 ---
-status: draft
+status: completed
 created: 2026-11-02
 updated: 2026-11-02
 slug: usage-in-calibration-and-stream-anomalies

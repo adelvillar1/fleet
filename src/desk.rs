@@ -1941,6 +1941,38 @@ mod tests {
     }
 
     #[test]
+    fn the_emitted_stages_carry_keys_not_tuple_arrays() {
+        // KI-444: `stages` is `Vec<(Stage, StageState)>`, and an audit that
+        // assumed a tuple serialized as a two-element array would write a
+        // reader finding nothing. `project_json` builds the objects
+        // explicitly; this pins the shape a consumer actually receives, so
+        // the next reader is written against the emitted keys rather than
+        // against the Rust type's apparent arity.
+        let mut desk = sample();
+        desk.stages = vec![
+            (Stage::Claims, StageState::Done),
+            (Stage::Outline, StageState::Running),
+        ];
+        let emitted = project_json(&desk);
+        let stages = emitted
+            .get("stages")
+            .and_then(serde_json::Value::as_array)
+            .unwrap_or_else(|| panic!("stages must be an array: {emitted}"));
+        assert_eq!(stages.len(), 2, "{emitted}");
+        for stage in stages {
+            let object = stage
+                .as_object()
+                .unwrap_or_else(|| panic!("a stage must be an object, not a tuple array: {stage}"));
+            assert!(object.contains_key("stage"), "the stage's own name: {stage}");
+            assert!(object.contains_key("state"), "the state key: {stage}");
+            assert!(object.contains_key("reason"), "the reason key: {stage}");
+        }
+        assert_eq!(stages[0]["stage"], "claims");
+        assert_eq!(stages[0]["state"], "done");
+        assert_eq!(stages[1]["state"], "running");
+    }
+
+    #[test]
     fn a_missing_source_is_a_named_refusal_not_a_silent_zero() {
         // The silent skip this replaces made a correct brief read as
         // zero claims: the stage said done, the claim set was empty.
