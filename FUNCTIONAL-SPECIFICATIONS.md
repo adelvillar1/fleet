@@ -112,7 +112,8 @@ its state in words — *handed back*, *resumed*, *completed*, *capped*,
 and, for background work, the job's name. One verb: opening a row loads
 that conversation in place, beside the list, with its composer, so
 reading and continuing are the same act. **New** writes a real
-conversation. Search reads the title, id, project, model, job and
+conversation — at the press, before any words, so the send that follows
+can only land in it, never in an older active conversation. Search reads the title, id, project, model, job and
 state; the list becomes a sheet where there is no room for a column,
 and the column itself folds to a narrow strip — its own way back and
 the count of what needs you — so the conversation takes the whole

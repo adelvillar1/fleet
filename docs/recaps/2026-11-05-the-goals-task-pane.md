@@ -152,3 +152,26 @@ gap the code had been declaring without shipping.
   carries is local 2026-11-05 — the whole session happened that day;
   the stray `2026-11-06` naming came from the tower-log ids, which
   run on UTC.
+
+## After the close-out: the New control's regression (KI-453)
+
+The owner hit a regression while the session was being wrapped: pressing
+**New** and sending appended to the last active session. The root was
+three open doors at once — the detach left `face.running` / `driving` and
+the old transcript standing, the queue carried no session of its own (its
+own drain comment named the design: *"the send names this session"*), and
+a null-session send fell through to a bare `/api/run`, which the bridge
+resolves to the thread's remembered session. The CDP repro on the scratch
+face showed the queued message sitting in the chip with no path out.
+
+The fix lands the owner's ruling whole (**New mints at the press**) and
+closes all three doors: `detachToWelcome` clears the abandoned
+conversation's run state and transcript; every queue item carries
+`{text, session}` and the flush dispatches with it; every run names a
+conversation — a null target mints rather than going bare; a foreign
+`session` event is adopted only by a face that has none; and the create
+moves the launch folder and the pending goal, so C6's attach lands at
+the press. The three N2-era harness tests were re-pointed to the ruling
+and three pins added — harness **941 checks / 105 cases**, the gate
+**2,077 / 0**, and the spec and gui.md sentences now name the timing.
+KI-453 carries the record.

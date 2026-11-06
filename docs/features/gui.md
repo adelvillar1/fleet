@@ -273,7 +273,8 @@ every visible `.tile`, `.badge`, `.rrow`, `.rank-row`, `.cal-cell`,
 - **The conversation's head** carries the way back to the work list, the
   title (press for the switcher, the pencil to rename), the state in
   words, and **New** — which writes a real session (`POST
-  /api/session/new`), so the next run lands in it. Replies render as
+  /api/session/new`) the moment it is pressed, so the send that follows
+  can only land in it — never an older active conversation. Replies render as
   markdown when their block closes: streamed text while it arrives, the
   rendered block at the boundary, and the receipt's closing report the
   same way. Every message then carries its own controls under its words

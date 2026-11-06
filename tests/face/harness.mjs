@@ -1285,10 +1285,12 @@ async function theHeadCarriesTheWayOutAndTheSwitcher() {
 
   page.fireOn('conv-new', 'click');
   await flush();
-  // New is an intent, not a row (N2): no session is created until words
-  // are sent — the face walks home and the composer waits.
+  // New mints the conversation at the press (the owner's 2026-11-05
+  // ruling, replacing N2's create-then-send): the log exists before
+  // any words, so the send that follows can only name this
+  // conversation — never an older active one.
   const news = page.calls.filter((c) => c.url.startsWith('/api/session/new'));
-  check('C3 New mints nothing', news.length === 0, String(news.length));
+  check('C3 New mints at the press', news.length === 1, String(news.length));
   check('C3 New walks home', page.window.location.hash === '#/chat', page.window.location.hash);
   check('C3 the home shows the welcome',
     page.IDS.empty.hidden === false && page.IDS.log.hidden === true,
@@ -2820,10 +2822,11 @@ async function theClearCommandStartsAConversation() {
     page.rows('.command').map((command) => command.textContent).join(' | '));
   if (offered) offered.click();
   await flush(80);
-  // /clear is the same verb as New (N2): an intent, not a row — nothing
-  // is minted until words are sent.
+  // /clear is the same verb as New: it mints the conversation at the
+  // press (the owner's 2026-11-05 ruling), so the words that follow
+  // can only land in it.
   const news = page.calls.filter((call) => call.url.startsWith('/api/session/new'));
-  check('C4 /clear mints nothing', news.length === 0, String(news.length));
+  check('C4 /clear mints at the press', news.length === 1, String(news.length));
   check('C4 /clear walks home with the intent',
     page.window.location.hash === '#/chat' && page.IDS.empty.hidden === false,
     page.window.location.hash + ' / empty hidden: ' + page.IDS.empty.hidden);
@@ -3913,10 +3916,12 @@ async function theHomeIsAlwaysReachable() {
     'resumes: ' + resumes.length + ' / news: ' + news.length);
 }
 
-// N2: New is an intent, not a row. Nothing is minted until words are
-// sent — create-then-send in one turn — and an abandoned compose leaves
-// no shell in the archive.
-async function newMintsNothingUntilWordsExist() {
+// New mints a real conversation at the press (the owner's 2026-11-05
+// ruling, replacing N2's create-then-send): the log exists before any
+// words, so the send that follows can only name this conversation —
+// never an older active one. An abandoned compose leaves the shell; the
+// intent fallback survives only for a refused creation.
+async function newMintsImmediatelyAndTheSendNamesIt() {
   const doc = {
     sessions: {
       type: 'sessions', read_at: 'now', current: 'x-1',
@@ -3936,32 +3941,126 @@ async function newMintsNothingUntilWordsExist() {
   const news = () => page.calls.filter((c) => c.url.startsWith('/api/session/new'));
   page.fireOn('conv-new', 'click');
   await flush(40);
-  check('N2 New walks home and mints nothing',
-    page.window.location.hash === '#/chat' && news().length === 0,
-    page.window.location.hash + ' / ' + news().length);
-  check('N2 the pending draft returns', page.IDS.task.value === 'pending words',
+  check('NEW mints at the press',
+    news().length === 1 && page.window.location.hash === '#/chat',
+    news().length + ' / ' + page.window.location.hash);
+  check('the pending draft returns', page.IDS.task.value === 'pending words',
     JSON.stringify(page.IDS.task.value));
-  // Abandon: open the existing conversation — the intent is left behind,
-  // and nothing was created.
-  page.window.location.hash = '#/sessions/x-1';
-  await flush(80);
-  check('N2 abandoning the intent mints nothing', news().length === 0,
-    String(news().length));
-  // The send materializes the intent: one creation, then the run in it.
-  page.fireOn('conv-new', 'click');
-  await flush(40);
+  check('the welcome shows the fresh compose',
+    page.IDS.empty.hidden === false && page.IDS.log.hidden === true,
+    'empty hidden: ' + page.IDS.empty.hidden);
+  // The send names the minted conversation: one create total, and the
+  // run never falls to the older one.
   page.IDS.task.value = 'the first words';
   page.fireOn('composer', 'submit', {});
   await flush(80);
-  check('N2 the send creates exactly one session', news().length === 1,
+  check('the send creates no second session', news().length === 1,
     String(news().length));
   const runs = page.calls.filter((c) => c.url.startsWith('/api/run'));
-  check('N2 the run lands in the session the face created',
+  check('the run lands in the conversation New minted',
     runs.length === 1 && String(runs[0].url).includes('session=new-session-1'),
     JSON.stringify(runs.map((c) => c.url)));
-  check('N2 the face follows the conversation it made',
-    page.window.location.hash === '#/sessions/new-session-1',
-    page.window.location.hash);
+  check('the run never names the older conversation',
+    !runs.some((c) => String(c.url).includes('x-1')),
+    JSON.stringify(runs.map((c) => c.url)));
+  // Abandon: opening the existing conversation mints nothing more —
+  // the shell from the press stands in the archive.
+  page.window.location.hash = '#/sessions/x-1';
+  await flush(80);
+  check('abandoning mints nothing more', news().length === 1,
+    String(news().length));
+}
+
+// The 2026-11-05 regression, pinned at its sharpest: a send typed while
+// another conversation's run works dispatches into the conversation it
+// was typed for — the one New minted — and never into the working one.
+async function aSendBesideARunMintsAndNamesItsOwnConversation() {
+  const doc = {
+    sessions: {
+      type: 'sessions', read_at: 'now', current: 'old-a',
+      counts: { needs: 0, working: 1, background: 0, earlier: 1, total: 2 },
+      sessions: [
+        row('old-a', 'working', { title: 'the active conversation' }),
+        row('old-b', 'completed', { title: 'an earlier one' }),
+      ],
+    },
+    state: (asked) => ({
+      ...emptyState(asked), session: asked,
+      running: true, driving: 'old-a',
+    }),
+  };
+  const page = boot({
+    width: 1440, hash: '#/sessions/old-a', documents: doc, newId: 'fresh-c',
+  });
+  await flush();
+  page.open();
+  await flush(80);
+  page.fireOn('conv-new', 'click');
+  await flush(80);
+  const news = page.calls.filter((c) => c.url.startsWith('/api/session/new'));
+  check('REG the + mints the new conversation', news.length === 1,
+    String(news.length));
+  page.IDS.task.value = 'the words for the new one';
+  page.fireOn('composer', 'submit', {});
+  await flush(80);
+  const runs = page.calls.filter((c) => c.url.startsWith('/api/run'));
+  check('REG the send dispatches behind no foreign run',
+    runs.length === 1, JSON.stringify(runs.map((c) => c.url)));
+  check('REG the run names the minted conversation',
+    runs.length === 1 && String(runs[0].url).includes('session=fresh-c'),
+    JSON.stringify(runs.map((c) => c.url)));
+  check('REG never the older active session',
+    !runs.some((c) => String(c.url).includes('old-a')),
+    JSON.stringify(runs.map((c) => c.url)));
+}
+
+// The queue's own half of the same ruling: a message queued on one
+// conversation while another's run works keeps ITS conversation across
+// the flush — even when the face has opened a different one by the time
+// the working run ends.
+async function aQueuedFlushNamesItsOwnConversation() {
+  const doc = {
+    sessions: {
+      type: 'sessions', read_at: 'now', current: 'old-b',
+      counts: { needs: 0, working: 1, background: 0, earlier: 1, total: 2 },
+      sessions: [
+        row('old-a', 'working', { title: 'the active conversation' }),
+        row('old-b', 'completed', { title: 'the one being written' }),
+      ],
+    },
+    state: (asked) => ({
+      ...emptyState(asked), session: asked,
+      running: true, driving: 'old-a',
+    }),
+  };
+  const page = boot({
+    width: 1440, hash: '#/sessions/old-b', documents: doc,
+  });
+  await flush();
+  page.open();
+  await flush(80);
+  // Typed on old-b while old-a works: the send queues, and the chip
+  // says which conversation it belongs to.
+  page.IDS.task.value = 'the words for old-b';
+  page.fireOn('composer', 'submit', {});
+  await flush(80);
+  const queuedRuns = page.calls.filter((c) => c.url.startsWith('/api/run'));
+  check('REG a send behind a foreign run queues instead of dispatching',
+    queuedRuns.length === 0 && page.IDS['queue-chip'] && !page.IDS['queue-chip'].hidden,
+    JSON.stringify(queuedRuns.map((c) => c.url)));
+  // The owner opens the working conversation before its run ends.
+  page.window.location.hash = '#/sessions/old-a';
+  await flush(80);
+  // The working run ends: the queue drains — into old-b, where the
+  // message was typed, not into the conversation now on screen.
+  page.push({ type: 'finished', session: 'old-a', stop_reason: 'handed back' });
+  await flush(80);
+  const runs = page.calls.filter((c) => c.url.startsWith('/api/run'));
+  check('REG the flush dispatches the queued message',
+    runs.length === 1, JSON.stringify(runs.map((c) => c.url)));
+  check('REG the flush names the conversation it was typed for',
+    runs.length === 1 && String(runs[0].url).includes('session=old-b'),
+    JSON.stringify(runs.map((c) => c.url)));
 }
 
 // N3: the rail's badge says where the work is — needs plus working on
@@ -10004,7 +10103,9 @@ const cases = [
   ['VERBS the composer carries the two verb icons', theComposerVerbsAreIcons],
   ['N0 the work rail renders the owner\u2019s work only', theListGroupsByAttentionAndCountsWhatTheServerCounted],
   ['N1 the home is always reachable', theHomeIsAlwaysReachable],
-  ['N2 New mints nothing until words exist', newMintsNothingUntilWordsExist],
+  ['NEW New mints at the press and the send names it', newMintsImmediatelyAndTheSendNamesIt],
+  ['REG a send beside a working run mints and names its own conversation', aSendBesideARunMintsAndNamesItsOwnConversation],
+  ['REG a queued flush names its own conversation', aQueuedFlushNamesItsOwnConversation],
   ['N3 the rail badge says where the work is', theRailBadgeSaysWhereTheWorkIs],
   ['Q the queued messages carry their actions', theQueuedMessagesCarryTheirActions],
   ['REV the diff offers both verdicts per hunk', theDiffOffersBothVerdictsPerHunk],

@@ -580,7 +580,23 @@ impl Bridge {
     pub fn new_session(&self) -> Result<String, String> {
         let created = session::Session::create(&self.home, &self.model)
             .map_err(|error| format!("could not create a conversation: {error}"))?;
-        Ok(created.id().to_string())
+        let id = created.id().to_string();
+        // The launch keys move with the first real conversation, exactly
+        // as they moved when the thread named it: a folder chosen on the
+        // welcome works in this chat, and a goal set there is this
+        // conversation's (the goal pane plan's C6, at the create rather
+        // than the first run — the run the owner starts from this
+        // conversation declares it).
+        let folder = {
+            let mut state = lock(&self.state);
+            state.name_launch(&id)
+        };
+        if folder.is_some() {
+            let map = lock(&self.state).workdirs.clone();
+            save_workdirs(&self.home, &map);
+        }
+        move_pending_goal(&self.home, &id);
+        Ok(id)
     }
 
     /// The bot's creation: the conversation names who takes it (the
@@ -605,10 +621,22 @@ impl Bridge {
         let created = session::Session::create_with_persona(&self.home, &self.model, personas)
             .map_err(|error| format!("could not create a conversation: {error}"))?;
         let id = created.id().to_string();
+        let folder = {
+            let mut state = lock(&self.state);
+            state.name_launch(&id)
+        };
+        if folder.is_some() {
+            let map = lock(&self.state).workdirs.clone();
+            save_workdirs(&self.home, &map);
+        }
         if let Some(text) = goal.map(str::trim).filter(|text| !text.is_empty()) {
             let mut goals = load_goals(&self.home);
             goals.insert(id.clone(), text.to_string());
             save_goals(&self.home, &goals);
+        } else {
+            // No explicit goal: a goal set on the welcome is this
+            // conversation's now — the same move the plain create makes.
+            move_pending_goal(&self.home, &id);
         }
         Ok(id)
     }

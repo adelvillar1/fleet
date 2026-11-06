@@ -1833,7 +1833,7 @@
     if (face.running || face.seat ||
         (face.driving && face.driving !== face.session)) {
       if (text.trim()) {
-        face.queued.push(text);
+        face.queued.push({ text: text, session: face.session });
         paintQueue();
       }
       return;
@@ -2801,10 +2801,13 @@
     // read and the rail's badge, not a log nobody is reading.
     if (!ownChild && event.session && (!face.session || event.session !== face.session)) {
       if (event.type === 'finished' || event.type === 'failed') {
-        // That run is over. A message queued in this conversation was
-        // waiting on it, so the queue drains now — the send names this
-        // session, and the run it starts is this one's.
-        face.driving = '';
+        // That run is over. A message queued behind it drains now —
+        // each carrying the session it was typed for, so it lands
+        // where its author was writing, never wherever the face happens
+        // to be looking. Only the driving run's own end clears the
+        // driving mark: another conversation's ending says nothing
+        // about this one's.
+        if (face.driving === event.session) face.driving = '';
         face.sessions = null;
         readSessions(true);
         if ((face.queued || []).length && !face.running && !face.seat) flushQueue();
@@ -2837,8 +2840,11 @@
         // happens. Without this the face kept whatever session the last
         // state load anchored — and the answered check compared the
         // seat's session against that stale value, leaving the card
-        // standing (KI-283's regression).
-        if (event.id) face.session = event.id;
+        // standing (KI-283's regression). Only a face with no
+        // conversation adopts one: a run minting its session elsewhere
+        // (a TUI run, a cron fire) must never steal the composer's
+        // conversation mid-compose (2026-11-05).
+        if (event.id && !face.session) face.session = event.id;
         break;
       case 'message':
         // Who spoke last: the room's head rings that member and the
@@ -3479,11 +3485,12 @@
     // eats the click (the seat's own paint keys the same way). The key
     // is what the rows say, in order; a new queue, and only a new queue,
     // rebuilds.
-    var key = items.join('\u0000');
+    var key = items.map(function (item) { return item.text; }).join('\u0000');
     if (key === face.queueKey) return;
     face.queueKey = key;
     el.queueList.textContent = '';
-    items.forEach(function (text, index) {
+    items.forEach(function (item, index) {
+      var text = item.text;
       var row = node('div', 'queue-row');
       row.draggable = true;
       row.tabIndex = 0;
@@ -3576,10 +3583,10 @@
   // double-sends.
   function flushQueue() {
     if (!(face.queued || []).length || face.running || face.seat) return;
-    var text = face.queued.shift();
+    var item = face.queued.shift();
     paintQueue();
-    el.task.value = text;
-    send();
+    el.task.value = item.text;
+    send(item.session);
   }
 
   // One control into the run in flight: the body is written verbatim to
@@ -7944,15 +7951,18 @@
     el.task.setSelectionRange(text.length, text.length);
   }
 
-  function send() {
+  function send(queuedSession) {
     // While a run is in flight the composer queues: one slot, sent the
     // moment the run ends. The queue is the face's own state — a reload
-    // drops it, and the chip says so.
-    if (face.running || face.seat ||
-        (face.driving && face.driving !== face.session)) {
+    // drops it, and the chip says so. A flush carries the session its
+    // message was typed for, so a queued message can never drain into
+    // a different conversation (2026-11-05).
+    if (queuedSession === undefined &&
+        (face.running || face.seat ||
+        (face.driving && face.driving !== face.session))) {
       var pending = el.task.value.trim();
       if (pending) {
-        face.queued.push(pending);
+        face.queued.push({ text: pending, session: face.session });
         el.task.value = '';
         grow();
         clearDraft();
@@ -7989,13 +7999,14 @@
       });
       return;
     }
-    dispatchTask();
+    dispatchTask(queuedSession);
   }
 
   // The run dispatch itself — the composer's text to /api/run, with the
   // face's standing choices. Split from send() so the edit path can
-  // rewind first and land here unchanged.
-  function dispatchTask() {
+  // rewind first and land here unchanged. A queued flush passes the
+  // session its message was typed for.
+  function dispatchTask(queuedSession) {
     var task = el.task.value.trim();
     if (!task) return;
     face.doorWords = task;
@@ -8005,42 +8016,60 @@
     el.empty.hidden = true;
     el.log.hidden = false;
     var before = face.events.length;
+    var dispatched = face.session;
     // A folder change in flight lands first: the run reads the stored
     // choice, and a run that overtook its own folder would work in the
     // old one.
     Promise.resolve(folderSync).then(function () {
-      // A pending New materializes here: the session is created at the
-      // first send — create-then-send in one turn — so an abandoned
-      // compose leaves no shell in the archive (N2). The pending
-      // draft's key clears with it; a refused creation restores the
-      // owner's words to the composer below.
-      var target = Promise.resolve(face.session);
-      if (!face.session && face.pendingNew) {
-        target = post('/api/session/new', {}).then(function (reply) {
+      // Every run names a conversation: the one this message was typed
+      // for (a queued send carries its own), the one the face is
+      // showing, or one minted right here. It never falls through to the
+      // thread's remembered session — that is how a message appended to
+      // the last active conversation (2026-11-05). If New is minting
+      // right now, this send waits for that mint instead of racing a
+      // second one.
+      var target = Promise.resolve(
+        queuedSession !== undefined ? queuedSession : face.session);
+      target = target.then(function (session) {
+        if (session) return session;
+        return face.creating || null;
+      });
+      return target.then(function (session) {
+        if (session) return session;
+        // No conversation: this send mints one. The intent path N2
+        // guarded is folded in — a refused creation restores the
+        // owner's words to the composer below.
+        return post('/api/session/new', {}).then(function (reply) {
           if (reply.status !== 200 || !reply.body || !reply.body.id) {
             throw new Error((reply.body && reply.body.error) || 'the new conversation was refused');
           }
           try { window.localStorage.removeItem('fleet-draft-new'); } catch (error) { }
           face.pendingNew = false;
-          face.session = reply.body.id;
-          face.focus = { panel: 'sessions', id: face.session };
-          face.panel = 'sessions';
-          try {
-            window.history.replaceState(null, '',
-              '#/sessions/' + encodeURIComponent(face.session));
-          } catch (error) { }
-          setWork(window.innerWidth > 1180);
-          paintWork();
-          paintConvHead();
-          return face.session;
+          var created = reply.body.id;
+          // The face was composing the conversation it just made: bind
+          // the view. A queued send minted for a conversation the owner
+          // has since opened elsewhere names it as the target without
+          // stealing the view.
+          if (!face.session) {
+            face.session = created;
+            face.focus = { panel: 'sessions', id: created };
+            face.panel = 'sessions';
+            try {
+              window.history.replaceState(null, '',
+                '#/sessions/' + encodeURIComponent(created));
+            } catch (error) { }
+            setWork(window.innerWidth > 1180);
+            paintWork();
+            paintConvHead();
+          }
+          return created;
         });
-      }
-      return target.then(function (session) {
-        // The run names the session the face is showing: after opening a
-        // session from the archive, a session-less run would go to the
-        // launch session — a different conversation, or a refusal when
-        // that one is mid-run — which reads as "the conversation will not
-        // let me work in it".
+      });
+    }).then(function (session) {
+        dispatched = session;
+        // The run names the conversation this message belongs to —
+        // never a bare call the thread would resolve to whatever
+        // session it last drove.
         var runPath = '/api/run' + (session
           ? '?session=' + encodeURIComponent(session) : '');
         return post(runPath, {
@@ -8060,11 +8089,10 @@
         };
         })
       });
-      });
     }).then(function (reply) {
       if (reply.status === 200) {
         face.running = true;
-        face.driving = face.session;
+        face.driving = dispatched;
         face.stop = null;
         face.attachments = [];
         paintAttachments();
@@ -12545,27 +12573,74 @@
     }).catch(function () { });
   }
 
-  // New is a real conversation: the route writes the log, so the work
-  // list holds it before its first message and the next run lands in it.
-  // A new conversation is an intent, not a row: the home with a fresh
-  // compose. The session is created when words are sent (create-
-  // then-send in one turn), so an abandoned compose leaves no shell in
-  // the archive — the archive holds conversations, not attempts (N2).
-  // The pending draft has its own key until a session owns it.
-  function newConversation() {
-    face.pendingNew = true;
-    if (window.location.hash === '#/chat') {
-      // Already home: the swap happens in place.
-      swapDraft(face.session || '', 'new');
-      face.session = null;
-      face.focus = null;
+  // The detach the New control and the home ride: the conversation the
+  // face was showing leaves with its run state and its transcript. The
+  // run keeps going at the bridge — its row in the work list carries
+  // it — but nothing of it may gate this view's composer or paint into
+  // the fresh one (the 2026-11-05 regression: `running` stayed set
+  // after the detach, so every send queued behind the old run, and the
+  // sessionless queue drained into whatever conversation was showing
+  // when that run ended — the owner's message appended to the last
+  // active session).
+  function detachToWelcome() {
+    swapDraft(face.session || '', face.pendingNew ? 'new' : '');
+    face.session = null;
+    face.focus = null;
+    face.running = false;
+    face.driving = '';
+    face.seat = null;
+    face.stop = null;
+    face.events = [];
+    face.rows = [];
+    face.pending = [];
+    face.delegations = {};
+    face.lastTurn = 0;
+    face.buffer = '';
+    face.seatKey = '';
+    face.process = null;
+    face.assistant = null;
+    dropThinking();
+    face.strip = null;
+    face.stripEl = null;
+    face.stripLog = [];
+    if (el.log) {
+      el.log.textContent = '';
+      face.stream = node('div', 'stream');
+      el.log.appendChild(face.stream);
+      if (el.toLive) el.log.appendChild(el.toLive);
       el.log.hidden = true;
-      el.empty.hidden = false;
-    } else {
-      // The hash walk detaches: showRoute's chat branch swaps the draft
-      // under the pending key and shows the welcome.
-      window.location.hash = '#/chat';
     }
+    if (el.empty) el.empty.hidden = false;
+    paint();
+  }
+
+  // New is a real conversation, minted the moment the control is
+  // pressed (the owner's 2026-11-05 ruling, replacing the
+  // create-then-send intent): the log exists, the work list holds it
+  // before its first message, and the composer names it — so the next
+  // send can never land in an older session. A refused creation falls
+  // back to the intent, and the first send retries the mint, so a
+  // refused creation never strands the compose.
+  function newConversation() {
+    // The intent flag first: the detach swaps the drafts under the
+    // pending key, and swapDraft reads the flag to pick that key.
+    face.pendingNew = true;
+    detachToWelcome();
+    try { window.location.hash = '#/chat'; } catch (error) { }
+    face.creating = post('/api/session/new', {}).then(function (reply) {
+      face.creating = null;
+      if (reply.status === 200 && reply.body && reply.body.id) {
+        window.localStorage.removeItem('fleet-draft-new');
+        face.pendingNew = false;
+        face.session = reply.body.id;
+        readSessions(true);
+        return reply.body.id;
+      }
+      return null;
+    }).catch(function () {
+      face.creating = null;
+      return null;
+    });
     el.task.focus();
   }
 
