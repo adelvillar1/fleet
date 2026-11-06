@@ -448,7 +448,11 @@
             paintGoal();
             if (reply.body.started) {
               // The goal started the work itself (C4): the run is in
-              // flight on this session — say so, not the passive carry.
+              // flight on this session — say so, not the passive carry,
+              // and open the pane on the run tab so the owner watches
+              // the tasks it declares.
+              openPane();
+              showPaneTab('run');
               notice('the goal is set — and it is running',
                 'the session is working on it now \u00b7 the chip names it');
             } else if (clearing) {
@@ -790,6 +794,12 @@
     panePreview: document.getElementById('pane-preview-body'),
     tabRun: document.getElementById('tab-run'),
     paneRun: document.getElementById('pane-run'),
+    gpCard: document.getElementById('gp-card'),
+    gpCount: document.getElementById('gp-count'),
+    gpState: document.getElementById('gp-state'),
+    gpGoalText: document.getElementById('gp-goal-text'),
+    gpTasks: document.getElementById('gp-tasks'),
+    gpNote: document.getElementById('gp-note'),
     tabFiles: document.getElementById('tab-files'),
     tabPreview: document.getElementById('tab-preview'),
     tabWeb: document.getElementById('tab-web'),
@@ -1076,6 +1086,15 @@
     // The live process: the run's own stage, turn, tool, and counts,
     // reduced from the same event log the transcript reads.
     process: null,
+    // The goal's task list (the goal-task-pane plan): the last full
+    // replacement a `todo` call carried — live off the `tasks` event,
+    // rebuilt on load from the log's `tasks` records. A view, never a
+    // synthesis: empty means the model declared nothing.
+    tasks: [],
+    // The completion's note, off the `goal_done` event. The done store
+    // keeps the goal text; the note rides the event only, so it shows
+    // live and on a replayed log, not on a bare state read.
+    goalNote: '',
     // The verify step's gate, read from the state document: the same
     // failover knob the route module owns.
     gate: null,
@@ -2990,6 +3009,26 @@
         face.goal = event.text || null;
         stripFold(event);
         paintRunbar();
+        paintGpCard();
+        break;
+      case 'tasks':
+        // The run's task list, as the last accepted todo call replaced
+        // it (the goal-task-pane plan): the pane card is a view over
+        // exactly this, live and on a replayed log.
+        face.tasks = Array.isArray(event.items) ? event.items : [];
+        paintGpCard();
+        break;
+      case 'goal_done':
+        // The goal tool marked the objective complete: it leaves the
+        // goals store (a done goal is a fact, not an objective), so the
+        // standing objective is gone and the chip names the completion.
+        // The card keeps the line it served — the event carries the
+        // text for exactly that.
+        face.goal = null;
+        face.goalDone = event.goal || null;
+        face.goalNote = event.note || '';
+        paintGoal();
+        paintGpCard();
         break;
       case 'folder':
         // The chat's working folder changed: one line, and the run bar
@@ -9044,6 +9083,62 @@
       ' \u00b7 /goal clear drops it';
   }
 
+  // The goal's tasks card (the goal-task-pane plan): one row per task
+  // in the order the model declared, the mockup's marks — the process
+  // stepper's own idiom. The card is a view: hidden while the list is
+  // empty, never synthesized from tool calls, the statuses shown
+  // exactly as the store normalized them.
+  function paintGpCard() {
+    if (!el.gpCard || !el.gpTasks) return;
+    if (!face.tasks.length) {
+      el.gpCard.hidden = true;
+      el.gpTasks.textContent = '';
+      return;
+    }
+    el.gpCard.hidden = false;
+    // The goal line serves either the standing objective or, once the
+    // tool completed it, the completion's own record of what it was.
+    var goalText = face.goal || face.goalDone || '';
+    if (el.gpGoalText) {
+      el.gpGoalText.textContent = goalText;
+      el.gpGoalText.hidden = !goalText;
+    }
+    if (el.gpState) {
+      el.gpState.hidden = !goalText;
+      el.gpState.textContent = face.goalDone ? 'done' : 'active';
+      el.gpState.dataset.state = face.goalDone ? 'done' : 'working';
+    }
+    var done = face.tasks.filter(function (item) {
+      return item.status === 'completed';
+    }).length;
+    if (el.gpCount) {
+      el.gpCount.textContent = done + ' of ' + face.tasks.length;
+      el.gpCount.dataset.state =
+        face.goalDone || done === face.tasks.length ? 'done' : 'working';
+    }
+    el.gpTasks.textContent = '';
+    face.tasks.forEach(function (item) {
+      var row = document.createElement('li');
+      row.className = 'gp-task';
+      row.dataset.status =
+        item.status === 'completed' || item.status === 'in_progress'
+          ? item.status
+          : 'pending';
+      var dot = document.createElement('span');
+      dot.className = 'gp-dot';
+      var step = document.createElement('span');
+      step.className = 'gp-step';
+      step.textContent = item.step;
+      row.appendChild(dot);
+      row.appendChild(step);
+      el.gpTasks.appendChild(row);
+    });
+    if (el.gpNote) {
+      el.gpNote.hidden = !(face.goalDone && face.goalNote);
+      el.gpNote.textContent = face.goalNote || '';
+    }
+  }
+
   // The goal popover (D1): the full text, and Set/Replace/Clear riding
   // /api/goal — the same route /goal rides, so the command and the chip
   // agree because they write through one seam.
@@ -9053,6 +9148,14 @@
       if (reply.status === 200) {
         face.goal = reply.body.text || null;
         paintGoal();
+        // A goal set with no run in flight started one (the reply says
+        // so): the pane opens on the run tab now, because the owner
+        // just asked to watch it work. A set riding an existing run
+        // does not grab the surface.
+        if (reply.body.started) {
+          openPane();
+          showPaneTab('run');
+        }
         if (onDone) onDone();
         return;
       }

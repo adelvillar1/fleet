@@ -504,9 +504,15 @@ function boot(options) {
     if (pathOnly === '/api/goal') {
       const body = {};
       try { Object.assign(body, JSON.parse(init.body || '{}')); } catch (e) {}
+      // A case may script the answer (the goal-task-pane plan's C5:
+      // the auto-open reads the reply's `started`, and a stub that
+      // never says started cannot exercise it — the desk verbs' seam).
+      const scripted = opts.goalReply && opts.goalReply(body);
       return Promise.resolve({
-        status: 200,
-        json: () => Promise.resolve({ type: 'goal', text: body.text || '' }),
+        status: scripted && scripted.status ? scripted.status : 200,
+        json: () => Promise.resolve(scripted && scripted.body
+          ? scripted.body
+          : { type: 'goal', text: body.text || '' }),
       });
     }
     if (pathOnly === '/api/settings') {
@@ -1934,6 +1940,195 @@ async function theGoalFieldIsAlwaysPresentAndWritable() {
   check('C1 the chip returns to the unset affordance',
     set.text('run-goal-btn') === 'goal' && set.IDS['run-goal-btn'].classList.contains('unset'),
     set.text('run-goal-btn'));
+}
+
+// GP (the goal-task-pane plan): the pane's tasks card is a view over the
+// todo tool's list — the live `tasks` event paints it, the empty list
+// hides it, a full replacement repaints it, and the marks are the
+// store's normalized three. The face never fabricates rows.
+async function theGoalTasksCardPaintsTheDeclaredList() {
+  const doc = {
+    sessions: {
+      type: 'sessions', read_at: 'now', current: '',
+      counts: { needs: 0, working: 0, background: 0, earlier: 1, total: 1 },
+      sessions: [row('gp-1', 'completed', { title: 'a conversation' })],
+    },
+    state: (asked) => ({ ...emptyState(asked), session: asked }),
+  };
+  const page = boot({ width: 1440, hash: '#/sessions/gp-1', documents: doc });
+  await flush();
+  page.open();
+  await flush();
+  check('GP the card is hidden while no list was declared',
+    page.IDS['gp-card'].hidden === true, String(page.IDS['gp-card'].hidden));
+  page.push({
+    type: 'tasks',
+    items: [
+      { step: 'read the merged commits', status: 'completed' },
+      { step: 'draft the notes', status: 'in_progress' },
+      { step: 'verify the links', status: 'pending' },
+    ],
+  });
+  await flush(40);
+  check('GP the declared list shows the card',
+    page.IDS['gp-card'].hidden === false, String(page.IDS['gp-card'].hidden));
+  const rows = page.rows('#gp-tasks .gp-task');
+  check('GP one row per task in the declared order',
+    rows.length === 3 &&
+      rows[0].dataset.status === 'completed' &&
+      rows[1].dataset.status === 'in_progress' &&
+      rows[2].dataset.status === 'pending',
+    JSON.stringify(rows.map((r) => r.dataset.status)));
+  check('GP the count reads the done share',
+    page.text('gp-count') === '1 of 3', page.text('gp-count'));
+  check('GP the in-progress step is the row the eye lands on',
+    rows[1].querySelector('.gp-step').textContent === 'draft the notes', '');
+  // No goal on this conversation: the header carries no goal line.
+  check('GP no goal means no goal line, not a fake one',
+    page.IDS['gp-state'].hidden === true && page.IDS['gp-goal-text'].hidden === true,
+    String(page.IDS['gp-state'].hidden));
+  // Full replacement: the model's own contract — the last list wins.
+  page.push({ type: 'tasks', items: [{ step: 'ship', status: 'completed' }] });
+  await flush(40);
+  const replaced = page.rows('#gp-tasks .gp-task');
+  check('GP a full replacement repaints the rows',
+    replaced.length === 1 && replaced[0].dataset.status === 'completed' &&
+      page.text('gp-count') === '1 of 1',
+    JSON.stringify(replaced.map((r) => r.dataset.status)));
+  // An empty list is a replacement to empty: the card hides again.
+  page.push({ type: 'tasks', items: [] });
+  await flush(40);
+  check('GP the empty list hides the card',
+    page.IDS['gp-card'].hidden === true, String(page.IDS['gp-card'].hidden));
+}
+
+// GP C6: the card names the session's standing goal, and the goal_done
+// event — the dispatch site's emission, replayed or live — flips the
+// header and shows the tool's note without a reload.
+async function theCardNamesTheGoalAndItsEnd() {
+  const doc = {
+    sessions: {
+      type: 'sessions', read_at: 'now', current: '',
+      counts: { needs: 0, working: 0, background: 0, earlier: 1, total: 1 },
+      sessions: [row('gp-2', 'completed', { title: 'a conversation' })],
+    },
+    state: (asked) => ({
+      ...emptyState(asked), session: asked, goal: 'draft the release notes',
+    }),
+  };
+  const page = boot({ width: 1440, hash: '#/sessions/gp-2', documents: doc });
+  await flush();
+  page.open();
+  await flush();
+  page.push({
+    type: 'tasks',
+    items: [{ step: 'draft the notes', status: 'in_progress' }],
+  });
+  await flush(40);
+  check('GP the header names the standing goal',
+    page.text('gp-goal-text') === 'draft the release notes' &&
+      page.text('gp-state') === 'active',
+    page.text('gp-state'));
+  page.push({
+    type: 'goal_done',
+    goal: 'draft the release notes',
+    note: 'the notes are drafted at docs/release-notes.md; links verified',
+  });
+  await flush(40);
+  check('GP the header flips to done',
+    page.text('gp-state') === 'done' &&
+      page.IDS['gp-state'].dataset.state === 'done',
+    page.text('gp-state'));
+  check('GP the tool note shows with the completion',
+    page.IDS['gp-note'].hidden === false &&
+      page.text('gp-note').includes('docs/release-notes.md'),
+    page.text('gp-note'));
+  check('GP the chip names the completion too',
+    page.text('run-goal-btn').includes('done'), page.text('run-goal-btn'));
+}
+
+// GP C5: a goal set with no run in flight opens the pane on the run tab
+// now — the reply's own `started` is the trigger, never a later event —
+// and a set riding an existing run does not grab the surface. The
+// owner's close still obeys.
+async function aGoalThatStartsAWorkOpensThePaneOnTheRun() {
+  const doc = {
+    sessions: {
+      type: 'sessions', read_at: 'now', current: '',
+      counts: { needs: 0, working: 0, background: 0, earlier: 1, total: 1 },
+      sessions: [row('gp-3', 'completed', { title: 'a conversation' })],
+    },
+    state: (asked) => ({ ...emptyState(asked), session: asked }),
+  };
+  const started = boot({
+    width: 1440, hash: '#/sessions/gp-3', documents: doc,
+    goalReply: () => ({ body: { type: 'goal', text: 'ship the picker', started: true } }),
+  });
+  await flush();
+  started.open();
+  await flush();
+  check('GP the pane starts closed', started.body.dataset.pane !== 'open',
+    String(started.body.dataset.pane));
+  started.fireOn('run-goal-btn', 'click');
+  started.IDS['goal-pop-input'].value = 'ship the picker';
+  started.fireOn('goal-pop-set', 'click');
+  await flush(40);
+  check('GP the started reply opens the pane',
+    started.body.dataset.pane === 'open', String(started.body.dataset.pane));
+  check('GP the pane opens on the run tab',
+    started.IDS['tab-run'].getAttribute('aria-selected') === 'true',
+    started.IDS['tab-run'].getAttribute('aria-selected'));
+  // The owner's close still obeys: the auto-open is a hand, not a trap.
+  started.fireOn('pane-close', 'click');
+  check('GP the owner can close it again',
+    started.body.dataset.pane === 'closed', String(started.body.dataset.pane));
+
+  const riding = boot({
+    width: 1440, hash: '#/sessions/gp-3', documents: doc,
+    goalReply: () => ({ body: { type: 'goal', text: 'ship the picker', started: false } }),
+  });
+  await flush();
+  riding.open();
+  await flush();
+  riding.fireOn('run-goal-btn', 'click');
+  riding.IDS['goal-pop-input'].value = 'ship the picker';
+  riding.fireOn('goal-pop-set', 'click');
+  await flush(40);
+  check('GP a set riding an existing run never opens the pane',
+    riding.body.dataset.pane !== 'open', String(riding.body.dataset.pane));
+}
+
+// GP C3: a restarted session rebuilds the card from the log alone — the
+// seed the resume carries is the log's own records, so the replayed
+// `tasks` and `goal_done` cards land in the same reducer as the live
+// stream. Nothing but the log holds the state.
+async function aReplayedLogRebuildsTheTaskCard() {
+  const doc = {
+    sessions: {
+      type: 'sessions', read_at: 'now', current: '',
+      counts: { needs: 0, working: 0, background: 0, earlier: 1, total: 1 },
+      sessions: [row('gp-4', 'completed', { title: 'a conversation' })],
+    },
+    state: (asked) => ({
+      ...emptyState(asked), session: asked, goal: 'draft the release notes',
+      events: [
+        { type: 'tasks', items: [{ step: 'draft the notes', status: 'completed' }] },
+        { type: 'goal_done', goal: 'draft the release notes', note: 'verified live' },
+      ],
+    }),
+  };
+  const page = boot({ width: 1440, hash: '#/sessions/gp-4', documents: doc });
+  await flush();
+  page.open();
+  await flush();
+  const rows = page.rows('#gp-tasks .gp-task');
+  check('GP the replayed list paints the card',
+    page.IDS['gp-card'].hidden === false && rows.length === 1 &&
+      rows[0].dataset.status === 'completed',
+    JSON.stringify(rows.map((r) => r.dataset.status)));
+  check('GP the replayed completion names the goal done',
+    page.text('gp-state') === 'done' && page.text('gp-note') === 'verified live',
+    page.text('gp-state'));
 }
 
 // C2 (drafts): each conversation's draft is its own — typing in one,
@@ -9785,6 +9980,10 @@ const cases = [
   ['C7 the conversation text size is the owner\'s', theConversationTextSizeIsTheOwners],
   ['C8 the servers card carries the registry', theServersCardCarriesTheRegistry],
   ['C1 the goal field is always present and writable', theGoalFieldIsAlwaysPresentAndWritable],
+  ['GP the tasks card paints the declared list', theGoalTasksCardPaintsTheDeclaredList],
+  ['GP the card names the goal and its end', theCardNamesTheGoalAndItsEnd],
+  ['GP a goal that starts work opens the pane on the run', aGoalThatStartsAWorkOpensThePaneOnTheRun],
+  ['GP a replayed log rebuilds the task card', aReplayedLogRebuildsTheTaskCard],
   ['C2 each conversation keeps its own draft', eachConversationKeepsItsOwnDraft],
   ['C3 editing a message rewinds and resends', editingAMessageRewindsAndResends],
   ['C4/C5 paste attaches and the @ typeahead references', pasteAttachesAndTheAtTypeaheadReferences],

@@ -704,6 +704,18 @@ pub enum UiEvent {
         /// the audit reads the record.
         resolution: Option<String>,
     },
+    /// The run's task list, as the last accepted `todo` call replaced
+    /// it. The face's pane card reads this live; the log carries the
+    /// same list as a `tasks` record, so a reload rebuilds it from the
+    /// log alone. The statuses are the store's normalized three.
+    Tasks {
+        items: Vec<crate::session::TaskItem>,
+    },
+    /// The `goal` tool marked the session's standing objective complete.
+    /// The comment at `run_goal` declares it; the emission lives at the
+    /// dispatch site beside the tool result, because `run_work` holds no
+    /// agent — the tool's own output JSON is the contract read there.
+    GoalDone { goal: String, note: String },
     /// A lane joined the run: its tools are in the model's tool set for
     /// the rest of the run, and its `lane_tools` record is in the log.
     LaneJoined { lane: String, tool_count: usize },
@@ -2033,6 +2045,11 @@ impl<'a> Agent<'a> {
                 "\n\n## Goal\n\nThe owner's standing objective for this session \u{2014} every turn serves it, and it outlives any one task:\n\n",
             );
             prompt.push_str(goal);
+            // The pane's task card is a view over the todo tool's list;
+            // a goal run that never declares tasks has nothing to show.
+            // One fixed line, part of this section's constant shape —
+            // the goal text itself stays pinned by its record.
+            prompt.push_str("\n\nTrack the work with the `todo` tool: send the complete task list as it changes, and mark the step in progress before starting it.");
         }
         if !skills.is_empty() {
             prompt.push_str(
@@ -4179,7 +4196,42 @@ impl<'a> Agent<'a> {
                     if let Ok(arguments) =
                         serde_json::from_str::<serde_json::Value>(&call.function.arguments)
                     {
-                        store_todo(&self.todos, &arguments);
+                        if let Some(items) = todo_items(&arguments) {
+                            store_todo(&self.todos, &items);
+                            // The face's pane card reads this live; the
+                            // log carries the same list as a `tasks`
+                            // record, so a reload rebuilds it from the
+                            // record and never from raw arguments.
+                            self.emit(UiEvent::Tasks {
+                                items: items.clone(),
+                            });
+                            self.record(&Record::Tasks { items })?;
+                        }
+                    }
+                }
+                // The goal tool's completion rides its own output JSON —
+                // the shape `run_goal` builds. `run_work` holds no
+                // agent, so the event and the record land here, beside
+                // the tool result they describe.
+                if call.function.name == tools::GOAL_TOOL {
+                    if let Ok(value) = serde_json::from_str::<serde_json::Value>(&output) {
+                        if value.get("completed").and_then(|v| v.as_bool()) == Some(true) {
+                            let goal = value
+                                .get("goal")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or_default()
+                                .to_string();
+                            let note = value
+                                .get("note")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or_default()
+                                .to_string();
+                            self.emit(UiEvent::GoalDone {
+                                goal: goal.clone(),
+                                note: note.clone(),
+                            });
+                            self.record(&Record::GoalDone { goal, note })?;
+                        }
                     }
                 }
             }
@@ -6404,8 +6456,9 @@ async fn run_builtin(
 /// `sessions-goals.json` — the same file `/goal` writes — so the
 /// model's completion and the owner's setting meet in one place. The
 /// completion is logged by the tool_result this returns (hard rule 5);
-/// the `goal-complete` UI event rides the ui channel when the run
-/// carries one, so the face names it without deriving anything.
+/// the dispatch site reads this output's JSON beside that result and
+/// emits the `GoalDone` event and the `goal_done` record, so the face
+/// names it without deriving anything.
 /** The `goal` tool's run, exposed for the pins. */
 #[cfg(test)]
 pub(crate) fn run_goal_for_test(
@@ -6951,13 +7004,15 @@ impl Agent<'_> {
     }
 }
 
-/// Remember a todo call's list. Full replacement, like the tool's own
-/// contract: the list the model last sent is the run's list.
-fn store_todo(todos: &std::sync::Mutex<Vec<(String, String)>>, arguments: &serde_json::Value) {
-    let Some(items) = arguments.get("items").and_then(|value| value.as_array()) else {
-        return;
-    };
-    let mut next: Vec<(String, String)> = Vec::new();
+/// The task list one `todo` call carries: the model's items with the
+/// store's normalized statuses. `None` when the call named no `items`
+/// array at all — a malformed call leaves the run's list standing; an
+/// explicit empty array is a replacement to empty. The parse lives
+/// beside the tool's schema, so the store, the event, and the record
+/// all read one shape.
+fn todo_items(arguments: &serde_json::Value) -> Option<Vec<crate::session::TaskItem>> {
+    let items = arguments.get("items").and_then(|value| value.as_array())?;
+    let mut next: Vec<crate::session::TaskItem> = Vec::new();
     for item in items {
         let Some(step) = item.get("step").and_then(|value| value.as_str()) else {
             continue;
@@ -6969,10 +7024,22 @@ fn store_todo(todos: &std::sync::Mutex<Vec<(String, String)>>, arguments: &serde
             }
             _ => "pending",
         };
-        next.push((step.to_string(), status.to_string()));
+        next.push(crate::session::TaskItem {
+            step: step.to_string(),
+            status: status.to_string(),
+        });
     }
+    Some(next)
+}
+
+/// Remember a todo call's list. Full replacement, like the tool's own
+/// contract: the list the model last sent is the run's list.
+fn store_todo(todos: &std::sync::Mutex<Vec<(String, String)>>, items: &[crate::session::TaskItem]) {
     if let Ok(mut todos) = todos.lock() {
-        *todos = next;
+        *todos = items
+            .iter()
+            .map(|item| (item.step.clone(), item.status.clone()))
+            .collect();
     }
 }
 
@@ -9867,23 +9934,90 @@ mod tests {
     #[test]
     fn the_ledger_replaces_the_list_and_marks_statuses() {
         let todos = std::sync::Mutex::new(Vec::new());
-        store_todo(
-            &todos,
-            &serde_json::json!({"items": [
-                {"step": "read", "status": "done"},
-                {"step": "edit", "status": "doing"},
-                {"step": "test"}
-            ]}),
-        );
+        let items = todo_items(&serde_json::json!({"items": [
+            {"step": "read", "status": "done"},
+            {"step": "edit", "status": "doing"},
+            {"step": "test"}
+        ]}))
+        .expect("a call that names items carries a list");
+        store_todo(&todos, &items);
         let block = render_todo_block(&todos.lock().unwrap());
         assert!(block.contains("[x] read"), "{block}");
         assert!(block.contains("[~] edit"), "{block}");
         assert!(block.contains("[ ] test"), "{block}");
+        // The typed list the event and the record carry: the aliases
+        // normalized to the store's three statuses.
+        assert_eq!(
+            items,
+            vec![
+                crate::session::TaskItem {
+                    step: "read".into(),
+                    status: "completed".into()
+                },
+                crate::session::TaskItem {
+                    step: "edit".into(),
+                    status: "in_progress".into()
+                },
+                crate::session::TaskItem {
+                    step: "test".into(),
+                    status: "pending".into()
+                },
+            ]
+        );
         // A second call replaces, never appends.
-        store_todo(&todos, &serde_json::json!({"items": [{"step": "ship"}]}));
+        store_todo(
+            &todos,
+            &todo_items(&serde_json::json!({"items": [{"step": "ship"}]})).unwrap(),
+        );
         let items = todos.lock().unwrap();
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].0, "ship");
+    }
+
+    /// A `todo` call that names no `items` array is malformed: the
+    /// run's list stands. An explicit empty array is a replacement to
+    /// empty — the full-replacement contract covers it.
+    #[test]
+    fn a_malformed_todo_call_leaves_the_list_standing() {
+        let todos = std::sync::Mutex::new(vec![("keep".to_string(), "pending".to_string())]);
+        assert!(todo_items(&serde_json::json!({"steps": []})).is_none());
+        assert_eq!(todos.lock().unwrap().len(), 1);
+        let empty = todo_items(&serde_json::json!({"items": []})).unwrap();
+        assert!(empty.is_empty());
+        store_todo(&todos, &empty);
+        assert!(todos.lock().unwrap().is_empty());
+    }
+
+    /// The goal tool's completion output is the contract the dispatch
+    /// site reads to emit `GoalDone` and write the `goal_done` record
+    /// (plan 2026-11-05-goal-task-pane, C6): completed, the goal, and a
+    /// note — and the done store carries it afterwards.
+    #[test]
+    fn the_goal_tools_completion_names_the_shape_the_face_reads() {
+        let home = scratch("goal-complete-shape");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::write(
+            home.join("sessions-goals.json"),
+            "{\"s1\":\"ship the picker\"}",
+        )
+        .unwrap();
+        let out = run_goal_for_test(
+            Some(home.clone()),
+            Some("s1".into()),
+            &serde_json::json!({"action": "complete"}),
+        );
+        let value: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(value["completed"], serde_json::Value::Bool(true), "{value}");
+        assert_eq!(value["goal"], "ship the picker", "{value}");
+        assert!(
+            value["note"].as_str().is_some_and(|note| !note.is_empty()),
+            "{value}"
+        );
+        let done: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(home.join("sessions-goals-done.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(done["s1"], "ship the picker", "{done}");
     }
 
     /// K6 (designs-are-project-knowledge): the assembled block carries
@@ -11540,6 +11674,10 @@ mod tests {
         };
         assert_eq!(none, default_prompt(), "no goal is the compiled constant");
         assert!(!none.contains("## Goal"), "{none}");
+        assert!(
+            !none.contains("Track the work with the `todo` tool"),
+            "{none}"
+        );
 
         let set = {
             let mut progress = Vec::new();
@@ -11566,6 +11704,10 @@ mod tests {
             "{set}"
         );
         assert!(set.contains("ship the picker before Thursday"), "{set}");
+        // A goal run is told to maintain the task list the pane card
+        // shows (plan 2026-11-05-goal-task-pane, C7); a run without a
+        // goal carries no such line.
+        assert!(set.contains("Track the work with the `todo` tool"), "{set}");
         // The goal rides ahead of the skills section when both are set.
         let skills_at = set.find("## Skills");
         let goal_at = set.find("## Goal").expect("the goal section");

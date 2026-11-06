@@ -127,6 +127,17 @@ pub struct Survival {
     pub dropped: Vec<String>,
 }
 
+/// One row of the run's task list: the step as the model wrote it and
+/// the store's normalized status (`pending` / `in_progress` /
+/// `completed`). The `tasks` record's item — the log's typed vocabulary
+/// for the list, so a rebuild reads the record and never the raw tool
+/// arguments.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TaskItem {
+    pub step: String,
+    pub status: String,
+}
+
 /// One line of a session log.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -324,6 +335,22 @@ pub enum Record {
     /// message.
     Goal {
         text: String,
+    },
+    /// One accepted `todo` call's full-replacement list, recorded beside
+    /// the tool result. The face's rebuild reads this typed record — the
+    /// store speaks the shape, so nothing downstream parses raw tool
+    /// arguments (the fixture-vs-bridge lesson). Bookkeeping: it replays
+    /// to no message.
+    Tasks {
+        items: Vec<TaskItem>,
+    },
+    /// The `goal` tool's completion: the objective it closed and the
+    /// note it returned. The `goal` record's sibling — the objective is
+    /// pinned at run start, the completion here with the tool's own
+    /// words. Bookkeeping: it replays to no message.
+    GoalDone {
+        goal: String,
+        note: String,
     },
     /// The route decision's execution head, recorded once at run start
     /// when the lane judged it (plan 2026-10-23-judgment-beats-one-lane.md,
@@ -1378,6 +1405,8 @@ pub fn conversation(records: &[Record]) -> Conversation {
             | Record::Memory { .. }
             | Record::Curated { .. }
             | Record::Goal { .. }
+            | Record::Tasks { .. }
+            | Record::GoalDone { .. }
             | Record::Routed { .. }
             | Record::ToolResolution { .. } => {}
         }
@@ -2578,6 +2607,75 @@ mod tests {
         }
         // And the log still lists as a readable session.
         assert_eq!(list(&home).unwrap().len(), 1);
+        fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn a_tasks_record_and_a_goal_done_record_round_trip_through_the_log() {
+        // The pane card's rebuild reads these records from the log
+        // alone (plan 2026-11-05-goal-task-pane, C1/C6): the tag is
+        // `tasks` / `goal_done`, the typed items and the note survive,
+        // and neither replays to a conversation message.
+        let home = temp_home("tasks-record");
+        let mut session = Session::create(&home, "m").unwrap();
+        session
+            .record(&Record::Tasks {
+                items: vec![
+                    TaskItem {
+                        step: "read".into(),
+                        status: "completed".into(),
+                    },
+                    TaskItem {
+                        step: "edit".into(),
+                        status: "in_progress".into(),
+                    },
+                    TaskItem {
+                        step: "test".into(),
+                        status: "pending".into(),
+                    },
+                ],
+            })
+            .unwrap();
+        session
+            .record(&Record::GoalDone {
+                goal: "ship the picker".into(),
+                note: "verified by this session's tool results".into(),
+            })
+            .unwrap();
+        let line = std::fs::read_to_string(session.path()).unwrap();
+        let tasks_line = line.lines().nth(1).expect("the tasks line");
+        assert!(
+            tasks_line.starts_with("{\"type\":\"tasks\""),
+            "{tasks_line}"
+        );
+        assert!(
+            tasks_line.contains("\"status\":\"in_progress\""),
+            "{tasks_line}"
+        );
+        let done_line = line.lines().nth(2).expect("the goal_done line");
+        assert!(
+            done_line.starts_with("{\"type\":\"goal_done\""),
+            "{done_line}"
+        );
+
+        let records = replay(session.path()).unwrap();
+        match &records[1] {
+            Record::Tasks { items } => {
+                assert_eq!(items.len(), 3);
+                assert_eq!(items[1].status, "in_progress");
+            }
+            other => panic!("expected a tasks record, got {other:?}"),
+        }
+        match &records[2] {
+            Record::GoalDone { goal, note } => {
+                assert_eq!(goal, "ship the picker");
+                assert!(note.contains("verified"));
+            }
+            other => panic!("expected a goal_done record, got {other:?}"),
+        }
+        // Bookkeeping: neither replays to a message.
+        let messages = messages(&records);
+        assert!(messages.is_empty(), "{messages:?}");
         fs::remove_dir_all(&home).ok();
     }
 

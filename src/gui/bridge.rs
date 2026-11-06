@@ -6458,6 +6458,14 @@ fn cards_from_records(records: &[session::Record]) -> (Vec<Value>, usize) {
                 // shows the line the run carried.
                 cards.push(json!({"type": "goal", "text": text}));
             }
+            session::Record::Tasks { items } => {
+                // The pane card's rebuild: the last `tasks` card a replay
+                // carries is the list the face shows.
+                cards.push(json!({"type": "tasks", "items": items}));
+            }
+            session::Record::GoalDone { goal, note } => {
+                cards.push(json!({"type": "goal_done", "goal": goal, "note": note}));
+            }
             session::Record::Skills { skills } => {
                 // The log pins what the run declared, not what the loader
                 // skipped — a skipped name lives in the loader's own
@@ -10763,6 +10771,15 @@ pub(crate) fn describe(event: &UiEvent) -> Value {
             "preview": preview,
             "approved": approved,
             "resolution": resolution,
+        }),
+        UiEvent::Tasks { items } => json!({
+            "type": "tasks",
+            "items": items,
+        }),
+        UiEvent::GoalDone { goal, note } => json!({
+            "type": "goal_done",
+            "goal": goal,
+            "note": note,
         }),
         UiEvent::LaneJoined { lane, tool_count } => {
             json!({"type": "lane", "lane": lane, "tools": tool_count})
@@ -15689,6 +15706,47 @@ mod tests {
         let value = describe(&UiEvent::Thinking("count the rows".to_string()));
         assert_eq!(value["type"], "thinking", "{value:?}");
         assert_eq!(value["text"], "count the rows", "{value:?}");
+    }
+
+    #[test]
+    fn the_tasks_and_goal_done_shapes_live_and_replayed() {
+        // The pane card's wire pins (plan 2026-11-05-goal-task-pane,
+        // C2/C3/C6): the live event and the replayed record carry the
+        // same document, so one face case covers both paths.
+        let tasks = describe(&UiEvent::Tasks {
+            items: vec![session::TaskItem {
+                step: "read".into(),
+                status: "completed".into(),
+            }],
+        });
+        assert_eq!(tasks["type"], "tasks", "{tasks:?}");
+        assert_eq!(tasks["items"][0]["step"], "read", "{tasks:?}");
+        assert_eq!(tasks["items"][0]["status"], "completed", "{tasks:?}");
+        let done = describe(&UiEvent::GoalDone {
+            goal: "ship the picker".into(),
+            note: "verified".into(),
+        });
+        assert_eq!(done["type"], "goal_done", "{done:?}");
+        assert_eq!(done["goal"], "ship the picker", "{done:?}");
+        assert_eq!(done["note"], "verified", "{done:?}");
+
+        let records = vec![
+            session::Record::Tasks {
+                items: vec![session::TaskItem {
+                    step: "read".into(),
+                    status: "completed".into(),
+                }],
+            },
+            session::Record::GoalDone {
+                goal: "ship the picker".into(),
+                note: "verified".into(),
+            },
+        ];
+        let (cards, _) = cards_from_records(&records);
+        assert_eq!(cards[0]["type"], "tasks", "{cards:?}");
+        assert_eq!(cards[0]["items"][0]["step"], "read", "{cards:?}");
+        assert_eq!(cards[1]["type"], "goal_done", "{cards:?}");
+        assert_eq!(cards[1]["note"], "verified", "{cards:?}");
     }
 
     #[test]

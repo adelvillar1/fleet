@@ -1322,6 +1322,11 @@ impl App {
             // deltas ride the same ignore.
             UiEvent::Reasoning { .. } => {}
             UiEvent::Thinking(_) => {}
+            // The task card and the goal's done mark are the browser
+            // face's pane surface; the TUI's transcript already carries
+            // the todo and goal tool results these events describe.
+            UiEvent::Tasks { .. } => {}
+            UiEvent::GoalDone { .. } => {}
             // The terminal has no door to raise: the run's own refusal
             // names the missing keys, and `fleet onboard` walks the same
             // steps here.
@@ -3093,8 +3098,12 @@ fn entry_of(record: &Record) -> Option<Entry> {
         // run keeps the route it had.
         | Record::PinRefused { .. } => None,
         // Bookkeeping: the standing goal rides the prompt, and the run
-        // card is where a TUI reads it.
+        // card is where a TUI reads it. The task list and the goal's
+        // completion are the face's pane card — the tool results are
+        // the transcript's rows.
         Record::Goal { .. } => None,
+        Record::Tasks { .. } => None,
+        Record::GoalDone { .. } => None,
         // Bookkeeping: the execution head rides the prompt's one line
         // (C3), and the route strip names it — not a conversation block.
         Record::Routed { .. } => None,

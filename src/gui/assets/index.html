@@ -1057,6 +1057,23 @@
       </div>
     </section>
 
+    <!-- The goal's tasks (the goal-task-pane plan): a view over the
+         todo tool's list, live and rebuilt from the log. Hidden while
+         the list is empty — the face never fabricates rows from tool
+         calls; the statuses are the store's normalized three. -->
+    <section class="card gp-card" id="gp-card" hidden>
+      <header class="card-head">
+        <h2>the goal&rsquo;s tasks</h2>
+        <span class="count" id="gp-count" data-state="working"></span>
+      </header>
+      <div class="gp-goal">
+        <span class="process-state" id="gp-state" data-state="working">active</span>
+        <p class="gp-goal-text" id="gp-goal-text"></p>
+      </div>
+      <ol class="gp-tasks" id="gp-tasks"></ol>
+      <p class="gp-note" id="gp-note" hidden></p>
+    </section>
+
 
     <section class="card" id="face-card">
       <header class="card-head">
