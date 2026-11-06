@@ -5,7 +5,7 @@ updated: 2026-11-06
 slug: reload-reattach
 ---
 
-# Plan: a reload re-opens the conversation it held
+# Plan: a reload restores what was showing
 
 ## Context
 
@@ -40,15 +40,24 @@ done store, and the log's `tasks`/`goal_done` records are all on disk.
 The defect is purely that the reloaded face never re-attaches the
 conversation whose state would rebuild from them.
 
-No mockup: there is no new surface — the chip and the card exist and
-are proven; this plan is the re-attach that feeds them.
+And the owner widened the ruling to a principle: **every surface that
+is reloaded restores what was showing.** The second gap that hides the
+goal card specifically: the pane's *width* is persisted
+(`fleet-pane-width`) but its **open/closed state and active tab are
+not** — a reload closes the pane, so the just-rebuilt tasks card is
+invisible until the pane button is pressed again.
+
+No mockup: there is no new surface — the chip, the card, and the pane
+exist and are proven; this plan is the persistence and re-attach that
+feed them.
 
 ## Direction lock
 
-- **A reload is the same address again** (the face's own law,
-  `app.js` header): a page reloaded at `#/chat` re-opens the
-  conversation it held. The owner should not be able to tell a reload
-  happened.
+- **A reload restores what was showing, on every surface** (the face's
+  own law — "a reload is the same address again" — widened by the
+  owner's ruling): the chat re-opens its conversation, the pane
+  re-opens at its tab, the boards re-read, the filters hold. The owner
+  should not be able to tell a reload happened.
 - **A deliberate detach stays a detach.** The rail's home press and
   **New** land on the welcome on purpose (N1: "the home is a place") —
   they clear the memory, so the *next* reload shows the welcome too.
@@ -66,13 +75,22 @@ are proven; this plan is the re-attach that feeds them.
    New mint's bind, dispatchTask's create-bind) and cleared by
    `detachToWelcome` (the deliberate detach). One key, one writer
    helper beside the draft helpers.
-2. **The boot re-attaches.** At boot, when the address is `#/chat` (or
+2. **The pane returns with the reload.** The pane's open/closed state
+   and its active tab persist beside the width (`fleet-pane`,
+   `fleet-pane-tab`), written by `openPane`/`closePane`/`showPaneTab`
+   and applied at boot before the first paint — the tasks card lives
+   in the pane, so a reload that closes the pane hides the very thing
+   the owner is watching.
+3. **The boot re-attaches.** At boot, when the address is `#/chat` (or
    bare) and a stored id exists, the route's chat branch runs the same
    re-attach the sessions case runs: `openWork(stored, {keepHash:
    true})` — the address stays `#/chat` (N1: the chat page is the
    standing place), the seed fills the transcript, the chip, and the
    card. A stored id the archive no longer holds takes `openWork`'s
    existing refusal path (a named notice, the welcome standing).
+   Every other surface's reload already restores through its address
+   (`#/desk/<slug>`, `#/huddles/<id>`, the boards' own reads) — the
+   plan verifies that rather than reinventing it.
 3. **The detach clears the memory.** `detachToWelcome` removes the key
    — the home press and New produce a welcome that *stays* a welcome
    across reloads, exactly as the owner chose it.
@@ -82,15 +100,16 @@ are proven; this plan is the re-attach that feeds them.
 5. **Pins, gate, docs.** `tests/face/harness.mjs` gains the surface's
    cases — the stored id written on bind and cleared on detach, the
    chat boot's re-attach, the chip and card rebuilding from the seed,
-   the deliberate detach surviving a reload, the bare read only on a
-   true welcome, and the refused id landing on a named welcome (C1–C6)
-   — and the live pass drives the running face end to end (C7). The
-   gate runs whole before any push carrying code — `cargo fmt --all
-   --check`, `cargo clippy --all-targets -- -D warnings`,
-   `cargo build --release`, `cargo test`, each exit code read on the
-   invocation, never through a status-losing pipe (C8). The doc updates
-   land with the work: gui.md's reload sentence and the
-   FUNCTIONAL-SPECIFICATIONS conversation section (C9).
+   the pane's open state and tab restored at boot, the deliberate
+   detach surviving a reload, the bare read only on a true welcome,
+   and the refused id landing on a named welcome (C1–C7) — and the
+   live pass drives the running face end to end (C8). The gate runs
+   whole before any push carrying code — `cargo fmt --all --check`,
+   `cargo clippy --all-targets -- -D warnings`, `cargo build
+   --release`, `cargo test`, each exit code read on the invocation,
+   never through a status-losing pipe (C9). The doc updates land with
+   the work: gui.md's reload sentence and the
+   FUNCTIONAL-SPECIFICATIONS conversation section (C10).
 
 ## Precedents this plan answers
 
@@ -112,10 +131,11 @@ are proven; this plan is the re-attach that feeds them.
 
 ## Use cases
 
-- **UC1 — reload mid-goal.** A goal run is working; the owner reloads
-  the tab. The chip returns with the standing goal, the tasks card
-  returns with its list, and the run's live events keep flowing —
-  nothing to click.
+- **UC1 — reload mid-goal.** A goal run is working; the pane shows the
+  tasks card. The owner reloads the tab: the conversation returns, the
+  pane re-opens at its tab with the card, the chip returns with the
+  standing goal, and the run's live events keep flowing — nothing to
+  click.
 - **UC2 — reload after a deliberate home.** The owner pressed the
   rail's home (or New) and reloaded: the welcome stands, as chosen.
 - **UC3 — the stored conversation is gone.** The session was archived
@@ -125,8 +145,9 @@ are proven; this plan is the re-attach that feeds them.
 ## UX routes
 
 No new HTTP routes. The re-attach reuses `POST /api/resume` and the
-existing `GET /api/state?session=` read. One localStorage key
-(`fleet-open-session`) rides beside the other `fleet-*` keys.
+existing `GET /api/state?session=` read. Three localStorage keys ride
+beside the other `fleet-*` keys: `fleet-open-session`, `fleet-pane`,
+`fleet-pane-tab`.
 
 ## Acceptance criteria
 
@@ -142,31 +163,42 @@ existing `GET /api/state?session=` read. One localStorage key
       shows the conversation's `goal`/`goal_done` from its own state
       document and the tasks card shows the log's list — the rebuild
       chain is the seed's, no second one. Pinned by a harness case.
-- [ ] **C4 — a deliberate detach stays detached across reloads.** After
+- [ ] **C4 — the pane returns with the reload, on every surface.** The
+      pane's open/closed state and its active tab persist and are
+      applied at boot, so a reload mid-goal re-opens the pane with the
+      tasks card showing; a reload with the pane deliberately closed
+      keeps it closed. Pinned by harness cases.
+- [ ] **C5 — a deliberate detach stays detached across reloads.** After
       the home press or New, a reload shows the welcome. Pinned by a
       harness case.
-- [ ] **C5 — the chip never names an unshown conversation.** A bare
+- [ ] **C6 — the chip never names an unshown conversation.** A bare
       `/api/state` read happens only when no conversation is shown; the
       shown conversation's read always names it. Pinned by a harness
       case.
-- [ ] **C6 — a vanished conversation is named.** A stored id the
+- [ ] **C7 — a vanished conversation is named.** A stored id the
       archive refuses lands on the welcome through `openWork`'s
       existing refusal path (the notice), never a silent blank. Pinned
       by a harness case.
-- [ ] **C7 — the live proof.** On the running face: a goal conversation
-      open, reload the tab, the chip and card return without a click;
-      then New, reload, the welcome stands. Quoted in the recap.
-- [ ] **C8 — the gate.** fmt, clippy, release build, test — exit codes
-      read directly.
-- [ ] **C9 — the docs.** gui.md's reload sentence (the face header's
-      own law) gains the re-attach; FUNCTIONAL-SPECIFICATIONS's
-      conversation section names it.
+- [ ] **C8 — the live proof.** On the running face: a goal conversation
+      open with the pane showing the tasks card, reload the tab — the
+      conversation, the pane, and the card return without a click;
+      then New, reload, the welcome stands with the pane closed. Quoted
+      in the recap.
+- [ ] **C9 — the gate runs whole locally before any push carrying
+      code.** The four commands of the house gate — `cargo fmt --all
+      --check`, `cargo clippy --all-targets -- -D warnings`,
+      `cargo build --release`, `cargo test` — each exit 0 with its exit
+      code read on the invocation, never through a status-losing pipe.
+- [ ] **C10 — the docs.** gui.md's reload sentence (the face header's
+      own law) gains the re-attach and the pane persistence;
+      FUNCTIONAL-SPECIFICATIONS's conversation section names it.
 
 ## Files to be touched
 
-- `src/gui/assets/app.js` — the stored id's writer/clearer, the chat
-  branch's re-attach, the boot's read of the key.
-- `tests/face/harness.mjs` — C1–C6's cases (the storage seam exists).
+- `src/gui/assets/app.js` — the stored id's writer/clearer, the pane
+  state's persistence and boot restore, the chat branch's re-attach,
+  the boot's read of the keys.
+- `tests/face/harness.mjs` — C1–C7's cases (the storage seam exists).
 - `docs/features/gui.md`, `FUNCTIONAL-SPECIFICATIONS.md` — the reload
   sentence.
 
