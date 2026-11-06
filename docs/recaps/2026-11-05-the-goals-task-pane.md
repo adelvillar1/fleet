@@ -136,9 +136,10 @@ gap the code had been declaring without shipping.
 
 ## Where it stands, honestly
 
-- The pane card is **deployed and serving**: the face at port 3080 and
-  the dmg both carry it; a reload picks up the served shell.
-- Trunk is merged and pushed through `f50e971` (the parallel session's
+- The pane card and the New-control fix are **deployed and serving**:
+  the face at port 3080 and the dmg both carry them; a reload picks up
+  the served shell.
+- Trunk is merged and pushed through `fff6dc3` (the parallel session's
   `edf5274` rides the same refs); the master worktree is caught up.
 - **KI-451 and KI-452 are open** — the account-400 failover
   classification and the blend1 doctor pair's load sensitivity — both
@@ -175,3 +176,12 @@ the press. The three N2-era harness tests were re-pointed to the ruling
 and three pins added — harness **941 checks / 105 cases**, the gate
 **2,077 / 0**, and the spec and gui.md sentences now name the timing.
 KI-453 carries the record.
+
+The fix shipped as `fff6dc3` — pushed to `face-plugin-host` **and**
+`master` (`00d69a7..fff6dc3`) — and was delivered through a new inode
+(347645925) with the service restarted (pid 94983, port 3080 answering
+200, the served `app.js` carrying `detachToWelcome` and
+`queuedSession`). The dmg was rebuilt with the fix verified from inside
+its bundle (`detachToWelcome` in the packaged `fleet-desktop` — 10.89
+MiB). The regression is closed in the running app, not only in the
+repo.
