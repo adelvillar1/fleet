@@ -8,7 +8,11 @@ vendor client: it asks `sys1_extract` for the entity pass and
 judgment (segmentation, the 0.85/0.35 floors, the bounded adjudication,
 absence as a named fact, the quote rule) stays in Rust unchanged. The
 plan completed 9 of 9, and the live proof found four defects — three in
-the desk's store, one introduced by the move itself.
+the desk's store, one introduced by the move itself. A sweep of every
+judgment surface followed (`e86cd4e`), the sweep's three repairs landed
+(`4bf08f6`, `de5d643`), and the session closed with the bundles rebuilt,
+the face relaunched on the new binary, and master fast-forwarded
+(`de5d643`).
 
 ## What was built
 
@@ -89,7 +93,9 @@ On a scratch home with the machine's keys:
 
 fmt 0, clippy 0, `cargo build --release` 0, `cargo test` 0 — lib
 1,865/0, integration 168/0 (4 ignored, one of them the live proof) —
-sys1's own `python3 -m unittest discover -s tests -t .` 17/17.
+sys1's own `python3 -m unittest discover -s tests -t .` 17/17. The gate
+was re-run after the sweep's repairs with the same counts; the recap and
+the docs commits that followed touch no code.
 
 ## The audit that followed
 
@@ -101,8 +107,30 @@ removed `sys1_extracts()`, the live test's missing-key branch (a panic
 where the house convention is a loud skip), and the probe's silent-pass
 path on a missing or refused reply.
 
-## Follow-ups named, not hidden
+## Close-out
 
+- **The bundles.** `cargo tauri build` rebuilt the workspace and
+  produced `fleet.app` + `fleet_0.3.0-beta_aarch64.dmg` (10.87 MiB). The
+  dmg was mounted and read rather than trusted from the log:
+  `sys1_extract` appears twice in its `mcp_server.py`, `def extract` in
+  its `extraction.py`, `task_spec` four times — the artifact carries the
+  verb. The `/Applications/fleet.app` copy is byte-identical to the
+  fresh build (`cmp` on `fleet-desktop`, `extraction.py`,
+  `mcp_server.py`, the lane README); it was current at build time, not
+  installed by this session. No face assets changed, so there was no
+  asset build or cache to bust.
+- **The face.** `~/.fleet/bin/fleet` replaced with the new binary and
+  `com.fleet.gui` kicked (new pid 94108). Verified live: `/` returns
+  200, `/api/state` answers, and `fleet lanes` against the installed
+  binary reports sys1 `✓ ok` with
+  `sys1_classify · sys1_extract · sys1_perceive_document`.
+- **The merge.** Master was 0 behind, so it fast-forwarded:
+  `origin/master` `ef591be → de5d643`, with `origin/face-plugin-host`
+  and the branch at the same tip. No force, nothing reverted. The
+  second worktree (`Projects/fleet-master-wt`) was clean and 62 commits
+  behind; it was fast-forwarded to the same tip on the owner's word.
+
+## Follow-ups named, not hidden
 - The desk's claim pass asks the lane's **choice head per segment**
   (kind labels), not the entity verb. That is its own shape and the
   floors it applies are the same constants; using LOCATE there would be
