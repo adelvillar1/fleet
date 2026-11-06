@@ -2478,6 +2478,14 @@ async function theSeatAnswersFromTheKeys() {
     buttons.length === 8 && buttons[0].textContent.includes('1') &&
       buttons[3].textContent.includes('4'),
     buttons.map((one) => one.textContent).join(' | '));
+  // The label once: the key badge then the text, never the label twice
+  // (the seat's decision buttons carried `Yes1 Yes` until the node call
+  // stopped setting the text the appended nodes already build).
+  check('C12 the seat labels its decisions once',
+    buttons[0].textContent === '1 Yes' &&
+      buttons[1].textContent === '2 Yes, and the rest of this run' &&
+      buttons[2].textContent === '3 No',
+    buttons.slice(0, 3).map((one) => one.textContent).join(' | '));
   // A digit the owner was not typing answers the seat.
   page.fireWindow('keydown', { key: '1' });
   await flush(120);

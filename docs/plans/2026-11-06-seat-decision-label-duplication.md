@@ -1,5 +1,5 @@
 ---
-status: draft
+status: active
 created: 2026-11-06
 updated: 2026-11-06
 slug: seat-decision-label-duplication
@@ -38,10 +38,10 @@ High-level steps:
 
 ## Acceptance criteria
 
-- [ ] C0 — the seat's decision button renders the key and the label once
+- [x] C0 — the seat's decision button renders the key and the label once
       each, the key first.
-- [ ] C1 — the design seat's decision button does the same.
-- [ ] C2 — the harness's C12 case asserts each button's exact text.
+- [x] C1 — the design seat's decision button does the same.
+- [x] C2 — the harness's C12 case asserts each button's exact text.
 - [ ] C3 — the gate and the harness run green.
 
 ## Files to be touched
