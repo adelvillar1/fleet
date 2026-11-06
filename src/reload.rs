@@ -145,10 +145,8 @@ pub fn parse_snapshot(record: &str, present: bool) -> ServiceSnapshot {
         let value = value.trim();
         match key {
             "pid" => pid = value.parse::<u32>().ok(),
-            "state" => {
-                if state.is_none() {
-                    state = Some(value.to_string());
-                }
+            "state" if state.is_none() => {
+                state = Some(value.to_string());
             }
             _ => {}
         }
@@ -602,21 +600,21 @@ pub fn reload_labeled(
     // service is now absent, or a process exists with nothing bound,
     // the pair is run together so the domain cannot be left holding a
     // service that is not there.
-    if post_state(after.pid, port_answers(host, port)) != PostState::Serving {
-        if after.present || !before.present {
-            if let Err(error) = bootout(uid, label) {
-                notes.push(error);
-            } else {
-                steps.push("bootout: unloaded the service for a clean load".to_string());
-            }
-            let plist = plist_path(user_home, label);
-            match bootstrap(uid, &plist) {
-                Ok(()) => steps.push(format!("bootstrap: reloaded {}", plist.display())),
-                Err(error) => notes.push(error),
-            }
-            std::thread::sleep(SETTLE);
-            after = read_snapshot(uid, label);
+    if post_state(after.pid, port_answers(host, port)) != PostState::Serving
+        && (after.present || !before.present)
+    {
+        if let Err(error) = bootout(uid, label) {
+            notes.push(error);
+        } else {
+            steps.push("bootout: unloaded the service for a clean load".to_string());
         }
+        let plist = plist_path(user_home, label);
+        match bootstrap(uid, &plist) {
+            Ok(()) => steps.push(format!("bootstrap: reloaded {}", plist.display())),
+            Err(error) => notes.push(error),
+        }
+        std::thread::sleep(SETTLE);
+        after = read_snapshot(uid, label);
     }
 
     let port_after = port_answers(host, port);

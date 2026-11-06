@@ -44,7 +44,12 @@ a reload.
 ## The home briefing
 
 The conversation's empty state is the harness's home, not a blank page.
-It answers four questions from live reads:
+It answers four questions from live reads — and a reload restores what
+was showing rather than reseting to it: the conversation the face held
+re-opens through the same seed a work-row press runs (the chip's goal
+and the tasks card rebuild from the log and the state document), the
+pane returns at its tab, and a deliberate detach — the home press,
+**New** — stays detached across reloads.
 
 - **What does fleet know about me?** Live and protected fact counts, and
   the names of the two most-recalled facts, from the memory corpus.
@@ -141,8 +146,9 @@ SHA-256s, licenses — and lazy-load per format from the face's own
 origin.
 
 **The owner's width.** The pane's left edge is a grip: drag it and the
-width follows between a 300px floor and the stage's own, the choice
-persists across reloads, a double-click resets, and the grip is a
+width follows between a 300px floor and the stage's own — the width,
+the open state, and the active tab persist across reloads — a
+double-click resets, and the grip is a
 separator the keyboard steps with the arrow keys. While a drag is in
 flight a live page's pointer events stand down, so the frame cannot
 swallow the move.

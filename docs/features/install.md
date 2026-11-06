@@ -250,6 +250,16 @@ and the lanes resolve from the `services/` tree beside the executable
 (or `FLEET_SERVICES_ROOT`), with a missing tree degrading to named
 dead lanes rather than a failed boot.
 
+**The native shell's bundle.** `cargo tauri build` produces the same
+face as a Tauri app — a dmg at
+`target/release/bundle/dmg/fleet_<version>_<arch>.dmg`. Drag
+`fleet.app` to `/Applications`; the first launch creates the home,
+builds the lane venvs in the background, and opens the window. The
+bundle carries the services root and sets the lane wiring itself (the
+inventory below); nothing else is needed on the machine but Chrome for
+the browser lane, which stays a machine resource named by
+`BROWSER_CHROME`.
+
 **The serving binary has one home.** The LaunchAgent that keeps the face
 up (`com.fleet.gui`) runs `~/.fleet/bin/fleet` — never a worktree's own
 `target/`, which goes stale the moment a session works elsewhere and the

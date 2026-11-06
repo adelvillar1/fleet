@@ -882,6 +882,10 @@ impl Bridge {
                 "folder": folder_value(state.effective_folder(session).as_deref(), &self.cwd),
             "goal": session_goal(&self.home, &key),
             "goal_done": session_goal_done(&self.home, &key),
+            // The run's task list, tail-scanned from the log (the
+            // reload-reattach plan's C4): the face's card rebuilds from
+            // this on every load, whatever the live event log dropped.
+            "tasks": session_tasks(&self.home, &key),
             // The room's members, when it is a room: an empty list on
             // an ordinary conversation keeps the head from rendering.
             "members": session_members(&self.home, &key),
@@ -933,6 +937,10 @@ impl Bridge {
             "folder": folder_value(state.effective_folder(session).as_deref(), &self.cwd),
             "goal": session_goal(&self.home, &key),
             "goal_done": session_goal_done(&self.home, &key),
+            // The run's task list, tail-scanned from the log (the
+            // reload-reattach plan's C4): the face's card rebuilds from
+            // this on every load, whatever the live event log dropped.
+            "tasks": session_tasks(&self.home, &key),
             // The room's members, when it is a room: an empty list on
             // an ordinary conversation keeps the head from rendering.
             "members": session_members(&self.home, &key),
@@ -5720,6 +5728,59 @@ pub fn session_goal_done(home: &std::path::Path, session: &str) -> Option<String
     let text = std::fs::read_to_string(home.join("sessions-goals-done.json")).ok()?;
     let done: std::collections::BTreeMap<String, String> = serde_json::from_str(&text).ok()?;
     done.get(session).cloned()
+}
+
+/// One session's task list, as the log's last `tasks` record carries it.
+/// The scan reads the log's tail backward in a bounded window: a long
+/// run drops its oldest events from the bridge's in-memory log
+/// (MAX_EVENTS), so the face's rebuild cannot rely on the live log —
+/// the record on disk is the truth. The last record wins (the tool's
+/// own full-replacement contract); no `tasks` record inside the window
+/// reads as an empty list, which is the honest absence.
+pub fn session_tasks(home: &std::path::Path, session: &str) -> Vec<crate::session::TaskItem> {
+    use std::io::{Read, Seek, SeekFrom};
+    let path = session::session_path(home, session);
+    let Ok(file) = std::fs::File::open(&path) else {
+        return Vec::new();
+    };
+    let Ok(len) = file.metadata().map(|meta| meta.len()) else {
+        return Vec::new();
+    };
+    const TAIL: u64 = 2 * 1024 * 1024;
+    let mut reader = std::io::BufReader::new(file);
+    if reader
+        .seek(SeekFrom::Start(len.saturating_sub(TAIL)))
+        .is_err()
+    {
+        return Vec::new();
+    }
+    let mut bytes = Vec::new();
+    if reader.read_to_end(&mut bytes).is_err() {
+        return Vec::new();
+    }
+    // A chunk seam can split a line or a UTF-8 sequence; lossy keeps the
+    // scan honest about everything after the seam.
+    let tail = String::from_utf8_lossy(&bytes);
+    for line in tail.lines().rev() {
+        if !line.starts_with("{\"type\":\"tasks\"") {
+            continue;
+        }
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        let Some(items) = value.get("items").and_then(|v| v.as_array()) else {
+            continue;
+        };
+        return items
+            .iter()
+            .filter_map(|item| {
+                let step = item.get("step")?.as_str()?.to_string();
+                let status = item.get("status")?.as_str()?.to_string();
+                Some(crate::session::TaskItem { step, status })
+            })
+            .collect();
+    }
+    Vec::new()
 }
 
 /// A room's knowledge for its head (the huddles plan's C15): what it
@@ -11859,6 +11920,57 @@ mod goal_tests {
         assert!(answer.contains("completed"), "{answer}");
         assert_eq!(session_goal(&home, &s1), None);
         assert_eq!(session_goal_done(&home, &s1).as_deref(), Some("the work"));
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn session_tasks_reads_the_last_tasks_record_from_the_log_tail() {
+        // The reload-reattach plan's C4: the state document's task list
+        // is the log's own last `tasks` record, tail-scanned — the live
+        // event log's cap may have dropped it, the record on disk is the
+        // truth. The last record wins (full replacement); no record at
+        // all is the honest absence.
+        let home = std::env::temp_dir().join(format!("fleet-session-tasks-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        let mut session = crate::session::Session::create(&home, "test-model").unwrap();
+        let s1 = session.id().to_string();
+        session
+            .record(&crate::session::Record::Tasks {
+                items: vec![
+                    crate::session::TaskItem {
+                        step: "read the log".into(),
+                        status: "completed".into(),
+                    },
+                    crate::session::TaskItem {
+                        step: "ship".into(),
+                        status: "in_progress".into(),
+                    },
+                ],
+            })
+            .unwrap();
+        // A different record lands between the two task lists: the scan
+        // still finds the newest, not the first.
+        session
+            .record(&crate::session::Record::User {
+                content: "go on".into(),
+            })
+            .unwrap();
+        session
+            .record(&crate::session::Record::Tasks {
+                items: vec![crate::session::TaskItem {
+                    step: "ship".into(),
+                    status: "completed".into(),
+                }],
+            })
+            .unwrap();
+        let tasks = session_tasks(&home, &s1);
+        assert_eq!(tasks.len(), 1, "{tasks:?}");
+        assert_eq!(tasks[0].step, "ship");
+        assert_eq!(tasks[0].status, "completed");
+        // A conversation that never declared tasks reads as empty.
+        let other = crate::session::Session::create(&home, "test-model").unwrap();
+        assert!(session_tasks(&home, other.id()).is_empty());
         let _ = std::fs::remove_dir_all(&home);
     }
 }
