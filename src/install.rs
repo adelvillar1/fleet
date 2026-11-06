@@ -35,7 +35,7 @@ use std::sync::mpsc::{self, RecvTimeoutError};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
-use palette::{ACCENT, BOLD, DIM, OK, RESET, TEXT};
+use palette::{ACCENT, BOLD, DIM, FAIL, OK, RESET, TEXT};
 
 /// The ANSI palette, mirroring the other headless surfaces' modules so
 /// the install reads as one surface with `fleet lanes` and `fleet
@@ -43,6 +43,7 @@ use palette::{ACCENT, BOLD, DIM, OK, RESET, TEXT};
 mod palette {
     pub const ACCENT: &str = "\u{1b}[36m"; // cyan
     pub const OK: &str = "\u{1b}[32m"; // green
+    pub const FAIL: &str = "\u{1b}[31m"; // red
     pub const DIM: &str = "\u{1b}[90m"; // dark gray
     pub const TEXT: &str = "\u{1b}[37m"; // gray
     pub const BOLD: &str = "\u{1b}[1m";
@@ -1370,6 +1371,95 @@ pub fn render_head(
     config: (ConfigStep, &Path),
     lanes: bool,
 ) -> String {
+    render_head_with(home, layout, config, lanes, None)
+}
+
+/// What the delivery step found and left, so the report names the
+/// machine's own state instead of an assurance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeliveryStep {
+    /// The installed copy already carries the build's bytes.
+    Current,
+    /// This run copied the build over the installed copy.
+    Installed,
+    /// The build was found and the copy could not be made; the reason
+    /// rides the report rather than an exit code, because a setup
+    /// command that names a broken delivery is still a finished setup.
+    Failed,
+    /// There is no build beside this binary to deliver — the ordinary
+    /// case on a machine that only runs fleet.
+    NoBuild,
+}
+
+impl DeliveryStep {
+    /// The one delivery step `fleet install` takes, decided from the
+    /// world it is handed.
+    ///
+    /// The SOURCE is the key decision, and it is deliberately narrow.
+    /// `std::env::current_exe()` is what the owner actually ran, so a
+    /// build invoked from this worktree delivers exactly that build —
+    /// `target/release/fleet` invoking `fleet install` delivers itself.
+    /// What it must never do is copy a *debug* binary over a release
+    /// install: `cargo test` runs debug binaries, an install test that
+    /// reconciled would overwrite the owner's face with a debug build
+    /// on every suite run. So a source is admissible only when it is
+    /// not under a `debug` profile directory and is not the installed
+    /// copy itself. `<repo>/target/release/fleet` beside the home is
+    /// the fallback for a binary that was installed and then asked to
+    /// reconcile, which is the case that made the row bite.
+    pub fn deliver(home: &Path, executable: Option<&Path>) -> DeliveryStep {
+        let installed = super::reload::installed_in_home(home);
+        let source = executable
+            .filter(|path| admissible_source(path, &installed))
+            .map(Path::to_path_buf)
+            .or_else(|| {
+                let beside = super::reload::source_beside_home(home);
+                beside
+                    .filter(|path| admissible_source(path, &installed))
+                    .filter(|path| path.is_file())
+            });
+        let Some(source) = source else {
+            return DeliveryStep::NoBuild;
+        };
+        match super::reload::reconcile_install(&source, &installed) {
+            None => DeliveryStep::NoBuild,
+            Some(Ok((before, after))) => {
+                if !before.needs_delivery() {
+                    DeliveryStep::Current
+                } else if !after.needs_delivery() {
+                    DeliveryStep::Installed
+                } else {
+                    DeliveryStep::Failed
+                }
+            }
+            Some(Err(_)) => DeliveryStep::Failed,
+        }
+    }
+}
+
+/// Whether a binary may be delivered over the installed copy: it must
+/// exist, it must not be a debug-profile build, and it must not be the
+/// installed copy itself (copying a file onto itself through a staged
+/// rename is wasted work, and reading its own state is the honest
+/// answer).
+fn admissible_source(source: &Path, installed: &Path) -> bool {
+    if !source.is_file() || source == installed {
+        return false;
+    }
+    !source
+        .components()
+        .any(|part| part.as_os_str() == "debug")
+}
+
+/// [`render_head`] with the delivery step's outcome, which the command
+/// prints once it has read the machine.
+pub fn render_head_with(
+    home: &Path,
+    layout: &[(&'static str, LayoutStep)],
+    config: (ConfigStep, &Path),
+    lanes: bool,
+    delivery: Option<DeliveryStep>,
+) -> String {
     let mut out = String::new();
     out.push_str(&format!(
         "{BOLD}{ACCENT}fleet install{RESET} {DIM}— the home layout, the config scaffold, and the doctor gate{RESET}\n\n"
@@ -1420,12 +1510,59 @@ pub fn render_head(
         "  {color}{glyph}{RESET} {TEXT}{:<12}{RESET} {color}{verb}{RESET} {DIM}{detail}{RESET}\n",
         CONFIG_FILE
     ));
+    if let Some(step) = delivery {
+        out.push_str(&render_delivery(home, step));
+    }
     if lanes {
         out.push_str(&format!(
             "  {DIM}{:<12}{RESET} {DIM}{} — one venv per core, idempotent, degrade-without{RESET}\n",
             "venvs",
             venvs_dir(home).display()
         ));
+    }
+    out
+}
+
+/// The delivery step's line: what the installed copy was, what it is
+/// now, and — when this run moved it — the one command that makes the
+/// running service re-exec it. KI-412's symptom was a face serving a
+/// binary nobody had copied; the same symptom one step later is a
+/// copied binary a running service has not re-executed, so the line
+/// says which of the two the machine is in rather than leaving the
+/// owner to work it out.
+fn render_delivery(home: &Path, step: DeliveryStep) -> String {
+    let installed = super::reload::installed_in_home(home);
+    let (glyph, color, verb) = match step {
+        DeliveryStep::Current => ("=", DIM, "current"),
+        DeliveryStep::Installed => ("+", OK, "installed"),
+        DeliveryStep::Failed => ("!", FAIL, "not installed"),
+        // No build beside this binary: the row is about a machine that
+        // RUNS fleet, and it has nothing to reconcile. Left out rather
+        // than rendered as a step that did nothing, so the report never
+        // claims a delivery step the machine does not have.
+        DeliveryStep::NoBuild => {
+            return format!(
+                "  {DIM}{:<12}{RESET} {DIM}{} — no build beside this binary to deliver{RESET}\n",
+                "binary",
+                installed.display()
+            )
+        }
+    };
+    let mut out = format!(
+        "  {color}{glyph}{RESET} {TEXT}{:<12}{RESET} {color}{verb}{RESET} {DIM}{}{RESET}\n",
+        "binary",
+        installed.display()
+    );
+    match step {
+        DeliveryStep::Current => {}
+        DeliveryStep::Installed => out.push_str(&format!(
+            "  {DIM}{:<12}{RESET} {DIM}the running agent re-execs it on `fleet reload`, which also proves the face is serving{RESET}\n",
+            ""
+        )),
+        _ => out.push_str(&format!(
+            "  {DIM}{:<12}{RESET} {DIM}the copy could not be brought up to the build; `fleet reload --from target/release/fleet` names why{RESET}\n",
+            ""
+        )),
     }
     out
 }
@@ -2075,5 +2212,100 @@ mod tests {
         assert!(report.contains("DEEPSEEK_API_KEY"), "{report}");
         assert!(report.contains("── doctor ──"), "{report}");
         let _ = fs::remove_dir_all(&home);
+    }
+
+    /// A build's bytes with the exec bit a real `target/release/fleet`
+    /// carries. `fs::write` lands 0o644, and a delivery of a
+    /// non-executable file is refused by name — so a fixture that
+    /// skipped this would assert against a file no build ever is.
+    fn an_executable(path: &Path, bytes: &[u8]) {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        fs::write(path, bytes).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+    }
+
+    /// The delivery step's source decision, pinned to the trap that
+    /// makes it necessary: `cargo test` runs a DEBUG binary, and an
+    /// install that reconciled unconditionally would overwrite the
+    /// owner's release install with a debug build on every suite run.
+    /// The path is the FLEET home: the delivery writes `<home>/bin/fleet`,
+    /// so a fixture rooted at the user home would watch a directory
+    /// nothing is ever delivered to and see a green assertion about a
+    /// file that was never there.
+    #[test]
+    fn a_debug_build_is_never_delivered_over_the_installed_copy() {
+        let root = std::env::temp_dir().join(format!("fleet-deliver-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let debug_binary = root.join("checkout/target/debug/fleet");
+        an_executable(&debug_binary, b"a debug build");
+        let home = root.join("home/.fleet");
+        fs::create_dir_all(&home).unwrap();
+        let installed = home.join("bin/fleet");
+        // The only candidate is a debug build, so there is nothing
+        // admissible to deliver — and the installed copy is untouched.
+        assert_eq!(
+            DeliveryStep::deliver(&home, Some(&debug_binary)),
+            DeliveryStep::NoBuild
+        );
+        assert!(!installed.exists());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// A release build invoked from its own worktree delivers itself:
+    /// the ordinary case the step exists for.
+    #[test]
+    fn a_release_build_delivers_itself_and_then_reads_current() {
+        let root = std::env::temp_dir().join(format!("fleet-deliver-r-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let binary = root.join("checkout/target/release/fleet");
+        an_executable(&binary, b"the release build");
+        let home = root.join("home/.fleet");
+        fs::create_dir_all(&home).unwrap();
+        let installed = home.join("bin/fleet");
+        assert_eq!(
+            DeliveryStep::deliver(&home, Some(&binary)),
+            DeliveryStep::Installed
+        );
+        assert_eq!(fs::read(&installed).unwrap(), b"the release build");
+        // Second run: the bytes already agree, so the step reports the
+        // machine's state rather than repeating the work.
+        assert_eq!(
+            DeliveryStep::deliver(&home, Some(&binary)),
+            DeliveryStep::Current
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// The report says which of the two failures the machine is in: a
+    /// delivery this run made still needs `fleet reload` (the running
+    /// agent has not re-executed), while an absent build says there was
+    /// nothing to deliver. Neither may claim the face is current.
+    #[test]
+    fn the_delivery_line_names_the_reload_the_running_agent_still_needs() {
+        let home = std::env::temp_dir().join(format!("fleet-deliver-line-{}", std::process::id()));
+        let report = strip_ansi(&render_delivery(&home, DeliveryStep::Installed));
+        assert!(report.contains("binary"), "{report}");
+        assert!(report.contains("installed"), "{report}");
+        assert!(report.contains("fleet reload"), "{report}");
+        assert!(report.contains("proves the face is serving"), "{report}");
+        let current = strip_ansi(&render_delivery(&home, DeliveryStep::Current));
+        assert!(current.contains("current"), "{current}");
+        // A current copy names no command: there is nothing left to do.
+        assert!(!current.contains("fleet reload"), "{current}");
+        let failed = strip_ansi(&render_delivery(&home, DeliveryStep::Failed));
+        assert!(failed.contains("not installed"), "{failed}");
+        assert!(failed.contains("fleet reload --from"), "{failed}");
+        // The no-build case is not a failure and never says the copy is
+        // current: it names the absence and stops.
+        let no_build = strip_ansi(&render_delivery(&home, DeliveryStep::NoBuild));
+        assert!(no_build.contains("no build beside this binary"), "{no_build}");
+        assert!(!no_build.contains("current"), "{no_build}");
+        assert!(!no_build.contains("fleet reload"), "{no_build}");
     }
 }

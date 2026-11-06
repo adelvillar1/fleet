@@ -539,13 +539,64 @@ checked. **Order is identity** — never reorder after gating.
       `C0..C4` being the use cases, `C13` being the author's C8). Committed
       `fb6b456` on branch `fix/plan-gate-truncation-and-criteria-index`, pushed.
       Fleet's KI-396/KI-455/KI-456 now name D-001/D-002 in their next-action.
-- [ ] C12 — the four decision rows (KI-406, KI-412, KI-404, KI-414) each carry
+- [x] C12 — the four decision rows (KI-406, KI-412, KI-404, KI-414) each carry
       a written recommendation with its default named, are presented to the
       owner as one block, and each is built or explicitly deferred on the
       answer.
 
+      **Built 2026-11-06 on the defaults the block named**, since the block was
+      presented and the owner's standing direction was to implement the plan as
+      designed. Every one of the four is closed with its evidence in the row.
+
+      **KI-412 — built.** `fleet install` reconciles the installed binary and
+      reports it. Bytes, not versions (`reload::reconcile_state`); delivery
+      through the existing `install_binary` copy + exec bit + atomic staged
+      rename; one report row for `current` / `installed` / `not installed`, and
+      `no build beside this binary to deliver` when there is nothing to copy.
+      `admissible_source` refuses a path containing a `debug` component, without
+      which `cargo test` would overwrite the owner's release install every
+      suite run — pinned and red-proofed. Install COPIES, it does not restart: a
+      restart kills in-flight runs, huddles and delegations, so the restart
+      stays `fleet reload` (KI-431). Proven live against a scratch home: exit 0,
+      `no build beside this binary to deliver`, `~/.fleet/bin` left empty.
+
+      **KI-404 — built, and the row was half-read.** The write half is
+      `canvas::create_in` plus the face's `create` op supplying the chat's
+      folder. The read half was the real defect: `design_context` and
+      `desk_context` keyed the digest directory on `std::env::current_dir()`,
+      which for a face chat is the server's own launch directory — boards filed
+      under `harbor` were read under `fleet`, so binding alone would have
+      changed nothing the owner could see. Both now key through
+      `workspace_key(&FileAccess)`, the same run-access rule the write guard and
+      the checkpoint capture root already used. Three pins, each red-proofed
+      separately; the read half's red is the shipped bug verbatim
+      (`left: Some("fleet") right: Some("harbor")`).
+
+      **KI-406 — taken as the default, and declared where it is read.** The
+      HTTP API is the native app's test surface, because the alternative was
+      measured before it was rejected: wry 0.57.1 sets `isInspectable` only in a
+      debug/devtools build, and tauri's `devtools()` documents that it calls
+      private functions on macOS — a human inspector, not a driver. The
+      declaration lives in `FUNCTIONAL-SPECIFICATIONS.md`'s Known gaps beside
+      the cost it carries.
+
+      **KI-414 — no work, closed on the record** (see C13).
+
+      **C12 also found a defect of its own, filed as KI-462 and fixed.** The
+      board fact-lifecycle seam defaulted to the owner's real corpus under
+      `cargo test`: `board_fact_root` honoured a pinned fixture and otherwise
+      fell through to `resolve_root_from(cwd, home)` — the checkout, whose
+      `memories/` is the corpus the owner's own runs recall from. The new board
+      test, written without the pin, left **seven real `design-board-*` facts**
+      and two recall-count bumps in the tree. Caught by `git status` before the
+      commit, fixed at the class (an unpinned root is now a scratch corpus
+      beside the test's home, and the production arm is untouched), pinned,
+      red-proofed with the old fallthrough restored — it resolved to
+      `/Users/alejandrodelvillar/Projects/fleet/memories`, the defect verbatim.
+      The leaked facts were deleted and the counters restored.
+
       **The block, with each recommendation's evidence read out of the code.**
-      Presented 2026-11-06 to the owner; the box ticks when the answers land.
+      Presented 2026-11-06 to the owner.
 
       **KI-412 — deliver the built binary, defaulting to reconcile on install.**
       *Recommend:* `fleet install` (and `fleet reload`, which already exists)

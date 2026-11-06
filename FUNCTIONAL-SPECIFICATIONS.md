@@ -553,6 +553,7 @@ prints house cards and lands one `eval_corpus` row (`docs/features/eval.md`).
 | Human TUI open | Unclosed | `docs/architecture/deep-dive-2026-10-15.md` |
 | Structured provider editor | Implemented: paste a key (vault or `.env`, never shown) → discovery lists every model the provider serves, with per-model settings and toggles; reload on demand; primary/secondary per workload | `src/gui/assets/app.js`, `src/settings.rs`, `src/canvas.rs` |
 | Design canvas review loop | Partially proven: the scan, the review store and the review card are pinned; the browse → screenshot → vision → `review_frame` ask is wired but not yet exercised end to end | `docs/features/design.md`, `src/tools.rs` |
+| Native app window | The window is a thin view over the server it starts, and **the server's HTTP API is the native app's test surface** — the same requests the window's own sends make. A WKWebView exposes no accessibility tree for its web content and its window cannot be captured, so the packaged app's clicks are not scriptable; its turns, sessions and routes are, and those are the product. A regression in the window's own rendering has no automated witness, which is bounded: the window loads the same served origin a browser does. Recorded as KI-406 | `src-tauri/`, `src/gui/server.rs` |
 
 These gaps are noted as missing coverage, not as defects in code. When
 this file falls out of sync with the sources, fix the source feature doc

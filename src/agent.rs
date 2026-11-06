@@ -424,6 +424,27 @@ pub enum FileAccess {
     None,
 }
 
+/// The project key a run's standing context is filed under: the final
+/// segment of the tree the run actually works in — the same derivation
+/// the design and desk digests' writers use (`canvas::project_key`),
+/// read off the run's own access rather than the process's cwd.
+///
+/// A face chat works in its own folder and the server hosting it was
+/// launched from somewhere else, so a cwd read answered a different
+/// question than "which project is this run in" (KI-404). A branch view
+/// keeps the cwd approximation the write guard already takes: the
+/// branch forked from this checkout, so its names are the host tree's.
+/// A run with no filesystem access has no project and reads nothing.
+fn workspace_key(access: &FileAccess) -> Option<String> {
+    let root = match access {
+        FileAccess::Folder(root) => root.clone(),
+        FileAccess::Unrestricted => std::env::current_dir().ok()?,
+        FileAccess::LayerFs(ctx) => ctx.folder.clone()?,
+        FileAccess::None => return None,
+    };
+    Some(root.file_name()?.to_string_lossy().to_string())
+}
+
 /// Options for one run.
 #[derive(Debug, Clone)]
 pub struct AgentOptions {
@@ -2647,10 +2668,20 @@ impl<'a> Agent<'a> {
         Ok(Some(full))
     }
 
-    /// The design section for the workspace this run was born in: the
-    /// process cwd's final segment keys the digest directory — a run
-    /// started inside `~/Projects/harbor` carries harbor's boards. The
-    /// pin points it at a fixture; absent one, a test run reads no
+    /// The design section for the workspace this run works in: the
+    /// final segment of the run's own tree keys the digest directory —
+    /// a run working in `~/Projects/harbor` carries harbor's boards.
+    ///
+    /// KI-404: this read the PROCESS cwd, which is the right answer
+    /// only for a run launched from a directory. A chat on the face
+    /// works in its own folder ([`FileAccess::Folder`]) and the server
+    /// that hosts it was launched from somewhere else, so the key was
+    /// the server's launch folder and every board was invisible. It now
+    /// follows the run's access, the same rule the write guard
+    /// (`:5961`) and the checkpoint's capture root (`:4321`) already
+    /// used — one derivation, three readers.
+    ///
+    /// The pin points it at a fixture; absent one, a test run reads no
     /// section — a run's assembly must never depend on this machine's
     /// canvas.
     fn design_context(&self) -> Option<String> {
@@ -2668,8 +2699,7 @@ impl<'a> Agent<'a> {
                 std::env::var("HOME").ok().as_deref(),
             )
             .ok()?;
-            let cwd = std::env::current_dir().ok()?;
-            let key = cwd.file_name()?.to_string_lossy().to_string();
+            let key = workspace_key(&self.options.file_access)?;
             crate::canvas::design_context_section(&home, &key)
         }
     }
@@ -2694,8 +2724,7 @@ impl<'a> Agent<'a> {
                 std::env::var("HOME").ok().as_deref(),
             )
             .ok()?;
-            let cwd = std::env::current_dir().ok()?;
-            let key = cwd.file_name()?.to_string_lossy().to_string();
+            let key = workspace_key(&self.options.file_access)?;
             crate::desk::desk_context_section(&home, &key)
         }
     }
@@ -10036,6 +10065,36 @@ mod tests {
         )
         .unwrap();
         assert_eq!(done["s1"], "ship the picker", "{done}");
+    }
+
+    /// KI-404's read half: the design and desk sections key on the tree
+    /// the RUN works in, not the directory the server happened to be
+    /// launched from. A face chat works in its own folder
+    /// ([`FileAccess::Folder`]) while the server runs from the worktree,
+    /// so a cwd read keyed the digest directory on `fleet` for every
+    /// chat — boards written under `harbor` were read under `fleet`,
+    /// which is why binding alone would not have fixed the row.
+    #[test]
+    fn the_workspace_key_follows_the_runs_folder_not_the_servers_cwd() {
+        let root = std::env::temp_dir().join(format!("fleet-ws-key-{}", std::process::id()));
+        let folder = root.join("harbor");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&folder).unwrap();
+        assert_eq!(
+            workspace_key(&FileAccess::Folder(folder.clone())),
+            Some("harbor".to_string())
+        );
+        // A run with no filesystem access has no project at all, so it
+        // reads no section — the absence rule, not an empty one.
+        assert_eq!(workspace_key(&FileAccess::None), None);
+        // A launch-from-a-directory run keeps the cwd answer it has
+        // always had.
+        let here = std::env::current_dir().expect("a working directory");
+        assert_eq!(
+            workspace_key(&FileAccess::Unrestricted),
+            here.file_name().map(|name| name.to_string_lossy().to_string())
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// K6 (designs-are-project-knowledge): the assembled block carries
