@@ -62,7 +62,7 @@ High-level steps:
 - [ ] C4 — the pass retires the tmp and sweeps the build cache.
 - [ ] C5 — the pass sweeps the stale processes (the Chrome, the lanes, the
       background) from the closed session.
-- [ ] C6 — the recap step runs the pass.
+- [x] C6 — the recap step runs the pass.
 - [x] C7 — the pins and the gate.
 
 ## Files to be touched
@@ -150,4 +150,6 @@ Expected: all four exit 0.
 ## Progress
 
 - C0, C2, C7 landed 2026-11-06: `Registry::shutdown` + the run's close, `checkpoints::prune` (the last 20 turns per session, the 5 GiB store cap), `fleet hygiene`, the pins `shutdown_stops_what_the_run_spawned_and_names_it` and `prune_keeps_each_sessions_last_turns_and_the_stores_cap`; the gate 1917/0 lib, clippy 0, fmt 0, build 0.
-- C1 (the GoalDone hook), C3 (the consolidation), C4 (the tmp and the build cache), C5 (the machine-wide stale processes), C6 (the recap step) remain.
+- C1 (the GoalDone hook), C3 (the consolidation), C4 (the tmp and the build cache), C5 (the machine-wide stale processes), C6 (the recap step) - C1 landed 2026-11-06: the bridge's event loop runs the retention on the `GoalDone` event, off the async context, naming what it freed. The pin is the event loop's own — hard to drive headless — so the box stays open until a live proof quotes the hook's line.
+- C6 landed 2026-11-06: the recap skill's new 8d runs `fleet hygiene` at the session's close and quotes its line.
+- C3 (the consolidation's model spend at every goal completion) and C5 (the machine-wide stale processes) remain; C4's tmp and build-cache legs ride the recap's existing 8c sweep and the daily maintenance.

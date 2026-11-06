@@ -11105,6 +11105,26 @@ async fn fan_out(
                         // first run moves to the session's own key.
                         move_pending_goal(&home, id);
                     }
+                    // The session-close hygiene: a goal completing is the
+                    // moment the run's debris is at its peak — the
+                    // checkpoints grew one 64 MB snapshot per turn — so the
+                    // retention runs here, off the async context, and names
+                    // what it freed.
+                    if matches!(event, UiEvent::GoalDone { .. }) {
+                        let store = home.join("checkpoints");
+                        tokio::task::spawn_blocking(move || {
+                            let (removed, reclaimed) = crate::checkpoints::prune(
+                                &store,
+                                crate::checkpoints::KEEP_TURNS,
+                                crate::checkpoints::STORE_CAP_BYTES,
+                            );
+                            if removed > 0 {
+                                eprintln!(
+                                    "fleet: hygiene: {removed} checkpoint turn(s) pruned, {reclaimed} bytes freed"
+                                );
+                            }
+                        });
+                    }
                     // The event belongs to the session the thread is
                     // driving, which is exact because the thread's
                     // command loop is serial: the events for one task all
