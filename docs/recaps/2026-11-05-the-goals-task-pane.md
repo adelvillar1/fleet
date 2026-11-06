@@ -1,4 +1,4 @@
-# Session recap — 2026-11-06: the goal's task pane
+# Session recap — 2026-11-05: the goal's task pane
 
 **Summary.** The owner's ask — while a goal runs, the right pane shows
 the tasks and each one's completion status — landed whole:
@@ -71,7 +71,20 @@ gap the code had been declaring without shipping.
   closed to the standing class — correct behavior in an unbound home.
 - **The scratch home now carries the owner's real `routing.json`** —
   the first goal attempt walked the compiled default chain (see
-  KI-451), which is not what the owner's home walks.
+  KI-451), which is not what the owner's home walks. The owner's
+  question that opened the dig ("why do we have a hard chain") has its
+  answer in the code: the chain is the leader's floor by the owner's
+  own 2026-10-16 ruling narrowed 2026-10-21 (`ORCHESTRATOR_WORKLOAD`,
+  `src/route.rs:722-728`) — the judgment grades the task, the leader
+  supervises, and the execution-head steer already raises a judged walk
+  to `hard` when it names `mixture`/`swarm`. The stepfun residue was
+  the compiled fallback `default_preferences()` (`src/route.rs:616-624`),
+  frozen at the 2026-10-16 migration: a home with `routing.json`
+  replaces each workload's chain wholesale
+  (`slot.candidates = candidates`, `src/route.rs:1228-1234`), so real
+  walks never see it — only a home without the file does, which is
+  what the proof's first scratch home was. Refreshing the fallback to
+  the owner's current chain is ruled the owner's call.
 
 ## Found on the way
 
@@ -98,15 +111,44 @@ gap the code had been declaring without shipping.
   sit in `stash@{0}` with a name saying exactly what they are.
   Keep-or-revert is still the owner's.
 
+## The close-out (the owner's three asks)
+
+- **Merged and pushed.** `origin/master` fast-forwarded
+  `de5d643..f50e971` — the goal-pane feature (`85fa835`) and the
+  close-out docs (`f50e971`) — and the `fleet-master-wt` worktree
+  caught up. (The parallel session's own close-out, `edf5274`, landed
+  on both refs minutes later from this same checkout — a co-tenant's
+  own file, no collision.)
+- **Delivered on 3080.** The release binary rebuilt at `f50e971` and
+  installed through a new inode (347553359, replacing 346539978);
+  `launchctl kickstart -k` left the service running as **pid 50913**;
+  port 3080 answering **200**; the served `app.js` carrying the tasks
+  card's code (`gp-card` / `paintGpCard` / `goal_done` — 8 marker
+  hits). KI-431's post-state check was made and passed: state
+  running, pid present, port answering — no re-bootstrap needed.
+- **The Tauri app rebuilt.** `cargo tauri build` finished
+  `fleet_0.3.0-beta_aarch64.dmg` at **10.90 MiB** (11,433,334 bytes,
+  18:59:48 local); mounted read-only and read from inside, the bundled
+  `fleet-desktop` (25,651,424 bytes) carries the new face —
+  `gp-goal-text` ×3, `goal_done` ×4. The timestamp that made the
+  artifact look stale was my own reading: local time was 19:00, the
+  build was 36 seconds old.
+
 ## Where it stands, honestly
 
-- The pane card is **implemented and proven, not yet deployed** — the
-  running face at port 3080 serves the previous binary; the delivery
-  pass (new inode + service restart) is the next step's opening move.
-- `face-plugin-host` is one commit ahead of `master` (which itself
-  fast-forwarded to `de5d643` and pushed during the session — the
-  53-commit gap from the warmup is closed). Trunk sequencing stays the
-  owner's.
+- The pane card is **deployed and serving**: the face at port 3080 and
+  the dmg both carry it; a reload picks up the served shell.
+- Trunk is merged and pushed through `f50e971` (the parallel session's
+  `edf5274` rides the same refs); the master worktree is caught up.
+- **KI-451 and KI-452 are open** — the account-400 failover
+  classification and the blend1 doctor pair's load sensitivity — both
+  filed with evidence in `docs/known-issues.md`.
+- `stash@{0}` still holds the pre-build half-edit (the `Row::Shape`
+  arm removal plus the usage plan's status flip, both stamped
+  12:32:33); keep-or-revert remains the owner's.
 - The scratch home, its SSE captures and the proof's raw frames remain
   under `tmp/goal-pane-home` and `tmp/goal-pane-events2.sse` — the
-  evidence behind every number quoted above.
+  evidence behind every number quoted above. The date this recap
+  carries is local 2026-11-05 — the whole session happened that day;
+  the stray `2026-11-06` naming came from the tower-log ids, which
+  run on UTC.
