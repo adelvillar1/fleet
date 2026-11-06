@@ -210,6 +210,17 @@ fixture.
   text/blame/revisions/diff, and the Store's own accounting — all from
   one backend read that answers warm in under a quarter-second.
 
+The terminal face — the same core at a keyboard's density. The
+conversation on the left, a tabbed board set on the right, every mode a
+key away. Shots at 120×40 from a scratch home, captured by
+`scripts/tui-shots.py`.
+
+| | |
+|---|---|
+| ![the conversation](docs/images/tui-conversation.png) *the conversation: the run's board beside the transcript, the status bar reading context health* | ![the palette](docs/images/tui-palette.png) *the palette: every pane, panel, and action, filtered by typing* |
+| ![sessions](docs/images/tui-sessions.png) *sessions: the archive as a styled table — a fresh home names its emptiness* | ![checkpoints](docs/images/tui-checkpoints.png) *checkpoints: the turn table; enter arms a rewind, `d` opens the diff — a fresh home has no store yet, and says so* |
+| ![lanes](docs/images/tui-lanes.png) *lanes: the vendored lanes' health, probed live* | ![plan mode](docs/images/tui-plan.png) *plan mode: `Ctrl-T` holds the write-class tools; the plan is the final answer* |
+
 ## What is next
 
 Effort levels per workload (research done, plan not written); the
@@ -224,10 +235,44 @@ the evidence token, the cost ceiling) arrives as benefit cards on
 demand, never as a checklist. `fleet onboard` walks the same sequence in
 a terminal, resuming where the machine left off.
 
-## Start here
+## Install
+
+Two ways in: the prebuilt native shell, or building from this repo.
+Both land the same binary and the same home.
+
+**The prebuilt shell (Tauri).** Build the bundle once and install it as
+an app — no shell profile, no checkout; the services root and the lane
+wiring ride inside the bundle:
 
 ```sh
-cargo build --release                     # one binary at target/release/fleet
+cargo tauri build    # → target/release/bundle/dmg/fleet_0.3.0-beta_aarch64.dmg
+```
+
+Open the dmg and drag `fleet.app` to `/Applications`. The first launch
+creates the home (`~/.fleet`), builds the lane venvs in the background,
+and opens the face in its own window. Credentials are never written by
+the app: set `DEEPSEEK_API_KEY` in the environment or `~/.fleet/.env`.
+
+**Building from the repo.** A Rust toolchain and the Tauri CLI
+(`cargo install tauri-cli`) are the only prerequisites:
+
+```sh
+cargo build --release    # the fleet binary: the TUI, the face's server, the agent
+cargo tauri build        # the native shell, bundled as a dmg
+```
+
+**The home.** `fleet install` provisions `~/.fleet` — the config
+scaffold, the sessions and memory stores, the doctor gate — idempotently;
+its exit code is the doctor's. The vendored lanes under `services/` are
+an optional second step (`fleet install --lanes`), each skipped by name
+when it cannot be built. No step needs Node or another harness's
+checkout.
+
+## Start here
+
+Build once (see [Install](#install)), then:
+
+```sh
 target/release/fleet gui                  # the guided first run: the door
 target/release/fleet onboard              # or the same steps in a terminal
 target/release/fleet chat                 # the everyday surface
@@ -237,12 +282,6 @@ target/release/fleet chat                 # the everyday surface
 with — and proves it with a real answer before anything else is offered.
 `fleet onboard` walks the sequence in a terminal and resumes at the first
 incomplete step; `--json` prints the document the face reads.
-
-`fleet install` is idempotent; its exit code is the doctor's. The lanes
-are vendored in this repository under `services/`, and their heavy
-dependencies are an optional second step (`fleet install --lanes`), each
-skipped by name when it cannot be built. No step needs Node or another
-harness's checkout.
 
 ## Foundations
 

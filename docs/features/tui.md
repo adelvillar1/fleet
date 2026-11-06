@@ -5,6 +5,38 @@ core the CLI and the browser face drive. It is keyboard-first and
 denser than the browser: the conversation is the center, and the right
 pane is a tabbed run card and board set rather than a dock.
 
+Shots at 120×40 from a scratch home — `scripts/tui-shots.py` drives the
+face in a tmux pane, captures each screen with its colours, and renders
+it beside the browser face's surfaces.
+
+![the conversation](../images/tui-conversation.png)
+
+*the conversation: the run's board beside the transcript, the status bar
+reading context health*
+
+![the palette](../images/tui-palette.png)
+
+*the palette: every pane, panel, and action, filtered by typing*
+
+![sessions](../images/tui-sessions.png)
+
+*sessions: the archive as a styled table — a fresh home names its
+emptiness*
+
+![checkpoints](../images/tui-checkpoints.png)
+
+*checkpoints: the turn table; enter arms a rewind, `d` opens the diff —
+a fresh home has no store yet, and says so*
+
+![lanes](../images/tui-lanes.png)
+
+*lanes: the vendored lanes' health, probed live*
+
+![plan mode](../images/tui-plan.png)
+
+*plan mode: `Ctrl-T` holds the write-class tools; the plan is the final
+answer*
+
 ## The shape
 
 At 120 columns the frame is the conversation on the left and a tabbed
