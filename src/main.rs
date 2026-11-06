@@ -164,6 +164,7 @@ fn dispatch_sync(args: &[String]) -> ExitCode {
                 .map(|(key, value)| (key.as_str(), value.as_str())),
         ),
         Ok(Command::Providers) => providers_command(),
+        Ok(Command::Hygiene) => hygiene_command(),
         Ok(Command::Calib(options)) => calib_command(&options),
         Ok(Command::Roles) => roles_command(),
         Ok(Command::Convention(options)) => convention_command(&options),
@@ -3561,6 +3562,31 @@ async fn lanes_command() -> ExitCode {
 /// network and no child spawn: key presence is an environment read. The
 /// exit code doubles as "is routing possible here" — success when at least
 /// one candidate is configured.
+/// The session-close hygiene: the checkpoints pruned to their retention
+/// — the last 20 turns per session under a 5 GiB store cap — and the
+/// report naming what went and what it freed. The 2026-11-06 incident's
+/// standing fix: 72 G of per-turn snapshots, nothing pruning them, the
+/// drive dead at 100% while a run kept writing.
+fn hygiene_command() -> ExitCode {
+    let Some(home) = fleet_home().ok() else {
+        eprintln!("fleet: no home directory known; set FLEET_HOME or HOME");
+        return ExitCode::from(2);
+    };
+    let store = home.join("checkpoints");
+    let (removed, reclaimed) = fleet::checkpoints::prune(
+        &store,
+        fleet::checkpoints::KEEP_TURNS,
+        fleet::checkpoints::STORE_CAP_BYTES,
+    );
+    println!(
+        "hygiene: {removed} checkpoint turn(s) pruned, {reclaimed} bytes freed — \
+         each session keeps its last {} turns under a {} byte store cap",
+        fleet::checkpoints::KEEP_TURNS,
+        fleet::checkpoints::STORE_CAP_BYTES,
+    );
+    ExitCode::SUCCESS
+}
+
 fn providers_command() -> ExitCode {
     let Some(home) = fleet_home().ok() else {
         eprintln!("fleet: no home directory known; set FLEET_HOME or HOME");

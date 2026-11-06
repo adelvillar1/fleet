@@ -2766,13 +2766,14 @@ impl<'a> Agent<'a> {
         alive.store(false, std::sync::atomic::Ordering::Relaxed);
         let _ = watcher.join();
         self.lanes.close_all().await;
-        // A background process still running at the end is left alive
-        // and named: killing the owner's server is worse than leaving
-        // it, and the owner reads what is still theirs.
-        let survivors = self.processes.still_running();
-        if !survivors.is_empty() {
-            let _ = writeln!(self.progress, "\u{2014} still running in the background:");
-            for (id, command) in &survivors {
+        // The standing principle: what the agent spins up, the agent
+        // shuts down cleanly. The run's own children go with it — the
+        // report names what stopped, so the owner reads the shutdown
+        // instead of finding the processes later.
+        let stopped = self.processes.shutdown();
+        if !stopped.is_empty() {
+            let _ = writeln!(self.progress, "\u{2014} shut down with the run:");
+            for (id, command) in &stopped {
                 let _ = writeln!(self.progress, "    {id}: {command}");
             }
             let _ = self.progress.flush();

@@ -5,9 +5,8 @@
 //! call. `bash` with `run_in_background` registers its child here; the
 //! `process` tool reads incremental output since the last read, waits
 //! up to a timeout, or kills. The registry is per run and closed at run
-//! end: a child still running when the run ends is left alive and named
-//! in the report, because killing a server the owner started is worse
-//! than leaving it.
+//! end: what the run spawned, the run shuts down cleanly — the standing
+//! principle — and the report names what stopped.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -139,6 +138,22 @@ impl Registry {
             .map(|(id, child)| (id.clone(), child.command.clone()))
             .collect()
     }
+
+    /// Shut down every child this run spawned and still lives — the
+    /// standing principle: what the agent spins up, the agent shuts down
+    /// cleanly. Returns `(id, command)` for what it stopped, so the
+    /// run-end report names the shutdown instead of leaving the owner to
+    /// wonder what happened to the processes the transcript showed
+    /// starting. A child already killed or already exited is not touched.
+    pub fn shutdown(&self) -> Vec<(String, String)> {
+        let mut stopped = Vec::new();
+        for (id, command) in self.still_running() {
+            if self.kill(&id).is_ok() {
+                stopped.push((id, command));
+            }
+        }
+        stopped
+    }
 }
 
 /// Whether a pid still answers. `kill -0` on Unix; on Windows the
@@ -207,6 +222,40 @@ mod tests {
         std::fs::write(&stdout, "first line\nsecond line\n").unwrap();
         let (text, _) = registry.output(&id).unwrap();
         assert_eq!(text, "second line\n");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn shutdown_stops_what_the_run_spawned_and_names_it() {
+        // A real child: the shutdown is what the run's close calls, and
+        // the principle it pins is that nothing the agent spun up
+        // outlives the run.
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("sleep spawns");
+        let pid = child.id();
+        let dir = std::env::temp_dir().join(format!("fleet-proc-s-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let registry = Registry::new();
+        let id = registry.register("sleep 30", dir.join("o.log"), dir.join("e.log"), pid);
+        assert!(
+            registry.still_running().iter().any(|(one, _)| *one == id),
+            "the live child is registered"
+        );
+        let stopped = registry.shutdown();
+        assert_eq!(stopped.len(), 1, "{stopped:?}");
+        assert_eq!(stopped[0].0, id);
+        assert_eq!(stopped[0].1, "sleep 30");
+        assert!(
+            registry.still_running().is_empty(),
+            "nothing survives the shutdown"
+        );
+        let _ = child.kill();
+        let _ = child.wait();
         let _ = std::fs::remove_dir_all(&dir);
     }
 
