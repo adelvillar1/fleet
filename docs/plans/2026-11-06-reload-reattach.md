@@ -167,51 +167,51 @@ beside the other `fleet-*` keys: `fleet-open-session`, `fleet-pane`,
 
 ## Acceptance criteria
 
-- [ ] **C1 — the open conversation is remembered.** Every path that
+- [x] **C1 — the open conversation is remembered.** Every path that
       binds `face.session` to a real conversation writes
       `fleet-open-session`; `detachToWelcome` clears it. Pinned by
       harness cases.
-- [ ] **C2 — a reload at the chat address re-attaches.** Boot at
+- [x] **C2 — a reload at the chat address re-attaches.** Boot at
       `#/chat` with a stored id runs the resume seed and shows that
       conversation; the address stays `#/chat`. Pinned by a harness
       case.
-- [ ] **C3 — the goals return with it.** After the re-attach, the chip
+- [x] **C3 — the goals return with it.** After the re-attach, the chip
       shows the conversation's `goal`/`goal_done` from its own state
       document and the tasks card shows the log's list — the rebuild
       chain is the seed's, no second one. Pinned by a harness case.
-- [ ] **C4 — the state document carries the list.** The state
+- [x] **C4 — the state document carries the list.** The state
       document's `tasks` field holds the session log's last `tasks`
       record (a bounded tail scan); the face's replay sets `face.tasks`
       from it; the in-flight refusal's fallback therefore rebuilds the
       card on a reload mid-run, whatever the event log dropped. Pinned
       by a bridge test and a harness case.
-- [ ] **C5 — the pane returns with the reload, on every surface.** The
+- [x] **C5 — the pane returns with the reload, on every surface.** The
       pane's open/closed state and its active tab persist and are
       applied at boot, so a reload mid-goal re-opens the pane with the
       tasks card showing; a reload with the pane deliberately closed
       keeps it closed. Pinned by harness cases.
-- [ ] **C6 — a deliberate detach stays detached across reloads.** After
+- [x] **C6 — a deliberate detach stays detached across reloads.** After
       the home press or New, a reload shows the welcome. Pinned by a
       harness case.
-- [ ] **C7 — the chip never names an unshown conversation.** A bare
+- [x] **C7 — the chip never names an unshown conversation.** A bare
       `/api/state` read happens only when no conversation is shown; the
       shown conversation's read always names it. Pinned by a harness
       case.
-- [ ] **C8 — a vanished conversation is named.** A stored id the
+- [x] **C8 — a vanished conversation is named.** A stored id the
       archive refuses lands on the welcome through `openWork`'s
       existing refusal path (the notice), never a silent blank. Pinned
       by a harness case.
-- [ ] **C9 — the live proof.** On the running face: a goal conversation
+- [x] **C9 — the live proof.** On the running face: a goal conversation
       open with the pane showing the tasks card, reload the tab — the
       conversation, the pane, and the card return without a click;
       then New, reload, the welcome stands with the pane closed. Quoted
       in the recap.
-- [ ] **C10 — the gate runs whole locally before any push carrying
+- [x] **C10 — the gate runs whole locally before any push carrying
       code.** The four commands of the house gate — `cargo fmt --all
       --check`, `cargo clippy --all-targets -- -D warnings`,
       `cargo build --release`, `cargo test` — each exit 0 with its exit
       code read on the invocation, never through a status-losing pipe.
-- [ ] **C11 — the docs.** gui.md's reload sentence (the face header's
+- [x] **C11 — the docs.** gui.md's reload sentence (the face header's
       own law) gains the re-attach and the pane persistence;
       FUNCTIONAL-SPECIFICATIONS's conversation section names it.
 

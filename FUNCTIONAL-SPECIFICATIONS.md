@@ -478,8 +478,12 @@ head, the rail and the panels keep the measure they have.
   complete / clear) lets the model finish it explicitly — completion is
   a logged fact the face reads back as the chip's done state. The
   run's task list rides beside the goal: the pane's run tab shows one
-  row per task with its status, live and rebuilt from the log on a
-  reload. A goal set on the welcome rides the
+  row per task with its status, live and rebuilt on a reload — the
+  state document carries the list, so the rebuild survives a long run's
+  dropped events. A reload restores what was showing: the conversation
+  re-opens through its own seed and the pane returns at its tab; a
+  deliberate detach stays detached across reloads. A goal set on the
+  welcome rides the
   pending key and attaches to the session the first send creates. A
   room's goal does not start a turn: rooms drive their own.
 - A provider that runs out of quota mid-run hands the walk to the next
