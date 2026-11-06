@@ -470,10 +470,15 @@ head, the rail and the panels keep the measure they have.
   paths, the rewind target and the resumed position.
 - **A goal drives the work.** `/goal <text>` sets the session's standing
   objective; on an ordinary conversation with no run in flight it
-  **starts the run** with the goal as the task. The run carries the goal
-  in its prompt, and the `goal` tool (show / complete / clear) lets the
-  model finish it explicitly — completion is a logged fact the face reads
-  back as the chip's done state. A goal set on the welcome rides the
+  **starts the run** with the goal as the task — and opens the pane on
+  its run tab, because the owner just asked to watch it work. The run
+  carries the goal in its prompt (a goal run is told to maintain the
+  task list with the `todo` tool), and the `goal` tool (show /
+  complete / clear) lets the model finish it explicitly — completion is
+  a logged fact the face reads back as the chip's done state. The
+  run's task list rides beside the goal: the pane's run tab shows one
+  row per task with its status, live and rebuilt from the log on a
+  reload. A goal set on the welcome rides the
   pending key and attaches to the session the first send creates. A
   room's goal does not start a turn: rooms drive their own.
 - A provider that runs out of quota mid-run hands the walk to the next

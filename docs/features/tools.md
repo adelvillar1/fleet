@@ -31,7 +31,7 @@ run whose tool results verify the goal's own words should complete it.
 | `glob` | finds files by pattern | `*`, `?`, `**`, newest first, capped at 100; `rg --files` when installed, so `.gitignore` is honored, and the walker says when it fell back |
 | `repo_map` | maps the repository | files ranked by how often their definitions are referenced, top-level definitions with line numbers, a token budget (default 1,000) that states when it cut, and the result says it is heuristic |
 | `file_change` | moves, copies, deletes, makes directories | paths inside the chat's folder; `.git`, the fleet home and `node_modules` refused by name; `move` and `delete` are the destructive class and ask in every mode |
-| `todo` | replaces the run's task list | full-list replacement, `pending`/`in_progress`/`completed` with `todo`/`doing`/`done` aliases |
+| `todo` | replaces the run's task list | full-list replacement, `pending`/`in_progress`/`completed` with `todo`/`doing`/`done` aliases; every accepted call is also a `tasks` log record and a live `tasks` event — the pane card's only source |
 
 `edit` is content-anchored rather than line-anchored: line numbers shift
 under a one-line change, and an anchor that no longer matches fails

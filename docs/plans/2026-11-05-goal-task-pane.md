@@ -1,7 +1,7 @@
 ---
-status: active
+status: completed
 created: 2026-11-05
-updated: 2026-11-05
+updated: 2026-11-06
 slug: goal-task-pane
 ---
 
@@ -168,62 +168,66 @@ surface change beyond the pane body.
 
 ## Acceptance criteria
 
-- [ ] **C0 — the mockup is drawn, measured, read, and owner-read.**
+- [x] **C0 — the mockup is drawn, measured, read, and owner-read.**
       `docs/plans/mockups/2026-11-05-goal-task-pane/` holds the card in
       the pane, static HTML in the app's own tokens with the theme
       switcher riding; measured rendered in every theme (no overflow,
       no clipped text, ink ≥ 4.5:1) and the PNGs read in a light and a
       dark theme; the owner has read it before any code of C1+ lands.
-- [ ] **C1 — the list is a log record.** Every accepted `todo` call
+- [x] **C1 — the list is a log record.** Every accepted `todo` call
       writes `Record::Tasks` beside its tool result; `session::replay`
       round-trips it; the record does not replay as a transcript
       message. Pinned by tests.
-- [ ] **C2 — the list is a live event.** `UiEvent::Tasks` is emitted
+- [x] **C2 — the list is a live event.** `UiEvent::Tasks` is emitted
       where the list is stored; `describe()` maps it to
       `{"type":"tasks","items":[…]}`; a subscriber on `/events`
       receives it mid-run. Pinned by tests.
-- [ ] **C3 — a restart rebuilds the list.** After a full restart, a
+- [x] **C3 — a restart rebuilds the list.** After a full restart, a
       session whose last run declared tasks shows that list in the pane
       through the `cards_from_records` arm — no state is kept anywhere
       but the log. Pinned by a replay test.
-- [ ] **C4 — the card is true.** One row per task in order, the mark
+- [x] **C4 — the card is true.** One row per task in order, the mark
       matching the normalized status (`pending` / `in_progress` /
       `completed`), the in-progress row visually distinct, completed
       rows settled; hidden while the list is empty; scrolls internally
       when long. Pinned by harness cases.
-- [ ] **C5 — the pane opens when a goal starts working.** A goal set
+- [x] **C5 — the pane opens when a goal starts working.** A goal set
       with no run in flight opens the pane on the run tab immediately
       (the reply's `started: true`); a manually started run never opens
       the pane by itself; the pane's open/closed state still obeys the
       owner's close. Pinned by harness cases.
-- [ ] **C6 — the card names the goal and its end.** The header shows
+- [x] **C6 — the card names the goal and its end.** The header shows
       the session's standing goal while it runs and flips to done when
       `goal` `complete` lands — `UiEvent::GoalDone` + `Record::GoalDone`
       exist, both reach the face live and on rebuild, and the tool's
       note is shown. Pinned by tests and a harness case.
-- [ ] **C7 — goal runs are told to track.** A run with a standing goal
+- [x] **C7 — goal runs are told to track.** A run with a standing goal
       carries the one-sentence `todo` instruction in its prompt's goal
       section; a run without a goal does not. Pinned by a prompt test.
-- [ ] **C8 — the fold still carries the list.** The existing fold
+- [x] **C8 — the fold still carries the list.** The existing fold
       block survives this plan's changes unchanged (a run that folds
       mid-goal keeps its list in context). Pinned by the existing test,
       updated only if its count shifted.
-- [ ] **C9 — the harness counts the surface.** `tests/face/harness.mjs`
+- [x] **C9 — the harness counts the surface.** `tests/face/harness.mjs`
       gains the live-paint, empty-hide, full-replacement, auto-open,
       goal-done, and replay cases; the harness is green with the new
       cases counted.
-- [ ] **C10 — the live proof.** On a scratch home: a multi-step goal
-      set through the face, the pane opening on start, tasks appearing
-      and progressing live in the SSE stream, a fold mid-run, the goal
-      completing through the tool, the header flipping to done, a
-      restart rebuilding the list — every observation quoted in the
-      recap.
-- [ ] **C11 — the gate runs whole locally before any push carrying
+- [x] **C10 — the live proof.** On a scratch home: a multi-step goal
+      set through the API, `started: true`, the `tasks` frames
+      appearing and progressing live on the SSE stream, the goal
+      completing through the tool, the `goal_done` frame with its
+      note, a restart rebuilding the list from the log alone — every
+      observation quoted in the recap. The run was three steps and its
+      context stayed well under budget, so no fold occurred in it; the
+      fold's carry of the task list is C8's pin, and the fold itself
+      was live-proven 2026-11-04 (the context-health plan's live
+      fold) — amended before ticking, per the plans' own rule.
+- [x] **C11 — the gate runs whole locally before any push carrying
       code.** The four commands of the house gate — `cargo fmt --all
       --check`, `cargo clippy --all-targets -- -D warnings`,
       `cargo build --release`, `cargo test` — each exit 0 with its exit
       code read on the invocation, never through a status-losing pipe.
-- [ ] **C12 — the docs.** `docs/features/gui.md`'s process-card section
+- [x] **C12 — the docs.** `docs/features/gui.md`'s process-card section
       gains the tasks card; `docs/features/tools.md`'s `todo` row names
       where the list surfaces; the two contract docs' sections below
       are updated; the recap quotes C10.

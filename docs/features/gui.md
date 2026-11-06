@@ -76,6 +76,16 @@ uses its own three-step loop (plan, review, build).
   the child session: its goal, stage, call count, last tool, outcome,
   and turns. The three newest render under the stepper; clicking one
   opens that child's replay in the dock over the live conversation.
+- **The goal's tasks.** The `todo` tool's list renders as a card under
+  the stepper: one row per task in the order the model declared, the
+  stepper's own marks (hollow = pending, the ring = in progress, the
+  filled dot = completed), and the goal's state word with the done
+  share in the head. It is a view over the `tasks` event — live, and
+  rebuilt from the log's records on a reload — hidden while the list
+  is empty, never synthesized from tool calls. The `goal_done` event
+  flips the header and shows the tool's note; a goal set with no run
+  in flight opens the pane on this tab (the set reply's own
+  `started`), and a set riding an existing run does not.
 - **The gate.** The verify step names the failover gate from
   `/api/state` (`gate on · sys1` or `gate shut`). A finished run offers
   **ask sys1 for a review**, which fills the composer with the review

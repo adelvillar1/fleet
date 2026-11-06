@@ -268,7 +268,10 @@ decode failures.
 #### `agent.rs`
 The tool loop, the uncapped main loop (context health is the long-run
 bound; only delegated children are turn-bounded) with the `goal` tool
-riding every homed run, the `UiEvent` stream, and run-scoped `LaneRoster`. One
+riding every homed run, the `UiEvent` stream — its `tasks` and
+`goal_done` events carry the run's task list and the goal's completion,
+both also log records so a reload rebuilds them — and run-scoped
+`LaneRoster`. One
 turn reads the owner's control file, assembles the memory block once at run
 start, streams the request with dynamic declarations, gates approvals one call
 at a time, executes tool waves, logs every message, and checks the window
