@@ -2592,6 +2592,181 @@ async fn judge_live(server: &McpServer, task: &str) -> Option<RouteJudgment> {
 /// for the decision row. A missing or empty workload label is `None`
 /// (an unusable verdict → fallback); a missing confidence reads as 0.0,
 /// which the gate then routes to the default workload. An answer
+/// The plan's own execution judgment: sys1's `plan_judge` task reads the
+/// plan's tasks and acceptance criteria and names the execution topology,
+/// and the verdict is written into the plan's frontmatter — the answer a
+/// session implementing the plan is told, not asked to re-derive. A
+/// legacy plan (drafted before the judgment existed, no `execution:` in
+/// its frontmatter) is judged here too: the on-the-spot call is the same
+/// task over the same text, and the store lands before execution begins.
+pub async fn judge_plan(plan: &Path) -> Result<crate::plan_graph::ExecutionVerdict, String> {
+    let spec = crate::lanes::spec_for(JUDGE_LANE)?;
+    let text = plan_judge_text(plan)?;
+    let server = McpServer::spawn(&spec)
+        .map_err(|error| format!("the sys1 lane could not spawn: {error}"))?;
+    let outcome = if server.initialize().await.is_ok() {
+        server
+            .call_tool(
+                "sys1_classify",
+                json!({ "task": "plan_judge", "text": text }),
+            )
+            .await
+            .ok()
+            .and_then(|call| parse_plan_execution(&call.text()))
+    } else {
+        None
+    };
+    let _ = server.close().await;
+    let verdict = outcome.ok_or_else(|| {
+        "sys1 gave no plan_judge verdict — the plan keeps its status and the route judges the brief".to_string()
+    })?;
+    write_plan_verdict(plan, verdict)?;
+    Ok(verdict)
+}
+
+/// The plan_judge input: the plan's slug and its checkbox lines — the
+/// tasks and acceptance criteria the verdict is read over.
+fn plan_judge_text(plan: &Path) -> Result<String, String> {
+    let meta = crate::plan_graph::read_meta(plan)
+        .map_err(|error| format!("{}: {error}", plan.display()))?;
+    let text =
+        std::fs::read_to_string(plan).map_err(|error| format!("{}: {error}", plan.display()))?;
+    let mut parts = vec![format!("plan: {}", meta.slug)];
+    for line in text.lines() {
+        let trimmed = line.trim();
+        let body = trimmed
+            .strip_prefix("- [ ]")
+            .or_else(|| trimmed.strip_prefix("- [x]"));
+        if let Some(body) = body {
+            if !body.trim().is_empty() {
+                parts.push(body.trim().to_string());
+            }
+        }
+    }
+    Ok(parts.join("\n"))
+}
+
+/// Read the execution head out of a `plan_judge` answer — the same
+/// answers shape the route task answers, one head.
+fn parse_plan_execution(text: &str) -> Option<crate::plan_graph::ExecutionVerdict> {
+    let value: serde_json::Value = serde_json::from_str(text).ok()?;
+    let answers = value.get("answers")?.as_object()?;
+    for heads in answers.values() {
+        if let Some(execution) = heads.get("execution").and_then(|e| e.as_object()) {
+            let label = execution.get("label").and_then(|l| l.as_str())?;
+            return crate::plan_graph::ExecutionVerdict::parse(label);
+        }
+    }
+    None
+}
+
+/// Write the execution verdict into the plan's frontmatter: the line
+/// lands after `status:`, so the fence's own order names where the
+/// verdict came from. A plan whose status is `draft` flips to `judged` —
+/// the verdict is the draft's next step — and a plan already carrying a
+/// verdict is rewritten in place.
+fn write_plan_verdict(
+    plan: &Path,
+    verdict: crate::plan_graph::ExecutionVerdict,
+) -> Result<(), String> {
+    let text =
+        std::fs::read_to_string(plan).map_err(|error| format!("{}: {error}", plan.display()))?;
+    let line = format!("execution: {}", verdict.as_str());
+    let mut out: Vec<String> = Vec::with_capacity(text.lines().count() + 1);
+    let mut replaced = false;
+    let mut in_fence = false;
+    let mut fence_closed = false;
+    for old in text.lines() {
+        let trimmed_end = old.trim_end();
+        if trimmed_end == "---" {
+            if !in_fence {
+                in_fence = true;
+            } else if !fence_closed {
+                fence_closed = true;
+            }
+            out.push(old.to_string());
+            continue;
+        }
+        if in_fence && !fence_closed {
+            if old.starts_with("execution:") {
+                out.push(line.clone());
+                replaced = true;
+                continue;
+            }
+            if old.starts_with("status:") {
+                // A draft that just earned its verdict is `judged`; any
+                // other status (active, completed) keeps its own word —
+                // the verdict rides beside it, never rewinds it.
+                if old.trim().ends_with("draft") {
+                    out.push("status: judged".to_string());
+                } else {
+                    out.push(old.to_string());
+                }
+                if !replaced {
+                    out.push(line.clone());
+                    replaced = true;
+                }
+                continue;
+            }
+        }
+        out.push(old.to_string());
+    }
+    if !replaced {
+        return Err(format!(
+            "{}: the frontmatter has no status line to hang the verdict on",
+            plan.display()
+        ));
+    }
+    std::fs::write(plan, out.join("\n") + "\n")
+        .map_err(|error| format!("{}: {error}", plan.display()))
+}
+
+/// The non-plan goal's implied work shape: sys1's `goal_work` task reads
+/// the goal and the task and names what they imply — the same ruling the
+/// plan verdict carries, for a goal that is not a plan. `None` is the
+/// named fallback (the lane absent, the answer unclear): the route falls
+/// back to its own read of the goal's literal words.
+pub async fn judge_goal_work(
+    goal: &str,
+    task: &str,
+) -> Option<crate::plan_graph::ExecutionVerdict> {
+    let spec = crate::lanes::spec_for(JUDGE_LANE).ok()?;
+    let text = format!("goal: {goal}\ntask: {task}");
+    let server = McpServer::spawn(&spec).ok()?;
+    let outcome = if server.initialize().await.is_ok() {
+        server
+            .call_tool(
+                "sys1_classify",
+                json!({ "task": "goal_work", "text": text }),
+            )
+            .await
+            .ok()
+            .and_then(|call| parse_goal_work(&call.text()))
+    } else {
+        None
+    };
+    let _ = server.close().await;
+    outcome
+}
+
+/// Read the work shape out of a `goal_work` answer — the answers shape,
+/// one head, the label the brief carries.
+fn parse_goal_work(text: &str) -> Option<crate::plan_graph::ExecutionVerdict> {
+    let value: serde_json::Value = serde_json::from_str(text).ok()?;
+    let answers = value.get("answers")?.as_object()?;
+    for heads in answers.values() {
+        if let Some(work) = heads.get("work").and_then(|w| w.as_object()) {
+            let label = work.get("label").and_then(|l| l.as_str())?;
+            return match label {
+                "independent parts" => Some(crate::plan_graph::ExecutionVerdict::Swarm),
+                "one thread" => Some(crate::plan_graph::ExecutionVerdict::Single),
+                _ => None,
+            };
+        }
+    }
+    None
+}
+
 /// without the execution head records none — the absence is never
 /// invented.
 fn parse_workload(text: &str) -> Option<RouteJudgment> {
@@ -3521,10 +3696,53 @@ async fn prepare_walk(
     // through. The cache never blocks a route — every failure path
     // inside it costs a recompute and nothing else.
     let mut decision_cache = crate::route_cache::Cache::load(home);
+    // The leader's judgment input is the work brief — the session's goal,
+    // the plans it drafted, and the plan's own execution verdict — not the
+    // bare task line, which for a plan-implementation ask is a pointer to
+    // the work, not the work. A child's brief is already the work; it
+    // passes through verbatim.
+    let (judged_input, plan_execution) = if walk == Walk::Leader {
+        let plan_root = std::env::current_dir().unwrap_or_default();
+        let mut brief = crate::work_brief::resolve(home, &plan_root, session_seed, task);
+        // A legacy plan — drafted before the judgment existed — is judged
+        // on the spot, before the route's own judgment runs, so the
+        // verdict is stored and the route rides it (the plan's C3). A
+        // sys1 absence is the named fallback: the plan keeps its status
+        // and the route judges the brief without a verdict.
+        if let Some(plan) = brief
+            .plan_path
+            .clone()
+            .filter(|_| brief.plan_execution.is_none())
+        {
+            match judge_plan(plan.as_path()).await {
+                Ok(verdict) => brief.plan_execution = Some(verdict),
+                Err(reason) => {
+                    eprintln!("fleet: the plan's judgment did not land: {reason}");
+                }
+            }
+        }
+        let plan_execution = brief.plan_execution;
+        (brief.render(), plan_execution)
+    } else {
+        // The non-plan half of the ruling: the goal's implied work, named
+        // by the sys1 goal_work judgment, rides the brief when the lane
+        // answers. An absence is the named fallback — the route judges
+        // the goal's literal words.
+        let mut brief = crate::work_brief::resolve(
+            home,
+            std::env::current_dir().unwrap_or_default().as_path(),
+            session_seed,
+            task,
+        );
+        if let Some(shape) = judge_goal_work(&brief.goal, task).await {
+            brief.work_shape = Some(shape.as_str().to_string());
+        }
+        (brief.render(), None)
+    };
     let (mut decision, latency_ms) = select_walk_with_home(
         &resolved,
         roster.pin.as_deref(),
-        task,
+        &judged_input,
         specs,
         &roster.preferences,
         roster.gates,
@@ -3533,6 +3751,22 @@ async fn prepare_walk(
         Some(home),
     )
     .await;
+    // The plan's own verdict outranks the fresh execution head: the plan
+    // was judged at draft time over its tasks and acceptance criteria,
+    // and the frontmatter carries the answer — the route's fresh head is
+    // a re-derivation from a pointer. The reason names the source, and
+    // the confidence is decided: the owner's ruling is that the session
+    // implementing a judged plan is told the answer, not asked to guess
+    // again.
+    if let Some(verdict) = plan_execution {
+        decision.execution = Some(ExecutionHead {
+            label: verdict.as_str().to_string(),
+            confidence: 1.0,
+        });
+        decision
+            .reason
+            .push_str("; the plan's own execution verdict (judged at draft time) rides the route");
+    }
     // The calibration stream, and its first read: today's graded rows
     // demote a candidate that keeps failing to the end of this session's
     // walk (slice 5's last acceptance criterion).
@@ -4301,8 +4535,7 @@ mod tests {
     fn the_model_arm_wins_over_the_account_arm_and_names_its_own_fact() {
         let both = ClientError::Api(crate::api::ApiError {
             status: 400,
-            message: "You have no active plan subscription; model is unavailable"
-                .to_string(),
+            message: "You have no active plan subscription; model is unavailable".to_string(),
             request_id: None,
         });
         assert_eq!(failure_class(&both), "model-availability");
@@ -4622,7 +4855,7 @@ mod tests {
                 candidate: Candidate {
                     id: "stand-in".into(),
                     models_url: None,
-            base_url: "http://127.0.0.1:1/v1".into(),
+                    base_url: "http://127.0.0.1:1/v1".into(),
                     key_env: "STAND_IN_TOKEN".into(),
                     models: vec!["auto".into()],
                     billing: Billing::Plan,
@@ -4642,7 +4875,7 @@ mod tests {
                 candidate: Candidate {
                     id: "zai-coding-plan".into(),
                     models_url: None,
-            base_url: "https://api.z.ai".into(),
+                    base_url: "https://api.z.ai".into(),
                     key_env: "ZAI_CODING_API_KEY".into(),
                     models: vec!["GLM-5.3-Flash".into()],
                     billing: Billing::Plan,
@@ -5524,7 +5757,7 @@ mod tests {
             candidate: Candidate {
                 id: id.to_string(),
                 models_url: None,
-            base_url: "http://127.0.0.1:1/v1".to_string(),
+                base_url: "http://127.0.0.1:1/v1".to_string(),
                 key_env: "STAND_IN_TOKEN".to_string(),
                 models: vec!["auto".to_string()],
                 billing: Billing::Plan,
@@ -5912,7 +6145,7 @@ mod tests {
             candidate: Candidate {
                 id: id.to_string(),
                 models_url: None,
-            base_url: "http://127.0.0.1:1/v1".to_string(),
+                base_url: "http://127.0.0.1:1/v1".to_string(),
                 key_env: format!("{}_KEY", id.to_uppercase().replace('-', "_")),
                 models: vec![format!("{id}-model")],
                 billing: Billing::Plan,

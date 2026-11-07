@@ -3390,7 +3390,7 @@
     var acts = node('div', 'canvas-inline');
     DECISIONS.forEach(function (pair) {
       if (pair[0] === 'remember' && !seat.allowlistable) return;
-      var button = node('button', 'decision', pair[2]);
+      var button = node('button', 'decision');
       button.type = 'button';
       button.dataset.decision = pair[0];
       button.title = pair[3] + ' \u00b7 key ' + pair[1];
@@ -3438,7 +3438,7 @@
     el.seatActions.textContent = '';
     DECISIONS.forEach(function (pair) {
       if (pair[0] === 'remember' && !seat.allowlistable) return;
-      var button = node('button', 'decision', pair[2]);
+      var button = node('button', 'decision');
       button.type = 'button';
       button.dataset.decision = pair[0];
       button.title = pair[3] + ' \u00b7 key ' + pair[1];

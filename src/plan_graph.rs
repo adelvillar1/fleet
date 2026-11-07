@@ -47,11 +47,16 @@ use serde::{Deserialize, Serialize};
 
 use crate::graph::{Capabilities, DeclaredNode, Graph, Node, Status};
 
-/// The four statuses the plan format declares, and the only ones a plan
+/// The five statuses the plan format declares, and the only ones a plan
 /// may carry. A value outside the set is a malformed plan, not a default.
+/// `Judged` is the draft's next step: the plan's execution verdict — the
+/// workload's own topology read over its tasks and acceptance criteria —
+/// is in the frontmatter, so a session picking the plan up hears the
+/// verdict with the plan and decides only how the delegation happens.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlanStatus {
     Draft,
+    Judged,
     Active,
     Completed,
     Cancelled,
@@ -62,6 +67,7 @@ impl PlanStatus {
     pub fn as_str(self) -> &'static str {
         match self {
             PlanStatus::Draft => "draft",
+            PlanStatus::Judged => "judged",
             PlanStatus::Active => "active",
             PlanStatus::Completed => "completed",
             PlanStatus::Cancelled => "cancelled",
@@ -71,6 +77,7 @@ impl PlanStatus {
     fn parse(text: &str) -> Option<PlanStatus> {
         match text.trim() {
             "draft" => Some(PlanStatus::Draft),
+            "judged" => Some(PlanStatus::Judged),
             "active" => Some(PlanStatus::Active),
             "completed" => Some(PlanStatus::Completed),
             "cancelled" => Some(PlanStatus::Cancelled),
@@ -85,14 +92,47 @@ impl PlanStatus {
     }
 }
 
+/// The execution verdict the plan's judgment writes into the
+/// frontmatter: the route's own execution topology, read over the
+/// plan's tasks and acceptance criteria while the plan is still a
+/// document — so the session that implements it is told the answer
+/// rather than re-deriving it from a one-line goal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExecutionVerdict {
+    Single,
+    Mixture,
+    Swarm,
+}
+
+impl ExecutionVerdict {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ExecutionVerdict::Single => "single",
+            ExecutionVerdict::Mixture => "mixture",
+            ExecutionVerdict::Swarm => "swarm",
+        }
+    }
+
+    pub fn parse(text: &str) -> Option<ExecutionVerdict> {
+        match text.trim() {
+            "single" => Some(ExecutionVerdict::Single),
+            "mixture" => Some(ExecutionVerdict::Mixture),
+            "swarm" => Some(ExecutionVerdict::Swarm),
+            _ => None,
+        }
+    }
+}
+
 /// The plan document's frontmatter: the identity and the status the
-/// graph's lifecycle hangs off.
+/// graph's lifecycle hangs off, plus the execution verdict the plan's
+/// own judgment wrote — `None` for a plan that has not been judged.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlanMeta {
     pub status: PlanStatus,
     pub created: String,
     pub updated: String,
     pub slug: String,
+    pub execution: Option<ExecutionVerdict>,
 }
 
 /// The declaration block, as the plan states it.
@@ -342,6 +382,7 @@ pub fn read_meta(plan: &Path) -> Result<PlanMeta, PlanError> {
         .map_err(|error| PlanError::NotAPlan(format!("{}: {error}", plan.display())))?;
     let shown = plan.display().to_string();
     let mut status = None;
+    let mut execution = None;
     let mut created = None;
     let mut updated = None;
     let mut slug = None;
@@ -370,6 +411,12 @@ pub fn read_meta(plan: &Path) -> Result<PlanMeta, PlanError> {
                         .ok_or_else(|| PlanError::BadStatus(shown.clone(), value.to_string()))?,
                 );
             }
+            "execution" => {
+                execution = Some(
+                    ExecutionVerdict::parse(value)
+                        .ok_or_else(|| PlanError::BadStatus(shown.clone(), value.to_string()))?,
+                );
+            }
             "created" => created = Some(value.to_string()),
             "updated" => updated = Some(value.to_string()),
             "slug" => slug = Some(value.to_string()),
@@ -386,6 +433,7 @@ pub fn read_meta(plan: &Path) -> Result<PlanMeta, PlanError> {
     };
     Ok(PlanMeta {
         status: status.ok_or_else(|| PlanError::MissingField(shown.clone(), "status".into()))?,
+        execution,
         created: field(created, "created")?,
         updated: field(updated, "updated")?,
         slug: field(slug, "slug")?,

@@ -4060,8 +4060,7 @@ esac
                 reason,
             }) => {
                 assert_eq!(
-                    integration,
-                    "merge-fleet-child-20261026t010000z-abc123",
+                    integration, "merge-fleet-child-20261026t010000z-abc123",
                     "{report:?}"
                 );
                 assert!(reason.contains("NoCommit"), "{reason}");

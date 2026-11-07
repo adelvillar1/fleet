@@ -2795,13 +2795,14 @@ impl<'a> Agent<'a> {
         alive.store(false, std::sync::atomic::Ordering::Relaxed);
         let _ = watcher.join();
         self.lanes.close_all().await;
-        // A background process still running at the end is left alive
-        // and named: killing the owner's server is worse than leaving
-        // it, and the owner reads what is still theirs.
-        let survivors = self.processes.still_running();
-        if !survivors.is_empty() {
-            let _ = writeln!(self.progress, "\u{2014} still running in the background:");
-            for (id, command) in &survivors {
+        // The standing principle: what the agent spins up, the agent
+        // shuts down cleanly. The run's own children go with it — the
+        // report names what stopped, so the owner reads the shutdown
+        // instead of finding the processes later.
+        let stopped = self.processes.shutdown();
+        if !stopped.is_empty() {
+            let _ = writeln!(self.progress, "\u{2014} shut down with the run:");
+            for (id, command) in &stopped {
                 let _ = writeln!(self.progress, "    {id}: {command}");
             }
             let _ = self.progress.flush();
@@ -10092,7 +10093,8 @@ mod tests {
         let here = std::env::current_dir().expect("a working directory");
         assert_eq!(
             workspace_key(&FileAccess::Unrestricted),
-            here.file_name().map(|name| name.to_string_lossy().to_string())
+            here.file_name()
+                .map(|name| name.to_string_lossy().to_string())
         );
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -14741,7 +14743,10 @@ You are auditing a change. Read the diff before you judge it.
         }
         for (path, content) in [
             // The `Usage` struct: the term's own identifier.
-            ("src/api.rs", "pub struct Usage {\n    pub tokens: u64,\n}\n"),
+            (
+                "src/api.rs",
+                "pub struct Usage {\n    pub tokens: u64,\n}\n",
+            ),
             // A font family in a plugin's markup.
             (
                 "plugins/telemetry/index.html",
@@ -14763,7 +14768,10 @@ You are auditing a change. Read the diff before you judge it.
                 "#[derive(Deserialize)]\npub struct Widget {\n    pub label: String,\n}\n",
             ),
         ] {
-            let guard = write_guard(&root, &serde_json::json!({"path": path, "content": content}));
+            let guard = write_guard(
+                &root,
+                &serde_json::json!({"path": path, "content": content}),
+            );
             assert_eq!(guard, WriteGuard::Clean, "{path}: {guard:?}");
         }
         // KI-428's surface: a patch carries the same names, and the guard
@@ -14808,7 +14816,10 @@ You are auditing a change. Read the diff before you judge it.
             crate::nomenclature::SPELLING_CONVENTION_FILES
         );
         let content = "pub static CODE: &str = \"SF Mono\";\n";
-        let guard = write_guard(&root, &serde_json::json!({"path":"src/x.rs","content":content}));
+        let guard = write_guard(
+            &root,
+            &serde_json::json!({"path":"src/x.rs","content":content}),
+        );
         assert!(
             matches!(guard, WriteGuard::Refused { .. }),
             "a spelling one file wrote is still policed: {guard:?}"
@@ -14831,7 +14842,10 @@ You are auditing a change. Read the diff before you judge it.
             "two files is the bar: {}",
             crate::nomenclature::SPELLING_CONVENTION_FILES
         );
-        let guard = write_guard(&root, &serde_json::json!({"path":"src/x.rs","content":content}));
+        let guard = write_guard(
+            &root,
+            &serde_json::json!({"path":"src/x.rs","content":content}),
+        );
         assert_eq!(guard, WriteGuard::Clean, "{guard:?}");
         let _ = std::fs::remove_dir_all(&root);
     }

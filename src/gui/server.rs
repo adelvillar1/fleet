@@ -4650,7 +4650,10 @@ mod tests {
             on_disk.contains("superseded-by: a-fact-reworded"),
             "{on_disk}"
         );
-        assert!(corpus.join("a-fact-reworded.md").exists(), "the replacement");
+        assert!(
+            corpus.join("a-fact-reworded.md").exists(),
+            "the replacement"
+        );
         // One consolidation pass on demand: the pass runs and names what
         // it did — here, nothing, which is itself the honest answer.
         let pass = post_within(port, "/api/memories/consolidate", &token, "{}", budget);

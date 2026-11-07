@@ -1446,9 +1446,7 @@ fn admissible_source(source: &Path, installed: &Path) -> bool {
     if !source.is_file() || source == installed {
         return false;
     }
-    !source
-        .components()
-        .any(|part| part.as_os_str() == "debug")
+    !source.components().any(|part| part.as_os_str() == "debug")
 }
 
 /// [`render_head`] with the delivery step's outcome, which the command
@@ -2304,7 +2302,10 @@ mod tests {
         // The no-build case is not a failure and never says the copy is
         // current: it names the absence and stops.
         let no_build = strip_ansi(&render_delivery(&home, DeliveryStep::NoBuild));
-        assert!(no_build.contains("no build beside this binary"), "{no_build}");
+        assert!(
+            no_build.contains("no build beside this binary"),
+            "{no_build}"
+        );
         assert!(!no_build.contains("current"), "{no_build}");
         assert!(!no_build.contains("fleet reload"), "{no_build}");
     }

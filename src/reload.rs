@@ -892,14 +892,18 @@ gui/501/com.fleet.gui = {
             reconcile_state(&source, &installed).unwrap(),
             Reconciliation::Absent
         );
-        assert!(reconcile_state(&source, &installed).unwrap().needs_delivery());
+        assert!(reconcile_state(&source, &installed)
+            .unwrap()
+            .needs_delivery());
         // Equal bytes read current, and current wants nothing.
         install_binary(&source, &installed).unwrap();
         assert_eq!(
             reconcile_state(&source, &installed).unwrap(),
             Reconciliation::Current
         );
-        assert!(!reconcile_state(&source, &installed).unwrap().needs_delivery());
+        assert!(!reconcile_state(&source, &installed)
+            .unwrap()
+            .needs_delivery());
         // A rebuild with a DIFFERENT byte but an identical version reads
         // stale — the case a version comparison would silently pass.
         a_built_binary(&root, "source", b"build two");
@@ -907,7 +911,9 @@ gui/501/com.fleet.gui = {
             reconcile_state(&source, &installed).unwrap(),
             Reconciliation::Stale
         );
-        assert!(reconcile_state(&source, &installed).unwrap().needs_delivery());
+        assert!(reconcile_state(&source, &installed)
+            .unwrap()
+            .needs_delivery());
         let _ = std::fs::remove_dir_all(&root);
     }
 
