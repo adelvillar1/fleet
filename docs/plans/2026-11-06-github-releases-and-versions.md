@@ -1,7 +1,7 @@
 ---
-status: active
+status: completed
 created: 2026-11-06
-updated: 2026-11-06
+updated: 2026-11-07
 slug: github-releases-and-versions
 ---
 
@@ -42,7 +42,7 @@ and it does not collide with the stable tag.)
 The deliverable is **v0.4.0: cut, gated, published, delivered** — and the
 machinery that makes it repeatable.
 
-- [ ] **C1 — `scripts/release.sh` gates before it cuts.** Running
+- [x] **C1 — `scripts/release.sh` gates before it cuts.** Running
   `scripts/release.sh tag` on a tree whose HEAD has not passed the four-leg
   gate on a detached worktree of that HEAD exits non-zero and cuts nothing;
   with the gate green it creates the annotated tag `v0.4.0` and pushes it.
@@ -50,14 +50,14 @@ machinery that makes it repeatable.
   working directory is restored unmodified, and the script refuses to run
   when the working tree is dirty. The gate is skipped only via
   `--skip-gate` (explicit on the command line, never defaulted).
-- [ ] **C2 — cutting bumps every version site in one commit.** One
+- [x] **C2 — cutting bumps every version site in one commit.** One
   `scripts/bump-version.sh OLD NEW` (plain sh, both versions passed as
   arguments) edits the three version sites (`Cargo.toml`, `src-tauri/Cargo.toml`,
   `src-tauri/tauri.conf.json`) and the lockfile, greps the repo for the old
   version and leaves only intentional sites, and its output lists what it
   touched. After it runs, `grep -rn '"0.3.0-beta"\|0\.3\.0-beta' Cargo.toml
   src-tauri/ --include="*.toml" --include="*.json"` prints nothing.
-- [ ] **C3 — the changelog is the release note, in one place.**
+- [x] **C3 — the changelog is the release note, in one place.**
   `CHANGELOG.md` exists, its head section is the version being released
   (`## v0.4.0 — 2026-11-06`), it is written from this session's landed
   increments (the open-ledger closeout: 28→5 ledger rows, KI-463's request
@@ -65,33 +65,53 @@ machinery that makes it repeatable.
   `gh release create v0.4.0 --title v0.4.0 --notes-file <(head section)` —
   so the changelog's head IS the GitHub release note; no text is written
   twice or diverges between the two.
-- [ ] **C4 — the tagged tree is gated, the tag is proven, and the
+- [x] **C4 — the tagged tree is gated, the tag is proven, and the
   provenance is greppable.** The release build runs from a detached worktree
   at `v0.4.0`; the lib gate log (`/tmp/gate-lib-release-*.log`) names
   `1929 passed`; the build output names the dmg; and `git show v0.4.0` on the
   repo shows the object pointing at the commit whose tree the gate's logs
   recorded.
-- [ ] **C5 — the release carries real binaries.** `gh release view v0.4.0`
+- [x] **C5 — the release carries real binaries.** `gh release view v0.4.0`
   lists both the dmg (`fleet-0.4.0-beta.1_aarch64.dmg`) and the CLI
   (`fleet-aarch64-apple-darwin.tar.gz`), the assets download successfully
   (`gh release download` to a scratch dir), and after
   `git shortlog -s v0.4.0` shows the release's span, the CLI tarball's
   `fleet` binary passes `fleet --version` and names `0.4.0-beta.1`.
-- [ ] **C6 — the face never serves a dev build again.** Post-cut, the
+- [x] **C6 — the face never serves a dev build again.** Post-cut, the
   installed release (dmg installed, or the CLI landed through `fleet reload`
   on this machine — whichever the owner runs) passes
   `fleet --version` → `0.4.0-beta.1` and
   `~/.fleet/bin/fleet --version` → `0.4.0-beta.1`, verified after a reload
   so the live face is genuinely the tagged build.
-- [ ] **C7 — the release reads as a release.** The README's install section
+- [x] **C7 — the release reads as a release.** The README's install section
   names the GitHub release as the way in (a URL to
   `https://github.com/adelvillar1/fleet/releases/latest`), and the release
   page itself reads as a release page, with no placeholder text.
-- [ ] **C8 — the release is repeatable and documented.** `scripts/release.sh`
+- [x] **C8 — the release is repeatable and documented.** `scripts/release.sh`
   carries a usage comment naming its mode (`tag`), its `--skip-gate` flag,
   and `gh` as a prerequisite; and a later cut (`v0.4.1` or `v0.5.0`) is the
   same script at a new version number, with no step that exists only in this
   session's transcript.
+## Status — verified 2026-11-07
+
+Every criterion is met by the artifact, not by the machinery existing. The
+evidence, read live:
+
+| | verdict | evidence |
+|---|---|---|
+| C1 | met | `scripts/release.sh` usage header names `tag`/`assets` and `--skip-gate` as explicit-only; the first cut attempt was **refused** because the gate legs failed (`REPO_ROOT` unexported), which is the gate working; the second cut gated `16f24bc` on a detached worktree and only then tagged |
+| C2 | met | `grep -rn '0\.3\.0-beta' Cargo.toml src-tauri/ --include="*.toml" --include="*.json"` prints nothing; all three version sites and the lock read `0.4.0-beta.1` |
+| C3 | met | `CHANGELOG.md:14` is `## v0.4.0 — 2026-11-06`, and `release.sh` refuses when the head section is not the tag being cut |
+| C4 | met | `v0.4.0` is an annotated tag (`git cat-file -t` → `tag`) on `16f24bc7`, the gated tree; pushed to origin (`refs/tags/v0.4.0` + `^{}` → `16f24bc7`) |
+| C5 | met | `gh release view v0.4.0` lists `fleet-aarch64-apple-darwin.tar.gz` and `fleet_0.4.0-beta.1_aarch64.dmg`; downloaded, `tar xzf`, and the binary printed `fleet 0.4.0-beta.1` |
+| C6 | met | `~/.fleet/bin/fleet --version` → `fleet 0.4.0-beta.1`, after a reload, byte-identical to `target/release/fleet` |
+| C7 | met | `README.md:244` links `https://github.com/adelvillar1/fleet/releases/latest` as the prebuilt way in |
+| C8 | met | the usage comment names both modes, `--skip-gate`, and `gh` as a prerequisite; nothing in the cut exists only in a transcript |
+
+The one correction worth recording: the release machinery was reverted on
+master by a parallel session (`10acb5e`) and restored by reverting that
+revert, verified byte-identical to the gated tree `16f24bc` before the
+restore was committed. The tag was never moved.
 
 ## The next versions are decided now
 

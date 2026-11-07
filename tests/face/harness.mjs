@@ -10250,6 +10250,45 @@ async function theConnectCardSaysWhatHappened() {
       transcript.slice(-160));
   }
 
+// KI-468: a door is a fixed, centered grid over the whole viewport, so a
+// form taller than the window overflows BOTH edges and its bottom — the
+// acts row, where every door is confirmed — sits below the fold with
+// nothing to scroll. The persona door carried eight fields and two chip
+// sets (1316px in a 613px-tall window), so the owner met a modal with no
+// scrolling and could not approve. The bounded surface must scroll itself.
+// Measured in Chromium at the owner's viewport rather than eyeballed:
+// before the fix the form was 1316px with overflow-y: visible and the acts
+// row unreachable; after, 565px, overflow-y: auto, acts reachable.
+function theDoorScrollsItsOwnForm() {
+  const door = ruleBlock('.door');
+  const form = ruleBlock('.door .form');
+  // The door is the full-viewport overlay and stays a centered grid; the
+  // scrolling belongs to the form, so the backdrop never scrolls away.
+  check('C-DOOR the door is a fixed full-viewport overlay',
+    door.includes('position: fixed') && door.includes('inset: 0'), door);
+  check('C-DOOR the form is bounded by the viewport height',
+    /max-height:\s*calc\(\s*100d?vh\s*-\s*\d+px\s*\)/.test(form), form);
+  check('C-DOOR the form scrolls itself, not the page',
+    /overflow-y:\s*auto/.test(form), form);
+  check('C-DOOR the form contains the scroll it starts',
+    /overscroll-behavior:\s*contain/.test(form), form);
+  // Every acts row is inside a form, which is now the scrolling box — so
+  // the confirm press of any door is inside the element that scrolls.
+  const actsInsideForms = HTML.split('<div class="acts">').length - 1;
+  const forms = HTML.split('<div class="form">').length - 1;
+  check('C-DOOR every door\u2019s acts row rides inside its form',
+    forms >= 2 && actsInsideForms >= 2, forms + ' forms, ' + actsInsideForms + ' acts rows');
+  // The persona door — the one the owner could not approve — is still the
+  // eight-field form this pin was written against.
+  const persona = HTML.slice(HTML.indexOf('id="persona-door"'),
+    HTML.indexOf('id="huddle-door"'));
+  check('C-DOOR the persona door carries the fields that overflowed',
+    ['persona-name', 'persona-description', 'persona-tools', 'persona-skills',
+      'persona-overlay', 'persona-temporal', 'persona-create', 'persona-cancel']
+      .every((id) => persona.includes('id="' + id + '"')),
+    persona.length + ' chars');
+}
+
 const cases = [
   ['HEALTH the working line reads the health, not the turn', theWorkingLineReadsTheHealthNotTheTurn],
   ['HEALTH a reopened conversation seeds its health and the floor names itself', aReopenedConversationSeedsItsHealth],
@@ -10358,6 +10397,8 @@ const cases = [
   ['CA-C3 the connect card says what happened', theConnectCardSaysWhatHappened],
 
   ['BUNDLE the plugin\u2019s own page mounts and relays its queries', theBundleMountsAndRelaysItsDeclaredQueries],
+
+  ['DOOR the door scrolls its own form (KI-468)', theDoorScrollsItsOwnForm],
 
   ['DESK the desk carries the brief and the review', theDeskCarriesTheBriefAndTheReview],
   ['GOAL the goal chip and the uncapped finish', theGoalChipAndTheUncappedFinish],

@@ -61,6 +61,16 @@ pub const MENTION_OWNER: &str = "you";
 /// the start of the text or a non-name byte, so `foo@bar` is not one — and
 /// a name of `[A-Za-z0-9_-]+`. The last address wins: a relay's most recent
 /// direction is the one the next turn serves.
+///
+/// The address must END the word that opens it, and must not open a
+/// formatter directive. A `@` inside a token — inside inline code, a path,
+/// or an identifier — is notation, not an address: `` `@loader_path/../lib`
+/// `` is an rpath and `@rpath/libLLVM.dylib` a library. Reading one as an
+/// address posted a `loader_path` capability-gap card whose suggestion was
+/// "create a persona for this" (KI-469) — a gap the room never had. So the
+/// boundary is on both sides: no name byte before the `@`, no continuing
+/// byte after the name, and no directive (`@media`, `@supports`, `@import`,
+/// `@keyframes`) whatever whitespace follows it.
 pub fn last_mention(text: &str) -> Option<(&str, &str)> {
     let bytes = text.as_bytes();
     let mut found = None;
@@ -76,14 +86,51 @@ pub fn last_mention(text: &str) -> Option<(&str, &str)> {
         if end == start {
             continue;
         }
+        // The name has to end the word: `/`, `.`, `:` and `@` continue a
+        // token rather than closing it, so an `@` followed by a name and
+        // then one of those is notation inside that token.
+        if let Some(next) = bytes.get(end) {
+            if !ends_the_word(*next) {
+                continue;
+            }
+        }
         // Both halves borrow `text`: `trim_start` and an ASCII prefix keep
         // their boundaries on char edges, so the slices stay valid UTF-8.
         let name = &text[start..end];
+        if DIRECTIVES.contains(&name) {
+            continue;
+        }
         let following = text[end..].trim_start();
         found = Some((name, following));
     }
     found
 }
+
+/// Whether the byte after a name CLOSES the word it ends, so the `@` before
+/// it opened an address rather than sitting inside a longer token. Prose
+/// closes a word with whitespace, punctuation, or the end of the text;
+/// `/`, `.`, `:`, `@`, `\` and `%` continue a path, a library, a symbol, a
+/// pair of names, or an escape. A backtick is a close, because it ends the
+/// inline-code span a real address is often written beside.
+fn ends_the_word(byte: u8) -> bool {
+    !matches!(byte, b'/' | b'.' | b':' | b'@' | b'\\' | b'%')
+}
+
+/// The `@`-words that open a formatter directive rather than address
+/// anyone, whatever follows them: the CSS at-rules and conditional group
+/// names. `@media (min-width: 700px)` is notation, and its whitespace is
+/// not the sign of an address, so a `@` followed by one of these never
+/// posts a capability gap.
+const DIRECTIVES: [&str; 8] = [
+    "media",
+    "supports",
+    "import",
+    "keyframes",
+    "font-face",
+    "charset",
+    "namespace",
+    "page",
+];
 
 /// The kind of a mention, from the closed vocabulary. The owner's own
 /// address asks; a member's address directs; and a request whose first
@@ -1778,6 +1825,24 @@ mod tests {
             last_mention("thanks, @clerk — file it"),
             Some(("clerk", "— file it"))
         );
+        // Notation is not an address (KI-469). The `@`s below are real text
+        // from the sessions that misfired: an rpath, a library, a CSS
+        // at-rule, a pair of names. Each one hired a persona for a gap the
+        // room never had, because the name was taken from inside a token.
+        assert_eq!(last_mention("rpath `@loader_path/../lib`"), None);
+        assert_eq!(last_mention("it links `@rpath/libLLVM.dylib`"), None);
+        assert_eq!(last_mention("@media (min-width: 700px) {"), None);
+        assert_eq!(last_mention("the pair @a@b in the drawing"), None);
+        assert_eq!(last_mention("see ./@scope/pkg"), None);
+        // A backtick CLOSES: a real address written beside inline code still
+        // reads as an address.
+        assert_eq!(
+            last_mention("`app.css` @designer the spacing is off"),
+            Some(("designer", "the spacing is off"))
+        );
+        // A name at the very end of the text has nothing after it to
+        // continue the token, so it is an address.
+        assert_eq!(last_mention("hand it to @clerk"), Some(("clerk", "")));
         // Classification: the owner asks; a review act names a review.
         assert_eq!(classify_mention(MENTION_OWNER, "worth a look"), MENTION_ASK);
         assert_eq!(

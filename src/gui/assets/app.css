@@ -9046,6 +9046,16 @@ body[data-work="collapsed"] .room-back { display: grid; }
 .door .form {
   width: 560px;
   max-width: calc(100vw - 48px);
+  /* The form scrolls ITSELF when it outgrows the window. The door is a
+     fixed, centered grid, so a form taller than the viewport overflowed
+     both edges equally and its bottom — the acts row, where every door
+     is confirmed — sat below the fold with nothing to scroll. The
+     persona door (eight fields, two chip sets) could not be submitted on
+     a 700px-tall window: the owner met it, and the approve press was
+     unreachable. A bounded surface scrolls itself, never past its pane. */
+  max-height: calc(100dvh - 48px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   background: var(--dsw-alias-surface);
   border: 1px solid var(--dsw-alias-hairline);
   border-radius: 12px;
