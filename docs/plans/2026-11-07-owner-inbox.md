@@ -30,6 +30,15 @@ The substrates all exist; nothing unifies them:
   (`app.js:4541`'s reader, the door's one-decision screen). The steps
   are exactly the owner's ask: the provider key, the sys1 key, the
   home's own setup.
+- **Cron failures.** The job store already records each job's
+  `last_outcome` (`Completed` / `Failed` / `SkippedNeedsApproval`,
+  `cron.rs:620-631`) beside `last_run` and the successes count — a job
+  whose last run failed, or was skipped for needing an approval it is
+  not allowlisted to receive, is the owner's to decide.
+- **Doctor findings.** The doctor's checks are public evaluates with no
+  face read: `evaluate_credentials`, `evaluate_home`, `evaluate_api`,
+  and their siblings (`doctor.rs:30+`) name the absence and the remedy —
+  a failing check is an inbox row waiting for a surface.
 - **Huddle questions.** `Record::Mention { member, kind, from }`
   (`session.rs:444`) is the typed routing fact: `member` is
   `MENTION_OWNER` when a room asks the owner ("which asks and never
@@ -56,8 +65,9 @@ no sys1 job here.
   look.
 - **The inbox is a view, not a store.** No new persistence; an item
   exists while its condition does (the seat unanswered, the step
-  incomplete, the ask unanswered) and leaves when it resolves. No
-  dismissal, no snooze — resolving is the only exit.
+  incomplete, the ask unanswered, the job failed, the check failing)
+  and leaves when it resolves. No dismissal, no snooze — resolving is
+  the only exit.
 - **Rows act in place where the machinery allows.** Seats answer
   inline (the answerer is cross-session); onboarding rows carry their
   own action; room asks jump to the room with the composer focused —
@@ -87,26 +97,36 @@ no sys1 job here.
      age. Unanswered means no owner `User` record follows the mention
      in that room's log; the scan is the bounded tail read, the same
      honesty the goals' tail scan carries.
-2. **The surface.** `#/inbox`: one list, three row classes, each row
+   - `cron`: enabled jobs whose `last_outcome` is `Failed` or
+     `SkippedNeedsApproval`, each with the job's name, task, schedule,
+     the outcome, and its `last_run` — the store's own record, read,
+     not inferred.
+   - `doctor`: the doctor's failing checks, each with its render text
+     and its remedy — the evaluates run in the read, bounded like the
+     doctor's own startup pass.
+2. **The surface.** `#/inbox`: one list, five row classes, each row
    saying what / where / why / since, with its action riding the row —
-   the seat's once/always/deny, the step's own control, the ask's jump.
-   Empty state: "nothing needs you" — an honest absence, never a
-   fabricated row.
+   the seat's once/always/deny, the step's own control, the ask's jump,
+   the job's enable/allowlist door, the check's remedy. The rail places
+   it directly below the conversation (the owner's ruling). Empty
+   state: "nothing needs you" — an honest absence, never a fabricated
+   row.
 3. **The badge.** The rail row's badge is the document's total,
    recomputed on every read and on the live events the face already
    receives (`seat`, `seat_cleared`, `mention`, `answered`) — the same
    events, one more reducer.
 4. **Pins, gate, docs.** `tests/face/harness.mjs` gains the surface's
-   cases — the read's three classes rendered, the seat answered in
+   cases — the read's five classes rendered, the seat answered in
    place, the onboarding rows with their controls, the ask's jump, the
-   badge's live total, and the honest empty state (C1–C6) — and the
-   live pass drives the running face end to end (C7). The gate runs
-   whole before any push carrying code — `cargo fmt --all --check`,
-   `cargo clippy --all-targets -- -D warnings`, `cargo build --release`,
-   `cargo test`, each exit code read on the invocation, never through a
-   status-losing pipe (C8). The doc updates land with the work:
-   gui.md's inbox surface, FUNCTIONAL-SPECIFICATIONS's navigation
-   section, and the rail's icon sheet (C9).
+   cron and doctor rows, the badge's live total, and the honest empty
+   state (C1–C7) — and the live pass drives the running face end to end
+   (C8). The gate runs whole before any push carrying code — `cargo fmt
+   --all --check`, `cargo clippy --all-targets -- -D warnings`,
+   `cargo build --release`, `cargo test`, each exit code read on the
+   invocation, never through a status-losing pipe (C9). The doc updates
+   land with the work: gui.md's inbox surface,
+   FUNCTIONAL-SPECIFICATIONS's navigation section, and the rail's icon
+   sheet (C10).
 
 ## Precedents this plan answers
 
@@ -133,8 +153,9 @@ no sys1 job here.
   four; the seat is answered in place; the questions are answered by
   jumping — each jump lands with the composer focused.
 - **UC2 — the fresh install.** A new home's inbox lists the onboarding
-  ladder's incomplete steps in order; each row's action is the door's
-  own decision; the rows leave as the steps complete.
+  ladder's incomplete steps in order and the doctor's failing checks
+  beside them (no key, no folder); each row's action is its own
+  decision; the rows leave as the steps complete.
 - **UC3 — the quiet morning.** Nothing waits: the badge is gone, the
   surface says "nothing needs you", and no row pretends otherwise.
 
@@ -154,10 +175,11 @@ The rail row and the badge ride the existing rail markup.
       PNGs read in a light and a dark theme, and the owner reads it
       before any code of C1+ lands.
 - [ ] **C1 — the read is one bounded document.** `GET /api/inbox`
-      returns seats, incomplete onboarding steps, and unanswered room
-      asks in one response, assembled from the existing reads; a room
-      ask carries the room, the asker, the kind, the message's words,
-      and its age. Pinned by bridge tests.
+      returns seats, incomplete onboarding steps, unanswered room asks,
+      failed cron jobs, and failing doctor checks in one response,
+      assembled from the existing reads; a room ask carries the room,
+      the asker, the kind, the message's words, and its age. Pinned by
+      bridge tests.
 - [ ] **C2 — seats answer in place.** A seat row's once/always/deny
       calls the existing answer seam with the seat's own session; the
       row leaves when the seat resolves. Pinned by a bridge test and a
@@ -170,19 +192,25 @@ The rail row and the badge ride the existing rail markup.
       jump opens the room with the composer focused; an owner reply in
       the room retires the row. Pinned by a bridge test and a harness
       case.
-- [ ] **C5 — the surface and the badge.** `#/inbox` mounts on the rail
-      with the badge showing the live total; the empty state is the
-      honest absence. Pinned by harness cases.
-- [ ] **C6 — the live events keep it true.** A seat, an ask, or a
-      resolution arriving on the wire updates the queue and the badge
-      without a reload. Pinned by a harness case.
-- [ ] **C7 — the live proof.** On the running face: a seat pending in
+- [ ] **C5 — the machinery's own findings.** Failed and
+      approval-skipped cron jobs render from the store's `last_outcome`
+      with their schedule and task; failing doctor checks render with
+      their remedy; both leave when the store or the check resolves.
+      Pinned by bridge tests and a harness case.
+- [ ] **C6 — the surface and the badge.** `#/inbox` mounts on the rail
+      directly below the conversation, with the badge showing the live
+      total; the empty state is the honest absence. Pinned by harness
+      cases.
+- [ ] **C7 — the live events keep it true.** A seat, an ask, a cron
+      failure, or a resolution arriving on the wire updates the queue
+      and the badge without a reload. Pinned by a harness case.
+- [ ] **C8 — the live proof.** On the running face: a seat pending in
       one conversation and a question pending in a room, reload the
       tab — the inbox returns with both; answer the seat in place and
       the question by jumping; both rows leave. Quoted in the recap.
-- [ ] **C8 — the gate.** fmt, clippy, release build, test — exit codes
+- [ ] **C9 — the gate.** fmt, clippy, release build, test — exit codes
       read directly, the whole suite.
-- [ ] **C9 — the docs.** gui.md gains the inbox surface (its read, its
+- [ ] **C10 — the docs.** gui.md gains the inbox surface (its read, its
       rows, its badge); FUNCTIONAL-SPECIFICATIONS's navigation section
       names it; the rail's icon sheet gains the inbox's mark.
 
@@ -199,10 +227,6 @@ The rail row and the badge ride the existing rail markup.
 
 ## Out of scope
 
-- **Cron failures and doctor findings as items.** The taxonomy v1 is
-  the owner's three: seats, onboarding, huddle questions. Doctor rows
-  and cron misses are candidates for a v2 — named here so the omission
-  is a decision.
 - **Snooze, dismissal, priority ordering.** The queue is ordered by
   age within its classes; resolving is the only exit.
 - **Answering a room from inside the inbox.** The jump is the answer's
