@@ -141,7 +141,17 @@ scripts/cache-sweep.sh [--all] [--dry-run]   # the recap step's sweep: stale deb
 
 ## Branch and environment topology
 
-Trunk is `master` → `origin/master`, the branch that ships. A working branch (named for the plan it carries, e.g. `design-parity`) forks master when a body of work needs a lane of its own — a parallel session holding master, or a plan whose landing should be reviewable whole — and merges back when its plan lands. No staging/production split: solo tool, no hosted surface. If a deploy surface ever appears, add a topology table here.
+Trunk is `master` → `origin/master`, the branch that ships. A working branch (named for the plan it carries, e.g. `design-parity`) forks master when a body of work needs a lane of its own — a parallel session holding master, or a plan whose landing should be reviewable whole — and merges back when its plan lands.
+
+**Plan worktrees, when parallel sessions are active.** A plan implemented while other sessions are working checks out its own worktree at plan start — `git worktree add ../fleet-<slug> -b <slug>` — and prunes it when the plan lands (`git worktree remove`). The worktree is event-scoped, never a resident: its `target/` costs 5–8 GiB on a drive that already runs close to full, and a stale worktree is the shelf the house prunes. Three rules inside it, each paid for:
+
+1. **Absolute paths only.** The tools' cwd resets to the main checkout between calls, and a relative path silently edits the *wrong* tree — the 2026-11-06/07 collisions (one edit reverting another, a ROUTES entry landing in the wrong checkout) were all this one shape. Grep the worktree's file after every edit.
+2. **The gate runs in the worktree**, its own `target/` — never through a shared `CARGO_TARGET_DIR` (KI-446's mock-server breakage).
+3. **The deployment is per-machine, one session at a time** — `~/.fleet/bin/fleet`, the LaunchAgent, and the dmg carry whichever branch's gate ran last, so a session delivers only its own landing and says so.
+
+Merges are ref-based fast-forwards (`git push origin <branch>:master`); the branch's gate is the merged tree's gate, so no second run is claimed. A checkout of master is added ad hoc only for a true non-fast-forward merge — resolved, merged, pruned in one sitting.
+
+No staging/production split: solo tool, no hosted surface. If a deploy surface ever appears, add a topology table here.
 
 **Two crates, one workspace.** `fleet` (the static binary: the TUI, the face's server, the agent) and `fleet-desktop` (`src-tauri/`, the native shell — a Tauri window on the same server). The workspace's default members are both, so the gate's commands at the repo root cover the shell too. The shell depends on `fleet` by path and reuses its bridge, server, and home; it adds no frontend and no second transport. Hard rule 12 governs both: anything added that becomes a dependency must ship, be built, or be fetched by the app.
 
