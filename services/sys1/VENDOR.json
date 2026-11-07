@@ -61,6 +61,12 @@
         "what": "the lane's own tests (stdlib unittest): the span parse and its wrong-offset drop, the per-field decline, the no-key/parse/empty failures, the extract log line, the `extract_*` settings, the `task_spec` seam, and a stdio drive of the handler's refusals",
         "why": "the vendored tree excludes upstream tests; these are Fleet's own pins for the additions above — run with `python3 -m unittest discover -s tests -t .` from services/sys1",
         "since": "2026-11-05"
+      },
+      {
+        "file": "src/sys1/tasks.py",
+        "what": "the `validate` task — one choice head id `validity` over supported/contradicted/unverifiable, the dream pass's evidence judgment",
+        "why": "fleet's dream pass (fleet memories --validate, the memory-dreaming plan's C3) calls sys1_classify with task validate over a fact-and-transcript pair; the lane judges the fact against the evidence its `source` names, and the verdict's confidence gates the pass's acting",
+        "since": "2026-11-07"
       }
     ]
   }

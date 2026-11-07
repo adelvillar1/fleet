@@ -1,5 +1,5 @@
 ---
-status: active
+status: completed
 created: 2026-11-07
 updated: 2026-11-07
 slug: memory-dreaming
@@ -141,56 +141,56 @@ are unchanged; the CLI gains `remember --source` and
 
 ## Acceptance criteria
 
-- [ ] **C0 — the measured set separates.** A fixture corpus of
+- [x] **C0 — the measured set separates.** A fixture corpus of
       known-wrong facts (drawn from `docs/known-issues.md`'s closed
       rows) beside known-right confirmed-by facts is separated by the
       validate pass at or above a named confidence bar before any
       auto-landing is enabled, pinned by a test in `src/memory.rs`.
-- [ ] **C1 — the source field round-trips.** `Remember::parse` and
+- [x] **C1 — the source field round-trips.** `Remember::parse` and
       `FactEdit::parse` in `src/memory.rs` accept an optional
       `source`, `render_document` writes it, `fleet remember --source`
       lands it, and the face's pane card renders it — pinned by
       `src/memory.rs` tests and a `tests/face/harness.mjs` case.
-- [ ] **C2 — the validated basis is a first-class value.**
+- [x] **C2 — the validated basis is a first-class value.**
       `Basis::parse` in `src/memory.rs` accepts `validated`, a
       validated fact scores the provenance channel at
       `PROVENANCE_VALIDATED` (0.75), the consolidation cycle's
       untouched set names it, and supersede applies the ruling —
       pinned by `src/memory.rs` tests.
-- [ ] **C3 — the validate task answers and is auditable.** The sys1
+- [x] **C3 — the validate task answers and is auditable.** The sys1
       validate task returns `supported` / `contradicted` /
       `unverifiable` with a confidence for a fact-transcript pair
       through the lane call, the verdict caches in the route cache
       under the pair's hash, and every judgment writes one calib
       `Row::Validate` — pinned by tests with the mock lanes in
       `src/memory.rs`.
-- [ ] **C4 — the dream pass acts on its verdicts.** `memory::dream`
+- [x] **C4 — the dream pass acts on its verdicts.** `memory::dream`
       in `src/memory.rs` walks the access-priority queue (ranked by
       calib `recall_hit` rows, inferred-only, bounded per pass),
       names its unverifiable skips, stamps `validated` on supported,
       and supersedes contradicted facts with a justification naming
       the session and the verdict after C0's bar is met — pinned by
       `src/memory.rs` tests.
-- [ ] **C5 — the pass runs on demand and on schedule.**
+- [x] **C5 — the pass runs on demand and on schedule.**
       `fleet memories --validate` runs one pass and prints what it
       did, and the hourly consolidator thread runs the pass under a
       per-pass budget in `src/main.rs` chat, `src/tui/mod.rs`, and
       `src/gui/bridge.rs` — the live index follows the stamps on the
       next load, and a process without lanes degrades to named
       skips.
-- [ ] **C6 — the tier cap bounds the block honestly.**
+- [x] **C6 — the tier cap bounds the block honestly.**
       `Memory::protected` in `src/memory.rs` returns the name-sorted
       set within `PROTECTED_TOKEN_CAP` (1024), the overflow ranks in
       recall marked `tier-overflow` without entering a block twice,
       and the assembled block names the overflow count — pinned by
       `src/memory.rs` tests.
-- [ ] **C7 — the live proof.** On the running face with sys1 live: a
+- [x] **C7 — the live proof.** On the running face with sys1 live: a
       fact carrying its source is validated in place — the corpus
       file, the calib row, and the pane card agree — quoted in the
       recap.
-- [ ] **C8 — the gate.** fmt, clippy, release build, test — exit
+- [x] **C8 — the gate.** fmt, clippy, release build, test — exit
       codes read directly, the whole suite.
-- [ ] **C9 — the docs.** `docs/features/memory.md` gains the source
+- [x] **C9 — the docs.** `docs/features/memory.md` gains the source
       field, the validated basis, and the dream pass;
       TECHNICAL-DOCUMENTATION's Module reference and
       FUNCTIONAL-SPECIFICATIONS's surfaces section name them.

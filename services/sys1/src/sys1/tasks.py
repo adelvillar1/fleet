@@ -8,10 +8,11 @@ existing dev-decisions "change" task: Jev asks 4 questions, Decide/local ask 2).
 Nine tasks are pre-registered: eight mirror `dev-decisions._TASK_BUILDERS`,
 `vision_qc` is sys1's own (the liquid-only vision task — no dev-decisions
 counterpart), and `route` carries the deepseek-harness router's judgment.
-Fleet adds `tool_route` (the deferred-tool search's capability class) and
-`curate` (the memory curator's needs_recall/focus/staleness judgment) as
-fleet additions — recorded in the vendored copy's VENDOR.json. Add your own
-with `register_task(Task(...))` or load from a TOML/JSON file.
+Fleet adds `tool_route` (the deferred-tool search's capability class),
+`curate` (the memory curator's needs_recall/focus/staleness judgment), and
+`validate` (the dream pass's supported/contradicted/unverifiable evidence
+judgment) as fleet additions — recorded in the vendored copy's VENDOR.json.
+Add your own with `register_task(Task(...))` or load from a TOML/JSON file.
 """
 
 from __future__ import annotations
@@ -772,6 +773,46 @@ _CURATE = Task(
 
 
 
+# ── validate: the dream pass's evidence judgment ─────────────────────────────
+# Fleet's dream pass (the memory-dreaming plan's C3) asks this over a
+# fact-and-transcript pair: the fact's own sentence, then the bounded
+# transcript of the session its `source` names. The judgment is of the
+# fact AGAINST the evidence, never of the fact's plausibility in the
+# abstract — a note wrong from the start reads as plausible, and only
+# the transcript catches it. One head:
+#   validity — supported: the transcript carries the words that back
+#             the fact; contradicted: the transcript carries words that
+#             oppose it; unverifiable: the transcript names neither
+#             (or nothing resolvable does) — the honest third answer,
+#             so a fact without evidence is a graded answer, not a
+#             silent skip.
+# Fleet addition: recorded in services/sys1/VENDOR.json's fleetAdditions.
+
+_VALIDATE = Task(
+    id="validate",
+    description=(
+        "Memory-validation judgment over a fact and its evidence: does "
+        "the transcript of the session the fact names carry the words "
+        "that support the fact as stated? The input text is a pair: the "
+        "fact's own sentence, then the bounded transcript."
+    ),
+    heads=[
+        make_choice(
+            "A fact and the transcript of the session it names are given. "
+            "Does the transcript support the fact as stated, oppose it, "
+            "or name neither?",
+            ["supported", "contradicted", "unverifiable"],
+            id="validity",
+            descriptions={
+                "supported": "The transcript carries the words that back the fact",
+                "contradicted": "The transcript carries words that oppose the fact",
+                "unverifiable": "The transcript names neither — no evidence, or none that resolves",
+            },
+        ),
+    ],
+)
+
+
 _DESK_COVERAGE = Task(
     id="desk_coverage",
     description=(
@@ -846,6 +887,7 @@ for _t in (
     _GOAL_WORK,
     _TOOL_ROUTE,
     _CURATE,
+    _VALIDATE,
     _DESK_COVERAGE,
 ):
     register_task(_t)

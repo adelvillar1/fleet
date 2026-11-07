@@ -84,13 +84,18 @@ impl DreamValidator {
             }
         }
         let session = self.session.as_mut().expect("the lane opened above");
-        let answer = session.ask(&pair).await.ok()?;
-        let verdict = crate::memory::parse_validate(
-            &answer
-                .get("answers")
-                .map(|answers| answers.to_string())
-                .unwrap_or_else(|| answer.to_string()),
-        )?;
+        let answer = session.ask(&pair).await.map_err(|error| {
+            eprintln!("fleet: the validate ask did not cross: {error}");
+        });
+        let answer = answer.ok()?;
+        let parsed = crate::memory::parse_validate(&answer.to_string());
+        if parsed.is_none() {
+            eprintln!(
+                "fleet: the validate answer did not parse as a verdict: {}",
+                answer
+            );
+        }
+        let verdict = parsed?;
         self.cache.put_validate(hash, verdict.clone());
         self.cache.flush(&self.cache_key);
         Some(verdict)
