@@ -4172,10 +4172,8 @@ fn install_command(options: &cli::InstallOptions) -> ExitCode {
     // invoked from. It does NOT restart the agent — that would kill
     // whatever the owner has in flight — the restart stays `fleet
     // reload`, and the report says so on the line it renders.
-    let delivery = fleet::install::DeliveryStep::deliver(
-        &home,
-        std::env::current_exe().ok().as_deref(),
-    );
+    let delivery =
+        fleet::install::DeliveryStep::deliver(&home, std::env::current_exe().ok().as_deref());
     print!(
         "{}",
         fleet::install::render_head_with(

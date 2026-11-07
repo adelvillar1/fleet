@@ -10093,7 +10093,8 @@ mod tests {
         let here = std::env::current_dir().expect("a working directory");
         assert_eq!(
             workspace_key(&FileAccess::Unrestricted),
-            here.file_name().map(|name| name.to_string_lossy().to_string())
+            here.file_name()
+                .map(|name| name.to_string_lossy().to_string())
         );
         let _ = std::fs::remove_dir_all(&root);
     }

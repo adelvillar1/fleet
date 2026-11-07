@@ -2518,7 +2518,11 @@ impl Bridge {
     pub fn design_write(&self, body: &str) -> Result<Value, String> {
         let launch = self.launch();
         let folder = lock(&self.state).effective_folder(&launch);
-        design_write_in(&self.home, body, folder.as_deref().map(std::path::Path::new))
+        design_write_in(
+            &self.home,
+            body,
+            folder.as_deref().map(std::path::Path::new),
+        )
     }
 
     /// The stateless tweak injection: HTML in, injected HTML out, no home
@@ -8711,7 +8715,7 @@ fn board_fact_root(home: &std::path::Path) -> std::path::PathBuf {
         // after a suite run. The seam's own doc claimed this could not
         // happen; only the `if let` above enforced it, and only for
         // tests that remembered. An absence now means a scratch corpus.
-        return home.join("board-facts");
+        home.join("board-facts")
     }
     #[cfg(not(test))]
     {
@@ -12113,9 +12117,14 @@ mod tests {
             .design_write(&serde_json::json!({ "op": "create", "name": "Loose" }).to_string())
             .expect("the create");
         assert!(loose["wrote"]["project"].is_null(), "{loose}");
-        let loose_slug = loose["wrote"]["slug"].as_str().expect("the slug").to_string();
+        let loose_slug = loose["wrote"]["slug"]
+            .as_str()
+            .expect("the slug")
+            .to_string();
         assert_eq!(
-            crate::canvas::load(&bare_home, &loose_slug).unwrap().project,
+            crate::canvas::load(&bare_home, &loose_slug)
+                .unwrap()
+                .project,
             None
         );
         let _ = std::fs::remove_dir_all(&home);
