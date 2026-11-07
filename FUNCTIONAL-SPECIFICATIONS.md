@@ -111,7 +111,13 @@ its state in words — *handed back*, *resumed*, *completed*, *capped*,
 *stopped by you*, *archived*, *interrupted*, *active* — with its age, its project,
 and, for background work, the job's name. One verb: opening a row loads
 that conversation in place, beside the list, with its composer, so
-reading and continuing are the same act. **New** writes a real
+reading and continuing are the same act. The **inbox** — on the rail
+directly below the conversation — is one queue of everything waiting on
+the owner: the pending approvals (answerable in place), the onboarding
+ladder's incomplete steps, the huddle rooms' unanswered questions, the
+cron jobs whose last run failed, and the doctor's failing checks. A row
+exists while its condition does and leaves when it resolves; the badge
+is the live total. **New** writes a real
 conversation — at the press, before any words, so the send that follows
 can only land in it, never in an older active conversation. Search reads the title, id, project, model, job and
 state; the list becomes a sheet where there is no room for a column,
@@ -184,10 +190,15 @@ writes; nothing is inferred from what a run did.
 idiom: **needs you** (the consolidation cycle's queue, runnable from the
 section that names it), the substrate's own type words as sections, then
 retired, the archive, and today's recall. Search the corpus across every
-section; open a fact with its whole body and edit it in place;
-**supersede** it from the pane — the click is the approval the
-provenance rule requires, the justification is required either way; run
-one consolidation pass; see today's recalls and their scores.
+section; open a fact with its whole body and edit it in place — the
+edit carries the fact's `source`, the session it came from, the
+evidence pointer the dream pass validates against; **supersede** it
+from the pane — the click is the approval the provenance rule
+requires, the justification is required either way; run one
+consolidation pass; validate the corpus's sourced inferences against
+their sessions (`fleet memories --validate`, the sys1-judged dream
+pass whose `validated` basis and stamps the pane shows beside each
+fact's basis); see today's recalls and their scores.
 
 **Knowledge — skills.** The library the model can reach, arranged on the
 work rail's idiom: a rail of sections — **needs you** (the proposals that

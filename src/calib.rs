@@ -507,6 +507,39 @@ pub struct CurateRow {
     pub lane: String,
 }
 
+/// One memory-validation judgment through the sys1 lane (the
+/// memory-dreaming plan's C3): what the lane said about one fact
+/// against the transcript its `source` names. The fact's text and the
+/// transcript are never stored — the fact's name and the pair's hash
+/// are the join, the same never-the-text rule the curate rows run on.
+/// The row exists so the validator's quality is gradeable beside the
+/// facts it stamped: which verdicts, at what confidence, and what the
+/// pass did about each.
+#[derive(Debug, Clone, Serialize)]
+pub struct ValidateRow {
+    pub ts: String,
+    /// The fact the judgment was of — the corpus name, the same key
+    /// every other memory row uses.
+    pub fact: String,
+    /// The fact-transcript pair's hash — the same 16 hex characters the
+    /// route-cache entry keys on.
+    pub input_hash: String,
+    /// The verdict: `supported`, `contradicted`, or `unverifiable` —
+    /// the third covers a source that would not resolve, so a fact
+    /// without evidence is a graded answer, not a silent skip.
+    pub verdict: String,
+    /// The confidence the verdict rode at, in `[0, 1]` — the number
+    /// the measured-set gate (the dream pass's auto-landing bar) reads.
+    pub confidence: f64,
+    /// What the pass did with the verdict: `stamped` (basis became
+    /// validated), `superseded` (the fact was retired with its
+    /// evidence named), or `skipped` (the gate held, or the source did
+    /// not resolve — nothing acted).
+    pub decision: String,
+    /// The lane that answered: `sys1`.
+    pub lane: String,
+}
+
 /// One delegated run, as the orchestrator records it the moment a
 /// subagent stops. The row the beat reads and the row the parent chain
 /// joins on.
@@ -650,6 +683,7 @@ pub enum Row {
     EmbedTiming(EmbedTimingRow),
     Curate(CurateRow),
     Shape(ShapeRow),
+    Validate(ValidateRow),
 }
 
 impl Row {
@@ -671,6 +705,7 @@ impl Row {
             Row::Delegation(_) => OP_DELEGATION,
             Row::EmbedTiming(_) => OP_EMBED_TIMING,
             Row::Shape(_) => OP_SHAPE,
+            Row::Validate(_) => OP_VALIDATE,
         }
     }
 
@@ -692,6 +727,7 @@ impl Row {
             Row::Delegation(row) => &row.ts,
             Row::EmbedTiming(row) => &row.ts,
             Row::Shape(row) => &row.ts,
+            Row::Validate(row) => &row.ts,
         }
     }
 }
@@ -976,6 +1012,12 @@ pub const OP_ROUTE_JUDGED: &str = "route_judged";
 /// would have decided alone, and the decision the composition landed
 /// on — not so anything acts on it in flight.
 pub const OP_CURATE: &str = "curate";
+/// The validate op: one memory-validation judgment through the sys1
+/// lane (the memory-dreaming plan's C3). The dream pass's audit trail —
+/// which facts were judged, the verdict and confidence, and what the
+/// pass did about each — so a stamped `validated` basis is never a
+/// claim without a row behind it.
+pub const OP_VALIDATE: &str = "validate";
 /// The delegation op: one delegated run, recorded by the orchestrator
 /// the moment a subagent stops. Keyed by the child's own session id —
 /// the join to the child's session log, the value
@@ -988,7 +1030,7 @@ pub const OP_DELEGATION: &str = "delegation";
 /// calib` groups them. The three the reads used to drop — `verify`,
 /// `embed_timing`, `lifecycle` — ride their own row shapes; the face's
 /// rail carries them beside the rest (the calibration revamp, 2026-10-30).
-pub const OPS: [&str; 14] = [
+pub const OPS: [&str; 15] = [
     OP_ROUTE,
     OP_TOOL_SCREEN,
     OP_TURN,
@@ -1003,6 +1045,7 @@ pub const OPS: [&str; 14] = [
     OP_EMBED_TIMING,
     OP_LIFECYCLE,
     OP_SHAPE,
+    OP_VALIDATE,
 ];
 
 /// The verdict a `propose` row carries when the change landed: the gate
@@ -4602,7 +4645,8 @@ mod tests {
                 "verify",
                 "embed_timing",
                 "lifecycle",
-                "shape"
+                "shape",
+                "validate"
             ]
         );
     }

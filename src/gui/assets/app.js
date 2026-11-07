@@ -6986,7 +6986,7 @@
     var haystack = [
       fact.name, fact.description, fact.fact_type, fact.tier, fact.basis,
       (fact.shape || []).join(' '), (fact.phrases || []).join(' '),
-      (fact.missing || []).join(' '), fact.body, fact.valid_until
+      (fact.missing || []).join(' '), fact.body, fact.valid_until, fact.source || ''
     ].join(' ').toLowerCase();
     return haystack.indexOf(asked) !== -1;
   }
@@ -7048,6 +7048,10 @@
     form.appendChild(field('phrases', 'one per line', (fact.phrases || []).join('\n'), 'area'));
     form.appendChild(field('missing', 'one per line', (fact.missing || []).join('\n'), 'area'));
     form.appendChild(field('valid-until', 'YYYY-MM-DD, or empty', fact.valid_until, 'text'));
+    // The evidence pointer: the session the fact came from. The dream
+    // pass's validate judgment reads this session against the fact, so
+    // a fact with a source is one that can be checked.
+    form.appendChild(field('source', 'the session id this fact came from, or empty', fact.source || '', 'text'));
     form.appendChild(field('body', 'everything after the frontmatter fence', fact.body, 'area'));
     var save = node('button', 'fact-save', 'save the fact');
     save.type = 'submit';
@@ -7074,6 +7078,7 @@
         phrases: lines('phrases'),
         missing: lines('missing'),
         'valid-until': form.querySelector('[name="valid-until"]').value,
+        source: form.querySelector('[name="source"]').value.trim(),
         body: form.querySelector('[name="body"]').value
       }).then(function (reply) {
         if (reply.status === 200) {

@@ -443,18 +443,21 @@ outcomes — never task text.
 
 | Module | Source |
 |---|---|
-| `memory.rs` | `docs/features/memory.md`; `docs/architecture/deep-dive-2026-10-15.md` |
+| `memory.rs` | `docs/features/memory.md`; `docs/architecture/deep-dive-2026-10-15.md`; `docs/architecture/deep-dive-2026-11-07-memory-dreaming.md` |
+| `dream.rs` | `docs/features/memory.md`; `docs/architecture/deep-dive-2026-11-07-memory-dreaming.md` |
 | `session_recall.rs` | `docs/features/memory.md`; `docs/architecture/deep-dive-2026-10-15.md` |
 | `skills.rs` | `docs/features/skills.md` |
 | `nomenclature.rs` | `docs/features/skills.md`; `docs/features/memory.md` |
 
 #### `memory.rs`
 The fact substrate, hybrid ranker, recall hits, write path, consolidation
-cycle, and provenance model. Facts are one markdown file per durable entry
+cycle, dream pass, and provenance model. Facts are one markdown file per durable entry
 under `memories/`, with hybrid ranking from vector, keyword, history,
 freshness, trajectory, and provenance channels. The protected tier (`user`,
-`feedback`) never competes and is never evicted, even past budget. The
-consolidation cycle runs on a timer and logs `consolidate` rows; its
+`feedback`) never competes and is never evicted; its section is bounded by
+`PROTECTED_TOKEN_CAP` (1024), and the overflow ranks in recall as marked
+`tier-overflow` candidates — reachable, named in the block, never twice.
+The consolidation cycle runs on a timer and logs `consolidate` rows; its
 queue is computable without writing (`preview`, the same filters beside
 `consolidate`), the face's needs-you section reads it, and
 `POST /api/memories/consolidate` lands one pass on demand. The face's
@@ -462,13 +465,35 @@ supersede rides `POST /api/fact/supersede` over `Memory::supersede`, the
 click carrying the approval the provenance rule requires. `section_of`
 maps a fact's type word to its rail section (the protected synonyms
 mapped, `everything-else` the fallback) and `load_archive` reads what
-the cycle forgot.
+the cycle forgot. The dream pass (`memory::dream`, lane-free with the
+judge injected) validates sourced inferred facts against their
+sessions: the queue ranked by recent access and bounded at
+`DREAM_PASS_BUDGET` (8), verdicts `supported`/`contradicted`/
+`unverifiable` through sys1's `validate` task, action gated at
+`VALIDATE_AUTO_LAND_CONFIDENCE` (0.80) — supported past the bar stamps
+`validated` (the third basis value, `PROVENANCE_VALIDATED` 0.75,
+supersedable on justification, left by the cycle), contradicted past
+the bar retires through the real supersede path, everything else is a
+`validate` calib row and a named skip. `fleet memories --validate`
+runs one pass on demand; `spawn_homekeeping` runs the cycle and the
+pass hourly in chat, the TUI, and the face.
+
+#### `dream.rs`
+The dream pass's lane-owning validator: the sys1 lane session (opened
+lazily, one per pass), the route cache's `validate` namespace (keyed
+to the lane spec, rekeyed on a re-vendored lane), and the bounded
+transcript read. The pass in `memory.rs` stays lane-free — the judge
+is injected — so the socket guards' synchronous paths never reach a
+lane ask; only the scheduled thread, the CLI verb, and the face's
+runner reference this module.
 
 #### `session_recall.rs`
 The session archive as synthetic facts through the same ranker. One synthetic
 fact per log whose phrases are successful tool calls, whose shape is the
 outcome word, and whose basis is `inferred`. Its own count store is beside the
-archive, never the session log.
+archive, never the session log. `transcript_text` is the bounded
+evidence read the validate judgment makes — task, user messages, tool
+calls, ending — twice the digest cap.
 
 #### `skills.rs`
 Skills loading, progressive disclosure via `use_skill`, the self-authoring

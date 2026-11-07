@@ -26,6 +26,7 @@ pub mod delegate;
 pub mod desk;
 pub mod doctor;
 pub mod documents;
+pub mod dream;
 pub mod eval;
 pub mod explain;
 pub mod extract;

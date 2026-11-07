@@ -5197,6 +5197,7 @@ fn memory_read(home: &std::path::Path, memories: &std::path::Path, cwd: &std::pa
             "retired": fact.retired,
             "superseded_by": fact.superseded_by,
             "valid_until": fact.valid_until,
+            "source": fact.source,
             "shape": fact.shape,
             "phrases": fact.phrases,
             "missing": fact.missing,
@@ -8810,6 +8811,7 @@ fn remember_board_at(
             basis: crate::memory::Basis::ConfirmedBy,
             tier: crate::memory::Tier::Durable,
             valid_until: String::new(),
+            source: String::new(),
             body,
         };
         return memory
@@ -11410,7 +11412,11 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
         // routing never produced one.
         let user_home = std::env::var("HOME").ok();
         let calib_root = crate::calib::resolve_root(&home, user_home.as_deref());
-        crate::memory::spawn_consolidator(memories_root, crate::calib::Stream::open(&calib_root));
+        crate::memory::spawn_homekeeping(
+            memories_root,
+            Some(home.clone()),
+            crate::calib::Stream::open(&calib_root),
+        );
         // The scheduled jobs: the catch-up pass once at startup, then one
         // tick per second for the life of the process. A fire is an
         // ordinary headless run in its own session log, never a turn in

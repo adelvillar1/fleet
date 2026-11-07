@@ -691,7 +691,11 @@ fn spawn_agent(config: AgentConfig) -> thread::JoinHandle<()> {
         let calib_root = crate::calib::resolve_root(&home, user_home.as_deref());
         let memories_root =
             crate::memory::resolve_root(&std::env::current_dir().unwrap_or_default());
-        crate::memory::spawn_consolidator(memories_root, crate::calib::Stream::open(&calib_root));
+        crate::memory::spawn_homekeeping(
+            memories_root,
+            Some(home.clone()),
+            crate::calib::Stream::open(&calib_root),
+        );
         // The scheduled jobs: the catch-up pass once at startup, then one
         // tick per second for the life of the process. The scheduler owns
         // its own thread and runtime — a fire is an ordinary headless run

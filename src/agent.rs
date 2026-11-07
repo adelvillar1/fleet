@@ -183,9 +183,13 @@ pub const MAX_VISIBLE_TOOLS: usize = 36;
 /// two tools (`frame`, `review_frame`) crossed it again at 9,575 against
 /// thirty — so it moves to 10,000 with the count bound and for the same
 /// reason: the ceiling is a degradation guard, not a prose budget. The
-/// measurement is pinned by `the_native_surface_fits_its_own_bounds`,
-/// which is the gate that caught both crossings.
-pub const MAX_DEFINITION_TOKENS: usize = 10_000;
+/// third crossing was the memory surface's own: the `remember` schema's
+/// `source` field — the evidence pointer the dream pass validates
+/// against — put the pair at 10,016 (the memory-dreaming plan's C1), so
+/// it moves to 10,050 for the same reason. The measurement is pinned by
+/// `the_native_surface_fits_its_own_bounds`, which is the gate that
+/// caught all three crossings.
+pub const MAX_DEFINITION_TOKENS: usize = 10_050;
 
 /// How many requests a `tool_search` activation stays declared for. An
 /// activation is an answer to ONE question, not a permanent grant: the
