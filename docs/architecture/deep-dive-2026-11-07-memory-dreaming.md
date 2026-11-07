@@ -142,6 +142,52 @@ writer), the cadence and budget, and whether corrections auto-land on
 inferred facts (the slice-12 reading says yes) or always queue as
 proposals.
 
+**The validation movement, concretely (2026-11-07, the owner's
+steer).** Sys1 is the judge; the transcript is the ground truth it
+judges against — validation in the abstract is a plausibility vote
+and makes nothing trustworthy (the article's Mt. Moon note was wrong
+from the start and read as plausible; only the transcript catches
+that). The shape follows the `curate` task's own pattern: a `validate`
+task_spec, a fact-and-transcript pair on the wire, a verdict of
+`supported` / `contradicted` / `unverifiable`, cached in the route
+cache keyed to the pair, the panel and confidence gate it earns if a
+single judge proves thin. The failure direction is fail-safe by
+construction: validation is an upgrade, so a lane that cannot answer
+— no keys, dead lane, unparseable verdict — leaves the fact `inferred`
+and nothing is lost. The queue is not the corpus: 422 facts are
+inferred, and the `recall_hit` rows already rank which of them the
+model actually sees — validate the surfaced first, the never-touched
+tail last or never. And the measured-set gate before any auto-upgrade
+lands: run the validator against facts the ledger already proves
+wrong, the same way the curate seat was awarded on its replay record
+with a one-constant rollback.
+
+**The basis upgrade: `validated`, the third value.** A sys1 pass must
+not stamp `confirmed-by` — that word means the owner stated or
+verified it, it is the permission model's input (protected tier,
+supersede needs approval, the cycle leaves it, provenance ranks it
+1.0), and machine validation writing it would launder a model's
+judgment into owner authority. The honest record is a third value on
+the basis axis: `validated` — evidence-checked by the lane, no owner
+authority claimed. The ladder reads: `inferred` (a guess) <
+`validated` (checked against its evidence) < `confirmed-by` (the
+owner stood behind it); the provenance channel weights it between
+0.5 and 1.0, a plan's arithmetic to set. **Why not `judged`:** the
+word is taken — the route-judgment work landed `judged` as the plan
+vocabulary's status with `judge_plan`/`plan_judge` as sys1 task
+names, and one word, one meaning is the house's own nomenclature
+rule. The division of labor the grammar wants: the *act* is the calib
+row's op (`validate`), the *verdict* is the judgment's vocabulary,
+and the basis value names the fact's standing afterwards.
+`Basis::parse` (`memory.rs:207`) currently refuses any third value —
+a malformed fact — so this is a schema change the plan carries, with
+two rulings beside it: does a `validated` fact still supersede on
+justification alone (the slice-12 rule for inferred; the
+recommendation here: yes, when the justification names the new
+evidence), and does the cycle treat it like confirmed-by (leave it)
+or inferred (fold it stale; the recommendation: leave it, like the
+provenance it has partly earned).
+
 ### 2. The injected layer must stay small — external evidence for the deep dive's finding 1
 
 The article's promotion section is, almost verbatim, an argument
@@ -172,7 +218,11 @@ on-demand reads, or demotion proposals).
 says *which session* produced a fact. The article's dreaming works
 because the note can be checked against its transcript; fleet's facts
 cannot be cheaply checked because the evidence link was never
-recorded. The candidate is small and mechanism-shaped: an optional
+recorded. This pointer is the prerequisite for area 1's validation
+movement — with it, a `validate` judgment is "load the named session,
+replay, judge the pair"; without it, the pass must *find* the
+transcript first, which is where wrong sessions get matched to right
+facts. The candidate is small and mechanism-shaped: an optional
 `source` frontmatter field (a session id or archive pointer) on the
 write path — the model filling it is steering, not prose, and the
 `recall_hit`/`curate` calib rows already demonstrate the
@@ -262,14 +312,24 @@ relax:
   finding does not argue it away; it argues for watching the write
   rate and the recall coverage as the measure of whether the
   friction suppresses salient writes the schema has no home for.
+- **The basis vocabulary is the permission model's input, so the
+  `validated` value is a schema and ruling change, not a stamp.**
+  `Basis::parse` refuses a third value today; the provenance
+  channel's weight for it, the supersede rule it earns, and the
+  cycle's treatment of it are three rulings the plan must carry (the
+  recommendations are in area 1). Until they land, machine judgment
+  can grade and propose, but the corpus's provenance ladder stays
+  two-rung.
 
 ## What this dive does not settle
 
 Whether dreaming pays for itself at fleet's corpus scale (the
 article's gains are measured on 420M-token corpora and long-horizon
-games); which lane should judge and write dream output; the tier-cap
-arithmetic's owner preference; and whether the working tier's
-disuse (census finding 5) is a defect or a fact of how fleet is used.
-Each is a plan's question; the two with weight are the dreaming pass
-(area 1) and the injected-layer cap (area 2), and area 3's evidence
-pointer is the small unblock that makes the first one cheap.
+games); the tier-cap arithmetic's owner preference; and whether the
+working tier's disuse (census finding 5) is a defect or a fact of how
+fleet is used. The `validated` naming and the validator's shape are
+recommended here, not ruled; the two supersede-and-cycle rulings it
+carries remain the owner's. Each is a plan's question; the two with
+weight are the dreaming pass (area 1) and the injected-layer cap
+(area 2), and area 3's evidence pointer is the small unblock that
+makes the first one cheap.
