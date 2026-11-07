@@ -2753,6 +2753,108 @@ pub fn render_lessons(lessons: &[Lesson]) -> String {
     out
 }
 
+#[cfg(test)]
+mod capability_tests {
+    use super::*;
+
+    fn scratch(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("fleet-caps-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// The applied proposals render as capabilities with their targets
+    /// and cues, and the empty library says so.
+    #[test]
+    fn the_applied_proposals_render_as_capabilities() {
+        let home = scratch("view");
+        let dir = lessons_dir(&home);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("the-gate-is-local.md"),
+            "---\nname: the-gate-is-local\ntarget: source\ntarget-name: src/improve.rs\nbasis: confirmed-by\ncreated: 2026-11-07\nstatus: applied\n---\n\n## Contrast\n\nthe gate ran and the corpus held\n\n## Cue\n\na proposal touches the gate\n\n## Lesson\n\nthe gate is the measure\n\n## Why\n\nthe corpus regressed without it\n",
+        )
+        .unwrap();
+        let caps = capabilities(&home);
+        assert_eq!(caps.len(), 1);
+        assert_eq!(caps[0].name, "the-gate-is-local");
+        assert_eq!(caps[0].target, "source");
+        assert_eq!(caps[0].cue, "a proposal touches the gate");
+        let rendered = render_capabilities(&caps);
+        assert!(rendered.contains("the-gate-is-local"), "{rendered}");
+        assert!(rendered.contains("source: src/improve.rs"), "{rendered}");
+        let empty = scratch("empty");
+        let rendered = render_capabilities(&capabilities(&empty));
+        assert!(rendered.contains("nothing applied yet"), "{rendered}");
+        let _ = std::fs::remove_dir_all(&home);
+        let _ = std::fs::remove_dir_all(&empty);
+    }
+}
+
+// --- the capability library (C7) --------------------------------------------
+
+/// One capability the system established about itself: an applied
+/// proposal rendered as what it learned to do — the check, pattern,
+/// or threshold it put in place. The article's coda — a growing
+/// library of intervention tools — read from the loop's own history.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Capability {
+    /// The proposal's name.
+    pub name: String,
+    /// What it changed: skill, memory, source, or config.
+    pub target: String,
+    /// The target's name or path.
+    pub target_name: String,
+    /// When this situation arises — the cue a future proposal matches.
+    pub cue: String,
+    /// What was learned: the change's expected effect.
+    pub lesson: String,
+}
+
+/// The capabilities from the applied proposals — the lesson store,
+/// newest first, rendered as what the system learned to do.
+pub fn capabilities(home: &Path) -> Vec<Capability> {
+    load_lessons(home)
+        .into_iter()
+        .map(|lesson| Capability {
+            name: lesson.name,
+            target: lesson.target.label().to_string(),
+            target_name: lesson.target_name,
+            cue: lesson.cue,
+            lesson: lesson.lesson,
+        })
+        .collect()
+}
+
+/// Render the capability library as the CLI's cards: each capability
+/// with its target and the cue it answers to.
+pub fn render_capabilities(capabilities: &[Capability]) -> String {
+    let mut out = String::new();
+    out.push_str(&format!(
+        "the capability library — {} applied change{} rendered as capabilities
+",
+        capabilities.len(),
+        if capabilities.len() == 1 { "" } else { "s" }
+    ));
+    for capability in capabilities {
+        out.push_str(&format!(
+            "\n  {}  ({}: {})\n    when: {}\n    learned: {}\n",
+            capability.name,
+            capability.target,
+            capability.target_name,
+            capability.cue,
+            capability.lesson
+        ));
+    }
+    if capabilities.is_empty() {
+        out.push_str(
+            "\n  nothing applied yet — the library grows one capability per landed proposal\n",
+        );
+    }
+    out
+}
+
 // --- analysis before policy (C4) --------------------------------------------
 
 /// One class's measured separation: the confidence threshold that

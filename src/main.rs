@@ -2307,6 +2307,10 @@ fn improve_command(options: &cli::ImproveOptions) -> ExitCode {
             );
             ExitCode::SUCCESS
         }
+        ImproveAction::Capabilities => {
+            let capabilities = fleet::improve::capabilities(&home);
+            print!("{}", fleet::improve::render_capabilities(&capabilities));
+        }
         ImproveAction::Analyze => {
             let user_home = std::env::var("HOME").ok();
             let calib_root = fleet::calib::resolve_root(&home, user_home.as_deref());

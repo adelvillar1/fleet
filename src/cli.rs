@@ -691,6 +691,9 @@ pub enum ImproveAction {
     /// first, with the contrast it was adopted on and the lesson it
     /// carries.
     Lessons,
+    /// The capability library: the applied proposals rendered as what
+    /// the system learned to do about itself.
+    Capabilities,
     /// The analysis-before-policy pass: the stream's graded rows
     /// measured — which classes fail, how consistently, and the
     /// confidence threshold that separates right from wrong — the
@@ -2172,6 +2175,16 @@ fn parse_improve(args: &[String]) -> Result<Command, String> {
     let verb = subcommand.as_str();
     // The lesson store is the one subcommand that names no proposal:
     // it reads the loop's own history, not one entry in it.
+    if verb == "--capabilities" || verb == "capabilities" {
+        if let Some(extra) = rest.first() {
+            return Err(format!(
+                "`fleet improve --capabilities` takes no argument; found `{extra}`"
+            ));
+        }
+        return Ok(Command::Improve(ImproveOptions {
+            action: ImproveAction::Capabilities,
+        }));
+    }
     if verb == "analyze" {
         if let Some(extra) = rest.first() {
             return Err(format!(
