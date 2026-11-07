@@ -95,7 +95,7 @@ tests/integration.rs    end-to-end tests: parser, client, tool loop, log, real s
 docs/plans/             plan-as-contract, YYYY-MM-DD-<slug>.md (slice records + dashboards record inherited from the fork)
 docs/recaps/            session recaps, YYYY-MM-DD-<slug>.md
 docs/known-issues.md    the ledger: every error/warning encountered, with evidence
-docs/architecture/      deep-dive-2026-10-15.md (current state), overview.md (slice-1 snapshot), ecosystem.md (the repos Fleet absorbs), surfaces.md (the what and why of all eleven destinations), lanes.md (why five specialized services stand between the owner and the LLM), tool-surface.md (the model's tools, the gap, and the 2026 build order)
+docs/architecture/      deep-dive-2026-10-15.md (current state), overview.md (slice-1 snapshot), ecosystem.md (the repos Fleet absorbs), surfaces.md (the what and why of all eleven destinations), lanes.md (why five specialized services stand between the owner and the LLM), tool-surface.md (the model's tools, the gap, and the 2026 build order), structure-guards.md (the cross-cutting guards: socket scans, surface bounds, row discipline)
 docs/images/            the surface screenshots the README and the functional spec render
 README.md                the product's front door: the arc, what ships, what is next (product-manager register)
 TECHNICAL-DOCUMENTATION.md   the system of record: interface contracts, environments, runbooks, verification, risk, sequencing (technical-program-manager register)
@@ -163,7 +163,7 @@ No staging/production split: solo tool, no hosted surface. If a deploy surface e
 
 ## Session protocol
 
-warmup (this file → latest recap → active plans) → plan (`docs/plans/`) → build (run the gate locally) → recap (`docs/recaps/` — the ledger must be well-formed before the document is generated: `python3 scripts/ki_ledger.py docs/known-issues.md` reports zero problems, since a malformed row shifts its cells and misreports the open count; then `scripts/cache-sweep.sh`, the recap step's closing sweep, because cargo never prunes: KI-279, 159 GiB of dead test binaries — automated daily by `scripts/daily-maintenance.sh` (the LaunchAgent), so a missed recap no longer means an unbounded target) → commit with explicit paths. The one-command form of the pre-push checks:
+warmup (this file → latest recap → active plans) → plan (`docs/plans/`) → build (run the gate locally) → recap (`docs/recaps/` — the ledger must be well-formed before the document is generated: `python3 scripts/ki_ledger.py docs/known-issues.md` reports zero problems, since a malformed row shifts its cells and misreports the open count; then `scripts/cache-sweep.sh`, the recap step's closing sweep, because cargo never prunes: KI-279, 159 GiB of dead test binaries — automated daily by `scripts/daily-maintenance.sh` (the LaunchAgent), so a missed recap no longer means an unbounded target) → commit with explicit paths. During the build: `scripts/edit-preflight.sh` names the structure guards the edit will meet, before the first compile (the inventory: `docs/architecture/structure-guards.md`); iterate with scoped test runs (`cargo test -p fleet --lib <name>`), run the whole four-leg gate once, at the end, and say one line between compile cycles. The one-command form of the pre-push checks:
 `python3 scripts/ki_ledger.py` (the ledger is well-formed) and
 `python3 scripts/plan_check.py` (no completed plan carries an unticked
 criterion — KI-398). The second is also a `.githooks/pre-commit` hook
