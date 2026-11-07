@@ -3577,6 +3577,127 @@ impl Bridge {
     /// The onboarding's state and narration: one document, read from the
     /// registries the runtime itself reads. The face paints the door from
     /// this and nothing else.
+    /// The owner's inbox (the owner-inbox plan): one bounded document of
+    /// everything waiting on the owner. A view, not a store — every row
+    /// is read from machinery that already exists, and a row leaves when
+    /// its condition resolves: the seat answered, the step complete, the
+    /// ask answered in the room, the job's outcome changed, the check
+    /// passing.
+    pub async fn owner_inbox(&self) -> Value {
+        // The seats: every attached session's pending call. The bridge
+        // drives one session at a time, but the seats are the sessions'
+        // own facts, read where they live.
+        let seats: Vec<Value> = {
+            let state = lock(&self.state);
+            let mut seats = Vec::new();
+            for (id, attached) in state.sessions.iter() {
+                if let Some(seat) = &attached.seat {
+                    // The seat's verdict, when sys1 judged it — the row
+                    // shows the reason rather than asserting a class
+                    // (the huddles plan's C10).
+                    let verdict = seat.verdict.as_ref().map(|v| v.reason.clone());
+                    seats.push(json!({
+                        "session": id,
+                        "tool": seat.call.function.name,
+                        "label": crate::agent::call_summary(&seat.call),
+                        "summary": seat.summary,
+                        "verdict": verdict,
+                    }));
+                }
+            }
+            seats
+        };
+        // The onboarding ladder's incomplete steps, in the ladder's own
+        // order — the door's authority, read, not re-derived.
+        let onboard = self.onboard().await;
+        let onboarding: Vec<Value> = onboard
+            .get("steps")
+            .and_then(|steps| steps.as_array())
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|step| step.get("done").and_then(|v| v.as_bool()) != Some(true))
+            .map(|step| {
+                json!({
+                    "id": step.get("id").cloned().unwrap_or(Value::Null),
+                    "name": step.get("narration").and_then(|n| n.get("title")).cloned().unwrap_or(Value::Null),
+                    "why": step.get("narration").and_then(|n| n.get("lede")).cloned().unwrap_or(Value::Null),
+                    "step": step.get("step").cloned().unwrap_or(Value::Null),
+                })
+            })
+            .collect();
+        // The huddle rooms' unanswered questions (C4): the huddles read
+        // derives `awaiting_you` itself — the last owner message and the
+        // last `@you`, in log order, a reply clearing the ask — and its
+        // preview after an unanswered ask IS the ask's words. Read, never
+        // a second derivation (D5).
+        let huddles = self.huddles("").await;
+        let asks: Vec<Value> = ["active", "inactive", "ended"]
+            .iter()
+            .filter_map(|key| huddles.get(*key).and_then(|v| v.as_array()))
+            .flatten()
+            .filter(|room| room.get("awaiting_you").and_then(|v| v.as_bool()) == Some(true))
+            .map(|room| {
+                json!({
+                    "session": room.get("id").cloned().unwrap_or(Value::Null),
+                    "from": room.get("from").cloned().unwrap_or(Value::Null),
+                    "words": room.get("preview").cloned().unwrap_or(Value::Null),
+                })
+            })
+            .collect();
+        // The cron jobs whose last run failed or was skipped for needing
+        // an approval — the store's own record, read (C5).
+        let cron: Vec<Value> = {
+            let home = self.home.clone();
+            tokio::task::spawn_blocking(move || match crate::cron::Store::open(&home) {
+                Ok(store) => store
+                    .jobs()
+                    .iter()
+                    .filter(|job| {
+                        job.enabled
+                            && matches!(
+                                job.last_outcome,
+                                Some(crate::cron::Outcome::Failed)
+                                    | Some(crate::cron::Outcome::SkippedNeedsApproval)
+                            )
+                    })
+                    .map(|job| {
+                        json!({
+                            "name": job.name,
+                            "task": job.task,
+                            "schedule": job.schedule,
+                            "outcome": job.last_outcome.as_ref().map(|o| o.label()),
+                            "last_run": job.last_run,
+                            "runs": job.runs,
+                            "successes": job.successes,
+                        })
+                    })
+                    .collect::<Vec<Value>>(),
+                Err(_) => Vec::new(),
+            })
+            .await
+            .unwrap_or_default()
+        };
+        // The doctor's failing checks (C5): the home and the API, the
+        // cheap evaluates — the credentials ride the onboarding ladder.
+        let doctor: Vec<Value> = {
+            let home = self.home.clone();
+            tokio::task::spawn_blocking(move || doctor_rows(&home))
+                .await
+                .unwrap_or_default()
+        };
+        let total = seats.len() + onboarding.len() + asks.len() + cron.len() + doctor.len();
+        json!({
+            "type": "inbox",
+            "seats": seats,
+            "onboarding": onboarding,
+            "asks": asks,
+            "cron": cron,
+            "doctor": doctor,
+            "total": total,
+        })
+    }
+
     pub async fn onboard(&self) -> Value {
         let home = self.home.clone();
         tokio::task::spawn_blocking(move || {
@@ -7558,6 +7679,38 @@ fn room_preview(text: &str) -> String {
         out.push('\u{2026}');
     }
     out
+}
+
+/// The doctor's failing checks, as inbox rows. The cheap evaluates only:
+/// the home's layout and the API's reachability (the doctor's own
+/// 1.5 s probe) — the credentials ride the onboarding ladder, whose step
+/// is the same remedy, so one absence never renders as two rows.
+fn doctor_rows(home: &std::path::Path) -> Vec<Value> {
+    let mut rows = Vec::new();
+    let home_outcome = crate::home::ensure_sessions_dir(home)
+        .map(|_| ())
+        .map_err(|error| error.to_string());
+    let home_check = crate::doctor::evaluate_home(Some(home), home_outcome);
+    if !home_check.ok {
+        rows.push(json!({
+            "check": "home",
+            "why": crate::doctor::render(&home_check),
+        }));
+    }
+    let endpoint = crate::doctor::api_endpoint(crate::api::DEFAULT_BASE_URL);
+    let reachable = endpoint
+        .map(|(host, port)| {
+            crate::net::listening(host, port, std::time::Duration::from_millis(1500))
+        })
+        .unwrap_or(false);
+    let api_check = crate::doctor::evaluate_api(endpoint, reachable);
+    if !api_check.ok {
+        rows.push(json!({
+            "check": "api",
+            "why": crate::doctor::render(&api_check),
+        }));
+    }
+    rows
 }
 
 fn huddles_read(home: &std::path::Path, current: &str, live: &LiveFace) -> Value {
@@ -11944,6 +12097,81 @@ mod goal_tests {
         assert!(answer.contains("completed"), "{answer}");
         assert_eq!(session_goal(&home, &s1), None);
         assert_eq!(session_goal_done(&home, &s1).as_deref(), Some("the work"));
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[tokio::test]
+    async fn the_owner_inbox_collects_the_rooms_asks_and_the_cron_failures() {
+        // The owner-inbox plan's C1/C4/C5: one document of everything
+        // waiting on the owner, read from machinery that already exists.
+        let home = std::env::temp_dir().join(format!("fleet-owner-inbox-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        let bridge = detached(&home);
+        // A huddle room whose last owner-directed ask went unanswered:
+        // the mention, then no owner words after it.
+        let room = crate::session::Session::create_with_persona(
+            &home,
+            "test-model",
+            Some(vec!["bob".into()]),
+        )
+        .unwrap();
+        let room_id = room.id().to_string();
+        let mut room = room;
+        room.record(&crate::session::Record::Assistant {
+            content: Some("the relay seal is tested — do we ship it behind the flag? @you".into()),
+            tool_calls: Vec::new(),
+            persona: Some("bob".into()),
+        })
+        .unwrap();
+        room.record(&crate::session::Record::Mention {
+            member: crate::session::MENTION_OWNER.into(),
+            kind: crate::session::MENTION_ASK.into(),
+            from: Some("bob".into()),
+            at: "2026-11-07T10:00Z".into(),
+        })
+        .unwrap();
+        // A cron job whose last run failed, and one that completed: only
+        // the failure waits on the owner.
+        let jobs = "{\"jobs\":[{\"name\":\"nightly-sweep\",\"schedule\":\"0 3 * * *\",\"task\":\"sweep\",\"auto_approve\":true,\"enabled\":true,\"last_outcome\":\"failed\",\"runs\":12,\"successes\":11},{\"name\":\"corpus-refresh\",\"schedule\":\"0 * * * *\",\"task\":\"refresh\",\"auto_approve\":true,\"enabled\":true,\"last_outcome\":\"completed\",\"runs\":40,\"successes\":40}]}";
+        let cron_dir = home.join("cron");
+        std::fs::create_dir_all(&cron_dir).unwrap();
+        std::fs::write(cron_dir.join("jobs.json"), jobs).unwrap();
+        let doc = bridge.owner_inbox().await;
+        // The ask: the room, the asker, the kind, the message's own words.
+        let asks = doc.get("asks").and_then(|v| v.as_array()).unwrap();
+        assert_eq!(asks.len(), 1, "{doc}");
+        assert_eq!(asks[0]["session"], room_id.as_str());
+        assert_eq!(asks[0]["from"], "bob");
+        assert!(asks[0]["words"]
+            .as_str()
+            .unwrap()
+            .contains("do we ship it behind the flag?"));
+        // The cron: the failure is the row, the completion is not.
+        let cron = doc.get("cron").and_then(|v| v.as_array()).unwrap();
+        assert_eq!(cron.len(), 1, "{doc}");
+        assert_eq!(cron[0]["name"], "nightly-sweep");
+        assert_eq!(cron[0]["outcome"], "failed");
+        // The onboarding ladder: a fresh home's steps are all incomplete.
+        assert!(!doc
+            .get("onboarding")
+            .and_then(|v| v.as_array())
+            .unwrap()
+            .is_empty());
+        // The total is the classes' own sum.
+        let total = doc.get("total").and_then(|v| v.as_u64()).unwrap();
+        assert_eq!(
+            total,
+            (doc.get("seats").and_then(|v| v.as_array()).unwrap().len()
+                + doc
+                    .get("onboarding")
+                    .and_then(|v| v.as_array())
+                    .unwrap()
+                    .len()
+                + doc.get("asks").and_then(|v| v.as_array()).unwrap().len()
+                + doc.get("cron").and_then(|v| v.as_array()).unwrap().len()
+                + doc.get("doctor").and_then(|v| v.as_array()).unwrap().len()) as u64
+        );
         let _ = std::fs::remove_dir_all(&home);
     }
 

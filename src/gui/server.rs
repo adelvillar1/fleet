@@ -1595,6 +1595,9 @@ async fn serve_connection(
         // four words, each with its last line. One polling read; the
         // conversation itself still rides /events.
         ("GET", "/api/inbox") => write_reply(&mut stream, api(200, bridge.inbox(50).await)).await,
+        ("GET", "/api/owner-inbox") => {
+            write_reply(&mut stream, api(200, bridge.owner_inbox().await)).await
+        }
         // Who may reach this face, and the revocation that forgets one.
         // A loopback read and write only: the remote face's allowlist
         // keeps both closed, because a phone that could revoke devices is

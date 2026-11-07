@@ -237,6 +237,7 @@
   // a page and a surface that is not built yet can say so honestly.
   var ROUTES = [
     ['chat', 'the conversation'],
+    ['inbox', 'the inbox'],
     ['router', 'router'],
     ['delegation', 'delegation'],
     ['memory', 'memory'],
@@ -266,6 +267,11 @@
   var GROUPS = [
     ['work', 'work', [
       ['chat', 'conversation'],
+      // The inbox sits directly below the conversation (the owner's
+      // ruling): one queue of everything waiting on the owner — seats,
+      // onboarding steps, huddle questions, cron failures, doctor
+      // findings. The badge is the queue's live total.
+      ['inbox', 'inbox'],
       // The canvas sits directly under the conversation: a board is work
       // the owner opens the way they open a chat, not a listing to
       // browse after one.
@@ -480,6 +486,11 @@
   var ICONS = {
     // the main rail's fifteen
     chat: [['path', { d: 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z' }]],
+    // the inbox: a tray with the lip the rows land in
+    inbox: [
+      ['path', { d: 'M22 12h-6l-2 3h-4l-2-3H2' }],
+      ['path', { d: 'M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z' }],
+    ],
     design: [
       ['rect', { x: 3.5, y: 4.5, width: 17, height: 15, rx: 2 }],
       ['circle', { cx: 8.5, cy: 9.5, r: 1.6 }],
@@ -953,6 +964,9 @@
     onboardSaid: document.getElementById('onboard-said'),
     onboardMechanismBody: document.getElementById('onboard-mechanism-body'),
     onboardCards: document.getElementById('onboard-cards'),
+    inboxBody: document.getElementById('ib-body'),
+    inboxTotal: document.getElementById('ib-total'),
+    inboxEmpty: document.getElementById('ib-empty'),
     homeFacts: document.getElementById('home-facts'),
     homeSkills: document.getElementById('home-skills'),
     homeRuns: document.getElementById('home-runs'),
@@ -2815,6 +2829,9 @@
                  event.type === 'answered') {
         face.sessions = null;
         readSessions(false);
+        // The inbox is cross-session by design: a seat or its resolution
+        // anywhere updates the queue, throttled like every read.
+        readInbox();
       }
       return;
     }
@@ -3118,6 +3135,7 @@
         flushQueue();
         break;
       case 'seat':
+        readInbox(true);
         notifyIfHidden('fleet \u00b7 a seat is waiting',
           (event.label || event.tool || 'a tool call') + ' needs an answer');
         face.running = true;
@@ -4537,6 +4555,118 @@
   // welcome in its first-run state — the same .empty frame, its eyebrow
   // and title swapped, one decision. The cards are the capabilities the
   // machine can still gain, on demand, never blocking.
+
+  // The owner's inbox (the owner-inbox plan): one read, one queue.
+  // Throttled like the onboard read; the live events re-read through
+  // the same seam, so the queue and the badge cannot drift apart.
+  function readInbox(force) {
+    var now = Date.now();
+    if (!force && face.inbox && now - face.inboxAt < 4000) return Promise.resolve();
+    face.inboxAt = now;
+    return fetch('/api/owner-inbox', { headers: { accept: 'application/json' } })
+      .then(function (reply) {
+        if (reply.status === 401) throw new Error('token');
+        return reply.json();
+      })
+      .then(function (doc) {
+        face.inbox = doc;
+        paintInbox();
+      })
+      .catch(function () { });
+  }
+
+  function inboxTotal(doc) {
+    if (!doc) return 0;
+    return ['seats', 'onboarding', 'asks', 'cron', 'doctor'].reduce(function (sum, key) {
+      return sum + ((doc[key] || []).length);
+    }, 0);
+  }
+
+  function paintInbox() {
+    paintRailCounts();
+    if (!el.inboxBody) return;
+    var doc = face.inbox;
+    if (!doc || refusals(doc)) return;
+    el.inboxBody.textContent = '';
+    var total = inboxTotal(doc);
+    if (el.inboxTotal) {
+      el.inboxTotal.textContent = total + ' waiting';
+      el.inboxTotal.hidden = total === 0;
+    }
+    if (el.inboxEmpty) el.inboxEmpty.hidden = total !== 0;
+    if (!total) return;
+    var age = function (at) { return at ? String(at) : ''; };
+    var group = function (label, n) {
+      var g = node('div', 'ib-group');
+      g.appendChild(node('div', 'ib-group-head',
+        [node('span', null, label), node('span', 'n', String(n))]));
+      el.inboxBody.appendChild(g);
+      return g;
+    };
+    var row = function (g, cls, title, where, why, since, actions) {
+      var r = node('div', 'ib-row');
+      r.dataset.class = cls;
+      var what = node('div', 'ib-what');
+      what.appendChild(node('div', 'ib-title', title));
+      if (where) what.appendChild(node('div', 'ib-where', where));
+      if (why) what.appendChild(node('div', 'ib-why', why));
+      if (since) what.appendChild(node('div', 'ib-age', since));
+      var act = node('div', 'ib-actions');
+      (actions || []).forEach(function (a) {
+        var b = node('button', a.cls || null, a.label);
+        b.type = 'button';
+        b.addEventListener('click', a.run);
+        act.appendChild(b);
+      });
+      r.appendChild(what);
+      r.appendChild(act);
+      g.appendChild(r);
+    };
+    (doc.seats || []).forEach(function (seat) {
+      var g = group('waiting for your answer', (doc.seats || []).length);
+      var act = function (decision) {
+        return function () {
+          post('/api/approve?session=' + encodeURIComponent(seat.session),
+            { decision: decision }).then(function () { readInbox(true); });
+        };
+      };
+      row(g, 'seat', (seat.tool || '') + (seat.label ? ' \u00b7 ' + seat.label : ''),
+        'in ' + conversationName(seat.session),
+        seat.verdict || seat.summary, '',
+        [
+          { label: 'once', cls: 'primary', run: act('once') },
+          { label: 'always', run: act('always') },
+          { label: 'deny', cls: 'danger', run: act('deny') },
+        ]);
+    });
+    (doc.onboarding || []).forEach(function (step) {
+      var g = group('setting fleet up', (doc.onboarding || []).length);
+      row(g, 'onboard', step.name || step.id,
+        'the onboarding ladder' + (step.step ? ' \u00b7 step ' + step.step : ''),
+        step.why, '',
+        [{ label: 'set it up', cls: 'primary', run: function () { window.location.hash = '#/chat'; } }]);
+    });
+    (doc.asks || []).forEach(function (ask) {
+      var g = group('questions from the huddles', (doc.asks || []).length);
+      row(g, 'ask', (ask.kind === 'review' ? 'review' : 'ask') +
+        (ask.from ? ' \u00b7 ' + ask.from + ' asks' : ''), '',
+        '\u201c' + (ask.words || '') + '\u201d', age(ask.at),
+        [{ label: 'answer', cls: 'primary', run: function () {
+          window.location.hash = '#/huddles/' + encodeURIComponent(ask.session);
+        } }]);
+    });
+    (doc.cron || []).forEach(function (job) {
+      var g = group('the machinery needs a decision', (doc.cron || []).length);
+      row(g, 'cron', (job.outcome || 'failed') + ' \u00b7 ' + (job.name || ''),
+        (job.schedule || '') + (job.last_run ? ' \u00b7 last ran ' + job.last_run : ''),
+        job.task, '',
+        [{ label: 'the settings', run: function () { window.location.hash = '#/settings'; } }]);
+    });
+    (doc.doctor || []).forEach(function (check) {
+      var g = group('the doctor\u2019s findings', (doc.doctor || []).length);
+      row(g, 'doctor', check.check, '', check.why, '', []);
+    });
+  }
 
   function readOnboard(force) {
     var now = Date.now();
@@ -23646,6 +23776,8 @@
   // can never forget to hide another — the failure mode the explicit
   // hide-lists were one new surface away from.
   var PANEL_EL = {
+
+    inbox: document.getElementById('panel-inbox'),
     chat: el.panelChat,
     router: el.panelRouter,
     delegation: el.panelDelegation,
@@ -23779,6 +23911,10 @@
         if (asked && asked !== face.session) {
           openRoom(asked, { keepHash: true });
         }
+      },
+      inbox: function () {
+        paintInbox();
+        readInbox(true).then(paintInbox);
       },
       sessions: function () {
         paintWork();
@@ -25249,7 +25385,7 @@
   // This is the ONE list the rail does not derive, so it drifts: it called
   // two built surfaces (design, huddles) "later" and carried a phantom
   // (tower). The harness pins it against the rail's own addresses.
-  var BUILT = ['chat', 'design', 'huddles', 'desk', 'router', 'delegation', 'memory', 'skills',
+  var BUILT = ['chat', 'inbox', 'design', 'huddles', 'desk', 'router', 'delegation', 'memory', 'skills',
     'sessions', 'calibration', 'second-brain', 'workspace-history', 'bots', 'vault',
     'settings', 'plugins'];
 
@@ -25273,6 +25409,15 @@
         span.hidden = !drafts;
         span.textContent = drafts ? String(drafts) : '';
         span.title = drafts ? drafts + (drafts === 1 ? ' draft awaits review' : ' drafts await review') : '';
+        return;
+      }
+      if (span.dataset.count === 'inbox') {
+        var ibWaiting = inboxTotal(face.inbox);
+        span.hidden = !ibWaiting;
+        span.textContent = ibWaiting ? String(ibWaiting) : '';
+        span.title = ibWaiting
+          ? ibWaiting + (ibWaiting === 1 ? ' thing needs you' : ' things need you')
+          : '';
         return;
       }
       if (span.dataset.count !== 'sessions') return;
