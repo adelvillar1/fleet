@@ -6148,8 +6148,7 @@ mod gap_tests {
     /// scenarios, and the promotion writes the seed.
     #[test]
     fn the_gaps_name_the_uncovered_classes_and_promotion_writes_the_seed() {
-        let root = std::path::PathBuf::from(std::env::temp_dir())
-            .join(format!("fleet-gaps-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("fleet-gaps-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         // A route class with failures — uncovered by definition. The
@@ -6200,8 +6199,7 @@ mod gap_tests {
             .find(|gap| gap.class == "deploy/glide")
             .unwrap()
             .clone();
-        let home = std::path::PathBuf::from(std::env::temp_dir())
-            .join(format!("fleet-gaps-home-{}", std::process::id()));
+        let home = std::env::temp_dir().join(format!("fleet-gaps-home-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&home);
         let path = promote(&home, &gap).expect("the seed writes");
         let text = std::fs::read_to_string(&path).expect("the seed reads back");

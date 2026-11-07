@@ -2308,7 +2308,7 @@ fn improve_command(options: &cli::ImproveOptions) -> ExitCode {
             ExitCode::SUCCESS
         }
         ImproveAction::Race { name } => {
-            let Some(proposal) = fleet::improve::load_one(&home, &name) else {
+            let Some(proposal) = fleet::improve::load_one(&home, name) else {
                 eprintln!("fleet: improve: no proposal named `{name}`");
                 return ExitCode::FAILURE;
             };
@@ -2317,9 +2317,19 @@ fn improve_command(options: &cli::ImproveOptions) -> ExitCode {
                 eprintln!("fleet: improve: the mock-server binary was not found beside the fleet executable; the race cannot run");
                 return ExitCode::FAILURE;
             };
-            match fleet::improve::race(&root, &mock_bin, &proposal).await {
+            let race = match tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
+                Ok(runtime) => runtime.block_on(fleet::improve::race(&root, &mock_bin, &proposal)),
+                Err(error) => {
+                    eprintln!("fleet: improve: the race could not start its runtime: {error}");
+                    return ExitCode::FAILURE;
+                }
+            };
+            match race {
                 Ok(race) => {
-                    print!("{}", fleet::improve::render_race(&name, &race));
+                    print!("{}", fleet::improve::render_race(name, &race));
                     match race.verdict {
                         fleet::improve::RaceVerdict::Applied => ExitCode::SUCCESS,
                         _ => ExitCode::FAILURE,
@@ -2334,6 +2344,7 @@ fn improve_command(options: &cli::ImproveOptions) -> ExitCode {
         ImproveAction::Capabilities => {
             let capabilities = fleet::improve::capabilities(&home);
             print!("{}", fleet::improve::render_capabilities(&capabilities));
+            ExitCode::SUCCESS
         }
         ImproveAction::Analyze => {
             let user_home = std::env::var("HOME").ok();
@@ -2985,6 +2996,56 @@ async fn judge_command(options: &cli::JudgeOptions) -> ExitCode {
     let user_home = std::env::var("HOME").ok();
     let root = fleet::calib::resolve_root(&home, user_home.as_deref());
     let day = options.day.clone().unwrap_or_else(fleet::calib::today);
+    if let Some(disposition) = &options.disposition {
+        return match fleet::judge::disposition(&root, &day, &disposition.key, &disposition.word) {
+            Ok(row) => {
+                print!("{}", fleet::judge::disposition_card(&row, &day));
+                ExitCode::SUCCESS
+            }
+            Err(reason) => {
+                print!("{}", fleet::judge::disposition_refusal_card(&day, &reason));
+                ExitCode::FAILURE
+            }
+        };
+    }
+    let outcome = fleet::judge::judge(fleet::judge::JudgeRequest {
+        root: &root,
+        home: &home,
+        day: day.clone(),
+        dry_run: options.dry_run,
+        run: options.run.clone(),
+        lane: fleet::lanes::LaneSource::Vendored,
+    })
+    .await;
+    print!("{}", outcome.card);
+    if outcome.batch_answered() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
+}
+
+/// `fleet delegate`: the day's delegation rows, judged against their
+/// outcome evidence — the child's own session log — through the
+/// vendored sys1 lane, or the owner's disposition on one judged
+/// delegation row.
+///
+/// The ported discipline verbatim, the plan's D2: the batch spends at
+/// most one bounded ask per unjudged delegation row under a named daily
+/// budget, lands a redacted `delegation_judged` row per ask, and refuses
+/// by name on every failure. The exit code is the plan's contractual
+/// rule: a batch that obtained no judgment — every row refused, an empty
+/// day, an over-budget day — exits 1; a dry run, a judging batch, and an
+/// all-already-judged batch exit 0, so a twice-daily cron is not a false
+/// alarm.
+async fn delegate_command(options: &cli::DelegateOptions) -> ExitCode {
+    let Some(home) = fleet_home().ok() else {
+        eprintln!("fleet: no home directory known; set FLEET_HOME or HOME");
+        return ExitCode::from(2);
+    };
+    let user_home = std::env::var("HOME").ok();
+    let root = fleet::calib::resolve_root(&home, user_home.as_deref());
+    let day = options.day.clone().unwrap_or_else(fleet::calib::today);
     // The self-probe: one delegation's outcome judged against its
     // brief through the lane; a confident wrong re-dispatches the
     // child. The probe's verdict rides the new delegate row.
@@ -3041,56 +3102,6 @@ async fn judge_command(options: &cli::JudgeOptions) -> ExitCode {
             }
         };
     }
-    if let Some(disposition) = &options.disposition {
-        return match fleet::judge::disposition(&root, &day, &disposition.key, &disposition.word) {
-            Ok(row) => {
-                print!("{}", fleet::judge::disposition_card(&row, &day));
-                ExitCode::SUCCESS
-            }
-            Err(reason) => {
-                print!("{}", fleet::judge::disposition_refusal_card(&day, &reason));
-                ExitCode::FAILURE
-            }
-        };
-    }
-    let outcome = fleet::judge::judge(fleet::judge::JudgeRequest {
-        root: &root,
-        home: &home,
-        day: day.clone(),
-        dry_run: options.dry_run,
-        run: options.run.clone(),
-        lane: fleet::lanes::LaneSource::Vendored,
-    })
-    .await;
-    print!("{}", outcome.card);
-    if outcome.batch_answered() {
-        ExitCode::SUCCESS
-    } else {
-        ExitCode::FAILURE
-    }
-}
-
-/// `fleet delegate`: the day's delegation rows, judged against their
-/// outcome evidence — the child's own session log — through the
-/// vendored sys1 lane, or the owner's disposition on one judged
-/// delegation row.
-///
-/// The ported discipline verbatim, the plan's D2: the batch spends at
-/// most one bounded ask per unjudged delegation row under a named daily
-/// budget, lands a redacted `delegation_judged` row per ask, and refuses
-/// by name on every failure. The exit code is the plan's contractual
-/// rule: a batch that obtained no judgment — every row refused, an empty
-/// day, an over-budget day — exits 1; a dry run, a judging batch, and an
-/// all-already-judged batch exit 0, so a twice-daily cron is not a false
-/// alarm.
-async fn delegate_command(options: &cli::DelegateOptions) -> ExitCode {
-    let Some(home) = fleet_home().ok() else {
-        eprintln!("fleet: no home directory known; set FLEET_HOME or HOME");
-        return ExitCode::from(2);
-    };
-    let user_home = std::env::var("HOME").ok();
-    let root = fleet::calib::resolve_root(&home, user_home.as_deref());
-    let day = options.day.clone().unwrap_or_else(fleet::calib::today);
     if let Some(disposition) = &options.disposition {
         return match fleet::delegate::disposition(&root, &day, &disposition.key, &disposition.word)
         {

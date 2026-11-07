@@ -5029,7 +5029,6 @@ mod tests {
 #[cfg(test)]
 mod analyze_tests {
     use super::*;
-    use crate::calib::Row;
 
     fn scratch(tag: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("fleet-analyze-{tag}-{}", std::process::id()));
