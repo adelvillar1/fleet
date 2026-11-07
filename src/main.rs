@@ -2421,6 +2421,29 @@ fn demand_command(options: &cli::DemandOptions) -> ExitCode {
     let calib_root = fleet::calib::resolve_root(&home, user_home.as_deref());
     let days = options.days.unwrap_or(fleet::demand::DEMAND_WINDOW_DAYS);
     let today = fleet::calib::today();
+    if options.cluster {
+        let clusters = fleet::demand::clusters(&calib_root, &today, days);
+        print!("{}", fleet::demand::render_clusters(&clusters, days));
+        let repo_root = std::env::current_dir().unwrap_or_default();
+        let mut filed = 0;
+        for cluster in &fleet::demand::filing_clusters(&clusters) {
+            match fleet::demand::file_shape_proposal(&home, &repo_root, cluster) {
+                Ok(path) => {
+                    println!("filed {}", path.display());
+                    filed += 1;
+                }
+                Err(error) => eprintln!(
+                    "fleet: the shape proposal for `{}` did not file: {error}",
+                    cluster.class
+                ),
+            }
+        }
+        println!(
+            "{filed} shape proposal{} filed",
+            if filed == 1 { "" } else { "s" }
+        );
+        return ExitCode::SUCCESS;
+    }
     let demands = fleet::demand::collect(&calib_root, &today, days);
     let stream = fleet::calib::Stream::open(&calib_root);
     fleet::demand::record_view(&stream, days, &demands);

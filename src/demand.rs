@@ -26,6 +26,7 @@ use std::path::Path;
 use crate::calib::{
     self, Row, Stream, OP_DELEGATION, OP_EVAL_CORPUS, OP_ROUTE_JUDGED, OP_VALIDATE,
 };
+use crate::improve::{self, Basis, Change, Target};
 
 /// The default window a demand view reads, in days.
 pub const DEMAND_WINDOW_DAYS: usize = 14;
@@ -316,6 +317,345 @@ fn bounded(text: &str, bound: usize) -> String {
     }
 }
 
+// --- the clustering beat (C1) ----------------------------------------------
+
+/// How many bad rows a class needs before the beat files a shape
+/// proposal for it. The article's rule — a cluster that repeats is a
+/// failure mode worth naming; a single bad row is noise.
+pub const CLUSTER_MIN_BAD: u64 = 5;
+
+/// The clusters at or over the filing threshold — the beat's
+/// candidate set. A cluster under the threshold is noise; the beat
+/// files nothing for it.
+pub fn filing_clusters(clusters: &[Cluster]) -> Vec<&Cluster> {
+    clusters
+        .iter()
+        .filter(|cluster| cluster.bad >= CLUSTER_MIN_BAD)
+        .collect()
+}
+
+/// How many examples a cluster surfaces, and how long each may be.
+const CLUSTER_EXAMPLES: usize = 3;
+const CLUSTER_EXAMPLE_CHARS: usize = 80;
+
+/// One failure cluster: a demand class's bad rows over the window,
+/// with the examples that name the mode.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Cluster {
+    pub family: String,
+    pub class: String,
+    pub bad: u64,
+    pub rows: u64,
+    pub rate: f64,
+    /// The cluster's examples, deduplicated, bounded — the rows a
+    /// reader names the failure mode from.
+    pub examples: Vec<String>,
+}
+
+/// Group the window's failures by class. Every bad row joins its
+/// class's cluster; the examples surface the rows' own detail.
+pub fn clusters(root: &Path, day: &str, days: usize) -> Vec<Cluster> {
+    use std::collections::HashMap;
+    #[derive(Default)]
+    struct Accum {
+        bad: u64,
+        rows: u64,
+        examples: Vec<String>,
+    }
+    let mut accums: HashMap<(String, String), Accum> = HashMap::new();
+    let mut add = |family: &str, class: &str, bad: bool, example: Option<String>| {
+        let entry = accums
+            .entry((family.to_string(), class.to_string()))
+            .or_default();
+        entry.rows += 1;
+        if bad {
+            entry.bad += 1;
+            if let Some(example) = example {
+                let example = bounded(&example, CLUSTER_EXAMPLE_CHARS);
+                if !entry.examples.contains(&example) && entry.examples.len() < CLUSTER_EXAMPLES {
+                    entry.examples.push(example);
+                }
+            }
+        }
+    };
+    for row in calib::read_days_recent(root, day, days) {
+        match row.op.as_str() {
+            OP_ROUTE_JUDGED => {
+                if row.workload.trim().is_empty() || row.provider.trim().is_empty() {
+                    continue;
+                }
+                let bad = row.verdict != "right";
+                let example = if row.reason.trim().is_empty() {
+                    format!("{} {} {}", row.workload, row.provider, row.verdict)
+                } else {
+                    row.reason.clone()
+                };
+                add(
+                    "route",
+                    &format!("{}/{}", row.workload, row.provider),
+                    bad,
+                    Some(example),
+                );
+            }
+            OP_EVAL_CORPUS => {
+                for scenario in &row.scenarios {
+                    let example = if scenario.failure.trim().is_empty() {
+                        scenario.scenario.clone()
+                    } else {
+                        scenario.failure.clone()
+                    };
+                    add("eval", &scenario.scenario, !scenario.passed, Some(example));
+                }
+            }
+            OP_DELEGATION => {
+                if row.outcome.trim().is_empty() {
+                    continue;
+                }
+                let example = format!("{}: {}", row.outcome, row.session);
+                add(
+                    "delegate",
+                    &row.outcome,
+                    row.outcome != "completed",
+                    Some(example),
+                );
+            }
+            OP_VALIDATE => {
+                if row.verdict.trim().is_empty() {
+                    continue;
+                }
+                let example = format!("{}: {}", row.verdict, row.fact);
+                add(
+                    "validate",
+                    &row.verdict,
+                    row.verdict == "contradicted",
+                    Some(example),
+                );
+            }
+            _ => {}
+        }
+    }
+    let mut out: Vec<Cluster> = accums
+        .into_iter()
+        .map(|((family, class), accum)| Cluster {
+            family,
+            class,
+            bad: accum.bad,
+            rows: accum.rows,
+            rate: if accum.rows == 0 {
+                0.0
+            } else {
+                accum.bad as f64 / accum.rows as f64
+            },
+            examples: accum.examples,
+        })
+        .collect();
+    out.sort_by(|left, right| {
+        right
+            .bad
+            .cmp(&left.bad)
+            .then_with(|| left.class.cmp(&right.class))
+    });
+    out
+}
+
+/// The clustering view's rendering: per cluster, its bad count, rate,
+/// and the examples that name the mode.
+pub fn render_clusters(clusters: &[Cluster], days: usize) -> String {
+    let mut out = String::new();
+    out.push_str(&format!(
+        "failure clusters — {days} day{} of the stream, {} class{} with failures\n",
+        if days == 1 { "" } else { "s" },
+        clusters.len(),
+        if clusters.len() == 1 { "" } else { "es" }
+    ));
+    let filing: Vec<&Cluster> = clusters
+        .iter()
+        .filter(|cluster| cluster.bad >= CLUSTER_MIN_BAD)
+        .collect();
+    out.push_str(&format!(
+        "{} cluster{} at or over the {}-bad filing threshold\n",
+        filing.len(),
+        if filing.len() == 1 { "" } else { "s" },
+        CLUSTER_MIN_BAD
+    ));
+    for cluster in clusters {
+        let mark = if cluster.bad >= CLUSTER_MIN_BAD {
+            "file"
+        } else {
+            "    "
+        };
+        out.push_str(&format!(
+            "\n[{}] {:<28} {:>3} bad of {:>3}  {:.0}%\n",
+            mark,
+            bounded(&cluster.class, 28),
+            cluster.bad,
+            cluster.rows,
+            cluster.rate * 100.0
+        ));
+        for example in &cluster.examples {
+            out.push_str(&format!("      · {}\n", example));
+        }
+    }
+    out
+}
+
+/// A class name as a taxonomy word: lowercase, hyphens, bounded — the
+/// shape vocabulary's own word shape. The beat proposes with the
+/// class-derived word; the owner's apply is the naming gate.
+fn taxonomy_word(class: &str) -> String {
+    let mut word = String::new();
+    let mut last_hyphen = false;
+    for character in class.chars() {
+        if character.is_ascii_alphanumeric() {
+            word.push(character.to_ascii_lowercase());
+            last_hyphen = false;
+        } else if !last_hyphen && !word.is_empty() {
+            word.push('-');
+            last_hyphen = true;
+        }
+        if word.chars().count() >= 32 {
+            break;
+        }
+    }
+    word.trim_matches('-').to_string()
+}
+
+/// The trigger keywords for a proposed tag: the class's own words,
+/// deduplicated, bounded — the taxonomy's keyword-table shape.
+fn taxonomy_keywords(class: &str) -> Vec<String> {
+    let mut words: Vec<String> = Vec::new();
+    for word in class.split(|character: char| !character.is_alphanumeric()) {
+        let word = word.to_ascii_lowercase();
+        if word.is_empty() || word.chars().count() > 24 || words.contains(&word) {
+            continue;
+        }
+        words.push(word);
+        if words.len() >= 6 {
+            break;
+        }
+    }
+    words
+}
+
+/// The taxonomy patch: the full new content of `src/memory.rs` with
+/// the tag joined to `FAILURE_SHAPES` and `FAILURE_SHAPE_KEYWORDS`.
+/// A patch, not a diff — the improve store's Patch change carries the
+/// file's whole new content and the gate guards it.
+fn taxonomy_patch(repo_root: &Path, tag: &str, keywords: &[String]) -> Result<String, String> {
+    let path = repo_root.join("src/memory.rs");
+    let text = std::fs::read_to_string(&path)
+        .map_err(|error| format!("could not read {}: {error}", path.display()))?;
+    // The failure-shape array: bump the count, insert before its close.
+    let shapes_anchor = "pub const FAILURE_SHAPES: [&str; 6] = [";
+    let shapes_start = text
+        .find(shapes_anchor)
+        .ok_or_else(|| "the FAILURE_SHAPES array moved".to_string())?;
+    let shapes_close = text[shapes_start..]
+        .find("];")
+        .map(|offset| shapes_start + offset)
+        .ok_or_else(|| "the FAILURE_SHAPES close moved".to_string())?;
+    let mut out = String::new();
+    out.push_str(&text[..shapes_start]);
+    out.push_str("pub const FAILURE_SHAPES: [&str; 7] = [");
+    out.push_str(&text[shapes_anchor.len() + shapes_start..shapes_close]);
+    out.push_str(&format!("    \"{tag}\",\n"));
+    out.push_str(&text[shapes_close..]);
+    // The keyword table: the same shape.
+    let text = out;
+    let keywords_anchor = "pub const FAILURE_SHAPE_KEYWORDS: [(&str, &[&str]); 6] = [";
+    let keywords_start = text
+        .find(keywords_anchor)
+        .ok_or_else(|| "the FAILURE_SHAPE_KEYWORDS table moved".to_string())?;
+    let keywords_close = text[keywords_start..]
+        .find("];")
+        .map(|offset| keywords_start + offset)
+        .ok_or_else(|| "the FAILURE_SHAPE_KEYWORDS close moved".to_string())?;
+    let mut entry = format!("    (\n        \"{tag}\",\n        &[\n");
+    for keyword in keywords {
+        entry.push_str(&format!("            \"{keyword}\",\n"));
+    }
+    entry.push_str("        ],\n    ),\n");
+    let mut out = String::new();
+    out.push_str(&text[..keywords_start]);
+    out.push_str("pub const FAILURE_SHAPE_KEYWORDS: [(&str, &[&str]); 7] = [");
+    out.push_str(&text[keywords_anchor.len() + keywords_start..keywords_close]);
+    out.push_str(&entry);
+    out.push_str(&text[keywords_close..]);
+    Ok(out)
+}
+
+/// File one shape proposal for a cluster into `<home>/proposals/` —
+/// the improve store's own format, a source Patch that joins the tag
+/// to the taxonomy, owner-applied. The proposal is a draft: the
+/// class-derived word is the beat's proposal, and the owner's apply
+/// is the naming gate.
+pub fn file_shape_proposal(
+    home: &Path,
+    repo_root: &Path,
+    cluster: &Cluster,
+) -> Result<std::path::PathBuf, String> {
+    let tag = taxonomy_word(&cluster.class);
+    if tag.is_empty() {
+        return Err(format!("`{}` yields no taxonomy word", cluster.class));
+    }
+    let keywords = taxonomy_keywords(&cluster.class);
+    let content = taxonomy_patch(repo_root, &tag, &keywords)?;
+    let change = Change::Patch {
+        path: "src/memory.rs".to_string(),
+        content,
+    };
+    let shas = improve::stamp_target_shas(repo_root, &change);
+    let name = format!("shape-{tag}-{}", calib::today());
+    let justification = format!(
+        "the demand map's {}-day window carries {} bad row{} in the class `{}` ({:.0}% of {} row{}). Examples: {}",
+        DEMAND_WINDOW_DAYS,
+        cluster.bad,
+        if cluster.bad == 1 { "" } else { "s" },
+        cluster.class,
+        cluster.rate * 100.0,
+        cluster.rows,
+        if cluster.rows == 1 { "" } else { "s" },
+        if cluster.examples.is_empty() {
+            "(no examples recorded)".to_string()
+        } else {
+            cluster.examples.join(" | ")
+        }
+    );
+    let acceptance = format!(
+        "the tag `{tag}` is joined to FAILURE_SHAPES and FAILURE_SHAPE_KEYWORDS in src/memory.rs; the writer accepts `{tag}` as a failure shape; the gate is green"
+    );
+    let effect = format!(
+        "facts carrying `{tag}` become recallable through the failure-shape partition; the mode the cluster names stops living only in the ledger"
+    );
+    let change_json = serde_json::json!({
+        "op": "patch",
+        "path": "src/memory.rs",
+        "content": match &change {
+            Change::Patch { content, .. } => content.clone(),
+            _ => unreachable!("a patch change"),
+        },
+    })
+    .to_string();
+    let text = improve::render_proposal(
+        &name,
+        Target::Source,
+        "src/memory.rs",
+        Basis::ConfirmedBy,
+        &justification,
+        &acceptance,
+        &effect,
+        &change_json,
+        &shas,
+    );
+    let dir = improve::proposals_dir(home);
+    std::fs::create_dir_all(&dir)
+        .map_err(|error| format!("could not create {}: {error}", dir.display()))?;
+    let path = dir.join(format!("{name}.md"));
+    std::fs::write(&path, text)
+        .map_err(|error| format!("could not write {}: {error}", path.display()))?;
+    Ok(path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -452,6 +792,111 @@ mod tests {
             .collect();
         assert_eq!(demand_rows.len(), 1, "one view, one row");
         assert_eq!(demand_rows[0].op, "demand");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The clustering beat: a repeating class surfaces its examples,
+    /// the filing set is the clusters at or over the threshold, and
+    /// the filed proposal carries the taxonomy patch.
+    #[test]
+    fn a_repeating_cluster_files_a_shape_proposal_with_the_taxonomy_patch() {
+        let root = scratch("cluster");
+        let stream = Stream::open(&root);
+        for index in 0..6 {
+            stream.record(route_row(
+                &format!("2026-11-0{index}T00:00:00Z"),
+                "deploy",
+                "glide",
+                "wrong",
+            ));
+        }
+        // A second class with two bad rows — under the threshold.
+        for index in 0..2 {
+            stream.record(route_row(
+                &format!("2026-11-0{index}T00:00:00Z"),
+                "build",
+                "drex",
+                "wrong",
+            ));
+        }
+        stream.flush();
+        let clusters = clusters(&root, "2026-11-20", 30);
+        let deploy = clusters
+            .iter()
+            .find(|cluster| cluster.class == "deploy/glide")
+            .expect("the deploy cluster");
+        assert_eq!(deploy.bad, 6);
+        assert_eq!(deploy.rows, 6);
+        assert!(!deploy.examples.is_empty(), "the examples surface");
+        let filing = filing_clusters(&clusters);
+        assert_eq!(filing.len(), 1, "only the repeating cluster files");
+        assert_eq!(filing[0].class, "deploy/glide");
+        // The proposal files with the taxonomy patch.
+        let home = scratch("cluster-home");
+        let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let path = file_shape_proposal(&home, &repo_root, filing[0]).expect("the proposal files");
+        let text = std::fs::read_to_string(&path).expect("the proposal reads back");
+        assert!(text.contains("target: source"), "{text}");
+        assert!(text.contains("name: shape-deploy-glide-"), "{text}");
+        // The proposal parses through the improve store's own reader, and
+        // the patch it carries joins the tag to both taxonomy arrays.
+        let name = format!("shape-deploy-glide-{}", calib::today());
+        let parsed = crate::improve::load_one(&home, &name)
+            .expect("the proposal parses through the store's loader");
+        assert_eq!(parsed.name, name);
+        let content = match &parsed.change {
+            crate::improve::Change::Patch { content, .. } => content,
+            other => panic!("a patch change was filed, not {other:?}"),
+        };
+        assert!(
+            content.contains("pub const FAILURE_SHAPES: [&str; 7] = ["),
+            "the array count is bumped"
+        );
+        assert!(
+            content.contains(
+                "\"deploy-glide\",
+"
+            ),
+            "the tag is joined"
+        );
+        assert!(
+            content.contains("pub const FAILURE_SHAPE_KEYWORDS: [(&str, &[&str]); 7] = ["),
+            "the keyword table is bumped"
+        );
+        assert!(
+            content.contains(
+                "\"deploy-glide\",
+        &[
+            \"deploy\",
+            \"glide\",
+"
+            ),
+            "the keywords ride"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// The cluster view renders the classes, the marks, and the
+    /// threshold count.
+    #[test]
+    fn the_cluster_view_names_the_classes_and_the_filing_set() {
+        let root = scratch("cluster-render");
+        let stream = Stream::open(&root);
+        for index in 0..5 {
+            stream.record(route_row(
+                &format!("2026-11-0{index}T00:00:00Z"),
+                "deploy",
+                "glide",
+                "wrong",
+            ));
+        }
+        stream.flush();
+        let clusters = clusters(&root, "2026-11-20", 30);
+        let rendered = render_clusters(&clusters, 30);
+        assert!(rendered.contains("deploy/glide"), "{rendered}");
+        assert!(rendered.contains("[file]"), "{rendered}");
+        assert!(rendered.contains("5-bad filing threshold"), "{rendered}");
         let _ = std::fs::remove_dir_all(&root);
     }
 

@@ -235,6 +235,10 @@ pub struct OnboardOptions {
 pub struct DemandOptions {
     /// The window in days; absent is [`crate::demand::DEMAND_WINDOW_DAYS`].
     pub days: Option<usize>,
+    /// The clustering view: group the window's failures by class and
+    /// file a shape proposal for each cluster at or over the filing
+    /// threshold.
+    pub cluster: bool,
 }
 
 /// Options for `fleet calib`.
@@ -1380,11 +1384,13 @@ fn parse_calib(args: &[String]) -> Result<Command, String> {
 /// window; anything but a positive integer is a usage error.
 fn parse_demand(args: &[String]) -> Result<Command, String> {
     let mut days: Option<usize> = None;
+    let mut cluster = false;
     let mut index = 0;
     while index < args.len() {
         let arg = args[index].as_str();
         match arg {
             "--help" | "-h" => return Ok(Command::Help),
+            "--cluster" => cluster = true,
             "--days" => {
                 let value = take_value(args, &mut index, arg)?;
                 let parsed = value
@@ -1402,7 +1408,7 @@ fn parse_demand(args: &[String]) -> Result<Command, String> {
         }
         index += 1;
     }
-    Ok(Command::Demand(DemandOptions { days }))
+    Ok(Command::Demand(DemandOptions { days, cluster }))
 }
 
 fn parse_judge(args: &[String]) -> Result<Command, String> {
@@ -4334,11 +4340,24 @@ mod tests {
     fn demand_parses_its_window_and_refuses_junk() {
         assert_eq!(
             parse(&args(&["demand"])).unwrap(),
-            Command::Demand(DemandOptions { days: None })
+            Command::Demand(DemandOptions {
+                days: None,
+                cluster: false
+            })
         );
         assert_eq!(
             parse(&args(&["demand", "--days", "7"])).unwrap(),
-            Command::Demand(DemandOptions { days: Some(7) })
+            Command::Demand(DemandOptions {
+                days: Some(7),
+                cluster: false
+            })
+        );
+        assert_eq!(
+            parse(&args(&["demand", "--cluster"])).unwrap(),
+            Command::Demand(DemandOptions {
+                days: None,
+                cluster: true
+            })
         );
         assert!(parse(&args(&["demand", "--days", "0"])).is_err());
         assert!(parse(&args(&["demand", "--days", "soon"])).is_err());
