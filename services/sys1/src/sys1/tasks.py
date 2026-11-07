@@ -522,6 +522,68 @@ _VISION_QC = Task(
 ROUTE_WORKLOAD_LABELS = ["quick", "standard_code", "frontend", "hard", "prose", "deep_context", "composed"]
 ROUTE_EXECUTION_LABELS = ["single", "mixture", "swarm"]
 
+# ── plan_judge: the plan's own execution verdict ────────────────────────────
+# Fleet's route-judges-the-work plan: a plan carries its execution verdict in
+# its frontmatter, judged over the plan's tasks and acceptance criteria while
+# the plan is still a document — so the session that implements it hears the
+# answer rather than re-deriving it from a one-line goal. The head and the
+# labels are the route task's execution head, so the verdict a plan carries
+# is the verdict the route would otherwise have to guess at.
+
+_PLAN_JUDGE = Task(
+    id="plan_judge",
+    description=(
+        "Plan-execution judgment: read the plan's tasks and acceptance "
+        "criteria and name the execution topology that completes them well. "
+        "The input text is the plan's slug and its criteria, verbatim."
+    ),
+    heads=[
+        make_choice(
+            "A development plan is described by its tasks and acceptance "
+            "criteria. Which execution style best fits completing the whole "
+            "plan well?",
+            ROUTE_EXECUTION_LABELS,
+            id="execution",
+            descriptions={
+                "single": "One focused worker suffices — the plan is one coherent thread whose criteria share files and sequencing",
+                "mixture": "Several independent answers compared by a judge would beat one — but the plan does not decompose into separate parts",
+                "swarm": "The plan decomposes into multiple substantial independent parts — parallel multi-agent workers with review would beat any single answer",
+            },
+        ),
+    ],
+)
+
+# ── goal_work: a non-plan goal's implied work ───────────────────────────────
+# The same ruling, the other half: a goal that is not a plan still implies
+# work the route's judgment cannot see from the goal's literal line. The
+# input is the goal and the task; the head names the implied work's shape
+# so the brief the judge reads carries the meaning, not the words.
+
+_GOAL_WORK_LABELS = ["one thread", "independent parts", "unclear"]
+
+_GOAL_WORK = Task(
+    id="goal_work",
+    description=(
+        "Goal-intent judgment: read the goal and the task and name the shape "
+        "of the work they imply. The input text is the goal and the task, "
+        "verbatim."
+    ),
+    heads=[
+        make_choice(
+            "An owner's goal and the task that asks for a run are stated. "
+            "What shape of work do they imply?",
+            _GOAL_WORK_LABELS,
+            id="work",
+            descriptions={
+                "one thread": "The implied work is one coherent thread — one worker suffices",
+                "independent parts": "The implied work decomposes into substantial independent parts — parallel workers would beat any single answer",
+                "unclear": "The goal and the task do not name enough for a shape — the route falls back to its own read",
+            },
+        ),
+    ],
+)
+
+
 _ROUTE = Task(
     id="route",
     description=(
@@ -780,6 +842,8 @@ for _t in (
     _SAFETY,
     _VISION_QC,
     _ROUTE,
+    _PLAN_JUDGE,
+    _GOAL_WORK,
     _TOOL_ROUTE,
     _CURATE,
     _DESK_COVERAGE,

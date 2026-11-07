@@ -702,11 +702,13 @@ async fn measure_the_real_blend1_probe() {
     server.initialize().await.expect("initialize");
     eprintln!("MEASURE blend1 initialize: {} ms", t0.elapsed().as_millis());
     let t1 = std::time::Instant::now();
-    server.call_tool("doctor", serde_json::json!({})).await.expect("doctor");
+    server
+        .call_tool("doctor", serde_json::json!({}))
+        .await
+        .expect("doctor");
     eprintln!("MEASURE blend1 doctor: {} ms", t1.elapsed().as_millis());
     server.close().await.expect("close");
 }
-
 
 /// DIAGNOSTIC (ignored, not a gate): what the probe reports when the
 /// lane's `doctor` call REFUSES — the fail-open the row's second

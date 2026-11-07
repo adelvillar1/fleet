@@ -904,7 +904,11 @@ fn a_spelling_two_files_wrote_is_admitted_and_one_file_is_drift() {
     // by one — the shape of this crate's own guard tests, which write
     // the variant as the example of a refusal.
     write(&root, "src/a.rs", "pub fn judge_route() {}\n");
-    write(&root, "src/b.rs", "pub fn judge_route_again() { judge_route() }\n");
+    write(
+        &root,
+        "src/b.rs",
+        "pub fn judge_route_again() { judge_route() }\n",
+    );
     write(&root, "src/c.rs", "pub fn judge_route_three() {}\n");
     write(&root, "src/d.rs", "pub fn judge_route_four() {}\n");
     write(&root, "src/e.rs", "pub fn x() { let judgeRoute = 1; }\n");
@@ -913,7 +917,11 @@ fn a_spelling_two_files_wrote_is_admitted_and_one_file_is_drift() {
         .get("judge_Route")
         .expect("the camel split establishes judge_Route");
     assert_eq!(
-        entry.spellings().iter().find(|s| s.written == "judgeRoute").map(|s| s.files),
+        entry
+            .spellings()
+            .iter()
+            .find(|s| s.written == "judgeRoute")
+            .map(|s| s.files),
         Some(1),
         "one file wrote the camel form"
     );
@@ -935,7 +943,11 @@ fn a_spelling_two_files_wrote_is_admitted_and_one_file_is_drift() {
         .get("judge_Route")
         .expect("the camel split establishes judge_Route");
     assert_eq!(
-        entry.spellings().iter().find(|s| s.written == "judgeRoute").map(|s| s.files),
+        entry
+            .spellings()
+            .iter()
+            .find(|s| s.written == "judgeRoute")
+            .map(|s| s.files),
         Some(2),
         "two files wrote the camel form"
     );

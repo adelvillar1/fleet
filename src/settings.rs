@@ -2271,7 +2271,11 @@ mod router_tests {
             .expect("the provider")
             .clone();
         // What the save DID name landed.
-        assert_eq!(stored["enabled"], serde_json::Value::Bool(false), "{stored}");
+        assert_eq!(
+            stored["enabled"],
+            serde_json::Value::Bool(false),
+            "{stored}"
+        );
         // What it did not name is still the owner's.
         assert_eq!(
             stored["protocol"],

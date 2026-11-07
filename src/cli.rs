@@ -29,6 +29,10 @@ pub enum Command {
         session: Option<String>,
         force: bool,
     },
+    /// The session-close hygiene: the checkpoints pruned to their
+    /// retention — the last 20 turns per session under a 5 GiB store
+    /// cap — and the report naming what went and what it freed.
+    Hygiene,
     /// The settings surface: list every knob, or write one.
     Settings {
         set: Option<(String, String)>,
@@ -953,6 +957,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "sessions" => parse_sessions(rest),
         "desk" => parse_desk(rest),
         "compact" => parse_compact(rest),
+        "hygiene" => no_flags(rest, Command::Hygiene),
         "settings" => parse_settings(rest),
         "lanes" => no_flags(rest, Command::Lanes),
         "mcp" => parse_mcp(rest),
@@ -2390,7 +2395,8 @@ fn parse_reload(args: &[String]) -> Result<Command, String> {
                     .map_err(|_| format!("`--port {value}` is not a port"))?;
                 if parsed == 0 {
                     return Err(
-                        "`--port 0` names no address: the reload's proof reads the port".to_string(),
+                        "`--port 0` names no address: the reload's proof reads the port"
+                            .to_string(),
                     );
                 }
                 port = parsed;

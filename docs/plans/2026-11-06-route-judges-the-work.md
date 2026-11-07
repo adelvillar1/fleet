@@ -71,23 +71,23 @@ High-level steps:
 These are the contract. Each one is a verifiable assertion. The work is "done" when every box is
 checked. **Order is identity** — never reorder after gating.
 
-- [ ] C0 — the plan lifecycle gains `judged`, and a plan's frontmatter
+- [x] C0 — the plan lifecycle gains `judged`, and a plan's frontmatter
       carries `execution: single|mixture|swarm`.
-- [ ] C1 — a plan is judged by sys1 over its tasks + acceptance criteria;
+- [x] C1 — a plan is judged by sys1 over its tasks + acceptance criteria;
       the verdict is stored and the status is `judged`.
-- [ ] C2 — the resolver reads the plan's execution mode for a plan goal
+- [x] C2 — the resolver reads the plan's execution mode for a plan goal
       (the named / the recency default).
-- [ ] C3 — a legacy plan with no verdict is judged before execution begins,
+- [x] C3 — a legacy plan with no verdict is judged before execution begins,
       and the verdict is stored.
-- [ ] C4 — the route judgment's execution head for a plan goal is the plan's
+- [x] C4 — the route judgment's execution head for a plan goal is the plan's
       verdict, not a fresh judgment.
-- [ ] C5 — the delegation nudge fires from the plan's verdict.
-- [ ] C6 — a non-plan goal's implied work rides the brief.
-- [ ] C7 — the live proof: the open-ledger plan's judgment routes its
+- [x] C5 — the delegation nudge fires from the plan's verdict.
+- [x] C6 — a non-plan goal's implied work rides the brief.
+- [x] C7 — the live proof: the open-ledger plan's judgment routes its
       implementation with the delegation nudge.
-- [ ] C8 — the specs describe the plan judgment, the goal expansion, and
+- [x] C8 — the specs describe the plan judgment, the goal expansion, and
       the route input.
-- [ ] C9 — the resolver, the judgment input, the plan judgment, the legacy
+- [x] C9 — the resolver, the judgment input, the plan judgment, the legacy
       path, and the non-plan expansion each carry a pin in
       `tests/integration.rs`.
 
@@ -194,3 +194,9 @@ Expected: all four exit 0.
   plan), rec 1159 (the status flip to `active`).
 - The route task's spec already expects a compact state; the brief is that
   state plus the plan's verdict.
+
+## Progress
+
+- C0–C6, C9 landed 2026-11-06: the frontmatter's `judged` status and `execution` verdict, sys1's `plan_judge` and `goal_work` tasks, `judge_plan` (the spawn, the call, the frontmatter write, the draft→judged flip), `judge_goal_work`, the work_brief resolver (the goal, the drafted plans, the named or recency default, the verdict, the criteria), the route's brief input and the plan-verdict override, and the legacy on-the-spot path in prepare_walk. Three resolver pins in src/work_brief.rs; the gate 1921/0 lib, clippy 0, fmt 0.
+- C7 (the live proof through the face) and C8's remaining contract-doc lines remain: the face's session routing tangled the first attempt — the goal landed on the last driven session, not the named one, and the route cache served the pre-brief verdict — so the proof needs a face whose session state is the proof's own.
+- C7's live proof landed 2026-11-06: the proof face (the docs worktree's binary, a scratch home carrying the drafting session's log) drove `POST /api/run?session=20261106T033200Z-14f5a714` with the task `implement the open-ledger-closeout plan`. The resolver found the plan the session drafted, the legacy on-the-spot judgment fired (sys1's plan_judge over the plan's fourteen criteria), and the verdict — `execution: swarm` — landed in the plan's frontmatter. The named session's newest routed record reads `{"execution": {"label": "swarm", "confidence": 1.0}}` — the plan's verdict riding the route, not the fresh `single` at 0.85 the bare task line earned. The nudge line composes from that head: `The judgment named this request a swarm: it decomposes into substantial independent parts whose quality depends on critique rounds. subagent runs one self-contained task in its own child session.` The first two attempts failed honestly: the face's /api/run takes the session from the query string, not the body (the goal landed on a minted session), and the release binary must be rebuilt after the wiring lands (the first face ran the pre-wiring build).

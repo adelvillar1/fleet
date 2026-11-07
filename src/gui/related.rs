@@ -369,10 +369,8 @@ fn build_corpus(
             }
             (store.routes.clone(), store.cells.clone(), reset)
         };
-        let (routes_fresh, routes_changed) =
-            refresh_section(&routes_existing, &routes, embedder);
-        let (cells_fresh, cells_changed) =
-            refresh_section(&cells_existing, &cells, embedder);
+        let (routes_fresh, routes_changed) = refresh_section(&routes_existing, &routes, embedder);
+        let (cells_fresh, cells_changed) = refresh_section(&cells_existing, &cells, embedder);
         if reset || routes_changed || cells_changed {
             let snapshot = {
                 let mut store = lock(store);

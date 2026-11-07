@@ -31,6 +31,13 @@ const MAX_FILES: usize = 2_000;
 /// How many bytes one checkpoint captures in total.
 const MAX_BYTES: u64 = 64 * 1024 * 1024;
 
+/// The retention the hygiene pass enforces: each session keeps its last
+/// twenty turns, and the store keeps its newest 5 GiB — the numbers the
+/// 2026-11-06 manual sweep used when 72 G of per-turn snapshots filled
+/// the drive and the gate died on ENOSPC.
+pub const KEEP_TURNS: usize = 20;
+pub const STORE_CAP_BYTES: u64 = 5 * 1024 * 1024 * 1024;
+
 /// The directories a checkpoint never enters: version control's own
 /// state, the build outputs, and the vendored dependencies. A snapshot
 /// of the working state does not carry the repository's history.
@@ -200,6 +207,90 @@ pub fn list(store: &Path, session: &str) -> Vec<Snapshot> {
         .collect();
     out.sort_by_key(|one| std::cmp::Reverse(one.turn));
     out
+}
+
+/// The retention: every session keeps its last `keep_turns` turns, and
+/// the store keeps its newest `max_bytes` overall, the oldest turns
+/// going first. Returns `(turn directories removed, bytes reclaimed)`.
+/// A directory already gone is not an error — the prune races nothing
+/// that matters.
+pub fn prune(store: &Path, keep_turns: usize, max_bytes: u64) -> (usize, u64) {
+    let mut removed = 0usize;
+    let mut reclaimed = 0u64;
+    let mut survivors: Vec<(std::time::SystemTime, PathBuf, u64)> = Vec::new();
+    let Ok(sessions) = std::fs::read_dir(store) else {
+        return (0, 0);
+    };
+    for sess in sessions.flatten() {
+        let sess_path = sess.path();
+        if !sess_path.is_dir() {
+            continue;
+        }
+        let mut ids: Vec<u64> = std::fs::read_dir(&sess_path)
+            .into_iter()
+            .flatten()
+            .filter_map(|entry| entry.ok())
+            .filter_map(|entry| {
+                entry
+                    .file_name()
+                    .to_str()
+                    .and_then(|name| name.parse::<u64>().ok())
+            })
+            .collect();
+        ids.sort_unstable();
+        let keep_from = ids.len().saturating_sub(keep_turns);
+        for (index, id) in ids.iter().enumerate() {
+            let dir = sess_path.join(id.to_string());
+            if index < keep_from {
+                let size = dir_size(&dir);
+                if std::fs::remove_dir_all(&dir).is_ok() {
+                    removed += 1;
+                    reclaimed += size;
+                }
+                continue;
+            }
+            let modified = std::fs::metadata(&dir)
+                .and_then(|meta| meta.modified())
+                .unwrap_or(std::time::UNIX_EPOCH);
+            let size = dir_size(&dir);
+            survivors.push((modified, dir, size));
+        }
+    }
+    // The store's cap: the oldest surviving turns go first, so a long
+    // session cannot hold the drive hostage a second time (the
+    // 2026-11-06 incident: 72 G of per-turn snapshots, nothing pruning).
+    survivors.sort_by_key(|(modified, _, _)| *modified);
+    let mut total: u64 = survivors.iter().map(|(_, _, size)| size).sum();
+    for (_, dir, size) in &survivors {
+        if total <= max_bytes {
+            break;
+        }
+        if std::fs::remove_dir_all(dir).is_ok() {
+            removed += 1;
+            reclaimed += size;
+            total = total.saturating_sub(*size);
+        }
+    }
+    (removed, reclaimed)
+}
+
+/// One directory's recursive size. The checkpoints' own caps bound a
+/// turn to 64 MB, so the walk is cheap; a directory that vanished
+/// mid-walk contributes nothing.
+fn dir_size(dir: &Path) -> u64 {
+    let mut total = 0u64;
+    let Ok(read) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    for entry in read.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            total += dir_size(&path);
+        } else if let Ok(meta) = entry.metadata() {
+            total += meta.len();
+        }
+    }
+    total
 }
 
 /// The manifest as the JSON file carries it.
@@ -779,6 +870,33 @@ mod tests {
         let listed = list(&store, "s-1");
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0], snapshot);
+        let _ = std::fs::remove_dir_all(tree.parent().unwrap());
+    }
+
+    #[test]
+    fn prune_keeps_each_sessions_last_turns_and_the_stores_cap() {
+        let (tree, store) = scratch("prune");
+        std::fs::write(tree.join("a.txt"), "one\n").unwrap();
+        for turn in 1..=25u64 {
+            capture(&tree, &store, "s-1", turn).unwrap();
+        }
+        for turn in 1..=10u64 {
+            capture(&tree, &store, "s-2", turn).unwrap();
+        }
+        let (removed, _) = prune(&store, 20, u64::MAX);
+        // s-1 keeps 6..=25 (twenty of twenty-five); s-2 keeps everything,
+        // because ten turns is inside the per-session keep.
+        assert_eq!(removed, 5, "the oldest five of s-1 go");
+        assert_eq!(list(&store, "s-1").len(), 20);
+        assert_eq!(list(&store, "s-2").len(), 10);
+        assert!(!store.join("s-1/5").exists());
+        assert!(store.join("s-1/6").exists());
+        // The store's cap: a total the survivors bust drops the oldest
+        // turns first, across sessions — the 72 G incident's cure.
+        let (removed2, _) = prune(&store, 20, 1);
+        assert_eq!(removed2, 30, "a one-byte cap keeps nothing");
+        assert_eq!(list(&store, "s-1").len(), 0);
+        assert_eq!(list(&store, "s-2").len(), 0);
         let _ = std::fs::remove_dir_all(tree.parent().unwrap());
     }
 

@@ -1963,7 +1963,10 @@ mod tests {
             let object = stage
                 .as_object()
                 .unwrap_or_else(|| panic!("a stage must be an object, not a tuple array: {stage}"));
-            assert!(object.contains_key("stage"), "the stage's own name: {stage}");
+            assert!(
+                object.contains_key("stage"),
+                "the stage's own name: {stage}"
+            );
             assert!(object.contains_key("state"), "the state key: {stage}");
             assert!(object.contains_key("reason"), "the reason key: {stage}");
         }

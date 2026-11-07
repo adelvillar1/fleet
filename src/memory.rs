@@ -1129,7 +1129,6 @@ const PROBE_RETRIES: usize = 2;
 /// a fixture reads instead.
 const EMBED_ATTEMPTS_PER_CALL: usize = 2;
 
-
 /// A steady-state embed's budget, for the load-time index build — the
 /// same measured tail as the probe's above (60 rows over
 /// 2026-10-26 → 2026-11-02, median 83 ms, p95 5,921 ms, max 9,107 ms),
@@ -10757,7 +10756,8 @@ mod tests {
         assert_eq!(flow_scalar(" padded"), "\" padded\"");
 
         // The reader agrees on the same text: three items stay three.
-        let items = split_flow("mktemp, XXXXXX, literal X's, shared /tmp filename, driver collision");
+        let items =
+            split_flow("mktemp, XXXXXX, literal X's, shared /tmp filename, driver collision");
         assert_eq!(
             items,
             vec![

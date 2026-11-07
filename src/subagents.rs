@@ -1510,10 +1510,7 @@ fn read_back_cli() -> String {
 /// address in a different form, so the choice follows the merge rather
 /// than assuming it. `None` when the report knows no project or no
 /// branch: a command with a blank field is worse than no command.
-fn read_back_command(
-    report: &crate::layerfs_tools::WorkspaceReport,
-    cli: &str,
-) -> Option<String> {
+fn read_back_command(report: &crate::layerfs_tools::WorkspaceReport, cli: &str) -> Option<String> {
     if report.project.is_empty() || report.branch.is_empty() {
         return None;
     }
@@ -1547,15 +1544,15 @@ fn render_workspace(report: &crate::layerfs_tools::WorkspaceReport) -> String {
 /// call resolves it once from the gate, and a pin names it, so neither
 /// the assertion nor the block depends on what this machine happens to
 /// have provisioned.
-fn render_workspace_with(
-    report: &crate::layerfs_tools::WorkspaceReport,
-    cli: &str,
-) -> String {
+fn render_workspace_with(report: &crate::layerfs_tools::WorkspaceReport, cli: &str) -> String {
     use crate::layerfs_tools::MergeOutcome;
     let mut line = if report.project.is_empty() {
         format!("workspace: branch {}", report.branch)
     } else {
-        format!("workspace: project {} \u{b7} branch {}", report.project, report.branch)
+        format!(
+            "workspace: project {} \u{b7} branch {}",
+            report.project, report.branch
+        )
     };
     line.push_str(if report.committed {
         " \u{b7} committed"
@@ -4185,7 +4182,10 @@ console.log(JSON.stringify({
         };
         let text = render_workspace_with(&unknown, "layerfs");
         assert!(!text.contains("read back:"), "{text}");
-        assert!(text.starts_with("workspace: branch fleet-child-abc"), "{text}");
+        assert!(
+            text.starts_with("workspace: branch fleet-child-abc"),
+            "{text}"
+        );
     }
 
     /// KI-327's pin. A publish that is REFUSED never moved `main`, and
@@ -4203,8 +4203,7 @@ console.log(JSON.stringify({
             committed: true,
             merge: Some(MergeOutcome::NotPublished {
                 integration: "merge-fleet-child-abc".to_string(),
-                reason: "layerfs refused [NoCommit]: it has no saved Commit to publish"
-                    .to_string(),
+                reason: "layerfs refused [NoCommit]: it has no saved Commit to publish".to_string(),
             }),
             ..WorkspaceReport::default()
         };
