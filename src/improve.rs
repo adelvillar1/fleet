@@ -2753,6 +2753,177 @@ pub fn render_lessons(lessons: &[Lesson]) -> String {
     out
 }
 
+// --- analysis before policy (C4) --------------------------------------------
+
+/// One class's measured separation: the confidence threshold that
+/// best divides right verdicts from wrong, and the misclassifications
+/// it costs. Qwen's finding, mechanised: the thresholds a proposal
+/// writes are measured from the graded rows, never guessed.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClassAnalysis {
+    /// The class: `workload/provider` for the routing judgment.
+    pub class: String,
+    /// The rows the class collected.
+    pub rows: u64,
+    /// The wrong verdicts among them.
+    pub bad: u64,
+    /// `bad / rows`, in `[0, 1]`.
+    pub rate: f64,
+    /// The best separating threshold, when the class carries both
+    /// right and wrong verdicts with confidences to separate.
+    pub threshold: Option<f64>,
+    /// The misclassifications at that threshold: rights below it
+    /// (flagged suspect) plus wrongs at or above it (missed).
+    pub errors: usize,
+}
+
+/// The default analysis window, in days — the demand map's own.
+pub const ANALYZE_WINDOW_DAYS: usize = 14;
+
+/// Measure the stream's routing judgments per class: the failure rate
+/// and the confidence threshold that separates right from wrong. A
+/// class with only one verdict side carries no threshold — the
+/// honest absence, not a fabricated split.
+pub fn analyze(root: &Path, day: &str, days: usize) -> Vec<ClassAnalysis> {
+    use std::collections::HashMap;
+    #[derive(Default)]
+    struct Accum {
+        rows: u64,
+        bad: u64,
+        /// (confidence, bad) per row, for the separation.
+        verdicts: Vec<(f64, bool)>,
+    }
+    let mut accums: HashMap<String, Accum> = HashMap::new();
+    for row in calib::read_days_recent(root, day, days) {
+        if row.op != calib::OP_ROUTE_JUDGED {
+            continue;
+        }
+        if row.workload.trim().is_empty() || row.provider.trim().is_empty() {
+            continue;
+        }
+        let bad = row.verdict != "right";
+        let entry = accums
+            .entry(format!("{}/{}", row.workload, row.provider))
+            .or_default();
+        entry.rows += 1;
+        entry.bad += bad as u64;
+        entry.verdicts.push((row.confidence, bad));
+    }
+    let mut out: Vec<ClassAnalysis> = accums
+        .into_iter()
+        .map(|(class, accum)| {
+            let (threshold, errors) = separate(&accum.verdicts);
+            ClassAnalysis {
+                rate: if accum.rows == 0 {
+                    0.0
+                } else {
+                    accum.bad as f64 / accum.rows as f64
+                },
+                class,
+                rows: accum.rows,
+                bad: accum.bad,
+                threshold,
+                errors,
+            }
+        })
+        .collect();
+    out.sort_by(|left, right| {
+        right
+            .rate
+            .partial_cmp(&left.rate)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| left.class.cmp(&right.class))
+    });
+    out
+}
+
+/// The separating threshold: the confidence value minimizing the
+/// misclassifications — rights below it (a tentative right is the
+/// dangerous direction, so it counts as an error) plus wrongs at or
+/// above it. Ties resolve to the higher threshold (the stricter
+/// flagging). `None` when the class carries only one verdict side.
+fn separate(verdicts: &[(f64, bool)]) -> (Option<f64>, usize) {
+    let rights = verdicts.iter().filter(|(_, bad)| !*bad).count();
+    let wrongs = verdicts.len() - rights;
+    if rights == 0 || wrongs == 0 {
+        return (None, 0);
+    }
+    let mut candidates: Vec<f64> = verdicts.iter().map(|(confidence, _)| *confidence).collect();
+    candidates.sort_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal));
+    candidates.dedup_by(|left, right| (*left - *right).abs() < 1e-9);
+    let mut best: Option<(f64, usize)> = None;
+    for candidate in candidates {
+        let errors = verdicts
+            .iter()
+            .filter(|(confidence, bad)| {
+                if *bad {
+                    *confidence >= candidate
+                } else {
+                    *confidence < candidate
+                }
+            })
+            .count();
+        match best {
+            Some((_, best_errors)) if best_errors <= errors => {}
+            _ => best = Some((candidate, errors)),
+        }
+    }
+    // The strictest among the equally-good thresholds: the last one
+    // with the minimum error count.
+    let min_errors = best.map(|(_, errors)| errors).unwrap_or(0);
+    let strictest = verdicts
+        .iter()
+        .map(|(confidence, _)| *confidence)
+        .filter(|candidate| {
+            let errors = verdicts
+                .iter()
+                .filter(|(confidence, bad)| {
+                    if *bad {
+                        *confidence >= *candidate
+                    } else {
+                        *confidence < *candidate
+                    }
+                })
+                .count();
+            errors == min_errors
+        })
+        .max_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal));
+    (strictest, min_errors)
+}
+
+/// Render the analysis as the CLI's cards: per class, the failure rate
+/// and the measured threshold with its error count.
+pub fn render_analysis(analyses: &[ClassAnalysis], days: usize) -> String {
+    let mut out = String::new();
+    out.push_str(&format!(
+        "the analysis — {days} day{} of routing judgments, {} class{} measured\n",
+        if days == 1 { "" } else { "s" },
+        analyses.len(),
+        if analyses.len() == 1 { "" } else { "es" }
+    ));
+    for analysis in analyses {
+        let threshold = match analysis.threshold {
+            Some(threshold) => format!(
+                "threshold {:.2}  {} misclassified",
+                threshold, analysis.errors
+            ),
+            None => "no threshold — one verdict side only".to_string(),
+        };
+        out.push_str(&format!(
+            "  {:<28} {:>3} bad of {:>3}  {:>4.0}%  {}\n",
+            analysis.class,
+            analysis.bad,
+            analysis.rows,
+            analysis.rate * 100.0,
+            threshold
+        ));
+    }
+    out.push_str(
+        "\nthe threshold is the confidence a proposal's acceptance criteria should be written from\n",
+    );
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4547,5 +4718,97 @@ mod tests {
             crate::tools::improve_spec_with_lessons(&bare).description(),
             crate::tools::improve_spec().description()
         );
+    }
+}
+
+// --- the analysis' tests ----------------------------------------------------
+
+#[cfg(test)]
+mod analyze_tests {
+    use super::*;
+    use crate::calib::Row;
+
+    fn scratch(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("fleet-analyze-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn route_row(ts: &str, workload: &str, provider: &str, verdict: &str, confidence: f64) -> Row {
+        Row::RouteJudged(calib::RouteJudgedRow {
+            ts: ts.to_string(),
+            route_key: format!("{provider}-{workload}-{verdict}"),
+            provider: provider.to_string(),
+            workload: workload.to_string(),
+            verdict: verdict.to_string(),
+            confidence,
+            reason: String::new(),
+            disposition: None,
+            cost_usd: None,
+            latency_ms: None,
+            lane: "sys1".to_string(),
+        })
+    }
+
+    /// The threshold is measured, not guessed: wrong verdicts at low
+    /// confidence and right verdicts at high confidence separate at
+    /// the boundary, and a one-sided class carries no threshold.
+    #[test]
+    fn the_threshold_separates_right_from_wrong_and_refuses_one_sided_classes() {
+        let root = scratch("threshold");
+        let stream = calib::Stream::open(&root);
+        for index in 0..4 {
+            stream.record(route_row(
+                &format!("2026-11-0{index}T00:00:00Z"),
+                "deploy",
+                "glide",
+                "wrong",
+                0.5,
+            ));
+        }
+        for index in 0..4 {
+            stream.record(route_row(
+                &format!("2026-11-0{index}T00:00:00Z"),
+                "deploy",
+                "glide",
+                "right",
+                0.9,
+            ));
+        }
+        // A one-sided class: every verdict right — no threshold exists.
+        for index in 0..3 {
+            stream.record(route_row(
+                &format!("2026-11-0{index}T00:00:00Z"),
+                "build",
+                "drex",
+                "right",
+                0.8,
+            ));
+        }
+        stream.flush();
+        let analyses = analyze(&root, "2026-11-20", 30);
+        let deploy = analyses
+            .iter()
+            .find(|analysis| analysis.class == "deploy/glide")
+            .expect("the deploy class");
+        assert_eq!(deploy.rows, 8);
+        assert_eq!(deploy.bad, 4);
+        assert!((deploy.rate - 0.5).abs() < 1e-9);
+        let threshold = deploy.threshold.expect("the two sides separate");
+        assert!(
+            threshold > 0.5 && threshold <= 0.9,
+            "the boundary: {threshold}"
+        );
+        assert_eq!(deploy.errors, 0, "a clean separation");
+        let build = analyses
+            .iter()
+            .find(|analysis| analysis.class == "build/drex")
+            .expect("the build class");
+        assert_eq!(build.threshold, None, "one side, no threshold");
+        let rendered = render_analysis(&analyses, 30);
+        assert!(rendered.contains("deploy/glide"), "{rendered}");
+        assert!(rendered.contains("threshold"), "{rendered}");
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

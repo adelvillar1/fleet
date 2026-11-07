@@ -2307,6 +2307,14 @@ fn improve_command(options: &cli::ImproveOptions) -> ExitCode {
             );
             ExitCode::SUCCESS
         }
+        ImproveAction::Analyze => {
+            let user_home = std::env::var("HOME").ok();
+            let calib_root = fleet::calib::resolve_root(&home, user_home.as_deref());
+            let days = fleet::improve::ANALYZE_WINDOW_DAYS;
+            let analyses = fleet::improve::analyze(&calib_root, &fleet::calib::today(), days);
+            print!("{}", fleet::improve::render_analysis(&analyses, days));
+            ExitCode::SUCCESS
+        }
         ImproveAction::Lessons => {
             print!(
                 "{}",
