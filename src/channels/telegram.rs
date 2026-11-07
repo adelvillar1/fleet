@@ -532,14 +532,23 @@ mod tests {
         });
 
         fake.offer(update(12, 4242, "do the thing"));
+        // Wait on the observables this test asserts on. The reply row is
+        // written by `note_reply` *after* the send it describes, so a
+        // wait on the send alone then asserts a row that has not landed
+        // yet — a test that passes on an idle machine and loses whichever
+        // race a loaded suite schedules differently. The budget is a poll
+        // count, not a wall clock: a loaded machine changes the seconds,
+        // never the number of times the loop looks (KI-405's class).
         let mut sent = Vec::new();
+        let mut activity = Vec::new();
         for _ in 0..500 {
             sent = fake
                 .sent
                 .lock()
                 .unwrap_or_else(|poison| poison.into_inner())
                 .clone();
-            if !sent.is_empty() {
+            activity = crate::channels::service::activity(&home, 10);
+            if !sent.is_empty() && activity.iter().any(|line| line.kind == "reply") {
                 break;
             }
             tokio::time::sleep(std::time::Duration::from_millis(20)).await;
@@ -548,7 +557,6 @@ mod tests {
         assert!(sent[0].1.contains("may only listen"), "{sent:?}");
         // And the attempt is in the activity log, twice over: the
         // refusal the driver recorded and the reply the channel sent.
-        let activity = crate::channels::service::activity(&home, 10);
         assert!(
             activity.iter().any(|line| line.kind == "refusal"),
             "{activity:?}"

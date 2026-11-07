@@ -567,7 +567,30 @@ pub fn delete_project(home: &Path, slug: &str) -> Result<(), String> {
 
 /// Create an empty project under a fresh slug. A name that collides takes
 /// a numeric suffix so a second board never overwrites the first.
+///
+/// The board is created UNBOUND. [`create_in`] is the binding-aware form
+/// and is what a surface that knows the owner's project must call: the
+/// document's `project` field is the only thing `refresh_digest` keys
+/// on, so a create that never names one leaves the board's digest
+/// unwritten for good (KI-404) and K6's design account empty.
 pub fn create(home: &Path, name: &str) -> Result<(String, Project), String> {
+    create_in(home, name, None)
+}
+
+/// Create a board already bound to the project folder it was made in.
+///
+/// KI-404's remedy, and it is deliberately a parameter rather than a
+/// second walk of the cwd: `create` has a `home` and a name and knows
+/// nothing about folders, while every caller that creates a board (the
+/// face's `create` op, a test) has the folder in hand already. The
+/// digest is written by the same `save` funnel every other write path
+/// crosses, so a created board lands in the project's knowledge account
+/// exactly the way a later `board-project` bind does.
+pub fn create_in(
+    home: &Path,
+    name: &str,
+    project: Option<&str>,
+) -> Result<(String, Project), String> {
     let base = slug_of(name);
     let mut slug = base.clone();
     let mut n = 2;
@@ -589,7 +612,10 @@ pub fn create(home: &Path, name: &str) -> Result<(String, Project), String> {
         chat: Vec::new(),
         brand: None,
         reference: None,
-        project: None,
+        project: project
+            .map(str::trim)
+            .map(|path| path.trim_end_matches('/').to_string())
+            .filter(|path| !path.is_empty()),
     };
     save(home, &slug, &project)?;
     Ok((slug, project))
@@ -5486,6 +5512,41 @@ h1{font-size:64px;border-radius:2px}
         assert!(section.contains("1 page"), "{section}");
         // A project with no digests: none, not an empty section.
         assert_eq!(design_context_section(&home, "nowhere"), None);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// KI-404: a board created in a project is bound to it at birth, so
+    /// the digest lands where K6 reads and nothing has to remember to
+    /// bind it afterwards. The binding is normalized the same way the
+    /// `board-project` op normalizes it — trailing slash off, blanks
+    /// off — because the key is the folder's last segment and
+    /// `/x/Projects/acme/` must file under `acme`, not nowhere.
+    #[test]
+    fn a_board_created_in_a_project_is_bound_to_it_and_keeps_its_digest() {
+        let home = scratch("create-in");
+        let (slug, project) = create_in(&home, "Harbor", Some("/x/Projects/acme/")).unwrap();
+        assert_eq!(project.project.as_deref(), Some("/x/Projects/acme"));
+        // `save` already wrote the digest, so the read path finds it
+        // with no second act — the KI-404 symptom is exactly this
+        // directory being absent.
+        assert!(digest_path(&home, "acme", &slug).is_file());
+        assert!(design_context_section(&home, "acme")
+            .expect("the section")
+            .contains("Harbor"));
+        // A blank binding is no binding: an unbound board writes no
+        // digest at all, rather than one filed under an empty key.
+        let (loose, loose_project) = create_in(&home, "Loose", Some("  /  ")).unwrap();
+        assert_eq!(loose_project.project, None);
+        assert_eq!(design_context_section(&home, ""), None);
+        assert!(!canvas_root(&home)
+            .join(DIGESTS_DIR)
+            .join("")
+            .join(format!("{loose}.md"))
+            .exists());
+        // The plain create stays what it always was: unbound.
+        let (plain, plain_project) = create(&home, "Plain").unwrap();
+        assert_eq!(plain_project.project, None);
+        assert_ne!(plain, loose);
         let _ = std::fs::remove_dir_all(&home);
     }
 }

@@ -171,6 +171,19 @@ pub fn installed_binary(user_home: &Path) -> PathBuf {
     user_home.join(INSTALLED_BINARY)
 }
 
+/// The installed binary as the FLEET home sees it.
+///
+/// [`installed_binary`] takes the USER home because the LaunchAgent's
+/// plist is written there; `fleet install` has the fleet home in hand.
+/// The two names are the same file for the default layout —
+/// [`INSTALLED_BINARY`] is `.fleet/bin/fleet` under `$HOME`, which is
+/// `<home>/bin/fleet` when the home is `~/.fleet` — and
+/// `the_two_home_relative_paths_name_the_same_install` pins that
+/// agreement so a future move cannot drift the two apart silently.
+pub fn installed_in_home(home: &Path) -> PathBuf {
+    home.join("bin/fleet")
+}
+
 /// The label-qualified name launchd's domain verbs take.
 ///
 /// `label` is a parameter rather than the constant because the reload
@@ -297,6 +310,120 @@ pub fn install_binary(source: &Path, installed: &Path) -> Result<(), String> {
             installed.display()
         )
     })
+}
+
+/// What the installed copy is relative to a source build, as the
+/// machine's own bytes say it.
+///
+/// KI-412 is the reason this exists: the LaunchAgent runs
+/// `~/.fleet/bin/fleet`, and nothing kept that copy current with
+/// `target/release/fleet`, so the owner could browse a console older
+/// than the code with no signal at all. The comparison is the FILE'S
+/// OWN CONTENT rather than a stored version, because a version string
+/// can agree while the bytes differ (a rebuild carries the same
+/// `CARGO_PKG_VERSION`) and the stale copy is exactly a byte-level
+/// fact.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reconciliation {
+    /// The installed copy's bytes are the source's — nothing to do.
+    Current,
+    /// Nothing is installed at all: the first install.
+    Absent,
+    /// Both exist and their bytes differ: the installed copy is stale.
+    Stale,
+}
+
+impl Reconciliation {
+    /// The word a report renders for this state.
+    pub fn describe(self) -> &'static str {
+        match self {
+            Reconciliation::Current => "current",
+            Reconciliation::Absent => "absent",
+            Reconciliation::Stale => "stale",
+        }
+    }
+
+    /// Whether this state calls for a delivery this run.
+    pub fn needs_delivery(self) -> bool {
+        !matches!(self, Reconciliation::Current)
+    }
+}
+
+/// Compare the installed copy against a source binary by reading both
+/// files. A source that cannot be read is an error the caller names;
+/// an installed copy that cannot be read reads absent, because a
+/// missing or unreadable delivery is the same repair as no delivery.
+pub fn reconcile_state(source: &Path, installed: &Path) -> Result<Reconciliation, String> {
+    let built = std::fs::read(source)
+        .map_err(|error| format!("could not read {}: {error}", source.display()))?;
+    match std::fs::read(installed) {
+        Ok(delivered) if delivered == built => Ok(Reconciliation::Current),
+        Ok(_) => Ok(Reconciliation::Stale),
+        Err(_) => Ok(Reconciliation::Absent),
+    }
+}
+
+/// A release build beside the home, when one happens to be there.
+///
+/// This is the fallback source for a run whose own executable is the
+/// installed copy (the LaunchAgent's binary, or `~/.fleet/bin/fleet`
+/// driven by hand): the worktree is not part of the installed layout,
+/// so the walk is short and named — `<home>/../../Projects/fleet` is
+/// where the owner's checkout lives, and a home installed anywhere
+/// else simply finds nothing, which reads as no build to deliver.
+///
+/// It exists so `fleet install` can be the reconcile verb from the
+/// copy the owner is actually running. It is NOT how a build gets
+/// delivered in the ordinary case — a worktree's
+/// `target/release/fleet install` delivers itself.
+pub fn source_beside_home(home: &Path) -> Option<PathBuf> {
+    let projects = home.parent()?.parent()?.join("Projects");
+    let entries = std::fs::read_dir(projects).ok()?;
+    let mut found: Vec<PathBuf> = entries
+        .flatten()
+        .map(|entry| entry.path().join("target/release/fleet"))
+        .filter(|candidate| candidate.is_file())
+        .collect();
+    found.sort();
+    found.into_iter().next()
+}
+
+/// The one delivery step `fleet install` takes: bring the installed
+/// copy up to a built binary, leaving the service's lifecycle alone.
+///
+/// KI-412's recommendation as the owner is reading it: install ends by
+/// reconciling, because a rebuilt binary that nobody copies leaves the
+/// served face behind with no signal — the exact symptom the row
+/// records. What install must NOT do is restart the agent. A restart
+/// kills whatever the owner has in flight (a run, a huddle, a
+/// delegation), and an install is a setup command, not a decision to
+/// interrupt work; the restart stays `fleet reload`, which is the verb
+/// that both swaps the binary and PROVES the face came back
+/// (KI-431). So the reconcile is the copy, and the report says plainly
+/// that the running service has not re-executed yet.
+///
+/// A source that does not exist is not an error: a machine running the
+/// installed binary has no worktree to copy from, and that is the
+/// ordinary case on a laptop that is not building fleet. It returns
+/// `None` so the caller can stay silent about a step it never had.
+pub fn reconcile_install(
+    source: &Path,
+    installed: &Path,
+) -> Option<Result<(Reconciliation, Reconciliation), String>> {
+    if !source.is_file() {
+        return None;
+    }
+    let before = match reconcile_state(source, installed) {
+        Ok(state) => state,
+        Err(error) => return Some(Err(error)),
+    };
+    if !before.needs_delivery() {
+        return Some(Ok((before, before)));
+    }
+    match install_binary(source, installed) {
+        Ok(()) => Some(Ok((before, Reconciliation::Current))),
+        Err(error) => Some(Err(error)),
+    }
 }
 
 /// The report one reload is judged by: what the state was, what was
@@ -675,6 +802,22 @@ gui/501/com.fleet.gui = {
         assert_eq!(domain(501), "gui/501");
     }
 
+    /// The install path is named from two roots — `installed_binary`
+    /// from the USER home (where the plist lives) and
+    /// `installed_in_home` from the FLEET home (what `fleet install`
+    /// has in hand). They must name the same file for the default
+    /// layout, or a delivery would land where nothing serves it.
+    #[test]
+    fn the_two_home_relative_paths_name_the_same_install() {
+        let user_home = Path::new("/Users/x");
+        let fleet_home = user_home.join(".fleet");
+        assert_eq!(
+            installed_binary(user_home),
+            installed_in_home(&fleet_home),
+            "the delivery path and the served path drifted apart"
+        );
+    }
+
     /// Build a scratch source that is executable, the way a real build
     /// directory's binary is. A fixture written with `fs::write` lands
     /// 0o644, so a test that skipped this would assert against a source
@@ -729,6 +872,112 @@ gui/501/com.fleet.gui = {
         // serving path is untouched rather than half-delivered.
         assert!(!installed.exists());
         assert!(!installed.with_extension("new").exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// KI-412's whole point: the state is the machine's own BYTES, not
+    /// a version string. A rebuild carries the same
+    /// `CARGO_PKG_VERSION`, so anything that compared versions would
+    /// call a stale copy current — which is exactly how the owner came
+    /// to browse a console older than the code.
+    #[test]
+    fn the_reconciled_state_is_the_file_s_own_bytes_not_its_version() {
+        let root = std::env::temp_dir().join(format!("fleet-reconcile-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let source = a_built_binary(&root, "source", b"build one");
+        let installed = root.join("home/.fleet/bin/fleet");
+        // Nothing installed yet reads absent, and absent wants delivery.
+        assert_eq!(
+            reconcile_state(&source, &installed).unwrap(),
+            Reconciliation::Absent
+        );
+        assert!(reconcile_state(&source, &installed).unwrap().needs_delivery());
+        // Equal bytes read current, and current wants nothing.
+        install_binary(&source, &installed).unwrap();
+        assert_eq!(
+            reconcile_state(&source, &installed).unwrap(),
+            Reconciliation::Current
+        );
+        assert!(!reconcile_state(&source, &installed).unwrap().needs_delivery());
+        // A rebuild with a DIFFERENT byte but an identical version reads
+        // stale — the case a version comparison would silently pass.
+        a_built_binary(&root, "source", b"build two");
+        assert_eq!(
+            reconcile_state(&source, &installed).unwrap(),
+            Reconciliation::Stale
+        );
+        assert!(reconcile_state(&source, &installed).unwrap().needs_delivery());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The two states describe themselves in the words the report
+    /// renders, so a row cannot print a state it did not reach.
+    #[test]
+    fn each_reconciled_state_names_itself_and_says_whether_it_needs_delivery() {
+        assert_eq!(Reconciliation::Current.describe(), "current");
+        assert_eq!(Reconciliation::Absent.describe(), "absent");
+        assert_eq!(Reconciliation::Stale.describe(), "stale");
+        assert!(!Reconciliation::Current.needs_delivery());
+        assert!(Reconciliation::Absent.needs_delivery());
+        assert!(Reconciliation::Stale.needs_delivery());
+    }
+
+    /// Reconcile brings the installed copy up to the build and reports
+    /// both ends of the move; a second run finds nothing to do, which
+    /// is what makes the step idempotent.
+    #[test]
+    fn reconciling_delivers_a_stale_copy_once_and_then_finds_it_current() {
+        let root = std::env::temp_dir().join(format!("fleet-reconcile-r-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let source = a_built_binary(&root, "source", b"the build");
+        let installed = root.join("home/.fleet/bin/fleet");
+        let (before, after) = reconcile_install(&source, &installed).unwrap().unwrap();
+        assert_eq!(before, Reconciliation::Absent);
+        assert_eq!(after, Reconciliation::Current);
+        assert_eq!(std::fs::read(&installed).unwrap(), b"the build");
+        let (before, after) = reconcile_install(&source, &installed).unwrap().unwrap();
+        assert_eq!(before, Reconciliation::Current);
+        assert_eq!(after, Reconciliation::Current);
+        // A machine with no build beside it is not an error and not a
+        // delivery: there is nothing to reconcile.
+        let missing = root.join("was-never-built");
+        assert!(reconcile_install(&missing, &installed).is_none());
+        // The installed copy is not overwritten by the no-build case.
+        assert_eq!(std::fs::read(&installed).unwrap(), b"the build");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The fallback source is a build in a sibling checkout, and a home
+    /// installed somewhere that has no `Projects` beside it simply has
+    /// no fallback — it must not invent one.
+    #[test]
+    fn a_build_beside_the_home_is_the_fallback_and_an_empty_world_finds_none() {
+        let root = std::env::temp_dir().join(format!("fleet-beside-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        // Layout: <root>/Projects/<checkout>/target/release/fleet
+        // with the home at <root>/home/.fleet.
+        let checkout = root.join("Projects/a-checkout/target/release");
+        std::fs::create_dir_all(&checkout).unwrap();
+        a_built_binary(&checkout, "fleet", b"a real build");
+        let home = root.join("home/.fleet");
+        std::fs::create_dir_all(&home).unwrap();
+        let found = source_beside_home(&home).expect("the build beside the home");
+        assert_eq!(std::fs::read(&found).unwrap(), b"a real build");
+        // No Projects beside this home: no fallback, rather than a path
+        // that would fail later where the failure is harder to read.
+        // It needs its OWN root: `<root>/nothing-here/.fleet` still
+        // walks up to `<root>`, which is where the build just was.
+        let bare = std::env::temp_dir().join(format!("fleet-bare-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&bare);
+        let elsewhere = bare.join("home/.fleet");
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        assert!(source_beside_home(&elsewhere).is_none());
+        let _ = std::fs::remove_dir_all(&bare);
+        // A checkout with no build is also nothing to deliver.
+        std::fs::remove_file(&found).unwrap();
+        assert!(source_beside_home(&home).is_none());
         let _ = std::fs::remove_dir_all(&root);
     }
 }

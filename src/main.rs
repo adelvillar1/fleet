@@ -4166,9 +4166,25 @@ fn install_command(options: &cli::InstallOptions) -> ExitCode {
             return ExitCode::FAILURE;
         }
     }
+    // KI-412: the delivery step. A rebuilt binary that nobody copies
+    // leaves the served face behind with no signal, so install ends by
+    // reconciling the copy the LaunchAgent runs against the build it was
+    // invoked from. It does NOT restart the agent — that would kill
+    // whatever the owner has in flight — the restart stays `fleet
+    // reload`, and the report says so on the line it renders.
+    let delivery = fleet::install::DeliveryStep::deliver(
+        &home,
+        std::env::current_exe().ok().as_deref(),
+    );
     print!(
         "{}",
-        fleet::install::render_head(&home, &layout, (config_step, &config_path), options.lanes)
+        fleet::install::render_head_with(
+            &home,
+            &layout,
+            (config_step, &config_path),
+            options.lanes,
+            Some(delivery),
+        )
     );
     // The lanes bootstrap, with each tool's own lines streaming to the
     // operator as they arrive — a multi-minute `uv pip install` cannot

@@ -2507,8 +2507,18 @@ impl Bridge {
     /// The design canvas's one writer: every board edit is one op in the
     /// same shape the settings writer uses. The face is a client of it,
     /// never a second writer.
+    ///
+    /// KI-404: a board created here is BOUND to the folder this face's
+    /// runs work in, because a board is project knowledge (the owner's
+    /// 2026-11-01 ruling) and the panel is not a separate world from
+    /// the conversation. The folder is the one a run would use —
+    /// [`Bridge::effective_folder`] for the launch session, which is the
+    /// chat's own choice or the fleet-wide default — so the board and
+    /// the runs that make it agree about which project they are in.
     pub fn design_write(&self, body: &str) -> Result<Value, String> {
-        design_write(&self.home, body)
+        let launch = self.launch();
+        let folder = lock(&self.state).effective_folder(&launch);
+        design_write_in(&self.home, body, folder.as_deref().map(std::path::Path::new))
     }
 
     /// The stateless tweak injection: HTML in, injected HTML out, no home
@@ -8692,9 +8702,22 @@ fn board_fact_root(home: &std::path::Path) -> std::path::PathBuf {
         if let Some(root) = TEST_BOARD_FACT_ROOT.lock().unwrap().clone() {
             return root;
         }
+        // A test that did not pin the seam gets a fixture beside its
+        // own home, never the resolution below. The fallthrough is not
+        // merely inconvenient here: under `cargo test` the cwd is the
+        // repository, whose `memories/` IS the owner's corpus, so a
+        // board lifecycle exercised without the seam wrote real facts
+        // into it — seven `design-board-*` files, found in the tree
+        // after a suite run. The seam's own doc claimed this could not
+        // happen; only the `if let` above enforced it, and only for
+        // tests that remembered. An absence now means a scratch corpus.
+        return home.join("board-facts");
     }
-    let cwd = std::env::current_dir().unwrap_or_else(|_| home.to_path_buf());
-    crate::memory::resolve_root_from(&cwd, Some(home))
+    #[cfg(not(test))]
+    {
+        let cwd = std::env::current_dir().unwrap_or_else(|_| home.to_path_buf());
+        crate::memory::resolve_root_from(&cwd, Some(home))
+    }
 }
 
 #[cfg(test)]
@@ -8847,7 +8870,24 @@ fn remember_board_at(
         .map_err(|error| format!("the board fact could not be modified: {error}"))
 }
 
+/// [`design_write_in`] with no folder, for the fixtures: a test that
+/// is not about the binding creates unbound, which is exactly what a
+/// chat with no folder does in production.
+#[cfg(test)]
 fn design_write(home: &std::path::Path, body: &str) -> Result<Value, String> {
+    design_write_in(home, body, None)
+}
+
+/// [`design_write`] with the folder the board is created in. The binding
+/// is a parameter rather than a `current_dir()` read for the same reason
+/// [`crate::canvas::create_in`] takes one: the caller already knows the
+/// folder, and a process-global read would make the write depend on
+/// wherever the binary happened to be launched from.
+fn design_write_in(
+    home: &std::path::Path,
+    body: &str,
+    folder: Option<&std::path::Path>,
+) -> Result<Value, String> {
     let arguments: Value = serde_json::from_str(body)
         .map_err(|error| format!("the design write is not a JSON object: {error}"))?;
     let op = arguments
@@ -8870,9 +8910,12 @@ fn design_write(home: &std::path::Path, body: &str) -> Result<Value, String> {
                 .get("name")
                 .and_then(Value::as_str)
                 .unwrap_or("Untitled board");
-            let (slug, project) = crate::canvas::create(home, name)?;
+            let bound = folder
+                .map(|path| path.to_string_lossy().to_string())
+                .filter(|path| !path.trim().is_empty());
+            let (slug, project) = crate::canvas::create_in(home, name, bound.as_deref())?;
             remember_board(home, &slug, &project, "create");
-            json!({ "slug": slug, "name": project.name })
+            json!({ "slug": slug, "name": project.name, "project": project.project })
         }
         "rename" => {
             let slug = slug()?;
@@ -11996,6 +12039,87 @@ mod tests {
         assert!(task.contains("pages the owner picked: /menu"), "{task}");
         assert!(task.contains("Redesign:"), "{task}");
         let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// A board lifecycle that a test did not point at a fixture corpus
+    /// writes into a scratch one, never the repository's `memories/`.
+    /// That directory IS the owner's corpus under `cargo test` (the cwd
+    /// is the checkout), so before this rule a create-only test left
+    /// real `design-board-*` facts behind for the owner's own runs to
+    /// recall — found in the tree after a suite run, seven of them.
+    #[test]
+    fn an_unpinned_board_fact_root_is_never_the_owners_corpus() {
+        let home = std::env::temp_dir().join(format!("fleet-board-root-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        let root = board_fact_root(&home);
+        assert_eq!(root, home.join("board-facts"), "a fixture beside the home");
+        let here = std::env::current_dir().expect("a working directory");
+        assert!(
+            !root.starts_with(&here),
+            "the root must not fall inside the checkout: {}",
+            root.display()
+        );
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// KI-404: the face's `create` op binds the board to the folder the
+    /// chat works in, so a board made in a conversation is project
+    /// knowledge from its first frame — the digest exists at the
+    /// project-keyed path without the owner ever pressing "bind", and
+    /// the answer says which project it landed in. A chat with no
+    /// folder still creates unbound (there is no project to name).
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_create_op_binds_a_board_to_the_chats_folder() {
+        let home = scratch("create-binds");
+        std::fs::create_dir_all(home.join("Projects/harbor")).unwrap();
+        let mut bridge = Bridge::detached(home.clone(), "m".to_string(), None).0;
+        bridge.cwd = home.clone();
+        let launch = bridge.launch();
+        bridge
+            .set_folder(&launch, Some("Projects/harbor"))
+            .expect("the chat's folder");
+        let created = bridge
+            .design_write(&serde_json::json!({ "op": "create", "name": "Harbor" }).to_string())
+            .expect("the create");
+        let slug = created["wrote"]["slug"]
+            .as_str()
+            .expect("the slug")
+            .to_string();
+        // The folder as the run resolves it — canonical, which is the
+        // form the digest's key is taken from.
+        let bound = home.join("Projects/harbor").canonicalize().unwrap();
+        assert_eq!(
+            created["wrote"]["project"],
+            bound.display().to_string(),
+            "the answer names the binding: {created}"
+        );
+        assert_eq!(
+            crate::canvas::load(&home, &slug).unwrap().project,
+            Some(bound.display().to_string())
+        );
+        assert!(
+            crate::canvas::digest_path(&home, "harbor", &slug).is_file(),
+            "the create writes the digest K6 reads"
+        );
+        // A chat with no folder: unbound, so no key and no digest. Its
+        // own home, because the launch chat's choice above is stored in
+        // the fleet-wide default slot (`""`) and a second face over the
+        // same home would inherit it — which is the documented
+        // behaviour, not a leak this pin should paper over.
+        let bare_home = scratch("create-unbound");
+        let bare = Bridge::detached(bare_home.clone(), "m".to_string(), None).0;
+        let loose = bare
+            .design_write(&serde_json::json!({ "op": "create", "name": "Loose" }).to_string())
+            .expect("the create");
+        assert!(loose["wrote"]["project"].is_null(), "{loose}");
+        let loose_slug = loose["wrote"]["slug"].as_str().expect("the slug").to_string();
+        assert_eq!(
+            crate::canvas::load(&bare_home, &loose_slug).unwrap().project,
+            None
+        );
+        let _ = std::fs::remove_dir_all(&home);
+        let _ = std::fs::remove_dir_all(&bare_home);
     }
 
     /// P4 (design-parity C12): an export downloads through the route's
