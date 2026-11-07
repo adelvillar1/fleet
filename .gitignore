@@ -89,3 +89,6 @@ docs/plans/*.graph.json
 # The release/version scripts' write locks — the same filelock seam as the
 # memory and doc locks (KI-062's shape): runtime state, not repo content.
 /scripts/*.lock
+
+# CHANGELOG lock sidecar, same seam
+CHANGELOG.md.lock

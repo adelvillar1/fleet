@@ -28,7 +28,7 @@
 set -u
 
 RELEASE_WORKTREE=/private/tmp/fleet-release-gate
-RELEASE_TARGET=/tmp/fleet-release-target
+RELEASE_TARGET=/tmp/fleet-gate-target
 REPO_ROOT=$(git rev-parse --show-toplevel)
 
 die() { echo "release.sh: $*" >&2; exit 1; }
