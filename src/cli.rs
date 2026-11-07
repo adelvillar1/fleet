@@ -3859,15 +3859,41 @@ mod tests {
     }
 
     #[test]
-    fn eval_parses_the_bare_run_and_the_last_query() {
+    fn eval_parses_the_bare_run_the_last_query_and_the_gaps() {
         assert_eq!(
             parse(&args(&["eval"])).unwrap(),
-            Command::Eval(EvalOptions { last: false })
+            Command::Eval(EvalOptions {
+                last: false,
+                gaps: false,
+                promote: None
+            })
         );
         assert_eq!(
             parse(&args(&["eval", "--last"])).unwrap(),
-            Command::Eval(EvalOptions { last: true })
+            Command::Eval(EvalOptions {
+                last: true,
+                gaps: false,
+                promote: None
+            })
         );
+        assert_eq!(
+            parse(&args(&["eval", "--gaps"])).unwrap(),
+            Command::Eval(EvalOptions {
+                last: false,
+                gaps: true,
+                promote: None
+            })
+        );
+        assert_eq!(
+            parse(&args(&["eval", "--promote", "deploy/glide"])).unwrap(),
+            Command::Eval(EvalOptions {
+                last: false,
+                gaps: false,
+                promote: Some("deploy/glide".to_string())
+            })
+        );
+        assert!(parse(&args(&["eval", "--promote"])).is_err());
+        assert!(parse(&args(&["eval", "--promote", "x", "--gaps"])).is_err());
         assert!(parse(&args(&["eval", "--json"])).is_err());
         assert!(parse(&args(&["eval", "extra"])).is_err());
         assert_eq!(parse(&args(&["eval", "--help"])).unwrap(), Command::Help);
