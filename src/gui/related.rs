@@ -170,23 +170,40 @@ impl RelatedIndex {
     /// The endpoint's work: rank every other candidate against the
     /// selected object, by raw cosine when the embedder serves vectors
     /// and by word overlap when it does not.
+    ///
+    /// **A request never embeds.** This module's contract is that the cold
+    /// half belongs to the warm task and a request arriving first answers
+    /// from what is ready, naming the index `warming`. [`Self::corpus`]
+    /// broke it by calling the cold builder, which reached
+    /// [`crate::memory::Memory::load_with`] with the process embedder —
+    /// and `load_with` embeds every fact whose cached digest does not
+    /// match, then rewrites the index. The bridge points this index at
+    /// `resolve_root(cwd)`, so that is the checkout's whole corpus, not
+    /// the test's temp home. Alone it hides, because the process-global
+    /// probe is unprobed and answers keyword-only; under the full suite an
+    /// earlier test has resolved the probe, so the first click of
+    /// `the_related_route_answers_one_document_and_refuses_a_foreign_kind`
+    /// ran a whole corpus build inside a `spawn_blocking` and blew the
+    /// test's 60 s reply deadline. The request path now reads what the
+    /// indices already hold — [`Self::corpus`] takes no embedder at all,
+    /// so that path is closed by the compiler rather than by discipline.
     pub fn related(&self, kind: &str, id: &str, limit: usize) -> Value {
         let limit = limit.clamp(1, MAX_LIMIT);
         let embedder = crate::memory::probed_embedder();
+        let warming = self.warming.load(Ordering::SeqCst);
         if !embedder.serves_vectors() {
-            let candidates = self.corpus(embedder.as_ref());
+            let candidates = self.corpus();
             return payload(
                 kind,
                 id,
                 &candidates,
                 limit,
                 "lexical",
-                "warm",
+                if warming { "warming" } else { "warm" },
                 Some("keyword-only"),
             );
         }
-        let warming = self.warming.load(Ordering::SeqCst);
-        let candidates = self.corpus(embedder.as_ref());
+        let candidates = self.corpus();
         let index = if warming { "warming" } else { "warm" };
         // What decides the scoring mode is the SELECTED object's
         // vector, not the corpus's: a skill added after the warm has
@@ -217,10 +234,16 @@ impl RelatedIndex {
         )
     }
 
-    /// The current corpus, built on demand and held for [`CORPUS_TTL`].
-    /// A build is the only read of the sessions directory and the
-    /// skill library on this path.
-    fn corpus(&self, embedder: &dyn crate::memory::Embedder) -> Vec<Candidate> {
+    /// The current corpus for a **request**: the cache if it is fresh,
+    /// otherwise what the indices already hold, rebuilt without a single
+    /// embed. Held for [`CORPUS_TTL`].
+    ///
+    /// A request must never pay for the cold half. The warm task owns
+    /// embedding (see [`Self::warm`]); this path reads the two recall
+    /// indices and the sidecar's existing vectors and nothing else, so a
+    /// click answers in milliseconds on a cold start and names the index
+    /// `warming` while the rest fills in behind it.
+    fn corpus(&self) -> Vec<Candidate> {
         {
             let cache = lock(&self.corpus);
             if let Some((at, candidates)) = cache.as_ref() {
@@ -229,7 +252,7 @@ impl RelatedIndex {
                 }
             }
         }
-        let candidates = build_corpus(&self.home, &self.memories, &self.store, embedder);
+        let candidates = build_corpus_cached(&self.home, &self.memories, &self.store);
         *lock(&self.corpus) = Some((Instant::now(), candidates.clone()));
         candidates
     }
@@ -316,20 +339,70 @@ fn payload(
     document
 }
 
-/// Build the whole corpus once: the two caches' facts and sessions,
-/// and the sidecar's cold kinds.
+/// Build the whole corpus once, embedding the cold half: the two caches'
+/// facts and sessions, and the sidecar's cold kinds. The warm task's
+/// path only — a request uses [`build_corpus_cached`].
 fn build_corpus(
     home: &Path,
     memories: &Path,
     store: &Mutex<Store>,
     embedder: &dyn crate::memory::Embedder,
 ) -> Vec<Candidate> {
+    // The day's routes and cells change without the process restarting,
+    // so they are refreshed here rather than in the startup warm. Their
+    // sources are one small ledger read and one calibration pass; a
+    // changed digest re-embeds that row and nothing else. This is the
+    // warm's work — a request reads whatever rows the sidecar holds.
+    if let Some((name, dims)) = embedder.vector_info() {
+        let routes = route_sources(home);
+        let cells = cell_sources(home);
+        let (routes_existing, cells_existing, reset) = {
+            let mut store = lock(store);
+            let reset = store.version != VERSION || store.embedder != name || store.dims != dims;
+            if reset {
+                *store = Store {
+                    version: VERSION,
+                    embedder: name.clone(),
+                    dims,
+                    ..Store::default()
+                };
+            }
+            (store.routes.clone(), store.cells.clone(), reset)
+        };
+        let (routes_fresh, routes_changed) =
+            refresh_section(&routes_existing, &routes, embedder);
+        let (cells_fresh, cells_changed) =
+            refresh_section(&cells_existing, &cells, embedder);
+        if reset || routes_changed || cells_changed {
+            let snapshot = {
+                let mut store = lock(store);
+                store.routes = routes_fresh;
+                store.cells = cells_fresh;
+                store.clone_for_write()
+            };
+            write_store(home, &snapshot);
+        }
+    }
+    // The session archive's cold vectors belong to its own index, and
+    // nothing else warms them on a model swap. The refreshed cache is
+    // then read by the same function a request uses, so both rank one
+    // set — the warm merely leaves vectors behind for the next read.
+    let sessions_dir = crate::home::sessions_dir(home);
+    let session_facts = crate::session_recall::facts_from_sessions(home);
+    let mut index = crate::session_recall::SessionIndex::load(&sessions_dir);
+    index.vectors_for(&sessions_dir, embedder, &session_facts);
+    build_corpus_cached(home, memories, store)
+}
+
+/// The corpus as the **indices already hold it**: every fact and session
+/// with the vector its cache carries, plus the sidecar's stored kinds.
+/// No embed, no write — the read a request path may do.
+fn build_corpus_cached(home: &Path, memories: &Path, store: &Mutex<Store>) -> Vec<Candidate> {
     let mut candidates: Vec<Candidate> = Vec::new();
 
-    // Facts: the recall cache is already warm, so this is a read of the
-    // corpus and the index, not an embed. A fact with no vector this
-    // load is left out of the ranking rather than scored zero.
-    let memory = crate::memory::Memory::load_with(memories, embedder.box_clone());
+    // Facts: the recall index's own vectors, read-only. A fact with no
+    // cached vector is left out of the ranking rather than scored zero.
+    let memory = crate::memory::Memory::load_cached(memories);
     let today = crate::calib::today();
     for fact in memory.facts() {
         // A superseded or expired fact is not a relation: the panel
@@ -369,48 +442,19 @@ fn build_corpus(
         });
     }
 
-    // The day's routes and cells change without the process restarting,
-    // so they are refreshed here rather than in the startup warm. Their
-    // sources are one small ledger read and one calibration pass; a
-    // changed digest re-embeds that row and nothing else.
-    if let Some((name, dims)) = embedder.vector_info() {
-        let routes = route_sources(home);
-        let cells = cell_sources(home);
-        let (routes_existing, cells_existing, reset) = {
-            let mut store = lock(store);
-            let reset = store.version != VERSION || store.embedder != name || store.dims != dims;
-            if reset {
-                *store = Store {
-                    version: VERSION,
-                    embedder: name.clone(),
-                    dims,
-                    ..Store::default()
-                };
-            }
-            (store.routes.clone(), store.cells.clone(), reset)
-        };
-        let (routes_fresh, routes_changed) = refresh_section(&routes_existing, &routes, embedder);
-        let (cells_fresh, cells_changed) = refresh_section(&cells_existing, &cells, embedder);
-        if reset || routes_changed || cells_changed {
-            let snapshot = {
-                let mut store = lock(store);
-                store.routes = routes_fresh;
-                store.cells = cells_fresh;
-                store.clone_for_write()
-            };
-            write_store(home, &snapshot);
-        }
-    }
-
-    // The sidecar's kinds. The vectors are already there; the labels
-    // rode along with them so this path reads no skill file and no git
-    // repository.
-    let store = lock(store);
-    push_store(&mut candidates, "skill", &store.skills);
-    push_store(&mut candidates, "project", &store.projects);
-    push_store(&mut candidates, "route", &store.routes);
-    push_store(&mut candidates, "cell", &store.cells);
+    push_store_kinds(&mut candidates, store);
     candidates
+}
+
+/// The sidecar's stored kinds, appended to a corpus. The vectors are
+/// already there; the labels rode along with them so a reader touches no
+/// skill file and no git repository.
+fn push_store_kinds(candidates: &mut Vec<Candidate>, store: &Mutex<Store>) {
+    let store = lock(store);
+    push_store(candidates, "skill", &store.skills);
+    push_store(candidates, "project", &store.projects);
+    push_store(candidates, "route", &store.routes);
+    push_store(candidates, "cell", &store.cells);
 }
 
 fn push_store(
@@ -867,5 +911,58 @@ mod tests {
             .filter(|entry| entry.file_name().to_string_lossy().ends_with(".tmp"))
             .count();
         assert_eq!(temps, 0);
+    }
+
+    /// A request must never reach a cold build. The pin is on the source
+    /// because the runtime observable cannot see the defect: the
+    /// process-global probe answers keyword-only on an idle machine, so
+    /// `build_corpus` returns without embedding a single row and the
+    /// click looks fast — which is exactly how this hid. Under the full
+    /// suite an earlier test has resolved the probe, the vector path is
+    /// live, and `build_corpus` → `Memory::load_with` embeds every fact
+    /// whose cached digest does not match, against the checkout's own
+    /// corpus (the bridge points this index at `resolve_root(cwd)`, not
+    /// the test's temp home).
+    ///
+    /// The compiler already closes most of it — `corpus()` takes no
+    /// embedder — so what is left to pin is that neither request-path
+    /// function names the cold builder or a live embedder. Sibling of
+    /// `explain::tests::no_synchronous_path_references_the_explanation_beat`.
+    #[test]
+    fn a_request_path_never_builds_the_cold_corpus() {
+        let source = include_str!("related.rs");
+        // Each function's body, taken from its declaration to the next
+        // top-level `fn`/`impl`/`/// Write`-style boundary is fragile, so
+        // the pin splits on the two request-path declarations and reads
+        // to the end of each — both are at the tail of their impl or file
+        // ordering, and the cold builder is defined after both.
+        let request_path = source
+            .split("fn corpus(&self)")
+            .nth(1)
+            .expect("the request-path corpus is gone");
+        let body = request_path.split("\n    }\n").next().unwrap_or("");
+        assert!(
+            !body.contains("build_corpus("),
+            "the request path calls the cold builder: {body}"
+        );
+        assert!(
+            !body.contains("probed_embedder"),
+            "the request path reads a live embedder: {body}"
+        );
+        assert!(
+            body.contains("build_corpus_cached("),
+            "the request path is not the cache read: {body}"
+        );
+        // And the warm — which owns the cold half — does build, so the
+        // pin above cannot be satisfied by the builder having vanished.
+        let warm = source
+            .split("pub fn warm(&self)")
+            .nth(1)
+            .expect("the warm is gone");
+        let warm_body = warm.split("\n    }\n").next().unwrap_or("");
+        assert!(
+            warm_body.contains("build_corpus("),
+            "the warm no longer builds the cold half: {warm_body}"
+        );
     }
 }

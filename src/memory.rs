@@ -2558,6 +2558,48 @@ impl Memory {
         Memory::load_with(root, probed_embedder())
     }
 
+    /// Load the corpus reading its index **only** — a fact whose cached
+    /// entry is current keeps its vector, a fact whose entry is absent or
+    /// stale carries none, and nothing is embedded and nothing is
+    /// written.
+    ///
+    /// This is the read a request path is allowed: the related endpoint
+    /// ranks whatever the caches already hold and never spends an embed
+    /// answering a click. [`Memory::load_with`] does the building, on the
+    /// background warm that owns it.
+    ///
+    /// The index is taken as it lies rather than checked against this
+    /// process's embedder. `load_with` discards a whole index by
+    /// `keyed_for` when the model moved, because it is about to write a
+    /// rebuilt one; a read-only load can simply use the vectors that are
+    /// there. They are keyed by the digest of the text they were computed
+    /// from (KI-228), so a vector is only ever served for the text that
+    /// produced it, and a reader that no longer matches the index's model
+    /// degrades to weaker suggestions rather than to a wrong number.
+    pub fn load_cached(root: &Path) -> Memory {
+        let facts = load_facts(root);
+        let index = Index::read(root);
+        let mut vectors: HashMap<String, Vec<f32>> = HashMap::new();
+        for fact in &facts {
+            let digest = indexed_digest(fact);
+            if let Some(entry) = index.facts.get(&fact.name) {
+                if entry.digest == digest {
+                    vectors.insert(fact.name.clone(), entry.vector.clone());
+                }
+            }
+        }
+        let graph = crate::recall_graph::Graph::build(&facts);
+        Memory {
+            root: root.to_path_buf(),
+            embedder: Box::new(KeywordOnly),
+            facts: Mutex::new(facts),
+            vectors: Mutex::new(vectors),
+            graph,
+            two_stage: std::sync::atomic::AtomicBool::new(false),
+            build_embeds_ms: Vec::new(),
+        }
+    }
+
     /// Load with an explicit embedder — the seam the tests and a future
     /// configured endpoint use. The index is built here: a fact whose
     /// stamp matches its cached entry keeps its vector, every other
