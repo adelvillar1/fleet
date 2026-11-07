@@ -486,7 +486,21 @@ head, the rail and the panels keep the measure they have.
   welcome rides the
   pending key and attaches to the session the first send creates. A
   room's goal does not start a turn: rooms drive their own.
+- **The route's judgment reads the work, not the pointer.** The leader's
+  judgment input is the work brief — the session's standing goal, the
+  plans the session drafted, and the plan the ask names or the most
+  recent one it drafted — rendered with the compact state, not the bare
+  task line. A plan carries its own execution verdict in its frontmatter
+  (`execution: single|mixture|swarm`), judged at draft time by sys1's
+  `plan_judge` over its tasks and acceptance criteria; the route rides
+  that verdict rather than re-deriving it, and the delegation nudge
+  fires from it. A plan with no verdict — a legacy plan — is judged on
+  the spot before execution begins, and the verdict is stored. A
+  non-plan goal's implied work shape rides the brief when sys1's
+  `goal_work` answers; the named fallback is the route's own read.
 - A provider that runs out of quota mid-run hands the walk to the next
+  candidate in the chain rather than failing the run: quota is a
+  persistent state, and the order's tail exists for it.
   candidate in the chain rather than failing the run: quota is a
   persistent state, and the order's tail exists for it.
 - A run's end is the loop stopping, not the session ending: when the
