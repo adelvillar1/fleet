@@ -2792,6 +2792,207 @@ mod capability_tests {
     }
 }
 
+// --- the twin and the sham (C3) ----------------------------------------------
+
+/// The race's verdict: the applied change beat both baselines, or it
+/// fell to the twin (a no-op would have scored the same — the change is
+/// decoration) or the sham (scrambled information scored the same — the
+/// gain was capacity, not content).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RaceVerdict {
+    Applied,
+    RefusedTwin,
+    RefusedSham,
+}
+
+/// One race's three scores: the applied tree, the twin (the change
+/// reverted), and the sham (the change scrambled).
+#[derive(Debug, Clone, PartialEq)]
+pub struct RaceResult {
+    pub applied: f64,
+    pub twin: f64,
+    pub sham: f64,
+    pub verdict: RaceVerdict,
+}
+
+/// The sham's scramble: the patch's lines reversed — the same shape,
+/// the same size, the information gone. Deterministic, so a race
+/// replays exactly.
+pub fn scramble(content: &str) -> String {
+    let mut lines: Vec<&str> = content.lines().collect();
+    lines.reverse();
+    let mut out = lines.join("\n");
+    if content.ends_with('\n') {
+        out.push('\n');
+    }
+    out
+}
+
+/// The race's decision: the applied change must beat BOTH baselines.
+/// The twin rules out decoration (a no-op scoring the same); the sham
+/// rules out raw capacity (scrambled content scoring the same). Ties
+/// refuse — a change that does not improve on doing nothing is not a
+/// change the evidence supports.
+pub fn race_verdict(applied: f64, twin: f64, sham: f64) -> RaceVerdict {
+    if applied <= twin {
+        RaceVerdict::RefusedTwin
+    } else if applied <= sham {
+        RaceVerdict::RefusedSham
+    } else {
+        RaceVerdict::Applied
+    }
+}
+
+/// The score of one corpus run: passed over the scenarios.
+fn corpus_score(report: &crate::eval::EvalReport) -> f64 {
+    let total = report.scenarios.len();
+    if total == 0 {
+        1.0
+    } else {
+        report.passed() as f64 / total as f64
+    }
+}
+
+/// Run the race for one proposal: the corpus on the applied tree, on
+/// the twin (the patch reverted), and on the sham (the patch
+/// scrambled). The patch is a source `Patch`; the revert is the
+/// structural one the apply path uses (`git checkout HEAD --`). The
+/// file is restored whatever the runs do.
+pub async fn race(root: &Path, mock_bin: &Path, proposal: &Proposal) -> Result<RaceResult, String> {
+    let Change::Patch { path, content } = &proposal.change else {
+        return Err(format!(
+            "`{}` is not a source patch — the race runs a patch against the corpus",
+            proposal.name
+        ));
+    };
+    let target = root.join(path);
+    if let Some(parent) = target.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let head = std::fs::read_to_string(&target).unwrap_or_default();
+    let restore = || {
+        let _ = std::fs::write(&target, &head);
+    };
+    // The applied arm.
+    std::fs::write(&target, content)
+        .map_err(|error| format!("the applied arm did not write: {error}"))?;
+    let applied_report = crate::eval::run(root, mock_bin).await;
+    restore();
+    // The twin arm: the file at its HEAD content.
+    let twin_report = crate::eval::run(root, mock_bin).await;
+    // The sham arm: the patch scrambled.
+    std::fs::write(&target, scramble(content))
+        .map_err(|error| format!("the sham arm did not write: {error}"))?;
+    let sham_report = crate::eval::run(root, mock_bin).await;
+    restore();
+    let applied = corpus_score(&applied_report);
+    let twin = corpus_score(&twin_report);
+    let sham = corpus_score(&sham_report);
+    Ok(RaceResult {
+        verdict: race_verdict(applied, twin, sham),
+        applied,
+        twin,
+        sham,
+    })
+}
+
+/// Render the race's cards: the three scores and the verdict.
+pub fn render_race(proposal: &str, race: &RaceResult) -> String {
+    let mut out = String::new();
+    out.push_str(&format!("the race — {proposal}\n"));
+    out.push_str(&format!(
+        "  applied  {:.0}%\n  twin     {:.0}%  (the change reverted)\n  sham     {:.0}%  (the change scrambled)\n",
+        race.applied * 100.0,
+        race.twin * 100.0,
+        race.sham * 100.0
+    ));
+    out.push_str(&format!(
+        "  verdict: {}\n",
+        match race.verdict {
+            RaceVerdict::Applied => "applied — the change beats both baselines",
+            RaceVerdict::RefusedTwin =>
+                "REFUSED — the twin matched it: a no-op would have scored the same",
+            RaceVerdict::RefusedSham =>
+                "REFUSED — the sham matched it: the gain was capacity, not content",
+        }
+    ));
+    out
+}
+
+#[cfg(test)]
+mod race_tests {
+    use super::*;
+
+    /// The sham's scramble reverses the lines, deterministic.
+    #[test]
+    fn the_sham_scrambles_deterministically() {
+        let content = "alpha\nbeta\ngamma\n";
+        let once = scramble(content);
+        assert_eq!(once, "gamma\nbeta\nalpha\n");
+        assert_eq!(once, scramble(content), "the scramble replays exactly");
+        assert_ne!(once, content);
+    }
+
+    /// The race's decision: the applied change must beat both
+    /// baselines; a tie refuses.
+    #[test]
+    fn the_applied_change_must_beat_both_baselines() {
+        assert_eq!(race_verdict(0.9, 0.5, 0.6), RaceVerdict::Applied);
+        assert_eq!(
+            race_verdict(0.5, 0.5, 0.4),
+            RaceVerdict::RefusedTwin,
+            "a tie with the twin is decoration"
+        );
+        assert_eq!(
+            race_verdict(0.5, 0.4, 0.5),
+            RaceVerdict::RefusedSham,
+            "a tie with the sham is capacity"
+        );
+        assert_eq!(race_verdict(0.4, 0.5, 0.3), RaceVerdict::RefusedTwin);
+    }
+
+    /// The race over a fixture: a patch to a scratch file the corpus
+    /// does not read scores the same on all three arms — the twin
+    /// refuses it, which is the placebo test working.
+    #[tokio::test]
+    async fn a_scratch_patch_races_to_a_twin_refusal() {
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let mock_bin = crate::eval::mock_server_binary().expect("the mock binary");
+        let scratch = "tmp/race-fixture.txt";
+        let _ = std::fs::remove_file(root.join(scratch));
+        let proposal = Proposal {
+            name: "race-fixture".to_string(),
+            target: Target::Source,
+            target_name: scratch.to_string(),
+            basis: Basis::ConfirmedBy,
+            created: crate::calib::today(),
+            status: Status::Pending,
+            justification: "the fixture".to_string(),
+            acceptance: String::new(),
+            effect: String::new(),
+            change: Change::Patch {
+                path: scratch.to_string(),
+                content: "the applied content\n".to_string(),
+            },
+            store: Store::General,
+            path: std::path::PathBuf::from("/tmp/race-fixture.md"),
+            commit: None,
+            gate: String::new(),
+            last_refusal: String::new(),
+            target_shas: Vec::new(),
+        };
+        let race = race(&root, &mock_bin, &proposal)
+            .await
+            .expect("the race runs");
+        assert_eq!(
+            race.applied, race.twin,
+            "the corpus does not read the scratch file"
+        );
+        assert_eq!(race.verdict, RaceVerdict::RefusedTwin);
+        let _ = std::fs::remove_file(root.join(scratch));
+    }
+}
+
 // --- the capability library (C7) --------------------------------------------
 
 /// One capability the system established about itself: an applied

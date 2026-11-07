@@ -2307,6 +2307,30 @@ fn improve_command(options: &cli::ImproveOptions) -> ExitCode {
             );
             ExitCode::SUCCESS
         }
+        ImproveAction::Race { name } => {
+            let Some(proposal) = fleet::improve::load_one(&home, &name) else {
+                eprintln!("fleet: improve: no proposal named `{name}`");
+                return ExitCode::FAILURE;
+            };
+            let root = std::env::current_dir().unwrap_or_default();
+            let Some(mock_bin) = fleet::eval::mock_server_binary() else {
+                eprintln!("fleet: improve: the mock-server binary was not found beside the fleet executable; the race cannot run");
+                return ExitCode::FAILURE;
+            };
+            match fleet::improve::race(&root, &mock_bin, &proposal).await {
+                Ok(race) => {
+                    print!("{}", fleet::improve::render_race(&name, &race));
+                    match race.verdict {
+                        fleet::improve::RaceVerdict::Applied => ExitCode::SUCCESS,
+                        _ => ExitCode::FAILURE,
+                    }
+                }
+                Err(reason) => {
+                    eprintln!("fleet: improve: {reason}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
         ImproveAction::Capabilities => {
             let capabilities = fleet::improve::capabilities(&home);
             print!("{}", fleet::improve::render_capabilities(&capabilities));

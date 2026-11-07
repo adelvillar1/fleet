@@ -698,6 +698,9 @@ pub enum ImproveAction {
     /// The capability library: the applied proposals rendered as what
     /// the system learned to do about itself.
     Capabilities,
+    /// The twin-and-sham race: the corpus on the applied tree, the twin
+    /// (reverted), and the sham (scrambled) — the placebo test.
+    Race { name: String },
     /// The analysis-before-policy pass: the stream's graded rows
     /// measured — which classes fail, how consistently, and the
     /// confidence threshold that separates right from wrong — the
@@ -2190,6 +2193,18 @@ fn parse_improve(args: &[String]) -> Result<Command, String> {
         }
         return Ok(Command::Improve(ImproveOptions {
             action: ImproveAction::Capabilities,
+        }));
+    }
+    if verb == "race" {
+        let name = rest
+            .first()
+            .filter(|name| !name.starts_with('-'))
+            .ok_or_else(|| {
+                "`fleet improve race` needs a proposal name: `fleet improve race <name>`"
+                    .to_string()
+            })?;
+        return Ok(Command::Improve(ImproveOptions {
+            action: ImproveAction::Race { name: name.clone() },
         }));
     }
     if verb == "analyze" {
