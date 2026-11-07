@@ -166,6 +166,7 @@ fn dispatch_sync(args: &[String]) -> ExitCode {
         Ok(Command::Providers) => providers_command(),
         Ok(Command::Hygiene) => hygiene_command(),
         Ok(Command::Calib(options)) => calib_command(&options),
+        Ok(Command::Demand(options)) => demand_command(&options),
         Ok(Command::Roles) => roles_command(),
         Ok(Command::Convention(options)) => convention_command(&options),
         Ok(Command::Graph(options)) => graph_command(&options),
@@ -2405,6 +2406,28 @@ fn improve_command(options: &cli::ImproveOptions) -> ExitCode {
 /// read of the audit trail, and a day with no rows says so rather than
 /// failing. The exit code is always success; the stream is an artifact,
 /// not a gate.
+/// `fleet demand`: the demand map over the calibration stream (the
+/// self-improvement plan's C0). The view is recomputed from the
+/// stream on every read; one `demand` row records that it ran.
+fn demand_command(options: &cli::DemandOptions) -> ExitCode {
+    let home = match fleet_home() {
+        Ok(home) => home,
+        Err(error) => {
+            eprintln!("{error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let user_home = std::env::var("HOME").ok();
+    let calib_root = fleet::calib::resolve_root(&home, user_home.as_deref());
+    let days = options.days.unwrap_or(fleet::demand::DEMAND_WINDOW_DAYS);
+    let today = fleet::calib::today();
+    let demands = fleet::demand::collect(&calib_root, &today, days);
+    let stream = fleet::calib::Stream::open(&calib_root);
+    fleet::demand::record_view(&stream, days, &demands);
+    print!("{}", fleet::demand::render(&demands, days));
+    ExitCode::SUCCESS
+}
+
 fn calib_command(options: &cli::CalibOptions) -> ExitCode {
     let Some(home) = fleet_home().ok() else {
         eprintln!("fleet: no home directory known; set FLEET_HOME or HOME");

@@ -43,6 +43,7 @@ pub enum Command {
     Providers,
     /// Show the calibration stream: one day's rows, grouped by op.
     Calib(CalibOptions),
+    Demand(DemandOptions),
     /// Judge a day's routing decisions through the sys1 lane, or record
     /// the owner's disposition on a judged row.
     Judge(JudgeOptions),
@@ -225,6 +226,15 @@ pub struct OnboardOptions {
     pub key: Option<String>,
     /// Record the roster step's confirmation.
     pub confirm: bool,
+}
+
+/// Options for `fleet demand`: the demand map over the calibration
+/// stream — the per-class demand view (the self-improvement plan's
+/// C0). The bare command reads the default window.
+#[derive(Debug, PartialEq, Eq)]
+pub struct DemandOptions {
+    /// The window in days; absent is [`crate::demand::DEMAND_WINDOW_DAYS`].
+    pub days: Option<usize>,
 }
 
 /// Options for `fleet calib`.
@@ -970,6 +980,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "mcp" => parse_mcp(rest),
         "providers" => no_flags(rest, Command::Providers),
         "calib" => parse_calib(rest),
+        "demand" => parse_demand(rest),
         "judge" => parse_judge(rest),
         "delegate" => parse_delegate(rest),
         "roles" => no_flags(rest, Command::Roles),
@@ -1365,6 +1376,35 @@ fn parse_calib(args: &[String]) -> Result<Command, String> {
 /// combine with the batch or with each other: one is a batch that
 /// spends, the other is a single write that does not, and a caller who
 /// wants both is asking two questions.
+/// `fleet demand`: the demand map. `--days <n>` widens or narrows the
+/// window; anything but a positive integer is a usage error.
+fn parse_demand(args: &[String]) -> Result<Command, String> {
+    let mut days: Option<usize> = None;
+    let mut index = 0;
+    while index < args.len() {
+        let arg = args[index].as_str();
+        match arg {
+            "--help" | "-h" => return Ok(Command::Help),
+            "--days" => {
+                let value = take_value(args, &mut index, arg)?;
+                let parsed = value
+                    .parse::<usize>()
+                    .map_err(|_| format!("`{value}` is not a day count; use --days <n>"))?;
+                if parsed == 0 {
+                    return Err("--days must be at least 1".to_string());
+                }
+                days = Some(parsed);
+            }
+            _ if arg.starts_with('-') && arg != "-" => {
+                return Err(format!("unknown demand option `{arg}`"));
+            }
+            _ => return Err(format!("`{arg}` takes no value here; see `fleet help`")),
+        }
+        index += 1;
+    }
+    Ok(Command::Demand(DemandOptions { days }))
+}
+
 fn parse_judge(args: &[String]) -> Result<Command, String> {
     let mut day: Option<String> = None;
     let mut dry_run = false;
@@ -4288,6 +4328,21 @@ mod tests {
             parse(&args(&["memories", "--help"])).unwrap(),
             Command::Help
         );
+    }
+
+    #[test]
+    fn demand_parses_its_window_and_refuses_junk() {
+        assert_eq!(
+            parse(&args(&["demand"])).unwrap(),
+            Command::Demand(DemandOptions { days: None })
+        );
+        assert_eq!(
+            parse(&args(&["demand", "--days", "7"])).unwrap(),
+            Command::Demand(DemandOptions { days: Some(7) })
+        );
+        assert!(parse(&args(&["demand", "--days", "0"])).is_err());
+        assert!(parse(&args(&["demand", "--days", "soon"])).is_err());
+        assert!(parse(&args(&["demand", "--nope"])).is_err());
     }
 
     /// A temp directory under the machine's own temp root, unique per
