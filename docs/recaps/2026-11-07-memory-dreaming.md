@@ -190,3 +190,10 @@ fleetAdditions.
 - Gate, final tree: fmt 0, fmt-check 0, clippy 0, build 0, test 0;
   harness 972/111. Ledger well-formed (469 rows, 6 open) before this
   document.
+- **Delivery:** the Tauri dmg rebuilt
+  (`fleet_0.4.0-beta.1_aarch64.dmg`, 10.84 MiB — the bundle carries
+  the `services` resources, so the sys1 `validate` task rides in it),
+  installed to /Applications (the old app moved aside, not deleted),
+  and the face relaunched on it — the running process serves the new
+  document (the proof fact reads `basis: validated` with its source
+  from the pane's own API). The local machine's face is the new build.
