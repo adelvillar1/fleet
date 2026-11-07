@@ -474,7 +474,13 @@ pub struct ReloadOptions {
 /// lands a row; `--last` reads the most recent run back without running.
 #[derive(Debug, PartialEq, Eq)]
 pub struct EvalOptions {
+    /// Read the last corpus run's row back instead of running.
     pub last: bool,
+    /// The gap report: the stream's failure classes with no corpus
+    /// scenario.
+    pub gaps: bool,
+    /// Promote one gap into a scenario seed under `<FLEET_HOME>/eval-gaps/`.
+    pub promote: Option<String>,
 }
 
 /// Options for `fleet explain`: one verdict selector, and the dry run
@@ -2503,11 +2509,24 @@ fn parse_reload(args: &[String]) -> Result<Command, String> {
 /// is accepted — the corpus is fixed, so there is no scenario to name.
 fn parse_eval(args: &[String]) -> Result<Command, String> {
     let mut last = false;
+    let mut gaps = false;
+    let mut promote: Option<String> = None;
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
             "--help" | "-h" => return Ok(Command::Help),
             "--last" => last = true,
+            "--gaps" => gaps = true,
+            "--promote" => {
+                let value = args
+                    .get(index + 1)
+                    .filter(|value| !value.starts_with('-'))
+                    .ok_or_else(|| {
+                        "`--promote` needs a class: `fleet eval --promote <class>`".to_string()
+                    })?;
+                promote = Some(value.to_string());
+                index += 1;
+            }
             other if other.starts_with('-') && other != "-" => {
                 return Err(format!("unknown eval option `{other}`"));
             }
@@ -2517,7 +2536,16 @@ fn parse_eval(args: &[String]) -> Result<Command, String> {
         }
         index += 1;
     }
-    Ok(Command::Eval(EvalOptions { last }))
+    if promote.is_some() && (last || gaps) {
+        return Err(
+            "`--promote` writes one seed; it does not combine with --last or --gaps".to_string(),
+        );
+    }
+    Ok(Command::Eval(EvalOptions {
+        last,
+        gaps,
+        promote,
+    }))
 }
 
 /// `fleet explain --proposal <name> | --eval <scenario> [--dry-run]`.

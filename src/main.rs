@@ -4424,6 +4424,28 @@ async fn eval_command(options: &cli::EvalOptions) -> ExitCode {
         print!("{}", fleet::eval::render_last(&root));
         return ExitCode::SUCCESS;
     }
+    if options.gaps || options.promote.is_some() {
+        let days = fleet::demand::DEMAND_WINDOW_DAYS;
+        let gaps = fleet::eval::gaps(&root, &fleet::calib::today(), days);
+        if let Some(class) = &options.promote {
+            let Some(gap) = gaps.iter().find(|gap| &gap.class == class) else {
+                eprintln!("fleet: eval: no gap named `{class}` in the {days}-day window");
+                return ExitCode::FAILURE;
+            };
+            match fleet::eval::promote(&home, gap) {
+                Ok(path) => {
+                    println!("scenario seed filed: {}", path.display());
+                    return ExitCode::SUCCESS;
+                }
+                Err(error) => {
+                    eprintln!("fleet: eval: the seed did not file: {error}");
+                    return ExitCode::FAILURE;
+                }
+            }
+        }
+        print!("{}", fleet::eval::render_gaps(&gaps, days));
+        return ExitCode::SUCCESS;
+    }
     let Some(mock_bin) = fleet::eval::mock_server_binary() else {
         eprintln!(
             "fleet: eval: the mock-server binary was not found beside the fleet executable; the corpus cannot run"
