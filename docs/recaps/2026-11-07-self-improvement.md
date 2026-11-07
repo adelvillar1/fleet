@@ -83,9 +83,15 @@ Status after this session: **completed** (all ten criteria ticked).
   discoverable Chrome. The lane's error names the remedy.
 - The 7 shape proposals filed by the live clustering beat sit in
   `~/.fleet/proposals/` — the owner's apply is the naming gate.
-- The self-probe's re-dispatch is wired but has not run a live child
-  (the mock lanes pin the probe and the decision; the re-dispatch's
-  live proof is the next session's).
+- The self-probe's re-dispatch is wired; the live probe path is proven
+  on five real rows (four October environmental failures and one fresh
+  false-premise delegation — the lane's verdicts at 0.42–0.60, all
+  correctly under the 0.80 bar: an environment failure or a false
+  premise is not a reason to re-run the child). The re-dispatch's live
+  firing awaits a confidently-wrong verdict — the bar is the design's
+  conservatism, and manufacturing one honestly is the next session's.
+  The probe's lane path is pinned by the scripted-lane test; the
+  decision by the should_rerun units.
 
 ## Notes
 
