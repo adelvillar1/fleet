@@ -168,6 +168,47 @@ verdict says so: `no corpus step — a memory change does not move the
 scripted corpus`. Implying a measurement that cannot exist would be
 worse than having none.
 
+## The self-improvement program (2026-11-07)
+
+The 2026-11-07 program (the DoubleAI article read against the loop)
+added the instruments around the proposal cycle:
+
+- **The demand map** (`src/demand.rs`, `fleet demand`): the per-class
+  demand over the calibration stream — the routing judgment's
+  workload × provider, the eval corpus's scenarios, the delegation
+  outcomes, the validate verdicts — each with its bad-rate, its row
+  count, and its trend across the window's halves (improving, flat,
+  worsening, thin). The phantom gradient's fleet instrument: a class
+  that stays high and flat is the intervention target; a thin class
+  is never read as healthy.
+- **The clustering beat** (`fleet demand --cluster`): the window's
+  failures grouped by class, each cluster's examples surfaced, and a
+  shape proposal filed for a cluster at or over the 5-bad threshold —
+  a source patch joining the tag to `FAILURE_SHAPES` and the keyword
+  table, owner-applied with the class-derived word as the draft name.
+- **The analysis** (`fleet improve analyze`): the threshold question
+  answered from the stream — which classes fail, how consistently, and
+  the confidence threshold that separates right from wrong verdicts,
+  measured, never guessed. The improve tool's declaration names it as
+  the first step.
+- **The gaps** (`fleet eval --gaps`, `--promote <class>`): the stream's
+  failure classes with no corpus scenario, and the promotion that
+  writes a scenario seed under `<FLEET_HOME>/eval-gaps/`.
+- **The race** (`fleet improve race <name>`): the corpus on the applied
+  tree, the twin (reverted), and the sham (scrambled) — the placebo
+  test. The twin rules out decoration; the sham rules out raw capacity.
+  A proposal that does not beat both is refused by name.
+- **The capability library** (`fleet improve --capabilities`): the
+  lesson store rendered as what the system learned to do — each
+  applied change with its target, its cue, and its lesson. The skill
+  drafter's feedstock names them, so a proposal for a kind the system
+  has already learned about says so.
+- **The self-probe** (`fleet delegate --probe <key>`): one delegation's
+  outcome judged against its brief through the lane; a confident wrong
+  (or insufficient) re-dispatches the child through the existing
+  delegation seam, routed by the router, bounded by the same turn cap,
+  and logged as a delegate row carrying the probe's verdict.
+
 ## The lesson store
 
 Every **applied** change writes one lesson under `<FLEET_HOME>/lessons/`
