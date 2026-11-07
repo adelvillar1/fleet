@@ -74,7 +74,7 @@ if [ "$MODE" = "tag" ]; then
 
     # KI-351's lesson: the ambient CARGO_TARGET_DIR may name a co-tenant's
     # tree. Pin the target dir; the gate owns it.
-    ( export CARGO_TARGET_DIR="$RELEASE_TARGET"
+    ( export CARGO_TARGET_DIR="$RELEASE_TARGET" REPO_ROOT
       cd "$RELEASE_WORKTREE" || exit 1
       echo "-- leg 1: build --all-targets"
       sh "$REPO_ROOT/scripts/release-gate-run.sh" build
