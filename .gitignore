@@ -85,10 +85,3 @@ docs/plans/*.graph.json
 # root — harness-side noise, the same class the tmp/ rule names.
 /home.txt
 /home.txt.lock
-
-# The release/version scripts' write locks — the same filelock seam as the
-# memory and doc locks (KI-062's shape): runtime state, not repo content.
-/scripts/*.lock
-
-# CHANGELOG lock sidecar, same seam
-CHANGELOG.md.lock
