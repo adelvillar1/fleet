@@ -1924,6 +1924,42 @@ fn a_confident_wrong_reruns_and_the_rest_stand() {
     );
 }
 
+/// The probe's lane path: the child's log is read, the scripted lane
+/// answers a `block` verdict at 0.9, and the grade reads it as a
+/// confident wrong — the re-run decision's input.
+#[tokio::test]
+async fn the_probe_reads_the_child_log_and_the_lane_verdict() {
+    let root = scratch("probe");
+    let log = root.join("child.jsonl");
+    std::fs::write(
+        &log,
+        "{\"type\":\"user\",\"content\":\"the brief: sort the list\"}\n{\"type\":\"end\",\"stop_reason\":\"completed\",\"turns\":2}\n",
+    )
+    .unwrap();
+    let mut row = delegation_row("sess-child", "glide", "hard", "completed");
+    row.log = log.display().to_string();
+    let lane = scripted_lane(
+        r#"{"verdict":"block","confidence":0.9,"reason":"the brief drove away"}"#,
+        1,
+    )
+    .expect("the scripted lane");
+    let mut session = crate::judge::LaneSession::open(
+        &crate::lanes::LaneSource::Scripted(lane),
+        crate::delegate::DELEGATE_LANE,
+        crate::delegate::DELEGATE_TOOL,
+        crate::delegate::DELEGATE_TASK,
+    )
+    .await
+    .expect("the lane opens");
+    let probe = crate::delegate::probe_outcome(&mut session, &row)
+        .await
+        .expect("the probe answers");
+    assert_eq!(probe.verdict, "wrong", "a `block` verdict grades wrong");
+    assert!((probe.confidence - 0.9).abs() < 1e-9);
+    assert!(crate::delegate::should_rerun(&probe));
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 #[tokio::test]
 async fn a_days_delegations_are_judged_beside_themselves_and_the_rows_land() {
     let home = scratch("judged-home");
