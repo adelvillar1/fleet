@@ -72,6 +72,11 @@ fi
 say "— repo hygiene —"
 "$REPO/scripts/repo-hygiene.sh" --live >>"$LOG" 2>&1 || say "the hygiene pass failed; tomorrow retries"
 
+# 6. the plan-worktree sweep — dry-run by default, named in the log;
+#    --live stays the owner's explicit act (the sweep's own rule).
+say "— plan worktrees —"
+"$REPO/scripts/plan-worktree.sh" sweep --dry-run >>"$LOG" 2>&1 || say "the worktree sweep failed; tomorrow retries"
+
 # 4. the orphan naming — read-only, always.
 orphans=$(git ls-files --others --exclude-standard 2>/dev/null | cut -d/ -f1 | sort -u | tr '\n' ' ')
 if [ -n "$orphans" ]; then

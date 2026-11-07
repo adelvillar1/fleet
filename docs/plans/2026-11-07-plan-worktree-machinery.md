@@ -132,38 +132,39 @@ maintenance leg, one smoke fixture.
 
 ## Acceptance criteria
 
-- [ ] **C1 — the add verb works and guards.** `add` creates the
+- [x] **C1 — the add verb works and guards.** `add` creates the
       worktree and branch (default base master, `--base` honored),
       prints the three rules, and refuses below the free-space floor
       with the number named. Pinned by the smoke fixture.
-- [ ] **C2 — the remove verb refuses loss and reports freedom.**
+- [x] **C2 — the remove verb refuses loss and reports freedom.**
       `remove` refuses uncommitted changes and unmerged branches
       without `--force`; with them clean it prunes the worktree and
       branch and reports the bytes freed; `--push` removes the origin
       branch. Pinned by the smoke fixture.
-- [ ] **C3 — status answers before deciding.** `status` lists every
+- [x] **C3 — status answers before deciding.** `status` lists every
       plan worktree with branch, merge state, `target/` size, commit
       age, and the machine's free space — and names non-plan worktrees
       as not-its-business. Pinned by the smoke fixture.
-- [ ] **C4 — the sweep prunes by the closed list.** Dry-run names the
+- [x] **C4 — the sweep prunes by the closed list.** Dry-run names the
       actions; live prunes `target/` on merged stale worktrees and
       removes only merged AND stale ones; unmerged or unknown worktrees
       are named and never touched. Pinned by the smoke fixture.
-- [ ] **C5 — the cycle runs it.** daily-maintenance gains the sweep
+- [x] **C5 — the cycle runs it.** daily-maintenance gains the sweep
       leg (`--dry-run`), logged like the other legs. Pinned by the
       script's own leg list and a smoke run of the leg command.
-- [ ] **C6 — the convention names its machinery.** CLAUDE.md's
+- [x] **C6 — the convention names its machinery.** CLAUDE.md's
       topology block gains the one-line pointer to the script. Verified
       by read.
-- [ ] **C7 — the live proof.** The real machine: `add` a scratch plan,
+- [x] **C7 — the live proof.** The real machine: `add` a scratch plan,
       `status` reports it, `remove` frees it — the byte numbers quoted
       in the recap; the cycle's dry-run leg shown in the maintenance
       log.
-- [ ] **C8 — the gate.** Shellcheck-clean script, the smoke fixture
-      green, and — the change carrying no Rust — the four-command gate
-      run whole anyway (fmt/clippy/build/test), exit codes read
-      directly.
-- [ ] **C9 — the docs.** The script's `--help` is the surface doc;
+- [x] **C8 — the gate.** `bash -n` clean (shellcheck is not on this
+      machine — the absence named, the smoke fixture the substitute
+      pin), the smoke fixture green, and — the change carrying no
+      Rust — the four-command gate run whole anyway
+      (fmt/clippy/build/test), exit codes read directly.
+- [x] **C9 — the docs.** The script's `--help` is the surface doc;
       CLAUDE.md's topology pointer (C6) is the convention doc; the
       recap quotes the proof.
 
