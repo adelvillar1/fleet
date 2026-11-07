@@ -1,5 +1,6 @@
 ---
 status: active
+execution: swarm
 created: 2026-11-05
 updated: 2026-11-05
 slug: open-ledger-closeout
