@@ -3567,6 +3567,65 @@ async fn lanes_command() -> ExitCode {
 /// report naming what went and what it freed. The 2026-11-06 incident's
 /// standing fix: 72 G of per-turn snapshots, nothing pruning them, the
 /// drive dead at 100% while a run kept writing.
+/// The stale-process sweep: the orphans the run's close could not
+/// reach — a lane child whose fleet parent died, the browser lane's
+/// Chrome still holding the debugging port the service fixes. A process
+/// is only touched when fleet can prove it spawned it: the command runs
+/// from the home's own venvs, or it is that Chrome on its fixed port —
+/// and the parent is gone. Anything else is named, never killed: the
+/// owner's Chrome and the owner's servers are not fleet's to stop.
+fn stale_process_sweep() -> usize {
+    let Ok(output) = std::process::Command::new("ps")
+        .args(["-axo", "pid=,ppid=,command="])
+        .output()
+    else {
+        return 0;
+    };
+    let text = String::from_utf8_lossy(&output.stdout);
+    let home_marker = format!(
+        "{}/.fleet/venvs/",
+        std::env::var("HOME").unwrap_or_default()
+    );
+    let mut stopped = 0usize;
+    for line in text.lines() {
+        // The ps columns are space-padded to fixed widths, so the split
+        // must collapse the runs — a bare splitn on one whitespace char
+        // hands the ppid slot an empty field and every line dies at the
+        // parse (the first sweep run stopped nothing because of it).
+        let trimmed = line.trim();
+        let Some((pid_field, rest)) = trimmed.split_once(char::is_whitespace) else {
+            continue;
+        };
+        let rest = rest.trim_start();
+        let Some((ppid_field, command)) = rest.split_once(char::is_whitespace) else {
+            continue;
+        };
+        let Ok(pid) = pid_field.trim().parse::<u32>() else {
+            continue;
+        };
+        let Ok(ppid) = ppid_field.trim().parse::<u32>() else {
+            continue;
+        };
+        let command = command.trim();
+        // The browser lane fixes its Chrome's debugging port
+        // (`services/browser`'s CDP_PORT = 9333); a headless Chrome
+        // holding it is the lane's, nobody else's.
+        let mine =
+            command.contains(&home_marker) || command.contains("--remote-debugging-port=9333");
+        if mine && ppid == 1 && pid != std::process::id() {
+            let _ = std::process::Command::new("kill")
+                .arg(pid.to_string())
+                .output();
+            println!(
+                "hygiene: stopped the orphaned {pid}: {}",
+                &command[..command.len().min(80)]
+            );
+            stopped += 1;
+        }
+    }
+    stopped
+}
+
 fn hygiene_command() -> ExitCode {
     let Some(home) = fleet_home().ok() else {
         eprintln!("fleet: no home directory known; set FLEET_HOME or HOME");
@@ -3584,6 +3643,25 @@ fn hygiene_command() -> ExitCode {
         fleet::checkpoints::KEEP_TURNS,
         fleet::checkpoints::STORE_CAP_BYTES,
     );
+    // The memory disposal: one consolidation pass — the expired working
+    // facts compressed into episodic summaries, the stale inferred facts
+    // retired. The corpus's own cycle, deterministic, no model call.
+    let user_home = std::env::var("HOME").ok();
+    let calib_root = fleet::calib::resolve_root(&home, user_home.as_deref());
+    let stream = fleet::calib::Stream::open(calib_root);
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let memory_root = fleet::memory::resolve_root_from(&cwd, Some(&home));
+    let today = fleet::calib::today();
+    let consolidation = fleet::memory::consolidate(&memory_root, &today, Some(&stream));
+    if consolidation.actions.is_empty() {
+        println!("hygiene: the memory corpus needed no consolidation");
+    } else {
+        for action in &consolidation.actions {
+            println!("hygiene: memory — {} {}", action.action, action.fact);
+        }
+    }
+    let swept = stale_process_sweep();
+    println!("hygiene: {swept} orphaned fleet process(es) stopped");
     ExitCode::SUCCESS
 }
 
