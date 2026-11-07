@@ -9,6 +9,15 @@ in one pass). `scripts/edit-preflight.sh` names the ones an edit will
 meet, in seconds, before the first `cargo` call; this doc is the one
 home for what they are and what to do when one fires.
 
+**This file is one project's instance of a universal protocol.** The
+house build-loop skill (`~/.agents/skills/house-build-loop/`) carries
+the loop for every project — pins before edits, the preflight before
+the first compile, scoped runs, one gate, narration — and its
+`templates/edit-preflight.sh` is the generic version of this repo's
+script: it discovers a project's guards by pattern (text-scan sites,
+named bounds, list pins), so a session's first work in a project
+installs it and seeds the inventory from a two-grep sweep.
+
 ## A. The socket guards — the lane-asking beats
 
 Three beats spend a lane ask (sys1 judgment calls): `judge`,
