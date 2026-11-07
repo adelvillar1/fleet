@@ -2961,6 +2961,62 @@ async fn judge_command(options: &cli::JudgeOptions) -> ExitCode {
     let user_home = std::env::var("HOME").ok();
     let root = fleet::calib::resolve_root(&home, user_home.as_deref());
     let day = options.day.clone().unwrap_or_else(fleet::calib::today);
+    // The self-probe: one delegation's outcome judged against its
+    // brief through the lane; a confident wrong re-dispatches the
+    // child. The probe's verdict rides the new delegate row.
+    if let Some(key) = &options.probe {
+        let rows = fleet::delegate::read_day(&root, &day);
+        let row = rows
+            .delegations
+            .iter()
+            .find(|row| fleet::delegate::delegation_key(row) == *key)
+            .cloned();
+        let Some(row) = row else {
+            eprintln!("fleet: delegate: no delegation row keyed `{key}` in {day}");
+            return ExitCode::FAILURE;
+        };
+        let mut lane = match fleet::judge::LaneSession::open(
+            &fleet::lanes::LaneSource::Vendored,
+            fleet::judge::JUDGE_LANE,
+            fleet::judge::JUDGE_TOOL,
+            fleet::delegate::DELEGATE_TASK,
+        )
+        .await
+        {
+            Ok(lane) => lane,
+            Err(reason) => {
+                eprintln!("fleet: delegate: the probe lane could not start: {reason}");
+                return ExitCode::FAILURE;
+            }
+        };
+        let probe = match fleet::delegate::probe_outcome(&mut lane, &row).await {
+            Some(probe) => probe,
+            None => {
+                eprintln!(
+                    "fleet: delegate: the probe could not judge `{key}` — the lane did not answer"
+                );
+                return ExitCode::FAILURE;
+            }
+        };
+        println!(
+            "the outcome probe: {} ({:.2} confidence) — {}",
+            probe.verdict, probe.confidence, probe.reason
+        );
+        if !fleet::delegate::should_rerun(&probe) {
+            println!("the outcome stands — no re-dispatch");
+            return ExitCode::SUCCESS;
+        }
+        return match fleet::delegate::rerun(&home, &row, &probe).await {
+            Ok(session) => {
+                println!("re-dispatched: {session}");
+                ExitCode::SUCCESS
+            }
+            Err(reason) => {
+                eprintln!("fleet: delegate: {reason}");
+                ExitCode::FAILURE
+            }
+        };
+    }
     if let Some(disposition) = &options.disposition {
         return match fleet::judge::disposition(&root, &day, &disposition.key, &disposition.word) {
             Ok(row) => {

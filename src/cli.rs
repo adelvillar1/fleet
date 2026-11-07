@@ -307,6 +307,10 @@ pub struct DelegateOptions {
     /// The session scope: judge one session's delegations instead of
     /// the whole day — the timing instrument.
     pub session: Option<String>,
+    /// The self-probe: judge one delegation's outcome against its
+    /// brief through the lane, and re-dispatch the child on a
+    /// confident wrong.
+    pub probe: Option<String>,
     /// Rehearse only: resolve the rows and show what would be asked — no
     /// ask, no row, no spend.
     pub dry_run: bool,
@@ -1055,6 +1059,7 @@ fn parse_run(args: &[String]) -> Result<Command, String> {
             "--yes" | "-y" => yes = true,
             "--compact-now" => compact_now = true,
             "--probe" => probe = true,
+            "--session" => session = Some(take_value(args, &mut index, arg)?),
             "--model" => model = Some(take_value(args, &mut index, arg)?),
             "--max-turns" => {
                 let value = take_value(args, &mut index, arg)?;
@@ -1062,7 +1067,6 @@ fn parse_run(args: &[String]) -> Result<Command, String> {
                     .parse()
                     .map_err(|_| format!("`{value}` is not a turn count"))?;
             }
-            "--session" => session = Some(take_value(args, &mut index, arg)?),
             _ if arg.starts_with('-') && arg != "-" => {
                 return Err(format!("unknown run option `{arg}`"));
             }
@@ -1521,6 +1525,7 @@ fn parse_judge(args: &[String]) -> Result<Command, String> {
 fn parse_delegate(args: &[String]) -> Result<Command, String> {
     let mut day: Option<String> = None;
     let mut session: Option<String> = None;
+    let mut probe: Option<String> = None;
     let mut dry_run = false;
     let mut disposition: Option<(String, String)> = None;
     let mut control: Option<(bool, String, Option<String>)> = None;
@@ -1532,6 +1537,7 @@ fn parse_delegate(args: &[String]) -> Result<Command, String> {
             "--dry-run" => dry_run = true,
             "--day" => day = Some(take_value(args, &mut index, arg)?),
             "--session" => session = Some(take_value(args, &mut index, arg)?),
+            "--probe" => probe = Some(take_value(args, &mut index, arg)?),
             "--agree" | "--disagree" | "--waive" => {
                 let word = match arg {
                     "--agree" => "agreed",
@@ -1635,6 +1641,7 @@ fn parse_delegate(args: &[String]) -> Result<Command, String> {
     Ok(Command::Delegate(DelegateOptions {
         day,
         session,
+        probe,
         dry_run,
         disposition,
         control,
@@ -4100,6 +4107,7 @@ mod tests {
                 dry_run: false,
                 disposition: None,
                 session: None,
+                probe: None,
                 control: None,
             })
         );
@@ -4110,6 +4118,7 @@ mod tests {
                 dry_run: true,
                 disposition: None,
                 session: None,
+                probe: None,
                 control: None,
             })
         );
@@ -4128,10 +4137,16 @@ mod tests {
                         key: "a1b2c3d4e5f60718".to_string()
                     }),
                     session: None,
+                    probe: None,
                     control: None,
                 })
             );
         }
+        // The session and probe scopes parse and refuse junk.
+        assert!(parse(&args(&["delegate", "--session", "sess-1"])).is_ok());
+        assert!(parse(&args(&["delegate", "--probe", "a1b2c3d4"])).is_ok());
+        assert!(parse(&args(&["delegate", "--session"])).is_err());
+        assert!(parse(&args(&["delegate", "--probe"])).is_err());
         // The refusals, each naming what was wrong.
         let error = parse(&args(&["delegate", "--agree"])).unwrap_err();
         assert!(error.contains("--agree"), "{error}");
@@ -4168,6 +4183,7 @@ mod tests {
                 dry_run: false,
                 disposition: None,
                 session: None,
+                probe: None,
                 control: Some(DelegateControl::Steer {
                     session: "sess-1".to_string(),
                     text: "focus on the parser".to_string(),
@@ -4181,6 +4197,7 @@ mod tests {
                 dry_run: false,
                 disposition: None,
                 session: None,
+                probe: None,
                 control: Some(DelegateControl::Stop {
                     session: "sess-1".to_string()
                 }),

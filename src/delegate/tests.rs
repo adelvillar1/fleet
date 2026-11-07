@@ -1891,6 +1891,39 @@ fn no_synchronous_path_references_the_delegation_beat() {
 
 // --- the beat, end to end over the scripted lane ---
 
+/// The re-run decision: a confident wrong re-dispatches; a right, a
+/// tentative wrong, and an insufficient verdict all let it stand.
+#[test]
+fn a_confident_wrong_reruns_and_the_rest_stand() {
+    let confident_wrong = crate::delegate::ProbeVerdict {
+        verdict: "wrong".to_string(),
+        confidence: 0.9,
+        reason: "the child missed the brief".to_string(),
+    };
+    assert!(crate::delegate::should_rerun(&confident_wrong));
+    let tentative_wrong = crate::delegate::ProbeVerdict {
+        verdict: "wrong".to_string(),
+        confidence: 0.5,
+        reason: String::new(),
+    };
+    assert!(!crate::delegate::should_rerun(&tentative_wrong));
+    let right = crate::delegate::ProbeVerdict {
+        verdict: "right".to_string(),
+        confidence: 0.95,
+        reason: String::new(),
+    };
+    assert!(!crate::delegate::should_rerun(&right));
+    let insufficient = crate::delegate::ProbeVerdict {
+        verdict: "insufficient".to_string(),
+        confidence: 0.9,
+        reason: String::new(),
+    };
+    assert!(
+        crate::delegate::should_rerun(&insufficient),
+        "an insufficient outcome is a stalled trajectory — it re-runs too"
+    );
+}
+
 #[tokio::test]
 async fn a_days_delegations_are_judged_beside_themselves_and_the_rows_land() {
     let home = scratch("judged-home");

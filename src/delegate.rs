@@ -240,6 +240,143 @@ pub struct JudgeRequest<'a> {
     pub lane: LaneSource,
 }
 
+// --- the self-probe and the re-run (C2) --------------------------------------
+
+/// The confidence a probe verdict needs before the child is re-run.
+/// The measured-set bar's own conviction rule: a tentative verdict is
+/// not a policy, and a re-dispatch spends a real child.
+pub const RERUN_CONFIDENCE: f64 = 0.8;
+
+/// One probe verdict: what the lane said about the child's outcome.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProbeVerdict {
+    /// `right`, `wrong`, or `insufficient` — the grade's vocabulary.
+    pub verdict: String,
+    pub confidence: f64,
+    pub reason: String,
+}
+
+/// The outcome probe: the lane judges the child's own log against its
+/// brief. The article's self-probe — the model reads its own output and
+/// acts on what it finds — in fleet's idiom: the child's transcript is
+/// the output, the brief is the claim, and the lane is the judge. The
+/// prompt is the grade's own (`compose_prompt`), the reply its own.
+pub async fn probe_outcome(
+    session: &mut crate::judge::LaneSession,
+    row: &DelegationRow,
+) -> Option<ProbeVerdict> {
+    let evidence = read_evidence(row);
+    let prompt = compose_prompt(row, &evidence);
+    let reply = session.ask(&prompt).await.ok()?;
+    let parsed = DelegateReply::parse(&reply);
+    let judgment = grade(row, &evidence, &parsed);
+    Some(ProbeVerdict {
+        verdict: judgment.verdict.to_string(),
+        confidence: judgment.confidence,
+        reason: judgment.reason,
+    })
+}
+
+/// The re-run decision: a confident wrong (or insufficient) outcome
+/// re-dispatches the child; anything else lets it stand. The bar is
+/// the measured-set's conviction rule — a re-dispatch spends a real
+/// child, so a tentative verdict is not a policy.
+pub fn should_rerun(probe: &ProbeVerdict) -> bool {
+    (probe.verdict == "wrong" || probe.verdict == "insufficient")
+        && probe.confidence >= RERUN_CONFIDENCE
+}
+
+/// The brief the child was given, reconstructed from its own log: the
+/// first user record is the composed brief the delegation spawned with.
+fn brief_from_log(row: &DelegationRow) -> Result<crate::subagents::Brief, String> {
+    let records = crate::session::replay(std::path::Path::new(&row.log))
+        .map_err(|error| format!("the child's log does not read: {error}"))?;
+    let first = records.iter().find_map(|record| match record {
+        crate::session::Record::User { content } => Some(content.clone()),
+        _ => None,
+    });
+    let first = first.ok_or_else(|| "the child's log carries no brief".to_string())?;
+    Ok(crate::subagents::Brief::parse(&first))
+}
+
+/// Re-dispatch the child on a confident wrong: the same brief, a fresh
+/// child session, the child's own route (the router rules the child),
+/// and the probe's verdict logged in the new `delegate` row's reason.
+/// The re-dispatch is bounded by the same turn cap a first dispatch
+/// carries, and it re-runs the owner's approved brief — the probe is
+/// the instrument, the brief is unchanged.
+pub async fn rerun(
+    home: &std::path::Path,
+    row: &DelegationRow,
+    probe: &ProbeVerdict,
+) -> Result<String, String> {
+    let brief = brief_from_log(row)?;
+    let prepared = crate::route::prepare_child(home, &brief.shape(), &Default::default(), None)
+        .await
+        .map_err(|error| format!("the child's route could not be prepared: {error}"))?;
+    let client = crate::api::Client::routed(prepared.router.clone());
+    let sessions_dir = home.join("sessions");
+    let mut approver = crate::agent::ConsoleApprover::new();
+    let mut progress = std::io::stderr();
+    let calib_root = crate::calib::resolve_root(home, std::env::var("HOME").ok().as_deref());
+    let calib = crate::calib::Stream::open(&calib_root);
+    let result = crate::subagents::run(crate::subagents::Delegation {
+        client: &client,
+        pin: None,
+        lane_specs: Default::default(),
+        route: Some(prepared.decision.clone()),
+        model: prepared.decision.model.clone(),
+        sessions_dir,
+        parent_session: row.session.clone(),
+        node: None,
+        goal: brief.task.clone(),
+        tools: None,
+        max_turns: crate::subagents::turn_ceiling(1),
+        approver: &mut approver,
+        progress: &mut progress,
+        ui_tx: None,
+        calib: Some(calib.clone()),
+        skills: Vec::new(),
+        identity: None,
+        home: Some(home.to_path_buf()),
+        depth: 1,
+        plan_mode: false,
+        file_access: crate::agent::FileAccess::Unrestricted,
+    })
+    .await;
+    {
+        {
+            let outcome = &result;
+            let reason = format!(
+                "re-run on the outcome probe: {} ({:.2} confidence) — {}",
+                probe.verdict, probe.confidence, probe.reason
+            );
+            crate::calib::record_delegation(
+                &calib,
+                crate::calib::DelegatedRunRow {
+                    ts: crate::calib::stamp(),
+                    session: outcome.session.clone(),
+                    brief_shape: brief.shape(),
+                    scope: String::new(),
+                    provider: String::new(),
+                    outcome: outcome.outcome.label().to_string(),
+                    turns: outcome.turns,
+                    spend_usd: 0.0,
+                    duration_ms: 0,
+                    log: outcome.log.display().to_string(),
+                    workspace: String::new(),
+                    workspace_branch: String::new(),
+                    parent_session: row.session.clone(),
+                    root_session: row.session.clone(),
+                    depth: 1,
+                    reason: Some(reason),
+                },
+            );
+            Ok(outcome.session.clone())
+        }
+    }
+}
+
 // --- the row shapes --------------------------------------------------------
 
 /// One delegation's judgment, as the beat records it. The row the
