@@ -57,7 +57,7 @@ fast, and reliable beside it. The case, with the evidence, is
 
 **Tested.** The verification is one logic at three scales. The gate at the change: `cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings`, `cargo build --release`, `cargo test` with exit codes read directly, beside the fixed eval corpus graded headless and the plan, evidence, and arch gates over the plans. The judge at the day: the calibration stream grades every route it recorded, per provider-and-workload-shape cell, from redacted evidence only, and the owner's agree-or-disagree rides the same append-only row as ground truth. The same pattern runs at project scale: one-line tower reports reconciled against git. Nothing ships green by assertion; each claim has a gate, and the gates grade themselves.
 
-**Here.** Beta, version 0.3.0-beta, past the agent core: routing, memory
+**Here.** Beta, version 0.4.0-beta.1, past the agent core: routing, memory
 recall, delegation, scheduling, self-calibration, a browser face, a
 terminal face, and the harness maintaining itself. What is next is
 named, not implied — see Sequencing in
@@ -237,15 +237,26 @@ a terminal, resuming where the machine left off.
 
 ## Install
 
-Two ways in: the prebuilt native shell, or building from this repo.
-Both land the same binary and the same home.
+Three ways in: a GitHub release (the prebuilt dmg and CLI tarball), building
+the bundle yourself, or building from this repo. All land the same binary
+and the same home.
+
+**The prebuilt release.** The [latest release](https://github.com/adelvillar1/fleet/releases/latest)
+carries the dmg (`fleet_<version>_aarch64.dmg`) that installs the native
+shell as an app, and the CLI tarball (`fleet-aarch64-apple-darwin.tar.gz`)
+for the terminal:
+
+```sh
+gh release download -R adelvillar1/fleet -p '*.dmg'
+open fleet-*.dmg    # drag fleet.app to /Applications
+```
 
 **The prebuilt shell (Tauri).** Build the bundle once and install it as
 an app — no shell profile, no checkout; the services root and the lane
 wiring ride inside the bundle:
 
 ```sh
-cargo tauri build    # → target/release/bundle/dmg/fleet_0.3.0-beta_aarch64.dmg
+cargo tauri build    # → target/release/bundle/dmg/fleet_<version>_aarch64.dmg
 ```
 
 Open the dmg and drag `fleet.app` to `/Applications`. The first launch
