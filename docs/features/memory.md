@@ -1,34 +1,42 @@
-# Memory (slice 8, slice 19)
+# Memory (slice 8, slice 19, the dreaming pass)
 
 Fleet's semantic memory: the git-tracked `memories/` fact substrate,
 hybrid retrieval with the vector path probed rather than assumed,
 shape-first recall, the failure axis with its three signs, the
-resolution's phrases, recall-hit feedback, the protected tier with
-budget-aware turn-context assembly, the `brain_remember`-shaped write
-path, the scheduled consolidation cycle, provenance as the permission
-model, and the turn-path wiring that carries the assembled block into
-every run.
+resolution's phrases, recall-hit feedback, the protected tier under
+its token cap, the `brain_remember`-shaped write path, the scheduled
+consolidation cycle, the dream pass that validates inferences against
+their evidence, provenance as the permission model with the
+`validated` rung, and the turn-path wiring that carries the assembled
+block into every run.
 
 Part 1 landed the substrate, retrieval, routing, feedback, and the
 protected tier; part 2 landed the write path, the consolidation cycle,
 provenance, and the turn wiring. Slice 19 inverted the ranking: the
-shape partitions the recall and the words corroborate within it. All
-of it is in `src/memory.rs`.
+shape partitions the recall and the words corroborate within it. The
+dreaming pass (2026-11-07) added the evidence pointer, the sys1
+validate judgment, and the third basis value. All of it is in
+`src/memory.rs`, with the lane-owning validator beside it in
+`src/dream.rs`.
 
 ```
 src/memory.rs      the substrate, the frontmatter subset, the embedder
                    trait and its two backends, the index, the ranker,
                    shape routing, feedback, assembly, the write path,
-                   the consolidation cycle, the surfaces
-src/calib.rs       the `recall_hit` and `consolidate` ops in the
-                   stream's vocabulary
+                   the consolidation cycle, the dream pass, the surfaces
+src/dream.rs       the validate judge: the sys1 lane session, the
+                   route-cache namespace, the transcript read
+src/calib.rs       the `recall_hit`, `consolidate`, `curate`, and
+                   `validate` ops in the stream's vocabulary
 src/agent.rs       the turn-path wiring: the assembled block, the
                    `memory` record, the `remember`/`supersede` tools
 src/tools.rs       the two tool declarations, beside `use_skill`
 src/session.rs     the `memory` record
-src/cli.rs         `fleet memories` and its four flags, `fleet remember`
+src/session_recall.rs  the archive's synthetic facts and the bounded
+                       transcript text the validate judgment reads
+src/cli.rs         `fleet memories` and its five flags, `fleet remember`
 src/main.rs        the command wiring, the per-run corpus load, the
-                   scheduled cycle in chat
+                   scheduled cycle and dream pass in chat
 src/tui/           the status bar's memory line
 memories/          the fact tree, git-tracked; `.recall-index.json`
                    beside it is generated and gitignored, and
@@ -551,6 +559,18 @@ got exactly one fact beside the tier. The floor (`MIN_RECALL_SCORE`,
 bounds a turn to ~25-30 facts while letting the protected tier and
 ranked recall coexist.
 
+**The section has its own bound: `PROTECTED_TOKEN_CAP` (1024).** The
+tier is never *dropped* — that contract is what makes identity and
+standing preferences load-bearing — but a tier that outgrows its
+corpus (201 facts at ≈15k tokens against a 2,048 budget, the 2026-11-07
+census) rides into every turn unexamined. Past the cap the facts leave
+the section in name order and rank in recall as marked `tier-overflow`
+candidates — scored on the standing a protected fact earned
+(provenance and history, with the topical channels when the embedder
+serves), strongest first, the strongest one entering even under
+budget pressure. The overflow is reachable, honest about how it got
+there, and never in a block twice; the rendered block names the count.
+
 The observed failure this avoids: a turn about one topic injected with
 unrelated facts. The floor, the ranking, and the budget together are
 the mechanism; the floor alone is the coarse guard, the budget the fine
@@ -674,6 +694,57 @@ Every action appends one `consolidate` calibration row:
 with the reason the named bound or the proposal's justification. The
 summary is one fact per pass, named `consolidation-<date>` (then `-2`,
 `-3`, so two passes never collide), listing everything the pass folded.
+
+## The dream pass: validation against the evidence
+
+The cycle is janitorial and deterministic; the dream pass is the half
+that reads. It validates the corpus's inferred facts against the
+sessions their `source` fields name — the transcript is the ground
+truth, the same invariant hard rule 5 guarantees on disk — through the
+sys1 lane's `validate` task (`src/dream.rs` owns the lane session, the
+route cache's third namespace, and the bounded transcript read; the
+pass itself, `memory::dream`, runs lane-free with the judge injected,
+which is what keeps the socket guards true and the measured-set test
+scriptable).
+
+The queue is the corpus's mass, bounded: inferred, live, not
+protected, carrying a `source` — ranked by recent access (the
+`recall_hit` rows of the last `DREAM_ACCESS_DAYS`, 14) and capped at
+`DREAM_PASS_BUDGET` (8 facts per pass). Facts without a source are
+never retro-tagged; they wait for a session that knows them.
+
+Each judgment answers `supported` / `contradicted` / `unverifiable`
+with a confidence, caches under the pair's hash, and writes one
+`validate` calib row — verdict, confidence, and what the pass did.
+Acting is gated by `VALIDATE_AUTO_LAND_CONFIDENCE` (0.80), the
+measured-set bar: `supported` past the bar stamps the fact's basis
+`validated` in place; `contradicted` past the bar retires it through
+the real supersede path, the session and the verdict in the
+justification; everything else is a row and a named skip. The pass
+loses nothing when the lane cannot answer — validation is an upgrade,
+and a fact that stays inferred is exactly what it was.
+
+Scheduling rides the consolidator's thread: `spawn_homekeeping` runs
+the cycle and the pass together, once at start and then hourly, in
+chat, the TUI, and the face. `fleet memories --validate` runs one pass
+on demand and prints what it did.
+
+## The evidence pointer and the `validated` rung
+
+`source` is the write path's optional evidence pointer — the session
+that produced the fact, carried in the frontmatter, excluded from the
+indexed text (a pointer is provenance, not direction). The tool's
+schema names it, `fleet remember --source` takes it, the face's pane
+card edits it, and the supersede path inherits it like the phrases.
+
+`validated` is the third basis value — evidence-checked by the lane,
+no owner authority claimed. It sits between the guess and the owner's
+word on the provenance channel (`PROVENANCE_VALIDATED`, 0.75), it is
+left by the consolidation cycle beside the confirmed-by facts, and it
+supersedes on justification alone (the slice-12 rule, one ruling
+higher). The write path refuses it: the dream pass is the value's only
+producer, past its measured gate — a write that claims a check it did
+not do would forge the one basis the corpus did not earn.
 
 ## Provenance as the permission model
 
@@ -816,6 +887,11 @@ fleet memories --shape <name>               the cards filtered by shape — a
 fleet memories --consolidate                one consolidation pass, with what
                                             it did as cards, then the corpus
                                             the pass left behind
+fleet memories --validate                   one dream pass: the sourced
+                                            inferred facts judged against
+                                            their sessions through sys1,
+                                            verdicts, stamps, and skips
+                                            named
 fleet memories --archive                    the facts the cycle's forget
                                             action archived
 ```

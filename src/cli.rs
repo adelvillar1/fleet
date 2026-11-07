@@ -352,6 +352,10 @@ pub struct MemoriesOptions {
     /// Run the consolidation cycle first, then print the cards: one
     /// pass on demand, with what it did named.
     pub consolidate: bool,
+    /// Run the dream pass: validate the corpus's inferred facts
+    /// against the sessions their `source` fields name, through sys1,
+    /// and print what it did.
+    pub validate: bool,
     /// List the facts the cycle's forget action archived, instead of
     /// the live corpus.
     pub archive: bool,
@@ -383,6 +387,9 @@ pub struct RememberOptions {
     /// means the trajectory either completed or was never recorded as
     /// stalled.
     pub missing: String,
+    /// Optional; the session that produced the fact — the dream pass's
+    /// evidence pointer. Empty means the writer does not know.
+    pub source: String,
     pub body: String,
 }
 
@@ -1607,6 +1614,7 @@ fn parse_memories(args: &[String]) -> Result<Command, String> {
     let mut recall: Option<String> = None;
     let mut shape: Option<String> = None;
     let mut consolidate = false;
+    let mut validate = false;
     let mut archive = false;
     let mut index = 0;
     while index < args.len() {
@@ -1622,6 +1630,7 @@ fn parse_memories(args: &[String]) -> Result<Command, String> {
             }
             "--shape" => shape = Some(take_value(args, &mut index, arg)?),
             "--consolidate" => consolidate = true,
+            "--validate" => validate = true,
             "--archive" => archive = true,
             _ if arg.starts_with('-') && arg != "-" => {
                 return Err(format!("unknown memories option `{arg}`"));
@@ -1636,7 +1645,7 @@ fn parse_memories(args: &[String]) -> Result<Command, String> {
                 .to_string(),
         );
     }
-    if archive && (recall.is_some() || shape.is_some() || consolidate) {
+    if archive && (recall.is_some() || shape.is_some() || consolidate || validate) {
         return Err(
             "--archive lists what the cycle forgot; it is its own surface and combines with nothing"
                 .to_string(),
@@ -1648,10 +1657,17 @@ fn parse_memories(args: &[String]) -> Result<Command, String> {
                 .to_string(),
         );
     }
+    if validate && (recall.is_some() || shape.is_some() || consolidate) {
+        return Err(
+            "--validate runs the dream pass and prints what it did; it combines with nothing"
+                .to_string(),
+        );
+    }
     Ok(Command::Memories(MemoriesOptions {
         recall,
         shape,
         consolidate,
+        validate,
         archive,
     }))
 }
@@ -2150,6 +2166,7 @@ fn parse_remember(args: &[String]) -> Result<Command, String> {
     let mut body_file: Option<String> = None;
     let mut phrases: Option<String> = None;
     let mut missing: Option<String> = None;
+    let mut source: Option<String> = None;
     let mut index = 0;
     while index < args.len() {
         let arg = args[index].as_str();
@@ -2188,6 +2205,9 @@ fn parse_remember(args: &[String]) -> Result<Command, String> {
             // than a subset that leaves the largest channel dark.
             "--phrases" => phrases = Some(take_value(args, &mut index, arg)?),
             "--missing" => missing = Some(take_value(args, &mut index, arg)?),
+            // The evidence pointer: the session the fact came from, the
+            // dream pass's validate judgment reads it against the fact.
+            "--source" => source = Some(take_value(args, &mut index, arg)?),
             _ if arg.starts_with('-') && arg != "-" => {
                 return Err(format!("unknown remember option `{arg}`"));
             }
@@ -2232,6 +2252,7 @@ fn parse_remember(args: &[String]) -> Result<Command, String> {
         body: body.unwrap_or_default(),
         phrases: phrases.unwrap_or_default(),
         missing: missing.unwrap_or_default(),
+        source: source.unwrap_or_default(),
     }))
 }
 
@@ -4180,6 +4201,7 @@ mod tests {
                 recall: None,
                 shape: None,
                 consolidate: false,
+                validate: false,
                 archive: false
             })
         );
@@ -4189,6 +4211,7 @@ mod tests {
                 recall: Some("the deploy is failing".to_string()),
                 shape: None,
                 consolidate: false,
+                validate: false,
                 archive: false
             })
         );
@@ -4198,6 +4221,7 @@ mod tests {
                 recall: None,
                 shape: Some("deploy".to_string()),
                 consolidate: false,
+                validate: false,
                 archive: false
             })
         );
@@ -4209,6 +4233,7 @@ mod tests {
                 recall: None,
                 shape: None,
                 consolidate: true,
+                validate: false,
                 archive: false
             })
         );
@@ -4218,6 +4243,7 @@ mod tests {
                 recall: None,
                 shape: Some("deploy".to_string()),
                 consolidate: true,
+                validate: false,
                 archive: false
             })
         );
@@ -4227,9 +4253,23 @@ mod tests {
                 recall: None,
                 shape: None,
                 consolidate: false,
+                validate: false,
                 archive: true
             })
         );
+        // The dream pass parses alone, like the archive: its own
+        // surface, combined with nothing.
+        assert_eq!(
+            parse(&args(&["memories", "--validate"])).unwrap(),
+            Command::Memories(MemoriesOptions {
+                recall: None,
+                shape: None,
+                consolidate: false,
+                validate: true,
+                archive: false
+            })
+        );
+        assert!(parse(&args(&["memories", "--validate", "--consolidate"])).is_err());
         // The two flags answer two different questions and do not
         // combine.
         assert!(parse(&args(&["memories", "--recall", "x", "--shape", "deploy"])).is_err());
@@ -4368,6 +4408,7 @@ mod tests {
                 tier: String::new(),
                 valid_until: String::new(),
                 body: String::new(),
+                source: String::new(),
                 phrases: String::new(),
                 missing: String::new(),
             })

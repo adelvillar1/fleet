@@ -1402,6 +1402,10 @@ pub fn remember_spec() -> ToolSpec {
                     "type": "string",
                     "description": "YYYY-MM-DD, the day the fact stops being true. Required for the working tier; a durable fact carries none.",
                 },
+                "source": {
+                    "type": "string",
+                    "description": "The source session, if any.",
+                },
                 "body": {
                     "type": "string",
                     "description": "The fact's full content.",

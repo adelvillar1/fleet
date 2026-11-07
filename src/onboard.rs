@@ -981,6 +981,7 @@ pub fn remember_onboarding(home: &Path, facts: &Facts) -> Result<String, String>
         basis: crate::memory::Basis::ConfirmedBy,
         tier: crate::memory::Tier::Durable,
         valid_until: String::new(),
+        source: String::new(),
         body,
     };
     memory

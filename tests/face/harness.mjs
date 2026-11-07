@@ -8477,6 +8477,7 @@ const memoryDoc = (() => {
     name, description: 'the ' + name + ' fact', fact_type: section, section,
     basis: 'inferred', tier: 'durable', date: '2026-10-01', recall_count: 0,
     protected: false, retired: false, superseded_by: '', valid_until: '',
+    source: '',
     shape: [], phrases: [], missing: [], body: 'the body of ' + name,
     path: '/repo/memories/' + name + '.md', relative: 'memories/' + name + '.md',
     ...extra,
@@ -8491,6 +8492,8 @@ const memoryDoc = (() => {
     facts: projects.concat([
       fact('owners-ruling', 'feedback', { basis: 'confirmed-by', protected: true,
         recall_count: 4 }),
+      fact('validated-one', 'project', { basis: 'validated', source: 'sess-042',
+        recall_count: 2 }),
       fact('odd-typed', 'everything-else', { fact_type: 'state-sync' }),
       fact('folded-away', 'project', { retired: true, superseded_by: 'fact-00' }),
     ]),
@@ -8568,13 +8571,13 @@ async function theMemoryRailCarriesTheQueueAndTheVerbs() {
     String(items.length));
   const more = routed.rows('.budget-more');
   check('MEM the budget names what is behind the press',
-    more.length === 1 && more[0].textContent.includes('1 more facts'),
+    more.length === 1 && more[0].textContent.includes('2 more facts'),
     more.length ? more[0].textContent : 'none');
   more[0].click();
   await flush(40);
   const revealed = routed.rows('.cfg-item');
   check('MEM the press reveals the rest, never recalled among them',
-    revealed.length === 31 &&
+    revealed.length === 32 &&
       revealed.some((row) => row.textContent.includes('never recalled')),
     String(revealed.length));
 
@@ -8603,6 +8606,35 @@ async function theMemoryRailCarriesTheQueueAndTheVerbs() {
   check('MEM the card carries the body',
     !!bodyBox && bodyBox.value === 'the body of fact-30',
     bodyWrap ? 'children: ' + bodyWrap.children.map((c) => c.name).join(',') : 'no wrap');
+
+  // The evidence pointer rides the card: a fact with a `source` renders
+  // it as the field the dream pass's validate judgment reads, and a
+  // save posts it through the substrate's own rewriter.
+  const validatedRow = routed.rows('.cfg-item')
+    .find((row) => row.textContent.includes('validated-one'));
+  validatedRow.click();
+  await flush(60);
+  const validatedForm = Array.from(routed.rows('form'))
+    .find((form) => form.textContent.includes('the session id this fact came from'));
+  check('MEM the card carries the source field',
+    !!validatedForm, routed.text('dock-object-title'));
+  const sourceWrap = validatedForm
+    ? Array.from(validatedForm.querySelectorAll('.fact-field'))
+        .find((wrap) => wrap.textContent.includes('the session id this fact came from'))
+    : null;
+  const sourceBox = sourceWrap ? sourceWrap.children[sourceWrap.children.length - 1] : null;
+  check('MEM the source field renders the pointer',
+    !!sourceBox && sourceBox.value === 'sess-042',
+    sourceBox ? sourceBox.value : 'no box');
+  validatedForm.fire('submit', { preventDefault() {} });
+  await flush(60);
+  const saves = routed.calls.filter((call) => call.url === '/api/fact' && call.method === 'POST');
+  check('MEM a save posts the source through the rewriter',
+    saves.length === 1 && JSON.parse(saves[saves.length - 1].body).source === 'sess-042' &&
+      JSON.parse(saves[saves.length - 1].body).name === 'validated-one',
+    JSON.stringify(saves.map((call) => call.body)));
+  routed.fireOn('dock-object-close', 'click');
+  await flush(40);
 
   // The supersede submits through the substrate's own writer, with the
   // justification the permission model requires.

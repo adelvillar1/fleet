@@ -1425,6 +1425,9 @@ pub struct MemoryFact {
     pub retired: bool,
     pub superseded_by: String,
     pub valid_until: String,
+    /// The evidence pointer: the session the fact names, the dream
+    /// pass's validate judgment reads it against the fact.
+    pub source: String,
     pub shape: Vec<String>,
     pub phrases: Vec<String>,
     pub missing: Vec<String>,
@@ -1505,6 +1508,7 @@ pub fn read_memory(root: &Path, calib_root: &Path, day: &str) -> MemorySnapshot 
             retired: fact.forgotten(day),
             superseded_by: fact.superseded_by.clone(),
             valid_until: fact.valid_until.clone(),
+            source: fact.source.clone(),
             shape: fact.shape.clone(),
             phrases: fact.phrases.clone(),
             missing: fact.missing.clone(),

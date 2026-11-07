@@ -183,6 +183,11 @@ fn fact_for(id: &str, path: &Path, records: &[Record], count: u64) -> memory::Fa
         recall_count: count,
         superseded_by: String::new(),
         valid_until: String::new(),
+        // The session itself IS the synthetic fact's source, and the
+        // pointer rides in the id form so the dream pass's validate
+        // judgment can resolve it — a synthetic Memory is never routed
+        // through the hit path, but the provenance is honest.
+        source: id.to_string(),
         body: digest(records, &task),
         path: path.to_path_buf(),
         stamp: memory::file_stamp(path),
@@ -366,6 +371,38 @@ fn digest(records: &[Record], task: &str) -> String {
         }
     }
     cut(&lines.join("\n"), DIGEST_CAP)
+}
+
+/// The evidence text a dream-pass validation reads: the session's own
+/// words and calls, bounded — the task, every user message, every
+/// assistant tool call, the ending. This is what the memory-dreaming
+/// plan's validate judgment reads a fact against: the transcript is
+/// the ground truth, and this is its bounded form. Twice the archive
+/// digest's cap — the judgment is of one fact against one session,
+/// and the session is the whole of what it may read.
+pub fn transcript_text(records: &[Record]) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    for record in records {
+        match record {
+            Record::User { content } => {
+                lines.push(format!("user: {}", sanitized(content)));
+            }
+            Record::Assistant { tool_calls, .. } => {
+                for call in tool_calls {
+                    lines.push(format!(
+                        "call: {} {}",
+                        sanitized(&call.function.name),
+                        compact_arguments(&call.function.arguments)
+                    ));
+                }
+            }
+            Record::End { stop_reason, .. } => {
+                lines.push(format!("ended: {}", sanitized(stop_reason)));
+            }
+            _ => {}
+        }
+    }
+    cut(&lines.join("\n"), DIGEST_CAP * 2)
 }
 
 /// The call's arguments as one compact line: re-serialized through

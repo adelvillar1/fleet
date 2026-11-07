@@ -110,6 +110,26 @@ pub struct Cache {
     /// judgments of the same producer.
     #[serde(default)]
     curate: HashMap<String, CurateVerdict>,
+    /// One recorded validation verdict per fact-transcript pair hash —
+    /// the memory-dreaming plan's third namespace, under the same
+    /// producer key and the same rekey discipline: both judgment maps
+    /// are judgments of the same lane, so a re-vendored service
+    /// invalidates all of them together.
+    #[serde(default)]
+    validate: HashMap<String, ValidateVerdict>,
+}
+
+/// One recorded validation judgment (the memory-dreaming plan's C3):
+/// what the lane said about one fact against the transcript its
+/// `source` names. The pair's texts are never stored — the hash is the
+/// key, the fact's name rides the calib row, not the cache.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ValidateVerdict {
+    /// `supported`, `contradicted`, or `unverifiable` — the lane's
+    /// word, parsed by [`crate::memory`]'s validate composition.
+    pub verdict: String,
+    /// The confidence the verdict rode at, in `[0, 1]`.
+    pub confidence: f64,
 }
 
 impl Cache {
@@ -197,6 +217,19 @@ impl Cache {
     /// it with the route verdicts, in one write.
     pub fn put_curate(&mut self, pair_hash: String, verdict: CurateVerdict) {
         self.curate.insert(pair_hash, verdict);
+    }
+
+    /// The recorded validation verdict for `pair_hash`, when this cache
+    /// is the loading lane's — the curate namespace's discipline, one
+    /// namespace over.
+    pub fn get_validate(&self, pair_hash: &str) -> Option<&ValidateVerdict> {
+        self.validate.get(pair_hash)
+    }
+
+    /// Record one validation verdict under `pair_hash`; `flush`
+    /// persists it with the rest, in one write.
+    pub fn put_validate(&mut self, pair_hash: String, verdict: ValidateVerdict) {
+        self.validate.insert(pair_hash, verdict);
     }
 
     /// Persist under `key`, through a unique temp file and a rename.
@@ -414,6 +447,41 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    /// The memory-dreaming plan's third namespace: a validate verdict
+    /// round-trips the same file under the same key discipline, and the
+    /// pre-dream format — no `validate` key at all — loads with an
+    /// empty map.
+    #[test]
+    fn a_validate_verdict_round_trips_and_an_old_file_loads_empty() {
+        let home = scratch("route-cache-validate");
+        let mut cache = Cache::load(&home);
+        assert!(
+            cache.get_validate("pair1").is_none(),
+            "a fresh cache is empty"
+        );
+        cache.put_validate(
+            "pair1".to_string(),
+            ValidateVerdict {
+                verdict: "supported".to_string(),
+                confidence: 0.91,
+            },
+        );
+        cache.flush("python3 /lanes/sys1 walk=hard");
+        let reloaded = Cache::load(&home);
+        let verdict = reloaded
+            .get_validate("pair1")
+            .expect("the verdict round-trips");
+        assert_eq!(verdict.verdict, "supported");
+        assert!((verdict.confidence - 0.91).abs() < 1e-9);
+        // A different lane key serves nothing — the same producer rule
+        // the route and curate verdicts run on.
+        assert!(
+            !reloaded.keyed_for("python3 /other-lane"),
+            "the key disciplines the namespace too"
+        );
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     /// The stats a reader sees: how many judgments are recorded, and the

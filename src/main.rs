@@ -447,7 +447,11 @@ async fn chat_command(options: &ChatOptions) -> ExitCode {
     let user_home = std::env::var("HOME").ok();
     let calib_root = fleet::calib::resolve_root(&home, user_home.as_deref());
     let memories_root = fleet::memory::resolve_root(&std::env::current_dir().unwrap_or_default());
-    fleet::memory::spawn_consolidator(memories_root, fleet::calib::Stream::open(&calib_root));
+    fleet::memory::spawn_homekeeping(
+        memories_root,
+        Some(home.clone()),
+        fleet::calib::Stream::open(&calib_root),
+    );
     // The scheduled jobs: the catch-up pass once at startup, then one
     // tick per second for the life of the session. The scheduler reads
     // the job store fresh every tick, so `fleet cron add` from another
@@ -1645,10 +1649,52 @@ fn desk_command() -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// The dream pass's shared runner (the memory-dreaming plan's C5): the
+/// sys1 judge over the home, the pass over the corpus, the report as
+/// cards. The judge's lane calls await, so they run on a
+/// current-thread runtime this function owns, block_on per judgment —
+/// legal because the pass itself is sync and runs on whichever plain
+/// thread called this: the CLI's main thread, or the scheduled
+/// consolidator thread. A judge that cannot start is the pass's named
+/// skip, never a failure.
+fn run_dream_pass(root: &std::path::Path, home: &std::path::Path) -> String {
+    let user_home = std::env::var("HOME").ok();
+    let calib_root = fleet::calib::resolve_root(home, user_home.as_deref());
+    let stream = fleet::calib::Stream::open(&calib_root);
+    let today = fleet::calib::today();
+    let runtime = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            return format!("the dream pass could not start its runtime: {error}\n");
+        }
+    };
+    let mut validator = fleet::dream::DreamValidator::new(home);
+    let report = fleet::memory::dream(
+        root,
+        &today,
+        Some(&calib_root),
+        Some(&stream),
+        |fact: &fleet::memory::Fact| runtime.block_on(validator.judge(fact)),
+    );
+    runtime.block_on(validator.close());
+    fleet::memory::render_dream(&report)
+}
+
 fn memories_command(options: &cli::MemoriesOptions) -> ExitCode {
     let root = fleet::memory::resolve_root(&std::env::current_dir().unwrap_or_default());
     if options.archive {
         print!("{}", fleet::memory::render_archive(&root));
+        return ExitCode::SUCCESS;
+    }
+    if options.validate {
+        let Some(home) = fleet_home().ok() else {
+            eprintln!("fleet: no home directory known; set FLEET_HOME or HOME");
+            return ExitCode::FAILURE;
+        };
+        print!("{}", run_dream_pass(&root, &home));
         return ExitCode::SUCCESS;
     }
     if options.consolidate {
@@ -1707,6 +1753,7 @@ fn remember_command(options: &cli::RememberOptions) -> ExitCode {
         ("tier", &options.tier),
         ("valid-until", &options.valid_until),
         ("body", &options.body),
+        ("source", &options.source),
     ] {
         if !value.is_empty() {
             object.insert(flag.to_string(), serde_json::Value::String(value.clone()));

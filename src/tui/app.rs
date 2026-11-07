@@ -4947,6 +4947,7 @@ mod tests {
             retired: false,
             superseded_by: String::new(),
             valid_until: String::new(),
+            source: String::new(),
             shape: Vec::new(),
             phrases: Vec::new(),
             missing: Vec::new(),

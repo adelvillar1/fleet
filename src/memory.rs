@@ -190,6 +190,16 @@ const ANCESTOR_LIMIT: usize = 12;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Basis {
     ConfirmedBy,
+    /// Evidence-checked by the sys1 lane's `validate` judgment: the
+    /// fact's own transcript was read and found to support it. No
+    /// owner authority claimed — the permission model treats it as
+    /// supersedable on justification (the slice-12 rule for inferred),
+    /// the consolidation cycle leaves it beside the confirmed-by ones,
+    /// and the provenance channel ranks it between inferred and
+    /// confirmed-by ([`PROVENANCE_VALIDATED`]). Never written by the
+    /// write path directly: the only producer is the dream pass, and
+    /// only after its measured gate has landed.
+    Validated,
     Inferred,
 }
 
@@ -198,15 +208,17 @@ impl Basis {
     pub fn label(self) -> &'static str {
         match self {
             Basis::ConfirmedBy => "confirmed-by",
+            Basis::Validated => "validated",
             Basis::Inferred => "inferred",
         }
     }
 
     /// Parse the vocabulary, or `None` for anything else — a basis
-    /// outside the two words is a malformed fact, not a default.
+    /// outside the three words is a malformed fact, not a default.
     fn parse(text: &str) -> Option<Basis> {
         match text.trim() {
             "confirmed-by" => Some(Basis::ConfirmedBy),
+            "validated" => Some(Basis::Validated),
             "inferred" => Some(Basis::Inferred),
             _ => None,
         }
@@ -296,6 +308,13 @@ pub struct Fact {
     /// ISO date after which the fact is stale; a past date forgets this
     /// fact.
     pub valid_until: String,
+    /// The session that produced the fact — the evidence pointer the
+    /// dream pass's validate judgment reads against (the
+    /// memory-dreaming plan's C1). A session id, or empty when the fact
+    /// predates the field or the writer did not know. Deliberately
+    /// EXCLUDED from [`Fact::indexed_text`]: the pointer is provenance,
+    /// not direction, and embedding it would score the fact for an id.
+    pub source: String,
     /// The fact's full content: everything after the frontmatter fence.
     pub body: String,
     pub path: PathBuf,
@@ -846,8 +865,9 @@ fn fact(
     // every writer to have been the harness's own.
     let description = sanitize_line(&document.required("description")?, MAX_DESCRIPTION_CHARS);
     let basis = match document.get("basis") {
-        Some(text) => Basis::parse(text)
-            .ok_or_else(|| format!("unknown basis `{text}` (expected confirmed-by or inferred)"))?,
+        Some(text) => Basis::parse(text).ok_or_else(|| {
+            format!("unknown basis `{text}` (expected confirmed-by, validated, or inferred)")
+        })?,
         None => Basis::Inferred,
     };
     let tier = match document.get("tier") {
@@ -876,6 +896,7 @@ fn fact(
         recall_count,
         superseded_by: document.get("superseded-by").unwrap_or("").to_string(),
         valid_until: document.get("valid-until").unwrap_or("").to_string(),
+        source: document.get("source").unwrap_or("").to_string(),
         body: document.body,
         path,
         stamp,
@@ -1511,6 +1532,13 @@ pub const W_PROVENANCE: f64 = 0.05;
 /// what ranks, and an inferred fact that drove is still a vector.
 pub const PROVENANCE_CONFIRMED: f64 = 1.0;
 
+/// What a `validated` fact contributes to the provenance channel: between
+/// the guess and the owner's word, because validation is evidence-checked
+/// but carries no owner authority (the memory-dreaming plan's C2). The
+/// dream pass is the value's only producer, and only past its measured
+/// gate.
+pub const PROVENANCE_VALIDATED: f64 = 0.75;
+
 /// What an `inferred` fact contributes to the provenance channel.
 pub const PROVENANCE_INFERRED: f64 = 0.5;
 
@@ -1636,6 +1664,7 @@ impl Score {
         let freshness = decay_factor(date, today_days);
         let provenance = match basis {
             Basis::ConfirmedBy => PROVENANCE_CONFIRMED,
+            Basis::Validated => PROVENANCE_VALIDATED,
             Basis::Inferred => PROVENANCE_INFERRED,
         };
         let total = W_VECTOR * vector
@@ -2797,6 +2826,7 @@ impl Memory {
                 score: Score::unranked(),
                 off_shape: false,
                 via: None,
+                tier_overflow: false,
             })
             .collect();
         hits.sort_by(|left, right| left.fact.name.cmp(&right.fact.name));
@@ -2867,6 +2897,7 @@ impl Memory {
                 score,
                 off_shape: !in_pool,
                 via: None,
+                tier_overflow: false,
             };
             if in_pool {
                 primary.push(hit);
@@ -2953,6 +2984,7 @@ impl Memory {
                     score,
                     off_shape: false,
                     via: Some(neighbour.edge.label()),
+                    tier_overflow: false,
                 });
             }
         };
@@ -3234,6 +3266,11 @@ pub struct ScoredFact {
     /// the line with it, so a graph-sourced fact is never silently mixed
     /// into the shape's own answer.
     pub via: Option<&'static str>,
+    /// True when the fact is protected but past the tier cap — it left
+    /// the protected section and rides the ranking as a marked
+    /// candidate, so the cap's overflow is reachable without ever
+    /// entering a block twice (the memory-dreaming plan's C6).
+    pub tier_overflow: bool,
 }
 
 /// The bounded, frontmatter-preserving field rewrite: the one line the
@@ -3415,6 +3452,18 @@ static REWRITE_SERIAL: AtomicUsize = AtomicUsize::new(0);
 /// while letting the protected tier and ranked recall coexist.
 pub const ASSEMBLY_TOKEN_BUDGET: usize = 2048;
 
+/// The protected section's own bound, in the same estimated tokens the
+/// assembly budget reads (the memory-dreaming plan's C6). The tier is
+/// never *dropped* — that contract is what makes identity and standing
+/// preferences load-bearing — but a tier that outgrew its corpus
+/// (201 facts at ≈15k tokens against a 2,048 budget) rides into every
+/// turn unexamined, and injected context is not free: the deeper the
+/// standing block, the thinner the attention over it. Past the cap the
+/// newest-admitted-by-name facts leave the section and rank in recall
+/// as marked `tier-overflow` candidates — reachable, honest about how
+/// they got there, and never in a block twice.
+pub const PROTECTED_TOKEN_CAP: usize = 1024;
+
 /// One turn's assembled context: the protected tier (never evicted),
 /// the shape-first recall that fit the budget — its primary pool and
 /// its marked spillover — the working memory that fit after it, and
@@ -3428,8 +3477,13 @@ pub struct Assembly {
     /// spillover, each strongest first — the full ranking, before the
     /// budget applies.
     pub ranked: Vec<ScoredFact>,
-    /// The protected tier, name-sorted.
+    /// The protected tier, name-sorted — the section the cap admitted,
+    /// never dropped.
     pub protected: Vec<ScoredFact>,
+    /// The protected facts past [`PROTECTED_TOKEN_CAP`]: out of the
+    /// section, ranked in recall as marked `tier-overflow` candidates.
+    /// Also the count the block names.
+    pub tier_overflow: Vec<ScoredFact>,
     /// The ranked facts that entered, in rank order: the primary pool
     /// first, then the spillover that a route admitted. This is what
     /// the turn path records hits for and what the block renders.
@@ -3521,7 +3575,6 @@ impl Memory {
     ) -> Assembly {
         let partition = self.partition_with_shape(instruction, hint);
         let shape = partition.shape;
-        let protected = self.protected();
         let ranked = self.ranked_of(&partition);
         let today = calib::today();
 
@@ -3536,10 +3589,54 @@ impl Memory {
             Some(spillover_route_room(shape))
         };
 
-        let mut used = 0;
-        for hit in &protected {
-            used += estimate_tokens(protected_line(hit).chars().count());
+        // The protected section: name-sorted facts in while they fit the
+        // cap, the overflow collected for the ranking below — never
+        // dropped, and never in the section and the ranking at once.
+        let mut protected: Vec<ScoredFact> = Vec::new();
+        let mut overflow_facts: Vec<Fact> = Vec::new();
+        let mut protected_used = 0;
+        for hit in self.protected() {
+            let cost = estimate_tokens(protected_line(&hit).chars().count());
+            if protected_used + cost <= PROTECTED_TOKEN_CAP {
+                protected_used += cost;
+                protected.push(hit);
+            } else {
+                overflow_facts.push(hit.fact);
+            }
         }
+        // The overflow ranks by its own standing — provenance and
+        // history are what a protected fact earned; the topical
+        // channels join only when the embedder serves, and the embed
+        // is paid only when an overflow exists at all. The name is the
+        // deterministic tie-break, the same discipline as every pool.
+        let mut tier_overflow: Vec<ScoredFact> = Vec::new();
+        if !overflow_facts.is_empty() {
+            let today_days = parse_day(&today);
+            let query_tokens = stems(instruction);
+            let query_vector = self.embedder.embed(instruction);
+            for fact in &overflow_facts {
+                let mut scored = self.score(fact, &query_vector, &query_tokens, today_days, None);
+                scored.total = scored
+                    .total
+                    .max(W_PROVENANCE * scored.provenance + W_HISTORY * scored.history);
+                tier_overflow.push(ScoredFact {
+                    fact: fact.clone(),
+                    score: scored,
+                    off_shape: false,
+                    via: None,
+                    tier_overflow: true,
+                });
+            }
+            tier_overflow.sort_by(|left, right| {
+                right
+                    .score
+                    .total
+                    .partial_cmp(&left.score.total)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then_with(|| left.fact.name.cmp(&right.fact.name))
+            });
+        }
+        let mut used = protected_used;
         let mut recalled: Vec<ScoredFact> = Vec::new();
         let mut primary: Vec<ScoredFact> = Vec::new();
         let mut spillover: Vec<ScoredFact> = Vec::new();
@@ -3552,6 +3649,20 @@ impl Memory {
                 used += cost;
                 recalled.push(hit.clone());
                 primary.push(hit.clone());
+            } else {
+                dropped.push(hit.fact.name.clone());
+            }
+        }
+        // The tier's overflow rides here, between the pool and the
+        // spillover: protected standing is worth more than off-shape
+        // proximity, and the strongest overflow fact enters even under
+        // pressure — the fork's `renderBlock` rule applied to the cap's
+        // other half.
+        for (index, hit) in tier_overflow.iter().enumerate() {
+            let cost = estimate_tokens(recalled_line(hit).chars().count());
+            if index == 0 || used + cost <= budget {
+                used += cost;
+                recalled.push(hit.clone());
             } else {
                 dropped.push(hit.fact.name.clone());
             }
@@ -3608,6 +3719,7 @@ impl Memory {
             shape,
             ranked,
             protected,
+            tier_overflow,
             recalled,
             primary,
             spillover,
@@ -3687,7 +3799,13 @@ fn protected_line(hit: &ScoredFact) -> String {
 /// absent pieces are named rather than lost.
 fn recalled_line(hit: &ScoredFact) -> String {
     let tag = line_tag(&hit.fact);
-    let marker = if hit.off_shape { " off-shape" } else { "" };
+    let mut marker = String::new();
+    if hit.off_shape {
+        marker.push_str(" off-shape");
+    }
+    if hit.tier_overflow {
+        marker.push_str(" tier-overflow");
+    }
     let mut line = format!(
         "- {} [{tag} {:.2} {}{}] {}",
         hit.fact.sign().marker(),
@@ -3755,6 +3873,13 @@ pub fn render_assembly(assembly: &Assembly) -> String {
         for hit in &assembly.protected {
             out.push_str(&protected_line(hit));
             out.push('\n');
+        }
+        if !assembly.tier_overflow.is_empty() {
+            out.push_str(&format!(
+                "{} protected fact{} past the section's cap rank below as tier-overflow candidates.\n",
+                assembly.tier_overflow.len(),
+                plural(assembly.tier_overflow.len())
+            ));
         }
     }
     if !assembly.recalled.is_empty() {
@@ -3858,6 +3983,12 @@ pub const MAX_MISSING_CHARS: usize = 160;
 /// The justification's bound: it rides the calibration row and the
 /// replacement fact's body, so it is bounded like the description.
 pub const MAX_JUSTIFICATION_CHARS: usize = 512;
+
+/// The `source` field's bound: a session id (or a short archive
+/// pointer), never prose. The pointer is provenance — the dream pass's
+/// validate judgment reads the named session against the fact — and an
+/// unbounded pointer field is the `bound-exceeded` class waiting.
+pub const MAX_SOURCE_CHARS: usize = 128;
 
 /// The type a write defaults to: the corpus's common kind, and a
 /// deliberately unprotected one. A fact that marks identity or a
@@ -4009,6 +4140,9 @@ pub struct Remember {
     /// ISO date after which the fact is stale; empty for a durable
     /// fact, which is the writer's default and means no expiry.
     pub valid_until: String,
+    /// The session that produced the fact — the dream pass's evidence
+    /// pointer. Optional; empty when the writer does not know.
+    pub source: String,
     pub body: String,
 }
 
@@ -4048,11 +4182,23 @@ impl Remember {
         let phrases = parse_phrases(&string_array_argument(arguments, "phrases")?)?;
         let missing = parse_missing(&string_array_argument(arguments, "missing")?)?;
         let basis = match string_argument(arguments, "basis")? {
-            Some(text) => Basis::parse(&text.to_ascii_lowercase()).ok_or_else(|| {
-                WriteError::Basis(format!(
-                    "`{text}` is not a basis: `basis` is required on every write and is confirmed-by or inferred"
-                ))
-            })?,
+            Some(text) => {
+                let parsed = Basis::parse(&text.to_ascii_lowercase()).ok_or_else(|| {
+                    WriteError::Basis(format!(
+                        "`{text}` is not a basis: `basis` is required on every write and is confirmed-by or inferred"
+                    ))
+                })?;
+                // `validated` is the dream pass's value: a write that
+                // claims evidence-checking it did not do would forge the
+                // one basis the corpus did not earn. The stamp lands
+                // only through the validate pass, past its measured gate.
+                if parsed == Basis::Validated {
+                    return Err(WriteError::Basis(
+                        "`validated` is written by the dream pass's validate judgment, never by a write: write `inferred` and let the pass earn the stamp".to_string(),
+                    ));
+                }
+                parsed
+            }
             None => {
                 return Err(WriteError::Basis(
                     "the `basis` argument is required on every write: confirmed-by when the user stated or verified the fact, inferred when the session merely produced it".to_string(),
@@ -4102,6 +4248,10 @@ impl Remember {
                 body.len()
             )));
         }
+        let source = match string_argument(arguments, "source")? {
+            Some(text) => sanitize_line(&text, MAX_SOURCE_CHARS),
+            None => String::new(),
+        };
         // R4b: the third sign is only real if the companions are named.
         // `missing` was optional and unpopulated — 15 corpus facts carry
         // the field and all 15 carry it empty — so an `incomplete` fact
@@ -4124,6 +4274,7 @@ impl Remember {
             basis,
             tier,
             valid_until,
+            source,
             body,
         })
     }
@@ -4153,6 +4304,10 @@ pub struct FactEdit {
     pub phrases: Option<Vec<String>>,
     pub missing: Option<Vec<String>>,
     pub valid_until: Option<String>,
+    /// The evidence pointer: `None` leaves it alone, an empty string
+    /// clears it, a value states it — the companions' own
+    /// absent-is-inherit grammar, one field over.
+    pub source: Option<String>,
     /// The replacement body: everything after the frontmatter fence.
     pub body: Option<String>,
 }
@@ -4223,6 +4378,8 @@ impl FactEdit {
                 None => None,
             },
             valid_until,
+            source: string_argument(arguments, "source")?
+                .map(|text| sanitize_line(&text, MAX_SOURCE_CHARS)),
             body,
         })
     }
@@ -4270,6 +4427,9 @@ pub fn edit(root: &Path, request: &FactEdit) -> Result<Fact, WriteError> {
     }
     if let Some(valid_until) = &request.valid_until {
         rewrite_field(&path, "valid-until", valid_until)?;
+    }
+    if let Some(source) = &request.source {
+        rewrite_field(&path, "source", source)?;
     }
     if let Some(body) = &request.body {
         rewrite_body(&path, body)?;
@@ -4506,6 +4666,11 @@ fn render_document(request: &Remember, today: &str) -> String {
     } else {
         out.push_str(&format!("valid-until: {}\n", request.valid_until));
     }
+    if request.source.is_empty() {
+        out.push_str("source:\n");
+    } else {
+        out.push_str(&format!("source: {}\n", request.source));
+    }
     out.push_str("---\n\n");
     out.push_str(&request.body);
     if !request.body.is_empty() && !request.body.ends_with('\n') {
@@ -4588,6 +4753,7 @@ impl Memory {
             recall_count: 0,
             superseded_by: String::new(),
             valid_until: request.valid_until.clone(),
+            source: request.source.clone(),
             body: request.body.clone(),
             path,
             stamp,
@@ -4877,7 +5043,11 @@ impl Memory {
             )));
         }
         // The permission model: provenance decides what a write may do
-        // without an approval in hand.
+        // without an approval in hand. `confirmed-by` waits for the
+        // owner; `validated` supersedes on justification (the
+        // memory-dreaming plan's ruling) — it was earned by a judgment
+        // naming its evidence, and a supersession naming new evidence
+        // is the same act one step on; `inferred` always has.
         if fact.basis == Basis::ConfirmedBy && !approved {
             return Err(WriteError::NeedsApproval(format!(
                 "`{}` is confirmed-by \u{2014} a load-bearing fact \u{2014} so it cannot be modified or forgotten without approval",
@@ -4938,6 +5108,12 @@ impl Memory {
                     basis: Basis::Inferred,
                     tier: fact.tier,
                     valid_until,
+                    // The evidence pointer rides: the replacement
+                    // describes the same fact's grounding, and a
+                    // supersession that names a different session
+                    // states it in `body` until a source argument
+                    // arrives.
+                    source: fact.source.clone(),
                     body,
                 };
                 let path = write_document(&self.root, &replacement_request, &today, true)?;
@@ -5069,6 +5245,7 @@ impl Memory {
                     recall_count: 0,
                     superseded_by: String::new(),
                     valid_until: replacement_request.valid_until.clone(),
+                    source: replacement_request.source.clone(),
                     body: replacement_request.body.clone(),
                     stamp: file_stamp(&path),
                     path,
@@ -5315,14 +5492,18 @@ fn supersede_candidates(facts: &[Fact], today: &str, today_days: Option<i64>) ->
         .collect()
 }
 
-/// The provenance rule, from the cycle's side: confirmed-by facts in the
-/// supersede set's shape, named and left exactly as they are.
+/// The provenance rule, from the cycle's side: confirmed-by and
+/// validated facts in the supersede set's shape, named and left exactly
+/// as they are. The confirmed-by one is the owner's to judge; the
+/// validated one carries evidence the pass checked, and folding it
+/// would keep the sentence and lose the check — the same shape the
+/// incomplete rule protects.
 fn untouched_candidates(facts: &[Fact], today: &str, today_days: Option<i64>) -> Vec<Fact> {
     facts
         .iter()
         .filter(|fact| {
             fact.tier == Tier::Durable
-                && fact.basis == Basis::ConfirmedBy
+                && matches!(fact.basis, Basis::ConfirmedBy | Basis::Validated)
                 && fact.superseded_by.trim().is_empty()
                 && !fact.forgotten(today)
                 && fact.recall_count == 0
@@ -5625,6 +5806,7 @@ fn write_summary(
         basis: Basis::Inferred,
         tier: Tier::Episodic,
         valid_until: String::new(),
+        source: String::new(),
         body,
     };
     // The name is free by construction, so the existence check is off.
@@ -5716,36 +5898,445 @@ fn archive_fact(root: &Path, fact: &Fact) -> bool {
 /// are safe by the stream's own construction (one `O_APPEND` write per
 /// row).
 pub fn spawn_consolidator(root: PathBuf, stream: calib::Stream) {
-    std::thread::spawn(move || loop {
-        let today = calib::today();
-        let result = consolidate(&root, &today, Some(&stream));
-        if !result.is_empty() {
-            let tally = calib::ACTIONS
-                .iter()
-                .filter_map(|action| {
-                    let count = result
-                        .actions
-                        .iter()
-                        .filter(|one| one.action == *action)
-                        .count();
-                    (count > 0).then(|| format!("{count} {action}"))
-                })
-                .collect::<Vec<_>>()
-                .join(", ");
-            eprintln!(
-                "fleet: memories: consolidated {} fact{} ({tally}) \u{2014} see `fleet calib`",
-                result.actions.len(),
-                if result.actions.len() == 1 { "" } else { "s" },
-            );
+    spawn_homekeeping(root, None, stream);
+}
+
+/// The consolidation thread with the dream pass beside it (the
+/// memory-dreaming plan's C5): one consolidate + one validate pass at
+/// once, then both every [`CONSOLIDATE_INTERVAL`], for the life of the
+/// process. `home` arms the dream half — the sys1 judge and the route
+/// cache read it — and `None` keeps the old behavior exactly: the
+/// cycle only. A judge that cannot start is the pass's named skip on
+/// every queued fact, never a crash.
+pub fn spawn_homekeeping(root: PathBuf, home: Option<PathBuf>, stream: calib::Stream) {
+    std::thread::spawn(move || {
+        // The judge's lane calls await, so the dream half owns a
+        // current-thread runtime for the thread's life; the pass is
+        // sync and block_on's per judgment.
+        let runtime = home.as_ref().and_then(|_| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .ok()
+        });
+        loop {
+            let today = calib::today();
+            let result = consolidate(&root, &today, Some(&stream));
+            if !result.is_empty() {
+                let tally = calib::ACTIONS
+                    .iter()
+                    .filter_map(|action| {
+                        let count = result
+                            .actions
+                            .iter()
+                            .filter(|one| one.action == *action)
+                            .count();
+                        (count > 0).then(|| format!("{count} {action}"))
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                eprintln!(
+                    "fleet: memories: consolidated {} fact{} ({tally}) \u{2014} see `fleet calib`",
+                    result.actions.len(),
+                    if result.actions.len() == 1 { "" } else { "s" },
+                );
+            }
+            // The dream half: bounded like every pass, its verdicts
+            // audited like every judgment. The calib root rides the
+            // home's own stream.
+            if let (Some(home), Some(runtime)) = (&home, &runtime) {
+                let user_home = std::env::var("HOME").ok();
+                let calib_root = crate::calib::resolve_root(home, user_home.as_deref());
+                let mut validator = crate::dream::DreamValidator::new(home);
+                let report = dream(
+                    &root,
+                    &today,
+                    Some(&calib_root),
+                    Some(&stream),
+                    |fact: &Fact| runtime.block_on(validator.judge(fact)),
+                );
+                validator_close(runtime, validator);
+                if !report.is_empty() {
+                    eprintln!(
+                        "fleet: memories: validated {} fact{} ({} stamped, {} retired, {} skipped) \u{2014} see `fleet calib`",
+                        report.judged.len(),
+                        plural(report.judged.len()),
+                        report.stamped.len(),
+                        report.retired.len(),
+                        report.skipped.len(),
+                    );
+                }
+            }
+            // KI-063: the pass's rows are flushed before the sleep. The
+            // stream drains when its last handle drops, and this thread's
+            // handle never drops — so a process that exits mid-pass used to
+            // lose the rows still queued. A bounded wait per pass: the cycle
+            // is hourly, and a wedged disk costs the wait, not the cycle.
+            stream.flush();
+            std::thread::sleep(CONSOLIDATE_INTERVAL);
         }
-        // KI-063: the pass's rows are flushed before the sleep. The
-        // stream drains when its last handle drops, and this thread's
-        // handle never drops — so a process that exits mid-pass used to
-        // lose the rows still queued. A bounded wait per pass: the cycle
-        // is hourly, and a wedged disk costs the wait, not the cycle.
-        stream.flush();
-        std::thread::sleep(CONSOLIDATE_INTERVAL);
     });
+}
+
+/// Close the dream judge on the pass's one exit path, through the
+/// runtime its lane session lives on.
+fn validator_close(runtime: &tokio::runtime::Runtime, validator: crate::dream::DreamValidator) {
+    runtime.block_on(validator.close());
+}
+
+// --- the dream pass --------------------------------------------------------
+
+/// How many facts one dream pass judges. The pass is bounded per run —
+/// the corpus's mass is not the queue, and an unbounded pass is the
+/// `bound-exceeded` class with a lane bill attached.
+pub const DREAM_PASS_BUDGET: usize = 8;
+
+/// The confidence a verdict needs before the pass acts on it — the
+/// measured-set bar (the memory-dreaming plan's C0). A verdict below
+/// the bar is a graded answer and a calib row, and nothing else: the
+/// pass never stamps or retires on a tentative judgment, the same
+/// conviction rule the curate gate runs.
+pub const VALIDATE_AUTO_LAND_CONFIDENCE: f64 = 0.8;
+
+/// How many recent days of `recall_hit` rows the access ranking reads.
+/// The stream is append-per-day; the window bounds the pass's read
+/// while keeping the ranking "what the model has actually seen
+/// lately" rather than all-time lore.
+pub const DREAM_ACCESS_DAYS: usize = 14;
+
+/// The three verdicts the validate judgment answers with. The third is
+/// the honest one: a source that would not resolve is a graded answer,
+/// never a silent skip.
+pub const VERDICT_SUPPORTED: &str = "supported";
+pub const VERDICT_CONTRADICTED: &str = "contradicted";
+pub const VERDICT_UNVERIFIABLE: &str = "unverifiable";
+
+/// Parse the validate judgment's reply, or `None` for anything else —
+/// a lane that cannot decide is the caller's named skip. Two shapes
+/// are accepted: the sys1 classify reply's own (`answers` heads with
+/// `label`/`confidence`, majority word and mean confidence across the
+/// judges that answered), and the plain verdict object
+/// (`{"verdict":…,"confidence":…}`) the tests and tools speak.
+pub fn parse_validate(text: &str) -> Option<crate::route_cache::ValidateVerdict> {
+    let value: serde_json::Value = serde_json::from_str(text).ok()?;
+    if let Some(answers) = value.get("answers").and_then(|answers| answers.as_object()) {
+        let mut words: Vec<(String, f64)> = Vec::new();
+        for heads in answers.values() {
+            let Some(answer) = heads.as_object() else {
+                continue;
+            };
+            let Some(validity) = answer.get("validity").and_then(|head| head.as_object()) else {
+                continue;
+            };
+            let Some(label) = validity
+                .get("label")
+                .and_then(|label| label.as_str())
+                .filter(|label| !label.is_empty())
+            else {
+                continue;
+            };
+            let confidence = validity
+                .get("confidence")
+                .and_then(|confidence| confidence.as_f64())
+                .unwrap_or(0.0);
+            words.push((label.to_string(), confidence));
+        }
+        if words.is_empty() {
+            return None;
+        }
+        // The vocabulary decides the verdict word, majority across the
+        // judges that answered; a split is no verdict at all.
+        let mut counts: std::collections::BTreeMap<&str, (usize, Vec<f64>)> = Default::default();
+        for (word, confidence) in &words {
+            let entry = counts.entry(word.as_str()).or_insert((0, Vec::new()));
+            entry.0 += 1;
+            entry.1.push(*confidence);
+        }
+        let mut ranked: Vec<(&str, &(usize, Vec<f64>))> =
+            counts.iter().map(|(word, entry)| (*word, entry)).collect();
+        ranked.sort_by(|left, right| right.1 .0.cmp(&left.1 .0).then(left.0.cmp(right.0)));
+        let (word, (count, confidences)) = ranked[0];
+        if count * 2 <= words.len() {
+            return None;
+        }
+        let confidence = confidences.iter().sum::<f64>() / confidences.len() as f64;
+        return Some(crate::route_cache::ValidateVerdict {
+            verdict: word.to_string(),
+            confidence,
+        });
+    }
+    // The plain object.
+    let verdict = value.get("verdict")?.as_str()?.to_string();
+    if !matches!(
+        verdict.as_str(),
+        VERDICT_SUPPORTED | VERDICT_CONTRADICTED | VERDICT_UNVERIFIABLE
+    ) {
+        return None;
+    }
+    let confidence = value
+        .get("confidence")
+        .and_then(|confidence| confidence.as_f64())
+        .unwrap_or(0.0);
+    Some(crate::route_cache::ValidateVerdict {
+        verdict,
+        confidence,
+    })
+}
+
+/// One fact's access count: how often recent recalls surfaced it. The
+/// pass ranks by this — the surfaced facts are the ones a wrong note
+/// poisons hardest, and the never-touched tail waits.
+fn access_counts(calib_root: &Path, today: &str) -> std::collections::HashMap<String, u64> {
+    let mut counts: std::collections::HashMap<String, u64> = Default::default();
+    for row in crate::calib::read_days_recent(calib_root, today, DREAM_ACCESS_DAYS) {
+        if row.op == crate::calib::OP_RECALL_HIT && !row.fact.is_empty() {
+            *counts.entry(row.fact).or_insert(0) += 1;
+        }
+    }
+    counts
+}
+
+/// What one dream pass did — the surface's cards and the recap's
+/// proof. Every judged fact appears in exactly one list.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct DreamReport {
+    /// Facts the pass judged (the queue it walked, bounded).
+    pub judged: Vec<String>,
+    /// Facts whose basis became `validated` — supported past the bar.
+    pub stamped: Vec<String>,
+    /// Facts retired on a contradicted verdict past the bar.
+    pub retired: Vec<String>,
+    /// Facts the pass named and did not act on, with the reason:
+    /// no lane, an unresolved source, `unverifiable`, or a verdict
+    /// below the bar.
+    pub skipped: Vec<(String, String)>,
+}
+
+impl DreamReport {
+    /// Whether the pass did anything at all.
+    pub fn is_empty(&self) -> bool {
+        self.judged.is_empty()
+            && self.stamped.is_empty()
+            && self.retired.is_empty()
+            && self.skipped.is_empty()
+    }
+}
+
+/// The dream pass (the memory-dreaming plan's C4): validate the
+/// corpus's inferred facts against the sessions their `source` fields
+/// name, and act on the verdicts.
+///
+/// The queue is inferred-only, not forgotten, not protected, carrying
+/// a resolvable-looking `source`, ranked by recent access and bounded
+/// to [`DREAM_PASS_BUDGET`]. The judge is injected — the caller owns
+/// the lane interaction, the transcript read, and the route cache, so
+/// the same machinery serves the CLI, the scheduled thread, and the
+/// C0 fixture test with scripted verdicts. `None` from the judge is
+/// the named skip, never a failure.
+///
+/// Acting is gated by [`VALIDATE_AUTO_LAND_CONFIDENCE`]: `supported`
+/// past the bar stamps the basis `validated` in place (the one
+/// producer the write path's refusal admits); `contradicted` past the
+/// bar retires the fact through the real supersede path with the
+/// session and the verdict in its justification; everything else is a
+/// row and a named skip. Every judgment appends one `validate` calib
+/// row — a stamped basis without a row behind it is the audit trail's
+/// one forbidden shape.
+pub fn dream(
+    root: &Path,
+    today: &str,
+    calib_root: Option<&Path>,
+    stream: Option<&calib::Stream>,
+    mut judge: impl FnMut(&Fact) -> Option<crate::route_cache::ValidateVerdict>,
+) -> DreamReport {
+    let facts = load_facts(root);
+    let access = calib_root
+        .map(|calib_root| access_counts(calib_root, today))
+        .unwrap_or_default();
+    // The queue: inferred, live, carrying an evidence pointer, most
+    // accessed first, the name the deterministic tie-break.
+    let mut queue: Vec<&Fact> = facts
+        .iter()
+        .filter(|fact| {
+            fact.basis == Basis::Inferred
+                && !fact.protected()
+                && fact.superseded_by.trim().is_empty()
+                && !fact.forgotten(today)
+                && !fact.source.trim().is_empty()
+        })
+        .collect();
+    queue.sort_by(|left, right| {
+        let left_access = access.get(&left.name).copied().unwrap_or(0);
+        let right_access = access.get(&right.name).copied().unwrap_or(0);
+        right_access
+            .cmp(&left_access)
+            .then_with(|| left.name.cmp(&right.name))
+    });
+    queue.truncate(DREAM_PASS_BUDGET);
+
+    let mut report = DreamReport::default();
+    // The supersede path runs through a cheap Memory over the same
+    // root: `supersede` re-reads the facts itself, so the pass's
+    // snapshot going stale mid-pass retires nothing that already left.
+    let memory = Memory::load_cached(root);
+    for fact in queue {
+        report.judged.push(fact.name.clone());
+        let pair_text = format!(
+            "fact: {}\ndescription: {}\nsource session: {}\n",
+            fact.name, fact.description, fact.source
+        );
+        let pair_hash = crate::calib::hash16(&pair_text);
+        let Some(verdict) = judge(fact) else {
+            report
+                .skipped
+                .push((fact.name.clone(), "no judge answered".to_string()));
+            record_validate(
+                stream,
+                &fact.name,
+                &pair_hash,
+                VERDICT_UNVERIFIABLE,
+                0.0,
+                "skipped",
+            );
+            continue;
+        };
+        let acted = match verdict.verdict.as_str() {
+            VERDICT_SUPPORTED if verdict.confidence >= VALIDATE_AUTO_LAND_CONFIDENCE => {
+                let stamped = rewrite_field(&fact.path, "basis", "validated").is_ok();
+                if stamped {
+                    report.stamped.push(fact.name.clone());
+                    "stamped"
+                } else {
+                    report.skipped.push((
+                        fact.name.clone(),
+                        "the validated stamp did not land".to_string(),
+                    ));
+                    "skipped"
+                }
+            }
+            VERDICT_CONTRADICTED if verdict.confidence >= VALIDATE_AUTO_LAND_CONFIDENCE => {
+                let request = Supersede {
+                    name: fact.name.clone(),
+                    justification: format!(
+                        "the validate judgment contradicted this fact against its source session {} (verdict {}, confidence {:.2})",
+                        fact.source, verdict.verdict, verdict.confidence
+                    ),
+                    replacement: None,
+                    description: String::new(),
+                    body: String::new(),
+                    fact_type: None,
+                    shape: None,
+                    phrases: None,
+                    missing: None,
+                    valid_until: None,
+                };
+                match memory.supersede(&request, true, None) {
+                    Ok(_) => {
+                        report.retired.push(fact.name.clone());
+                        "superseded"
+                    }
+                    Err(error) => {
+                        report.skipped.push((
+                            fact.name.clone(),
+                            format!("the retirement did not land: {error}"),
+                        ));
+                        "skipped"
+                    }
+                }
+            }
+            VERDICT_SUPPORTED | VERDICT_CONTRADICTED => {
+                report.skipped.push((
+                    fact.name.clone(),
+                    format!(
+                        "the {} verdict sat below the {:.2} gate ({:.2})",
+                        verdict.verdict, VALIDATE_AUTO_LAND_CONFIDENCE, verdict.confidence
+                    ),
+                ));
+                "skipped"
+            }
+            _ => {
+                report.skipped.push((
+                    fact.name.clone(),
+                    format!("the lane answered {}", verdict.verdict),
+                ));
+                "skipped"
+            }
+        };
+        record_validate(
+            stream,
+            &fact.name,
+            &pair_hash,
+            &verdict.verdict,
+            verdict.confidence,
+            acted,
+        );
+    }
+    report
+}
+
+/// One `validate` row, best-effort like every row.
+fn record_validate(
+    stream: Option<&calib::Stream>,
+    fact: &str,
+    input_hash: &str,
+    verdict: &str,
+    confidence: f64,
+    decision: &str,
+) {
+    if let Some(stream) = stream {
+        stream.record(calib::Row::Validate(calib::ValidateRow {
+            ts: calib::stamp(),
+            fact: fact.to_string(),
+            input_hash: input_hash.to_string(),
+            verdict: verdict.to_string(),
+            confidence,
+            decision: decision.to_string(),
+            lane: "sys1".to_string(),
+        }));
+    }
+}
+
+/// Render one dream pass as the CLI's cards — what was judged, what
+/// the verdicts did, and what was skipped, each named.
+pub fn render_dream(report: &DreamReport) -> String {
+    let mut out = String::new();
+    let width = CARD_WIDTH;
+    let rule = dashes_for("the dream pass", "");
+    out.push_str(&format!("{}\n", dim_line(&rule, width).join("\n")));
+    if report.is_empty() {
+        out.push_str("nothing to judge — the queue is empty\n");
+        return out;
+    }
+    out.push_str(&format!(
+        "{} fact{} judged this pass (budget {})\n",
+        report.judged.len(),
+        plural(report.judged.len()),
+        DREAM_PASS_BUDGET
+    ));
+    if !report.stamped.is_empty() {
+        out.push_str(&format!("\nvalidated ({}):\n", report.stamped.len()));
+        for name in &report.stamped {
+            out.push_str(&format!("  - `{name}` basis stamped validated\n"));
+        }
+    }
+    if !report.retired.is_empty() {
+        out.push_str(&format!(
+            "\nretired on contradiction ({}):\n",
+            report.retired.len()
+        ));
+        for name in &report.retired {
+            out.push_str(&format!(
+                "  - `{name}` retired, the session named in the note\n"
+            ));
+        }
+    }
+    if !report.skipped.is_empty() {
+        out.push_str(&format!("\nskipped ({}):\n", report.skipped.len()));
+        for (name, reason) in &report.skipped {
+            out.push_str(&format!("  - `{name}` — {reason}\n"));
+        }
+    }
+    out
 }
 
 // --- the surface -----------------------------------------------------------
@@ -9160,6 +9751,7 @@ mod tests {
             recall_count: 0,
             superseded_by: superseded_by.to_string(),
             valid_until: String::new(),
+            source: String::new(),
             body: String::new(),
             path: std::path::PathBuf::from(format!("{name}.md")),
             stamp: None,
@@ -12340,5 +12932,413 @@ mod tests {
         // A day that is not a day is refused.
         let day = FactEdit::parse(&serde_json::json!({"name": "a-fact", "valid-until": "soon"}));
         assert!(matches!(day, Err(WriteError::ValidUntil(_))), "{day:?}");
+    }
+
+    // --- the dream pass (the memory-dreaming plan) -------------------------
+
+    /// A fact whose `source` names a session, ready for the queue. The
+    /// basis is inferred and the shape carries nothing, so the fact's
+    /// only claim to the queue is its evidence pointer.
+    fn sourced_fact(name: &str, description: &str, source: &str) -> String {
+        format!(
+            "---\nname: {name}\ndescription: \"{description}\"\ntype: project\ndate: 2026-11-01\n\
+             basis: inferred\ntier: durable\nshape: []\nphrases: []\nmissing: []\n\
+             recall-count: 0\nsuperseded-by:\nvalid-until:\nsource: {source}\n---\n\nThe body.\n"
+        )
+    }
+
+    /// The dream pass separates the measured set: known-wrong facts
+    /// (drawn from the ledger's closed rows, KI numbers in the names'
+    /// comments) are retired on a contradicted verdict past the bar,
+    /// known-right facts are stamped validated on a supported one, and
+    /// a verdict below [`VALIDATE_AUTO_LAND_CONFIDENCE`] acts on
+    /// nothing — the C0 gate, pinned with scripted verdicts so the
+    /// pass's machinery is what is under test.
+    #[test]
+    fn the_measured_set_separates_known_wrong_from_known_right() {
+        let root = scratch("dream-measured-set");
+        std::fs::create_dir_all(&root).unwrap();
+        // Known-wrong: the pre-KI-060 world claimed descriptions ride
+        // unbounded; KI-164's null dropped rows silently; the
+        // pre-KI-313 chain had no LayerFS leg.
+        std::fs::write(
+            root.join("descriptions-ride-unbounded.md"),
+            sourced_fact(
+                "descriptions-ride-unbounded",
+                "fact descriptions carry no length bound",
+                "sess-wrong-1",
+            ),
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("a-null-row-drops-silently-into-the-ledger.md"),
+            sourced_fact(
+                "a-null-row-drops-silently-into-the-ledger",
+                "a JSON null row is dropped by the ledger reader",
+                "sess-wrong-2",
+            ),
+        )
+        .unwrap();
+        // Known-right: the gate is local and the rewriter is one path —
+        // both verified facts of this repo.
+        std::fs::write(
+            root.join("the-gate-is-local-and-its-exit-code-is-read.md"),
+            sourced_fact(
+                "the-gate-is-local-and-its-exit-code-is-read",
+                "the pre-push gate runs locally and its exit code is read",
+                "sess-right-1",
+            ),
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("one-rewriter-owns-every-frontmatter-edit.md"),
+            sourced_fact(
+                "one-rewriter-owns-every-frontmatter-edit",
+                "one bounded rewriter owns every in-place frontmatter edit",
+                "sess-right-2",
+            ),
+        )
+        .unwrap();
+        // The scripted judge: contradicted past the bar for the known
+        // wrongs, supported past the bar for one known right, supported
+        // BELOW the bar for the other — the gate must hold it.
+        let verdicts: std::collections::HashMap<&str, (&str, f64)> = [
+            ("descriptions-ride-unbounded", (VERDICT_CONTRADICTED, 0.92)),
+            (
+                "a-null-row-drops-silently-into-the-ledger",
+                (VERDICT_CONTRADICTED, 0.88),
+            ),
+            (
+                "the-gate-is-local-and-its-exit-code-is-read",
+                (VERDICT_SUPPORTED, 0.95),
+            ),
+            (
+                "one-rewriter-owns-every-frontmatter-edit",
+                (VERDICT_SUPPORTED, 0.4),
+            ),
+        ]
+        .into_iter()
+        .collect();
+        let judge = |fact: &Fact| -> Option<crate::route_cache::ValidateVerdict> {
+            verdicts
+                .get(fact.name.as_str())
+                .map(
+                    |(verdict, confidence)| crate::route_cache::ValidateVerdict {
+                        verdict: (*verdict).to_string(),
+                        confidence: *confidence,
+                    },
+                )
+        };
+        let report = dream(&root, "2026-11-07", None, None, judge);
+        assert_eq!(
+            report.retired,
+            vec![
+                "a-null-row-drops-silently-into-the-ledger".to_string(),
+                "descriptions-ride-unbounded".to_string(),
+            ],
+            "the known-wrong facts retired, name-ordered"
+        );
+        assert_eq!(
+            report.stamped,
+            vec!["the-gate-is-local-and-its-exit-code-is-read".to_string()],
+            "the known-right fact stamped; the below-bar one skipped"
+        );
+        assert!(
+            report.skipped.iter().any(|(name, reason)| name
+                == "one-rewriter-owns-every-frontmatter-edit"
+                && reason.contains("below")),
+            "the below-bar verdict named, not acted on: {:?}",
+            report.skipped
+        );
+        // The disk agrees: the stamped fact reads validated, the
+        // retired facts read expired with their note, and the skipped
+        // one is untouched.
+        let facts = load_facts(&root);
+        let stamped = facts
+            .iter()
+            .find(|fact| fact.name == "the-gate-is-local-and-its-exit-code-is-read")
+            .unwrap();
+        assert_eq!(stamped.basis, Basis::Validated, "the stamp landed");
+        let retired = facts
+            .iter()
+            .find(|fact| fact.name == "descriptions-ride-unbounded")
+            .unwrap();
+        assert!(
+            retired.forgotten("2026-11-07"),
+            "the contradicted fact is expired on disk"
+        );
+        assert!(
+            retired.body.contains("the validate judgment contradicted"),
+            "the justification names the verdict"
+        );
+        let skipped = facts
+            .iter()
+            .find(|fact| fact.name == "one-rewriter-owns-every-frontmatter-edit")
+            .unwrap();
+        assert_eq!(
+            skipped.basis,
+            Basis::Inferred,
+            "the below-bar fact stays inferred"
+        );
+    }
+
+    /// A fact without a source never enters the queue — the pointer is
+    /// the evidence, and a fact without evidence is not judged. The
+    /// queue is also bounded and inferred-only.
+    #[test]
+    fn the_dream_queue_takes_only_sourced_inferred_facts() {
+        let root = scratch("dream-queue");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(
+            root.join("has-a-source.md"),
+            sourced_fact("has-a-source", "sourced and inferred", "sess-1"),
+        )
+        .unwrap();
+        // No source: out of the queue (the backfill ruling).
+        std::fs::write(
+            root.join("no-source.md"),
+            sourced_fact("no-source", "inferred but unsourced", ""),
+        )
+        .unwrap();
+        // Confirmed-by: out of the queue — the owner's word is not the
+        // pass's to check.
+        let mut confirmed = sourced_fact("confirmed-already", "the owner said so", "sess-2");
+        confirmed = confirmed.replace("basis: inferred", "basis: confirmed-by");
+        std::fs::write(root.join("confirmed-already.md"), confirmed).unwrap();
+        // Retired: out of the queue.
+        let mut retired = sourced_fact("already-retired", "folded away", "sess-3");
+        retired = retired.replace("superseded-by:", "superseded-by: has-a-source");
+        std::fs::write(root.join("already-retired.md"), retired).unwrap();
+        let judged: Vec<Vec<String>> = Vec::new();
+        let _ = judged;
+        let mut seen: Vec<String> = Vec::new();
+        let judge = |fact: &Fact| -> Option<crate::route_cache::ValidateVerdict> {
+            seen.push(fact.name.clone());
+            Some(crate::route_cache::ValidateVerdict {
+                verdict: VERDICT_UNVERIFIABLE.to_string(),
+                confidence: 0.0,
+            })
+        };
+        let report = dream(&root, "2026-11-07", None, None, judge);
+        assert_eq!(seen, vec!["has-a-source".to_string()]);
+        assert_eq!(report.judged, vec!["has-a-source".to_string()]);
+        assert_eq!(report.skipped.len(), 1, "the unverifiable named");
+    }
+
+    /// The validate verdict parses both shapes the lane speaks: the
+    /// sys1 answers head (majority word, mean confidence) and the plain
+    /// verdict object — and refuses a split, a word outside the
+    /// vocabulary, and a non-JSON reply.
+    #[test]
+    fn the_validate_verdict_parses_the_lane_shapes_and_refuses_the_rest() {
+        // The answers shape, one judge.
+        let single = parse_validate(
+            r#"{"answers":{"glide":{"validity":{"label":"supported","confidence":0.9}}}}"#,
+        )
+        .expect("a single judge's answer parses");
+        assert_eq!(single.verdict, "supported");
+        assert!((single.confidence - 0.9).abs() < 1e-9);
+        // The answers shape, a 2-1 panel: majority word, mean confidence
+        // of the winning side.
+        let panel = parse_validate(
+            r#"{"answers":{
+                "glide":{"validity":{"label":"supported","confidence":0.9}},
+                "drex":{"validity":{"label":"supported","confidence":0.7}},
+                "jev":{"validity":{"label":"contradicted","confidence":0.8}}
+            }}"#,
+        )
+        .expect("a majority verdict parses");
+        assert_eq!(panel.verdict, "supported");
+        assert!((panel.confidence - 0.8).abs() < 1e-9);
+        // A split is no verdict.
+        assert!(parse_validate(
+            r#"{"answers":{
+                "glide":{"validity":{"label":"supported","confidence":0.9}},
+                "drex":{"validity":{"label":"contradicted","confidence":0.9}}
+            }}"#,
+        )
+        .is_none());
+        // The plain object.
+        let plain = parse_validate(r#"{"verdict":"contradicted","confidence":0.85}"#)
+            .expect("the plain object parses");
+        assert_eq!(plain.verdict, "contradicted");
+        // A word outside the vocabulary is refused — the parser speaks
+        // three words, and inventing a fourth is the lane's error to
+        // name.
+        assert!(parse_validate(r#"{"verdict":"probably","confidence":0.9}"#).is_none());
+        assert!(parse_validate("not json at all").is_none());
+    }
+
+    /// The `validated` basis: refused on every direct write, loaded from
+    /// a hand-written file, ranked between inferred and confirmed-by,
+    /// left by the cycle, and supersedable on justification alone.
+    #[test]
+    fn the_validated_basis_is_the_dream_passs_value_alone() {
+        // The write path refuses it by name.
+        let refused = Remember::parse(&serde_json::json!({
+            "name": "claims-validation",
+            "description": "a write that claims a check it did not do",
+            "basis": "validated",
+        }));
+        assert!(
+            matches!(&refused, Err(WriteError::Basis(message)) if message.contains("dream pass")),
+            "the write refusal names the dream pass: {refused:?}"
+        );
+        let root = scratch("validated-basis");
+        std::fs::create_dir_all(&root).unwrap();
+        // Stale enough for the cycle's supersede set's shape (180 days),
+        // never recalled, so the untouched rule is the one under test.
+        let text = sourced_fact("already-validated", "the pass stamped this", "sess-9")
+            .replace("basis: inferred", "basis: validated")
+            .replace("date: 2026-11-01", "date: 2026-05-01");
+        std::fs::write(root.join("already-validated.md"), text).unwrap();
+        let facts = load_facts(&root);
+        let fact = facts.first().expect("the validated fact loads");
+        assert_eq!(fact.basis, Basis::Validated);
+        // The provenance channel ranks it between the guess and the
+        // owner's word.
+        let score = Score::compute(0.0, 0.0, 0.0, 0, fact.basis, "2026-11-07", None);
+        assert!((score.provenance - PROVENANCE_VALIDATED).abs() < 1e-9);
+        assert!(score.provenance > PROVENANCE_INFERRED && score.provenance < PROVENANCE_CONFIRMED);
+        // The cycle leaves it: a stale, never-recalled validated fact is
+        // named untouched, not folded.
+        let today_days = parse_day("2026-11-07");
+        let supersede = supersede_candidates(&facts, "2026-11-07", today_days);
+        assert!(
+            !supersede
+                .iter()
+                .any(|candidate| candidate.name == "already-validated"),
+            "the cycle does not fold a validated fact"
+        );
+        let untouched = untouched_candidates(&facts, "2026-11-07", today_days);
+        assert!(
+            untouched
+                .iter()
+                .any(|candidate| candidate.name == "already-validated"),
+            "the cycle names the validated fact untouched"
+        );
+        // Supersede on justification alone: the permission model reads
+        // it like an inferred fact, one ruling higher. The cached load
+        // (no embeds, root intact) is what `supersede`'s own re-read
+        // needs.
+        let memory = Memory::load_cached(&root);
+        let request = Supersede {
+            name: "already-validated".to_string(),
+            justification: "the evidence moved".to_string(),
+            replacement: None,
+            description: String::new(),
+            body: String::new(),
+            fact_type: None,
+            shape: None,
+            phrases: None,
+            missing: None,
+            valid_until: None,
+        };
+        let superseded = memory.supersede(&request, false, None);
+        assert!(
+            matches!(superseded, Ok(Superseded::Forgotten { .. })),
+            "a validated fact supersedes on its justification: {superseded:?}"
+        );
+    }
+
+    /// The source field round-trips: the writer renders it, the loader
+    /// reads it, the edit rewrites it, and an unset one renders bare.
+    #[test]
+    fn the_source_field_round_trips_through_writer_loader_and_edit() {
+        let root = scratch("source-roundtrip");
+        std::fs::create_dir_all(&root).unwrap();
+        let request = Remember::parse(&serde_json::json!({
+            "name": "carries-a-source",
+            "description": "a fact with its evidence named",
+            "basis": "inferred",
+            "source": "sess-42",
+        }))
+        .expect("the source rides the parse");
+        let memory = Memory::load(&root);
+        memory.remember(&request).expect("the write lands");
+        let facts = load_facts(&root);
+        assert_eq!(facts[0].source, "sess-42", "the pointer reads back");
+        // The edit rewrites it; an empty value clears it.
+        let edit = FactEdit::parse(&serde_json::json!({
+            "name": "carries-a-source",
+            "source": "",
+        }))
+        .expect("the edit parses");
+        crate::memory::edit(&root, &edit).expect("the edit lands");
+        let facts = load_facts(&root);
+        assert_eq!(facts[0].source, "", "an empty edit clears the pointer");
+    }
+
+    /// The tier cap: a corpus whose protected facts outgrow
+    /// [`PROTECTED_TOKEN_CAP`] leaves the section within the cap, and
+    /// the overflow ranks as marked candidates — reachable, named, and
+    /// never in the section and the ranking at once.
+    #[test]
+    fn the_tier_cap_keeps_the_section_bounded_and_the_overflow_reachable() {
+        let root = scratch("tier-cap");
+        std::fs::create_dir_all(&root).unwrap();
+        // Twelve protected facts with long descriptions: the section
+        // cannot hold them all.
+        for index in 0..12 {
+            let filler = "standing ".repeat(60);
+            let text = format!(
+                "---\nname: standing-fact-{index:02}\ndescription: \"{}\"\ntype: feedback\n\
+                 date: 2026-11-0{}\nbasis: confirmed-by\ntier: durable\nshape: []\nphrases: []\n\
+                 missing: []\nrecall-count: 0\nsuperseded-by:\nvalid-until:\n---\n\nBody.\n",
+                filler.trim(),
+                (index % 9) + 1,
+            );
+            std::fs::write(root.join(format!("standing-fact-{index:02}.md")), text).unwrap();
+        }
+        let memory = Memory::load(&root);
+        let assembly = memory.assemble("a question about the project", &[]);
+        // The section holds a strict subset; the overflow is the rest;
+        // together they are all of them — nothing dropped.
+        assert!(
+            !assembly.protected.is_empty(),
+            "the section is never emptied by the cap"
+        );
+        assert!(
+            !assembly.tier_overflow.is_empty(),
+            "the overflow exists for a corpus that outgrows the cap"
+        );
+        assert_eq!(
+            assembly.protected.len() + assembly.tier_overflow.len(),
+            12,
+            "the cap moves facts, it never loses one"
+        );
+        // The capped-in section fits the constant.
+        let mut section_tokens = 0;
+        for hit in &assembly.protected {
+            section_tokens += estimate_tokens(protected_line(hit).chars().count());
+        }
+        assert!(
+            section_tokens <= PROTECTED_TOKEN_CAP,
+            "the section fits: {section_tokens} <= {PROTECTED_TOKEN_CAP}"
+        );
+        // Every overflow fact is marked and rides the ranking; none is
+        // also in the section.
+        for hit in &assembly.tier_overflow {
+            assert!(hit.tier_overflow, "the overflow fact is marked");
+            assert!(
+                !assembly
+                    .protected
+                    .iter()
+                    .any(|kept| kept.fact.name == hit.fact.name),
+                "no fact enters twice"
+            );
+        }
+        // The strongest overflow fact enters the block even under
+        // pressure; the rendered block names the count.
+        assert!(
+            assembly.recalled.iter().any(|hit| hit.tier_overflow),
+            "the overflow ranks into the block"
+        );
+        let rendered = render_assembly(&assembly);
+        assert!(
+            rendered.contains("past the section's cap"),
+            "the block names the overflow: {rendered}"
+        );
+        assert!(rendered.contains("tier-overflow"), "the marker renders");
     }
 }
