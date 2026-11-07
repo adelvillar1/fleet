@@ -3240,6 +3240,7 @@ async fn calibration_loop_closes(_mock_bin: PathBuf) -> ScenarioOutcome {
         home: &home,
         day: day.clone(),
         dry_run: true,
+        run: None,
         lane: crate::judge::LaneSource::Scripted(spec.clone()),
     })
     .await;
@@ -3273,6 +3274,7 @@ async fn calibration_loop_closes(_mock_bin: PathBuf) -> ScenarioOutcome {
         home: &home,
         day: day.clone(),
         dry_run: false,
+        run: None,
         lane: crate::judge::LaneSource::Scripted(spec.clone()),
     })
     .await;
@@ -3330,6 +3332,7 @@ async fn calibration_loop_closes(_mock_bin: PathBuf) -> ScenarioOutcome {
         home: &home,
         day: day.clone(),
         dry_run: false,
+        run: None,
         lane: crate::judge::LaneSource::Scripted(spec.clone()),
     })
     .await;
@@ -3561,6 +3564,7 @@ async fn calibration_loop_closes(_mock_bin: PathBuf) -> ScenarioOutcome {
         home: &home,
         day: day.clone(),
         dry_run: false,
+        run: None,
         lane: crate::judge::LaneSource::Scripted(third_lane.spec()),
     })
     .await;
@@ -3649,6 +3653,7 @@ async fn calibration_loop_closes(_mock_bin: PathBuf) -> ScenarioOutcome {
         home: &home,
         day: day.clone(),
         dry_run: false,
+        run: None,
         lane: crate::judge::LaneSource::Scripted(fail_lane.spec()),
     })
     .await;
@@ -4037,6 +4042,7 @@ async fn delegation_loop_closes(_mock_bin: PathBuf) -> ScenarioOutcome {
         home: &home,
         day: day.clone(),
         dry_run: true,
+        session: None,
         lane: crate::delegate::LaneSource::Scripted(lane.spec()),
     })
     .await;
@@ -4085,6 +4091,7 @@ async fn delegation_loop_closes(_mock_bin: PathBuf) -> ScenarioOutcome {
         home: &home,
         day: day.clone(),
         dry_run: false,
+        session: None,
         lane: crate::delegate::LaneSource::Scripted(lane.spec()),
     })
     .await;
@@ -4171,6 +4178,7 @@ async fn delegation_loop_closes(_mock_bin: PathBuf) -> ScenarioOutcome {
         home: &home,
         day: day.clone(),
         dry_run: false,
+        session: None,
         lane: crate::delegate::LaneSource::Scripted(lane.spec()),
     })
     .await;
@@ -4380,6 +4388,7 @@ async fn delegation_loop_closes(_mock_bin: PathBuf) -> ScenarioOutcome {
         home: &home,
         day: day.clone(),
         dry_run: false,
+        session: None,
         lane: crate::delegate::LaneSource::Scripted(lane.spec()),
     })
     .await;
@@ -6143,26 +6152,32 @@ mod gap_tests {
             .join(format!("fleet-gaps-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
-        // A route class with failures — uncovered by definition.
-        let stream = crate::calib::Stream::open(&root);
+        // A route class with failures — uncovered by definition. The
+        // fixture is a hand-written JSON line, not the row type: the
+        // socket guard's "only calib and judge construct one" stays
+        // literally true of this file (the route.rs precedent).
+        let day = "2026-11-20";
+        let mut lines = String::new();
         for index in 0..6 {
-            stream.record(crate::calib::Row::RouteJudged(
-                crate::calib::RouteJudgedRow {
-                    ts: format!("2026-11-0{index}T00:00:00Z"),
-                    route_key: "glide-deploy-wrong".to_string(),
-                    provider: "glide".to_string(),
-                    workload: "deploy".to_string(),
-                    verdict: "wrong".to_string(),
-                    confidence: 0.5,
-                    reason: "the route picked the wrong provider".to_string(),
-                    disposition: None,
-                    cost_usd: None,
-                    latency_ms: None,
-                    lane: "sys1".to_string(),
-                },
-            ));
+            lines.push_str(
+                &serde_json::json!({
+                    "ts": format!("2026-11-0{index}T00:00:00Z"),
+                    "op": "route_judged",
+                    "route_key": "glide-deploy-wrong",
+                    "provider": "glide",
+                    "workload": "deploy",
+                    "verdict": "wrong",
+                    "confidence": 0.5,
+                    "reason": "the route picked the wrong provider",
+                    "lane": "sys1",
+                })
+                .to_string(),
+            );
+            lines.push('\n');
         }
-        stream.flush();
+        let file = crate::calib::day_path(&root, day);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, lines).unwrap();
         let gaps = gaps(&root, "2026-11-20", 30);
         assert!(!gaps.is_empty(), "a route class is a gap");
         assert!(

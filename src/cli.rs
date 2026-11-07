@@ -278,6 +278,10 @@ pub struct JudgeOptions {
     pub dry_run: bool,
     /// The owner's disposition, and the judged row's key it addresses.
     pub disposition: Option<JudgeDisposition>,
+    /// The run scope: judge one run's route rows (its input hash)
+    /// instead of the whole day — the timing instrument, so a judgment
+    /// can land while the run's context is live.
+    pub run: Option<String>,
 }
 
 /// One `fleet judge --agree/--disagree/--waive` request: the word, and
@@ -300,6 +304,9 @@ pub struct JudgeDisposition {
 pub struct DelegateOptions {
     /// A past day to judge, `YYYY-MM-DD`; absent is today (UTC).
     pub day: Option<String>,
+    /// The session scope: judge one session's delegations instead of
+    /// the whole day — the timing instrument.
+    pub session: Option<String>,
     /// Rehearse only: resolve the rows and show what would be asked — no
     /// ask, no row, no spend.
     pub dry_run: bool,
@@ -1425,6 +1432,7 @@ fn parse_demand(args: &[String]) -> Result<Command, String> {
 
 fn parse_judge(args: &[String]) -> Result<Command, String> {
     let mut day: Option<String> = None;
+    let mut run: Option<String> = None;
     let mut dry_run = false;
     let mut disposition: Option<(String, String)> = None;
     let mut index = 0;
@@ -1434,6 +1442,7 @@ fn parse_judge(args: &[String]) -> Result<Command, String> {
             "--help" | "-h" => return Ok(Command::Help),
             "--dry-run" => dry_run = true,
             "--day" => day = Some(take_value(args, &mut index, arg)?),
+            "--run" => run = Some(take_value(args, &mut index, arg)?),
             "--agree" | "--disagree" | "--waive" => {
                 let word = match arg {
                     "--agree" => "agreed",
@@ -1493,6 +1502,7 @@ fn parse_judge(args: &[String]) -> Result<Command, String> {
         day,
         dry_run,
         disposition,
+        run,
     }))
 }
 
@@ -1507,6 +1517,7 @@ fn parse_judge(args: &[String]) -> Result<Command, String> {
 /// with each other.
 fn parse_delegate(args: &[String]) -> Result<Command, String> {
     let mut day: Option<String> = None;
+    let mut session: Option<String> = None;
     let mut dry_run = false;
     let mut disposition: Option<(String, String)> = None;
     let mut control: Option<(bool, String, Option<String>)> = None;
@@ -1517,6 +1528,7 @@ fn parse_delegate(args: &[String]) -> Result<Command, String> {
             "--help" | "-h" => return Ok(Command::Help),
             "--dry-run" => dry_run = true,
             "--day" => day = Some(take_value(args, &mut index, arg)?),
+            "--session" => session = Some(take_value(args, &mut index, arg)?),
             "--agree" | "--disagree" | "--waive" => {
                 let word = match arg {
                     "--agree" => "agreed",
@@ -1619,6 +1631,7 @@ fn parse_delegate(args: &[String]) -> Result<Command, String> {
     }
     Ok(Command::Delegate(DelegateOptions {
         day,
+        session,
         dry_run,
         disposition,
         control,
@@ -4073,6 +4086,7 @@ mod tests {
                 day: None,
                 dry_run: false,
                 disposition: None,
+                session: None,
                 control: None,
             })
         );
@@ -4082,6 +4096,7 @@ mod tests {
                 day: Some("2026-10-13".to_string()),
                 dry_run: true,
                 disposition: None,
+                session: None,
                 control: None,
             })
         );
@@ -4099,6 +4114,7 @@ mod tests {
                         word: word.to_string(),
                         key: "a1b2c3d4e5f60718".to_string()
                     }),
+                    session: None,
                     control: None,
                 })
             );
@@ -4138,6 +4154,7 @@ mod tests {
                 day: None,
                 dry_run: false,
                 disposition: None,
+                session: None,
                 control: Some(DelegateControl::Steer {
                     session: "sess-1".to_string(),
                     text: "focus on the parser".to_string(),
@@ -4150,6 +4167,7 @@ mod tests {
                 day: None,
                 dry_run: false,
                 disposition: None,
+                session: None,
                 control: Some(DelegateControl::Stop {
                     session: "sess-1".to_string()
                 }),
@@ -4806,7 +4824,8 @@ mod tests {
             Command::Judge(JudgeOptions {
                 day: None,
                 dry_run: false,
-                disposition: None
+                disposition: None,
+                run: None,
             })
         );
         assert_eq!(
@@ -4814,7 +4833,8 @@ mod tests {
             Command::Judge(JudgeOptions {
                 day: Some("2026-10-13".to_string()),
                 dry_run: true,
-                disposition: None
+                disposition: None,
+                run: None,
             })
         );
         // The dispositions address one judged row by its key, and each
@@ -4832,7 +4852,8 @@ mod tests {
                     disposition: Some(JudgeDisposition {
                         word: word.to_string(),
                         key: "a1b2c3d4e5f60718".to_string()
-                    })
+                    }),
+                    run: None,
                 })
             );
         }

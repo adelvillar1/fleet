@@ -2974,6 +2974,7 @@ async fn judge_command(options: &cli::JudgeOptions) -> ExitCode {
         home: &home,
         day: day.clone(),
         dry_run: options.dry_run,
+        run: options.run.clone(),
         lane: fleet::lanes::LaneSource::Vendored,
     })
     .await;
@@ -3050,6 +3051,7 @@ async fn delegate_command(options: &cli::DelegateOptions) -> ExitCode {
         home: &home,
         day: day.clone(),
         dry_run: options.dry_run,
+        session: options.session.clone(),
         lane: fleet::delegate::LaneSource::Vendored,
     })
     .await;

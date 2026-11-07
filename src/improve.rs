@@ -4735,20 +4735,27 @@ mod analyze_tests {
         dir
     }
 
-    fn route_row(ts: &str, workload: &str, provider: &str, verdict: &str, confidence: f64) -> Row {
-        Row::RouteJudged(calib::RouteJudgedRow {
-            ts: ts.to_string(),
-            route_key: format!("{provider}-{workload}-{verdict}"),
-            provider: provider.to_string(),
-            workload: workload.to_string(),
-            verdict: verdict.to_string(),
-            confidence,
-            reason: String::new(),
-            disposition: None,
-            cost_usd: None,
-            latency_ms: None,
-            lane: "sys1".to_string(),
+    fn route_line(
+        index: usize,
+        workload: &str,
+        provider: &str,
+        verdict: &str,
+        confidence: f64,
+    ) -> String {
+        let mut line = serde_json::json!({
+            "ts": format!("2026-11-0{index}T00:00:00Z"),
+            "op": "route_judged",
+            "route_key": format!("{provider}-{workload}-{verdict}"),
+            "provider": provider,
+            "workload": workload,
+            "verdict": verdict,
+            "confidence": confidence,
+            "reason": "",
+            "lane": "sys1",
         })
+        .to_string();
+        line.push('\n');
+        line
     }
 
     /// The threshold is measured, not guessed: wrong verdicts at low
@@ -4757,36 +4764,24 @@ mod analyze_tests {
     #[test]
     fn the_threshold_separates_right_from_wrong_and_refuses_one_sided_classes() {
         let root = scratch("threshold");
-        let stream = calib::Stream::open(&root);
+        // The fixtures are hand-written JSON lines, not the row type:
+        // the socket guard's "only calib and judge construct one"
+        // stays literally true of this file (the route.rs precedent).
+        let day = "2026-11-20";
+        let mut lines = String::new();
         for index in 0..4 {
-            stream.record(route_row(
-                &format!("2026-11-0{index}T00:00:00Z"),
-                "deploy",
-                "glide",
-                "wrong",
-                0.5,
-            ));
+            lines.push_str(&route_line(index, "deploy", "glide", "wrong", 0.5));
         }
         for index in 0..4 {
-            stream.record(route_row(
-                &format!("2026-11-0{index}T00:00:00Z"),
-                "deploy",
-                "glide",
-                "right",
-                0.9,
-            ));
+            lines.push_str(&route_line(index, "deploy", "glide", "right", 0.9));
         }
         // A one-sided class: every verdict right — no threshold exists.
         for index in 0..3 {
-            stream.record(route_row(
-                &format!("2026-11-0{index}T00:00:00Z"),
-                "build",
-                "drex",
-                "right",
-                0.8,
-            ));
+            lines.push_str(&route_line(index, "build", "drex", "right", 0.8));
         }
-        stream.flush();
+        let file = calib::day_path(&root, day);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, lines).unwrap();
         let analyses = analyze(&root, "2026-11-20", 30);
         let deploy = analyses
             .iter()

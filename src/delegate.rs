@@ -233,6 +233,9 @@ pub struct JudgeRequest<'a> {
     /// Rehearse only: resolve the rows and show what would be asked — no
     /// ask, no row, no spend.
     pub dry_run: bool,
+    /// The session scope: judge one session's delegations instead of
+    /// the whole day — the timing instrument.
+    pub session: Option<String>,
     /// Where the lane comes from.
     pub lane: LaneSource,
 }
@@ -1234,10 +1237,20 @@ pub async fn judge(request: JudgeRequest<'_>) -> JudgeOutcome {
         home,
         day,
         dry_run,
+        session,
         lane,
     } = request;
     let rows = read_day(root, &day);
-    let delegations = rows.delegations;
+    // The session scope: one session's delegations, the timing
+    // instrument — the rows carry the session id.
+    let delegations = match &session {
+        Some(session) => rows
+            .delegations
+            .into_iter()
+            .filter(|row| &row.session == session)
+            .collect(),
+        None => rows.delegations,
+    };
     let already = judged_keys(&rows.judged);
     let spent = day_spend(root, home, &day);
     let cap = budget_usd_day();

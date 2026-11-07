@@ -437,6 +437,7 @@ async fn the_delegate_beat_opens_the_shared_session_once() {
         home: &home,
         day: day.clone(),
         dry_run: false,
+        session: None,
         lane: LaneSource::Counting(std::sync::Arc::clone(&log)),
     })
     .await;
@@ -476,6 +477,7 @@ async fn judge_over_asks(
         home,
         day: day.to_string(),
         dry_run,
+        session: None,
         lane: LaneSource::Scripted(lane),
     })
     .await
@@ -2066,6 +2068,7 @@ async fn a_lane_that_cannot_answer_fails_open_naming_its_reason() {
         home: &home,
         day: day(),
         dry_run: false,
+        session: None,
         lane,
     })
     .await;
