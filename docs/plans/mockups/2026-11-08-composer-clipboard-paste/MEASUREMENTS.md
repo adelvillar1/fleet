@@ -73,10 +73,13 @@ weaker: **the owner's read of these PNGs is the leg still owed.**
 
 `browse` is still disabled, so the pixels above remain the owner's to
 read. What could be verified without eyes is the surface the mockup
-describes, on the **built** binary rather than on the mockup:
+describes, on the **live** binary rather than on the mockup:
 
-`./target/release/fleet gui --port 3099 --no-open` (the owner's own
-server on 3080 is a live relay and was not touched), then:
+First on `./target/release/fleet gui --port 3099 --no-open` on a spare
+port; then, once the release build had landed, on the owner's own face:
+`fleet reload --from target/release/fleet` swapped the installed binary
+through a new inode and restarted `com.fleet.gui` (pid 8685 → 70551), and
+the checks below were re-run against 3080 itself. What they saw:
 
 - `GET /` serves `id="paste"` once, with `aria-label` and `data-tip`
   "paste from the clipboard" and the clipboard glyph — the button exists
@@ -85,13 +88,33 @@ server on 3080 is a live relay and was not touched), then:
   pasteboard' | pbcopy`) answers `{"kind":"text","text":"a clip from the
   pasteboard","type":"clipboard"}`; with nothing on it,
   `{"kind":"empty",...}`. Both are live reads of the real pasteboard.
-- `POST /api/plan` with a **12.0 MiB** body (three 3 MiB PNGs, base64 as
-  the page sends them) answered `200` — against a 64 KiB cap the same
+- `POST /api/plan` with a **12.0 MiB** body answered `200` — three 3 MiB
+  PNGs base64 in the spare-port run, one real PNG padded out to 12.0 MiB
+  on 3080, the same 12582912 bytes either way. Against a 64 KiB cap that
   body was a refusal, so the raise is real on the wire and not only in
   the const.
-- The old server on 3080 answers `fleet gui has no route for
-  /api/clipboard`, which is the pre-change binary still in memory: the
-  live face needs its restart before the owner sees any of this.
+- **On 3080, after the reload:** `/` carries `id="paste"` once, `/app.js`
+  is byte-identical to `src/gui/assets/app.js`, `/api/clipboard` answers
+  `kind:"text"` for a real clip, `kind:"empty"` for a cleared pasteboard,
+  and `kind:"image"` with `mime: image/png`, `name: clipboard.png` and
+  34712 bytes when a PNG is put there. A 12.0 MiB `/api/plan` body
+  returned `200` — the same body a 64 KiB cap refused. The pre-reload
+  server answered `fleet gui has no route for /api/clipboard`; that is
+  the evidence the reload was the change, and it is gone now.
+- The served `/` differs from `src/gui/assets/index.html` in exactly two
+  lines — `/app.css?v=<hash>` and `/app.js?v=<hash>` — which is the
+  cache-buster the server stamps, not a stale asset.
+
+**What that last check cost.** `/api/plan` is not a bodiless ping: posting
+12.0 MiB to it on the owner's own face asked the agent to plan the task
+in the body, which opened a session (`the cap check`), loaded skills and
+lanes, and spent a real turn (14310 prompt / 371 completion tokens)
+before it was stopped with `POST /api/stop`. The bound was already
+proven on the spare port, so the 3080 repeat bought nothing the spare
+port had not shown. The session log was removed, the archive entry
+undone, and the face reloaded, so the launch conversation is empty
+again — but the turn was spent, and the right place for that body was
+the spare port it had already been tried on.
 
 The bot face's markup is not served on the loopback root (`/bot.css` and
 `/bot.js` are the remote listener's routes, gated on `RemoteFace::Bot`),
