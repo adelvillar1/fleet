@@ -8,7 +8,7 @@ tier: durable
 shape: [change, docs]
 phrases: [per deliverable, commit only after proper testing, verifiable document, "stop when a finding changes the plan's premises, rows: 218 open: 85 PROBLEMS (8), turns end on raw tool output with no verdict"]
 missing: []
-recall-count: 1
+recall-count: 2
 superseded-by:
 valid-until:
 ---
