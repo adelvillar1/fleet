@@ -232,8 +232,17 @@ esac
 DESKTOP_BIN="$REPO_ROOT/src-tauri/target/release/fleet-desktop"
 [ -f "$DESKTOP_BIN" ] || DESKTOP_BIN="$REPO_ROOT/target/release/fleet-desktop"
 [ -f "$DESKTOP_BIN" ] || die "no fleet-desktop binary at src-tauri/target or target/release"
-STRINGS_HIT=$(strings "$DESKTOP_BIN" | grep -c " ${VERSION}$" || true)
-[ "$STRINGS_HIT" != "0" ] || die "the bundled binary does not carry the literal $VERSION"
+
+# The third leg: the BUNDLED APP's version, strongest-form — the bundle's
+# own Info.plist read by plutil. (The first cut proved the strings probe
+# unreliable: const-merging packs "0.6.0" into neighbors, so a grep for a
+# line ending in " 0.6.0" misses a binary that truly carries the version.)
+PLIST_DIR="$REPO_ROOT/target/release/bundle/macos/fleet.app/Contents"
+PLIST_HIT=$(plutil -extract CFBundleShortVersionString raw "$PLIST_DIR/Info.plist" 2>/dev/null | grep -cx "$VERSION" || true)
+[ "$PLIST_HIT" = "1" ] ||
+  { strings "$DESKTOP_BIN" | grep -q " ${VERSION}\$" ||
+      die "the bundled app's Info.plist and the binary both fail to name $VERSION"; }
+
 if [ "$CONF_VERSION" != "$VERSION" ]; then
   die "the three-way version check failed: tauri.conf.json says $CONF_VERSION, the tag says $VERSION"
 fi
