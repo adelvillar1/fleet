@@ -4633,7 +4633,10 @@
     }
     if (el.inboxEmpty) el.inboxEmpty.hidden = total !== 0;
     if (!total) return;
-    var age = function (at) { return at ? String(at) : ''; };
+    // The ask's age is a span, not a raw stamp: `roomAge` already reads an
+    // ISO time and answers "now"/"3h"/"2d" — the same words the room rows
+    // use, so the inbox and the rail cannot disagree about what "when" is.
+    var age = function (at) { return at ? roomAge(at) : ''; };
     var group = function (label, n) {
       var g = node('div', 'ib-group');
       g.appendChild(node('div', 'ib-group-head',

@@ -3666,6 +3666,11 @@ impl Bridge {
                     "session": room.get("id").cloned().unwrap_or(Value::Null),
                     "from": room.get("from").cloned().unwrap_or(Value::Null),
                     "words": room.get("preview").cloned().unwrap_or(Value::Null),
+                    // The ask's own facts, read off the same fold (C1): the
+                    // kind it was classified as, and when it was made. The
+                    // row shows both; absent on a room with no ask.
+                    "kind": room.get("ask_kind").cloned().unwrap_or(Value::Null),
+                    "at": room.get("ask_at").cloned().unwrap_or(Value::Null),
                 })
             })
             .collect();
@@ -8054,6 +8059,12 @@ fn huddles_read(home: &std::path::Path, current: &str, live: &LiveFace) -> Value
         // The last owner message and the last `@you` decide it, in log
         // order — a reply after the ask clears it.
         let mut awaiting_you = false;
+        // The ask's own two facts (the owner-inbox plan's C1): what kind of
+        // address it is — an ask or a review — and when it was made. Both
+        // ride the `Mention` record; the fold is where they are read, so
+        // the inbox need not open the log a second time to say them.
+        let mut ask_kind = String::new();
+        let mut ask_at = String::new();
         // The row's last line: who spoke last and what they said, read off
         // the same fold the state and the ask already ride. The rail's
         // preview is the room's own sentence, not its goal re-stated.
@@ -8083,10 +8094,15 @@ fn huddles_read(home: &std::path::Path, current: &str, live: &LiveFace) -> Value
                             });
                         }
                     }
-                    session::Record::Mention { member, .. }
-                        if member == crate::session::MENTION_OWNER =>
-                    {
+                    session::Record::Mention {
+                        member,
+                        kind,
+                        at: mentioned,
+                        ..
+                    } if member == crate::session::MENTION_OWNER => {
                         last_ask = at;
+                        ask_kind = kind.clone();
+                        ask_at = mentioned.clone();
                     }
                     _ => {}
                 }
@@ -8107,6 +8123,8 @@ fn huddles_read(home: &std::path::Path, current: &str, live: &LiveFace) -> Value
             "preview": preview,
             "from": from,
             "awaiting_you": awaiting_you,
+            "ask_kind": ask_kind,
+            "ask_at": ask_at,
             "parent": parents.get(&entry.id),
             "children": Vec::<Value>::new(),
             "state": state,
@@ -12464,6 +12482,12 @@ mod goal_tests {
             .as_str()
             .unwrap()
             .contains("do we ship it behind the flag?"));
+        // The ask's own facts ride the row: the kind it was classified as
+        // and when it was made. Without them the surface's age slot and its
+        // ask/review title read an absence — a field the read never emits is
+        // a row that promises what it cannot say.
+        assert_eq!(asks[0]["kind"], crate::session::MENTION_ASK);
+        assert_eq!(asks[0]["at"], "2026-11-07T10:00Z");
         // The cron: the failure is the row, the completion is not.
         let cron = doc.get("cron").and_then(|v| v.as_array()).unwrap();
         assert_eq!(cron.len(), 1, "{doc}");

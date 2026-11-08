@@ -41,6 +41,21 @@ answered it; steer frames and scheduled prompts ride the log as user
 records but are not counted, so the total reads the same live and after
 a reload.
 
+## The inbox
+
+The owner's queue of everything waiting on them, on the rail directly
+below the conversation with the live count riding the row. One bounded
+read (`GET /api/owner-inbox`) assembles five classes: the approval
+gate's pending calls (answerable in place — once, always, deny — on the
+seat's own session), the onboarding ladder's incomplete steps (each with
+its own action), the huddle rooms' unanswered questions to the owner
+(the ask's words and its asker on the row; answering is the room's own
+composer, one jump away), the cron jobs whose last run failed or was
+skipped for needing an approval, and the doctor's failing checks. The
+inbox is a view, not a store: a row exists while its condition does and
+leaves when it resolves — resolving is the only exit, and the empty
+state is the honest "nothing needs you".
+
 ## The home briefing
 
 The conversation's empty state is the harness's home, not a blank page.

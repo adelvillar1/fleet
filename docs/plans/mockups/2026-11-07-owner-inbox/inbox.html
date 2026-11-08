@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="en" data-theme="paper">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>the owner's inbox — one queue of everything waiting on you</title>
+<style>
+/* The face's own tokens, hand-copied from src/gui/assets/app.css. The
+   inbox's own family is prefixed ib- so it can never collide with an
+   owned .pane/.card/.rail name. */
+:root, :root[data-theme="paper"] {
+  --page: rgb(246,244,239); --surface: rgb(252,251,248); --raised: rgb(239,236,230);
+  --hairline: rgb(24 26 29 / 10%); --hairline-strong: rgb(24 26 29 / 17%);
+  --ink: rgb(24,26,29); --ink-2: rgb(82,88,96); --ink-3: rgb(94,102,112);
+  --accent: rgb(47,95,208); --accent-lift: rgb(37,78,176); --accent-wash: rgb(47 95 208 / 10%);
+  --ok: rgb(22,110,46); --down: rgb(176,36,32); --warn: rgb(122,82,8);
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+}
+:root[data-theme="console"] {
+  --page: rgb(14,15,18); --surface: rgb(20,22,26); --raised: rgb(28,31,36);
+  --hairline: rgb(255 255 255 / 8%); --hairline-strong: rgb(255 255 255 / 15%);
+  --ink: rgb(235,231,228); --ink-2: rgb(166,175,188); --ink-3: rgb(138,148,163);
+  --accent: rgb(96,143,255); --accent-lift: rgb(143,178,255); --accent-wash: rgb(96 143 255 / 14%);
+  --ok: rgb(74,190,110); --down: rgb(240,106,99); --warn: rgb(220,166,66);
+}
+:root[data-theme="graphite"] {
+  --page: rgb(10,12,16); --surface: rgb(15,18,23); --raised: rgb(21,25,31);
+  --hairline: rgb(255 255 255 / 8%); --hairline-strong: rgb(255 255 255 / 15%);
+  --ink: rgb(232,238,244); --ink-2: rgb(160,170,184); --ink-3: rgb(132,144,160);
+  --accent: rgb(94,148,255); --accent-lift: rgb(143,178,255); --accent-wash: rgb(94 148 255 / 14%);
+  --ok: rgb(74,190,110); --down: rgb(240,106,99); --warn: rgb(220,166,66);
+}
+:root[data-theme="contrast"] {
+  --page: #fff; --surface: #fff; --raised: rgb(238,238,238);
+  --hairline: rgb(0 0 0 / 22%); --hairline-strong: rgb(0 0 0 / 45%);
+  --ink: #000; --ink-2: rgb(38,38,38); --ink-3: rgb(70,70,70);
+  --accent: rgb(24,66,160); --accent-lift: rgb(20,60,150); --accent-wash: rgb(24 66 160 / 10%);
+  --ok: rgb(0,104,32); --down: rgb(176,20,20); --warn: rgb(124,82,6);
+}
+* { box-sizing: border-box; margin: 0; }
+body {
+  background: var(--page); color: var(--ink);
+  font: 13.5px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  padding: 0 0 40px; min-height: 100vh;
+}
+
+/* ---------- the review rack: not part of the screen ---------- */
+.rack {
+  display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
+  padding: 10px 16px; background: rgb(24,26,30); position: sticky; top: 0; z-index: 10;
+}
+.rack .grp { display: flex; align-items: center; gap: 6px; }
+.rack .lbl { color: #7d8590; text-transform: uppercase; letter-spacing: .08em; font-size: 9.5px; }
+.rack button {
+  font: 11px/1 -apple-system, BlinkMacSystemFont, sans-serif; color: #cdd3dc;
+  background: #2a2e36; border: 1px solid #3a3f49; border-radius: 7px; padding: 5px 9px; cursor: pointer;
+}
+.rack button[aria-pressed="true"] { background: #3d6fd8; border-color: #3d6fd8; color: #fff; }
+.rack .why { margin-left: auto; color: #7d8590; font-size: 11px; }
+
+/* ---------- the screen: the rail and the inbox panel ---------- */
+.screen { display: flex; align-items: flex-start; gap: 0; padding: 24px; }
+.rail {
+  width: 200px; flex: 0 0 auto; border-right: 1px solid var(--hairline);
+  padding: 10px 8px; min-height: 560px;
+}
+.rail .mark {
+  display: flex; align-items: center; gap: 9px; padding: 8px 10px;
+  border-radius: 8px; color: var(--ink-2); font-size: 12.5px; text-decoration: none;
+}
+.rail .mark.active { background: var(--accent-wash); color: var(--ink); font-weight: 600; }
+.rail .glyph {
+  width: 16px; height: 16px; display: grid; place-items: center;
+  border: 1.5px solid currentColor; border-radius: 4px; font-size: 9px;
+}
+.rail .badge {
+  margin-left: auto; min-width: 18px; padding: 1px 6px; border-radius: 999px;
+  background: var(--down); color: #fff; font-size: 10px; font-weight: 700;
+  font-variant-numeric: tabular-nums; text-align: center;
+}
+.inbox { flex: 1 1 auto; max-width: 860px; padding: 6px 0 0 22px; }
+.ib-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 14px; }
+.ib-head h1 { font-size: 15px; font-weight: 700; letter-spacing: -0.01em; }
+.ib-head .ib-total {
+  padding: 1px 8px; border-radius: 999px; background: var(--accent-wash);
+  color: var(--accent-lift); font-size: 10.5px; font-variant-numeric: tabular-nums; font-weight: 600;
+}
+.ib-empty { color: var(--ink-3); font-size: 13.5px; padding: 28px 0; text-align: center; }
+.ib-group { margin: 0 0 18px; }
+.ib-group-head {
+  display: flex; align-items: baseline; gap: 8px; margin: 0 0 8px;
+  color: var(--ink-3); font-size: 9.5px; font-weight: 600;
+  letter-spacing: 0.11em; text-transform: uppercase;
+}
+.ib-group-head .n { font-variant-numeric: tabular-nums; }
+.ib-row {
+  display: flex; align-items: flex-start; gap: 12px;
+  padding: 12px 14px; border: 1px solid var(--hairline); border-radius: 10px;
+  background: var(--surface); margin-bottom: 8px;
+}
+.ib-row[data-class="seat"] { border-left: 3px solid var(--accent); }
+.ib-row[data-class="ask"] { border-left: 3px solid var(--warn); }
+.ib-row[data-class="cron"] { border-left: 3px solid var(--down); }
+.ib-row[data-class="doctor"] { border-left: 3px solid var(--down); }
+.ib-row[data-class="onboard"] { border-left: 3px solid var(--hairline-strong); }
+.ib-what { flex: 1 1 auto; min-width: 0; }
+.ib-title { color: var(--ink); font-size: 12.5px; font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; }
+.ib-where { color: var(--ink-3); font-size: 11px; margin-top: 2px; }
+.ib-where .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.ib-why { color: var(--ink-2); font-size: 12px; line-height: 1.45; margin-top: 4px; overflow-wrap: anywhere; }
+.ib-why .q { color: var(--ink-2); font-style: italic; }
+.ib-age { color: var(--ink-3); font-size: 10.5px; margin-top: 3px; font-variant-numeric: tabular-nums; }
+.ib-actions { display: flex; gap: 6px; flex: 0 0 auto; align-items: center; }
+.ib-actions button {
+  font: 11.5px/1 -apple-system, BlinkMacSystemFont, sans-serif; cursor: pointer;
+  padding: 6px 10px; border-radius: 7px; border: 1px solid var(--hairline-strong);
+  background: var(--surface); color: var(--ink-2);
+}
+.ib-actions button.primary {
+  background: var(--accent-wash); border-color: var(--accent); color: var(--accent-lift); font-weight: 600;
+}
+.ib-actions button.danger { color: var(--down); border-color: var(--down); }
+.ib-actions button:hover { border-color: var(--accent); color: var(--ink); }
+.ib-actions button.primary:hover { color: #fff; }
+.ib-pill {
+  padding: 1px 8px; border-radius: 999px; font-size: 10px; font-weight: 600;
+  background: var(--raised); color: var(--ink-2); white-space: nowrap;
+}
+.ib-pill.down { background: color-mix(in srgb, var(--down) 12%, var(--surface)); color: var(--down); }
+.ib-pill.warn { background: color-mix(in srgb, var(--warn) 14%, var(--surface)); color: var(--warn); }
+</style>
+</head>
+<body>
+<div class="rack">
+  <div class="grp"><span class="lbl">state</span>
+    <button data-k="state" data-v="full">full</button>
+    <button data-k="state" data-v="empty">empty</button>
+  </div>
+  <div class="grp"><span class="lbl">width</span>
+    <button data-k="w" data-v="1440">1440</button>
+    <button data-k="w" data-v="1024">1024</button>
+  </div>
+  <div class="grp"><span class="lbl">theme</span>
+    <button data-k="theme" data-v="paper">paper</button>
+    <button data-k="theme" data-v="console">console</button>
+    <button data-k="theme" data-v="graphite">graphite</button>
+    <button data-k="theme" data-v="contrast">contrast</button>
+  </div>
+  <span class="why">review furniture — not part of the screen · the rail shows the inbox directly below the conversation, badge riding the row</span>
+</div>
+
+<div class="screen">
+<nav class="rail" aria-label="the surfaces">
+  <a class="mark" href="#"><span class="glyph">◆</span><span>conversation</span></a>
+  <a class="mark active" href="#"><span class="glyph">▤</span><span>inbox</span><span class="badge" id="rail-badge">5</span></a>
+  <a class="mark" href="#"><span class="glyph">▦</span><span>work</span></a>
+</nav>
+
+<section class="inbox" aria-label="the inbox">
+  <div class="ib-head">
+    <h1>the inbox</h1>
+    <span class="ib-total" id="ib-total">5 waiting</span>
+  </div>
+  <div class="ib-empty" id="ib-empty" hidden>nothing needs you</div>
+  <div id="ib-body">
+
+    <div class="ib-group">
+      <div class="ib-group-head"><span>waiting for your answer</span><span class="n">1</span></div>
+      <div class="ib-row" data-class="seat">
+        <div class="ib-what">
+          <div class="ib-title">write_file · tmp/notes/draft.md</div>
+          <div class="ib-where">in <span class="mono">release-notes</span> · the approval gate, ask mode</div>
+          <div class="ib-why">the run wants to create the file; the gate is holding the call until you answer</div>
+          <div class="ib-age">waiting 4m</div>
+        </div>
+        <div class="ib-actions">
+          <button class="primary">once</button>
+          <button>always</button>
+          <button class="danger">deny</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="ib-group">
+      <div class="ib-group-head"><span>questions from the huddles</span><span class="n">2</span></div>
+      <div class="ib-row" data-class="ask">
+        <div class="ib-what">
+          <div class="ib-title"><span class="ib-pill warn">ask</span> should the beta cut include the relay?</div>
+          <div class="ib-where">the room <span class="mono">release-triage</span> · bob asks</div>
+          <div class="ib-why"><span class="q">“the relay seal is tested but the bot face is not — do we ship it behind the flag?”</span></div>
+          <div class="ib-age">asked 26m ago</div>
+        </div>
+        <div class="ib-actions"><button class="primary">answer</button></div>
+      </div>
+      <div class="ib-row" data-class="ask">
+        <div class="ib-what">
+          <div class="ib-title"><span class="ib-pill warn">review</span> the calibration fold's wording</div>
+          <div class="ib-where">the room <span class="mono">calib-notes</span> · alice asks</div>
+          <div class="ib-why"><span class="q">“read the fold paragraph before I commit the wording change”</span></div>
+          <div class="ib-age">asked 1h ago</div>
+        </div>
+        <div class="ib-actions"><button class="primary">answer</button></div>
+      </div>
+    </div>
+
+    <div class="ib-group">
+      <div class="ib-group-head"><span>the machinery needs a decision</span><span class="n">1</span></div>
+      <div class="ib-row" data-class="cron">
+        <div class="ib-what">
+          <div class="ib-title"><span class="ib-pill down">failed</span> the nightly sweep</div>
+          <div class="ib-where"><span class="mono">nightly-sweep</span> · 0 3 * * * · last ran 03:00</div>
+          <div class="ib-why">the run ended failed — the task's own words: “sweep the stale branches and report”</div>
+          <div class="ib-age">failed 5h ago · 12 runs, 11 completed</div>
+        </div>
+        <div class="ib-actions"><button>the job's door</button></div>
+      </div>
+    </div>
+
+    <div class="ib-group">
+      <div class="ib-group-head"><span>setting fleet up</span><span class="n">1</span></div>
+      <div class="ib-row" data-class="onboard">
+        <div class="ib-what">
+          <div class="ib-title">give the bot face its own provider key</div>
+          <div class="ib-where">the onboarding ladder · step 2 of 3</div>
+          <div class="ib-why">the bot conversations route through their own key; without it they answer on yours or not at all</div>
+        </div>
+        <div class="ib-actions"><button class="primary">add the key</button></div>
+      </div>
+    </div>
+
+  </div>
+</section>
+</div>
+<script>
+const q = new URLSearchParams(location.search);
+const state = q.get('state') || 'full';
+const w = q.get('w') || '1440';
+const theme = q.get('theme') || 'paper';
+document.documentElement.dataset.theme = theme;
+document.querySelector('.screen').style.width = w + 'px';
+document.getElementById('ib-body').hidden = state === 'empty';
+document.getElementById('ib-empty').hidden = state !== 'empty';
+document.getElementById('ib-total').hidden = state === 'empty';
+document.getElementById('rail-badge').hidden = state === 'empty';
+for (const b of document.querySelectorAll('.rack button')) {
+  b.setAttribute('aria-pressed', String(b.dataset.v === ({ state, w, theme })[b.dataset.k]));
+  b.addEventListener('click', () => {
+    const next = new URLSearchParams({ state, w, theme });
+    next.set(b.dataset.k, b.dataset.v);
+    location.search = next.toString();
+  });
+}
+</script>
+</body>
+</html>

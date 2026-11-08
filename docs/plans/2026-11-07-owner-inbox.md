@@ -173,13 +173,25 @@ The rail row and the badge ride the existing rail markup.
       the app's own tokens (the three row classes, the empty state, the
       badge), measured in every theme (no overflow, ink ≥ 4.5:1), the
       PNGs read in a light and a dark theme, and the owner reads it
-      before any code of C1+ lands.
-- [x] **C1 — the read is one bounded document.** `GET /api/inbox`
+      before any code of C1+ lands. *(The directory holds 16 distinct
+      PNGs — 2 states × 2 widths × 4 themes — and the source
+      `inbox.html`. They were drawn on the `owner-inbox` branch and then
+      lost to the stash at the switch to master, so the plan read as
+      complete while its own C0 artifact was absent from the tree; they
+      were restored from the stash's untracked tree on 2026-11-07, each
+      verified a real PNG of 2144 × 1800.)*
+- [x] **C1 — the read is one bounded document.** `GET /api/owner-inbox`
       returns seats, incomplete onboarding steps, unanswered room asks,
       failed cron jobs, and failing doctor checks in one response,
       assembled from the existing reads; a room ask carries the room,
       the asker, the kind, the message's words, and its age. Pinned by
-      bridge tests.
+      bridge tests. *(The route is `/api/owner-inbox`, not `/api/inbox`
+      — the bot face's own session-list read already held that name, and
+      the owner's queue is a different thing for a different face. The
+      kind and the age ride the `Mention` record's own `kind` and `at`
+      through the huddles fold; the bridge test asserts all four of the
+      ask's facts, and the surface's age slot reads `roomAge`, the same
+      words the rail's own rows use.)*
 - [x] **C2 — seats answer in place.** A seat row's once/always/deny
       calls the existing answer seam with the seat's own session; the
       row leaves when the seat resolves. Pinned by a bridge test and a
@@ -212,7 +224,14 @@ The rail row and the badge ride the existing rail markup.
       read directly, the whole suite.
 - [x] **C10 — the docs.** gui.md gains the inbox surface (its read, its
       rows, its badge); FUNCTIONAL-SPECIFICATIONS's navigation section
-      names it; the rail's icon sheet gains the inbox's mark.
+      names it; the rail's icon sheet gains the inbox's mark. *(The
+      navigation section at line 119 and the tray-with-lip glyph at
+      `app.js:498` were on master; gui.md's section was not — it was
+      written on the branch and stashed, so the tree read as complete
+      with the surface undocumented. Restored and applied on 2026-11-07:
+      `## The inbox`, naming `GET /api/owner-inbox` and the five
+      classes. gui.md now carries the section three times over: the
+      heading, the read, and the row vocabulary.)*
 
 ## Files to be touched
 
