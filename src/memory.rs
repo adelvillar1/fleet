@@ -315,6 +315,10 @@ pub struct Fact {
     /// EXCLUDED from [`Fact::indexed_text`]: the pointer is provenance,
     /// not direction, and embedding it would score the fact for an id.
     pub source: String,
+    /// The propositions this one rests on, by name — the chain's
+    /// joint-premise structure (the learning plan's C5). Empty is a
+    /// foundation.
+    pub premises: Vec<String>,
     /// The fact's full content: everything after the frontmatter fence.
     pub body: String,
     pub path: PathBuf,
@@ -734,8 +738,10 @@ fn split_flow(inner: &str) -> Vec<String> {
 }
 
 /// Render a list field's flow sequence: `[]` when empty, otherwise
-/// `[a, "b, c"]` with each item through [`flow_scalar`].
-fn flow_list(items: &[String]) -> String {
+/// `[a, "b, c"]` with each item through [`flow_scalar`]. Public for the
+/// modules that rewrite a list field through [`rewrite_field`] — the
+/// lesson's chain merge among them.
+pub fn flow_list(items: &[String]) -> String {
     if items.is_empty() {
         return "[]".to_string();
     }
@@ -824,6 +830,31 @@ fn missing_list(value: Option<&str>) -> Vec<String> {
         .collect()
 }
 
+/// The `premises` field reads as a bracketed list too — the chain's
+/// joint premises, `[a-request-runs-until, a-handler-that-blocks]`.
+/// Like the shape tags the names are **lowercased**: the chain's join
+/// is the fact's own name, and a premise that is not a name cannot
+/// resolve to the proposition it names.
+fn premise_list(value: Option<&str>) -> Vec<String> {
+    let Some(value) = value else {
+        return Vec::new();
+    };
+    let Some(inner) = value
+        .trim()
+        .strip_prefix('[')
+        .and_then(|v| v.strip_suffix(']'))
+    else {
+        return Vec::new();
+    };
+    split_flow(inner)
+        .iter()
+        .map(|entry| sanitize_line(&unquote(entry.trim()), MAX_PREMISE_CHARS))
+        .map(|entry| entry.trim().to_ascii_lowercase())
+        .filter(|entry| !entry.is_empty())
+        .take(MAX_PREMISES)
+        .collect()
+}
+
 /// One log line naming the fact that was skipped and why. A broken fact
 /// is never silent and never fatal — the skills precedent.
 fn skip_line(name: &str, reason: &str) {
@@ -893,6 +924,7 @@ fn fact(
         shape: shape_tags(document.get("shape")),
         phrases: phrase_list(document.get("phrases")),
         missing: missing_list(document.get("missing")),
+        premises: premise_list(document.get("premises")),
         recall_count,
         superseded_by: document.get("superseded-by").unwrap_or("").to_string(),
         valid_until: document.get("valid-until").unwrap_or("").to_string(),
@@ -3980,6 +4012,15 @@ pub const MAX_MISSING: usize = 6;
 /// card, so it is bounded like a phrase.
 pub const MAX_MISSING_CHARS: usize = 160;
 
+/// How many premises a proposition names. A chain's joint premises
+/// are a handful — the propositions the claim rests on together — not a
+/// transcript of everything that touched it.
+pub const MAX_PREMISES: usize = 8;
+
+/// One premise's bound: it is a proposition's name, so it is bounded
+/// like the fact's own name rather than like a phrase.
+pub const MAX_PREMISE_CHARS: usize = 120;
+
 /// The justification's bound: it rides the calibration row and the
 /// replacement fact's body, so it is bounded like the description.
 pub const MAX_JUSTIFICATION_CHARS: usize = 512;
@@ -4012,6 +4053,8 @@ pub enum WriteError {
     /// Too many missing companions, or a missing list that is not
     /// strings.
     Missing(String),
+    /// A premise is not a proposition name, or there are too many.
+    Premise(String),
     /// The basis is missing or outside the vocabulary.
     Basis(String),
     /// The tier is outside the three speeds — `episodic` included,
@@ -4059,6 +4102,7 @@ impl std::fmt::Display for WriteError {
             WriteError::Type(reason) => write!(f, "{reason}"),
             WriteError::Shape(reason) => write!(f, "{reason}"),
             WriteError::Missing(reason) => write!(f, "{reason}"),
+            WriteError::Premise(reason) => write!(f, "{reason}"),
             WriteError::Basis(reason) => write!(f, "{reason}"),
             WriteError::Tier(reason) => write!(f, "{reason}"),
             WriteError::ValidUntil(reason) => write!(f, "{reason}"),
@@ -4135,6 +4179,12 @@ pub struct Remember {
     /// Empty for a trajectory that either completed or was never
     /// recorded as stalled.
     pub missing: Vec<String>,
+    /// The propositions this one rests on, by name — the chain's
+    /// joint-premise structure (the learning plan's C5). The pairwise
+    /// recall graph cannot carry it: a chain's premises imply the
+    /// conclusion TOGETHER, and the field is what keeps that. Empty is
+    /// a foundation.
+    pub premises: Vec<String>,
     pub basis: Basis,
     pub tier: Tier,
     /// ISO date after which the fact is stale; empty for a durable
@@ -4181,6 +4231,7 @@ impl Remember {
         let shape = parse_shape(&string_argument(arguments, "shape")?)?;
         let phrases = parse_phrases(&string_array_argument(arguments, "phrases")?)?;
         let missing = parse_missing(&string_array_argument(arguments, "missing")?)?;
+        let premises = parse_premises(&string_array_argument(arguments, "premises")?)?;
         let basis = match string_argument(arguments, "basis")? {
             Some(text) => {
                 let parsed = Basis::parse(&text.to_ascii_lowercase()).ok_or_else(|| {
@@ -4271,6 +4322,7 @@ impl Remember {
             shape,
             phrases,
             missing,
+            premises,
             basis,
             tier,
             valid_until,
@@ -4303,6 +4355,10 @@ pub struct FactEdit {
     pub shape: Option<Vec<String>>,
     pub phrases: Option<Vec<String>>,
     pub missing: Option<Vec<String>>,
+    /// The chain's joint premises. `None` leaves them alone, an empty
+    /// list clears them, a list states the new ones — the same
+    /// absent-is-inherit grammar, one field over.
+    pub premises: Option<Vec<String>>,
     pub valid_until: Option<String>,
     /// The evidence pointer: `None` leaves it alone, an empty string
     /// clears it, a value states it — the companions' own
@@ -4377,6 +4433,10 @@ impl FactEdit {
                 Some(list) => Some(parse_missing(&Some(list))?),
                 None => None,
             },
+            premises: match string_array_argument(arguments, "premises")? {
+                Some(list) => Some(parse_premises(&Some(list))?),
+                None => None,
+            },
             valid_until,
             source: string_argument(arguments, "source")?
                 .map(|text| sanitize_line(&text, MAX_SOURCE_CHARS)),
@@ -4424,6 +4484,9 @@ pub fn edit(root: &Path, request: &FactEdit) -> Result<Fact, WriteError> {
     }
     if let Some(missing) = &request.missing {
         rewrite_field(&path, "missing", &render_list(missing))?;
+    }
+    if let Some(premises) = &request.premises {
+        rewrite_field(&path, "premises", &render_list(premises))?;
     }
     if let Some(valid_until) = &request.valid_until {
         rewrite_field(&path, "valid-until", valid_until)?;
@@ -4638,6 +4701,35 @@ fn parse_phrases(value: &Option<Vec<String>>) -> Result<Vec<String>, WriteError>
     Ok(phrases)
 }
 
+/// The `premises` argument: the proposition names this claim rests on.
+/// Each is a fact name — lowercase letters, digits, and hyphens —
+/// because the chain's join is the name, and a premise that is not a
+/// name cannot resolve to the proposition it names. Empties and
+/// duplicates drop; the bound is the phrases' own.
+fn parse_premises(value: &Option<Vec<String>>) -> Result<Vec<String>, WriteError> {
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+    let mut premises: Vec<String> = Vec::new();
+    for entry in value {
+        let entry = sanitize_line(entry, MAX_PREMISE_CHARS)
+            .trim()
+            .to_ascii_lowercase();
+        if entry.is_empty() || premises.iter().any(|seen| seen == &entry) {
+            continue;
+        }
+        if !valid_name(&entry) {
+            return Err(WriteError::Premise(format!(
+                "`{entry}` is not a proposition name: lowercase letters, digits, and hyphens, \
+                 up to {MAX_NAME_CHARS} characters"
+            )));
+        }
+        premises.push(entry);
+    }
+    premises.truncate(MAX_PREMISES);
+    Ok(premises)
+}
+
 /// Render one fact in the fork's field order: `name`, `description`,
 /// `type`, `date`, `basis`, `tier`, `shape`, `phrases`, `missing`,
 /// `recall-count`, `superseded-by`, `valid-until` — the order part 1's
@@ -4659,6 +4751,7 @@ fn render_document(request: &Remember, today: &str) -> String {
     out.push_str(&format!("shape: {}\n", flow_list(&request.shape)));
     out.push_str(&format!("phrases: {}\n", flow_list(&request.phrases)));
     out.push_str(&format!("missing: {}\n", flow_list(&request.missing)));
+    out.push_str(&format!("premises: {}\n", flow_list(&request.premises)));
     out.push_str("recall-count: 0\n");
     out.push_str("superseded-by:\n");
     if request.valid_until.is_empty() {
@@ -4750,6 +4843,7 @@ impl Memory {
             shape: request.shape.clone(),
             phrases: request.phrases.clone(),
             missing: request.missing.clone(),
+            premises: request.premises.clone(),
             recall_count: 0,
             superseded_by: String::new(),
             valid_until: request.valid_until.clone(),
@@ -4842,6 +4936,12 @@ pub struct Supersede {
     /// call carrying `phrases` was silently dropped — neither an error
     /// nor an effect.
     pub phrases: Option<Vec<String>>,
+    /// The replacement's premises — the propositions the chain rests
+    /// on. **Inherit-or-clear**, the phrases' own rule: omitted, the
+    /// replacement keeps the superseded proposition's premises (a
+    /// reworded claim does not lose the chain it belongs to); an
+    /// explicit empty list clears them; a list states the new ones.
+    pub premises: Option<Vec<String>>,
     /// The replacement's `valid-until`; defaults to the superseded
     /// fact's own, and is required when that is a working fact with
     /// none.
@@ -4910,6 +5010,12 @@ impl Supersede {
         let phrases = string_array_argument(arguments, "phrases")?
             .map(|list| parse_phrases(&Some(list)))
             .transpose()?;
+        // The premises ride the same inherit-or-clear rule: absent
+        // inherits the superseded proposition's chain, an explicit
+        // empty list clears it, a list states the new one.
+        let premises = string_array_argument(arguments, "premises")?
+            .map(|list| parse_premises(&Some(list)))
+            .transpose()?;
         let valid_until = match string_argument(arguments, "valid-until")? {
             Some(text) => {
                 if !crate::cli::valid_calendar_day(&text) {
@@ -4956,6 +5062,9 @@ impl Supersede {
             if missing.is_some() {
                 carried.push("missing");
             }
+            if premises.is_some() {
+                carried.push("premises");
+            }
             if valid_until.is_some() {
                 carried.push("valid-until");
             }
@@ -4973,6 +5082,7 @@ impl Supersede {
         Ok(Supersede {
             name,
             justification,
+            premises,
             replacement,
             description,
             body,
@@ -5102,6 +5212,13 @@ impl Memory {
                     missing: match &request.missing {
                         Some(list) => list.clone(),
                         None => fact.missing.clone(),
+                    },
+                    // The chain rides the same inherit-or-clear rule:
+                    // a reworded proposition keeps the premises it
+                    // rested on, and an explicit empty list clears them.
+                    premises: match &request.premises {
+                        Some(list) => list.clone(),
+                        None => fact.premises.clone(),
                     },
                     // A supersession is a proposal: the replacement is
                     // inferred until someone confirms it.
@@ -5242,6 +5359,7 @@ impl Memory {
                     shape: replacement_request.shape.clone(),
                     phrases: replacement_request.phrases.clone(),
                     missing: replacement_request.missing.clone(),
+                    premises: replacement_request.premises.clone(),
                     recall_count: 0,
                     superseded_by: String::new(),
                     valid_until: replacement_request.valid_until.clone(),
@@ -5803,6 +5921,7 @@ fn write_summary(
         shape: Vec::new(),
         phrases: Vec::new(),
         missing: Vec::new(),
+        premises: Vec::new(),
         basis: Basis::Inferred,
         tier: Tier::Episodic,
         valid_until: String::new(),
@@ -6228,6 +6347,7 @@ pub fn dream(
                     shape: None,
                     phrases: None,
                     missing: None,
+                    premises: None,
                     valid_until: None,
                 };
                 match memory.supersede(&request, true, None) {
@@ -9748,6 +9868,7 @@ mod tests {
             shape: vec!["deploy".to_string()],
             phrases: Vec::new(),
             missing: missing.iter().map(|m| m.to_string()).collect(),
+            premises: Vec::new(),
             recall_count: 0,
             superseded_by: superseded_by.to_string(),
             valid_until: String::new(),
@@ -11000,6 +11121,102 @@ mod tests {
             .find(|fact| fact.name == "deploy-credentials-rule")
             .expect("the fact is on disk");
         assert_eq!(fact.phrases, request.phrases);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// The learning record's chain field: the premises ride the write
+    /// path's own validator, the frontmatter, the loader, the edit, and
+    /// the supersede's inherit-or-clear rule — a chain that cannot
+    /// resolve to the propositions it names is refused rather than
+    /// written.
+    #[test]
+    fn the_premises_round_trip_through_writer_loader_edit_and_supersede() {
+        let root = scratch("premises-round-trip");
+        let memory = Memory::load_with(&root, Box::new(KeywordOnly));
+        let request = Remember::parse(&serde_json::json!({
+            "name": "a-blocked-handler-stalls",
+            "description": "a blocked handler stalls the whole request",
+            "type": "proposition",
+            "basis": "confirmed-by",
+            "premises": ["a-request-runs-until-its-handler-returns", "a-connection-stays-open"],
+        }))
+        .unwrap();
+        assert_eq!(
+            request.premises,
+            vec![
+                "a-request-runs-until-its-handler-returns",
+                "a-connection-stays-open"
+            ]
+        );
+        // A premise that is not a proposition name is refused: the
+        // chain's join is the name, and a name that cannot resolve is
+        // not a premise.
+        let error = Remember::parse(&serde_json::json!({
+            "name": "a-blocked-handler-stalls",
+            "description": "a blocked handler stalls the whole request",
+            "basis": "confirmed-by",
+            "premises": ["Not A Name"],
+        }))
+        .expect_err("a premise that is not a name");
+        assert!(
+            error.to_string().contains("not a proposition name"),
+            "{error}"
+        );
+        memory.remember(&request).unwrap();
+        // The loader reads the chain back off the file.
+        let loaded = load_facts(&root);
+        let fact = loaded
+            .iter()
+            .find(|fact| fact.name == "a-blocked-handler-stalls")
+            .expect("the proposition is on disk");
+        assert_eq!(fact.premises, request.premises);
+        // The edit rewrites the chain.
+        let request = FactEdit::parse(&serde_json::json!({
+            "name": "a-blocked-handler-stalls",
+            "premises": ["a-request-runs-until-its-handler-returns"],
+        }))
+        .unwrap();
+        let edited = edit(&root, &request).unwrap();
+        assert_eq!(
+            edited.premises,
+            vec!["a-request-runs-until-its-handler-returns"]
+        );
+        // The supersede inherits the chain when the argument is absent.
+        let inherit = Supersede::parse(&serde_json::json!({
+            "name": "a-blocked-handler-stalls",
+            "justification": "a reworded claim",
+            "replacement": "a-blocked-handler-stalls-v2",
+            "description": "a blocked handler stalls the whole request, still",
+        }))
+        .unwrap();
+        assert!(inherit.premises.is_none(), "absent is an inheritance");
+        memory.supersede(&inherit, true, None).unwrap();
+        let loaded = load_facts(&root);
+        let replacement = loaded
+            .iter()
+            .find(|fact| fact.name == "a-blocked-handler-stalls-v2")
+            .expect("the replacement is on disk");
+        assert_eq!(
+            replacement.premises,
+            vec!["a-request-runs-until-its-handler-returns"]
+        );
+        // An explicit empty list clears the chain.
+        let clear = Supersede::parse(&serde_json::json!({
+            "name": "a-blocked-handler-stalls-v2",
+            "justification": "a fact with no chain",
+            "replacement": "a-blocked-handler-stalls-v3",
+            "description": "a blocked handler stalls the request",
+            "premises": [],
+        }))
+        .unwrap();
+        assert_eq!(clear.premises, Some(Vec::new()));
+        memory.supersede(&clear, true, None).unwrap();
+        let loaded = load_facts(&root);
+        let cleared = loaded
+            .iter()
+            .find(|fact| fact.name == "a-blocked-handler-stalls-v3")
+            .expect("the cleared replacement is on disk");
+        assert!(cleared.premises.is_empty(), "an explicit empty list clears");
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -13236,6 +13453,7 @@ mod tests {
             shape: None,
             phrases: None,
             missing: None,
+            premises: None,
             valid_until: None,
         };
         let superseded = memory.supersede(&request, false, None);

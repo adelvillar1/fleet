@@ -978,6 +978,7 @@ pub fn remember_onboarding(home: &Path, facts: &Facts) -> Result<String, String>
         shape: vec!["onboarding".to_string(), "setup".to_string()],
         phrases: vec!["when was fleet set up".to_string()],
         missing: Vec::new(),
+        premises: Vec::new(),
         basis: crate::memory::Basis::ConfirmedBy,
         tier: crate::memory::Tier::Durable,
         valid_until: String::new(),

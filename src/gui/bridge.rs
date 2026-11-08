@@ -8980,6 +8980,7 @@ fn remember_board_at(
             shape: vec!["design".to_string(), "board".to_string()],
             phrases,
             missing: Vec::new(),
+            premises: Vec::new(),
             basis: crate::memory::Basis::ConfirmedBy,
             tier: crate::memory::Tier::Durable,
             valid_until: String::new(),
@@ -9006,6 +9007,7 @@ fn remember_board_at(
             shape: None,
             phrases: None,
             missing: None,
+            premises: None,
             valid_until: None,
         };
         return memory
@@ -9040,6 +9042,7 @@ fn remember_board_at(
         shape: None,
         phrases: None,
         missing: None,
+        premises: None,
         valid_until: None,
     };
     memory

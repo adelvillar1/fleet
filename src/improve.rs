@@ -1942,6 +1942,7 @@ fn stage(proposal: &Proposal, ctx: &Apply<'_>) -> Result<Landed, Hold> {
                 shape: None,
                 phrases: None,
                 missing: None,
+                premises: None,
                 valid_until: None,
             },
             ctx,

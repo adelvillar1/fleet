@@ -386,6 +386,7 @@ pub fn record_lesson(
             shape: Vec::new(),
             phrases: Vec::new(),
             missing: Vec::new(),
+            premises: Vec::new(),
             basis: Basis::ConfirmedBy,
             tier: Tier::Durable,
             valid_until: String::new(),
@@ -411,6 +412,7 @@ pub fn record_lesson(
         shape: Vec::new(),
         phrases: Vec::new(),
         missing: confusions.clone(),
+        premises: Vec::new(),
         basis: Basis::ConfirmedBy,
         tier: Tier::Durable,
         valid_until: String::new(),
@@ -456,6 +458,7 @@ pub fn record_plan(
         shape: Vec::new(),
         phrases: Vec::new(),
         missing: Vec::new(),
+        premises: Vec::new(),
         basis: Basis::ConfirmedBy,
         tier: Tier::Durable,
         valid_until: String::new(),
@@ -490,6 +493,7 @@ pub fn record_probe(
             shape: Vec::new(),
             phrases: Vec::new(),
             missing: Vec::new(),
+            premises: Vec::new(),
             basis: Basis::ConfirmedBy,
             tier: Tier::Durable,
             valid_until: String::new(),
@@ -520,6 +524,7 @@ pub fn record_probe(
         shape: Vec::new(),
         phrases: Vec::new(),
         missing: Vec::new(),
+        premises: Vec::new(),
         basis: Basis::ConfirmedBy,
         tier: Tier::Durable,
         valid_until: String::new(),
@@ -541,6 +546,196 @@ pub fn record_probe(
         }));
     }
     Ok(())
+}
+
+/// Record one proposition on the substrate (the learning plan's C5): a
+/// fact of the `proposition` type whose `premises` field carries the
+/// chain's joint-premise structure — the propositions the claim rests
+/// on TOGETHER, which the pairwise recall graph cannot carry. The
+/// claim is the fact's sentence; the premises ride the frontmatter.
+pub fn record_proposition(
+    memory: &Memory,
+    name: &str,
+    claim: &str,
+    premises: &[String],
+    source: &str,
+) -> Result<memory::Fact, String> {
+    // The write goes through `Remember::parse`, the tool's own
+    // validator — a proposition whose premise is not a proposition name
+    // is refused rather than written as a chain that cannot resolve.
+    let arguments = serde_json::json!({
+        "name": name,
+        "description": claim,
+        "type": "proposition",
+        "premises": premises,
+        "basis": "confirmed-by",
+        "source": source,
+    });
+    let request = memory::Remember::parse(&arguments)
+        .map_err(|error| format!("the proposition is not writable: {error}"))?;
+    memory
+        .remember(&request)
+        .map_err(|error| format!("the proposition did not land: {error}"))
+}
+
+/// One proposition the extraction proposes from the teaching prose.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExtractedProposition {
+    /// The proposition's name — a fact name, the chain's join.
+    pub name: String,
+    /// The claim, in one sentence.
+    pub claim: String,
+    /// The propositions this one rests on, by name.
+    pub premises: Vec<String>,
+    /// The prose the claim came from — the evidence the extraction
+    /// read, kept so the audit can say what the claim accounts for.
+    pub evidence: Vec<String>,
+}
+
+/// The extraction's coverage gate: the fraction of the teaching prose's
+/// significant tokens the propositions must account for. Below it the
+/// extraction left the teaching's own content behind, and the graph is
+/// only as good as the extract — so the merge is refused rather than
+/// quietly incomplete.
+pub const MIN_COVERAGE: f64 = 0.8;
+
+/// The audit's result: the prose's tokens, how many the extraction
+/// covers, and the tokens nothing accounted for.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExtractionAudit {
+    pub prose_tokens: usize,
+    pub covered_tokens: usize,
+    /// The covered fraction, in `[0, 1]`.
+    pub coverage: f64,
+    /// Whether the gate holds.
+    pub passed: bool,
+    /// The tokens no proposition accounted for.
+    pub uncovered: Vec<String>,
+}
+
+/// The words that carry no content of their own — the audit counts the
+/// prose's significant tokens, and a function word is not one.
+const STOPWORDS: &[&str] = &[
+    "a", "an", "and", "are", "as", "at", "be", "been", "but", "by", "for", "from", "has", "have",
+    "how", "i", "in", "is", "it", "its", "of", "on", "or", "so", "that", "the", "their", "there",
+    "this", "to", "was", "we", "were", "what", "when", "where", "which", "who", "why", "will",
+    "with", "would", "you", "your",
+];
+
+/// The prose's significant tokens: the words, lowercased, the function
+/// words dropped. The audit's denominator.
+fn significant_tokens(text: &str) -> Vec<String> {
+    let mut tokens: Vec<String> = Vec::new();
+    for word in text.split(|c: char| !c.is_alphanumeric()) {
+        let word = word.to_ascii_lowercase();
+        if word.is_empty() || STOPWORDS.contains(&word.as_str()) {
+            continue;
+        }
+        if !tokens.contains(&word) {
+            tokens.push(word);
+        }
+    }
+    tokens
+}
+
+/// Audit the extraction against the teaching prose: how much of the
+/// prose's own content the propositions account for. The gate the
+/// graph's quality rides on — an extraction that leaves the teaching
+/// uncovered is not the graph, and the audit names what it left.
+pub fn audit(prose: &str, extracted: &[ExtractedProposition]) -> ExtractionAudit {
+    let prose_tokens = significant_tokens(prose);
+    let mut claimed: Vec<String> = Vec::new();
+    for proposition in extracted {
+        claimed.extend(significant_tokens(&proposition.claim));
+        for premise in &proposition.premises {
+            claimed.extend(significant_tokens(premise));
+        }
+    }
+    let uncovered: Vec<String> = prose_tokens
+        .iter()
+        .filter(|token| !claimed.contains(token))
+        .cloned()
+        .collect();
+    let covered_tokens = prose_tokens.len() - uncovered.len();
+    let coverage = if prose_tokens.is_empty() {
+        1.0
+    } else {
+        covered_tokens as f64 / prose_tokens.len() as f64
+    };
+    ExtractionAudit {
+        prose_tokens: prose_tokens.len(),
+        covered_tokens,
+        coverage,
+        passed: coverage >= MIN_COVERAGE,
+        uncovered,
+    }
+}
+
+/// Merge the extraction into the substrate, deterministically: a
+/// proposition the corpus already holds gains the new premises — the
+/// ordered union — and keeps its own sentence, because the first
+/// writer's claim stands and a later extraction adds to the chain
+/// rather than rewording it. A new proposition is written whole.
+///
+/// Returns how many propositions landed: the new and the joined.
+pub fn merge_extraction(
+    memory: &Memory,
+    extracted: &[ExtractedProposition],
+) -> Result<usize, String> {
+    let existing = memory.facts();
+    let mut landed = 0;
+    for proposition in extracted {
+        let held = existing.iter().find(|fact| fact.name == proposition.name);
+        match held {
+            Some(fact) => {
+                let mut premises = fact.premises.clone();
+                for premise in &proposition.premises {
+                    if !premises.contains(premise) {
+                        premises.push(premise.clone());
+                    }
+                }
+                if premises != fact.premises {
+                    memory::rewrite_field(&fact.path, "premises", &memory::flow_list(&premises))
+                        .map_err(|error| format!("the chain did not land: {error}"))?;
+                }
+            }
+            None => {
+                record_proposition(
+                    memory,
+                    &proposition.name,
+                    &proposition.claim,
+                    &proposition.premises,
+                    "",
+                )?;
+            }
+        }
+        landed += 1;
+    }
+    Ok(landed)
+}
+
+/// The extraction pipeline (the learning plan's C5): extract → audit
+/// → merge, over the teaching prose. The audit gates the merge — an
+/// extraction that leaves the teaching's own content uncovered is
+/// refused by name, with the uncovered tokens, rather than merged
+/// into the graph as a silently incomplete map.
+pub fn extract_pipeline(
+    memory: &Memory,
+    prose: &str,
+    extracted: &[ExtractedProposition],
+) -> Result<ExtractionAudit, String> {
+    let audit = audit(prose, extracted);
+    if !audit.passed {
+        return Err(format!(
+            "the extraction covers {:.0}% of the teaching prose's {} significant tokens — below              the {:.0}% gate. Uncovered: {}",
+            audit.coverage * 100.0,
+            audit.prose_tokens,
+            MIN_COVERAGE * 100.0,
+            audit.uncovered.join(", ")
+        ));
+    }
+    merge_extraction(memory, extracted)?;
+    Ok(audit)
 }
 
 #[cfg(test)]
@@ -1045,6 +1240,175 @@ mod tests {
         assert_eq!(lesson.fact_type, "lesson");
         assert!(lesson.body.contains("complete: true"));
         assert!(lesson.body.contains("self-evidence: obviously true now"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // --- the knowledge graph (the learning plan's C5) ----------------------
+
+    fn proposition(name: &str, claim: &str, premises: &[&str]) -> ExtractedProposition {
+        ExtractedProposition {
+            name: name.to_string(),
+            claim: claim.to_string(),
+            premises: premises.iter().map(|p| p.to_string()).collect(),
+            evidence: vec![claim.to_string()],
+        }
+    }
+
+    #[test]
+    fn a_proposition_lands_as_a_fact_with_its_chain() {
+        let root = scratch("proposition");
+        let memory = Memory::load(&root);
+        let fact = record_proposition(
+            &memory,
+            "a-blocked-handler-stalls",
+            "a blocked handler stalls the whole request",
+            &["a-request-runs-until-its-handler-returns".to_string()],
+            "2026-11-08-abc",
+        )
+        .expect("the proposition lands");
+        assert_eq!(fact.fact_type, "proposition");
+        assert_eq!(
+            fact.premises,
+            vec!["a-request-runs-until-its-handler-returns"]
+        );
+        // The chain reads back off the file, not the write's own return.
+        let loaded = Memory::load(&root);
+        let facts = loaded.facts();
+        let fact = facts
+            .iter()
+            .find(|fact| fact.name == "a-blocked-handler-stalls")
+            .expect("the proposition loads");
+        assert_eq!(
+            fact.premises,
+            vec!["a-request-runs-until-its-handler-returns"]
+        );
+        assert_eq!(fact.source, "2026-11-08-abc");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_premise_that_is_not_a_proposition_name_is_refused() {
+        let root = scratch("premise-name");
+        let memory = Memory::load(&root);
+        let error = record_proposition(
+            &memory,
+            "a-blocked-handler-stalls",
+            "a blocked handler stalls the whole request",
+            &["Not A Name".to_string()],
+            "",
+        )
+        .expect_err("a premise that is not a name");
+        assert!(error.contains("not a proposition name"), "{error}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_extraction_audit_gates_the_merge() {
+        let root = scratch("audit");
+        let memory = Memory::load(&root);
+        let prose = "a blocked handler does not return, so the request waits and the \
+                     connection is held open until the handler comes back or the \
+                     client gives up";
+        // The extraction accounts for almost none of the prose.
+        let extracted = vec![proposition(
+            "a-blocked-handler-stalls",
+            "a blocked handler stalls the request",
+            &[],
+        )];
+        let audit = audit(prose, &extracted);
+        assert!(!audit.passed, "the extraction left the prose behind");
+        assert!(!audit.uncovered.is_empty());
+        let error =
+            extract_pipeline(&memory, prose, &extracted).expect_err("the gate refuses the merge");
+        assert!(error.contains("below"), "{error}");
+        // And nothing landed: the graph is not silently incomplete.
+        assert!(
+            Memory::load(&root)
+                .facts()
+                .iter()
+                .all(|fact| fact.name != "a-blocked-handler-stalls"),
+            "a refused extraction writes nothing"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_extraction_merges_deterministically() {
+        let root = scratch("merge");
+        let memory = Memory::load(&root);
+        record_proposition(
+            &memory,
+            "a-blocked-handler-stalls",
+            "a blocked handler stalls the whole request",
+            &["a-request-runs-until-its-handler-returns".to_string()],
+            "2026-11-08-abc",
+        )
+        .expect("the first proposition lands");
+        let prose = "a blocked handler stalls the whole request and the connection stays open";
+        let extracted = vec![
+            proposition(
+                "a-blocked-handler-stalls",
+                "a blocked handler stalls the whole request",
+                &["a-connection-stays-open"],
+            ),
+            proposition(
+                "a-connection-stays-open",
+                "the connection stays open while the handler is blocked",
+                &["a-blocked-handler-stalls"],
+            ),
+        ];
+        let audit = extract_pipeline(&memory, prose, &extracted).expect("the gate holds");
+        assert!(audit.passed);
+        // The held proposition gained the new premise — the ordered
+        // union — and kept its own sentence.
+        let loaded = Memory::load(&root);
+        let facts = loaded.facts();
+        let held = facts
+            .iter()
+            .find(|fact| fact.name == "a-blocked-handler-stalls")
+            .expect("the held proposition");
+        assert_eq!(
+            held.premises,
+            vec![
+                "a-request-runs-until-its-handler-returns".to_string(),
+                "a-connection-stays-open".to_string()
+            ],
+            "the chain grew by the ordered union"
+        );
+        assert_eq!(
+            held.description,
+            "a blocked handler stalls the whole request"
+        );
+        // The new proposition landed whole.
+        let fresh = facts
+            .iter()
+            .find(|fact| fact.name == "a-connection-stays-open")
+            .expect("the new proposition");
+        assert_eq!(fresh.premises, vec!["a-blocked-handler-stalls"]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_proposition_recalls_like_project_knowledge() {
+        let root = scratch("recall");
+        let memory = Memory::load(&root);
+        record_proposition(
+            &memory,
+            "a-blocked-handler-stalls",
+            "a blocked handler stalls the whole request",
+            &["a-request-runs-until-its-handler-returns".to_string()],
+            "2026-11-08-abc",
+        )
+        .expect("the proposition lands");
+        let hits = memory.recall("why does a blocked handler stall the request");
+        assert!(
+            hits.iter()
+                .any(|hit| hit.fact.name == "a-blocked-handler-stalls"),
+            "the chain's conclusion recalls like any project knowledge: {:?}",
+            hits.iter()
+                .map(|hit| hit.fact.name.clone())
+                .collect::<Vec<_>>()
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 }

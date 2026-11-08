@@ -1525,6 +1525,11 @@ pub fn remember_spec() -> ToolSpec {
                     "items": { "type": "string" },
                     "description": "The companions an INCOMPLETE trajectory was missing: the absent pieces that kept a correct direction from reaching the minima. Name them and tag the fact `incomplete` — recall surfaces them on the `incomplete:` line so a later session finishes the trajectory instead of re-deriving it. They are not the fact's direction, so they do not ride the indexed text and cannot score.",
                 },
+                "premises": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "The propositions this claim rests on, by name — the chain's joint-premise structure: the premises imply the conclusion TOGETHER, which a flat related-to cannot carry. Each is a fact name (lowercase letters, digits, hyphens). Empty is a foundation. The learning record's proposition facts use this; an ordinary fact omits it.",
+                },
                 "basis": {
                     "type": "string",
                     "enum": ["confirmed-by", "inferred"],
@@ -1601,6 +1606,11 @@ pub fn supersede_spec() -> ToolSpec {
                     "type": "array",
                     "items": { "type": "string" },
                     "description": "The replacement's missing companions. Omit it to inherit the superseded fact's own; pass an explicit empty list to clear them because they arrived; pass a list to state the new ones.",
+                },
+                "premises": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "The replacement's premises — the propositions the chain rests on. Omit it to inherit the superseded proposition's own; pass an explicit empty list to clear them; pass a list to state the new ones.",
                 },
                 "valid-until": {
                     "type": "string",

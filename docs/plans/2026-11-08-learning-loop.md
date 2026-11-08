@@ -166,11 +166,21 @@ as the problem sessions' turns.
       terminal condition), and `record_lesson` landing one `check`
       fact per step plus the lesson's own fact. `teaching_order` reads
       the critical path as the spine, foundation first.*
-- [ ] **C5 — the knowledge graph.** The propositions and chains land
+- [x] **C5 — the knowledge graph.** The propositions and chains land
       as facts (the `proposition` type, the `premises` field through
       `Remember::parse`); the extraction pipeline runs over the
       teaching prose, gated; the recall and the dream pass apply;
       pinned by `src/memory.rs` and `src/lesson.rs` tests.
+      *Landed: the `premises` field rides the write path's own
+      validator (a premise that is not a proposition name is refused),
+      the frontmatter, the loader, the edit, and the supersede's
+      inherit-or-clear rule; `record_proposition` writes the
+      `proposition` type through `Remember::parse`; the extraction
+      pipeline audits the teaching prose against the claims and merges
+      at the 80% uncovered-token gate, deterministically (the ordered
+      union of premises, the first writer's claim standing); the
+      memory tests pin the round-trip and the lesson tests pin the
+      recall, the gate's refusal, and the merge.*
 - [ ] **C6 — the practice.** The practitioner role and the problem
       sessions pose varied problems requiring unnamed retrieval, one
       active problem per turn, with the outcomes as session evidence;

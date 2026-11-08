@@ -180,6 +180,7 @@ fn fact_for(id: &str, path: &Path, records: &[Record], count: u64) -> memory::Fa
         shape: vec![outcome_word(records).to_string()],
         phrases: derived_phrases(records),
         missing: Vec::new(),
+        premises: Vec::new(),
         recall_count: count,
         superseded_by: String::new(),
         valid_until: String::new(),
