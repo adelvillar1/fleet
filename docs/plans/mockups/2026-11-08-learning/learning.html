@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Learning — mockup</title>
+<link rel="stylesheet" href="../../../../src/gui/assets/app.css">
+<style>
+  body { margin: 0; }
+  .mock-wrap { display: grid; grid-template-columns: 200px minmax(0, 1fr); min-height: 560px; }
+  .mock-rail { border-right: 1px solid var(--dsw-alias-surface-raised); padding: 10px; }
+  .mock-board { padding: 14px; }
+  .mock-row { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 6px; font-size: 13px; }
+  .mock-row.active { background: var(--dsw-alias-surface-raised); font-weight: 600; }
+  .mock-badge { margin-left: auto; font-size: 11px; padding: 1px 6px; border-radius: 8px; background: var(--dsw-alias-accent, #2b6cb0); color: #fff; }
+  .mock-section { margin: 14px 0 6px; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; opacity: .65; }
+  .mock-node { border: 1px solid var(--dsw-alias-surface-raised); border-radius: 8px; padding: 8px 10px; margin: 6px 0; font-size: 13px; }
+  .mock-node.current { border-color: var(--dsw-alias-accent, #2b6cb0); }
+  .mock-node .dep { font-size: 11px; opacity: .6; }
+  .mock-prop { border-left: 3px solid var(--dsw-alias-accent, #2b6cb0); padding: 6px 10px; margin: 6px 0; font-size: 13px; background: var(--dsw-alias-surface-raised); }
+  .mock-pos { font-size: 12px; opacity: .75; margin: 4px 0 10px; }
+</style>
+</head>
+<body>
+<div class="mock-wrap">
+  <nav class="mock-rail" aria-label="learning sections">
+    <div class="mock-section">Learning</div>
+    <div class="mock-row active">the lesson <span class="mock-badge">3</span></div>
+    <div class="mock-row">the graph</div>
+    <div class="mock-row">practice</div>
+    <div class="mock-row">history</div>
+  </nav>
+  <div class="mock-board">
+    <div class="mock-section">the lesson — sorting, from what you hold</div>
+    <div class="mock-pos">position: step 4 of 7 · checked</div>
+    <div class="mock-node">what a list is <span class="dep">· held</span></div>
+    <div class="mock-node">order and comparison <span class="dep">· held</span></div>
+    <div class="mock-node current">one pass, one swap <span class="dep">· you are here</span></div>
+    <div class="mock-node">why the largest sinks <span class="dep">· next</span></div>
+    <div class="mock-node">the invariant <span class="dep">· later</span></div>
+    <div class="mock-section">what you hold</div>
+    <div class="mock-prop">a list keeps its order</div>
+    <div class="mock-prop">comparing two things tells which comes first</div>
+  </div>
+</div>
+</body>
+</html>
