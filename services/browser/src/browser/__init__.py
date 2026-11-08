@@ -60,6 +60,23 @@ def find_chrome() -> str:
         found = shutil.which(name)
         if found:
             return found
+    # The macOS app bundles. A Mac installs Chrome as an app bundle and
+    # puts no `google-chrome` on PATH — neither does Chromium, which
+    # ships as `Chromium.app` — so the PATH probe above finds nothing on
+    # a machine whose Chrome sits in the one place every Mac puts it, and
+    # the lane refused on its owner's own laptop with "no Chrome found".
+    # The binary inside the bundle is the same one the Linux probe would
+    # have found.
+    for bundle in (
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "/Applications/Chromium.app/Contents/MacOS/Chromium",
+        os.path.expanduser(
+            "~/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        ),
+        os.path.expanduser("~/Applications/Chromium.app/Contents/MacOS/Chromium"),
+    ):
+        if os.path.isfile(bundle) and os.access(bundle, os.X_OK):
+            return bundle
     # The puppeteer cache, where this machine's headless shells live. The
     # cache holds one directory per version and `os.walk` visits them in
     # directory order, which is not version order — an old shell picked
@@ -85,7 +102,8 @@ def find_chrome() -> str:
     raise BrowserError(
         "no Chrome found \u2014 set BROWSER_CHROME to the binary; looked for "
         "google-chrome-stable, google-chrome, chromium, chromium-browser on "
-        "PATH and under ~/.cache/puppeteer"
+        "PATH, the macOS bundles (/Applications and ~/Applications, Google "
+        "Chrome and Chromium), and under ~/.cache/puppeteer"
     )
 
 
