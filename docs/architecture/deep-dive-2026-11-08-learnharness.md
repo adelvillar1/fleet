@@ -109,13 +109,18 @@ The rail gains a **Learning** section; the feature's components:
    the edges the single-step dependencies, the critical path the
    teaching order. The plan doc carries the coarse view the learner
    sees; the DAG is validated.
-3. **The knowledge graph** (a new store). Propositions and chains —
-   the chain's joint-premise structure is the piece fleet's pairwise
-   recall graph lacks. The extraction pipeline (extract → audit →
-   merge) runs over the teaching prose, gated; the provenance links
-   the graph to the source sessions. Future lessons read it: the
-   assembled context gains a "what you hold" section, and the probe
-   starts from it.
+3. **The knowledge graph rides the memory substrate.** The learning
+   record is project knowledge, not a silo: the propositions are facts
+   (a `proposition` type in the substrate's vocabulary), the chains
+   are facts carrying the joint-premise structure (a `premises` field
+   — the piece the pairwise recall graph lacks), the provenance is
+   the fact's `source` field, and the practice outcomes are facts.
+   The extraction pipeline (extract → audit → merge) runs over the
+   teaching prose, gated, and writes through the same writer; the
+   recall, the dream pass, and the calibration rows all apply. A
+   future session working the project recalls what the learner holds
+   like any other project knowledge — the "what you hold" section is
+   the assembled context reading the substrate, not a parallel store.
 4. **The practice sessions.** Varied problems requiring the knowledge
    to come to mind unnamed; one active problem per turn; the outcomes
    as session evidence (never graph mastery). The problem set joins
@@ -129,13 +134,30 @@ The rail gains a **Learning** section; the feature's components:
    happened; the graph is the intended map; confidence is
    self-reported; model-authored content can be wrong; the thinking
    fields are data, not decoration.
+7. **The self-improvement feed.** The learning record's friction is
+   the loop's richest signal, and it already has consumers: the
+   learning events (probe answers, checks, practice outcomes) join
+   the calibration stream as rows the demand map reads — the
+   learner's confusions become demand classes; the recurring
+   confusions are the clustering beat's shape-proposal feed (the
+   C1 beat's output lands as `improve` proposals, owner-applied, as
+   it already does); and the friction itself — what the learner
+   struggled with, what the practice exposed — is proposal
+   feedstock: "the confusion about X says the docs lack Y", "the
+   lesson's gap says the eval corpus lacks Z". The dream pass reads
+   the teaching prose for the extraction and the learner's records
+   for the confusions, in one pass over the same records.
 
 ## The first steps (the plan's shape)
 
 The feature is a program: the lesson session kind and its records
-first (the host), then the prober role and the probe loop, then the
-plan (the graph integration), then the teaching loop, then the graph
-store and its extraction, then the practice, then the face surface.
+first (the host — and the records ride the substrate from the
+start: the probe answers and the checks are facts and calib rows,
+not a parallel store), then the prober role and the probe loop, then
+the plan (the graph integration), then the teaching loop, then the
+graph's chain facts and their extraction, then the practice, then
+the face surface, with the self-improvement feed wired at each
+step the evidence lands.
 The theory's demands are the acceptance criteria: the prober's states
 are precise (the plan's ceiling), the teaching moves in single
 checked steps, the plan's resolution does not leak, the logistics are
