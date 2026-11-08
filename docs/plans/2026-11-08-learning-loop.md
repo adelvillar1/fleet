@@ -197,7 +197,8 @@ as the problem sessions' turns.
       (fed by the mockup) show the active lesson, the graph, the
       practice entry, and the history; pinned by a
       `tests/face/harness.mjs` case.
-      *Landed 88ae9d5: the Learning rail group and the pane's four
+      *Landed 88ae9d5, the row moved into the work group by the
+      owner's ruling: the Learning rail row and the pane's four
       sections (the lesson's coarse view, position and holds; the
       graph's propositions and chains; the practice's entry and
       outcomes; the history's sessions), the bridge's one learning

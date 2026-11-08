@@ -286,7 +286,12 @@
       // The desk is knowledge work's place: a brief, not a blank canvas —
       // sources read, claims carried, a deliverable that cannot end
       // while a refusal stands.
-      ['desk', 'desk']
+      ['desk', 'desk'],
+      // Learning is work the owner opens the way they open a chat: the
+      // measure → plan → teach loop's own surface, with the lesson's
+      // graph and the practice beside it — not a category of its own
+      // (the owner's ruling).
+      ['learning', 'learning']
     ]],
     ['intelligence', 'intelligence', [
       ['router', 'router'],
@@ -297,12 +302,6 @@
       ['skills', 'skills'],
       ['second-brain', 'second brain'],
       ['workspace-history', 'workspace history']
-    ]],
-    // Learning: the measure → plan → teach loop's own surface. The
-    // lesson is the owner's work in a real session, the graph is the
-    // propositions it built, the practice is the unnamed retrieval.
-    ['learning', 'learning', [
-      ['learning', 'learning']
     ]],
     ['system', 'system', [
       ['bots', 'bots'],

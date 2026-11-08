@@ -36,9 +36,10 @@ goal. The load-bearing ideas, each of which is a rule the code carries:
 
 ## The surface
 
-`#/learning` is a group of its own in the rail, beside the knowledge
-surfaces. The pane is the section rail's own idiom — the same split the
-memory and skills panels use — with the mockup's four sections:
+`#/learning` sits in the **work** group of the rail — learning is work
+the owner opens the way they open a chat, not a category of its own.
+The pane is the section rail's own idiom — the same split the memory and
+skills panels use — with the mockup's four sections:
 
 - **the lesson** — the plan's coarse view: each step with its state
   (*held*, *you are here*, *next*, *later*), the position (`step 3 of

@@ -8597,6 +8597,17 @@ async function theLearningRailCarriesTheFourSections() {
       page.rows('.section-body')[0].dataset.section === 'lesson',
     page.rows('.section-body').map((b) => b.dataset.section).join(','));
 
+  // The rail row sits in the work group (the owner's ruling: learning
+  // is work the owner opens the way they open a chat, not a category of
+  // its own).
+  const learningLink = page.IDS['rail-tree']
+    .find((one) => one.dataset && one.dataset.address === 'learning')[0];
+  const learningSection = learningLink ? learningLink.parentNode : null;
+  check('LEARN the rail row sits in the work group',
+    !!learningSection && learningSection.dataset &&
+      learningSection.dataset.group === 'work',
+    learningSection ? 'group=' + learningSection.dataset.group : 'no section');
+
   // The lesson pane: the plan's coarse view, the position, the holds.
   const nodes = page.rows('.lr-node');
   check('LEARN the lesson shows the plan\u2019s nodes with their states',
@@ -10022,7 +10033,7 @@ async function theConnectCardSaysWhatHappened() {
     await flush();
     const groups = page.IDS['rail-tree'].find((one) =>
       String(one.className || '').split(/\s+/).includes('surfaces-group'));
-    check('ICONS the rail carries five group controls', groups.length === 5,
+    check('ICONS the rail carries four group controls', groups.length === 4,
       'groups=' + groups.length);
     check('ICONS a group starts open',
       groups[0].getAttribute('aria-expanded') === 'true' &&
