@@ -1,5 +1,5 @@
 ---
-status: active
+status: completed
 created: 2026-11-07
 updated: 2026-11-07
 slug: self-improvement
@@ -115,49 +115,49 @@ view rides the existing `fleet improve` surface.
 
 ## Acceptance criteria
 
-- [ ] **C0 — the demand map answers per class.** `fleet demand` in
+- [x] **C0 — the demand map answers per class.** `fleet demand` in
       `src/main.rs` prints the per-class demand aggregated from the
       calib stream by `src/demand.rs` — each class with its recent
       rate and its trend — and one `demand` calib row records the
       view; pinned by `src/demand.rs` tests over a fixture stream.
-- [ ] **C1 — repeated failures become shape proposals.** The
+- [x] **C1 — repeated failures become shape proposals.** The
       clustering beat in `src/demand.rs` groups a period's failures by
       class, names each cluster's examples, and files a shape proposal
       into `<FLEET_HOME>/proposals/` for a cluster at or over a named
       repetition threshold; pinned by tests over a fixture stream.
-- [ ] **C2 — a confidently wrong delegation is re-run.** The delegate
+- [x] **C2 — a confidently wrong delegation is re-run.** The delegate
       outcome probe through the lane judges the child's log against
       its brief; a confident wrong re-dispatches the child through the
       existing delegation seam, logged as a `delegate` row with the
       probe's verdict; pinned by tests with the mock lanes.
-- [ ] **C3 — the race separates real from placebo.** `fleet improve
+- [x] **C3 — the race separates real from placebo.** `fleet improve
       race <proposal>` in `src/improve.rs` runs the eval corpus on the
       applied tree, the twin (reverted), and the sham (scrambled
       diff), and reports the three scores; a proposal below either
       baseline is refused by name; pinned by tests over fixture
       proposals.
-- [ ] **C4 — the thresholds are measured, not guessed.**
+- [x] **C4 — the thresholds are measured, not guessed.**
       `fleet improve analyze` in `src/improve.rs` answers the
       separation question from the stream — which classes fail, how
       consistently, the threshold that separates — and the `improve`
       tool's declaration in `src/tools.rs` names it as the first step;
       pinned by tests over a fixture stream.
-- [ ] **C5 — the beats scope to a session.** The judge and delegate
+- [x] **C5 — the beats scope to a session.** The judge and delegate
       beats in `src/judge.rs` and `src/delegate.rs` accept a session or
       run scope beside the day's, and grade the session's rows with
       the same verdict vocabulary; pinned by tests.
-- [ ] **C6 — the gaps are named and promotable.** `fleet eval --gaps`
+- [x] **C6 — the gaps are named and promotable.** `fleet eval --gaps`
       in `src/eval.rs` reports the classes the stream shows but the
       corpus does not cover, and a reported gap promotes into a corpus
       scenario from the rows' examples; pinned by tests.
-- [ ] **C7 — the capabilities are readable.** The applied proposals
+- [x] **C7 — the capabilities are readable.** The applied proposals
       render as capabilities — each with its target and the check,
       pattern, or threshold it established — through `fleet improve`
       in `src/improve.rs`, and the skill drafter's feedstock in
       `src/skills.rs` names them; pinned by tests.
-- [ ] **C8 — the gate.** fmt, clippy, release build, test — exit
+- [x] **C8 — the gate.** fmt, clippy, release build, test — exit
       codes read directly, the whole suite.
-- [ ] **C9 — the docs.** `docs/features/self-maintenance.md` and the
+- [x] **C9 — the docs.** `docs/features/self-maintenance.md` and the
       calibration doc gain the demand map, the race, the analysis, the
       gaps, and the capability view; the tech doc's module reference
       names `src/demand.rs`.

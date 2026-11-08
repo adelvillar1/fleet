@@ -43,6 +43,7 @@ pub enum Command {
     Providers,
     /// Show the calibration stream: one day's rows, grouped by op.
     Calib(CalibOptions),
+    Demand(DemandOptions),
     /// Judge a day's routing decisions through the sys1 lane, or record
     /// the owner's disposition on a judged row.
     Judge(JudgeOptions),
@@ -227,6 +228,19 @@ pub struct OnboardOptions {
     pub confirm: bool,
 }
 
+/// Options for `fleet demand`: the demand map over the calibration
+/// stream — the per-class demand view (the self-improvement plan's
+/// C0). The bare command reads the default window.
+#[derive(Debug, PartialEq, Eq)]
+pub struct DemandOptions {
+    /// The window in days; absent is [`crate::demand::DEMAND_WINDOW_DAYS`].
+    pub days: Option<usize>,
+    /// The clustering view: group the window's failures by class and
+    /// file a shape proposal for each cluster at or over the filing
+    /// threshold.
+    pub cluster: bool,
+}
+
 /// Options for `fleet calib`.
 #[derive(Debug, PartialEq, Eq)]
 pub struct CalibOptions {
@@ -264,6 +278,10 @@ pub struct JudgeOptions {
     pub dry_run: bool,
     /// The owner's disposition, and the judged row's key it addresses.
     pub disposition: Option<JudgeDisposition>,
+    /// The run scope: judge one run's route rows (its input hash)
+    /// instead of the whole day — the timing instrument, so a judgment
+    /// can land while the run's context is live.
+    pub run: Option<String>,
 }
 
 /// One `fleet judge --agree/--disagree/--waive` request: the word, and
@@ -286,6 +304,13 @@ pub struct JudgeDisposition {
 pub struct DelegateOptions {
     /// A past day to judge, `YYYY-MM-DD`; absent is today (UTC).
     pub day: Option<String>,
+    /// The session scope: judge one session's delegations instead of
+    /// the whole day — the timing instrument.
+    pub session: Option<String>,
+    /// The self-probe: judge one delegation's outcome against its
+    /// brief through the lane, and re-dispatch the child on a
+    /// confident wrong.
+    pub probe: Option<String>,
     /// Rehearse only: resolve the rows and show what would be asked — no
     /// ask, no row, no spend.
     pub dry_run: bool,
@@ -460,7 +485,13 @@ pub struct ReloadOptions {
 /// lands a row; `--last` reads the most recent run back without running.
 #[derive(Debug, PartialEq, Eq)]
 pub struct EvalOptions {
+    /// Read the last corpus run's row back instead of running.
     pub last: bool,
+    /// The gap report: the stream's failure classes with no corpus
+    /// scenario.
+    pub gaps: bool,
+    /// Promote one gap into a scenario seed under `<FLEET_HOME>/eval-gaps/`.
+    pub promote: Option<String>,
 }
 
 /// Options for `fleet explain`: one verdict selector, and the dry run
@@ -664,6 +695,18 @@ pub enum ImproveAction {
     /// first, with the contrast it was adopted on and the lesson it
     /// carries.
     Lessons,
+    /// The capability library: the applied proposals rendered as what
+    /// the system learned to do about itself.
+    Capabilities,
+    /// The twin-and-sham race: the corpus on the applied tree, the twin
+    /// (reverted), and the sham (scrambled) — the placebo test.
+    Race { name: String },
+    /// The analysis-before-policy pass: the stream's graded rows
+    /// measured — which classes fail, how consistently, and the
+    /// confidence threshold that separates right from wrong — the
+    /// numbers a proposal's acceptance criteria should be written
+    /// from, not guessed.
+    Analyze,
 }
 
 /// Turn cap when `--max-turns` is absent.
@@ -970,6 +1013,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "mcp" => parse_mcp(rest),
         "providers" => no_flags(rest, Command::Providers),
         "calib" => parse_calib(rest),
+        "demand" => parse_demand(rest),
         "judge" => parse_judge(rest),
         "delegate" => parse_delegate(rest),
         "roles" => no_flags(rest, Command::Roles),
@@ -1018,6 +1062,7 @@ fn parse_run(args: &[String]) -> Result<Command, String> {
             "--yes" | "-y" => yes = true,
             "--compact-now" => compact_now = true,
             "--probe" => probe = true,
+            "--session" => session = Some(take_value(args, &mut index, arg)?),
             "--model" => model = Some(take_value(args, &mut index, arg)?),
             "--max-turns" => {
                 let value = take_value(args, &mut index, arg)?;
@@ -1025,7 +1070,6 @@ fn parse_run(args: &[String]) -> Result<Command, String> {
                     .parse()
                     .map_err(|_| format!("`{value}` is not a turn count"))?;
             }
-            "--session" => session = Some(take_value(args, &mut index, arg)?),
             _ if arg.starts_with('-') && arg != "-" => {
                 return Err(format!("unknown run option `{arg}`"));
             }
@@ -1365,8 +1409,40 @@ fn parse_calib(args: &[String]) -> Result<Command, String> {
 /// combine with the batch or with each other: one is a batch that
 /// spends, the other is a single write that does not, and a caller who
 /// wants both is asking two questions.
+/// `fleet demand`: the demand map. `--days <n>` widens or narrows the
+/// window; anything but a positive integer is a usage error.
+fn parse_demand(args: &[String]) -> Result<Command, String> {
+    let mut days: Option<usize> = None;
+    let mut cluster = false;
+    let mut index = 0;
+    while index < args.len() {
+        let arg = args[index].as_str();
+        match arg {
+            "--help" | "-h" => return Ok(Command::Help),
+            "--cluster" => cluster = true,
+            "--days" => {
+                let value = take_value(args, &mut index, arg)?;
+                let parsed = value
+                    .parse::<usize>()
+                    .map_err(|_| format!("`{value}` is not a day count; use --days <n>"))?;
+                if parsed == 0 {
+                    return Err("--days must be at least 1".to_string());
+                }
+                days = Some(parsed);
+            }
+            _ if arg.starts_with('-') && arg != "-" => {
+                return Err(format!("unknown demand option `{arg}`"));
+            }
+            _ => return Err(format!("`{arg}` takes no value here; see `fleet help`")),
+        }
+        index += 1;
+    }
+    Ok(Command::Demand(DemandOptions { days, cluster }))
+}
+
 fn parse_judge(args: &[String]) -> Result<Command, String> {
     let mut day: Option<String> = None;
+    let mut run: Option<String> = None;
     let mut dry_run = false;
     let mut disposition: Option<(String, String)> = None;
     let mut index = 0;
@@ -1376,6 +1452,7 @@ fn parse_judge(args: &[String]) -> Result<Command, String> {
             "--help" | "-h" => return Ok(Command::Help),
             "--dry-run" => dry_run = true,
             "--day" => day = Some(take_value(args, &mut index, arg)?),
+            "--run" => run = Some(take_value(args, &mut index, arg)?),
             "--agree" | "--disagree" | "--waive" => {
                 let word = match arg {
                     "--agree" => "agreed",
@@ -1435,6 +1512,7 @@ fn parse_judge(args: &[String]) -> Result<Command, String> {
         day,
         dry_run,
         disposition,
+        run,
     }))
 }
 
@@ -1449,6 +1527,8 @@ fn parse_judge(args: &[String]) -> Result<Command, String> {
 /// with each other.
 fn parse_delegate(args: &[String]) -> Result<Command, String> {
     let mut day: Option<String> = None;
+    let mut session: Option<String> = None;
+    let mut probe: Option<String> = None;
     let mut dry_run = false;
     let mut disposition: Option<(String, String)> = None;
     let mut control: Option<(bool, String, Option<String>)> = None;
@@ -1459,6 +1539,8 @@ fn parse_delegate(args: &[String]) -> Result<Command, String> {
             "--help" | "-h" => return Ok(Command::Help),
             "--dry-run" => dry_run = true,
             "--day" => day = Some(take_value(args, &mut index, arg)?),
+            "--session" => session = Some(take_value(args, &mut index, arg)?),
+            "--probe" => probe = Some(take_value(args, &mut index, arg)?),
             "--agree" | "--disagree" | "--waive" => {
                 let word = match arg {
                     "--agree" => "agreed",
@@ -1561,6 +1643,8 @@ fn parse_delegate(args: &[String]) -> Result<Command, String> {
     }
     Ok(Command::Delegate(DelegateOptions {
         day,
+        session,
+        probe,
         dry_run,
         disposition,
         control,
@@ -2101,6 +2185,38 @@ fn parse_improve(args: &[String]) -> Result<Command, String> {
     let verb = subcommand.as_str();
     // The lesson store is the one subcommand that names no proposal:
     // it reads the loop's own history, not one entry in it.
+    if verb == "--capabilities" || verb == "capabilities" {
+        if let Some(extra) = rest.first() {
+            return Err(format!(
+                "`fleet improve --capabilities` takes no argument; found `{extra}`"
+            ));
+        }
+        return Ok(Command::Improve(ImproveOptions {
+            action: ImproveAction::Capabilities,
+        }));
+    }
+    if verb == "race" {
+        let name = rest
+            .first()
+            .filter(|name| !name.starts_with('-'))
+            .ok_or_else(|| {
+                "`fleet improve race` needs a proposal name: `fleet improve race <name>`"
+                    .to_string()
+            })?;
+        return Ok(Command::Improve(ImproveOptions {
+            action: ImproveAction::Race { name: name.clone() },
+        }));
+    }
+    if verb == "analyze" {
+        if let Some(extra) = rest.first() {
+            return Err(format!(
+                "`fleet improve analyze` takes no argument; found `{extra}`"
+            ));
+        }
+        return Ok(Command::Improve(ImproveOptions {
+            action: ImproveAction::Analyze,
+        }));
+    }
     if verb == "lessons" {
         if let Some(extra) = rest.first() {
             return Err(format!(
@@ -2441,11 +2557,24 @@ fn parse_reload(args: &[String]) -> Result<Command, String> {
 /// is accepted — the corpus is fixed, so there is no scenario to name.
 fn parse_eval(args: &[String]) -> Result<Command, String> {
     let mut last = false;
+    let mut gaps = false;
+    let mut promote: Option<String> = None;
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
             "--help" | "-h" => return Ok(Command::Help),
             "--last" => last = true,
+            "--gaps" => gaps = true,
+            "--promote" => {
+                let value = args
+                    .get(index + 1)
+                    .filter(|value| !value.starts_with('-'))
+                    .ok_or_else(|| {
+                        "`--promote` needs a class: `fleet eval --promote <class>`".to_string()
+                    })?;
+                promote = Some(value.to_string());
+                index += 1;
+            }
             other if other.starts_with('-') && other != "-" => {
                 return Err(format!("unknown eval option `{other}`"));
             }
@@ -2455,7 +2584,16 @@ fn parse_eval(args: &[String]) -> Result<Command, String> {
         }
         index += 1;
     }
-    Ok(Command::Eval(EvalOptions { last }))
+    if promote.is_some() && (last || gaps) {
+        return Err(
+            "`--promote` writes one seed; it does not combine with --last or --gaps".to_string(),
+        );
+    }
+    Ok(Command::Eval(EvalOptions {
+        last,
+        gaps,
+        promote,
+    }))
 }
 
 /// `fleet explain --proposal <name> | --eval <scenario> [--dry-run]`.
@@ -3769,15 +3907,41 @@ mod tests {
     }
 
     #[test]
-    fn eval_parses_the_bare_run_and_the_last_query() {
+    fn eval_parses_the_bare_run_the_last_query_and_the_gaps() {
         assert_eq!(
             parse(&args(&["eval"])).unwrap(),
-            Command::Eval(EvalOptions { last: false })
+            Command::Eval(EvalOptions {
+                last: false,
+                gaps: false,
+                promote: None
+            })
         );
         assert_eq!(
             parse(&args(&["eval", "--last"])).unwrap(),
-            Command::Eval(EvalOptions { last: true })
+            Command::Eval(EvalOptions {
+                last: true,
+                gaps: false,
+                promote: None
+            })
         );
+        assert_eq!(
+            parse(&args(&["eval", "--gaps"])).unwrap(),
+            Command::Eval(EvalOptions {
+                last: false,
+                gaps: true,
+                promote: None
+            })
+        );
+        assert_eq!(
+            parse(&args(&["eval", "--promote", "deploy/glide"])).unwrap(),
+            Command::Eval(EvalOptions {
+                last: false,
+                gaps: false,
+                promote: Some("deploy/glide".to_string())
+            })
+        );
+        assert!(parse(&args(&["eval", "--promote"])).is_err());
+        assert!(parse(&args(&["eval", "--promote", "x", "--gaps"])).is_err());
         assert!(parse(&args(&["eval", "--json"])).is_err());
         assert!(parse(&args(&["eval", "extra"])).is_err());
         assert_eq!(parse(&args(&["eval", "--help"])).unwrap(), Command::Help);
@@ -3957,6 +4121,8 @@ mod tests {
                 day: None,
                 dry_run: false,
                 disposition: None,
+                session: None,
+                probe: None,
                 control: None,
             })
         );
@@ -3966,6 +4132,8 @@ mod tests {
                 day: Some("2026-10-13".to_string()),
                 dry_run: true,
                 disposition: None,
+                session: None,
+                probe: None,
                 control: None,
             })
         );
@@ -3983,10 +4151,17 @@ mod tests {
                         word: word.to_string(),
                         key: "a1b2c3d4e5f60718".to_string()
                     }),
+                    session: None,
+                    probe: None,
                     control: None,
                 })
             );
         }
+        // The session and probe scopes parse and refuse junk.
+        assert!(parse(&args(&["delegate", "--session", "sess-1"])).is_ok());
+        assert!(parse(&args(&["delegate", "--probe", "a1b2c3d4"])).is_ok());
+        assert!(parse(&args(&["delegate", "--session"])).is_err());
+        assert!(parse(&args(&["delegate", "--probe"])).is_err());
         // The refusals, each naming what was wrong.
         let error = parse(&args(&["delegate", "--agree"])).unwrap_err();
         assert!(error.contains("--agree"), "{error}");
@@ -4022,6 +4197,8 @@ mod tests {
                 day: None,
                 dry_run: false,
                 disposition: None,
+                session: None,
+                probe: None,
                 control: Some(DelegateControl::Steer {
                     session: "sess-1".to_string(),
                     text: "focus on the parser".to_string(),
@@ -4034,6 +4211,8 @@ mod tests {
                 day: None,
                 dry_run: false,
                 disposition: None,
+                session: None,
+                probe: None,
                 control: Some(DelegateControl::Stop {
                     session: "sess-1".to_string()
                 }),
@@ -4288,6 +4467,34 @@ mod tests {
             parse(&args(&["memories", "--help"])).unwrap(),
             Command::Help
         );
+    }
+
+    #[test]
+    fn demand_parses_its_window_and_refuses_junk() {
+        assert_eq!(
+            parse(&args(&["demand"])).unwrap(),
+            Command::Demand(DemandOptions {
+                days: None,
+                cluster: false
+            })
+        );
+        assert_eq!(
+            parse(&args(&["demand", "--days", "7"])).unwrap(),
+            Command::Demand(DemandOptions {
+                days: Some(7),
+                cluster: false
+            })
+        );
+        assert_eq!(
+            parse(&args(&["demand", "--cluster"])).unwrap(),
+            Command::Demand(DemandOptions {
+                days: None,
+                cluster: true
+            })
+        );
+        assert!(parse(&args(&["demand", "--days", "0"])).is_err());
+        assert!(parse(&args(&["demand", "--days", "soon"])).is_err());
+        assert!(parse(&args(&["demand", "--nope"])).is_err());
     }
 
     /// A temp directory under the machine's own temp root, unique per
@@ -4662,7 +4869,8 @@ mod tests {
             Command::Judge(JudgeOptions {
                 day: None,
                 dry_run: false,
-                disposition: None
+                disposition: None,
+                run: None,
             })
         );
         assert_eq!(
@@ -4670,7 +4878,8 @@ mod tests {
             Command::Judge(JudgeOptions {
                 day: Some("2026-10-13".to_string()),
                 dry_run: true,
-                disposition: None
+                disposition: None,
+                run: None,
             })
         );
         // The dispositions address one judged row by its key, and each
@@ -4688,7 +4897,8 @@ mod tests {
                     disposition: Some(JudgeDisposition {
                         word: word.to_string(),
                         key: "a1b2c3d4e5f60718".to_string()
-                    })
+                    }),
+                    run: None,
                 })
             );
         }

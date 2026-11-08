@@ -627,6 +627,17 @@ function boot(options) {
         }),
       });
     }
+    if (pathOnly === '/api/owner-inbox') {
+      // The owner-inbox plan: the read is one document; a case stages
+      // its own queue through `documents.inbox`.
+      return Promise.resolve({
+        status: 200,
+        json: () => Promise.resolve(documents.inbox || {
+          type: 'inbox', seats: [], onboarding: [], asks: [], cron: [], doctor: [], total: 0,
+        }),
+      });
+    }
+
     if (pathOnly === '/api/resume') {
       // A case can stage the refusal the real bridge sends for a run in
       // flight, and the face's answer — load the view anyway — is the
@@ -4249,6 +4260,168 @@ async function aVanishedConversationIsNamed() {
     page.calls.some((c) => c.url.startsWith('/api/resume')), 'no resume');
   check('RE the welcome stands when the conversation is gone',
     page.IDS.empty.hidden === false, 'empty hidden: ' + page.IDS.empty.hidden);
+}
+
+// IB (the owner-inbox plan): one queue of everything waiting on the
+// owner — seats answerable in place, the onboarding ladder, huddle
+// questions, cron failures, doctor findings — fed by one read, badged
+// on the rail, empty honestly.
+async function theInboxCollectsEverythingWaiting() {
+  const doc = {
+    sessions: {
+      type: 'sessions', read_at: 'now', current: '',
+      counts: { needs: 0, working: 0, background: 0, earlier: 0, total: 0 },
+      sessions: [],
+    },
+    state: (asked) => ({ ...emptyState(asked), session: asked }),
+    inbox: {
+      type: 'inbox',
+      seats: [{ session: 'seat-s1', tool: 'write_file', label: 'tmp/notes/draft.md',
+        summary: 'the run wants to create the file', verdict: 'the standing class decides' }],
+      onboarding: [{ id: 'key', name: 'give the bot face its own key', step: '2 of 3',
+        why: 'the bot conversations route through their own key' }],
+      asks: [{ session: 'room-1', from: 'bob', words: 'do we ship it behind the flag?' }],
+      cron: [{ name: 'nightly-sweep', outcome: 'failed', schedule: '0 3 * * *',
+        task: 'sweep the stale branches', last_run: '03:00', runs: 12, successes: 11 }],
+      doctor: [{ check: 'api', why: 'the API did not answer' }],
+      total: 5,
+    },
+  };
+  const page = boot({ width: 1440, hash: '#/inbox', documents: doc });
+  await flush();
+  page.open();
+  await flush(80);
+  check('IB the surface mounts', page.IDS['panel-inbox'].hidden === false,
+    String(page.IDS['panel-inbox'].hidden));
+  const rows = page.rows('.ib-row');
+  check('IB the five classes render as five rows', rows.length === 5,
+    String(rows.length));
+  check('IB the badge is the queue\u2019s total',
+    page.text('rail-inbox-count') === '5' ||
+      page.rows('.surfaces-count').some((c) => c.textContent === '5'),
+    page.rows('.surfaces-count').map((c) => c.textContent).join('|'));
+  const seat = page.rows('.ib-row').find((r) => r.dataset.class === 'seat');
+  check('IB the seat\u2019s verdict rides the row',
+    seat && seat.textContent.includes('the standing class decides'),
+    seat ? seat.textContent.slice(0, 80) : 'no seat row');
+  const ask = page.rows('.ib-row').find((r) => r.dataset.class === 'ask');
+  check('IB the ask carries its words',
+    ask && ask.textContent.includes('do we ship it behind the flag?'),
+    ask ? ask.textContent.slice(0, 80) : 'no ask row');
+}
+
+async function aSeatAnswersInPlace() {
+  const doc = {
+    sessions: {
+      type: 'sessions', read_at: 'now', current: '',
+      counts: { needs: 0, working: 0, background: 0, earlier: 0, total: 0 },
+      sessions: [],
+    },
+    state: (asked) => ({ ...emptyState(asked), session: asked }),
+    inbox: {
+      type: 'inbox',
+      seats: [{ session: 'seat-s1', tool: 'write_file', label: 'the file',
+        summary: 'the run wants to create the file' }],
+      onboarding: [], asks: [], cron: [], doctor: [], total: 1,
+    },
+  };
+  const page = boot({ width: 1440, hash: '#/inbox', documents: doc });
+  await flush();
+  page.open();
+  await flush(80);
+  const before = page.calls.filter((c) => c.url.startsWith('/api/owner-inbox')).length;
+  const seat = page.rows('.ib-row').find((r) => r.dataset.class === 'seat');
+  const once = [...seat.querySelectorAll('button')].find((b) => b.textContent === 'once');
+  once.click();
+  await flush(80);
+  const approves = page.calls.filter((c) => c.url.startsWith('/api/approve'));
+  check('IB the seat answers in place, on its own session',
+    approves.length === 1 && approves[0].url.includes('session=seat-s1') &&
+      approves[0].body.includes('"once"'),
+    JSON.stringify(approves.map((c) => c.url + ' ' + c.body)));
+  const after = page.calls.filter((c) => c.url.startsWith('/api/owner-inbox')).length;
+  check('IB the queue re-reads after the answer', after > before,
+    before + ' -> ' + after);
+}
+
+async function theInboxIsEmptyHonestly() {
+  const doc = {
+    sessions: {
+      type: 'sessions', read_at: 'now', current: '',
+      counts: { needs: 0, working: 0, background: 0, earlier: 0, total: 0 },
+      sessions: [],
+    },
+    state: (asked) => ({ ...emptyState(asked), session: asked }),
+    inbox: { type: 'inbox', seats: [], onboarding: [], asks: [], cron: [], doctor: [], total: 0 },
+  };
+  const page = boot({ width: 1440, hash: '#/inbox', documents: doc });
+  await flush();
+  page.open();
+  await flush(80);
+  check('IB the empty state is the honest absence',
+    page.IDS['ib-empty'].hidden === false &&
+      page.IDS['ib-total'].hidden === true && page.rows('.ib-row').length === 0,
+    'empty hidden: ' + page.IDS['ib-empty'].hidden);
+  check('IB the badge says nothing when nothing waits',
+    page.rows('.surfaces-count').every((c) => c.hidden || c.textContent === ''),
+    page.rows('.surfaces-count').map((c) => c.textContent).join('|'));
+}
+
+async function anAskJumpsToItsRoom() {
+  const doc = {
+    sessions: {
+      type: 'sessions', read_at: 'now', current: '',
+      counts: { needs: 0, working: 0, background: 0, earlier: 0, total: 0 },
+      sessions: [],
+    },
+    state: (asked) => ({ ...emptyState(asked), session: asked }),
+    inbox: {
+      type: 'inbox', seats: [], onboarding: [],
+      asks: [{ session: 'room-9', from: 'bob', words: 'do we ship it behind the flag?' }],
+      cron: [], doctor: [], total: 1,
+    },
+  };
+  const page = boot({ width: 1440, hash: '#/inbox', documents: doc });
+  await flush();
+  page.open();
+  await flush(80);
+  const ask = page.rows('.ib-row').find((r) => r.dataset.class === 'ask');
+  const answer = [...ask.querySelectorAll('button')].find((b) => b.textContent === 'answer');
+  answer.click();
+  await flush(80);
+  check('IB the ask\u2019s answer opens the room',
+    page.window.location.hash === '#/huddles/room-9',
+    page.window.location.hash);
+}
+
+async function theInboxKeepsTrueOnTheWire() {
+  // C7: a seat arriving on the wire — for the conversation the face is
+  // showing — re-reads the queue without a reload. The inbox's own
+  // read is the seam; the seat case fires it.
+  const doc = {
+    sessions: {
+      type: 'sessions', read_at: 'now', current: 'held-s',
+      counts: { needs: 0, working: 1, background: 0, earlier: 1, total: 2 },
+      sessions: [row('held-s', 'working', { title: 'the working conversation' })],
+    },
+    state: (asked) => ({ ...emptyState(asked), session: asked }),
+  };
+  const page = boot({ width: 1440, hash: '#/sessions/held-s', documents: doc });
+  await flush();
+  page.open();
+  await flush(80);
+  page.window.location.hash = '#/inbox';
+  await flush(80);
+  const before = page.calls.filter((c) => c.url.startsWith('/api/owner-inbox')).length;
+  check('IB the inbox read once on arrival', before === 1, String(before));
+  page.push({
+    type: 'seat', session: 'held-s', tool: 'bash', label: 'pwd',
+    summary: 'the run wants to run pwd', since: Date.now(),
+  });
+  await flush(80);
+  const after = page.calls.filter((c) => c.url.startsWith('/api/owner-inbox')).length;
+  check('IB a seat on the wire re-reads the queue', after > before,
+    before + ' -> ' + after);
 }
 
 // N3: the rail's badge says where the work is — needs plus working on
@@ -9714,14 +9887,14 @@ async function theConnectCardSaysWhatHappened() {
     await flush();
     const links = page.IDS['rail-tree'].find((one) =>
       String(one.className || '').split(/\s+/).includes('surfaces-link'));
-    check('ICONS the main rail lists sixteen destinations', links.length === 16,
+    check('ICONS the main rail lists seventeen destinations', links.length === 17,
       'links=' + links.length);
     const shapes = links.map((link) => {
       const svg = link.find((one) => one.name === 'svg')[0];
       return svg ? svg.children.map((shape) => JSON.stringify(shape.attrs || {})).join('|') : '';
     });
     check('ICONS every destination draws its own mark',
-      shapes.every(Boolean) && new Set(shapes).size === 16,
+      shapes.every(Boolean) && new Set(shapes).size === 17,
       'distinct=' + new Set(shapes).size + ' empty=' + shapes.filter((one) => !one).length);
   }
 
@@ -10408,6 +10581,11 @@ const cases = [
   ['RE the pane returns with the reload', thePaneReturnsWithTheReload],
   ['RE a deliberate detach stays detached across reloads', aDeliberateDetachStaysDetached],
   ['RE a vanished conversation is named', aVanishedConversationIsNamed],
+  ['IB the inbox collects everything waiting', theInboxCollectsEverythingWaiting],
+  ['IB a seat answers in place', aSeatAnswersInPlace],
+  ['IB the empty inbox is the honest absence', theInboxIsEmptyHonestly],
+  ['IB an ask jumps to its room', anAskJumpsToItsRoom],
+  ['IB the inbox keeps true on the wire', theInboxKeepsTrueOnTheWire],
   ['N3 the rail badge says where the work is', theRailBadgeSaysWhereTheWorkIs],
   ['Q the queued messages carry their actions', theQueuedMessagesCarryTheirActions],
   ['REV the diff offers both verdicts per hunk', theDiffOffersBothVerdictsPerHunk],

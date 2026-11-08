@@ -1078,6 +1078,26 @@ impl Lesson {
     }
 }
 
+/// The lesson's evidence names the capabilities already established for
+/// its target kind — the drafter's feedstock: a proposal drafted for a
+/// kind the system has already learned about says so, so the new
+/// proposal builds on the library rather than repeating it.
+fn name_capabilities(mut lesson: Lesson, capabilities: &[crate::improve::Capability]) -> Lesson {
+    let matching: Vec<&str> = capabilities
+        .iter()
+        .filter(|capability| capability.target == lesson.kind.label())
+        .map(|capability| capability.name.as_str())
+        .collect();
+    if !matching.is_empty() {
+        lesson.evidence.push_str(&format!(
+            " capabilities already established for {}: {}",
+            lesson.kind.label(),
+            matching.join(", ")
+        ));
+    }
+    lesson
+}
+
 /// The lessons `records` and the day's calibration `rows` justify, at most
 /// [`MAX_LESSONS_PER_SESSION`], in a fixed order: a failure that was
 /// corrected, a repeated multi-step tool sequence, a turn graded failed
@@ -1091,10 +1111,11 @@ pub fn lessons(
     records: &[Record],
     rows: &[crate::calib::ReadRow],
     session_id: &str,
+    capabilities: &[crate::improve::Capability],
 ) -> Vec<Lesson> {
     let mut found: Vec<Lesson> = Vec::new();
     if let Some(lesson) = failure_correction(records, session_id) {
-        found.push(lesson);
+        found.push(name_capabilities(lesson, capabilities));
     }
     if let Some(lesson) = repeated_sequence(records, session_id) {
         found.push(lesson);
@@ -1487,7 +1508,8 @@ pub fn draft_session(
     let root = crate::calib::resolve_root(home, user_home);
     let rows = crate::calib::read_day(&root, &crate::calib::today(), crate::calib::READ_CAP);
     let mut filed: Vec<PathBuf> = Vec::new();
-    for lesson in lessons(&records, &rows, &session_id) {
+    let capabilities = crate::improve::capabilities(home);
+    for lesson in lessons(&records, &rows, &session_id, &capabilities) {
         let lesson = match live.iter().find(|skill| skill.name == lesson.name) {
             Some(existing) => lesson.into_update(existing),
             None => lesson,
@@ -2572,7 +2594,7 @@ mod tests {
             result("c2", "bash", "exit 0"),
             assistant(vec![]),
         ];
-        let found = lessons(&records, &[], "session-1");
+        let found = lessons(&records, &[], "session-1", &[]);
         assert_eq!(found.len(), 1, "{found:?}");
         let lesson = &found[0];
         assert_eq!(lesson.kind, ProposalKind::Create);
@@ -2602,7 +2624,7 @@ mod tests {
             assistant(vec![tool_call("c3", "read_file", "{}")]),
             result("c3", "read_file", "the text"),
         ];
-        let found = lessons(&records, &[], "session-4");
+        let found = lessons(&records, &[], "session-4", &[]);
         assert_eq!(found.len(), 1, "{found:?}");
         assert_eq!(found[0].name, "read-file-recovery");
         assert!(
@@ -2631,7 +2653,7 @@ mod tests {
             assistant(vec![tool_call("c2", "bash", "{}")]),
             denied("c2", "bash"),
         ];
-        assert!(lessons(&records, &[], "session-5").is_empty());
+        assert!(lessons(&records, &[], "session-5", &[]).is_empty());
         // The denial neither corrects nor ends the search: an approved
         // success after it is the correction.
         let records = vec![
@@ -2645,7 +2667,7 @@ mod tests {
             assistant(vec![tool_call("c3", "bash", "{}")]),
             result("c3", "bash", "exit 0"),
         ];
-        let found = lessons(&records, &[], "session-5");
+        let found = lessons(&records, &[], "session-5", &[]);
         assert_eq!(found.len(), 1, "{found:?}");
         assert_eq!(found[0].name, "bash-recovery");
         assert!(
@@ -2676,7 +2698,7 @@ mod tests {
             denied("c3", "list_dir"),
             denied("c4", "read_file"),
         ];
-        assert!(lessons(&records, &[], "session-6").is_empty());
+        assert!(lessons(&records, &[], "session-6", &[]).is_empty());
         // A turn that only half ran does not count either: the sequence
         // that executed is not the sequence that was requested.
         let records = vec![
@@ -2696,7 +2718,7 @@ mod tests {
             result("c3", "list_dir", "ok"),
             result("c4", "read_file", "ok"),
         ];
-        assert!(lessons(&records, &[], "session-6").is_empty());
+        assert!(lessons(&records, &[], "session-6", &[]).is_empty());
     }
 
     #[test]
@@ -2710,7 +2732,7 @@ mod tests {
             assistant(vec![tool_call("c2", "bash", r#"{"command":"ls -la"}"#)]),
             result("c2", "bash", "exit 0"),
         ];
-        let found = lessons(&records, &[], "session-7");
+        let found = lessons(&records, &[], "session-7", &[]);
         assert_eq!(found.len(), 1, "{found:?}");
         let evidence = &found[0].evidence;
         // Self-contained: the tool, both argument summaries, and both
@@ -2742,7 +2764,7 @@ mod tests {
             assistant(vec![tool_call("c2", "bash", r#"{"command":"ls"}"#)]),
             result("c2", "bash", "exit 0"),
         ];
-        let found = lessons(&records, &[], "session-8");
+        let found = lessons(&records, &[], "session-8", &[]);
         let evidence = &found[0].evidence;
         assert!(!evidence.contains('\n'), "{evidence}");
         assert!(evidence.contains('\u{2026}'), "{evidence}");
@@ -2782,7 +2804,7 @@ mod tests {
             result("c3", "list_dir", "ok"),
             result("c4", "read_file", "ok"),
         ];
-        let found = lessons(&records, &[], "session-2");
+        let found = lessons(&records, &[], "session-2", &[]);
         assert_eq!(found.len(), 1, "{found:?}");
         assert_eq!(found[0].name, "procedure-list-dir-read-file");
         assert_eq!(found[0].kind, ProposalKind::Create);
@@ -2808,7 +2830,7 @@ mod tests {
             reason: "server".to_string(),
             ..Default::default()
         }];
-        let found = lessons(&records, &rows, "session-3");
+        let found = lessons(&records, &rows, "session-3", &[]);
         assert_eq!(found.len(), 1, "{found:?}");
         assert_eq!(found[0].name, "turn-failure-server");
         assert!(found[0].evidence.contains(&hash), "{}", found[0].evidence);
@@ -2818,7 +2840,7 @@ mod tests {
             input_hash: "ffffffffffffffff".to_string(),
             ..rows[0].clone()
         }];
-        assert!(lessons(&records, &other, "session-3").is_empty());
+        assert!(lessons(&records, &other, "session-3", &[]).is_empty());
     }
 
     #[test]

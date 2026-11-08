@@ -168,49 +168,49 @@ The rail row and the badge ride the existing rail markup.
 
 ## Acceptance criteria
 
-- [ ] **C0 — the mockup is drawn, measured, read, and owner-read.**
+- [x] **C0 — the mockup is drawn, measured, read, and owner-read.**
       `docs/plans/mockups/2026-11-07-owner-inbox/` holds the surface in
       the app's own tokens (the three row classes, the empty state, the
       badge), measured in every theme (no overflow, ink ≥ 4.5:1), the
       PNGs read in a light and a dark theme, and the owner reads it
       before any code of C1+ lands.
-- [ ] **C1 — the read is one bounded document.** `GET /api/inbox`
+- [x] **C1 — the read is one bounded document.** `GET /api/inbox`
       returns seats, incomplete onboarding steps, unanswered room asks,
       failed cron jobs, and failing doctor checks in one response,
       assembled from the existing reads; a room ask carries the room,
       the asker, the kind, the message's words, and its age. Pinned by
       bridge tests.
-- [ ] **C2 — seats answer in place.** A seat row's once/always/deny
+- [x] **C2 — seats answer in place.** A seat row's once/always/deny
       calls the existing answer seam with the seat's own session; the
       row leaves when the seat resolves. Pinned by a bridge test and a
       harness case.
-- [ ] **C3 — onboarding rows carry their actions.** Each incomplete
+- [x] **C3 — onboarding rows carry their actions.** Each incomplete
       step renders with its own control (the door's decision or its
       route); a completed step never renders. Pinned by a harness case.
-- [ ] **C4 — huddle asks are collected and answered.** Every room's
+- [x] **C4 — huddle asks are collected and answered.** Every room's
       unanswered owner-mention renders with its words and its age; the
       jump opens the room with the composer focused; an owner reply in
       the room retires the row. Pinned by a bridge test and a harness
       case.
-- [ ] **C5 — the machinery's own findings.** Failed and
+- [x] **C5 — the machinery's own findings.** Failed and
       approval-skipped cron jobs render from the store's `last_outcome`
       with their schedule and task; failing doctor checks render with
       their remedy; both leave when the store or the check resolves.
       Pinned by bridge tests and a harness case.
-- [ ] **C6 — the surface and the badge.** `#/inbox` mounts on the rail
+- [x] **C6 — the surface and the badge.** `#/inbox` mounts on the rail
       directly below the conversation, with the badge showing the live
       total; the empty state is the honest absence. Pinned by harness
       cases.
-- [ ] **C7 — the live events keep it true.** A seat, an ask, a cron
+- [x] **C7 — the live events keep it true.** A seat, an ask, a cron
       failure, or a resolution arriving on the wire updates the queue
       and the badge without a reload. Pinned by a harness case.
-- [ ] **C8 — the live proof.** On the running face: a seat pending in
+- [x] **C8 — the live proof.** On the running face: a seat pending in
       one conversation and a question pending in a room, reload the
       tab — the inbox returns with both; answer the seat in place and
       the question by jumping; both rows leave. Quoted in the recap.
-- [ ] **C9 — the gate.** fmt, clippy, release build, test — exit codes
+- [x] **C9 — the gate.** fmt, clippy, release build, test — exit codes
       read directly, the whole suite.
-- [ ] **C10 — the docs.** gui.md gains the inbox surface (its read, its
+- [x] **C10 — the docs.** gui.md gains the inbox surface (its read, its
       rows, its badge); FUNCTIONAL-SPECIFICATIONS's navigation section
       names it; the rail's icon sheet gains the inbox's mark.
 

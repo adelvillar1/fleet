@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="paper">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>the component catalog — the sheet</title>
+<link rel="stylesheet" href="mockup.css">
+</head>
+<body>
+<main class="page">
+  <p class="eyebrow">work · deliverables</p>
+  <h1 class="title">A checked vocabulary, drawn.</h1>
+  <p class="note">Every card is one catalog kind with its props, drawn the way the renderer will draw it. The sheet is the render contract: the Rust module emits these <code>cat-*</code> classes against the face's own tokens, so a component built for another project inherits the brand. The second section is one sample spec rendered end to end — the same loop the <code>ui</code> tool will run.</p>
+
+  <section class="section">
+    <div class="section-head"><h2>the catalog</h2><span class="why">16 kinds · layout, text, data, media, action, form</span></div>
+    <div class="grid" id="grid"></div>
+  </section>
+
+  <section class="section">
+    <div class="section-head"><h2>the loop</h2><span class="why">one spec in, one page out</span></div>
+    <div class="loop">
+      <pre id="spec"></pre>
+      <div class="loop-frame" id="loop-render"></div>
+    </div>
+  </section>
+</main>
+<div class="theme-bar">
+  <button data-t="paper" aria-pressed="true">paper</button>
+  <button data-t="console">console</button>
+  <button data-t="graphite">graphite</button>
+  <button data-t="contrast">contrast</button>
+</div>
+<script src="catalog.js"></script>
+<script>
+  const bar = document.querySelector('.theme-bar');
+  const set = (t) => {
+    document.documentElement.dataset.theme = t;
+    bar.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.t === t)));
+    const u = new URL(location.href); u.searchParams.set('theme', t); history.replaceState(null, '', u);
+  };
+  bar.addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) set(b.dataset.t); });
+  const asked = new URL(location.href).searchParams.get('theme');
+  if (asked) set(asked);
+</script>
+</body>
+</html>

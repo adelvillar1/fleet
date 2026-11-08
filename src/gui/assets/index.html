@@ -697,6 +697,16 @@
        log. A fact edits in place through the substrate's own rewriter:
        the named frontmatter lines are re-rendered and every other byte
        survives. -->
+  <main class="stage stage-board" id="panel-inbox" hidden aria-label="the inbox">
+    <div class="board" id="inbox-board">
+      <header class="ib-head">
+        <h1>the inbox</h1>
+        <span class="ib-total" id="ib-total" hidden></span>
+      </header>
+      <div class="ib-empty" id="ib-empty" hidden>nothing needs you</div>
+      <div id="ib-body"></div>
+    </div>
+  </main>
   <main class="stage stage-board stage-split" id="panel-memory" hidden>
     <nav class="section-rail" id="memory-rail" aria-label="memory sections"></nav>
     <div class="board" id="memory-board"></div>

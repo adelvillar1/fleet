@@ -82,7 +82,10 @@ pub const REPORTING_CONTRACT: &str = "## Closing every turn\n\nTool output is no
 /// voice and the reporting contract, in that order. One function, so
 /// the composition has one spelling for the run and for its tests.
 pub fn default_prompt() -> String {
-    format!("{SYSTEM_PROMPT}\n\n{REPORTING_CONTRACT}")
+    format!(
+        "{SYSTEM_PROMPT}\n\n{REPORTING_CONTRACT}\n\n{}",
+        crate::catalog::prompt_text()
+    )
 }
 
 /// What the harness says when a run stops without the report it owes.
@@ -186,10 +189,14 @@ pub const MAX_VISIBLE_TOOLS: usize = 36;
 /// third crossing was the memory surface's own: the `remember` schema's
 /// `source` field — the evidence pointer the dream pass validates
 /// against — put the pair at 10,016 (the memory-dreaming plan's C1), so
-/// it moves to 10,050 for the same reason. The measurement is pinned by
-/// `the_native_surface_fits_its_own_bounds`, which is the gate that
-/// caught all three crossings.
-pub const MAX_DEFINITION_TOKENS: usize = 10_050;
+/// it moves to 10,050 for the same reason. The fourth is the component
+/// catalog's `ui` tool (the component-catalog plan's C7): the closed
+/// vocabulary rides the system prompt, so the declaration is a schema
+/// pointer plus a short contract, and it put the surface at 10,224
+/// against thirty-one — so it moves to 10,300. The measurement is pinned
+/// by `the_native_surface_fits_its_own_bounds`, which is the gate that
+/// caught all four crossings.
+pub const MAX_DEFINITION_TOKENS: usize = 10_300;
 
 /// How many requests a `tool_search` activation stays declared for. An
 /// activation is an answer to ONE question, not a permanent grant: the
@@ -2052,6 +2059,11 @@ impl<'a> Agent<'a> {
         let mut prompt = String::from(base);
         prompt.push_str("\n\n");
         prompt.push_str(REPORTING_CONTRACT);
+        // The component catalog — the closed vocabulary for `ui` specs.
+        // It rides the prompt the way the tool descriptions do, so the model
+        // builds inside the set rather than inventing components.
+        prompt.push_str("\n\n");
+        prompt.push_str(&crate::catalog::prompt_text());
         // C0: the boundary the model reads before it reaches it.
         if plan_mode {
             prompt.push_str("\n\n");
@@ -2257,6 +2269,7 @@ impl<'a> Agent<'a> {
         specs.push(tools::deck_spec());
         specs.push(tools::frame_spec());
         specs.push(tools::review_frame_spec());
+        specs.push(tools::ui_spec());
         // The extraction leg, in the live path's position after the deck:
         // declared unguarded because the named absence lives in the
         // result, not the declaration (E2-C3).
@@ -2385,6 +2398,13 @@ impl<'a> Agent<'a> {
         }
         if admitted(tools::REVIEW_FRAME_TOOL) {
             specs.push(tools::review_frame_spec());
+        }
+        // The component catalog's ui tool: a checked component page for
+        // another project. Declared beside the deck and the frame — the
+        // same structured-deliverable family, the closed vocabulary riding
+        // the system prompt.
+        if admitted(tools::UI_TOOL) {
+            specs.push(tools::ui_spec());
         }
         // The extraction leg rides every run whose machine carries the
         // credentials: a typed read beside the decision tier, declared
@@ -4524,6 +4544,32 @@ impl<'a> Agent<'a> {
                             })
                         }
                     }
+                }
+            });
+        }
+        if name == tools::UI_TOOL {
+            // The catalog's ui tool: the spec is validated before anything
+            // renders, and a refusal is a model-visible error naming the
+            // element and the fault. A rendered page is saved beside the
+            // session and rides an Artifact event, so the face shows a file
+            // card — the same receipt the deck's files get.
+            let arguments = parse_arguments(&call.function.arguments);
+            let session_dir = self
+                .session
+                .path()
+                .parent()
+                .map(std::path::Path::to_path_buf);
+            return Ok(match tools::run_ui(&arguments, session_dir.as_deref()) {
+                Err(error) => settled(error),
+                Ok(run) => {
+                    if let Some(path) = &run.path {
+                        self.emit(UiEvent::Artifact {
+                            path: path.to_string_lossy().to_string(),
+                            size: run.bytes as u64,
+                            note: Some("the catalog page".to_string()),
+                        });
+                    }
+                    settled(run.outcome.output)
                 }
             });
         }
@@ -11465,6 +11511,23 @@ mod tests {
     }
 
     #[test]
+    fn the_assembled_prompt_names_every_catalog_kind() {
+        let home = scratch("catalog-prompt");
+        let root = corpus("catalog-prompt-corpus", &[]);
+        let agent = agent_over(&home, &root, Box::new(ApproveAll));
+        let prompt = agent.system_prompt(None);
+        for kind in crate::catalog::kinds() {
+            assert!(prompt.contains(kind), "the prompt names `{kind}`");
+            let def = crate::catalog::find(kind).expect("the kind exists");
+            assert!(
+                prompt.contains(def.description),
+                "the prompt carries `{kind}`'s description"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
     fn a_run_with_memory_declares_the_write_path_and_one_without_it_does_not() {
         let home = scratch("memory-declarations");
         let root = corpus("memory-declarations-corpus", &[]);
@@ -11512,6 +11575,9 @@ mod tests {
                 // deliverables a surface renders, beside the deck.
                 "frame",
                 "review_frame",
+                // The catalog's `ui`: the closed-vocabulary component page,
+                // beside the deck and the frame in the deliverable family.
+                "ui",
                 // The extraction leg rides the deck's slot: a typed read
                 // beside the decision tier, declared when the machine
                 // carries the credentials and named-absent otherwise.
@@ -11581,7 +11647,7 @@ mod tests {
         // computation over a value the model writes, and neither touches
         // anything outside itself. So does `plan`: it drafts a plan
         // document's declaration, which is the repo's own state.
-        assert_eq!(plain.declarations().len(), 30);
+        assert_eq!(plain.declarations().len(), 31);
         assert_eq!(plain.system_prompt(None), default_prompt());
         let _ = std::fs::remove_dir_all(&home);
         let _ = std::fs::remove_dir_all(&root);
@@ -11849,7 +11915,10 @@ mod tests {
         // harness's expectation rides after whatever base the run has.
         assert_eq!(
             agent.system_prompt(None),
-            format!("{identity}\n\n{REPORTING_CONTRACT}")
+            format!(
+                "{identity}\n\n{REPORTING_CONTRACT}\n\n{}",
+                crate::catalog::prompt_text()
+            )
         );
 
         // With skills declared, the frame appends beside the identity —
@@ -12189,7 +12258,10 @@ You are auditing a change. Read the diff before you judge it.
         let prompt = agent.system_prompt(None);
         assert_eq!(
             prompt,
-            format!("You are the owner's own voice.\n\n{REPORTING_CONTRACT}")
+            format!(
+                "You are the owner's own voice.\n\n{REPORTING_CONTRACT}\n\n{}",
+                crate::catalog::prompt_text()
+            )
         );
         assert_eq!(
             prompt.matches("## Closing every turn").count(),

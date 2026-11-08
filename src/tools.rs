@@ -671,6 +671,143 @@ pub fn run_deck_with_event(
     })
 }
 
+pub const UI_TOOL: &str = "ui";
+
+/// The request declaration for `ui`: one checked component spec, rendered.
+///
+/// The description names the validation as the tool's own contract, the way
+/// the deck's does — a model that knows the checker refuses will build to it,
+/// and a refusal is a fixable answer rather than a failure. The vocabulary
+/// itself rides the system prompt, so the schema points at the spec shape
+/// rather than repeating sixteen components.
+pub fn ui_spec() -> ToolSpec {
+    ToolSpec::function(
+        UI_TOOL,
+        "Build a UI component from the catalog: a checked, self-contained HTML page. The spec \
+         is a flat tree — `root` names the page element, `elements` maps an id to \
+         `{type, props, children}`. Every `type` must be a catalog kind and every prop must be \
+         declared on it; the spec is validated before it renders, and a refusal names the \
+         element and the fault, so fix that one thing and call again. The result is the \
+         rendered page, saved beside the session, plus the page itself.",
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "spec": {
+                    "type": "object",
+                    "description": "The component spec: `root` plus `elements`. The catalog in the system prompt names the kinds and their props."
+                },
+                "name": {
+                    "type": "string",
+                    "description": "The page's name, used for the saved file's stem."
+                }
+            },
+            "required": ["spec"]
+        }),
+    )
+}
+
+/// The ui run's two faces: what the model reads, and the file the owner gets.
+pub struct UiRun {
+    pub outcome: ToolOutcome,
+    /// The saved page's path, when a session directory was given and the
+    /// write landed.
+    pub path: Option<std::path::PathBuf>,
+    /// The rendered page's byte size (0 when the spec was refused).
+    pub bytes: usize,
+}
+
+/// Run the ui tool: parse the spec, check it, render it, save it.
+///
+/// A refusal is a model-visible `error:` result naming every element and
+/// fault, the same shape the deck's refusals take. The rendered page is
+/// saved beside the session so the owner can open it headless, and the HTML
+/// rides the result so a surface can show it.
+pub fn run_ui(
+    arguments: &serde_json::Value,
+    session_dir: Option<&std::path::Path>,
+) -> Result<UiRun, String> {
+    let Some(spec_json) = arguments.get("spec") else {
+        return Ok(UiRun {
+            outcome: ToolOutcome {
+                output: "error: the tool needs a `spec`".to_string(),
+                truncated: false,
+            },
+            path: None,
+            bytes: 0,
+        });
+    };
+    let spec: crate::catalog::UiSpec = serde_json::from_value(spec_json.clone())
+        .map_err(|error| format!("error: the spec does not parse: {error}"))?;
+    let faults = crate::catalog::check(&spec);
+    if !faults.is_empty() {
+        let named: Vec<String> = faults.iter().map(|fault| fault.line()).collect();
+        return Ok(UiRun {
+            outcome: ToolOutcome {
+                output: format!("error: the spec was refused:\n- {}", named.join("\n- ")),
+                truncated: false,
+            },
+            path: None,
+            bytes: 0,
+        });
+    }
+    let html = crate::catalog::render(&spec);
+    let bytes = html.len();
+    let mut path = None;
+    let mut output = format!(
+        "the spec rendered {} element(s) into {} bytes",
+        spec.elements.len(),
+        bytes
+    );
+    if let Some(dir) = session_dir {
+        let stem = arguments
+            .get("name")
+            .and_then(|value| value.as_str())
+            .filter(|name| !name.trim().is_empty())
+            .map(sanitize_stem)
+            .unwrap_or_else(|| "ui".to_string());
+        let file = dir.join(format!("{stem}.html"));
+        match std::fs::write(&file, &html) {
+            Ok(()) => {
+                output.push_str(&format!("\nthe page is saved at {}", file.display()));
+                path = Some(file);
+            }
+            Err(error) => {
+                output.push_str(&format!("\nthe page file could not be written: {error}"))
+            }
+        }
+    }
+    output.push_str(&format!("\n\n{html}"));
+    Ok(UiRun {
+        outcome: ToolOutcome {
+            output,
+            truncated: false,
+        },
+        path,
+        bytes,
+    })
+}
+
+/// Fold a caller's page name into a file stem: lowercase, dashed, no
+/// separators. A name that sanitizes to nothing becomes `ui`.
+fn sanitize_stem(name: &str) -> String {
+    let folded: String = name
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let trimmed = folded.trim_matches('-');
+    if trimmed.is_empty() {
+        "ui".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
 /// How long a concept may be before the lookup stops reading it. A
 /// concept is a name, not a sentence; the bound is what keeps a
 /// pasted paragraph from becoming a vocabulary scan key.
@@ -1494,7 +1631,7 @@ pub fn supersede_spec() -> ToolSpec {
 pub fn improve_spec() -> ToolSpec {
     ToolSpec::function(
         IMPROVE_TOOL,
-        "File one self-maintenance proposal: a change to the harness's own skills, memory or config, with the justification, acceptance criteria and expected effect a reviewer needs. This tool only FILES it into <FLEET_HOME>/proposals/ and never applies anything. Applying is the owner's `fleet improve apply <name>`, which runs the gate (fmt, clippy, build, test), asks approval when destructive, measures a source edit against the eval corpus, and records the verdict in the calibration ledger. Use it when a session's outcome justifies a change the harness should make to itself; state the evidence — an applied change records a lesson from it, and a proposal without evidence records none. The confirmation names recent lessons for the same target kind, so an earlier change's outcome informs this one.",
+        "File one self-maintenance proposal: a change to the harness's own skills, memory or config, with the justification, acceptance criteria and expected effect a reviewer needs. Write `fleet improve analyze` FIRST: it measures the graded rows — which classes fail and the confidence threshold that separates right from wrong — so the acceptance criteria carry measured thresholds, not guessed ones. This tool only FILES it into <FLEET_HOME>/proposals/ and never applies anything. Applying is the owner's `fleet improve apply <name>`, which runs the gate (fmt, clippy, build, test), asks approval when destructive, measures a source edit against the eval corpus, and records the verdict in the calibration ledger. Use it when a session's outcome justifies a change the harness should make to itself; state the evidence — an applied change records a lesson from it, and a proposal without evidence records none. The confirmation names recent lessons for the same target kind, so an earlier change's outcome informs this one.",
         serde_json::json!({
             "type": "object",
             "properties": {
@@ -4091,6 +4228,64 @@ mod tests {
     /// measurement before any shortening; this is that measurement,
     /// pinned so a future edit to the description cannot quietly change
     /// the number.
+    #[test]
+    fn the_ui_tool_refuses_a_bad_spec_and_saves_a_good_one() {
+        // A spec that breaks the vocabulary is refused by name, and no
+        // file is written.
+        let bad = serde_json::json!({
+            "spec": {
+                "root": "page",
+                "elements": {
+                    "page": { "type": "hero", "props": {}, "children": [] }
+                }
+            }
+        });
+        let run = run_ui(&bad, None).expect("the handler answers");
+        assert!(run.path.is_none(), "a refused spec writes no file");
+        assert!(run.bytes == 0, "a refused spec renders nothing");
+        assert!(
+            run.outcome.output.starts_with("error:"),
+            "the refusal is model-visible: {}",
+            run.outcome.output
+        );
+        assert!(
+            run.outcome.output.contains("is not a catalog kind"),
+            "the refusal names the fault: {}",
+            run.outcome.output
+        );
+
+        // A known-good spec renders and saves beside the session.
+        let dir = scratch("ui");
+        let good = serde_json::json!({
+            "name": "Q3 Review",
+            "spec": {
+                "root": "page",
+                "elements": {
+                    "page": { "type": "container", "props": { "dir": "column" },
+                              "children": ["head", "cta"] },
+                    "head": { "type": "heading", "props": { "text": "Q3 revenue review" }, "children": [] },
+                    "cta": { "type": "button", "props": { "label": "Export", "action": "export" }, "children": [] }
+                }
+            }
+        });
+        let run = run_ui(&good, Some(&dir)).expect("the handler answers");
+        let path = run.path.expect("a rendered spec saves a file");
+        assert!(path.exists(), "the page is on disk");
+        assert!(
+            run.outcome.output.contains("the page is saved at"),
+            "the path rides the summary: {}",
+            run.outcome.output
+        );
+        let html = std::fs::read_to_string(&path).expect("the page reads back");
+        assert!(
+            html.starts_with("<!doctype html>"),
+            "the saved page is a document"
+        );
+        assert!(html.contains("data-cat=\"head\""), "the elements are drawn");
+        assert!(run.bytes == html.len(), "the byte count is the page's own");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn the_subagent_declarations_cost_is_measured() {
         // The declaration measured is `subagent_spec`, which the agent

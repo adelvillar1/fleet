@@ -224,6 +224,7 @@ async fn judge_over_asks(
         home,
         day: day.to_string(),
         dry_run,
+        run: None,
         lane: LaneSource::Scripted(lane),
     })
     .await
@@ -1649,6 +1650,46 @@ fn no_synchronous_path_references_the_judgment_beat() {
     }
 }
 
+/// The run scope keeps one run's rows and passes the rest through.
+#[test]
+fn the_run_scope_keeps_one_runs_rows() {
+    let root = scratch("run-scope");
+    let day = "2026-11-20";
+    let mut lines = String::new();
+    for (hash, verdict) in [
+        ("hash-a", "right"),
+        ("hash-b", "wrong"),
+        ("hash-a", "wrong"),
+    ] {
+        lines.push_str(
+            &serde_json::json!({
+                "ts": "2026-11-20T00:00:00Z",
+                "op": "route",
+                "provider": "glide",
+                "how": "judged",
+                "workload": "deploy",
+                "verdict": verdict,
+                "input_hash": hash,
+            })
+            .to_string(),
+        );
+        lines.push('\n');
+    }
+    let file = crate::calib::day_path(&root, day);
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(file, lines).unwrap();
+    let rows = read_day(&root, day);
+    let routes = route_rows(&rows);
+    assert_eq!(routes.len(), 3);
+    let filtered = filter_run(routes, &Some("hash-a".to_string()));
+    assert_eq!(filtered.len(), 2, "one run's rows");
+    assert!(filtered.iter().all(|row| row.input_hash == "hash-a"));
+    let rows = read_day(&root, day);
+    let all = filter_run(route_rows(&rows), &None);
+    assert_eq!(all.len(), 3, "no scope, all rows");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 // --- the beat, end to end over the scripted lane ---
 
 #[tokio::test]
@@ -1845,6 +1886,7 @@ async fn a_lane_that_cannot_answer_fails_open_naming_its_reason() {
         home: &home,
         day: day(),
         dry_run: false,
+        run: None,
         lane,
     })
     .await;
@@ -2607,6 +2649,7 @@ async fn one_lane_opens_once_and_asks_once_per_row() {
         home: &home,
         day: day.clone(),
         dry_run: false,
+        run: None,
         lane: LaneSource::Counting(std::sync::Arc::clone(&log)),
     })
     .await;
@@ -2657,6 +2700,7 @@ async fn a_lane_that_fails_to_open_refuses_every_row_by_name() {
         home: &home,
         day: day.clone(),
         dry_run: false,
+        run: None,
         lane: LaneSource::Counting(std::sync::Arc::clone(&log)),
     })
     .await;

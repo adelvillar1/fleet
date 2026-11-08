@@ -89,6 +89,18 @@ surface need no format change when it lands.
 hash, and a count. `route`'s `input_hash` hashes the task; `tool_screen`'s
 hashes the call's arguments; both keep the length beside the hash.
 
+## The demand row and the beats' scopes (2026-11-07)
+
+The stream gained the `demand` op: one row per `fleet demand` view —
+the window, the classes counted, the top demand class and its bad-rate
+— the audit trail that a view ran. The judge and delegate beats accept
+a scope beside the day's: `fleet judge --run <input-hash>` grades one
+run's route rows (the timing instrument — a judgment can land while
+the run's context is live), and `fleet delegate --session <id>` judges
+one session's delegations (the rows carry the session id natively). The
+judge's session scope would need a row link the schema does not carry;
+the run scope is the honest form there.
+
 ## The writer
 
 One background thread per stream, fed by a bounded `sync_channel` of

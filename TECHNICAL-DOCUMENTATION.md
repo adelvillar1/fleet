@@ -347,7 +347,8 @@ the refine snapshot, and the board the model named.
 The closed built-in tool set — now including the design canvas's
 `frame` (a complete page onto a board) and `review_frame` (a structured
 review onto a frame), beside `deck` as the family of structured
-deliverables a surface renders. Every failure is a model-visible result, never a
+deliverables a surface renders, and `ui` (a checked component page from
+the catalog, `catalog.rs`). Every failure is a model-visible result, never a
 panic. This module also declares the tool vocabulary the dynamic surfaces
 assemble: built-ins, `mcp__<svc>__<tool>`, skills, memory tools, `subagent`,
 and `web`. [`Tool::execute`] is the unrestricted run (the process's working
@@ -444,6 +445,7 @@ outcomes — never task text.
 | Module | Source |
 |---|---|
 | `memory.rs` | `docs/features/memory.md`; `docs/architecture/deep-dive-2026-10-15.md`; `docs/architecture/deep-dive-2026-11-07-memory-dreaming.md` |
+| `demand.rs` | `docs/features/self-maintenance.md`; `docs/architecture/deep-dive-2026-11-07-self-improvement.md` |
 | `dream.rs` | `docs/features/memory.md`; `docs/architecture/deep-dive-2026-11-07-memory-dreaming.md` |
 | `session_recall.rs` | `docs/features/memory.md`; `docs/architecture/deep-dive-2026-10-15.md` |
 | `skills.rs` | `docs/features/skills.md` |
@@ -477,6 +479,19 @@ the bar retires through the real supersede path, everything else is a
 `validate` calib row and a named skip. `fleet memories --validate`
 runs one pass on demand; `spawn_homekeeping` runs the cycle and the
 pass hourly in chat, the TUI, and the face.
+
+#### `demand.rs`
+The demand map (the self-improvement plan's C0): the phantom
+gradient's fleet instrument over the calibration stream. Per-class
+demand — the routing judgment's workload × provider, the eval
+corpus's scenarios, the delegation outcomes, the validate verdicts —
+each with its bad-rate, row count, and trend across the window's
+halves (`Trend`: improving, flat, worsening, thin). `fleet demand`
+prints it and lands one `demand` row; `fleet demand --cluster` groups
+the failures, surfaces the examples, and files a shape proposal per
+cluster at or over the threshold. The clustering beat, the race, the
+analysis, the gaps, the capability view, and the self-probe live
+beside it in `improve.rs`, `eval.rs`, and `delegate.rs`.
 
 #### `dream.rs`
 The dream pass's lane-owning validator: the sys1 lane session (opened
@@ -631,6 +646,7 @@ batch-only by construction.
 | `tui/` | `docs/architecture/deep-dive-2026-10-15.md`; `docs/architecture/overview.md` |
 | `gui/` | `docs/features/gui.md` |
 | `checkpoints.rs` | `docs/features/gui.md` (the trust trio) |
+| `catalog.rs` | `docs/features/catalog.md`; the component catalog's vocabulary, spec, check and render |
 | `deck.rs` | `docs/features/gui.md`; the deck pipeline's render stage |
 | `desk.rs` | `docs/features/desk.md`; `docs/plans/2026-11-05-desk-ux.md` |
 | `vault.rs` | AES-256-GCM at rest, keyed by a passphrase |
