@@ -1,5 +1,6 @@
 ---
 status: completed
+execution: single
 created: 2026-11-08
 updated: 2026-11-08
 slug: the-shell-updates-itself
