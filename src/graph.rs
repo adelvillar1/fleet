@@ -1565,12 +1565,83 @@ pub struct LessonPlan {
 }
 
 impl LessonPlan {
-    /// The teaching order: the graph's critical path, the longest chain
-    /// of single steps. The teaching moves in this order, because each
-    /// step attaches to what is held by one step and a shorter order
-    /// would step on ground not yet laid.
+    /// The teaching order: every proposition in the tree, in the order
+    /// the teaching moves — a foundation first, then each step once the
+    /// propositions it rests on are held.
+    ///
+    /// The critical path is the spine. Among the steps whose premises
+    /// are all held, the one on the longest chain to the goal teaches
+    /// first, so the lesson's own spine proceeds and the side branches
+    /// slot in as their dependencies arrive — never after the step that
+    /// needs them.
     pub fn teaching_order(&self) -> Vec<String> {
-        self.graph.critical_path()
+        // Each node's longest chain from a foundation through it: the
+        // priority the ready steps teach in.
+        let mut depth: Vec<(String, u64)> = Vec::with_capacity(self.nodes.len());
+        for node in &self.nodes {
+            depth.push((node.id.clone(), self.chain_through(node)));
+        }
+        let priority = |id: &str| {
+            depth
+                .iter()
+                .find(|(seen, _)| seen == id)
+                .map(|(_, chain)| *chain)
+                .unwrap_or(0)
+        };
+        let mut taught: Vec<String> = Vec::new();
+        let mut order: Vec<String> = Vec::new();
+        // Kahn's algorithm with the critical path's priority: a ready
+        // step is one whose premises are all taught.
+        while order.len() < self.nodes.len() {
+            let mut ready: Vec<&LessonNode> = self
+                .nodes
+                .iter()
+                .filter(|node| !taught.contains(&node.id))
+                .filter(|node| node.premises.iter().all(|premise| taught.contains(premise)))
+                .collect();
+            if ready.is_empty() {
+                // A cycle would have been refused at the build; a gap
+                // here is a node whose premises name nothing, which the
+                // build also refuses. Neither reaches a lesson.
+                break;
+            }
+            ready.sort_by(|left, right| {
+                priority(&right.id)
+                    .cmp(&priority(&left.id))
+                    .then_with(|| left.id.cmp(&right.id))
+            });
+            let next = ready[0].id.clone();
+            taught.push(next.clone());
+            order.push(next);
+        }
+        order
+    }
+
+    /// The longest chain from a foundation through `node`, in teaching
+    /// steps: the node's own cost plus the deepest of its premises'.
+    fn chain_through(&self, node: &LessonNode) -> u64 {
+        let deepest = node
+            .premises
+            .iter()
+            .filter_map(|premise| {
+                self.nodes
+                    .iter()
+                    .find(|seen| &seen.id == premise)
+                    .map(|seen| self.chain_through(seen))
+            })
+            .max()
+            .unwrap_or(0);
+        node.cost + deepest
+    }
+
+    /// Whether a node is a foundation — a proposition the learner
+    /// already holds, which the teaching never re-teaches.
+    pub fn is_foundation(&self, id: &str) -> bool {
+        self.nodes
+            .iter()
+            .find(|node| node.id == id)
+            .map(|node| node.premises.is_empty())
+            .unwrap_or(false)
     }
 
     /// The proposition a node carries.

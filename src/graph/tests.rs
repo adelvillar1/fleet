@@ -1698,8 +1698,8 @@ fn the_lesson_plan_builds_the_tree_and_the_critical_path_is_the_teaching_order()
     let plan = build_lesson_plan("goal", &nodes).expect("the tree builds");
     assert_eq!(
         plan.teaching_order(),
-        ids(&["goal", "blocks", "holds"]),
-        "the critical path is the teaching order, goal first"
+        ids(&["holds", "blocks", "goal"]),
+        "the teaching moves from what is held to the goal"
     );
     assert_eq!(plan.foundations().len(), 1);
     assert_eq!(plan.foundations()[0].id, "holds");
@@ -1757,10 +1757,12 @@ fn the_lesson_plan_teaches_the_longest_chain_first_in_a_branching_tree() {
         ),
     ];
     let plan = build_lesson_plan("goal", &nodes).expect("the tree builds");
+    // The spine teaches first (holds, long, deeper), the side branch
+    // slots in as soon as it is the only ready step, and the goal last.
     assert_eq!(
         plan.teaching_order(),
-        ids(&["goal", "deeper", "long", "holds"]),
-        "the longer chain leads the teaching order"
+        ids(&["holds", "long", "deeper", "short", "goal"]),
+        "the critical path is the spine, the branches slot in by their dependencies"
     );
     // Every node is on the goal's path, so nothing is refused.
     assert_eq!(plan.nodes.len(), 5);

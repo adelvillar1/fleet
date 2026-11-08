@@ -24,6 +24,15 @@ use crate::memory::{self, Basis, Memory, Tier};
 /// run rides as its overlay.
 pub const PROBER_ROLE: &str = "prober";
 
+/// The teacher role's name — the file under `<home>/roles/` the lesson's
+/// teaching run rides as its overlay.
+pub const TEACHER_ROLE: &str = "teacher";
+
+/// The repair rounds one step may take before the lesson stops rather
+/// than building on ground that is not held — the house's rounds
+/// discipline, applied to a confusion the learner cannot yet step past.
+pub const MAX_REPAIRS: usize = 3;
+
 /// One probe answer: the learner's words, their thinking, and their
 /// confidence — the record the bracket is drawn from. The thinking and
 /// the confidence are the theory's richest data; the answer is the
@@ -106,6 +115,201 @@ pub fn probe_loop(
     }
 }
 
+/// One step's check: the learner's own words after the explanation,
+/// and whether the step is held. A confusion is the learner's own
+/// account of where the step did not land — the repair's whole target.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Check {
+    /// The learner's words, taken whole.
+    pub words: String,
+    /// Whether the step reads as held — the learner can state it and
+    /// step on it.
+    pub held: bool,
+    /// The confusion the learner named, when the step did not land.
+    pub confusion: Option<String>,
+}
+
+/// The lesson's terminal state: the learner's own words at the goal,
+/// and whether they read as the goal held as obviously true. The
+/// theory's terminal condition is not recall or coverage — it is the
+/// felt experience of "obviously true", read from the learner's words.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SelfEvidence {
+    pub words: String,
+    pub obviously_true: bool,
+}
+
+/// One taught step's record: the prediction, the check, and the repairs
+/// a confusion took before the step was held.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TeachStep {
+    /// The proposition's node id.
+    pub node: String,
+    /// The proposition the step taught.
+    pub proposition: String,
+    /// The learner's prediction before the explanation.
+    pub prediction: String,
+    /// The check after the explanation.
+    pub check: Check,
+    /// The repairs: each confusion and the check that followed it.
+    pub repairs: Vec<(String, Check)>,
+}
+
+/// A lesson's whole record: the steps in the teaching order, and the
+/// goal's self-evidence.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LessonOutcome {
+    pub steps: Vec<TeachStep>,
+    pub self_evidence: SelfEvidence,
+    /// True when every step is held and the goal feels obviously true —
+    /// a lesson that stopped on an unrepaired confusion is not complete.
+    pub complete: bool,
+}
+
+/// The conversation seam the teaching flow drives. A run implements it
+/// with the lesson session's own turns — the teacher's overlay asks,
+/// the learner answers — and a test scripts the replies.
+pub trait TeachingConversation {
+    /// Ask the learner to predict the step before it is explained: the
+    /// prediction attaches the step to what is already held, which is
+    /// what makes the explanation land as obviously true.
+    fn predict(&mut self, proposition: &str) -> String;
+
+    /// Offer the step's explanation and read the learner's check.
+    fn check(&mut self, proposition: &str) -> Check;
+
+    /// Repair a confusion the check surfaced, and read the check that
+    /// follows the repair. Nothing is built on a step that is not held.
+    fn repair(&mut self, confusion: &str, proposition: &str) -> Check;
+
+    /// Read the goal's self-evidence in the learner's own words.
+    fn self_evidence(&mut self, goal: &str) -> SelfEvidence;
+}
+
+/// The teaching loop (the learning plan's C4): move one reasoning step
+/// at a time through the plan's teaching order — predict, explain,
+/// check — repairing a confusion before anything is built on it, and
+/// stop at the goal's self-evidence.
+///
+/// The theory's own discipline: a foundation is what the learner
+/// already holds and is never re-taught; a step whose confusion will
+/// not repair within [`MAX_REPAIRS`] stops the lesson rather than
+/// building on ground that is not held; and the terminal condition is
+/// the learner's own "obviously true", never the lesson's coverage.
+pub fn teach(
+    plan: &crate::graph::LessonPlan,
+    conversation: &mut dyn TeachingConversation,
+) -> LessonOutcome {
+    let mut steps: Vec<TeachStep> = Vec::new();
+    let mut complete = true;
+    for node in plan.teaching_order() {
+        // A foundation is what the learner holds — the minimal tree
+        // re-teaches nothing.
+        if plan.is_foundation(&node) {
+            continue;
+        }
+        let proposition = plan.proposition(&node).unwrap_or_default().to_string();
+        let prediction = conversation.predict(&proposition);
+        let mut check = conversation.check(&proposition);
+        let mut repairs: Vec<(String, Check)> = Vec::new();
+        // A confusion is repaired before continuing — the error
+        // surfaces the moment it is stepped on, and nothing is built
+        // on it until it is repaired.
+        let mut round = 0;
+        while !check.held && round < MAX_REPAIRS {
+            let confusion = check
+                .confusion
+                .clone()
+                .unwrap_or_else(|| "the learner named no confusion".to_string());
+            check = conversation.repair(&confusion, &proposition);
+            repairs.push((confusion, check.clone()));
+            round += 1;
+        }
+        if !check.held {
+            // The ground is not held: the lesson stops here rather than
+            // teaching a step that rests on a confusion.
+            complete = false;
+            steps.push(TeachStep {
+                node,
+                proposition,
+                prediction,
+                check,
+                repairs,
+            });
+            return LessonOutcome {
+                steps,
+                self_evidence: SelfEvidence {
+                    words: String::new(),
+                    obviously_true: false,
+                },
+                complete,
+            };
+        }
+        steps.push(TeachStep {
+            node,
+            proposition,
+            prediction,
+            check,
+            repairs,
+        });
+    }
+    let self_evidence = conversation.self_evidence(&plan.goal);
+    if !self_evidence.obviously_true {
+        complete = false;
+    }
+    LessonOutcome {
+        steps,
+        self_evidence,
+        complete,
+    }
+}
+
+/// Seed the teacher role into the home's roles (the learning plan's C4).
+/// A seed only fills a home that lacks the role — an owner-edited file
+/// is the owner's and is left exactly as it stands.
+pub fn seed_teacher(home: &Path) -> Result<(), String> {
+    let path = crate::roles::roles_dir(home).join(format!("{TEACHER_ROLE}.md"));
+    if path.exists() {
+        return Ok(());
+    }
+    let fields = crate::roles::RoleFields {
+        description: "The learning teacher — moves one reasoning step at a time, from what the learner holds to the goal.".to_string(),
+        tools: Vec::new(),
+        skills: Vec::new(),
+        shapes: Vec::new(),
+        overlay: TEACHER_OVERLAY.to_string(),
+    };
+    crate::roles::write(home, TEACHER_ROLE, &fields)
+}
+
+/// The teacher's overlay — the standing instruction the teaching run
+/// carries beside the harness prompt. The theory's demands are its
+/// rules: one step at a time, predict before explaining, a check after
+/// every step, the confusion repaired first, and the goal's
+/// self-evidence the only terminal condition.
+pub const TEACHER_OVERLAY: &str = r#"You are the teacher in a learning session. You move one reasoning
+step at a time, from what the learner already holds to the goal they
+pinned. Never teach two steps at once: a step the learner cannot hold
+is not a step, and a lecture is a pile of them.
+
+Before you explain a step, ask the learner to predict it. The
+prediction attaches the step to what they hold, which is what makes
+the explanation land as obviously true. Then explain it — the clearest
+form you have, no meta-narration, every sentence installing
+understanding or cut as overhead. Then check: ask the learner to state
+the step back or to use it, and take their words whole.
+
+When the learner names a confusion, repair it before anything is built
+on it. A confusion is the exact edge of their understanding, and the
+repair is the lesson's most important work. If a step will not hold
+after honest repair, stop there and say so — never build on ground
+that is not held.
+
+You never teach the plan's own reasoning back to the learner, and you
+never name the goal as reached. The lesson ends when the learner's own
+words say the goal feels obviously true. Ask them, and take their
+answer."#;
+
 /// Seed the prober role into the home's roles (the learning plan's C2).
 /// The role is the lesson run's overlay: it tells the prober to ask,
 /// to take the learner's words whole, and never to teach. A seed only
@@ -148,6 +352,85 @@ never move on while the learner's last answer is unclear. The goal you
 pin must be the learner's own articulation of what they want to be
 true, not a goal you supply for them. When you pin it, say it back in
 their words and ask whether you have it right."#;
+
+/// Record a lesson on the substrate (the learning plan's C4): one
+/// `check` fact per taught step — the prediction, the check, and every
+/// repair with the confusion it answered — and one `lesson` fact
+/// carrying the goal's self-evidence and whether the lesson completed.
+/// The confusions ride the facts whole: they are the friction the
+/// self-improvement feed reads.
+pub fn record_lesson(
+    memory: &Memory,
+    session: &str,
+    plan: &crate::graph::LessonPlan,
+    outcome: &LessonOutcome,
+) -> Result<(), String> {
+    for step in &outcome.steps {
+        let mut body = format!(
+            "prediction: {}\n\ncheck: {}\n\nheld: {}",
+            step.prediction, step.check.words, step.check.held
+        );
+        if let Some(confusion) = &step.check.confusion {
+            body.push_str(&format!("\n\nconfusion: {confusion}"));
+        }
+        for (confusion, check) in &step.repairs {
+            body.push_str(&format!(
+                "\n\nrepair of `{confusion}`: {}\nheld: {}",
+                check.words, check.held
+            ));
+        }
+        let request = memory::Remember {
+            name: format!("check-{session}-{}", step.node),
+            description: step.proposition.clone(),
+            fact_type: "check".to_string(),
+            shape: Vec::new(),
+            phrases: Vec::new(),
+            missing: Vec::new(),
+            basis: Basis::ConfirmedBy,
+            tier: Tier::Durable,
+            valid_until: String::new(),
+            source: session.to_string(),
+            body,
+        };
+        memory
+            .remember(&request)
+            .map_err(|error| format!("the check fact did not land: {error}"))?;
+    }
+    let confusions: Vec<String> = outcome
+        .steps
+        .iter()
+        .filter_map(|step| step.check.confusion.clone())
+        .collect();
+    let request = memory::Remember {
+        name: format!("lesson-{session}"),
+        description: plan
+            .goal_proposition()
+            .unwrap_or(plan.goal.as_str())
+            .to_string(),
+        fact_type: "lesson".to_string(),
+        shape: Vec::new(),
+        phrases: Vec::new(),
+        missing: confusions.clone(),
+        basis: Basis::ConfirmedBy,
+        tier: Tier::Durable,
+        valid_until: String::new(),
+        source: session.to_string(),
+        body: format!(
+            "complete: {}\n\nself-evidence: {}\n\nconfusions: {}",
+            outcome.complete,
+            outcome.self_evidence.words,
+            if confusions.is_empty() {
+                "(none)".to_string()
+            } else {
+                confusions.join("; ")
+            }
+        ),
+    };
+    memory
+        .remember(&request)
+        .map_err(|error| format!("the lesson fact did not land: {error}"))?;
+    Ok(())
+}
 
 /// Record a lesson plan on the substrate (the learning plan's C3): one
 /// `lesson-plan` fact naming the goal, the teaching order, and the
@@ -503,11 +786,265 @@ mod tests {
         assert_eq!(fact.fact_type, "lesson-plan");
         assert_eq!(fact.description, "why a blocked handler stalls the request");
         assert!(
-            fact.body.contains("teaching order: goal \u{2192} holds"),
+            fact.body.contains("teaching order: holds \u{2192} goal"),
             "{}",
             fact.body
         );
         assert!(fact.body.contains("graph TD"), "{}", fact.body);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The scripted teaching conversation: the test's stand-in for the
+    /// lesson session's own turns.
+    struct ScriptedTeaching {
+        predictions: VecDeque<String>,
+        checks: VecDeque<Check>,
+        repairs: VecDeque<Check>,
+        self_evidence: SelfEvidence,
+        taught: Vec<String>,
+        repaired: Vec<String>,
+    }
+
+    impl TeachingConversation for ScriptedTeaching {
+        fn predict(&mut self, proposition: &str) -> String {
+            self.taught.push(proposition.to_string());
+            self.predictions.pop_front().unwrap_or_default()
+        }
+
+        fn check(&mut self, _proposition: &str) -> Check {
+            self.checks
+                .pop_front()
+                .expect("the script answers every check")
+        }
+
+        fn repair(&mut self, confusion: &str, _proposition: &str) -> Check {
+            self.repaired.push(confusion.to_string());
+            self.repairs
+                .pop_front()
+                .expect("the script answers every repair")
+        }
+
+        fn self_evidence(&mut self, _goal: &str) -> SelfEvidence {
+            self.self_evidence.clone()
+        }
+    }
+
+    /// A plan with one foundation and two taught steps.
+    fn teaching_plan() -> crate::graph::LessonPlan {
+        let nodes = vec![
+            crate::graph::LessonNode {
+                id: "holds".to_string(),
+                proposition: "a request runs until its handler returns".to_string(),
+                premises: Vec::new(),
+                cost: 1,
+            },
+            crate::graph::LessonNode {
+                id: "blocks".to_string(),
+                proposition: "a handler that blocks does not return".to_string(),
+                premises: vec!["holds".to_string()],
+                cost: 2,
+            },
+            crate::graph::LessonNode {
+                id: "goal".to_string(),
+                proposition: "why a blocked handler stalls the request".to_string(),
+                premises: vec!["blocks".to_string()],
+                cost: 2,
+            },
+        ];
+        crate::graph::build_lesson_plan("goal", &nodes).expect("the tree builds")
+    }
+
+    fn held(words: &str) -> Check {
+        Check {
+            words: words.to_string(),
+            held: true,
+            confusion: None,
+        }
+    }
+
+    fn confused(words: &str, confusion: &str) -> Check {
+        Check {
+            words: words.to_string(),
+            held: false,
+            confusion: Some(confusion.to_string()),
+        }
+    }
+
+    #[test]
+    fn the_teaching_loop_moves_one_step_and_repairs_before_continuing() {
+        let plan = teaching_plan();
+        let mut conversation = ScriptedTeaching {
+            predictions: VecDeque::from(vec![
+                "I think the handler blocks the request".to_string(),
+                "I think the request waits for the handler".to_string(),
+            ]),
+            checks: VecDeque::from(vec![
+                confused(
+                    "I thought a returning handler was the same as a finished request",
+                    "the handler returning and the request finishing are the same in my head",
+                ),
+                held("the blocked handler does not return, so the request does not finish"),
+                held("a blocked handler stalls the whole request"),
+            ]),
+            repairs: VecDeque::from(vec![held(
+                "they are different: the handler returning is one thing, the request finishing another",
+            )]),
+            self_evidence: SelfEvidence {
+                words: "yes — obviously, the request is stuck because the handler never comes back"
+                    .to_string(),
+                obviously_true: true,
+            },
+            taught: Vec::new(),
+            repaired: Vec::new(),
+        };
+        let outcome = teach(&plan, &mut conversation);
+        // The foundation is never re-taught; the two steps move in the
+        // plan's order.
+        assert_eq!(
+            conversation.taught,
+            vec![
+                "a handler that blocks does not return",
+                "why a blocked handler stalls the request"
+            ]
+        );
+        assert_eq!(outcome.steps.len(), 2);
+        assert_eq!(outcome.steps[0].node, "blocks");
+        assert_eq!(
+            outcome.steps[0].prediction,
+            "I think the handler blocks the request"
+        );
+        // The confusion was repaired before the next step, and the
+        // repair's check is recorded.
+        assert_eq!(conversation.repaired.len(), 1);
+        assert_eq!(outcome.steps[0].repairs.len(), 1);
+        assert_eq!(
+            outcome.steps[0].repairs[0].0,
+            "the handler returning and the request finishing are the same in my head"
+        );
+        assert!(outcome.steps[0].repairs[0].1.held);
+        assert!(outcome.steps[0].check.held, "the repair held the step");
+        assert!(outcome.complete, "every step held and the goal felt true");
+        assert!(outcome.self_evidence.obviously_true);
+    }
+
+    #[test]
+    fn the_teaching_loop_stops_on_a_confusion_it_cannot_repair() {
+        let plan = teaching_plan();
+        let mut conversation = ScriptedTeaching {
+            predictions: VecDeque::from(vec!["a prediction".to_string()]),
+            checks: VecDeque::from(vec![confused(
+                "I do not see it",
+                "the blocking step will not land",
+            )]),
+            repairs: VecDeque::from(vec![
+                confused("still not", "the blocking step will not land"),
+                confused("still not", "the blocking step will not land"),
+                confused("still not", "the blocking step will not land"),
+            ]),
+            self_evidence: SelfEvidence {
+                words: String::new(),
+                obviously_true: false,
+            },
+            taught: Vec::new(),
+            repaired: Vec::new(),
+        };
+        let outcome = teach(&plan, &mut conversation);
+        // The repair rounds are bounded, and the lesson stops rather
+        // than building on ground that is not held.
+        assert_eq!(conversation.repaired.len(), MAX_REPAIRS);
+        assert_eq!(outcome.steps.len(), 1, "only the step that failed");
+        assert_eq!(outcome.steps[0].node, "blocks");
+        assert!(!outcome.steps[0].check.held);
+        assert!(
+            !outcome.complete,
+            "an unrepaired confusion is not a completed lesson"
+        );
+        assert!(outcome.self_evidence.words.is_empty());
+    }
+
+    #[test]
+    fn the_teaching_loop_ends_at_the_goals_self_evidence() {
+        let plan = teaching_plan();
+        let mut conversation = ScriptedTeaching {
+            predictions: VecDeque::from(vec!["a prediction".to_string(), "another".to_string()]),
+            checks: VecDeque::from(vec![
+                held("the blocked handler does not return"),
+                held("a blocked handler stalls the request"),
+            ]),
+            repairs: VecDeque::new(),
+            self_evidence: SelfEvidence {
+                words: "I can say it, but it does not feel obvious yet".to_string(),
+                obviously_true: false,
+            },
+            taught: Vec::new(),
+            repaired: Vec::new(),
+        };
+        let outcome = teach(&plan, &mut conversation);
+        // Every step held, but the goal is not obviously true — the
+        // lesson is not complete, because coverage is not the terminal
+        // condition.
+        assert_eq!(outcome.steps.len(), 2);
+        assert!(outcome.steps.iter().all(|step| step.check.held));
+        assert!(
+            !outcome.complete,
+            "the learner's own words say the goal is not obviously true"
+        );
+    }
+
+    #[test]
+    fn the_teacher_role_seeds_into_the_home() {
+        let home = scratch("teacher-role");
+        seed_teacher(&home).expect("the teacher seeds");
+        let role = crate::roles::load(&home, TEACHER_ROLE).expect("the teacher loads");
+        assert!(role.overlay.contains("one reasoning"), "{}", role.overlay);
+        assert!(role.overlay.contains("predict"), "{}", role.overlay);
+        assert!(role.overlay.contains("obviously true"), "{}", role.overlay);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn the_lesson_records_land_as_facts_with_their_confusions() {
+        let root = scratch("lesson-record");
+        let memory = Memory::load(&root);
+        let plan = teaching_plan();
+        let outcome = LessonOutcome {
+            steps: vec![TeachStep {
+                node: "blocks".to_string(),
+                proposition: "a handler that blocks does not return".to_string(),
+                prediction: "I think the handler blocks the request".to_string(),
+                check: held("the blocked handler does not return"),
+                repairs: vec![(
+                    "the handler returning and the request finishing are the same in my head"
+                        .to_string(),
+                    held("they are different"),
+                )],
+            }],
+            self_evidence: SelfEvidence {
+                words: "obviously true now".to_string(),
+                obviously_true: true,
+            },
+            complete: true,
+        };
+        record_lesson(&memory, "2026-11-08-abc", &plan, &outcome).expect("the lesson lands");
+        let facts = memory.facts();
+        let check = facts
+            .iter()
+            .find(|fact| fact.name == "check-2026-11-08-abc-blocks")
+            .expect("the check fact");
+        assert_eq!(check.fact_type, "check");
+        assert!(check
+            .body
+            .contains("prediction: I think the handler blocks the request"));
+        assert!(check.body.contains(
+            "repair of `the handler returning and the request finishing are the same in my head`"
+        ));
+        let lesson = facts
+            .iter()
+            .find(|fact| fact.name == "lesson-2026-11-08-abc")
+            .expect("the lesson fact");
+        assert_eq!(lesson.fact_type, "lesson");
+        assert!(lesson.body.contains("complete: true"));
+        assert!(lesson.body.contains("self-evidence: obviously true now"));
         let _ = std::fs::remove_dir_all(&root);
     }
 }
