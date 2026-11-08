@@ -2053,16 +2053,27 @@ impl Scheduler {
             return Vec::new();
         }
         // The model switch forces a run: the corpus grades the surfaces
-        // the model serves, and a new model is a new baseline.
-        let model_changed = match (&self.eval_model, read_eval_model(&self.home)) {
-            (Some(current), Some(persisted)) => current != &persisted,
+        // the model serves, and a new model is a new baseline. An EMPTY
+        // model is not a baseline — KI-481: the face spawned its
+        // scheduler with `String::new()`, the empty write reads back as
+        // `None`, and the guard below made the corpus re-run every
+        // second against the daily 04:00 cadence (the owner's store
+        // measured it at ~9 full corpus runs a minute).
+        let model_changed = match (
+            self.eval_model.as_deref().filter(|m| !m.is_empty()),
+            read_eval_model(&self.home),
+        ) {
+            (Some(current), Some(persisted)) => current != persisted,
             (Some(_), None) => true,
             _ => false,
         };
         if !eval_due(self.eval_last, now) && !model_changed {
             return Vec::new();
         }
-        if let Some(model) = &self.eval_model {
+        // Only a real model persists; an empty one is no baseline at
+        // all (KI-481 — the write/read round-trip below never
+        // converged while the empty string was written).
+        if let Some(model) = self.eval_model.as_deref().filter(|model| !model.is_empty()) {
             write_eval_model(&self.home, model);
         }
         self.eval_last = Some(now);
@@ -3888,6 +3899,56 @@ mod tests {
         scheduler.run_eval_if_due(off_cadence).await;
         assert_eq!(fired.load(Ordering::SeqCst), 2, "the switch forces a run");
         assert_eq!(read_eval_model(&home).as_deref(), Some("model-b"));
+        fs::remove_dir_all(&home).ok();
+    }
+
+    /// KI-481: the face spawns its scheduler with `String::new()`, and
+    /// an empty model is not a baseline. Pre-fix, the empty model was
+    /// written (a lone newline), `read_eval_model` read it back as
+    /// `None`, and `(Some(_), None) => true` fired the corpus on every
+    /// one-second tick — measured on the owner's store at 9 full runs
+    /// a minute and 21k calibration rows in one morning. The pin drives
+    /// the empty model through the cadence repeatedly and asserts the
+    /// convergence that failed: one fire, no persisted model, and the
+    /// second-and-later calls on the same minute stay silent.
+    #[tokio::test]
+    async fn an_empty_model_is_no_baseline_and_the_corpus_fires_once() {
+        let home = temp_home("eval-empty-model");
+        let fired = std::sync::Arc::new(AtomicUsize::new(0));
+        let seen = std::sync::Arc::clone(&fired);
+        let eval: EvalRunner = Box::new(move || {
+            let seen = std::sync::Arc::clone(&seen);
+            Box::pin(async move {
+                seen.fetch_add(1, Ordering::SeqCst);
+                Ok("ran \u{2014} 6 passed, 0 failed, score 1.00".to_string())
+            })
+        });
+        let mut scheduler =
+            Scheduler::new(home.clone(), scripted_runner("nothing")).with_eval(eval);
+        // The face's own shape: a scheduler built out with an empty
+        // model, no persisted model anywhere.
+        scheduler.eval_model = Some(String::new());
+        let off_cadence = minute(2026, 11, 8, 9, 0);
+        for _ in 0..5 {
+            scheduler.run_eval_if_due(off_cadence).await;
+        }
+        assert_eq!(
+            fired.load(Ordering::SeqCst),
+            0,
+            "an empty model is no baseline: the corpus never force-fires off the cadence"
+        );
+        assert_eq!(
+            read_eval_model(&home).as_deref(),
+            None,
+            "an empty model is never persisted as a baseline"
+        );
+        // The daily cadence is the only driver left: the matching minute
+        // fires exactly once, and the same minute again stays silent.
+        let due = minute(2026, 11, 8, 4, 0);
+        scheduler.run_eval_if_due(due).await;
+        scheduler.run_eval_if_due(due).await;
+        assert_eq!(fired.load(Ordering::SeqCst), 1, "the cadence fires once");
+        assert_eq!(read_eval_model(&home).as_deref(), None);
         fs::remove_dir_all(&home).ok();
     }
 
