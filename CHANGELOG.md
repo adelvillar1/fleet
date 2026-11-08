@@ -5,11 +5,30 @@ cut time. The repo was born 2026-10-12; this changelog starts at v0.4.0 with
 the first release — everything before it is `git log` (492 commits, each one
 through the local gate).
 
-**What beta means while the beta epoch runs:** this is the tool the owner
-uses daily, not a promise of API stability. The tag is a real version
-(`v0.5.0`); the version literal keeps its beta suffix (`0.5.0-beta.1`) until
-the owner says otherwise, and the changelog header carries this paragraph
-until then.
+**The beta epoch ended with 0.5.1** — the owner retired the suffix when
+asking for diligent version numbering. From here: every user-facing change
+bumps the third segment as its own release commit, the three declarations
+(`Cargo.toml`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`) and the
+lock move together, a section lands in this file, and the running app
+answers `GET /api/version` so the owner asks the face what it is.
+
+## v0.5.1 — 2026-11-08
+
+The diligence release, born from the loop it names. The once-daily
+21-scenario eval corpus had been firing on the face's every second since
+daybreak — 3,143 rows in the calibration ledger, 24,679 temp directories,
+a 40 MB day stream — because an *empty* served model counted as a model
+switch.
+
+- **KI-481 — the eval corpus fired every second, never daily.** The face
+  hands the scheduler `""` as its served model; the guard read a persisted
+  empty (trimmed to `None`) as *changed* and "changed" was forever. Empty
+  is no baseline: nothing forced, nothing persisted, the daily schedule
+  holds. Revert-proven (the old guard reddens the new pin with the exact
+  pre-fix signature), pinned, ledger green.
+- **/api/version** — the running app names itself. `GET /api/version`
+  answers `{"name":"fleet","version":"<the compiled literal>"}`, pinned
+  against the build's own `CARGO_PKG_VERSION` so a drift reds the suite.
 
 ## v0.5.0 — 2026-11-08
 
