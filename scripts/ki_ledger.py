@@ -10,12 +10,41 @@ leads with a word outside the ledger's vocabulary of open, closed, noted,
 none (KI-322), or when the severity cell leads with a word outside the
 preamble's six — blocker, defect, gap, improvement, environmental, risk
 (KI-391).
+
+It also refuses a ledger that carries merge-conflict debris. The parse below
+skips every line that is not a table row, which is right for the prose
+preamble and wrong for a marker: `<<<<<<< HEAD`, `=======` and `>>>>>>>` fell
+through the `startswith("|")` guard and vanished, so a tree that resolved a
+conflict by deleting rows and leaving the markers was reported "all cell
+counts agree with the header". `docs/known-issues.md` really did end with
+`master` and `>>>>>>> origin/master` at HEAD — the conflict was committed and
+this check passed it. A marker is now a named problem, not a silent skip.
 """
 import re
 import sys
 from pathlib import Path
 
 HEADER = "| ID | Severity | Issue | Evidence | Status | Next action |"
+
+
+def conflict_markers(text: str):
+    """Every merge-conflict marker line, as `(lineno, text)`.
+
+    A marker is a line whose whole content is one of git's four: the `<<<<<<<`
+    and `|||||||` openers, the `=======` divider, and the `>>>>>>>` closer. A
+    line that merely starts with `=====` under a heading is prose, so the
+    divider is matched only as the entire trimmed line — which is also how
+    `=======` appears in a real conflict.
+
+    Matched anywhere in the file, including inside the Rules section the row
+    parse skips: a conflict does not respect which section it lands in.
+    """
+    pattern = re.compile(r"^(<{7}|>{7}|\|{7})(\s|$)|^={7}$")
+    return [
+        (lineno, line)
+        for lineno, line in enumerate(text.splitlines(), start=1)
+        if pattern.match(line.strip())
+    ]
 
 
 def parse(path: Path):
@@ -146,6 +175,11 @@ def main() -> int:
     header, rows = parse(path)
     problems = []
     seen = {}
+    for lineno, marker in conflict_markers(path.read_text(encoding="utf-8")):
+        problems.append(
+            f"{path}:{lineno}: merge-conflict marker {marker!r} — the file holds "
+            "unresolved debris, and rows the conflict dropped cannot be counted"
+        )
     for lineno, raw, cells in rows:
         if len(cells) != len(header):
             problems.append(
