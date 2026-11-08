@@ -145,10 +145,15 @@ as the problem sessions' turns.
       file), the `ProbeConversation` seam with `probe_loop` asking one
       question at a time, and `record_probe` landing the answers and the
       bracket as `probe` facts plus one `learn_probe` row.*
-- [ ] **C3 — the plan.** The minimal tree builds in `src/graph.rs`
+- [x] **C3 — the plan.** The minimal tree builds in `src/graph.rs`
       from the bracketed states: the nodes, the single-step
       dependencies, the critical path as the teaching order; the
       coarse view is the learner's; pinned by `src/graph.rs` tests.
+      *Landed d4516f2: `LessonNode`/`LessonPlan`/`build_lesson_plan`
+      (refusing a premise naming nothing, a goal naming no node, a
+      cycle, an off-path proposition, a blank, a duplicate), the
+      critical path as the teaching order, the Mermaid coarse view, and
+      the plan's `lesson-plan` fact.*
 - [ ] **C4 — the teaching loop.** The teacher role and the lesson
       flow move one reasoning step at a time — predict, explain,
       check — with the confusions repaired before continuing and the
