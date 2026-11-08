@@ -181,10 +181,17 @@ as the problem sessions' turns.
       union of premises, the first writer's claim standing); the
       memory tests pin the round-trip and the lesson tests pin the
       recall, the gate's refusal, and the merge.*
-- [ ] **C6 — the practice.** The practitioner role and the problem
+- [x] **C6 — the practice.** The practitioner role and the problem
       sessions pose varied problems requiring unnamed retrieval, one
       active problem per turn, with the outcomes as session evidence;
       pinned by `src/lesson.rs` tests.
+      *Landed: the practitioner role's seed, the `PracticeConversation`
+      seam with `practice` (one problem posed, answered, and judged
+      before the next; a setting that covers the proposition's claim is
+      refused by name, because a problem that names the answer is a
+      recall test), and `record_practice` landing one `practice` fact
+      per problem — the setting, the answer, and whether it held; the
+      exercises ride the chain's field.*
 - [ ] **C7 — the face surface.** The Learning rail section and pane
       (fed by the mockup) show the active lesson, the graph, the
       practice entry, and the history; pinned by a

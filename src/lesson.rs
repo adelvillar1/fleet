@@ -738,6 +738,188 @@ pub fn extract_pipeline(
     Ok(audit)
 }
 
+/// The practitioner role's name — the file under `<home>/roles/` the
+/// practice session's run rides as its overlay.
+pub const PRACTITIONER_ROLE: &str = "practitioner";
+
+/// One practice problem: a varied setting that requires the knowledge
+/// to come to mind **unnamed**. The setting never names the
+/// propositions it exercises — a problem that names the answer is a
+/// recall test, not a practice, and the theory's whole point is that
+/// the knowledge arrives without the name attached.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PracticeProblem {
+    /// The problem's own setting, in the practitioner's words.
+    pub setting: String,
+    /// The propositions the problem exercises, by name — the
+    /// practitioner's own record, never shown to the learner.
+    pub exercises: Vec<String>,
+}
+
+/// One problem's outcome: the learner's answer and whether it held.
+/// Session evidence, never a mastery rating — the graph stores the
+/// ideas and their connections, not how well the learner did.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PracticeOutcome {
+    pub problem: PracticeProblem,
+    pub answer: String,
+    pub held: bool,
+}
+
+/// The conversation seam the practice loop drives. A run implements it
+/// with the practice session's own turns; a test scripts the answers.
+pub trait PracticeConversation {
+    /// Pose one problem and read the learner's answer.
+    fn pose(&mut self, problem: &PracticeProblem) -> String;
+
+    /// Judge this answer against the problem's own shape — whether it
+    /// held, never a grade.
+    fn judge(&mut self, problem: &PracticeProblem, answer: &str) -> bool;
+}
+
+/// The practice loop (the learning plan's C6): varied problems, one
+/// active per turn, each requiring the knowledge to come to mind
+/// unnamed. The loop is sequential by construction — a problem is
+/// posed, answered, and judged before the next begins, because two
+/// active problems at once is a test, not a practice.
+///
+/// A problem whose setting names one of the propositions it exercises
+/// is refused rather than posed: the unnamed retrieval is the whole
+/// mechanism, and a setting that names the answer teaches the name
+/// instead of the knowledge.
+pub fn practice(
+    memory: &Memory,
+    problems: &[PracticeProblem],
+    conversation: &mut dyn PracticeConversation,
+) -> Result<Vec<PracticeOutcome>, String> {
+    let facts = memory.facts();
+    let mut outcomes = Vec::with_capacity(problems.len());
+    for problem in problems {
+        for exercise in &problem.exercises {
+            // The proposition's own claim, when the corpus holds it —
+            // the knowledge the problem must not name.
+            let claim = facts
+                .iter()
+                .find(|fact| fact.name == *exercise)
+                .map(|fact| fact.description.clone())
+                .unwrap_or_else(|| exercise.clone());
+            if names_the_knowledge(&problem.setting, &claim) {
+                return Err(format!(
+                    "the problem's setting names `{exercise}`, which it exercises — a practice \
+                     problem requires the knowledge to come to mind unnamed"
+                ));
+            }
+        }
+        let answer = conversation.pose(problem);
+        let held = conversation.judge(problem, &answer);
+        outcomes.push(PracticeOutcome {
+            problem: problem.clone(),
+            answer,
+            held,
+        });
+    }
+    Ok(outcomes)
+}
+
+/// Whether a problem's setting names the knowledge it exercises: the
+/// claim's significant tokens, covered by the setting's own. A setting
+/// that carries the claim is a recall test — it hands the learner the
+/// name — and the practice's whole mechanism is the retrieval without
+/// it. The same token rule the extraction's audit uses, pointed the
+/// other way.
+fn names_the_knowledge(setting: &str, claim: &str) -> bool {
+    let claim_tokens = significant_tokens(claim);
+    if claim_tokens.is_empty() {
+        return false;
+    }
+    let setting_tokens = significant_tokens(setting);
+    let covered = claim_tokens
+        .iter()
+        .filter(|token| setting_tokens.contains(token))
+        .count();
+    covered as f64 / claim_tokens.len() as f64 >= MIN_COVERAGE
+}
+
+/// Record the practice outcomes on the substrate (the learning plan's
+/// C6): one `practice` fact per problem, carrying the setting, the
+/// answer, and whether it held. The outcomes are session evidence —
+/// the fact records what happened, never a mastery rating.
+pub fn record_practice(
+    memory: &Memory,
+    session: &str,
+    outcomes: &[PracticeOutcome],
+) -> Result<(), String> {
+    for (index, outcome) in outcomes.iter().enumerate() {
+        let request = memory::Remember {
+            name: format!("practice-{session}-{index}"),
+            description: outcome.problem.setting.clone(),
+            fact_type: "practice".to_string(),
+            shape: Vec::new(),
+            phrases: Vec::new(),
+            missing: Vec::new(),
+            premises: outcome.problem.exercises.clone(),
+            basis: Basis::ConfirmedBy,
+            tier: Tier::Durable,
+            valid_until: String::new(),
+            source: session.to_string(),
+            body: format!(
+                "answer: {}\n\nheld: {}\n\nexercises: {}",
+                outcome.answer,
+                outcome.held,
+                if outcome.problem.exercises.is_empty() {
+                    "(none)".to_string()
+                } else {
+                    outcome.problem.exercises.join(", ")
+                }
+            ),
+        };
+        memory
+            .remember(&request)
+            .map_err(|error| format!("the practice fact did not land: {error}"))?;
+    }
+    Ok(())
+}
+
+/// Seed the practitioner role into the home's roles (the learning
+/// plan's C6). A seed only fills a home that lacks the role — an
+/// owner-edited file is the owner's and is left exactly as it stands.
+pub fn seed_practitioner(home: &Path) -> Result<(), String> {
+    let path = crate::roles::roles_dir(home).join(format!("{PRACTITIONER_ROLE}.md"));
+    if path.exists() {
+        return Ok(());
+    }
+    let fields = crate::roles::RoleFields {
+        description: "The learning practitioner — poses varied problems that require the knowledge to come to mind unnamed.".to_string(),
+        tools: Vec::new(),
+        skills: Vec::new(),
+        shapes: Vec::new(),
+        overlay: PRACTITIONER_OVERLAY.to_string(),
+    };
+    crate::roles::write(home, PRACTITIONER_ROLE, &fields)
+}
+
+/// The practitioner's overlay — the standing instruction the practice
+/// session carries beside the harness prompt. The theory's demands are
+/// its rules: the problems are varied, the knowledge is never named,
+/// one problem is active at a time, and a hint adapts to the learner's
+/// own answer.
+pub const PRACTITIONER_OVERLAY: &str = r#"You are the practitioner in a learning session. You pose problems.
+The problems are varied — different settings, different surfaces — so
+that the knowledge must come to mind WITHOUT being named. Never name
+the idea the problem exercises, not in the setting, not in a hint, not
+in the answer's framing. A problem that names the answer is a recall
+test, and a recall test teaches the name instead of the knowledge.
+
+One problem is active at a time. Pose it, let the learner work, and
+read their answer whole. When the answer does not hold, adapt: a hint
+that meets the learner where their answer went wrong, never the answer
+itself. When it holds, move on.
+
+You never grade. You say whether the answer held, and you record the
+setting and the answer as they were. The learner's performance is not a
+score and must never become one — the session records what happened,
+nothing more."#;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1410,5 +1592,169 @@ mod tests {
                 .collect::<Vec<_>>()
         );
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // --- the practice (the learning plan's C6) --------------------------------
+
+    /// The scripted practice conversation.
+    struct ScriptedPractice {
+        answers: VecDeque<String>,
+        held: VecDeque<bool>,
+        posed: Vec<String>,
+    }
+
+    impl PracticeConversation for ScriptedPractice {
+        fn pose(&mut self, problem: &PracticeProblem) -> String {
+            self.posed.push(problem.setting.clone());
+            self.answers
+                .pop_front()
+                .expect("the script answers every problem")
+        }
+
+        fn judge(&mut self, _problem: &PracticeProblem, _answer: &str) -> bool {
+            self.held
+                .pop_front()
+                .expect("the script judges every answer")
+        }
+    }
+
+    fn problem(setting: &str, exercises: &[&str]) -> PracticeProblem {
+        PracticeProblem {
+            setting: setting.to_string(),
+            exercises: exercises.iter().map(|e| e.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn the_practice_poses_one_problem_per_turn_and_never_names_the_knowledge() {
+        let problems = vec![
+            problem(
+                "a server's handler stops mid-request and never comes back; the client is \
+                 still waiting",
+                &["a-blocked-handler-stalls"],
+            ),
+            problem(
+                "a connection sits open long after its request should have finished",
+                &["a-connection-stays-open"],
+            ),
+        ];
+        let mut conversation = ScriptedPractice {
+            answers: VecDeque::from(vec![
+                "the request is stuck because the handler never returns".to_string(),
+                "the connection is held open by the stalled request".to_string(),
+            ]),
+            held: VecDeque::from(vec![true, false]),
+            posed: Vec::new(),
+        };
+        let root = scratch("practice");
+        let memory = Memory::load(&root);
+        record_proposition(
+            &memory,
+            "a-blocked-handler-stalls",
+            "a blocked handler stalls the whole request",
+            &[],
+            "2026-11-08-abc",
+        )
+        .expect("the proposition lands");
+        record_proposition(
+            &memory,
+            "a-connection-stays-open",
+            "the connection stays open while the handler is blocked",
+            &[],
+            "2026-11-08-abc",
+        )
+        .expect("the second proposition lands");
+        let outcomes = practice(&memory, &problems, &mut conversation).expect("the practice runs");
+        // One problem per turn: the settings pose in order, each answered
+        // and judged before the next begins.
+        assert_eq!(
+            conversation.posed,
+            vec![
+                "a server's handler stops mid-request and never comes back; the client is \
+                 still waiting",
+                "a connection sits open long after its request should have finished"
+            ]
+        );
+        assert_eq!(outcomes.len(), 2);
+        assert!(outcomes[0].held);
+        assert!(!outcomes[1].held, "the second answer did not hold");
+        assert_eq!(
+            outcomes[0].problem.exercises,
+            vec!["a-blocked-handler-stalls"],
+            "the practitioner's own record names what the problem exercised"
+        );
+    }
+
+    #[test]
+    fn the_practice_refuses_a_setting_that_names_what_it_exercises() {
+        let root = scratch("practice-refusal");
+        let memory = Memory::load(&root);
+        record_proposition(
+            &memory,
+            "a-blocked-handler-stalls",
+            "a blocked handler stalls the whole request",
+            &[],
+            "2026-11-08-abc",
+        )
+        .expect("the proposition lands");
+        let problems = vec![problem(
+            "explain why a blocked handler stalls the whole request",
+            &["a-blocked-handler-stalls"],
+        )];
+        let mut conversation = ScriptedPractice {
+            answers: VecDeque::new(),
+            held: VecDeque::new(),
+            posed: Vec::new(),
+        };
+        let error = practice(&memory, &problems, &mut conversation).expect_err("a named problem");
+        assert!(error.contains("unnamed"), "{error}");
+        assert!(
+            conversation.posed.is_empty(),
+            "a refused problem is never posed"
+        );
+    }
+
+    #[test]
+    fn the_practice_outcomes_land_as_session_evidence() {
+        let root = scratch("practice-record");
+        let memory = Memory::load(&root);
+        let outcomes = vec![PracticeOutcome {
+            problem: problem(
+                "a server's handler stops mid-request and never comes back",
+                &["a-blocked-handler-stalls"],
+            ),
+            answer: "the request is stuck because the handler never returns".to_string(),
+            held: true,
+        }];
+        record_practice(&memory, "2026-11-08-abc", &outcomes).expect("the practice lands");
+        let facts = memory.facts();
+        let fact = facts
+            .iter()
+            .find(|fact| fact.name == "practice-2026-11-08-abc-0")
+            .expect("the practice fact");
+        assert_eq!(fact.fact_type, "practice");
+        assert_eq!(fact.source, "2026-11-08-abc");
+        // The exercises ride the chain's field: the practice's outcomes
+        // name what they exercised, which is the evidence the feeds read.
+        assert_eq!(fact.premises, vec!["a-blocked-handler-stalls"]);
+        assert!(fact.body.contains("held: true"));
+        assert!(fact
+            .body
+            .contains("answer: the request is stuck because the handler never returns"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_practitioner_role_seeds_into_the_home() {
+        let home = scratch("practitioner-role");
+        seed_practitioner(&home).expect("the practitioner seeds");
+        let role = crate::roles::load(&home, PRACTITIONER_ROLE).expect("the practitioner loads");
+        assert!(
+            role.overlay.contains("WITHOUT being named"),
+            "{}",
+            role.overlay
+        );
+        assert!(role.overlay.contains("One problem"), "{}", role.overlay);
+        let _ = std::fs::remove_dir_all(&home);
     }
 }
