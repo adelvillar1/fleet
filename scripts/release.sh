@@ -189,6 +189,25 @@ printf '# %s\n\nThe CLI binary: the terminal face, the face'"'"'s server, the ag
 TARBALL="$PKGDIR/fleet-aarch64-apple-darwin.tar.gz"
 tar -czf "$TARBALL" -C "$PKGDIR" fleet-aarch64-apple-darwin
 
+# The update artifact the plugin installs: the .app.tar.gz the config's
+# createUpdaterArtifacts generated beside the dmg.
+APP_TAR=$(ls "$REPO_ROOT"/src-tauri/target/release/bundle/macos/*.tar.gz 2>/dev/null | head -1)
+if [ -z "$APP_TAR" ]; then
+  for cand in "$REPO_ROOT"/target/release/bundle/macos/*.tar.gz; do
+    [ -f "$cand" ] && APP_TAR="$cand" && break
+  done
+fi
+[ -n "$APP_TAR" ] || die "no .app.tar.gz updater artifact beside the dmg — createUpdaterArtifacts generated none"
+
+echo "== signing the updater artifact =="
+command -v cargo >/dev/null 2>&1 || die "cargo is not on PATH — the signer needs it"
+export PATH="$HOME/.cargo/bin:$PATH"
+# KEYFILE was already checked above the build (createUpdaterArtifacts signs
+# there too, via TAURI_SIGNING_PRIVATE_KEY). -k takes the key's CONTENTS,
+# not a path — the path form fails to decode (proved live 2026-11-08).
+cargo-tauri signer sign -k "$(cat "$KEYFILE")" "$APP_TAR" --password ""
+[ -f "$APP_TAR.sig" ] || die "the signer left no .sig beside $APP_TAR"
+
 echo "== uploading the assets =="
 if ! gh release view "$TAG" --json name >/dev/null 2>&1; then
   [ -f "$NOTES_FILE" ] || die "no release $TAG and no notes file to create it with"
@@ -218,25 +237,6 @@ STRINGS_HIT=$(strings "$DESKTOP_BIN" | grep -c " ${VERSION}$" || true)
 if [ "$CONF_VERSION" != "$VERSION" ]; then
   die "the three-way version check failed: tauri.conf.json says $CONF_VERSION, the tag says $VERSION"
 fi
-
-# The update artifact the plugin installs: the .app.tar.gz the config's
-# createUpdaterArtifacts generated beside the dmg.
-APP_TAR=$(ls "$REPO_ROOT"/src-tauri/target/release/bundle/macos/*.tar.gz 2>/dev/null | head -1)
-if [ -z "$APP_TAR" ]; then
-  for cand in "$REPO_ROOT"/target/release/bundle/macos/*.tar.gz; do
-    [ -f "$cand" ] && APP_TAR="$cand" && break
-  done
-fi
-[ -n "$APP_TAR" ] || die "no .app.tar.gz updater artifact beside the dmg — createUpdaterArtifacts generated none"
-
-echo "== signing the updater artifact =="
-command -v cargo >/dev/null 2>&1 || die "cargo is not on PATH — the signer needs it"
-export PATH="$HOME/.cargo/bin:$PATH"
-# KEYFILE was already checked above the build (createUpdaterArtifacts signs
-# there too, via TAURI_SIGNING_PRIVATE_KEY). -k takes the key's CONTENTS,
-# not a path — the path form fails to decode (proved live 2026-11-08).
-cargo-tauri signer sign -k "$(cat "$KEYFILE")" "$APP_TAR" --password ""
-[ -f "$APP_TAR.sig" ] || die "the signer left no .sig beside $APP_TAR"
 
 echo "== generating latest.json =="
 LATEST=/tmp/fleet-latest.json
