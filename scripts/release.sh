@@ -31,6 +31,11 @@ RELEASE_WORKTREE=/private/tmp/fleet-release-gate
 RELEASE_TARGET=/tmp/fleet-gate-target
 REPO_ROOT=$(git rev-parse --show-toplevel)
 
+# The gate's cargo legs need the toolchain on PATH — nohup'd and cron-launched
+# runs start with a bare env (the 2026-11-08 first cut died exit 127 on both).
+export PATH="$HOME/.cargo/bin:$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:/opt/homebrew/bin:$PATH"
+command -v cargo >/dev/null 2>&1 || die "cargo is not on PATH — install rust, or export the toolchain's bin before running"
+
 die() { echo "release.sh: $*" >&2; exit 1; }
 
 command -v gh >/dev/null 2>&1 || die "gh is not on PATH — it creates the release"
