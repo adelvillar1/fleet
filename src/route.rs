@@ -727,6 +727,12 @@ pub fn masked_workloads(home: &Path) -> Vec<String> {
 /// as the grounded lane's only route).
 pub const PROTECTED_WORKLOADS: &[&str] = &["vision", "composed"];
 
+/// The workload an image-bearing turn is served by. Named here because
+/// two places read it: the router's own `vision` tool, and a run whose
+/// task carries a picture — neither of which should be asking a text
+/// judgment what a picture wants.
+pub const VISION_WORKLOAD: &str = "vision";
+
 /// A workload's preference, or `None` for a workload no table names.
 pub fn preference_for<'a>(table: &'a [Preference], workload: &str) -> Option<&'a Preference> {
     table.iter().find(|entry| entry.workload == workload)
@@ -1948,7 +1954,10 @@ pub async fn select_with_home(
     walk: Walk,
     home: Option<&Path>,
 ) -> (RouteDecision, u128) {
-    select_walk_with_home(resolved, pin, task, specs, table, gates, cache, walk, home).await
+    select_walk_with_home(
+        resolved, pin, task, specs, table, gates, cache, walk, home, false,
+    )
+    .await
 }
 
 /// [`select`] for either session: the leader walks the orchestrator's
@@ -1965,7 +1974,10 @@ pub async fn select_walk(
     cache: Option<&mut crate::route_cache::Cache>,
     walk: Walk,
 ) -> (RouteDecision, u128) {
-    select_walk_with_home(resolved, pin, task, specs, table, gates, cache, walk, None).await
+    select_walk_with_home(
+        resolved, pin, task, specs, table, gates, cache, walk, None, false,
+    )
+    .await
 }
 
 /// [`select_walk`] with the fleet home: the workflow mask applies when
@@ -1981,6 +1993,7 @@ pub async fn select_walk_with_home(
     cache: Option<&mut crate::route_cache::Cache>,
     walk: Walk,
     masked_from: Option<&Path>,
+    carries_image: bool,
 ) -> (RouteDecision, u128) {
     let started = Instant::now();
     let head = head_index(resolved);
@@ -2020,6 +2033,58 @@ pub async fn select_walk_with_home(
         })
         .map(|pin_id| format!("pin `{pin_id}` names no roster provider; "));
 
+    // A turn carrying a picture names `vision` and asks nobody: the
+    // judgment reads the task's words, and a screenshot's words do not
+    // describe the picture. Every rule below still applies to it — the
+    // pin filters the chain, the gates decide admissibility, the
+    // calibration reorders the walk — so an image run is an ordinary run
+    // whose workload is not guessed. The choice is recorded as what it
+    // is: the workload's chain, not a judgment (`JudgedFrom::None`), so
+    // no row claims sys1 chose a route it was never asked about.
+    if carries_image {
+        let order: Vec<(String, String)> = match preference_for(table, VISION_WORKLOAD) {
+            Some(preference) => {
+                let pin_provider = pin.filter(|pin_id| !pin_id.contains('/'));
+                preference
+                    .candidates
+                    .iter()
+                    .filter(|(provider, _)| {
+                        pin_provider.is_none_or(|wanted| {
+                            wanted.split_once('/').map(|(p, _)| p).unwrap_or(wanted) == *provider
+                        })
+                    })
+                    .filter(|(provider, _)| admissible(resolved, provider, &gates))
+                    .map(|(provider, model)| (provider.to_string(), model.to_string()))
+                    .collect()
+            }
+            None => Vec::new(),
+        };
+        if !order.is_empty() {
+            let pin_note = match pin {
+                Some(pin_id) => format!("pinned to {pin_id}; "),
+                None => String::new(),
+            };
+            return (
+                decision_from(
+                    with_tail(order, resolved, &gates),
+                    if pin.is_some() {
+                        How::Pinned
+                    } else {
+                        How::Judged
+                    },
+                    Some(VISION_WORKLOAD.to_string()),
+                    None,
+                    None,
+                    format!("{pin_note}the turn carries an image, so the `{VISION_WORKLOAD}` workload's chain serves it"),
+                    JudgedFrom::None,
+                ),
+                started.elapsed().as_millis(),
+            );
+        }
+        // An image with no vision chain to serve it is a named refusal
+        // downstream: the walk falls through and the run fails with the
+        // reason this decision carries.
+    }
     let (judged, judged_from) = judge(task, specs, cache).await;
     // The workload this route serves: sys1's, or the gates' default when
     // the judgment is absent or below the confidence floor. The
@@ -3656,7 +3721,48 @@ pub async fn prepare_with_pin(
     pin: Option<&str>,
     session_seed: Option<&str>,
 ) -> Result<Prepared, ConfigError> {
-    prepare_walk(home, dotenv, task, specs, pin, Walk::Leader, session_seed).await
+    prepare_walk(
+        home,
+        dotenv,
+        task,
+        specs,
+        pin,
+        Walk::Leader,
+        session_seed,
+        false,
+    )
+    .await
+}
+
+/// The route for a turn that carries pictures.
+///
+/// A task with an image is not judged: the judgment reads words, and the
+/// words of a screenshot's instruction say nothing about the picture. So
+/// the walk is the `vision` workload's own chain, prepared over the same
+/// roster and the same pin as any other run — a pinned provider still
+/// serves, and the router still decides which of that provider's models
+/// answers. The judgment does not run at all here, which is the point: a
+/// text-only chain asked to serve a picture would fail at the provider,
+/// not at the router.
+pub async fn prepare_for_images(
+    home: &Path,
+    dotenv: &HashMap<String, String>,
+    task: &str,
+    specs: &HashMap<String, ServerSpec>,
+    pin: Option<&str>,
+    session_seed: Option<&str>,
+) -> Result<Prepared, ConfigError> {
+    prepare_walk(
+        home,
+        dotenv,
+        task,
+        specs,
+        pin,
+        Walk::Leader,
+        session_seed,
+        true,
+    )
+    .await
 }
 
 /// A delegated child's route: the same roster, the same pin the parent
@@ -3674,9 +3780,10 @@ pub async fn prepare_child(
     let dotenv = crate::home::read_dotenv_with_process_vault(home);
     // A child is its own conversation: a fresh id, per the lifecycle
     // contract the session-header-parity plan holds.
-    prepare_walk(home, &dotenv, brief, specs, pin, Walk::Judged, None).await
+    prepare_walk(home, &dotenv, brief, specs, pin, Walk::Judged, None, false).await
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn prepare_walk(
     home: &Path,
     dotenv: &HashMap<String, String>,
@@ -3685,6 +3792,7 @@ async fn prepare_walk(
     pin: Option<&str>,
     walk: Walk,
     session_seed: Option<&str>,
+    carries_image: bool,
 ) -> Result<Prepared, ConfigError> {
     let mut roster = load_roster(home)?;
     if let Some(pin) = pin {
@@ -3749,6 +3857,7 @@ async fn prepare_walk(
         Some(&mut decision_cache),
         walk,
         Some(home),
+        carries_image,
     )
     .await;
     // The plan's own verdict outranks the fresh execution head: the plan
@@ -7007,6 +7116,67 @@ mod tests {
             .expect("a roster candidate keyed by STEPFUN_API_KEY");
         assert!(stepfun.usable(), "the sealed key makes it usable");
         let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// An image-bearing turn is served by the `vision` chain whatever
+    /// the words would have judged, and the decision says why: a
+    /// judgment reads words, and a screenshot's words do not describe
+    /// the picture.
+    #[tokio::test]
+    async fn an_image_bearing_turn_walks_the_vision_chain_over_any_judgment() {
+        let resolved = keyed_default_roster();
+        let table = default_preferences();
+        let gates = Gates::default();
+        let specs = dead_judge();
+        // The same task, judged and carrying an image. The judge is dead
+        // here (no lane), so the words would fall to the gates' default
+        // workload; the picture must reach `vision` regardless.
+        let (by_words, _) = select_walk(
+            &resolved,
+            None,
+            "what is wrong with this page?",
+            &specs,
+            &table,
+            gates,
+            None,
+            Walk::Leader,
+        )
+        .await;
+        let (by_image, _) = select_walk_with_home(
+            &resolved,
+            None,
+            "what is wrong with this page?",
+            &specs,
+            &table,
+            gates,
+            None,
+            Walk::Leader,
+            None,
+            true,
+        )
+        .await;
+        assert_eq!(by_image.workload.as_deref(), Some(VISION_WORKLOAD));
+        assert_eq!(
+            by_image.provider, by_image.order[0].0,
+            "the decision names its own head"
+        );
+        let vision_head = preference_for(&table, VISION_WORKLOAD)
+            .expect("the vision workload")
+            .candidates[0];
+        assert_eq!(
+            (by_image.provider.as_str(), by_image.model.as_str()),
+            vision_head,
+            "{by_image:?}"
+        );
+        assert!(
+            by_image.reason.contains("carries an image"),
+            "{}",
+            by_image.reason
+        );
+        // Evidence, not a claim of judgment: nobody was asked.
+        assert_eq!(by_image.judged_from, JudgedFrom::None);
+        // And the same task without a picture is routed as it always was.
+        assert_ne!(by_words.workload.as_deref(), Some(VISION_WORKLOAD));
     }
 
     #[tokio::test]

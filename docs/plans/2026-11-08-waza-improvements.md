@@ -1,5 +1,5 @@
 ---
-status: active
+status: completed
 created: 2026-11-08
 updated: 2026-11-08
 slug: waza-improvements
@@ -101,14 +101,19 @@ The remainder is one edit, in the shape its six siblings already have:
   changed since the last, pinned by a `src/cron.rs` test. Verified: the three
   model-path helpers, the changed-model branch, and
   `a_model_switch_forces_the_eval_corpus_off_the_cadence`.
-- [ ] **C4 — the references.** Each `~/.agents/skills/house-*/` carries a
-  `references/` folder with its playbook, linked from its SKILL.md. Remainder:
-  `house-build-loop` — the other six are landed.
+- [x] **C4 — the references.** Each `~/.agents/skills/house-*/` carries a
+  `references/` folder with its playbook, linked from its SKILL.md. Verified:
+  all seven carry exactly one reference (2643 bytes for `house-build-loop`'s
+  `references/verification-economics.md`), and its SKILL.md links it from a
+  `## References` section at line 87.
 - [x] **C5 — the chaining doc.** `docs/architecture/skill-chains.md` names the
   chains, with a pointer from CLAUDE.md's session protocol. Verified: the
   doc's presence and the pointer.
-- [ ] **C6 — the gate.** fmt, clippy, release build, and test — exit codes
-  read directly, the whole suite.
+- [x] **C6 — the gate.** fmt, clippy, release build, and test — exit codes
+  read directly, the whole suite. Verified 2026-11-08: `fmt=0`, `clippy=0`
+  (`--all-targets -- -D warnings`), `build=0` (release), `cargo test` green
+  (lib 2039, integration 168), and `node tests/face/harness.mjs` at 1009
+  checks across 117 cases.
 
 ## Files to be touched
 

@@ -20,6 +20,7 @@ pub mod catalog;
 pub mod channels;
 pub mod checkpoints;
 pub mod cli;
+pub mod clipboard;
 pub mod compaction;
 pub mod cron;
 pub mod deck;

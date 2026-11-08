@@ -41,6 +41,9 @@ async fn a_composed_request_walks_blend1() {
         None,
         fleet::route::Walk::Judged,
         None,
+        // A text-only request: this leg exists to let the live lane judge
+        // `composed`, and an image would force the vision chain past it.
+        false,
     )
     .await;
     // The lane is a live model, so its verdict on this wording is the

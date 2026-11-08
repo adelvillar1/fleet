@@ -645,6 +645,7 @@ batch-only by construction.
 | `net.rs` | `docs/architecture/overview.md` |
 | `tui/` | `docs/architecture/deep-dive-2026-10-15.md`; `docs/architecture/overview.md` |
 | `gui/` | `docs/features/gui.md` |
+| `clipboard.rs` | `docs/features/gui.md` (the Pasting section); `src/gui/bridge.rs`'s `clipboard()` |
 | `checkpoints.rs` | `docs/features/gui.md` (the trust trio) |
 | `catalog.rs` | `docs/features/catalog.md`; the component catalog's vocabulary, spec, check and render |
 | `lexical.rs` | `docs/features/retrieval.md`; the BM25 lexical route |
@@ -764,6 +765,23 @@ address is `#/huddles/<id>`. The log's vocabulary is
 and `Assistant.persona`; a speaker's turn is scoped by
 `subagents::Scope::child` and its delivery tools (`read_document`,
 `send_file`) plus `author_persona` are exempt from the scope refusal.
+
+#### `clipboard.rs`
+The pasteboard, read on the owner's gesture and nothing else. A webview
+never hands an image to the page it renders, so the composer's paste
+cannot be a DOM handler; the face's own process reads the clipboard and
+answers the page over `GET /api/clipboard`. `Clip` is the three answers
+that read can give — text, an image with its name, media type and bytes,
+or empty — and `read` asks for text **first**, names an image's file
+from its media type, and encodes to PNG when the pasteboard offers only
+raw pixels. The `Backend` trait (`text`, `image`) is the seam: `System`
+wraps `arboard` in production and the tests inject fixtures, so the
+suite never touches the owner's pasteboard. A `ContentNotAvailable`
+answer maps to `Clip::Empty`, while any other failure is an `Err` the
+bridge turns into a named refusal — a clipboard that cannot be read must
+not be reported as an empty one. What an image is *for* is not decided
+here; the caller attaches it and `gui::server`'s bounds judge whether it
+fits.
 
 ### Integration harness
 

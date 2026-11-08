@@ -1,0 +1,393 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>composer foot + paste</title>
+<style>
+/* Tokens copied from src/gui/assets/app.css so the mockup paints in the
+   app's own colours rather than an approximation of them. */
+:root {
+  --card-hairline: 1px solid var(--dsw-alias-hairline);
+  --composer-radius: 16px;
+  --font-text: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica,
+    Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+[data-theme="light"] {
+  --dsw-alias-page: rgb(246, 244, 239);
+  --composer-bg: var(--dsw-alias-surface);
+  --dsw-alias-surface: rgb(252, 251, 248);
+  --dsw-alias-surface-raised: rgb(239, 236, 230);
+  --dsw-alias-hairline: rgb(24 26 29 / 10%);
+  --dsw-alias-hairline-strong: rgb(24 26 29 / 17%);
+  --dsw-alias-ink: rgb(24, 26, 29);
+  --dsw-alias-ink-secondary: rgb(82, 88, 96);
+  --dsw-alias-ink-tertiary: rgb(94, 102, 112);
+  --dsw-alias-accent: rgb(47, 95, 208);
+  --dsw-alias-gradient: linear-gradient(135deg, rgb(63, 108, 218), rgb(37, 78, 176));
+}
+[data-theme="console"] {
+  --dsw-alias-page: rgb(14, 15, 18);
+  --composer-bg: var(--dsw-alias-surface);
+  --dsw-alias-surface: rgb(20, 22, 26);
+  --dsw-alias-surface-raised: rgb(28, 31, 36);
+  --dsw-alias-hairline: rgb(255 255 255 / 8%);
+  --dsw-alias-hairline-strong: rgb(255 255 255 / 14%);
+  --dsw-alias-ink: rgb(235, 231, 228);
+  --dsw-alias-ink-secondary: rgb(166, 175, 188);
+  --dsw-alias-ink-tertiary: rgb(138, 148, 163);
+  --dsw-alias-accent: rgb(96, 143, 255);
+  --dsw-alias-gradient: linear-gradient(135deg, rgb(96, 143, 255), rgb(66, 112, 230));
+}
+[data-theme="graphite"] {
+  --dsw-alias-page: rgb(10, 12, 16);
+  --composer-bg: var(--dsw-alias-surface);
+  --dsw-alias-surface: rgb(15, 18, 23);
+  --dsw-alias-surface-raised: rgb(21, 25, 31);
+  --dsw-alias-hairline: rgb(255 255 255 / 8%);
+  --dsw-alias-hairline-strong: rgb(255 255 255 / 14%);
+  --dsw-alias-ink: rgb(232, 238, 244);
+  --dsw-alias-ink-secondary: rgb(160, 170, 184);
+  --dsw-alias-ink-tertiary: rgb(132, 144, 160);
+  --dsw-alias-accent: rgb(94, 148, 255);
+  --dsw-alias-gradient: linear-gradient(135deg, rgb(94, 148, 255), rgb(62, 112, 232));
+}
+
+body {
+  margin: 0;
+  padding: 28px;
+  /* A contact sheet: the margin is one neutral ground, and each sheet
+     paints its own theme's page colour inside its own bounds. */
+  background: rgb(246, 244, 239);
+  color: var(--dsw-alias-ink);
+  font: 13.5px/1.55 var(--font-text);
+  -webkit-font-smoothing: antialiased;
+}
+.sheet { max-width: 880px; margin: 0 auto 30px; padding: 18px 20px 22px;
+  background: var(--dsw-alias-page); }
+.sheet > h2 {
+  margin: 0 0 2px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--dsw-alias-ink-tertiary);
+}
+.sheet > p.note { margin: 0 0 12px; font-size: 11.5px; color: var(--dsw-alias-ink-secondary); }
+.frame { padding: 22px 0; border-radius: 14px; border: var(--card-hairline); }
+
+/* ---- the composer card, exactly the app's geometry ------------------ */
+.composer {
+  --ctl-h: 30px;
+  --ctl-radius: 8px;
+  --ctl-font: 11.5px;
+  width: min(820px, calc(100% - 64px));
+  margin: 0 auto;
+  padding: 10px 12px;
+  border: var(--card-hairline);
+  border-radius: var(--composer-radius);
+  background: var(--composer-bg);
+}
+.composer textarea {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 40px;
+  padding: 6px 2px 2px;
+  border: 0;
+  outline: 0;
+  resize: none;
+  background: transparent;
+  color: var(--dsw-alias-ink);
+  font: inherit;
+  font-size: 15px;
+}
+.attach-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 2px 0; }
+.attach-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 7px;
+  border: 1px solid var(--dsw-alias-hairline);
+  border-radius: 999px;
+  background: var(--dsw-alias-surface);
+  color: var(--dsw-alias-ink-secondary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+.attach-drop {
+  padding: 0 2px;
+  border: 0;
+  background: none;
+  color: var(--dsw-alias-ink-tertiary);
+  font: inherit;
+  cursor: pointer;
+}
+/* The second chip treatment: a 14px face on the leading edge. */
+.attach-chip .thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  background: var(--dsw-alias-surface-raised);
+  border: 1px solid var(--dsw-alias-hairline-strong);
+  flex: 0 0 auto;
+}
+
+.runbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  font-size: var(--ctl-font);
+  color: var(--dsw-alias-ink-secondary);
+}
+.runbar-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: var(--ctl-h);
+  padding: 0 8px;
+  border: var(--card-hairline);
+  border-radius: var(--ctl-radius);
+  color: var(--dsw-alias-ink-secondary);
+}
+.runbar-field svg { width: 13px; height: 13px; flex: 0 0 auto; }
+
+.composer-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 0 2px;
+}
+.composer-hint {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: var(--ctl-font);
+  color: var(--dsw-alias-ink-tertiary);
+}
+.foot-actions { display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+.foot-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: var(--ctl-h);
+  padding: 0 11px;
+  border: 0;
+  border-radius: var(--ctl-radius);
+  background: transparent;
+  color: var(--dsw-alias-ink-secondary);
+  font: inherit;
+  font-size: var(--ctl-font);
+  font-weight: 600;
+  cursor: pointer;
+}
+.foot-btn.icon { width: var(--ctl-h); padding: 0; }
+.foot-btn svg { width: 14px; height: 14px; }
+.foot-btn.send {
+  padding: 0 14px;
+  background: var(--dsw-alias-gradient);
+  color: #fff;
+  font-size: 12px;
+}
+.foot-btn.send svg { width: 14px; height: 14px; }
+.foot-btn:hover { background: var(--dsw-alias-surface-raised); }
+.foot-btn.send:hover { background: var(--dsw-alias-gradient); }
+
+.verdict {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+  font-size: 11.5px;
+  color: var(--dsw-alias-ink-secondary);
+}
+.verdict b { color: var(--dsw-alias-ink); font-weight: 600; }
+.mock-pos { color: var(--dsw-alias-ink-tertiary); font-family: var(--font-mono); font-size: 10.5px; }
+</style>
+</head>
+<body>
+<div id="sheets"></div>
+
+<script>
+// One template, painted once per theme: the foot is the same geometry in
+// every theme, so a copy per theme would be three chances to drift.
+var ICONS = {
+  doc: '<path d="M6 3.5h7l5 5v12H6z"></path><path d="M13 3.5v5h5"></path>' +
+       '<path d="M12 12.5v6"></path><path d="M9 15.5h6"></path>',
+  clip: '<path d="M8.5 12.6l5.7-5.7a3 3 0 1 1 4.2 4.2l-7.2 7.2a5 5 0 0 1-7.1-7.1l6.6-6.6"></path>',
+  paste: '<path d="M9 4.5h6a1.5 1.5 0 0 1 1.5 1.5v.5h1.5a1.5 1.5 0 0 1 1.5 1.5v11a1.5 1.5 0 0 1-1.5 1.5h-10A1.5 1.5 0 0 1 6.5 19V8a1.5 1.5 0 0 1 1.5-1.5h1.5V6A1.5 1.5 0 0 1 9 4.5z"></path>' +
+         '<path d="M9.5 4.5a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1.2h-5z"></path>' +
+         '<path d="M9.5 12h5"></path><path d="M9.5 15.5h3.5"></path>',
+  steer: '<circle cx="12" cy="12" r="8.5"></circle><path d="M12 3.5v5"></path>' +
+         '<path d="M12 12l6 4.5"></path><path d="M12 12l-6 4.5"></path>',
+  btw: '<path d="M5 5v6a4 4 0 0 0 4 4h10"></path><path d="M15 11l4 4-4 4"></path><path d="M5 5v14"></path>',
+  send: '<path d="M5 12h13"></path><path d="M13 7l5 5-5 5"></path>'
+};
+
+function svg(name) {
+  return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" ' +
+    'stroke-linecap="round" stroke-linejoin="round">' + ICONS[name] + '</svg>';
+}
+
+function chip(name, size, thumb) {
+  return '<span class="attach-chip">' + (thumb ? '<span class="thumb"></span>' : '') +
+    name + ' \u00b7 ' + size + '<button class="attach-drop" type="button">\u00d7</button></span>';
+}
+
+function foot() {
+  return '<div class="composer-foot">' +
+    '<span class="composer-hint">Shift+Enter makes a newline</span>' +
+    '<span class="foot-actions">' +
+      '<button class="foot-btn icon" aria-label="attach a document from the workspace" title="attach a document from the workspace">' + svg('doc') + '</button>' +
+      '<button class="foot-btn icon" aria-label="attach files from this machine" title="attach files from this machine">' + svg('clip') + '</button>' +
+      '<button class="foot-btn icon" aria-label="paste from the clipboard" title="paste from the clipboard">' + svg('paste') + '</button>' +
+      '<button class="foot-btn icon" aria-label="steer the run in flight" title="steer the run in flight (/steer)">' + svg('steer') + '</button>' +
+      '<button class="foot-btn icon" aria-label="open a side branch" title="open a side branch (/btw)">' + svg('btw') + '</button>' +
+      '<button class="foot-btn plan" aria-pressed="false"><span class="foot-label">Plan</span></button>' +
+      '<button class="foot-btn send" type="submit"><span class="foot-label">Send</span>' + svg('send') + '</button>' +
+    '</span>' +
+  '</div>';
+}
+
+function composer(withChips) {
+  return '<div class="composer">' +
+    '<textarea rows="2" spellcheck="false">paste this into the run</textarea>' +
+    (withChips
+      ? '<div class="attach-chips">' +
+          chip('shot-2026-11-08-at-14.22.png', '2.0 MB', true) +
+          chip('notes.txt', '412 B', false) +
+          chip('plan.md', '3.1 kB', false) +
+        '</div>'
+      : '') +
+    '<div class="runbar">' +
+      '<span class="runbar-field">Ask before</span><span class="runbar-field">Auto</span>' +
+      '<span class="runbar-field">no folder</span><span class="runbar-field">no goal</span>' +
+    '</div>' +
+    foot() +
+  '</div>';
+}
+
+function sheet(theme, headline, note, body) {
+  return '<section class="sheet" data-theme="' + theme + '">' +
+    '<h2>' + theme + '</h2><p class="note">' + note + '</p>' +
+    '<div class="frame">' + body + '</div>' + (headline || '') + '</section>';
+}
+
+var html = '';
+html += sheet('light', null, 'the deck\u2019s default; a chip carries the file\u2019s own size, never a text length',
+  composer(true));
+html += sheet('console', null, 'the theme the face runs on; same geometry, quieter chip ground',
+  composer(true));
+html += sheet('graphite', null, 'the darkest ground; the filled Send must stay the one primary',
+  composer(true));
+
+// The chip question on its own, both treatments against one another.
+var sideBySide =
+  '<div class="composer"><div class="attach-chips">' +
+    chip('shot-2026-11-08-at-14.22.png', '2.0 MB', false) +
+    chip('shot-2026-11-08-at-14.31.png', '1.4 MB', false) +
+  '</div></div>' +
+  '<div class="composer" style="margin-top:10px"><div class="attach-chips">' +
+    chip('shot-2026-11-08-at-14.22.png', '2.0 MB', true) +
+    chip('shot-2026-11-08-at-14.31.png', '1.4 MB', true) +
+  '</div></div>';
+html += sheet('light', '<p class="verdict"><b>chosen: no thumbnail</b> &mdash; the name already carries the ' +
+  'extension, the size already carries the weight, and a 14px face on a screenshot says less than ' +
+  'the filename does.</p><p class="verdict mock-pos" id="chip-cost"></p>',
+  'name \u00b7 size above; the same chips with a 14px face below', sideBySide);
+
+document.getElementById('sheets').innerHTML = html;
+
+// The measurement the eye cannot make: worst contrast anywhere on the page,
+// overflowing cells, and the foot's own width against the card's inner width.
+window.addEventListener('load', function () {
+  var lum = function (c) {
+    var m = c.match(/rgba?\(([^)]+)\)/); if (!m) return 1;
+    var p = m[1].split(',').map(function (x) { return parseFloat(x); });
+    var a = p.length > 3 ? p[3] : 1;
+    var f = function (v) { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+    return (0.2126 * f(p[0]) + 0.7152 * f(p[1]) + 0.0722 * f(p[2])) * a + (1 - a);
+  };
+  var ratio = function (fg, bg) {
+    var l1 = lum(fg), l2 = lum(bg);
+    if (l1 < l2) { var t = l1; l1 = l2; l2 = t; }
+    return (l1 + 0.05) / (l2 + 0.05);
+  };
+  var els = document.querySelectorAll('.composer-hint, .attach-chip, .foot-btn, ' +
+    '.runbar-field, .verdict, .note, h2, textarea');
+  // What is actually behind an element: its own ground, else the first
+  // colour of its gradient (Send is filled with one), else the nearest
+  // ancestor that paints a ground at all.
+  var ground = function (el) {
+    for (var node = el; node; node = node.parentElement) {
+      var cs = getComputedStyle(node);
+      if (cs.backgroundColor && cs.backgroundColor !== 'rgba(0, 0, 0, 0)') return cs.backgroundColor;
+      var found = (cs.backgroundImage || '').match(/rgba?\([^)]+\)/);
+      if (found) return found[0];
+    }
+    return getComputedStyle(document.body).backgroundColor;
+  };
+  // Per theme, because a minimum folded across three grounds says nothing
+  // about any one of them. The filled Send is reported apart: it is the
+  // app's own gradient and not this mockup's decision.
+  var min = 99, overflow = 0, worst = '', report = [];
+  ['light', 'console', 'graphite'].forEach(function (theme) {
+    var host = document.querySelector('.sheet[data-theme="' + theme + '"]');
+    var local = 99, localWorst = '', sendRatio = 0;
+    Array.prototype.forEach.call(host.querySelectorAll('.composer-hint, .attach-chip, ' +
+      '.runbar-field, .verdict, .note, h2, textarea, .foot-btn'), function (el) {
+      var cs = getComputedStyle(el);
+      var r = ratio(cs.color, ground(el));
+      if (el.classList.contains('send')) { sendRatio = r; return; }
+      if (el.scrollWidth > el.clientWidth + 1) overflow++;
+      if (r < local) { local = r; localWorst = (el.className || el.tagName).split(' ')[0]; }
+    });
+    if (local < min) { min = local; worst = theme + '/' + localWorst; }
+    report.push(theme + ' ' + local.toFixed(2) + ' (' + localWorst + ') send ' + sendRatio.toFixed(2));
+  });
+
+  var cards = document.querySelectorAll('.composer');
+  var card = cards[0];
+  var footEl = card.querySelector('.composer-foot');
+  var actions = footEl.querySelector('.foot-actions');
+  var inner = card.clientWidth - 24;
+  var room = inner - actions.offsetWidth;
+
+  // What the thumbnail would cost the chip row: eight screenshots, both ways.
+  var plain = 0, faced = 0, i;
+  var chips = document.querySelectorAll('.attach-chip');
+  for (i = 0; i < chips.length; i++) {
+    var w = chips[i].offsetWidth;
+    if (chips[i].querySelector('.thumb')) faced = Math.max(faced, w); else plain = Math.max(plain, w);
+  }
+  document.getElementById('chip-cost').textContent =
+    'measured: chip ' + plain + 'px without a face vs ' + faced + 'px with one; eight of them ' +
+    'run ' + ((faced - plain) * 8) + 'px wider than the card can spare.';
+
+  document.getElementById('chip-cost').textContent += ' contrast per theme: ' + report.join('; ');
+  // Where each sheet actually ends, so the screenshot can be cropped to it.
+  var bounds = [];
+  Array.prototype.forEach.call(document.querySelectorAll('.sheet'), function (sh) {
+    var r = sh.getBoundingClientRect();
+    bounds.push(sh.dataset.theme + ':' + Math.round(r.left) + ',' +
+      Math.round(r.top + window.scrollY) + '-' + Math.round(r.right) + ',' +
+      Math.round(r.bottom + window.scrollY));
+  });
+  var probe = document.createElement('meta');
+  probe.name = 'bounds';
+  probe.content = bounds.join(' ') + ' total:' + Math.round(document.body.scrollHeight);
+  document.head.appendChild(probe);
+  document.title = 'contrast:' + min.toFixed(2) + ' overflow:' + overflow +
+    ' foot:' + actions.offsetWidth + 'px inner:' + inner + 'px room:' + room + 'px' +
+    ' worst:' + worst;
+});
+</script>
+</body>
+</html>

@@ -605,6 +605,21 @@
                 <path d="M8.5 12.6l5.7-5.7a3 3 0 1 1 4.2 4.2l-7.2 7.2a5 5 0 0 1-7.1-7.1l6.6-6.6"></path>
               </svg>
             </button>
+            <!-- Paste, asked rather than intercepted: a webview will not
+                 hand an image to the page, so this reads the clipboard
+                 through the server on the click and inserts text or
+                 attaches the image. Same pipeline as the picker above. -->
+            <button type="button" class="foot-btn icon" id="paste"
+                    aria-label="paste from the clipboard"
+                    data-tip="paste from the clipboard">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
+                   stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M9 4.5h6a1.5 1.5 0 0 1 1.5 1.5v.5h1.5a1.5 1.5 0 0 1 1.5 1.5v11a1.5 1.5 0 0 1-1.5 1.5h-10A1.5 1.5 0 0 1 6.5 19V8a1.5 1.5 0 0 1 1.5-1.5h1.5V6A1.5 1.5 0 0 1 9 4.5z"></path>
+                <path d="M9.5 4.5a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1.2h-5z"></path>
+                <path d="M9.5 12h5"></path>
+                <path d="M9.5 15.5h3.5"></path>
+              </svg>
+            </button>
             <input type="file" id="attach-input" multiple hidden>
             <!-- The run's two verbs beside the run itself, as icons that
                  prefill their commands: the steering wheel fills the

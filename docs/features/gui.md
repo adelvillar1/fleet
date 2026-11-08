@@ -311,7 +311,7 @@ every visible `.tile`, `.badge`, `.rrow`, `.rank-row`, `.cal-cell`,
   whole; a hook seeds a scheduled job from the ask the turn answered,
   and the owner arms it in the drawer before anything is written. The
   composer's foot carries the run's two beside-verbs as icons beside
-  attach and plan: the **steering wheel** fills the composer with
+  paste, attach and plan: the **steering wheel** fills the composer with
   `/steer` and the **bifurcation** with `/btw` — the owner types the
   instruction, and the slash parser, the only parser, takes it from
   there. The icon buttons carry the face's own hover tooltip — instant
@@ -446,6 +446,7 @@ Escape clears the object, never the dock.
 | `GET /api/related` | cross-kind related objects for one selected id |
 | `GET/POST /api/usage` | the browser's counters and the adaptation knob |
 | `GET /api/router`, `/api/delegation`, `/api/memory`, `/api/skills`, `/api/sessions`, `/api/session`, `/api/calibration`, `/api/tower`, `/api/second-brain`, `/api/settings` | the panels' own reads |
+| `GET /api/clipboard` | what the owner has on the clipboard, read on their own click: `{kind:"text", text}`, `{kind:"image", image:{name, mime, bytes, size}}` with the bytes base64, or `{kind:"empty"}`. A read that cannot land answers `refused` with the reason — a locked session, a process with no window — rather than an empty success. The page never sees the pasteboard; this process does |
 | `GET /api/tree`, `/api/file`, `/api/web`, `/api/web/frame`, `/api/preview` | the pane's contained reads: the working directory, a credential-refusing file read, a guarded fetch, the framing verdict the browser tab renders by, and the document bytes the preview renders from |
 | `GET /api/channels` | the channel control plane: the service's status (and whether its heartbeat still beats), every channel's paired and pending peers, and the newest fifty activity lines with the bound named |
 | `POST /api/channels/{start,stop,pair,capability,revoke,forget}` | the control plane's writes. `pair` answers with the token exactly once; there is no read that returns it again |
@@ -672,6 +673,65 @@ all** — access is granted by choosing a folder and by nothing else.
   runs are launched from a directory; that launch is the owner's
   explicit choice, so they keep the unrestricted root they always had.
 
+## Pasting
+
+The composer's textarea keeps its native Cmd+V for text. An **image** is
+the case the keyboard cannot serve: a webview never hands a picture to
+the page, so the `paste` event either never fires or arrives with an
+empty `clipboardData`. The foot therefore carries a **paste** button
+beside attach and the Document control, and the press is the gesture:
+the page asks the face, and the face's own process reads the pasteboard.
+
+**The read is the server's.** `GET /api/clipboard` reaches
+`src/clipboard.rs` through `spawn_blocking`, behind a two-method backend
+trait (`text`, `image`) so a test drives it with fixtures and never
+touches the owner's pasteboard; `arboard` is the production backend.
+The answer is one of four shapes and never a bare error: text to insert
+at the caret, an image to attach (name, declared media type, base64
+bytes, size), the word that the clipboard is empty, or a refusal naming
+the reason. A locked session and a headless process both speak; a
+clipboard that cannot be read is never reported as an empty one.
+
+**An image attaches, it does not type.** A pasted picture joins the
+attachment list through the same chip, the same bounds and the same send
+payload every attached file rides, and its `mime` comes from the
+pasteboard's declared type or from the bytes themselves. It is
+**framed as a picture, not pasted as text**: the turn's task text gains
+`--- name (mime image · N bytes) ---` and `(an image, attached to this
+turn)`, and the bytes ride the request's own image part through
+`Message::text_with_images` — so the model sees the screenshot and the
+conversation log keeps words. A declared media type that disagrees with
+the bytes is refused by name (`X is declared … but its bytes are …`),
+and the framing is what makes a 3 MiB screenshot cost one log line
+instead of two megabytes of replay.
+
+**An image-bearing turn is routed by its picture.** A run whose task
+carries an image walks the `vision` workload's chain
+(`route::prepare_for_images`), skipping judgment entirely: a text
+verdict cannot know what a picture wants, so the decision row names the
+`vision` workload and `judged_from: none`, and says why in its words. A pin still
+wins — the owner's model is the owner's — and the chain is filtered by
+the pin's provider and by the gates' admissibility like every order. A
+home whose `vision` chain leaves no admissible candidate falls through
+to the ordinary judgment rather than inventing a model: the order is
+built, not assumed, and the decision row is what says which chain served.
+The carrying turn also never reads or fills the session's prepared route
+slot, so one screenshot cannot re-point the next text-only run.
+
+**The bounds moved with the pictures.** One `/api/run` request may carry
+25 MiB (`MAX_BODY_BYTES`, KI-475's raise from 64 KiB), one attachment 8 MiB
+(`ATTACHMENT_BYTE_CAP`), eight may ride one turn (`MAX_ATTACHMENTS`) and
+20 MiB together (`ATTACHMENTS_TOTAL_CAP`); the composer's own
+`ATTACH_LIMIT` and `ATTACH_BYTE_LIMIT` mirror the two it can enforce
+before sending, so the page refuses exactly what the server would rather
+than inventing a tighter number. A body past the bound is KI-378's
+refusal in the product's own words, not a dropped connection.
+
+**The bot face carries the same button.** `fleet bot`'s composer has the
+paste affordance beside send, reads the same endpoint, inserts text at
+its own caret and holds a pasted picture in the console's attachment
+shape — one endpoint, so the two faces cannot drift.
+
 ## Documents
 
 The composer's Document control attaches a document from the workspace,
@@ -701,7 +761,7 @@ the units where Perception billed, the job id, and a truncated preview's
 provider that serves it — the same egress every turn has; a document that
 went through Perception names that second recipient too.
 
-**Bounds.** Five attachments a turn, 64 MB a document, a 120-second local
+**Bounds.** Eight attachments a turn, 64 MB a document, a 120-second local
 extraction and a 300-second job budget. A missing lane or tool is a named
 refusal; macros are never executed and embedded objects are never opened.
 The lane's tools and licences are listed in `services/documents/README.md`.

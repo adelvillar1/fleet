@@ -193,6 +193,11 @@ async function api(path, options) {
   return body;
 }
 
+// What the composer is holding between a paste and its send: the
+// console keeps its attachments in the same place, and the body it sends
+// is the console's body — one shape, two faces.
+const pending = { attachments: [] };
+
 const post = (path, payload) =>
   api(path, {
     method: 'POST',
@@ -536,6 +541,7 @@ function renderConversation() {
       ${seat ? seatHtml(seat) : ''}
       <div class="composer">
         <textarea id="steer" rows="1" enterkeyhint="send" placeholder="${running ? 'steer or answer…' : `say something to ${personas[0] || 'fleet'}…`}"></textarea>
+        <button class="paste" id="paste" aria-label="paste from the clipboard" ${running ? 'disabled' : ''}>${ICON_CLIP}</button>
         <button class="send ${running ? 'stop' : ''}" id="send" aria-label="${running ? 'Stop the run' : 'Send'}">${running ? ICON_STOP : ICON_ARROW}</button>
       </div>
     </div>`;
@@ -568,7 +574,15 @@ function renderConversation() {
         await post(`/api/run?session=${encodeURIComponent(state.session)}`, {
           task: text,
           mode: 'yes-guarded', // R5: non-destructive runs; destructive is held
+          // The picture a paste attached, in the console's own shape.
+          attachments: (pending.attachments || []).map((file) => ({
+            name: file.name,
+            mime: file.mime,
+            bytes: file.bytes,
+            size: file.size,
+          })),
         });
+        pending.attachments = [];
       }
       refreshConversation(state.session);
     } catch (error) {
@@ -576,6 +590,43 @@ function renderConversation() {
     }
   };
   send.addEventListener('click', submit);
+  // Paste, asked rather than intercepted, exactly as the console's is:
+  // text goes into the composer at the caret, an image rides the turn's
+  // own attachments. One endpoint, two faces.
+  view.querySelector('#paste')?.addEventListener('click', async (event) => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    try {
+      const answer = await api('/api/clipboard');
+      if (answer?.refused?.length) {
+        toast(`the clipboard could not be read: ${answer.refused.join(' · ')}`);
+        return;
+      }
+      if (!answer || answer.kind === 'empty') {
+        toast('the clipboard is empty');
+        return;
+      }
+      if (answer.kind === 'text') {
+        const at = textarea.selectionStart ?? textarea.value.length;
+        const end = textarea.selectionEnd ?? at;
+        textarea.value = textarea.value.slice(0, at) + (answer.text || '') + textarea.value.slice(end);
+        const caret = at + (answer.text || '').length;
+        textarea.focus();
+        try { textarea.setSelectionRange(caret, caret); } catch (ignored) { }
+        return;
+      }
+      if (answer.kind === 'image' && answer.image) {
+        // A phone's run carries the picture in the same body shape the
+        // console sends, so the listener decodes it the same way.
+        pending.attachments = [{ ...answer.image, image: true }];
+        toast('the image rides the next send');
+      }
+    } catch (error) {
+      toast(error.message || 'the clipboard is unreachable');
+    } finally {
+      button.disabled = false;
+    }
+  });
   textarea.addEventListener('keydown', (event) => {
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
@@ -819,6 +870,7 @@ const ICON_ARROW = `<svg width="17" height="17" viewBox="0 0 20 20" fill="none" 
 const ICON_BACK = `<svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12.4 4.5 6 10.5l6.4 6"/></svg>`;
 const ICON_PLUS = `<svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><path d="M10 4.5v11M4.5 10h11"/></svg>`;
 const ICON_STOP = `<svg width="15" height="15" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><rect x="5.5" y="5.5" width="9" height="9" rx="1.6"/></svg>`;
+const ICON_CLIP = `<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 4.5h6a1.5 1.5 0 0 1 1.5 1.5v.5h1.5a1.5 1.5 0 0 1 1.5 1.5v11a1.5 1.5 0 0 1-1.5 1.5h-10A1.5 1.5 0 0 1 6.5 19V8a1.5 1.5 0 0 1 1.5-1.5h1.5V6A1.5 1.5 0 0 1 9 4.5z"/><path d="M9.5 4.5a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1.2h-5z"/><path d="M9.5 12h5"/><path d="M9.5 15.5h3.5"/></svg>`;
 const ICON_CLOSE = `<svg width="17" height="17" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15"/></svg>`;
 
 // ---------- the boot: the inbox, the events, the 5s floor ----------

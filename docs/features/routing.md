@@ -121,6 +121,24 @@ router chain selects among them. The router has no `design` workload, and
 design-shaped work judged as `frontend` walks `frontend`'s chain like any
 other interface work.
 
+**A turn carrying an image is judged by nothing.** An attachment is not
+a word, and a text verdict cannot know what a picture wants, so a run
+whose task carries an image skips the judgment altogether:
+`route::prepare_for_images` builds the order from the `vision`
+workload's own chain (`route::VISION_WORKLOAD`) and lands a decision
+naming that workload and `judged_from: none` — no row claims sys1 chose
+a route it was never asked about, and the reason reads "the turn carries
+an image, so the `vision` workload's chain serves it". The order is a
+real order, not an assumption that the table has one: it is filtered by
+the pin's provider and by `admissible`, and the failover tail is
+appended the way it is to every order. A pin still wins and its row says
+`How::Pinned`; a home whose `vision` chain leaves no admissible
+candidate falls through to the ordinary judgment rather than inventing a
+model. Both faces reach this through the one seam
+(`gui::server::with_attachments` frames the turn, `images_of` decodes
+the picture), so the remote listener and the console cannot route a
+screenshot differently.
+
 ## Pins and the nominal model
 
 No surface seeds a provider's model as a default. `AgentOptions::default`

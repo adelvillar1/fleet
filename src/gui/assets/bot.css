@@ -611,6 +611,20 @@ button {
   color: var(--on-accent);
 }
 .composer .send.stop { background: var(--down); color: var(--on-down); }
+/* The paste button sits beside send and is quiet: it is a rail, not
+   the action, so it takes the raised surface and the secondary ink. */
+.composer .paste {
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--pill);
+  background: var(--raised);
+  color: var(--ink-2);
+}
+.composer .paste:active { transform: scale(0.96); }
+.composer .paste[disabled] { opacity: 0.45; }
 
 .empty {
   flex: 1 1 auto;

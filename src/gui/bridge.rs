@@ -77,7 +77,7 @@ pub enum Command {
     /// working in a different conversation. The folder rides here
     /// rather than being read when the thread wakes, so a choice made
     /// while the run was being accepted cannot move under it.
-    Run(String, String, Option<PathBuf>),
+    Run(String, String, Option<PathBuf>, Vec<crate::api::ImageRef>),
     /// Plan this task: the run plans and does not write, and its final
     /// message records as a plan the owner edits and builds.
     Plan(String, String, Option<PathBuf>),
@@ -2511,6 +2511,65 @@ impl Bridge {
         }
     }
 
+    /// What the owner has on the clipboard, read on their gesture.
+    ///
+    /// A webview will not hand an image to the page, so the page asks
+    /// this and the process that owns a window does the reading. The
+    /// answer is one of three shapes and never a bare error: text to
+    /// insert, an image to attach (name, mime, base64), or the word
+    /// that there was nothing to carry.
+    pub async fn clipboard(&self) -> Value {
+        let read = tokio::task::spawn_blocking(|| {
+            let mut backend = match crate::clipboard::System::open() {
+                Ok(backend) => backend,
+                Err(why) => {
+                    return json!({
+                        "type": "clipboard",
+                        "refused": [why],
+                    })
+                }
+            };
+            match crate::clipboard::read(&mut backend) {
+                Ok(crate::clipboard::Clip::Text(text)) => {
+                    json!({"type": "clipboard", "kind": "text", "text": text})
+                }
+                Ok(crate::clipboard::Clip::Image { name, mime, bytes }) => {
+                    // base64 so the page can carry it in the run's own
+                    // JSON body without a second encoding step.
+                    use base64::Engine;
+                    let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
+                    let size = bytes.len();
+                    json!({
+                        "type": "clipboard",
+                        "kind": "image",
+                        "image": {
+                            "name": name,
+                            "mime": mime,
+                            "bytes": encoded,
+                            "size": size,
+                        },
+                    })
+                }
+                Ok(crate::clipboard::Clip::Empty) => json!({
+                    "type": "clipboard",
+                    "kind": "empty",
+                }),
+                Err(why) => json!({
+                    "type": "clipboard",
+                    "refused": [why],
+                }),
+            }
+        })
+        .await;
+        match read {
+            Ok(answer) => answer,
+            Err(_) => json!({
+                "type": "clipboard",
+                "refused": ["the clipboard read did not land"],
+            }),
+        }
+    }
+
     /// The design canvas's document: the boards the home holds, the
     /// active board with its frames (each one's HTML already carrying its
     /// tweak overrides — the one injection path), the presets the
@@ -4044,7 +4103,7 @@ impl Bridge {
         let folder = self.run_folder(session, None)?;
         self.full_access_floor(folder.as_deref(), lock(&self.state).permissions)?;
         self.dispatch(session, task, |session, task| {
-            Command::Run(session.to_string(), task.to_string(), folder)
+            Command::Run(session.to_string(), task.to_string(), folder, Vec::new())
         })
     }
 
@@ -4094,6 +4153,22 @@ impl Bridge {
         pin: Option<String>,
         folder: Option<&str>,
     ) -> Result<(), RunError> {
+        self.run_with_images(session, task, mode, pin, folder, Vec::new())
+    }
+
+    /// The same run, carrying the pictures this turn hands over. The
+    /// images reach the agent thread on the command: they are one turn's
+    /// — the owner's pasted screenshot — and the log keeps the task's
+    /// words, which name each one.
+    pub fn run_with_images(
+        &self,
+        session: &str,
+        task: &str,
+        mode: crate::approvals::Mode,
+        pin: Option<String>,
+        folder: Option<&str>,
+        images: Vec<crate::api::ImageRef>,
+    ) -> Result<(), RunError> {
         let folder = self
             .run_folder(session, folder)
             .map_err(RunError::BadRequest)?;
@@ -4105,7 +4180,7 @@ impl Bridge {
             state.provider_pin = pin;
         }
         self.dispatch(session, task, |session, task| {
-            Command::Run(session.to_string(), task.to_string(), folder)
+            Command::Run(session.to_string(), task.to_string(), folder, images)
         })
         .map_err(RunError::Refused)
     }
@@ -4114,6 +4189,7 @@ impl Bridge {
     /// `None` is the home's config value; a named budget is clamped to
     /// the compiled default exactly the way the config value is — a
     /// request can tighten the cap, never raise it.
+    #[allow(clippy::too_many_arguments)]
     pub fn run_with_budget(
         &self,
         session: &str,
@@ -4122,13 +4198,14 @@ impl Bridge {
         pin: Option<String>,
         folder: Option<&str>,
         budget: Option<usize>,
+        images: Vec<crate::api::ImageRef>,
     ) -> Result<(), RunError> {
         // The per-run budget override is retired with the cap it served
         // (the 2026-11-05 ruling): the main loop is uncapped by turns,
         // and the accepted `budget` argument is read nowhere — the
         // signature stays so the face's run body stays wire-compatible.
         let _ = budget;
-        self.run_with(session, task, mode, pin, folder)
+        self.run_with_images(session, task, mode, pin, folder, images)
     }
 
     /// Full access is never permitted on a chat with no working folder:
@@ -9147,25 +9224,26 @@ fn remember_board(
 }
 
 /// The corpus the board facts resolve to: the one the process's runs
-/// recall from (home-first, then the cwd walk — KI-087's rule). The
-/// pin points it at a fixture instead: any other resolution under test
-/// adopts the repository's real corpus, and a lifecycle write must
-/// never touch the owner's facts.
+/// recall from (home-first, then the cwd walk — KI-087's rule).
 fn board_fact_root(home: &std::path::Path) -> std::path::PathBuf {
     #[cfg(test)]
     {
-        if let Some(root) = TEST_BOARD_FACT_ROOT.lock().unwrap().clone() {
-            return root;
-        }
-        // A test that did not pin the seam gets a fixture beside its
-        // own home, never the resolution below. The fallthrough is not
-        // merely inconvenient here: under `cargo test` the cwd is the
-        // repository, whose `memories/` IS the owner's corpus, so a
-        // board lifecycle exercised without the seam wrote real facts
-        // into it — seven `design-board-*` files, found in the tree
-        // after a suite run. The seam's own doc claimed this could not
-        // happen; only the `if let` above enforced it, and only for
-        // tests that remembered. An absence now means a scratch corpus.
+        // A test gets a fixture beside its own home, never the resolution
+        // below. That is not merely convenient: under `cargo test` the cwd
+        // is the repository, whose `memories/` IS the owner's corpus, so a
+        // board lifecycle exercised here wrote real facts into it — seven
+        // `design-board-*` files, found in the tree after a suite run.
+        //
+        // Per-home and no process-global override. A shared pin was tried
+        // and removed on 2026-11-08: it made the corpus a property of the
+        // *process*, so two tests running concurrently on the same board
+        // name (`Harbor`, slug `harbor`) wrote `design-board-harbor` into
+        // one another's corpus, and whichever wrote last superseded the
+        // other's fact. That surfaced as KI-474's flake — a lib run
+        // failing once in a while at `live[0].body.contains("Harbor
+        // Site")`, with the neighbour's binding in the message. A root
+        // derived from the home cannot collide, because the home is the
+        // one thing each test already owns.
         home.join("board-facts")
     }
     #[cfg(not(test))]
@@ -9174,10 +9252,6 @@ fn board_fact_root(home: &std::path::Path) -> std::path::PathBuf {
         crate::memory::resolve_root_from(&cwd, Some(home))
     }
 }
-
-#[cfg(test)]
-static TEST_BOARD_FACT_ROOT: std::sync::Mutex<Option<std::path::PathBuf>> =
-    std::sync::Mutex::new(None);
 
 /// The fact writer itself, root first — the pin's seam, so a fixture
 /// corpus is written without touching the owner's. The substrate has no
@@ -11949,7 +12023,7 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
             // exactly as the TUI's thread does.
             let mut current_session: Option<String> = session_id;
             let mut commands = command_rx;
-            while let Some(command) = commands.recv().await {
+            while let Some(mut command) = commands.recv().await {
                 // Which arm this task arrived on, read before the match
                 // consumes it: the two share one body, and the flag is
                 // the only difference between a run and a plan.
@@ -11961,10 +12035,21 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
                     Command::RunAs(_, _, _, kind, role) => Some((kind.clone(), role.clone())),
                     _ => None,
                 };
+                // The images this run's first message carries, taken
+                // here for the same reason: the match below consumes the
+                // command. A plan and a learning run carry none — the
+                // pictures a turn hands over belong to the run verb — and
+                // `mem::take` moves them rather than copying a screenshot
+                // that can be megabytes wide.
+                let images = match &mut command {
+                    Command::Run(_, _, _, images) => std::mem::take(images),
+                    _ => Vec::new(),
+                };
                 match command {
-                    Command::Run(driving, task, folder)
+                    Command::Run(driving, task, folder, _)
                     | Command::Plan(driving, task, folder)
                     | Command::RunAs(driving, task, folder, _, _) => {
+
                         // The session this task drives. An empty name is
                         // the face's own launch session, which is created
                         // on this first task: a face that is opened and
@@ -12025,22 +12110,53 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
                         if route_pins.get(&driving).cloned().flatten() != pin {
                             routes.insert(driving.clone(), None);
                         }
-                        let slot = routes.entry(driving.clone()).or_insert(None);
-                        if slot.is_none() {
-                            match crate::route::prepare_with_pin(
-                                &home,
-                                &dotenv,
-                                &task,
-                                &std::collections::HashMap::new(),
-                                pin.as_deref(),
-                                Some(driving.as_str()),
-                            )
-                            .await
-                            {
+                        // A turn carrying a picture is not judged: its
+                        // chain is the `vision` workload's, named rather
+                        // than guessed, because the judgment reads the
+                        // task's words and a screenshot's words do not
+                        // describe the picture. It is also never served
+                        // from the session's prepared slot — that route
+                        // answered a conversation of words, and reusing it
+                        // would put a picture on a text-only chain — so a
+                        // carrying turn prepares its own and leaves the
+                        // slot empty for the words that follow.
+                        let carrying = !images.is_empty();
+                        if carrying {
+                            routes.insert(driving.clone(), None);
+                        }
+                        // Prepared into a local so the map's borrow does
+                        // not span the await.
+                        let mut just_routed: Option<crate::route::Prepared> = None;
+                        let needs_route =
+                            carrying || routes.get(&driving).is_none_or(|slot| slot.is_none());
+                        if needs_route {
+                            let outcome = if carrying {
+                                crate::route::prepare_for_images(
+                                    &home,
+                                    &dotenv,
+                                    &task,
+                                    &std::collections::HashMap::new(),
+                                    pin.as_deref(),
+                                    Some(driving.as_str()),
+                                )
+                                .await
+                            } else {
+                                crate::route::prepare_with_pin(
+                                    &home,
+                                    &dotenv,
+                                    &task,
+                                    &std::collections::HashMap::new(),
+                                    pin.as_deref(),
+                                    Some(driving.as_str()),
+                                )
+                                .await
+                            };
+                            match outcome {
+                                Ok(fresh) if carrying => just_routed = Some(fresh),
                                 Ok(fresh) => {
                                     judge_tasks.insert(driving.clone(), task.clone());
-                                    *slot = Some(fresh);
                                     route_pins.insert(driving.clone(), pin.clone());
+                                    routes.insert(driving.clone(), Some(fresh));
                                 }
                                 Err(error) => {
                                     // A stop can be written while the
@@ -12068,7 +12184,13 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
                                 }
                             }
                         }
-                        let prepared = slot.as_ref().expect("prepared on the first run");
+                        let prepared = match &just_routed {
+                            Some(prepared) => prepared,
+                            None => routes
+                                .get(&driving)
+                                .and_then(|slot| slot.as_ref())
+                                .expect("prepared on the first run"),
+                        };
                         let client = Client::routed(prepared.router.clone());
                         let path = session::session_path(
                             &home,
@@ -12233,7 +12355,7 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
                                     continue;
                                 }
                             };
-                        let _ = agent.run(&task).await;
+                        let _ = agent.run_with_images(&task, images).await;
                         // A control that landed on the run's last step is
                         // never read by the loop. Left in place it would
                         // stop the next run in this session before that
@@ -12732,12 +12854,13 @@ mod tests {
     /// board through the substrate's writer — create, rename and bind
     /// each move it, carrying the project key in its phrases so recall
     /// ranks it for a design instruction about that project. The corpus
-    /// is the fixture's own: the pin never touches the owner's.
+    /// is the home's own (`board-facts`), so no pin is set and no other
+    /// test can write into it — the collision a process-global pin made
+    /// possible was this test's own flake (KI-474).
     #[test]
     fn the_board_binding_moves_the_digest_and_the_fact() {
         let home = scratch("board-fact");
-        let corpus = home.join("corpus");
-        *TEST_BOARD_FACT_ROOT.lock().unwrap() = Some(corpus.clone());
+        let corpus = home.join("board-facts");
         // Create through the op: the first fact lands, unbound.
         let created = design_write(
             &home,
@@ -12842,7 +12965,6 @@ mod tests {
             "delete retires the board's fact: {:?}",
             live.iter().map(|fact| &fact.name).collect::<Vec<_>>()
         );
-        *TEST_BOARD_FACT_ROOT.lock().unwrap() = None;
         let _ = std::fs::remove_dir_all(&home);
     }
 

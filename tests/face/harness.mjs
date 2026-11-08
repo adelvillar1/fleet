@@ -247,7 +247,15 @@ class El {
   }
   blur() {}
   scrollIntoView() {}
-  setSelectionRange() {}
+  // A real textarea's caret: the paste inserts at the selection and
+  // leaves the caret after the insertion, so the stub keeps the numbers
+  // a browser keeps. A no-op here would let a page that never restores
+  // the caret pass a case that says it does.
+  setSelectionRange(start, end) {
+    this.selectionStart = start;
+    this.selectionEnd = end === undefined ? start : end;
+    return undefined;
+  }
   // Pointer capture: the canvas's drag and the pane's grip both hold the
   // pointer for a gesture; the stub has no capture, only the calls.
   setPointerCapture() {}
@@ -342,6 +350,15 @@ function boot(options) {
     }
     if (pathOnly === '/api/sessions') {
       return Promise.resolve({ status: 200, json: () => Promise.resolve(documents.sessions || emptySessions()) });
+    }
+    // The clipboard read (the composer's paste): a case scripts what the
+    // system clipboard holds — text, an image, nothing, or a refusal —
+    // because the harness must never touch the owner's real pasteboard.
+    if (pathOnly === '/api/clipboard') {
+      const scripted = typeof documents.clipboard === 'function'
+        ? documents.clipboard()
+        : (documents.clipboard || { type: 'clipboard', kind: 'empty' });
+      return Promise.resolve({ status: 200, json: () => Promise.resolve(scripted) });
     }
     if (pathOnly === '/api/learning') {
       return Promise.resolve({ status: 200, json: () => Promise.resolve(documents.learning || emptyLearning()) });
@@ -2407,6 +2424,75 @@ async function pasteAttachesAndTheAtTypeaheadReferences() {
   page2.fireOn('task', 'paste', { clipboardData: { files: [], items: [] } });
   check('C4 a plain text paste is not an attach',
     !page2.IDS['attach-chips'].children.length, String(page2.IDS['attach-chips'].children.length));
+
+  // The paste button (C2/C3): text lands in the composer at the caret,
+  // an image joins the attachments through the same chip pipeline, and
+  // an empty clipboard says so rather than doing nothing.
+  const page3 = boot({
+    width: 1440,
+    hash: '#/sessions/ref-1',
+    documents: {
+      ...doc,
+      clipboard: { type: 'clipboard', kind: 'text', text: 'the pasted sentence' },
+    },
+  });
+  await flush();
+  page3.open();
+  await flush();
+  page3.IDS['task'].value = 'a prefix and a suffix';
+  page3.IDS['task'].selectionStart = 9;
+  page3.IDS['task'].selectionEnd = 9;
+  page3.IDS['paste'].click();
+  await flush(40);
+  check('C2 the paste button puts the clipboard text in the composer',
+    page3.IDS['task'].value === 'a prefix the pasted sentenceand a suffix',
+    JSON.stringify(page3.IDS['task'].value));
+  check('C2 the caret lands after the paste',
+    page3.IDS['task'].selectionStart === 9 + 'the pasted sentence'.length,
+    String(page3.IDS['task'].selectionStart));
+
+  const image = {
+    type: 'clipboard',
+    kind: 'image',
+    image: {
+      name: 'screenshot.png',
+      mime: 'image/png',
+      bytes: 'iVBORw0KGgo=',
+      size: 2048,
+    },
+  };
+  const page4 = boot({ width: 1440, hash: '#/sessions/ref-1', documents: { ...doc, clipboard: image } });
+  await flush();
+  page4.open();
+  await flush();
+  page4.IDS['task'].value = 'what is wrong here?';
+  page4.IDS['paste'].click();
+  await flush(40);
+  const imageChips = page4.IDS['attach-chips'].children;
+  check('C3 the paste button attaches the clipboard image',
+    imageChips.length === 1 && imageChips[0].textContent.includes('screenshot.png'),
+    imageChips.length ? imageChips[0].textContent : 'no chip');
+  check('C3 the chip names the image\u2019s size, not a text length',
+    imageChips.length === 1 && imageChips[0].textContent.includes('2.0 kB'),
+    imageChips.length ? imageChips[0].textContent : 'no chip');
+  // The send carries the image's own fields, so the run can decode them.
+  page4.IDS['send'].click();
+  await flush(60);
+  const runCall = page4.calls.filter((c) => String(c.url).startsWith('/api/run')).pop();
+  const sent = runCall && runCall.body ? JSON.parse(runCall.body) : {};
+  const carried = (sent.attachments || [])[0] || {};
+  check('C3 the run body carries the image bytes and type',
+    carried.bytes === 'iVBORw0KGgo=' && carried.mime === 'image/png' && carried.name === 'screenshot.png',
+    JSON.stringify(carried));
+
+  const page5 = boot({ width: 1440, hash: '#/sessions/ref-1', documents: { ...doc, clipboard: { type: 'clipboard', kind: 'empty' } } });
+  await flush();
+  page5.open();
+  await flush();
+  page5.IDS['paste'].click();
+  await flush(40);
+  check('C2 an empty clipboard says so and attaches nothing',
+    !page5.IDS['attach-chips'].children.length, String(page5.IDS['attach-chips'].children.length));
 
   // The @ typeahead over the tree read.
   page.IDS['task'].value = 'look at @rea';
@@ -5226,6 +5312,20 @@ async function theStrategyStepShowsItsPreview() {
       RUST.indexOf('--bot-relay') !== -1 && RUST.indexOf('bot relay at') !== -1, 'second dial');
     check('RL the bot handler answers its own icons',
       RUST.indexOf('RemoteFace::Bot => crate::gui::server::bot_icon_for(path)') !== -1, 'bot icons');
+    // C7 (the composer's paste): the bot face carries the same
+    // affordance through the same endpoint and the same body shape, so
+    // the two faces cannot drift. A screenshot pasted on a phone is then
+    // a screenshot the run reads, not a name it was told about.
+    check('C7 the bot composer has the paste button',
+      BOTJS.indexOf('id="paste"') !== -1, 'bot paste button');
+    check('C7 the bot paste reads the console\u2019s own endpoint',
+      BOTJS.indexOf("api('/api/clipboard')") !== -1, 'bot clipboard read');
+    check('C7 the bot sends an image in the console\u2019s body shape',
+      BOTJS.indexOf('attachments: (pending.attachments || [])') !== -1 &&
+        BOTJS.indexOf('mime: file.mime') !== -1 && BOTJS.indexOf('bytes: file.bytes') !== -1,
+      'bot attachments');
+    check('C7 the bot inserts clipboard text at the caret',
+      BOTJS.indexOf('textarea.setSelectionRange(caret, caret)') !== -1, 'bot caret');
   }
 
 

@@ -802,7 +802,23 @@ async fn route_with(
                 Err(message) => return bad_request(&message),
             };
             let session = asked_session(bridge, request);
-            match task_of(&body) {
+            let task = match task_of(&body) {
+                Ok(task) => task,
+                Err(message) => return bad_request(&message),
+            };
+            // The same framing and the same picture decode the console's
+            // route runs: one body shape, two faces, so a screenshot
+            // pasted on a phone is a screenshot the run reads and not a
+            // file name the model was told about and never given.
+            let task = match crate::gui::server::with_attachments(&body, &task) {
+                Ok(task) => task,
+                Err(message) => return bad_request(&message),
+            };
+            let images = match crate::gui::server::images_of(&body) {
+                Ok(images) => images,
+                Err(message) => return bad_request(&message),
+            };
+            match Ok::<String, String>(task) {
                 Ok(task) => {
                     // The run's policy rides the body the same way the
                     // console's does — this was the defect the dogfood
@@ -833,6 +849,7 @@ async fn route_with(
                         pin,
                         folder.as_deref(),
                         budget,
+                        images,
                     ) {
                         Ok(()) => api(
                             200,

@@ -1568,6 +1568,12 @@ pub struct Agent<'a> {
     /// prompt, whose byte-stability is what the provider-side prefix
     /// cache keys on.
     pending_curated: Option<String>,
+    /// The images this run's first message carries — the owner's pasted
+    /// screenshot, handed in by `run_with_images`. Taken by the first
+    /// message and never again: the log keeps the task's words, which
+    /// name each image, so a replay rebuilds the words rather than four
+    /// thirds of a picture's pixels in characters.
+    first_images: Vec<crate::api::ImageRef>,
     /// How many tool calls this run put through the gate. The report
     /// repair reads it: an acknowledgment-only stop is a missing report
     /// only when the run had tool work whose result the owner needs.
@@ -1840,6 +1846,7 @@ impl<'a> Agent<'a> {
             curate_text: None,
             steered_once: false,
             pending_curated: None,
+            first_images: Vec::new(),
             improve_home,
             tool_calls_run: 0,
             repairs: 0,
@@ -2803,6 +2810,22 @@ impl<'a> Agent<'a> {
     /// the way out, on every exit path — orderly stop, turn cap, or API
     /// failure alike. A teardown that goes wrong never fails a run that
     /// is already over.
+    /// A run whose first message carries images.
+    ///
+    /// The pictures are one turn's — a screenshot the owner pasted — and
+    /// they ride the request that reads them, not the conversation the
+    /// log replays. What the log keeps is the task's own words, which
+    /// name each image and what it is; `images` is read once, below, and
+    /// drops out of the running history after its turn.
+    pub async fn run_with_images(
+        &mut self,
+        task: &str,
+        images: Vec<crate::api::ImageRef>,
+    ) -> Result<RunReport, AgentError> {
+        self.first_images = images;
+        self.run(task).await
+    }
+
     pub async fn run(&mut self, task: &str) -> Result<RunReport, AgentError> {
         // The turn boundary already reads the control file, but a child
         // command can run for minutes. The watcher turns the owner's
@@ -3048,7 +3071,16 @@ impl<'a> Agent<'a> {
         // nothing, and the prompt stays the compiled-in constant.
         let memory_block = self.prepare_memory(task)?;
         let system_prompt = self.system_prompt(memory_block.as_deref());
-        self.push_message(Message::text(Role::User, task))?;
+        // The turn's images ride this message and no other. They are the
+        // owner's screenshot, read once: the log keeps the task's words
+        // (which name each image), so a replay rebuilds the words and
+        // not four thirds of its pixels in characters.
+        let first = if self.first_images.is_empty() {
+            Message::text(Role::User, task)
+        } else {
+            Message::text_with_images(Role::User, task, std::mem::take(&mut self.first_images))
+        };
+        self.push_message(first)?;
         // The next request is the repair ask, when it is.
         let mut repair_next = false;
         // The main session is uncapped by turns (the 2026-11-05 ruling):
@@ -13679,6 +13711,38 @@ You are auditing a change. Read the diff before you judge it.
         assert_eq!(images[0].media, "image/png");
         assert_eq!(images[0].data, png);
         let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    /// The run's first message carries the turn's pictures, and only the
+    /// first: the message is built once, so `first_images` cannot leak
+    /// into a later turn of the same run.
+    #[test]
+    fn a_runs_first_message_carries_the_turns_images_and_nothing_after_it() {
+        let png = vec![0x89u8, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+        let carried = crate::api::ImageRef::new("image/png", png.clone());
+        // The same shape `run_task` builds, over one image.
+        let mut first_images = vec![carried.clone()];
+        let first = if first_images.is_empty() {
+            Message::text(Role::User, "read this screenshot")
+        } else {
+            Message::text_with_images(
+                Role::User,
+                "read this screenshot",
+                std::mem::take(&mut first_images),
+            )
+        };
+        assert_eq!(first.images.len(), 1);
+        assert_eq!(first.images[0].media, "image/png");
+        assert_eq!(first.images[0].data, png);
+        assert_eq!(
+            first.content.as_deref(),
+            Some("read this screenshot"),
+            "the instruction rides beside the picture"
+        );
+        // Taken, not copied: the next turn of the same run carries none.
+        assert!(first_images.is_empty());
+        let next = Message::text(Role::User, "and now the words");
+        assert!(next.images.is_empty());
     }
 
     #[test]

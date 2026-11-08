@@ -577,6 +577,12 @@ async fn serve_connection(
                 Ok(task) => task,
                 Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
             };
+            // The pictures the turn carries, decoded here so the run
+            // receives what a model can read and not a page's base64.
+            let images = match images_of(&body) {
+                Ok(images) => images,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
             let (mode, pin) = match run_policy_of(&body) {
                 Ok(policy) => policy,
                 Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
@@ -598,7 +604,15 @@ async fn serve_connection(
                 }
             }
             let session = asked_session(bridge, &request);
-            match bridge.run_with_budget(&session, &task, mode, pin, folder.as_deref(), budget) {
+            match bridge.run_with_budget(
+                &session,
+                &task,
+                mode,
+                pin,
+                folder.as_deref(),
+                budget,
+                images,
+            ) {
                 Ok(()) => {
                     write_reply(
                         &mut stream,
@@ -1781,6 +1795,12 @@ async fn serve_connection(
             let day = (!day.is_empty()).then_some(day);
             write_reply(&mut stream, api(200, bridge.calibration(day).await)).await
         }
+        ("GET", "/api/clipboard") => {
+            // What the owner copied, read on the click that asked. The
+            // webview will not hand an image to the page, so the page
+            // asks here and the process with a window does the reading.
+            write_reply(&mut stream, api(200, bridge.clipboard().await)).await
+        }
         ("GET", "/api/design") => {
             let project = decode_query(&request.query, "project");
             let project = (!project.is_empty()).then_some(project);
@@ -2325,6 +2345,88 @@ trim the payload (for a run, put the bulk in a file: attach it and name it in th
 /// The task a run's body carries. Anything that is not a JSON object
 /// with a `task` string is a malformed request, and saying so is the
 /// whole reply.
+/// The images a run's body carries, decoded from their base64 into the
+/// form the model is sent: media type and raw bytes.
+///
+/// The picture travels twice, on purpose and in two different vehicles.
+/// The task text names it, so the log — which keeps words — says what the
+/// turn carried and a later replay knows an image was there. The bytes
+/// ride the request's own image part instead of the text, because a
+/// screenshot replayed through the task would cost the log its size and
+/// its readability for nothing: the model reads a picture far better than
+/// it reads four thirds of its pixels in characters.
+///
+/// The bound is the attachment bound. A body that sends no image is not
+/// empty here — it is a vector of none, which is the text-only run.
+pub fn images_of(body: &str) -> Result<Vec<crate::api::ImageRef>, String> {
+    let parsed: serde_json::Value = serde_json::from_str(body)
+        .map_err(|e| format!("fleet gui could not read the run's body: {e}"))?;
+    let Some(rows) = parsed
+        .get("attachments")
+        .and_then(serde_json::Value::as_array)
+    else {
+        return Ok(Vec::new());
+    };
+    let mut images = Vec::new();
+    for row in rows {
+        let Some(encoded) = row.get("bytes").and_then(serde_json::Value::as_str) else {
+            continue;
+        };
+        if encoded.is_empty() {
+            continue;
+        }
+        let name = row
+            .get("name")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("an attachment");
+        if encoded.len() > ATTACHMENT_BYTE_CAP {
+            return Err(format!(
+                "{name} is larger than the {} MB attachment bound",
+                ATTACHMENT_BYTE_CAP / (1024 * 1024)
+            ));
+        }
+        // The type the clipboard read named, checked against the bytes:
+        // a page could say anything, and the model's provider rejects an
+        // image whose declared type is not the one it holds.
+        let declared = row
+            .get("mime")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("image/png");
+        use base64::Engine;
+        let data = base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .map_err(|e| format!("{name}: its base64 does not decode: {e}"))?;
+        let media = image_media(&data)
+            .ok_or_else(|| format!("{name}: not a PNG, JPEG, GIF, or WebP image"))?;
+        if media != declared {
+            return Err(format!(
+                "{name} is declared {declared} but its bytes are {media}"
+            ));
+        }
+        images.push(crate::api::ImageRef::new(media, data));
+    }
+    Ok(images)
+}
+
+/// An image's media type, read off its own leading bytes rather than
+/// trusted from the request. The clipboard reader builds the same four
+/// kinds; this is the boundary that catches a page that names a different
+/// one.
+fn image_media(bytes: &[u8]) -> Option<String> {
+    let kind = if bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]) {
+        "image/png"
+    } else if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        "image/jpeg"
+    } else if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        "image/gif"
+    } else if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        "image/webp"
+    } else {
+        return None;
+    };
+    Some(kind.to_string())
+}
+
 /// The turn's attached files, framed ahead of the task. The browser read
 /// the text the owner picked; the server owns the bounds — eight files,
 /// 8 MiB each, 20 MiB together — and refuses a name that is a path.
@@ -2334,7 +2436,7 @@ trim the payload (for a run, put the bulk in a file: attach it and name it in th
 /// so KI-378's advice to "put the bulk in a file" could not be followed.
 /// The owner's ruling (2026-11-08) raised both, and this is the side
 /// that has to be able to hold what a screenshot turn carries.
-fn with_attachments(body: &str, task: &str) -> Result<String, String> {
+pub fn with_attachments(body: &str, task: &str) -> Result<String, String> {
     let parsed: serde_json::Value = serde_json::from_str(body)
         .map_err(|e| format!("fleet gui could not read the run's body: {e}"))?;
     let Some(rows) = parsed
@@ -2371,17 +2473,44 @@ fn with_attachments(body: &str, task: &str) -> Result<String, String> {
             .get("text")
             .and_then(serde_json::Value::as_str)
             .unwrap_or_default();
-        if text.len() > ATTACHMENT_BYTE_CAP {
+        // An image attachment carries base64 bytes and no text. Its
+        // bound is the text bound, so one number governs both kinds; the
+        // decoded picture is three quarters of what the page sent.
+        let encoded = row
+            .get("bytes")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        let carried = text.len() + encoded.len();
+        if carried > ATTACHMENT_BYTE_CAP {
             return Err(format!(
                 "{name} is larger than the {} MB attachment bound",
                 ATTACHMENT_BYTE_CAP / (1024 * 1024)
             ));
         }
-        total += text.len();
+        total += carried;
         // The parser is part of the record: a local read and a hosted
         // parse are different provenance, and a truncated preview says
         // so in the same line.
         let mut meta: Vec<String> = Vec::new();
+        // An image says what it is and how big, and its bytes stay out of
+        // the task text: they ride the turn's own image part, so the
+        // model sees the picture and the log keeps words (paying ~2.6 KB
+        // of log for a 2 KB screenshot, on every replay, is a cost with
+        // no answer behind it).
+        let is_image = !encoded.is_empty();
+        if is_image {
+            let mime = row
+                .get("mime")
+                .and_then(serde_json::Value::as_str)
+                .filter(|mime| !mime.trim().is_empty())
+                .unwrap_or("image/png");
+            meta.push(format!("{mime} image"));
+            let size = row
+                .get("size")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or((encoded.len() as u64) * 3 / 4);
+            meta.push(format!("{} bytes", size));
+        }
         if let Some(parser) = row.get("parser").and_then(serde_json::Value::as_str) {
             if !parser.trim().is_empty() {
                 meta.push(format!("parser {}", parser.trim()));
@@ -2419,7 +2548,16 @@ fn with_attachments(body: &str, task: &str) -> Result<String, String> {
         } else {
             format!("{name} ({})", meta.join(" · "))
         };
-        framed.push_str(&format!("\n--- {head} ---\n{text}\n"));
+        if is_image {
+            // The picture is attached to this turn; the sentence is what
+            // the model is told about it, and it is true because the
+            // image part rides the same request.
+            framed.push_str(&format!(
+                "\n--- {head} ---\n(an image, attached to this turn)\n"
+            ));
+        } else {
+            framed.push_str(&format!("\n--- {head} ---\n{text}\n"));
+        }
     }
     if total > ATTACHMENTS_TOTAL_CAP {
         return Err(format!(
@@ -3430,6 +3568,76 @@ mod tests {
         )
         .expect("a framed task");
         assert!(framed.contains("--- scan.pdf (parser nace · 96 pages · 96 units · job job1 · escalated: the PDF is probably a scan · truncated · retained 65536 of 1000) ---"), "{framed}");
+    }
+
+    /// A PNG's first bytes, enough for the type check: the signature and
+    /// an IHDR length, which is what `image_media` reads.
+    fn tiny_png() -> Vec<u8> {
+        let mut bytes = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+        bytes.extend_from_slice(&[0, 0, 0, 13]);
+        bytes.extend_from_slice(b"IHDR");
+        bytes
+    }
+
+    #[test]
+    fn an_image_attachment_is_framed_as_a_picture_and_decodes_to_its_bytes() {
+        use base64::Engine;
+        let png = tiny_png();
+        let encoded = base64::engine::general_purpose::STANDARD.encode(&png);
+        let body = format!(
+            r#"{{"task":"what is this?","attachments":[{{"name":"shot.png","mime":"image/png","bytes":"{encoded}","size":{}}}]}}"#,
+            png.len()
+        );
+        // The task text names the picture and does not carry it: the log
+        // keeps words, and a screenshot replayed as text is a cost with
+        // no answer behind it.
+        let framed = with_attachments(&body, "what is this?").expect("a framed turn");
+        assert!(
+            framed.contains("--- shot.png (image/png image \u{b7} "),
+            "{framed}"
+        );
+        assert!(
+            framed.contains("(an image, attached to this turn)"),
+            "{framed}"
+        );
+        assert!(
+            !framed.contains(&encoded),
+            "the bytes must not ride the task text"
+        );
+        // The bytes ride the request's own image part, decoded.
+        let images = images_of(&body).expect("the image decodes");
+        assert_eq!(images.len(), 1);
+        assert_eq!(images[0].media, "image/png");
+        assert_eq!(images[0].data, png);
+    }
+
+    #[test]
+    fn an_image_whose_declared_type_is_not_its_bytes_is_refused_by_name() {
+        use base64::Engine;
+        let encoded = base64::engine::general_purpose::STANDARD.encode(tiny_png());
+        let body = format!(
+            r#"{{"task":"x","attachments":[{{"name":"shot.png","mime":"image/jpeg","bytes":"{encoded}"}}]}}"#
+        );
+        let why = images_of(&body).expect_err("a mislabelled image is refused");
+        assert!(why.contains("declared image/jpeg"), "{why}");
+        assert!(why.contains("image/png"), "{why}");
+    }
+
+    #[test]
+    fn a_text_only_turn_carries_no_images() {
+        assert!(images_of(r#"{"task":"x"}"#).expect("plain").is_empty());
+        assert!(
+            images_of(r#"{"task":"x","attachments":[{"name":"a.md","text":"hello"}]}"#)
+                .expect("a text attachment")
+                .is_empty()
+        );
+        // The framing of a text attachment is unchanged by the image kind.
+        let framed = with_attachments(
+            r#"{"task":"read it","attachments":[{"name":"a.md","text":"hello"}]}"#,
+            "read it",
+        )
+        .expect("a framed task");
+        assert!(framed.contains("--- a.md ---\nhello"), "{framed}");
     }
 
     #[tokio::test(flavor = "multi_thread")]

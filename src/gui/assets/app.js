@@ -1059,6 +1059,7 @@
     folderPopInput: document.getElementById('folder-pop-input'),
     connDown: document.getElementById('conn-down'),
     attach: document.getElementById('attach'),
+    paste: document.getElementById('paste'),
     composerSteer: document.getElementById('composer-steer'),
     composerBtw: document.getElementById('composer-btw'),
     attachInput: document.getElementById('attach-input'),
@@ -8567,7 +8568,7 @@
         mode: face.permissions,
         pin: face.providerPin || null,
         attachments: face.attachments.map(function (file) {
-          return {
+          var carried = {
           name: file.name,
           text: file.text,
           parser: file.parser || '',
@@ -8577,6 +8578,15 @@
           reason: file.reason || '',
           truncated: file.truncated || null
         };
+          // An image attachment carries bytes and type, not text: the
+          // server frames it as its own kind and decides what the model
+          // is shown.
+          if (file.image) {
+            carried.mime = file.mime;
+            carried.bytes = file.bytes;
+            carried.size = file.size;
+          }
+          return carried;
         })
       });
     }).then(function (reply) {
@@ -10198,7 +10208,8 @@
     el.attachChips.hidden = !face.attachments.length;
     face.attachments.forEach(function (file, index) {
       var chip = node('span', 'attach-chip');
-      var meta = [bytes(file.text.length)];
+      // An image carries its own size and type, not a text length.
+      var meta = [file.image ? bytes(file.size) : bytes(file.text.length)];
       if (file.parser) meta.unshift(file.parser);
       if (file.pages) meta.push(file.pages + ' pages');
       if (file.units) meta.push(file.units + ' units');
@@ -10246,6 +10257,78 @@
 
   if (el.attach) {
     el.attach.addEventListener('click', function () { el.attachInput.click(); });
+  }
+  // Paste, asked rather than intercepted. A webview will not hand an
+  // image to the page, so the button reads the clipboard through the
+  // server: text inserts at the caret, an image joins the attachments
+  // through the same chip pipeline files ride. One pipeline, one set of
+  // bounds, one place that decides what the turn carries.
+  function pasteText(text) {
+    var at = typeof el.task.selectionStart === 'number' ? el.task.selectionStart : el.task.value.length;
+    var end = typeof el.task.selectionEnd === 'number' ? el.task.selectionEnd : at;
+    el.task.value = el.task.value.slice(0, at) + text + el.task.value.slice(end);
+    var caret = at + text.length;
+    el.task.focus();
+    try { el.task.setSelectionRange(caret, caret); } catch (ignored) { }
+  }
+
+  function pasteImage(image) {
+    if (face.attachments.length >= ATTACH_LIMIT) {
+      notice('at most ' + ATTACH_LIMIT + ' attachments', image.name + ' was not added');
+      return false;
+    }
+    if (image.size > ATTACH_BYTE_LIMIT) {
+      notice('the image is larger than the ' + (ATTACH_BYTE_LIMIT / (1024 * 1024)) + ' MB bound',
+        image.name + ' was not added');
+      return false;
+    }
+    // An image attachment carries its bytes and its type; the framing
+    // and the bounds are the server's, as they are for every file.
+    face.attachments.push({
+      name: image.name,
+      mime: image.mime,
+      bytes: image.bytes,
+      size: image.size,
+      image: true
+    });
+    paintAttachments();
+  }
+
+  function pasteFromClipboard() {
+    if (!el.paste || el.paste.disabled) return;
+    el.paste.disabled = true;
+    fetch('/api/clipboard', { headers: { accept: 'application/json' } })
+      .then(function (reply) { return reply.json(); })
+      .then(function (answer) {
+      el.paste.disabled = false;
+      var refused = answer && answer.refused;
+      if (refused && refused.length) {
+        notice('the clipboard could not be read', refused.join(' \u00b7 '));
+        return;
+      }
+      if (!answer || answer.kind === 'empty') {
+        notice('the clipboard is empty', 'copy something and press paste again');
+        return;
+      }
+      if (answer.kind === 'text') {
+        pasteText(answer.text || '');
+        return;
+      }
+      if (answer.kind === 'image' && answer.image) {
+        // The server already sized it; the chip says so, and the notice
+        // states what the turn now carries.
+        if (pasteImage(answer.image) !== false) {
+          notice('the image is attached', answer.image.name + ' rides this turn');
+        }
+      }
+    }).catch(function () {
+      el.paste.disabled = false;
+      notice('the clipboard is unreachable', 'the read did not leave the page');
+    });
+  }
+
+  if (el.paste) {
+    el.paste.addEventListener('click', pasteFromClipboard);
   }
   // The composer's two verbs as icons: the press fills the composer
   // with the command's own word and puts the caret after it, so the
