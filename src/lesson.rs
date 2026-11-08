@@ -361,6 +361,7 @@ their words and ask whether you have it right."#;
 /// self-improvement feed reads.
 pub fn record_lesson(
     memory: &Memory,
+    stream: Option<&Stream>,
     session: &str,
     plan: &crate::graph::LessonPlan,
     outcome: &LessonOutcome,
@@ -396,6 +397,21 @@ pub fn record_lesson(
         memory
             .remember(&request)
             .map_err(|error| format!("the check fact did not land: {error}"))?;
+    }
+    // The learning feed's own stream: one row per taught step, the
+    // confusion the learner named and whether the step was held. The
+    // demand map reads the confusions as the classes the learner
+    // struggles with; the clustering beat's proposals follow.
+    if let Some(stream) = stream {
+        for step in &outcome.steps {
+            stream.record(Row::LearnCheck(calib::LearnCheckRow {
+                ts: calib::stamp(),
+                session: session.to_string(),
+                node: step.node.clone(),
+                confusion: step.check.confusion.clone().unwrap_or_default(),
+                held: step.check.held,
+            }));
+        }
     }
     let confusions: Vec<String> = outcome
         .steps
@@ -1402,7 +1418,7 @@ mod tests {
             },
             complete: true,
         };
-        record_lesson(&memory, "2026-11-08-abc", &plan, &outcome).expect("the lesson lands");
+        record_lesson(&memory, None, "2026-11-08-abc", &plan, &outcome).expect("the lesson lands");
         let facts = memory.facts();
         let check = facts
             .iter()
@@ -1741,6 +1757,82 @@ mod tests {
         assert!(fact
             .body
             .contains("answer: the request is stuck because the handler never returns"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_graph_never_claims_mastery_and_the_sessions_carry_the_evidence() {
+        let root = scratch("evidence");
+        let memory = Memory::load(&root);
+        // The graph's record: a proposition and its chain — the claim,
+        // the premises, the provenance. No score, no confidence, no
+        // mastery: the graph stores the ideas and their connections,
+        // never how well the learner did.
+        let fact = record_proposition(
+            &memory,
+            "a-blocked-handler-stalls",
+            "a blocked handler stalls the whole request",
+            &["a-request-runs-until-its-handler-returns".to_string()],
+            "2026-11-08-abc",
+        )
+        .expect("the proposition lands");
+        let graph_text = std::fs::read_to_string(&fact.path).expect("the proposition reads back");
+        for rating in ["confidence:", "mastery:", "score:", "held:"] {
+            assert!(
+                !graph_text.contains(rating),
+                "the graph carries no `{rating}` line: {graph_text}"
+            );
+        }
+        assert!(graph_text.contains("premises: [a-request-runs-until-its-handler-returns]"));
+        // The session's evidence: the practice outcome carries the
+        // held and the answer — what happened, in the session's own
+        // record.
+        let outcome = PracticeOutcome {
+            problem: problem(
+                "a server's handler stops mid-request and never comes back",
+                &["a-blocked-handler-stalls"],
+            ),
+            answer: "the request is stuck because the handler never returns".to_string(),
+            held: true,
+        };
+        record_practice(&memory, "2026-11-08-abc", &[outcome]).expect("the practice lands");
+        let facts = memory.facts();
+        let session_fact = facts
+            .iter()
+            .find(|fact| fact.name == "practice-2026-11-08-abc-0")
+            .expect("the practice fact");
+        let session_text =
+            std::fs::read_to_string(&session_fact.path).expect("the practice reads back");
+        assert!(session_text.contains("held: true"), "{session_text}");
+        assert!(
+            session_text.contains("answer: the request is stuck because the handler never returns"),
+            "{session_text}"
+        );
+        // The probe's record carries the learner's thinking and their
+        // confidence — the theory's richest data, in the session's own
+        // record, never in the graph.
+        let record = ProbeRecord {
+            session: "2026-11-08-abc".to_string(),
+            answers: vec![answer(
+                "the request runs until the handler returns",
+                "I have read this but could not say why",
+                Some(0.4),
+            )],
+            bracket: ProbeBracket {
+                current: "the caller holds the request open".to_string(),
+                edge: "a blocked handler".to_string(),
+                goal: "why a blocked handler stalls the request".to_string(),
+            },
+        };
+        record_probe(&memory, None, &record).expect("the probe lands");
+        let facts = memory.facts();
+        let probe_fact = facts
+            .iter()
+            .find(|fact| fact.name == "probe-2026-11-08-abc-0")
+            .expect("the probe fact");
+        let probe_text = std::fs::read_to_string(&probe_fact.path).expect("the probe reads back");
+        assert!(probe_text.contains("thinking: I have read this but could not say why"));
+        assert!(probe_text.contains("confidence: 0.40"));
         let _ = std::fs::remove_dir_all(&root);
     }
 

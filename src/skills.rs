@@ -2943,6 +2943,50 @@ mod tests {
         let _ = std::fs::remove_dir_all(&home);
     }
 
+    /// The learning feed's drafter leg (the learning plan's C8): a
+    /// lesson's procedure that recurs — the steps that worked, the ones
+    /// the checks could stand on — is skill-shaped feedstock, and the
+    /// drafter files it. The fixture is a lesson session whose teaching
+    /// demonstrates the same two-step procedure twice.
+    #[test]
+    fn a_lessons_repeated_procedure_drafts_a_skill() {
+        let home = scratch("learn-draft");
+        let records = vec![
+            Record::User {
+                content: "how does a blocked handler stall the request?".into(),
+            },
+            assistant(vec![
+                tool_call("c1", "read_file", "{}"),
+                tool_call("c2", "grep", "{}"),
+            ]),
+            result("c1", "read_file", "the handler\u{2019}s loop"),
+            result("c2", "grep", "the blocked call"),
+            assistant(vec![
+                tool_call("c3", "read_file", "{}"),
+                tool_call("c4", "grep", "{}"),
+            ]),
+            result("c3", "read_file", "the same loop"),
+            result("c4", "grep", "the same call"),
+        ];
+        let log = session_log(&home, &records);
+        let filed = draft_session(&canon(&home), &home, &log, None);
+        assert_eq!(filed.len(), 1, "{filed:?}");
+        let draft = std::fs::read_to_string(&filed[0]).expect("the draft reads back");
+        assert!(draft.contains("procedure-read-file-grep"), "{draft}");
+        assert!(draft.contains("proposed: true"), "{draft}");
+        // The live tree is untouched: a draft is a proposal, not a skill.
+        let canonical = canon(&home);
+        if canonical.is_dir() {
+            let entries: Vec<String> = std::fs::read_dir(canonical)
+                .unwrap()
+                .flatten()
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .collect();
+            assert!(entries.is_empty(), "{entries:?}");
+        }
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
     // --- curation ---
 
     #[test]

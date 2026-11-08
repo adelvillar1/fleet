@@ -24,7 +24,7 @@
 use std::path::Path;
 
 use crate::calib::{
-    self, Row, Stream, OP_DELEGATION, OP_EVAL_CORPUS, OP_ROUTE_JUDGED, OP_VALIDATE,
+    self, Row, Stream, OP_DELEGATION, OP_EVAL_CORPUS, OP_LEARN_CHECK, OP_ROUTE_JUDGED, OP_VALIDATE,
 };
 use crate::improve::{self, Basis, Change, Target};
 
@@ -184,6 +184,18 @@ pub fn collect(root: &Path, day: &str, days: usize) -> Vec<ClassDemand> {
                     continue;
                 }
                 classes("validate", &row.verdict, row.verdict == "contradicted");
+            }
+            OP_LEARN_CHECK => {
+                // The learning feed: the class is the proposition the
+                // step taught, and a row is bad when the learner named
+                // a confusion — the map reads which propositions the
+                // learner struggles with, and the trend says whether
+                // the struggle is easing. An empty confusion (the step
+                // held first) is a clean row, not a demand.
+                if row.node.trim().is_empty() {
+                    continue;
+                }
+                classes("learn", &row.node, !row.confusion.trim().is_empty());
             }
             _ => {}
         }
@@ -431,6 +443,19 @@ pub fn clusters(root: &Path, day: &str, days: usize) -> Vec<Cluster> {
                     Some(example),
                 );
             }
+            OP_LEARN_CHECK => {
+                if row.node.trim().is_empty() {
+                    continue;
+                }
+                // The example is the learner's own confusion — the
+                // cluster's evidence is what they said, not a summary.
+                add(
+                    "learn",
+                    &row.node,
+                    !row.confusion.trim().is_empty(),
+                    Some(row.confusion.clone()),
+                );
+            }
             _ => {}
         }
     }
@@ -607,10 +632,11 @@ pub fn file_shape_proposal(
     let shas = improve::stamp_target_shas(repo_root, &change);
     let name = format!("shape-{tag}-{}", calib::today());
     let justification = format!(
-        "the demand map's {}-day window carries {} bad row{} in the class `{}` ({:.0}% of {} row{}). Examples: {}",
+        "the demand map's {}-day window carries {} bad row{} in the {} class `{}` ({:.0}% of {} row{}). Examples: {}",
         DEMAND_WINDOW_DAYS,
         cluster.bad,
         if cluster.bad == 1 { "" } else { "s" },
+        cluster.family,
         cluster.class,
         cluster.rate * 100.0,
         cluster.rows,
@@ -683,6 +709,83 @@ mod tests {
             latency_ms: None,
             lane: "sys1".to_string(),
         })
+    }
+
+    fn learn_check_row(ts: &str, node: &str, confusion: &str) -> Row {
+        Row::LearnCheck(calib::LearnCheckRow {
+            ts: ts.to_string(),
+            session: "2026-11-08-abc".to_string(),
+            node: node.to_string(),
+            confusion: confusion.to_string(),
+            held: confusion.is_empty(),
+        })
+    }
+
+    /// The learning feed (the learning plan's C8): the lesson's own
+    /// rows are demand classes. A fixture lesson's repeated confusion
+    /// about one proposition is a class the map reads, the clustering
+    /// beat files it, and the proposal lands in the improve store.
+    #[test]
+    fn the_lesson_confusions_are_demand_classes_and_file_a_proposal() {
+        let root = scratch("learn-demand");
+        let stream = Stream::open(&root);
+        // A fixture lesson: the step on `blocks` confused six times.
+        for index in 0..6 {
+            stream.record(learn_check_row(
+                &format!("2026-11-0{index}T00:00:00Z"),
+                "blocks",
+                "the handler returning and the request finishing are the same",
+            ));
+        }
+        // A clean step: held first, no confusion — a clean row.
+        stream.record(learn_check_row("2026-11-07T00:00:00Z", "holds", ""));
+        stream.flush();
+        let demands = collect(&root, "2026-11-20", 30);
+        let learn = demands
+            .iter()
+            .find(|demand| demand.family == "learn")
+            .expect("the learning family");
+        assert_eq!(learn.class, "blocks");
+        assert_eq!(learn.rows, 6, "the confused step's rows");
+        assert_eq!(learn.bad, 6);
+        // The clean step is counted as a class with no bad rows — the
+        // map's denominator, not a target.
+        let clean = demands
+            .iter()
+            .find(|demand| demand.family == "learn" && demand.class == "holds")
+            .expect("the clean step's class");
+        assert_eq!(clean.bad, 0, "a held-first step is a clean row");
+        assert_eq!(clean.rows, 1);
+        // The clustering beat files the repeating confusion.
+        let clusters = clusters(&root, "2026-11-20", 30);
+        let filing = filing_clusters(&clusters);
+        assert_eq!(filing.len(), 1, "only the repeating confusion files");
+        assert_eq!(filing[0].family, "learn");
+        assert_eq!(filing[0].class, "blocks");
+        assert!(
+            !filing[0].examples.is_empty(),
+            "the learner's own words surface"
+        );
+        // The proposal lands in the improve store and parses through
+        // the store's own loader.
+        let home = scratch("learn-home");
+        let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let path = file_shape_proposal(&home, &repo_root, filing[0]).expect("the proposal files");
+        assert!(path.exists(), "the proposal is on disk");
+        let name = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .expect("the proposal's own name");
+        let parsed = crate::improve::load_one(&home, name)
+            .expect("the proposal parses through the store's loader");
+        assert_eq!(parsed.name, name);
+        assert!(
+            parsed.justification.contains("learn"),
+            "the justification names the family: {}",
+            parsed.justification
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     /// The map reads the four families' rates and trends over a

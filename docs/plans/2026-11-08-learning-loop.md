@@ -196,14 +196,26 @@ as the problem sessions' turns.
       (fed by the mockup) show the active lesson, the graph, the
       practice entry, and the history; pinned by a
       `tests/face/harness.mjs` case.
-- [ ] **C8 — the feeds.** The demand map's classes include the
+- [x] **C8 — the feeds.** The demand map's classes include the
       learning rows' confusions, and the capability gaps land through
       the improve store and the drafter; pinned by tests over a
       fixture lesson.
-- [ ] **C9 — the evidence discipline.** The probe records carry the
+      *Landed: the `learn_check` row (one per taught step — the
+      proposition, the learner's own confusion, whether it held) and
+      the demand map's `learn` family (the class is the proposition, a
+      row is bad when the learner named a confusion); the clustering
+      beat files the repeating confusion into the improve store and the
+      proposal's justification names the family; the drafter files a
+      skill draft over a lesson session whose procedure repeated.*
+- [x] **C9 — the evidence discipline.** The probe records carry the
       thinking and the confidence; the sessions and the graph stay
       distinct (the graph never claims mastery); pinned by the record
       shapes' tests.
+      *Landed: the graph's record carries the claim, the premises, and
+      the provenance — no confidence, mastery, score, or held line
+      (pinned on the file's own text); the session's records carry the
+      held and the answer, and the probe's carry the thinking and the
+      confidence.*
 - [ ] **C10 — the gate.** fmt, clippy, release build, test — exit
       codes read directly, the whole suite.
 - [ ] **C11 — the docs.** `docs/features/learning.md` (new), the

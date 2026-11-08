@@ -575,6 +575,25 @@ pub struct LearnProbeRow {
     pub goal: String,
 }
 
+/// One taught step's record (the learning plan's C8): the proposition
+/// the step taught, the confusion the learner named (empty when none),
+/// and whether the step was held. The row is the learning feed's own
+/// stream: the demand map reads the confusions as the classes the
+/// learner struggles with, and the clustering beat's proposals follow.
+#[derive(Debug, Clone, Serialize)]
+pub struct LearnCheckRow {
+    pub ts: String,
+    /// The lesson session's id.
+    pub session: String,
+    /// The proposition's node id the step taught.
+    pub node: String,
+    /// The confusion the learner named, empty when the step held
+    /// first.
+    pub confusion: String,
+    /// Whether the step was held after its repairs.
+    pub held: bool,
+}
+
 /// One delegated run, as the orchestrator records it the moment a
 /// subagent stops. The row the beat reads and the row the parent chain
 /// joins on.
@@ -721,6 +740,7 @@ pub enum Row {
     Validate(ValidateRow),
     Demand(DemandRow),
     LearnProbe(LearnProbeRow),
+    LearnCheck(LearnCheckRow),
 }
 
 impl Row {
@@ -745,6 +765,7 @@ impl Row {
             Row::Validate(_) => OP_VALIDATE,
             Row::Demand(_) => OP_DEMAND,
             Row::LearnProbe(_) => OP_LEARN_PROBE,
+            Row::LearnCheck(_) => OP_LEARN_CHECK,
         }
     }
 
@@ -769,6 +790,7 @@ impl Row {
             Row::Validate(row) => &row.ts,
             Row::Demand(row) => &row.ts,
             Row::LearnProbe(row) => &row.ts,
+            Row::LearnCheck(row) => &row.ts,
         }
     }
 }
@@ -1068,6 +1090,12 @@ pub const OP_DEMAND: &str = "demand";
 /// answers themselves are facts; the row is the join to the lesson
 /// session's log.
 pub const OP_LEARN_PROBE: &str = "learn_probe";
+/// The learn-check op: one taught step's record (the learning plan's
+/// C8) — the proposition, the confusion the learner named, and whether
+/// the step was held. The learning feed's own stream: the demand map's
+/// `learn` family reads the confusions as the classes the learner
+/// struggles with.
+pub const OP_LEARN_CHECK: &str = "learn_check";
 /// The delegation op: one delegated run, recorded by the orchestrator
 /// the moment a subagent stops. Keyed by the child's own session id —
 /// the join to the child's session log, the value
@@ -1080,7 +1108,7 @@ pub const OP_DELEGATION: &str = "delegation";
 /// calib` groups them. The three the reads used to drop — `verify`,
 /// `embed_timing`, `lifecycle` — ride their own row shapes; the face's
 /// rail carries them beside the rest (the calibration revamp, 2026-10-30).
-pub const OPS: [&str; 17] = [
+pub const OPS: [&str; 18] = [
     OP_ROUTE,
     OP_TOOL_SCREEN,
     OP_TURN,
@@ -1098,6 +1126,7 @@ pub const OPS: [&str; 17] = [
     OP_VALIDATE,
     OP_DEMAND,
     OP_LEARN_PROBE,
+    OP_LEARN_CHECK,
 ];
 
 /// The verdict a `propose` row carries when the change landed: the gate
@@ -1874,6 +1903,14 @@ pub struct ReadRow {
     /// every other op — the face's verify section reads them.
     #[serde(default)]
     pub node: String,
+    /// The confusion a `learn_check` row carries — the learner's own
+    /// account of where the step did not land. Empty on every other op.
+    #[serde(default)]
+    pub confusion: String,
+    /// Whether the step a `learn_check` row records was held after its
+    /// repairs. False on every other op.
+    #[serde(default)]
+    pub held: bool,
     #[serde(default)]
     pub gates: Vec<String>,
     #[serde(default)]
@@ -4705,7 +4742,8 @@ mod tests {
                 "shape",
                 "validate",
                 "demand",
-                "learn_probe"
+                "learn_probe",
+                "learn_check"
             ]
         );
     }
