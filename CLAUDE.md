@@ -1,6 +1,6 @@
 # Fleet
 
-A native Rust agent for the DeepSeek API — and the intended home of a self-contained Rust harness for the whole Fleet-of-Ones ecosystem. Repo: `git@github.com:adelvillar1/fleet.git` (public, MIT). Status: **beta** 0.4.0-beta.1 — the owner's declaration, 2026-10-30: what they wanted in the app is there, and it is time to find bugs. Every surface is in-repo — the eight rail pages, the conversation, delegation, the substrate's reads and writes — and the shakeout is the work mode now (see Today's state).
+A native Rust agent for the DeepSeek API — and the intended home of a self-contained Rust harness for the whole Fleet-of-Ones ecosystem. Repo: `git@github.com:adelvillar1/fleet.git` (public, MIT). Status: **beta** 0.5.0-beta.1 — the owner's declaration, 2026-10-30: what they wanted in the app is there, and it is time to find bugs. Every surface is in-repo — the eight rail pages, the conversation, delegation, the substrate's reads and writes — and the shakeout is the work mode now (see Today's state).
 
 ## What Fleet is
 

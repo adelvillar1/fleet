@@ -7,9 +7,57 @@ through the local gate).
 
 **What beta means while the beta epoch runs:** this is the tool the owner
 uses daily, not a promise of API stability. The tag is a real version
-(`v0.4.0`); the version literal keeps its beta suffix (`0.4.0-beta.1`) until
+(`v0.5.0`); the version literal keeps its beta suffix (`0.5.0-beta.1`) until
 the owner says otherwise, and the changelog header carries this paragraph
 until then.
+
+## v0.5.0 — 2026-11-08
+
+The resource-responsibility release. The increment is a real one in this
+repo's own terms: the harness had been keeping everything it ever wrote, and
+a harness that consumes all available disk is not a useful tool. Two
+resource defects were measured, root-caused and closed, and the compositor's
+paste path landed beside them.
+
+### Fixed — what the harness kept
+
+- **KI-478 — the checkpoint retention never ran.** `checkpoints::prune` was
+  bounded and tested from the day it was written; its *trigger* was a manual
+  verb and a session's `GoalDone` event, so a face up for days without a goal
+  set reached neither. `~/.fleet/checkpoints` stood at **68 GB** across 72
+  sessions — two holding 54 GB between them, one at 512 turn directories
+  against a documented keep of 20 — and the face's log held **zero** hygiene
+  lines for its whole life. The retention now runs on a 15-minute timer for
+  the life of the process that creates the debris (`gui::serve` and the
+  chat), through a live-safe pass that never deletes a capture still writing
+  and never takes the turn a rewind points at. The daily maintenance script
+  gained the leg for a machine whose face is not running.
+- **KI-479 — the cache sweep had never once done its last tier.** It ran
+  `cargo clean` under launchd's `PATH`, where `rustc` does not resolve, so
+  cargo exited 101 and cleaned nothing while the script reported "the dev
+  profile was cleaned whole". The exit code is now read, with an `rm -rf`
+  fallback that needs nothing from a toolchain.
+- **KI-477 — orphaned `mock-server` children** now die with the parent that
+  held their stdin pipe, and the `target/debug/incremental` beside them was
+  cleared (21 GB).
+
+### Added
+
+- The composer's clipboard paste, with the request caps raised to match what
+  a real paste carries, and the send key's contrast fixed.
+
+### Measured
+
+Disk reclaimed on the owner's machine, each step verified: checkpoints
+68 GB → **5.2 GB**, `target` 40 GB → **11 GB**, the volume's free space
+**12 GiB → 116 GiB**. Memory was measured and left alone — every fleet
+process together held 230 MB, with no leak to chase.
+
+### Verification
+
+The full gate ran green after the changes: **2,249 tests passed, 0 failed,
+0 orphaned children**, `fmt --check` and `clippy --all-targets -D warnings`
+clean, the ledger at 479 rows.
 
 ## v0.4.0 — 2026-11-06
 
