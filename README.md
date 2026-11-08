@@ -128,6 +128,14 @@ named, not implied — see Sequencing in
   judged by sys1 on the seat, and the owner's SOUL is the guardrail under
   every bot's voice. See
   [docs/features/huddles.md](docs/features/huddles.md).
+- **Learning as a first-class work surface** — the measure → plan →
+  teach loop: the prober asks what the learner holds and where it ends,
+  the minimal tree draws the teaching order, the teacher moves one
+  checked step at a time, and the practitioner poses problems that need
+  the knowledge to come to mind unnamed. The propositions ride the
+  memory substrate as chains, and the friction feeds the demand map and
+  the skill drafter. See
+  [docs/features/learning.md](docs/features/learning.md).
 - **A working folder that is a default** — set it once; every chat
   without its own choice works in it, and the face shows the folder the
   run will use.
@@ -316,6 +324,9 @@ owner's own work that predates and feeds this harness. What grew from them is it
 - [docs/features/desk.md](docs/features/desk.md) · the desk: where
   knowledge work happens — the brief, the claims with their sentences,
   the coverage that names its gaps, the end gate that names what stands.
+- [docs/features/learning.md](docs/features/learning.md) · the learning
+  loop: the measure → plan → teach cycle and the practice, riding the
+  memory substrate.
 - [docs/architecture/surfaces.md](docs/architecture/surfaces.md) · the
   what and why of the destinations.
   [docs/architecture/lanes.md](docs/architecture/lanes.md) — the five-lane

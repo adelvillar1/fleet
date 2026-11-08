@@ -4,16 +4,19 @@ A read of the browser face as a user meets it, taken live on
 2026-10-21 against every destination in the rail — eleven then;
 **workspace history** joined the knowledge group when the LayerFS
 instrument landed, making twelve, the design canvas makes
-thirteen, and the huddles room makes fourteen. This is the what and
+thirteen, the huddles room makes fourteen, and the learning surface
+makes fifteen. This is the what and
 the why of each surface — the terms the README and the functional
 specification should speak. The how stays in the code.
 
 ## The shape every surface shares
 
-Twelve destinations in four groups — **work** (conversation, sessions),
-**intelligence** (router, delegation), **knowledge** (memory, skills,
-second brain), **system** (bots, vault, settings, calibration) — one
-flat level, reachable from the rail or the ⌘K palette by name. Every
+Fifteen destinations in five groups — **work** (conversation, inbox,
+design, sessions, huddles, desk), **intelligence** (router, delegation),
+**knowledge** (memory, skills, second brain, workspace history),
+**learning** (learning), **system** (bots, vault, settings,
+calibration, plugins) — one flat level, reachable from the rail or the
+⌘K palette by name. Every
 destination is built from the same grammar:
 
 - a **head**: the group, the surface's name, and one sentence saying what
@@ -486,6 +489,36 @@ asks it answers. That is what makes a third-party bundle safe to play.
 **State.** Complete, with the shipped example **Telemetry**: eight
 strata of the real pipeline — door, recall, skills, route, model, tools,
 rooms, write-back — drawn from live counts.
+
+### Learning — *learning*
+
+**What it is.** The measure → plan → teach loop's own surface, in the
+split the knowledge surfaces share: a section rail beside the board. The
+four sections are the mockup's own — **the lesson** (the plan's coarse
+view: each step with its state, the position, and what the learner
+holds), **the graph** (the propositions and the chains between them),
+**practice** (the entry and the outcomes — what happened, never a
+score), **history** (the lesson and practice sessions, newest first).
+
+**What you do.** Open the lesson to see where the learner stands: the
+steps the plan teaches, which are held, which is next, and the
+foundations that are never re-taught. Start a lesson (the prober asks
+what the learner holds, where it ends, and what they are reaching for)
+or a practice (the practitioner poses varied problems that require the
+knowledge to come to mind unnamed). Read the graph to see what the
+lessons built; read the history to reopen a session.
+
+**Why.** Learning is project knowledge, not a silo: the lesson's
+propositions ride the same substrate the recall reads, the plan's coarse
+view is the only map the learner sees, and the outcomes are session
+evidence — the graph stores the ideas and their connections, never how
+well the learner did. The friction feeds the loop it came from: a
+repeating confusion is a demand class the clustering beat files, and a
+recurring procedure is skill-shaped feedstock the drafter proposes.
+
+**State.** Complete (the model, the records and the surface), pinned by
+the harness and the module tests; the owner's read of the mockup is the
+surface's remaining gate.
 
 ## What a first-time user meets today
 

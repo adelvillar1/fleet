@@ -404,6 +404,10 @@ remember(
                 the absent pieces that kept a correct direction from
                 reaching the minima. Name them and tag the fact
                 `incomplete`
+  premises:     the propositions this claim rests on, by name — the
+                chain's joint-premise structure (the learning record's
+                `proposition` type). Each is a fact name: lowercase
+                letters, digits, hyphens. Empty is a foundation
   basis:        confirmed-by | inferred (required — every write)
   tier:         working | durable (default durable)
   valid-until:  YYYY-MM-DD (required for working; none for durable)
@@ -454,10 +458,24 @@ whole.
 
 The document renders in the fork's field order — `name`, `description`,
 `type`, `date`, `basis`, `tier`, `shape`, `phrases`, `missing`,
-`recall-count`, `superseded-by`, `valid-until` — with an unset optional
+`premises`, `recall-count`, `superseded-by`, `valid-until` — with an
+unset optional
 field bare, the fork writer's own "unset" rendering, through a unique
 temp file and a rename. The file is the record: a written fact loads
 with every field, which is what makes a bad fact a revert.
+
+**The `premises` field is the chain.** The pairwise recall graph cannot
+carry a chain's joint premises — the propositions that *together* imply
+a conclusion — so the learning record's `proposition` type rides them in
+the frontmatter: each premise is a proposition's own name, the join the
+graph walks. The write path's validator requires a premise to be a fact
+name, because a premise that is not a name cannot resolve to the
+proposition it names; the loader lowercases and bounds them like the
+shape tags; the edit rewrites them; and a supersede inherits or clears
+them the way it inherits the phrases — a reworded proposition keeps the
+chain it belongs to. The learning plan's extraction writes them through
+the same validator, so a proposition the corpus cannot join is refused
+rather than written.
 
 ## The recall graph: one bounded hop over the frontmatter's own edges
 
