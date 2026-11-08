@@ -1,5 +1,5 @@
 ---
-status: draft
+status: completed
 created: 2026-11-07
 updated: 2026-11-07
 slug: plan-worktree-machinery

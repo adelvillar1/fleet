@@ -1,7 +1,7 @@
 ---
-status: draft
+status: completed
 created: 2026-11-03
-updated: 2026-11-03
+updated: 2026-11-07
 slug: provider-add-is-independent-of-its-catalog
 ---
 

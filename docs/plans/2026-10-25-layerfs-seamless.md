@@ -1,7 +1,7 @@
 ---
-status: draft
+status: completed
 created: 2026-10-25
-updated: 2026-10-25
+updated: 2026-11-07
 slug: layerfs-seamless
 ---
 
