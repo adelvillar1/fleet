@@ -114,6 +114,10 @@ impl MockApi {
             .arg(&script_path)
             .arg(&requests_path)
             .arg(&port_path)
+            // KI-477: a pipe, so the child's stdin EOF means this test
+            // binary died — the one exit path `Drop` cannot cover — and
+            // the child exits with it rather than outliving the suite.
+            .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::from(stderr_file))
             .spawn()

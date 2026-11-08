@@ -9495,6 +9495,9 @@ mod tests {
             .arg(scratch.join("script.jsonl"))
             .arg(scratch.join("requests.jsonl"))
             .arg(scratch.join("port"))
+            // KI-477: a pipe, so the child's stdin EOF means this test
+            // binary died, not that the harness was handed a closed stdin.
+            .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::from(stderr_file))
             .spawn()

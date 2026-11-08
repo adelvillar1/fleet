@@ -126,3 +126,88 @@ async fn a_broken_scenario_injected_through_the_seam_fails_with_its_name() {
     assert_eq!(report.passed(), 21);
     assert_eq!(report.failed().len(), 1);
 }
+
+/// KI-477's pin: a `mock-server` exits on its stdin pipe's EOF, so the
+/// pipe closing *is* its parent's death.
+///
+/// The harnesses reap their child from `Drop`, which covers every exit
+/// they control. It cannot cover the ones they do not: a test binary the
+/// runner kills, or the grandchild of a `fleet eval` whose own bound
+/// expired (`src/eval.rs`'s `run_eval_subprocess` kills only its direct
+/// child). On macOS a killed parent's children are reparented to launchd
+/// and live on, each holding a listening socket — measured, 80 of them,
+/// the oldest at 8h57m.
+///
+/// The mechanism the mock carries instead: every harness gives it a
+/// stdin **pipe**, and the mock exits when that pipe reaches EOF. The
+/// kernel closes the pipe when the last holder dies, however it dies, so
+/// the child goes with its parent. This test drives the half that is
+/// ours to drive — bind, serve, then close the write end and require the
+/// child gone — because a fix for a leak that only manifests under a kill
+/// is unproven by a suite that never kills.
+#[test]
+fn a_mock_server_exits_when_the_parent_holding_its_stdin_dies() {
+    use std::process::{Command, Stdio};
+
+    let root = scratch("eof-orphan");
+    let script = root.join("script.jsonl");
+    let port_path = root.join("port");
+    std::fs::write(&script, "{\"status\":\"200 OK\",\"body\":\"{}\"}\n").unwrap();
+
+    // Exactly the harness's spawn shape: stdin is a pipe this process
+    // holds, and the port file is the readiness signal.
+    let mut child = Command::new(mock_bin())
+        .arg(&script)
+        .arg(root.join("requests.jsonl"))
+        .arg(&port_path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("the mock spawns");
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        if let Ok(text) = std::fs::read_to_string(&port_path) {
+            if let Ok(port) = text.trim().parse::<u16>() {
+                assert!(port > 0, "the mock bound a real port");
+                break;
+            }
+        }
+        if child
+            .try_wait()
+            .map(|status| status.is_some())
+            .unwrap_or(true)
+        {
+            panic!("the mock exited before serving");
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the mock never wrote its port"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    // It is serving, not merely bound.
+    assert!(
+        child.try_wait().unwrap().is_none(),
+        "the mock is alive once it has a port"
+    );
+
+    // The parent lets go — the shape a SIGKILL produces, since the kernel
+    // closes the same write end either way.
+    drop(child.stdin.take());
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            Ok(None) => {
+                panic!("the mock outlived the close of its stdin pipe — it leaked, which is KI-477")
+            }
+            Err(error) => panic!("the mock could not be waited on: {error}"),
+        }
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}

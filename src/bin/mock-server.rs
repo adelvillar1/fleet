@@ -25,6 +25,13 @@ use std::path::Path;
 use std::time::Duration;
 
 fn main() {
+    watch_stdin_for_eof();
+    serve();
+}
+
+/// The server proper: parse the arguments, bind, and answer until the
+/// process is stopped.
+fn serve() {
     let mut args = std::env::args().skip(1);
     let script_path = args
         .next()
@@ -68,6 +75,32 @@ fn main() {
             ),
         }
     }
+}
+
+/// Exit when this process's stdin reaches EOF — the graceful teardown's
+/// signature, and the one an orphan cannot mistake for a live parent.
+///
+/// The harnesses hold this child's stdin as a pipe and kill it from
+/// `Drop`, so the happy path never needs this. It is the *other* exit
+/// paths that leak: a test binary killed by the runner, a suite that
+/// panics before the struct exists, a `SIGKILL` on `fleet eval` when its
+/// bound expires (`src/eval.rs`'s `run_eval_subprocess` kills only its
+/// own child, never the grandchild this server is). On macOS there is no
+/// `PR_SET_PDEATHSIG`, so a killed parent's children are reparented to
+/// launchd and live on, each holding a listening socket — measured: 80
+/// residents, the oldest at 8h57m (KI-477).
+///
+/// The read blocks on a thread of its own, so a parent that never writes
+/// and never closes costs nothing. A reader thread, not a poll: EOF is
+/// delivered the moment the parent's handle closes, however it closes.
+fn watch_stdin_for_eof() {
+    std::thread::spawn(|| {
+        let mut stdin = std::io::stdin();
+        let mut sink = [0u8; 256];
+        // Any bytes a parent sends are ignored; only the end matters.
+        while matches!(stdin.read(&mut sink), Ok(n) if n > 0) {}
+        std::process::exit(0);
+    });
 }
 
 /// One scripted response line: either a whole document or a list of raw SSE

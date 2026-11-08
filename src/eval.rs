@@ -313,6 +313,10 @@ fn start_over(
         .arg(&script_path)
         .arg(&requests_path)
         .arg(&port_path)
+        // A pipe, so the child's stdin EOF means *this* process let go of
+        // it — the parent's death — and not that the harness was handed a
+        // closed stdin. `mock-server` exits on that EOF (KI-477).
+        .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()

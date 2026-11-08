@@ -55,6 +55,10 @@ fn mock(stream: Vec<String>) -> Mock {
         .arg(&script_path)
         .arg(&requests_path)
         .arg(&port_path)
+        // KI-477: a pipe, so the child's stdin EOF means this test binary
+        // died — the one exit path `Drop` cannot cover — and the child
+        // exits with it rather than outliving the suite.
+        .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::from(stderr_file))
         .spawn()
