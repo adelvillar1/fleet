@@ -314,3 +314,27 @@ before the next — the fast loop: the host and the measure, then the
 plan, the teaching, the graph, the practice, the face, the feeds. The
 owner's first lesson is the proof; a failure is fixed in the open, not
 deferred to a later plan.
+
+## State
+
+The feature is implemented and merged onto master's latest work
+(the hybrid retrieval): the lesson session kind, the prober and the
+probe loop, the minimal tree, the teaching loop, the knowledge graph
+and its gated extraction, the practice, the face surface, the feeds
+and the evidence discipline — C1 through C11 are ticked, the gate is
+green (2,024 lib tests, the integration suites, the face harness's
+998 checks, fmt and clippy clean), and the branch is fast-forwardable
+to master.
+
+Two gates remain, and they are the owner's:
+
+- **C0's last leg.** The mockup
+  (`docs/plans/mockups/2026-11-08-learning/`, measured and read in a
+  light and a dark theme) is read by the owner before the pane's code
+  lands — the pane's code is written and committed in the branch, and
+  the merge waits on this read.
+- **The live proof.** The owner's first lesson runs end to end — the
+  probe brackets, the plan draws, the teaching moves one checked step
+  at a time, the graph accumulates, and the friction's proposals land
+  in the stores. The harness and the module tests pin the machinery;
+  the lesson itself is the owner's.
