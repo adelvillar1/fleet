@@ -11422,7 +11422,10 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
         // ordinary headless run in its own session log, never a turn in
         // the session this face is driving, and its outcome rides this
         // face's own event channel and lands as a card (KI-090).
-        crate::cron::Scheduler::spawn(home.clone(), Some(ui_tx.clone()));
+        // The face's runs vary per task, so no single model serves it;
+        // the eval re-run's model-change trigger is the chat/TUI's, and
+        // the face's corpus rides the daily cadence.
+        crate::cron::Scheduler::spawn(home.clone(), Some(ui_tx.clone()), String::new());
         let runtime = match tokio::runtime::Builder::new_multi_thread()
             .worker_threads(1)
             .enable_all()

@@ -3318,7 +3318,7 @@
       ['session', face.session || '\u2014'],
       ['model', face.model],
       ['spend', tokens(face.spend) + ' tokens'],
-      ['context', face.context ? tokens(face.context) + ' of ' + tokens(face.budget) : '\u2014'],
+      ['context', face.context ? tokens(face.context) + ' of ' + tokens(face.budget) + (face.budgetModel ? ' \u00b7 ' + face.budgetModel : '') : '\u2014'],
       ['exchanges', ex ? String(ex) : '\u2014'],
       ['route', face.route ? face.route.provider : '\u2014'],
       ['state', face.seat ? 'a seat is standing' : face.running ? 'running'

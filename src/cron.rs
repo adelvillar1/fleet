@@ -1705,6 +1705,34 @@ pub fn eval_minute_path(home: &Path) -> PathBuf {
     home.join("cron").join(EVAL_MINUTE_FILE)
 }
 
+/// The model the eval corpus last ran under, persisted beside the eval
+/// minute. The model-switch re-run's latch: a change forces a run off
+/// the daily cadence, because the corpus grades the surfaces a model
+/// serves and a new model is a new baseline.
+pub fn eval_model_path(home: &Path) -> PathBuf {
+    home.join("cron").join("eval-model.txt")
+}
+
+/// The persisted eval model, or `None`.
+pub fn read_eval_model(home: &Path) -> Option<String> {
+    let text = fs::read_to_string(eval_model_path(home)).ok()?;
+    let text = text.trim().to_string();
+    if text.is_empty() {
+        None
+    } else {
+        Some(text)
+    }
+}
+
+/// Write the eval model. Best-effort, like the eval minute.
+fn write_eval_model(home: &Path, model: &str) {
+    let path = eval_model_path(home);
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let _ = fs::write(path, format!("{model}\n"));
+}
+
 /// The persisted eval minute, or `None` when there is none.
 pub fn read_eval_minute(home: &Path) -> Option<Minute> {
     let text = fs::read_to_string(eval_minute_path(home)).ok()?;
@@ -1906,6 +1934,9 @@ pub struct Scheduler {
     /// test that does not wire one gets (its cron-job behavior is
     /// unchanged). [`Scheduler::spawn`] wires the real corpus run.
     eval: Option<EvalRunner>,
+    /// The model this process serves, set at spawn. A change from the
+    /// persisted eval model forces a corpus run off the daily cadence.
+    eval_model: Option<String>,
     /// The last minute this scheduler saw. KI-094: a clock that steps
     /// BACKWARD re-presents minutes the latch already holds, and the
     /// tick would fire them again — two runs, two logs, two outcomes
@@ -1984,6 +2015,7 @@ impl Scheduler {
             runner,
             eval_last,
             eval: None,
+            eval_model: None,
             last_seen: None,
         }
     }
@@ -2017,8 +2049,21 @@ impl Scheduler {
     /// minute stays claimed either way, the discipline a panicking
     /// fire's latch keeps.
     pub async fn run_eval_if_due(&mut self, now: Minute) -> Vec<String> {
-        if self.eval.is_none() || !eval_due(self.eval_last, now) {
+        if self.eval.is_none() {
             return Vec::new();
+        }
+        // The model switch forces a run: the corpus grades the surfaces
+        // the model serves, and a new model is a new baseline.
+        let model_changed = match (&self.eval_model, read_eval_model(&self.home)) {
+            (Some(current), Some(persisted)) => current != &persisted,
+            (Some(_), None) => true,
+            _ => false,
+        };
+        if !eval_due(self.eval_last, now) && !model_changed {
+            return Vec::new();
+        }
+        if let Some(model) = &self.eval_model {
+            write_eval_model(&self.home, model);
         }
         self.eval_last = Some(now);
         // KI-105: the minute rides disk beside the store, so a restart
@@ -2044,7 +2089,11 @@ impl Scheduler {
     /// stderr line scratched over the alternate screen (KI-090). The
     /// headless `chat` path passes `None`, and its named lines ride
     /// stderr.
-    pub fn spawn(home: PathBuf, ui_tx: Option<UnboundedSender<UiEvent>>) -> thread::JoinHandle<()> {
+    pub fn spawn(
+        home: PathBuf,
+        ui_tx: Option<UnboundedSender<UiEvent>>,
+        model: String,
+    ) -> thread::JoinHandle<()> {
         thread::spawn(move || {
             let runtime = match tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -2090,6 +2139,7 @@ impl Scheduler {
                     })
                 });
                 let mut scheduler = Scheduler::new(home, runner).with_ui(ui_tx).with_eval(eval);
+                scheduler.eval_model = Some(model);
                 for line in scheduler.start(Minute::now()).await {
                     eprintln!("{line}");
                 }
@@ -3807,6 +3857,37 @@ mod tests {
             .await
             .is_empty());
         assert_eq!(fired.load(Ordering::SeqCst), 1);
+        fs::remove_dir_all(&home).ok();
+    }
+
+    #[tokio::test]
+    async fn a_model_switch_forces_the_eval_corpus_off_the_cadence() {
+        let home = temp_home("eval-model-switch");
+        let fired = std::sync::Arc::new(AtomicUsize::new(0));
+        let seen = std::sync::Arc::clone(&fired);
+        let eval: EvalRunner = Box::new(move || {
+            let seen = std::sync::Arc::clone(&seen);
+            Box::pin(async move {
+                seen.fetch_add(1, Ordering::SeqCst);
+                Ok("ran \u{2014} 6 passed, 0 failed, score 1.00".to_string())
+            })
+        });
+        let mut scheduler =
+            Scheduler::new(home.clone(), scripted_runner("nothing")).with_eval(eval);
+        // No model yet: the first run persists it.
+        scheduler.eval_model = Some("model-a".to_string());
+        let off_cadence = minute(2026, 10, 14, 9, 0);
+        scheduler.run_eval_if_due(off_cadence).await;
+        assert_eq!(fired.load(Ordering::SeqCst), 1, "the first run fires");
+        assert_eq!(read_eval_model(&home).as_deref(), Some("model-a"));
+        // The same model at a non-matching minute: no run.
+        assert!(scheduler.run_eval_if_due(off_cadence).await.is_empty());
+        assert_eq!(fired.load(Ordering::SeqCst), 1);
+        // A different model at a non-matching minute: the run fires.
+        scheduler.eval_model = Some("model-b".to_string());
+        scheduler.run_eval_if_due(off_cadence).await;
+        assert_eq!(fired.load(Ordering::SeqCst), 2, "the switch forces a run");
+        assert_eq!(read_eval_model(&home).as_deref(), Some("model-b"));
         fs::remove_dir_all(&home).ok();
     }
 

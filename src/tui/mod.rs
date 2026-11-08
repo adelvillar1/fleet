@@ -705,7 +705,7 @@ fn spawn_agent(config: AgentConfig) -> thread::JoinHandle<()> {
         // second. A finished fire rides the interface's own event
         // channel and lands as a card (KI-090); the store and latch
         // lines the pass names still ride stderr.
-        crate::cron::Scheduler::spawn(home.clone(), Some(ui_tx.clone()));
+        crate::cron::Scheduler::spawn(home.clone(), Some(ui_tx.clone()), model.clone());
         let runtime = match tokio::runtime::Builder::new_multi_thread()
             .worker_threads(1)
             .enable_all()

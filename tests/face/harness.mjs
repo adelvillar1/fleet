@@ -1467,6 +1467,10 @@ async function aReopenedConversationSeedsItsHealth() {
     /1 fold so far/.test((meter && meter.title) || ''), meter && meter.title);
   check('C4 nothing runs, the health line hides',
     page.rows('#working-live')[0].hidden === true, 'hidden');
+  // C1: the status area's context row carries the declaring model.
+  var facts = page.text('facts');
+  check('C1 the status context row names the declaring model',
+    /context/.test(facts) && /deepseek-flash/.test(facts), facts);
   // The floor: a model nothing declares serves the constant, named.
   const floored = boot({
     hash: '#/sessions/floored-1',

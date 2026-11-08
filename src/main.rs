@@ -457,7 +457,7 @@ async fn chat_command(options: &ChatOptions) -> ExitCode {
     // the job store fresh every tick, so `fleet cron add` from another
     // shell is picked up within a second, and each fire is an ordinary
     // headless run in its own session log. Its named lines ride stderr.
-    fleet::cron::Scheduler::spawn(home.clone(), None);
+    fleet::cron::Scheduler::spawn(home.clone(), None, prepared.decision.model.clone());
     // The skills are loaded once per chat session and declared on every
     // run in it: the files can change between runs, and the per-run
     // `skills` record is what pins what each run actually saw.
