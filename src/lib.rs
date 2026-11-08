@@ -34,9 +34,11 @@ pub mod explain;
 pub mod extract;
 pub mod filelock;
 pub mod fileops;
+pub mod fusion;
 pub mod graph;
 pub mod gui;
 pub mod home;
+pub mod hybrid;
 pub mod improve;
 pub mod install;
 pub mod judge;
@@ -54,6 +56,7 @@ pub(crate) static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(()
 
 pub mod layerfs_tools;
 pub mod layerfs_view;
+pub mod lexical;
 pub mod lifecycle;
 pub mod mcp;
 pub mod mcp_meta;
@@ -62,6 +65,7 @@ pub mod memory;
 pub mod net;
 pub mod nomenclature;
 pub mod onboard;
+pub mod outline;
 pub mod perception;
 pub mod plan_graph;
 pub mod plugins;

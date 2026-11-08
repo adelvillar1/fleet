@@ -647,6 +647,10 @@ batch-only by construction.
 | `gui/` | `docs/features/gui.md` |
 | `checkpoints.rs` | `docs/features/gui.md` (the trust trio) |
 | `catalog.rs` | `docs/features/catalog.md`; the component catalog's vocabulary, spec, check and render |
+| `lexical.rs` | `docs/features/retrieval.md`; the BM25 lexical route |
+| `fusion.rs` | `docs/features/retrieval.md`; Reciprocal Rank Fusion over the routes |
+| `hybrid.rs` | `docs/features/retrieval.md`; the fused search over the lane's cached corpus and the source outlines |
+| `outline.rs` | `docs/features/retrieval.md`; the tree-sitter structural outlines |
 | `deck.rs` | `docs/features/gui.md`; the deck pipeline's render stage |
 | `desk.rs` | `docs/features/desk.md`; `docs/plans/2026-11-05-desk-ux.md` |
 | `vault.rs` | AES-256-GCM at rest, keyed by a passphrase |
