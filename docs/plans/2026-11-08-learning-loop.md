@@ -218,9 +218,14 @@ as the problem sessions' turns.
       confidence.*
 - [ ] **C10 — the gate.** fmt, clippy, release build, test — exit
       codes read directly, the whole suite.
-- [ ] **C11 — the docs.** `docs/features/learning.md` (new), the
+- [x] **C11 — the docs.** `docs/features/learning.md` (new), the
       surfaces doc's rail inventory, and the memory doc's proposition
       type and premises field.
+      *Landed 801d9da: the feature doc (the theory, the four sections,
+      the loop, the records, the evidence discipline, the feeds), the
+      surfaces doc's learning group and section, the memory doc's
+      `premises` field and `proposition` type, and the README's
+      pointer.*
 
 ## Files to be touched
 
