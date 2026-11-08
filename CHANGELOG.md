@@ -12,6 +12,26 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.6.1 — 2026-11-08
+
+The fold budget followed the workloads' real serving pairs.
+
+- **KI-482 fixed.** The compaction budget derives from the serving pair's
+  declared context window, but the compiled table named ollama's copy of
+  `deepseek-v4.1-flash` only — while the owner's routing walks `hard`,
+  `deep_context` and `frontend` with `opencode`'s copy first. The unknown
+  pair floored the budget at 100k, so long sessions folded six times more
+  often than a 1M-window model needs (19 folds across the day's two long
+  sessions, every one at ~100,0xx tokens). The table now declares every
+  copy of the served generations (`opencode`, `token-plan`, their `-free`
+  spellings, ~1.05M / 1M to match the same generation's window
+  elsewhere), pinned by
+  `every_copy_of_a_served_generation_declares_its_window`.
+- **release.sh feeds the bare name.** The v0.6.0 cut's `latest.json`
+  uploaded under the scratch basename `fleet-latest.json`, so the pinned
+  feed URL 404'd until a hand-clobbered upload; the scratch now IS
+  `/tmp/latest.json` and the feed leg cannot detach from its name again.
+
 ## v0.6.0 — 2026-11-08
 
 The self-updater. The shell now asks the release feed from inside the app

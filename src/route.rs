@@ -103,11 +103,30 @@ const CONTEXT_WINDOWS: &[(&str, &str, u64)] = &[
     ("stepfun", "step-3.5-flash-2603", 262_144),
     ("stepfun", "step-5-preview", 1_024_000),
     ("token-plan", "qwen3.8-flash", 1_000_000),
+    // token-plan also carries the deepseek flash generation (unsuffixed
+    // and its own `-1017` dated spelling): the same served generation the
+    // roster names elsewhere, so the same window — a copy on one gateway
+    // is the same model, not a new one to guess at.
+    ("token-plan", "deepseek-v4.1-flash", 1_048_576),
+    ("token-plan", "deepseek-v4.1-flash-1017", 1_048_576),
     // The old name is kept by the provider so no caller has to rename,
     // and what it serves is now the V4.1 flash generation — the window
     // is the served model's, not the retired one's.
     ("deepseek", crate::api::DEEPSEEK_MODEL, 1_000_000),
     ("liquid", "lfm2.5-24b-a2b", 131_072),
+    // opencode serves the same flash generation the walk leads `hard`,
+    // `deep_context` and `frontend` with (the owner's routing config).
+    // It declared no window of its own, so those runs folded at the
+    // compaction floor six times more often than the model needs — the
+    // copy declares the served model's window, the same fix the
+    // token-plan copy got.
+    ("opencode", "deepseek-v4.1-flash", 1_048_576),
+    ("opencode", "glm-5.3-flash", 1_048_576),
+    // The `-free` spellings are the same models through a free quota,
+    // not different models.
+    ("opencode", "deepseek-v4.1-flash-free", 1_048_576),
+    ("opencode", "glm-5.3-flash-free", 1_048_576),
+    ("opencode", "mimo-v2.6-flash-free", 1_000_000),
     ("ollama-cloud", "gemma4:31b", 262_144),
     ("ollama-cloud", "beam", 1_048_576),
     ("ollama-cloud", "clef:27b", 65_536),
@@ -4502,6 +4521,43 @@ mod tests {
         // compaction budget falls back to its floor for it.
         assert_eq!(context_window("stepfun", "step-9-preview"), None);
         assert_eq!(context_window("no-such-provider", "step-5-preview"), None);
+    }
+
+    /// KI-482's pin. The floor bug the 2026-11-08 sessions ran live: the
+    /// workloads that lead with `opencode/deepseek-v4.1-flash` resolved
+    /// no window — the compiled table declared ollama-cloud's copy only —
+    /// so `serving_window()` handed the budget `None` and every fold ran
+    /// at the 100k floor (12 folds in one session, all at ~100,0xx) while
+    /// the models actually hold 1M. Every pair the roster can serve that
+    /// names a flash generation must carry a row in the table.
+    #[test]
+    fn every_copy_of_a_served_generation_declares_its_window() {
+        for (provider, model, window) in [
+            // The owner's chain heads: opencode leads `hard`,
+            // `deep_context` and `frontend` with this pair.
+            ("opencode", "deepseek-v4.1-flash", 1_048_576),
+            ("opencode", "glm-5.3-flash", 1_048_576),
+            // The same generation through the other gateways that list it.
+            ("token-plan", "deepseek-v4.1-flash", 1_048_576),
+            ("token-plan", "deepseek-v4.1-flash-1017", 1_048_576),
+            ("ollama-cloud", "deepseek-v4.1-flash", 1_048_576),
+            ("ollama-cloud", "deepseek-v4.1-flash:1017", 1_048_576),
+            // The free-quota spellings are the same models.
+            ("opencode", "deepseek-v4.1-flash-free", 1_048_576),
+            ("opencode", "glm-5.3-flash-free", 1_048_576),
+            ("opencode", "mimo-v2.6-flash-free", 1_000_000),
+        ] {
+            assert_eq!(
+                context_window(provider, model),
+                Some(window),
+                "{provider}/{model} must declare its window"
+            );
+            assert_eq!(
+                crate::compaction::budget_for(context_window(provider, model)),
+                crate::compaction::budget_for(Some(window)),
+                "{provider}/{model} derives its budget from its window"
+            );
+        }
     }
 
     fn api(status: u16) -> ClientError {

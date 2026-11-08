@@ -248,7 +248,10 @@ if [ "$CONF_VERSION" != "$VERSION" ]; then
 fi
 
 echo "== generating latest.json =="
-LATEST=/tmp/fleet-latest.json
+# The feed must upload under its bare feed name: `gh release upload`
+# keeps the basename, and `/releases/latest/download/latest.json` 404d
+# under the scratch name `fleet-latest.json` in the v0.6.0 cut.
+LATEST=/tmp/latest.json
 python3 - "$VERSION" "$TAG" "$(basename "$DMG")" "$(basename "$APP_TAR")" "$DMG" "$APP_TAR" "$TARBALL" > "$LATEST" <<'PYEOF'
 import hashlib, json, sys, datetime
 version, tag, dmg_name, tar_name, dmg_path, tar_path, cli_tarball = sys.argv[1:]
@@ -272,7 +275,7 @@ feed = {
     "cli": {"url": base + "fleet-aarch64-apple-darwin.tar.gz", "signature": sha(pkgdir)},
 
 }
-open('/tmp/fleet-latest.json', 'w').write(json.dumps(feed, indent=2) + "\n")
+open(LATEST, 'w').write(json.dumps(feed, indent=2) + "\n")
 PYEOF
 [ -s "$LATEST" ] || die "latest.json was not generated"
 python3 -c "import json;d=json.load(open('$LATEST'));assert d['version']=='$VERSION' and 'darwin-aarch64' in d['platforms'] and 'cli' in d, 'the feed is missing a leg'" ||
