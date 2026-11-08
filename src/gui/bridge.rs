@@ -4047,6 +4047,18 @@ impl Bridge {
     /// the session's `start` record carries the lesson kind and the role
     /// whose overlay rides the run. An empty kind is an ordinary run.
     pub fn run_as(&self, session: &str, task: &str, kind: &str, role: &str) -> Result<(), String> {
+        // The role's overlay rides the run, so the home must hold it:
+        // the lesson's three roles seed on the way in. A seed only fills
+        // a home that lacks the role — an owner-edited file stands.
+        match role {
+            role if role == crate::lesson::PROBER_ROLE => crate::lesson::seed_prober(&self.home),
+            role if role == crate::lesson::TEACHER_ROLE => crate::lesson::seed_teacher(&self.home),
+            role if role == crate::lesson::PRACTITIONER_ROLE => {
+                crate::lesson::seed_practitioner(&self.home)
+            }
+            _ => Ok(()),
+        }
+        .map_err(|error| format!("the role did not seed: {error}"))?;
         let folder = self.run_folder(session, None)?;
         self.full_access_floor(folder.as_deref(), lock(&self.state).permissions)?;
         self.dispatch(session, task, |session, task| {
@@ -13228,6 +13240,31 @@ mod tests {
         );
         let door = bridge.connect();
         (bridge, sources, door)
+    }
+
+    /// The learning seam (the learning plan's C7): a learning start
+    /// seeds the role whose overlay rides the run — a home that lacks
+    /// it gets the product's own role — and sends the command carrying
+    /// the lesson kind and the role.
+    #[tokio::test]
+    async fn a_learning_start_seeds_the_role_and_sends_the_learning_command() {
+        let (bridge, _sources, mut door) = bridge().await;
+        let home = bridge.home_path();
+        bridge
+            .run_as("", "let\u{2019}s start a lesson", "teaching", "prober")
+            .expect("the learning start lands");
+        let role = crate::roles::load(&home, crate::lesson::PROBER_ROLE).expect("the prober loads");
+        assert!(role.overlay.contains("do not teach"), "{}", role.overlay);
+        match door.recv().await {
+            Some(Command::RunAs(_session, task, _folder, kind, role)) => {
+                assert_eq!(kind, "teaching");
+                assert_eq!(role, "prober");
+                assert_eq!(task, "let\u{2019}s start a lesson");
+            }
+            Some(_) => panic!("the learning command arrived as another command"),
+            None => panic!("no learning command arrived"),
+        }
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     /// The welcome's one read is assembled from the panel reads and
