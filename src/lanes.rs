@@ -363,15 +363,31 @@ pub fn configured_spec(lane: &Lane, home: &Path) -> Result<ServerSpec, String> {
     let Some(fleet_home) = fleet_home_path() else {
         return Ok(launch_spec(lane, home));
     };
-    configured_spec_at(lane, home, &fleet_home)
+    configured_spec_holding(lane, home, &fleet_home, &ambient_presence())
 }
 
-/// The same injection over an explicit fleet home, so the precedence is
-/// testable without mutating the process environment.
-pub fn configured_spec_at(
+/// The process's own environment, as the "a name the caller already has
+/// is never rewritten" leg of the precedence reads it.
+fn ambient_presence() -> impl Fn(&str) -> bool {
+    |name: &str| std::env::var(name).is_ok()
+}
+
+/// The precedence itself: `lanes.json` first, the dotenv/vault over it,
+/// and a name the caller already holds belonging to the caller, applied
+/// to an explicit fleet home.
+///
+/// The presence test is injected rather than read from `std::env` for the
+/// reason the settings surface injects its table: the process environment
+/// is process-global, so a test that pinned the absence of `SEM1_ST_VENV`
+/// was asserting the shell it ran in. On the harness's own shell — where
+/// the lane provisioning exports `SEM1_ST_VENV`, `SDM1_MODELS_VENV`,
+/// `GEN1_KOKORO_PYTHON` and `FLEET_SERVICES_ROOT` — the two precedence
+/// tests failed while the code was right.
+pub fn configured_spec_holding(
     lane: &Lane,
     home: &Path,
     fleet_home: &Path,
+    held: &dyn Fn(&str) -> bool,
 ) -> Result<ServerSpec, String> {
     let mut spec = launch_spec(lane, home);
     let config = read_lane(fleet_home, lane.name)?.unwrap_or_default();
@@ -390,7 +406,7 @@ pub fn configured_spec_at(
             values.insert(name.clone(), value.clone());
         }
     }
-    values.retain(|name, _| std::env::var(name).is_err());
+    values.retain(|name, _| !held(name));
     for (name, value) in values {
         if spec.env.iter().any(|(declared, _)| declared == &name) {
             continue;
@@ -2243,6 +2259,12 @@ mod tests {
 
     /// The configured values reach the child for names the lane declares,
     /// and a name it does not declare never crosses.
+    ///
+    /// Over the injected presence test — "the process holds nothing" —
+    /// rather than the ambient one: the shell this suite runs in is the
+    /// harness's own, and it exports `SEM1_ST_VENV` (the lane
+    /// provisioning's venv). Reading `std::env` here made the assertion a
+    /// claim about that shell.
     #[test]
     fn lanes_json_values_reach_the_spec_and_only_declared_names_cross() {
         let home = scratch("reach");
@@ -2251,8 +2273,13 @@ mod tests {
             r#"{"lanes":{"sem1":{"env":{"SEM1_ST_VENV":"/opt/venv-st","SEM1_EVIL":"no"}}}}"#,
         )
         .unwrap();
-        let spec = configured_spec_at(&lane("sem1"), Path::new("/repo/services/sem1"), &home)
-            .expect("the spec");
+        let spec = configured_spec_holding(
+            &lane("sem1"),
+            Path::new("/repo/services/sem1"),
+            &home,
+            &|_name| false,
+        )
+        .expect("the spec");
         assert!(
             spec.env
                 .iter()
@@ -2269,7 +2296,8 @@ mod tests {
     }
 
     /// The dotenv sits over lanes.json, and a name the process already
-    /// carries is never rewritten by either.
+    /// carries is never rewritten by either — both legs, over the
+    /// injected presence test.
     #[test]
     fn the_dotenv_wins_over_the_lane_config() {
         let home = scratch("precedence");
@@ -2279,14 +2307,35 @@ mod tests {
         )
         .unwrap();
         std::fs::write(home.join(".env"), "SEM1_ST_VENV=/from/dotenv\n").unwrap();
-        let spec = configured_spec_at(&lane("sem1"), Path::new("/repo/services/sem1"), &home)
-            .expect("the spec");
+        let spec = configured_spec_holding(
+            &lane("sem1"),
+            Path::new("/repo/services/sem1"),
+            &home,
+            &|_name| false,
+        )
+        .expect("the spec");
         let value = spec
             .env
             .iter()
             .find(|(name, _)| name == "SEM1_ST_VENV")
             .map(|(_, value)| value.as_str());
         assert_eq!(value, Some("/from/dotenv"));
+        // The top of the chain: a name the caller already holds is the
+        // caller's, and neither file lands it in the spec at all — the
+        // leg that only the injected test can assert, because it is a
+        // claim about a process that does *not* hold the name.
+        let held = configured_spec_holding(
+            &lane("sem1"),
+            Path::new("/repo/services/sem1"),
+            &home,
+            &|name| name == "SEM1_ST_VENV",
+        )
+        .expect("the spec");
+        assert!(
+            !held.env.iter().any(|(name, _)| name == "SEM1_ST_VENV"),
+            "{:?}",
+            held.env
+        );
         let _ = std::fs::remove_dir_all(&home);
     }
 

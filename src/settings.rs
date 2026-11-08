@@ -630,11 +630,36 @@ pub(crate) fn is_secret_name(name: &str) -> bool {
 /// same precedence the credential resolution runs on, so what the pane
 /// shows is what a run would actually read.
 pub fn states(home: &Path) -> Vec<State> {
+    states_with(home, &ambient_value)
+}
+
+/// The process environment as a setting is read: a name this process
+/// carries, and an empty export is no export — the loader's own rule,
+/// so an empty value reads as unset rather than as a value.
+fn ambient_value(name: &str) -> Option<String> {
+    std::env::var(name).ok().filter(|value| !value.is_empty())
+}
+
+/// The same read over an **injected** environment, which is what makes
+/// the surface's precedence testable without holding the process's own
+/// environment still.
+///
+/// The first shape of these tests had the reader consult `std::env`
+/// directly and pinned the ambient names with a remove-and-restore guard
+/// through a mutex (KI-291). That guard cannot be complete: the process
+/// environment is process-global and shared with every other test and
+/// every library that touches it, so the surface's shape was a claim
+/// about the machine rather than about the code — a suite that passed
+/// on a clean shell failed on the harness's own, where the lane
+/// provisioning has `FLEET_SERVICES_ROOT` and the venv names exported.
+/// Injection is the fix at the mechanism: the test supplies the table it
+/// asserts against, and no ambient export can reach it.
+pub fn states_with(home: &Path, process: &dyn Fn(&str) -> Option<String>) -> Vec<State> {
     let (config_path, routing_path, env_path) = paths(home);
     let config = read_json(&config_path).unwrap_or(Value::Object(Map::new()));
     let routing = read_json(&routing_path).unwrap_or(Value::Object(Map::new()));
     let env_file = read_env_file(&env_path);
-    let process_env = |name: &str| std::env::var(name).ok().filter(|value| !value.is_empty());
+    let process_env = |name: &str| process(name).filter(|value| !value.is_empty());
 
     SETTINGS
         .iter()
@@ -1088,7 +1113,14 @@ use palette::{ACCENT, BOLD, DIM, RESET, TEXT, WARN};
 /// what it does. A value from the environment is marked, because a file
 /// write would not take effect until the env var is unset.
 pub fn render(home: &Path) -> String {
-    let states = states(home);
+    render_with(home, &ambient_value)
+}
+
+/// The same rendering over an **injected** environment — the seam the
+/// tests take, so a card's shape is a claim about `render` and not about
+/// what the harness happens to export (see [`states_with`]).
+pub fn render_with(home: &Path, process: &dyn Fn(&str) -> Option<String>) -> String {
+    let states = states_with(home, process);
     let mut out = format!(
         "{BOLD}fleet settings{RESET} {DIM}\u{2014} every knob the surface can address{RESET}\n\n"
     );
@@ -2599,51 +2631,25 @@ mod render_tests {
         dir
     }
 
-    /// The env-reading tests below serialize on this. `render` names the
-    /// truth about where a value came from — the environment included —
-    /// so a test that asserts a shape must hold the ambient names still
-    /// while it runs (KI-291: an exported `FLEET_EMBEDDING_ENDPOINT` on
-    /// the host flipped the unset count on an otherwise green machine).
-    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-    /// Remove `name` for the duration of the guard, restoring whatever
-    /// was there before — including its absence — on the way out. The
-    /// lanes tests' own pattern, carried here.
-    struct EnvVar {
-        name: String,
-        previous: Option<std::ffi::OsString>,
-    }
-
-    impl EnvVar {
-        fn absent(name: &str) -> EnvVar {
-            let previous = std::env::var_os(name);
-            std::env::remove_var(name);
-            EnvVar {
-                name: name.to_string(),
-                previous,
-            }
-        }
-    }
-
-    impl Drop for EnvVar {
-        fn drop(&mut self) {
-            match &self.previous {
-                Some(value) => std::env::set_var(&self.name, value),
-                None => std::env::remove_var(&self.name),
-            }
-        }
+    /// The environment these two shape tests read: **none of it**. The
+    /// table is injected, so the assertions are claims about `render`
+    /// rather than about the shell the suite runs in. KI-291's guard —
+    /// remove `FLEET_EMBEDDING_ENDPOINT`, hold a mutex, restore it —
+    /// pinned one name and left the rest ambient; the harness's own
+    /// shell exports `FLEET_SERVICES_ROOT` besides, and the count moved
+    /// with it. An injected empty table cannot be overruled by an export.
+    fn no_environment(_name: &str) -> Option<String> {
+        None
     }
 
     /// The surface is cards, never a table: every setting renders inside
     /// a box, and no line is a padded column row.
     #[test]
     fn the_surface_is_cards_and_never_a_table() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        let _embedding = EnvVar::absent("FLEET_EMBEDDING_ENDPOINT");
         let home = scratch("cards");
         set(&home, "pin", "stepfun").unwrap();
         set(&home, "approvals", "yes-guarded").unwrap();
-        let rendered = render(&home);
+        let rendered = render_with(&home, &no_environment);
         assert!(rendered.contains("fleet settings"), "{rendered}");
         // One box per setting, plus the header's own count line.
         assert_eq!(
@@ -2665,16 +2671,52 @@ mod render_tests {
     /// honest reading of a machine that has configured nothing.
     #[test]
     fn an_empty_home_renders_every_setting_as_unset() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        let _embedding = EnvVar::absent("FLEET_EMBEDDING_ENDPOINT");
         let home = scratch("empty");
-        let rendered = render(&home);
+        let rendered = render_with(&home, &no_environment);
         assert!(rendered.contains("unset"), "{rendered}");
         assert_eq!(
             rendered.matches("unset \u{b7} default").count(),
             SETTINGS.len(),
             "every unset setting names its source as the default"
         );
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    /// The other half of the precedence, now that it is testable: a name
+    /// the injected environment carries is rendered as env-sourced and
+    /// beats the file — the behavior KI-291's guard could only assert by
+    /// taking a name away from the real process.
+    #[test]
+    fn an_env_sourced_value_is_marked_and_wins_over_the_file() {
+        let home = scratch("env-wins");
+        set(&home, "FLEET_CONCURRENCY", "2").unwrap();
+        let from_env = |name: &str| match name {
+            "FLEET_CONCURRENCY" => Some("7".to_string()),
+            _ => None,
+        };
+        let states = states_with(&home, &from_env);
+        let concurrency = states
+            .iter()
+            .find(|state| state.key == "FLEET_CONCURRENCY")
+            .expect("the concurrency knob");
+        assert_eq!(concurrency.value.as_deref(), Some("7"));
+        assert_eq!(concurrency.source(), "env");
+        // Every other knob is still the file's or the default's.
+        assert_eq!(
+            states.iter().filter(|state| state.from_env).count(),
+            1,
+            "only the injected name reads as env-sourced"
+        );
+        // An empty export is no export: the file's value answers.
+        let empty = states_with(&home, &|name: &str| {
+            (name == "FLEET_CONCURRENCY").then(String::new)
+        });
+        let file_value = empty
+            .iter()
+            .find(|state| state.key == "FLEET_CONCURRENCY")
+            .expect("the concurrency knob");
+        assert_eq!(file_value.value.as_deref(), Some("2"));
+        assert_eq!(file_value.source(), "file");
         let _ = fs::remove_dir_all(&home);
     }
 }

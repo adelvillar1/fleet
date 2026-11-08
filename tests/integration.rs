@@ -3447,6 +3447,19 @@ fn python3_available() -> bool {
         .unwrap_or(false)
 }
 
+/// This checkout's own services tree.
+///
+/// A `fleet lanes` run resolves its lanes from `FLEET_SERVICES_ROOT` when
+/// that is set, and the machine this suite runs on has it pointing at the
+/// *installed* app's bundle (`/Applications/fleet.app/Contents/Resources/
+/// services`) — a copy frozen at whatever release was last installed. The
+/// lane tests below assert about the code under test, so they name this
+/// checkout's tree: without it they graded the installed app's stale
+/// browser lane and failed on a fix that was present here.
+fn repo_services_root() -> &'static str {
+    concat!(env!("CARGO_MANIFEST_DIR"), "/services")
+}
+
 /// One registry lane by name.
 fn lane(name: &str) -> Lane {
     *lanes::LANES
@@ -4094,6 +4107,7 @@ fn the_lanes_command_reports_every_real_lane() {
     }
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_fleet"))
         .arg("lanes")
+        .env("FLEET_SERVICES_ROOT", repo_services_root())
         .output()
         .expect("run the fleet binary");
     assert!(output.status.success(), "{output:?}");
@@ -4133,6 +4147,7 @@ fn a_lane_home_override_shadows_the_bundled_copy() {
     }
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_fleet"))
         .arg("lanes")
+        .env("FLEET_SERVICES_ROOT", repo_services_root())
         .env("FLEET_LANE_SEM1_HOME", sem1_home())
         .output()
         .expect("run the fleet binary");

@@ -1783,14 +1783,23 @@ mod tests {
         assert!(error.to_string().contains("could not spawn"), "{error}");
     }
 
-    /// A parent environment for `child_env`: the caller's, plus the names
-    /// a test wants present. Nothing here mutates the test process.
+    /// A parent environment for `child_env`: exactly the names a test
+    /// wants present, and nothing else. Nothing here mutates the test
+    /// process, and nothing here reads it either.
+    ///
+    /// It used to start from `std::env::vars_os()`, which made every
+    /// assertion a claim about the shell the suite ran in: the harness's
+    /// own shell exports the lane provisioning's `SEM1_ST_VENV`, so
+    /// `an_absent_allowlist_entry_is_absent_not_empty` — a test whose
+    /// whole point is that an allowlisted name the caller does not hold
+    /// never crosses — saw it present and failed, and its own subset
+    /// assertion named the ambient exports. A parent that holds only what
+    /// the test gave it cannot be overruled by an export.
     fn parent_env(entries: &[(&str, &str)]) -> HashMap<OsString, OsString> {
-        let mut parent: HashMap<OsString, OsString> = std::env::vars_os().collect();
-        for (name, value) in entries {
-            parent.insert(OsString::from(name), OsString::from(value));
-        }
-        parent
+        entries
+            .iter()
+            .map(|(name, value)| (OsString::from(name), OsString::from(value)))
+            .collect()
     }
 
     fn names(env: &[(OsString, OsString)]) -> Vec<String> {
@@ -1822,6 +1831,10 @@ mod tests {
             ("TABPFN_API_KEY", "tabpfn-do-not-cross-either"),
             ("SEM1_ST_VENV", "/opt/venvs/st"),
             ("PATH", "/opt/homebrew/bin:/usr/bin"),
+            // The base names this test asserts on are the test's to
+            // supply, now that the fixture no longer copies the runner's
+            // environment in.
+            ("HOME", "/home/someone"),
         ]);
 
         let env = child_env(&spec, &parent);
