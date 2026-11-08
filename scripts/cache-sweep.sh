@@ -99,7 +99,25 @@ for target in $targets; do
     fi
     if [ "$after_kb" -gt "$threshold_kb" ]; then
         if [ -n "$cargo_bin" ] && [ -f "$target/../Cargo.toml" ]; then
-            (cd "$target/.." && "$cargo_bin" clean --profile dev >/dev/null 2>&1)
+            # `cargo clean --profile dev` is run through cargo so it also
+            # drops the profile's metadata, but cargo needs `rustc` on
+            # PATH to answer even that: under launchd's PATH it exits 101
+            # and cleans nothing. The toolchain dir is put in front for
+            # the one call, and the exit code is read rather than
+            # discarded — the old leg reported "cleaned whole" whatever
+            # happened, which is how a 40 GiB target survived a sweep
+            # that claimed to have emptied it (KI-479).
+            cargo_dir="$(dirname "$cargo_bin")"
+            cleaned=0
+            if (cd "$target/.." && PATH="$cargo_dir:$PATH" "$cargo_bin" clean --profile dev >/dev/null 2>&1); then
+                cleaned=1
+            fi
+            if [ "$cleaned" -eq 0 ]; then
+                # The fallback the empty-toolchain case needs: the files
+                # are regenerable build output, and release is a separate
+                # tree this never names.
+                rm -rf "$debug"
+            fi
             action="$action; still over, so the dev profile was cleaned whole"
         else
             rm -rf "$debug"

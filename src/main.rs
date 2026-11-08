@@ -454,6 +454,10 @@ async fn chat_command(options: &ChatOptions) -> ExitCode {
         Some(home.clone()),
         fleet::calib::Stream::open(&calib_root),
     );
+    // The checkpoints' own timer, beside the corpus': a chat can run for
+    // as long as a face, and a turn's capture is up to 64 MB. The debris
+    // belongs to the process that writes it (KI-478).
+    fleet::checkpoints::spawn_reclaim(home.join("checkpoints"));
     // The scheduled jobs: the catch-up pass once at startup, then one
     // tick per second for the life of the session. The scheduler reads
     // the job store fresh every tick, so `fleet cron add` from another
@@ -3846,7 +3850,12 @@ fn hygiene_command() -> ExitCode {
         return ExitCode::from(2);
     };
     let store = home.join("checkpoints");
-    let (removed, reclaimed) = fleet::checkpoints::prune(
+    // The live-safe retention, the same one the face and the chat run on
+    // their timers: the manual verb is often run while a face is up, and
+    // the plain cap would take the newest checkpoint of every session
+    // still open — the turn its rewind button points at (KI-478). The
+    // in-flight guard matters for the same reason.
+    let (removed, reclaimed) = fleet::checkpoints::prune_live(
         &store,
         fleet::checkpoints::KEEP_TURNS,
         fleet::checkpoints::STORE_CAP_BYTES,

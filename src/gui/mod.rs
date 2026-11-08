@@ -126,6 +126,12 @@ pub async fn serve(options: GuiOptions) -> Result<(), String> {
         None,
         base_url,
     ));
+    // The retention behind the face: the checkpoints reclaim on a timer
+    // for as long as the face is up. A turn's capture is up to 64 MB and
+    // the face is long-lived, so the reclaim is a duty of the process
+    // that creates the debris — not a verb the owner has to remember
+    // (KI-478: 68 GB of it, pruned by hand once).
+    crate::checkpoints::spawn_reclaim(home.join("checkpoints"));
     let (server, _port) =
         server::Server::bind(&options.host, options.port, Arc::clone(&bridge)).await?;
     let url = server.base_url().to_string();

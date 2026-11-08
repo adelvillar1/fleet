@@ -11689,7 +11689,11 @@ async fn fan_out(
                     if matches!(event, UiEvent::GoalDone { .. }) {
                         let store = home.join("checkpoints");
                         tokio::task::spawn_blocking(move || {
-                            let (removed, reclaimed) = crate::checkpoints::prune(
+                            // The live-safe retention: this fires while
+                            // the session is still open, so its newest
+                            // checkpoint — the turn the face's rewind
+                            // points at — is spared (KI-478).
+                            let (removed, reclaimed) = crate::checkpoints::prune_live(
                                 &store,
                                 crate::checkpoints::KEEP_TURNS,
                                 crate::checkpoints::STORE_CAP_BYTES,

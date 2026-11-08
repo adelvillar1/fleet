@@ -2,7 +2,7 @@
 # daily-maintenance.sh — the fleet repo's own upkeep, unattended.
 #
 # Built 2026-10-26 after the owner asked why the repo collects garbage.
-# Four legs, each safe to run while nothing else is, each noisy only in
+# Seven legs, each safe to run while nothing else is, each noisy only in
 # its own log:
 #
 #   1. the cache sweep (scripts/cache-sweep.sh) — target/'s age-based
@@ -17,17 +17,24 @@
 #      written whole and guarded (the nomenclature write-guard), so any
 #      instant snapshot is a complete fact — committing the corpus
 #      daily cannot capture a half-thought;
-#   4. the orphan naming — untracked, non-ignored TOP-LEVEL entries are
-#      named in the log and never deleted: a stray directory is a
-#      question for the owner, not a file a script may remove.
-#      (generated/ taught this: what read as an orphan was the corpus
-#      refresh jobs' working driver, named checked-in in a memory fact.)
+#   4. the checkpoints' retention (fleet hygiene) — the one store
+#      outside the repo that fleet itself grows: each session keeps its
+#      last 20 turns under a 5 GiB cap. The face and the chat reclaim on
+#      their own timers, so this leg is for a machine whose face is not
+#      running (KI-478: 68 GB across 72 sessions, 54 GB of it in two);
 #   5. the repo hygiene pass (scripts/repo-hygiene.sh --live) — the same
 #      upkeep for every repository under ~/Projects: stale repos'
 #      regenerable artifact dirs pruned by the closed list and the two
 #      age guards, neglected loose objects packed weekly, everything
 #      logged with sizes. C3 of docs/plans/2026-10-27-projects-repo-
-#      hygiene.md.
+#      hygiene.md;
+#   6. the plan-worktree sweep — dry-run by default: --live stays the
+#      owner's explicit act, which is the sweep's own rule;
+#   7. the orphan naming — untracked, non-ignored TOP-LEVEL entries are
+#      named in the log and never deleted: a stray directory is a
+#      question for the owner, not a file a script may remove.
+#      (generated/ taught this: what read as an orphan was the corpus
+#      refresh jobs' working driver, named checked-in in a memory fact.)
 #
 # Never fails the machine: every leg's failure is logged and the run
 # exits 0, so a locked index or a busy corpus waits for tomorrow.
@@ -68,6 +75,15 @@ if [ -n "$(git status --porcelain -- memories/ 2>/dev/null)" ]; then
     fi
 fi
 
+# 4. the checkpoints' retention — the one store outside the repo that
+#    fleet itself grows, and the only one nothing else swept. The face
+#    and the chat reclaim on their own timers; a machine whose face is
+#    not running would otherwise wait for the owner to remember
+#    (KI-478: 68 GB across 72 sessions, two of them holding 54 GB).
+#    `fleet hygiene` is the shipped verb and its numbers are the caps.
+say "— checkpoints —"
+"$HOME/.fleet/bin/fleet" hygiene 2>&1 | sed 's/^/  /' >>"$LOG" || say "the checkpoint retention failed; tomorrow retries"
+
 # 5. the repo hygiene pass — its own voice, its own log, its own guards.
 say "— repo hygiene —"
 "$REPO/scripts/repo-hygiene.sh" --live >>"$LOG" 2>&1 || say "the hygiene pass failed; tomorrow retries"
@@ -77,7 +93,7 @@ say "— repo hygiene —"
 say "— plan worktrees —"
 "$REPO/scripts/plan-worktree.sh" sweep --dry-run >>"$LOG" 2>&1 || say "the worktree sweep failed; tomorrow retries"
 
-# 4. the orphan naming — read-only, always.
+# 7. the orphan naming — read-only, always.
 orphans=$(git ls-files --others --exclude-standard 2>/dev/null | cut -d/ -f1 | sort -u | tr '\n' ' ')
 if [ -n "$orphans" ]; then
     say "— untracked at the top level, for the owner to name or ignore: $orphans"

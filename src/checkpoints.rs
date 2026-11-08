@@ -22,7 +22,7 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// How many files one checkpoint captures. A tree past it captures its
 /// first `MAX_FILES` in walk order and names the rest.
@@ -37,6 +37,159 @@ const MAX_BYTES: u64 = 64 * 1024 * 1024;
 /// the drive and the gate died on ENOSPC.
 pub const KEEP_TURNS: usize = 20;
 pub const STORE_CAP_BYTES: u64 = 5 * 1024 * 1024 * 1024;
+
+/// How often the store reclaims while a face is running. A turn's
+/// capture is up to 64 MB, so a long session writes that much per turn
+/// for as long as it is open; a quarter of an hour bounds what an open
+/// face can hold without ever letting a session grow past its keep.
+pub const RECLAIM_INTERVAL: Duration = Duration::from_secs(15 * 60);
+
+/// The retention, run on a timer for the life of the process.
+///
+/// The policy was never the defect — [`prune`] is bounded, tested and
+/// old. Its *trigger* was: the two places that called it were a manual
+/// verb and a session's goal completing, and a face that runs for days
+/// without a goal set never reaches either. So the store grew to 68 GB
+/// across 72 sessions, two of them holding 54 GB between them, while
+/// the retention that would have kept each at 20 turns never ran once.
+/// A harness that mails back everything it ever wrote is not being
+/// careful; it is squatting on the drive (KI-478).
+///
+/// Two rules the timer keeps, both learned from the compaction
+/// operations that eat their own tail:
+///
+/// - **Never the current turn.** The newest checkpoint of every session
+///   is what a face's rewind button points at, so the sweep keeps it
+///   whatever the caps say — [`prune_live`] and not the plain cap.
+/// - **Never mid-capture.** A capture writes a manifest beside its
+///   files and the manifest is written last, so a turn directory
+///   without one is a capture in flight and is skipped rather than
+///   half-deleted under the run that is writing it.
+///
+/// The pass is quiet when it reclaims nothing, and names what it freed
+/// when it does: the debris is the owner's disk, so the report is the
+/// owner's.
+pub fn spawn_reclaim(store: PathBuf) {
+    std::thread::spawn(move || loop {
+        let (removed, reclaimed) = prune_live(&store, KEEP_TURNS, STORE_CAP_BYTES);
+        if removed > 0 {
+            eprintln!(
+                "fleet: checkpoints: {removed} turn(s) released, {} reclaimed \u{2014} \
+                 each session keeps its last {KEEP_TURNS} turns under a {STORE_CAP_BYTES} byte cap",
+                human_bytes(reclaimed),
+            );
+        }
+        std::thread::sleep(RECLAIM_INTERVAL);
+    });
+}
+
+/// A byte count in the unit that reads honestly. A pass that released
+/// five 200 KB turns freed a megabyte, and reporting it as "0 MB" would
+/// say it freed nothing when it freed all of it.
+fn human_bytes(bytes: u64) -> String {
+    const KIB: u64 = 1024;
+    const MIB: u64 = 1024 * 1024;
+    const GIB: u64 = 1024 * 1024 * 1024;
+    if bytes >= GIB {
+        format!("{} GiB", bytes / GIB)
+    } else if bytes >= MIB {
+        format!("{} MiB", bytes / MIB)
+    } else if bytes >= KIB {
+        format!("{} KiB", bytes / KIB)
+    } else {
+        format!("{bytes} bytes")
+    }
+}
+
+/// [`prune`] for a store a run is writing to: a turn still being
+/// captured is not seen, and every session keeps the turn its rewind
+/// points at.
+///
+/// The caps are the same ones; only the eviction order changes. The
+/// per-session keep is `keep_turns`, and the store's byte cap is
+/// measured over the turns that may really go — so a store holding
+/// nothing but each session's newest turn reports nothing rather than
+/// spending the pass on what it must not free.
+pub fn prune_live(store: &Path, keep_turns: usize, max_bytes: u64) -> (usize, u64) {
+    let mut removed = 0usize;
+    let mut reclaimed = 0u64;
+    // `(modified, dir, bytes, is_a_sessions_newest)`. The newest turn of
+    // a session is sorted last and never evicted: it is the checkpoint a
+    // face's rewind button points at, and the one the run that is live
+    // just wrote.
+    let mut survivors: Vec<(SystemTime, PathBuf, u64, bool)> = Vec::new();
+    let Ok(sessions) = std::fs::read_dir(store) else {
+        return (0, 0);
+    };
+    for sess in sessions.flatten() {
+        let sess_path = sess.path();
+        if !sess_path.is_dir() {
+            continue;
+        }
+        // A turn counts only once its manifest landed: the capture
+        // writes the manifest after the files, so a directory without
+        // one is a capture still writing and is left alone.
+        let mut ids: Vec<u64> = std::fs::read_dir(&sess_path)
+            .into_iter()
+            .flatten()
+            .filter_map(|entry| entry.ok())
+            .filter_map(|entry| {
+                let path = entry.path();
+                if !path.is_dir() || !path.join("manifest.json").exists() {
+                    return None;
+                }
+                entry
+                    .file_name()
+                    .to_str()
+                    .and_then(|name| name.parse::<u64>().ok())
+            })
+            .collect();
+        ids.sort_unstable();
+        let Some(&newest) = ids.last() else {
+            continue;
+        };
+        let keep_from = ids.len().saturating_sub(keep_turns);
+        for (index, id) in ids.iter().enumerate() {
+            let dir = sess_path.join(id.to_string());
+            let is_newest = *id == newest;
+            if index < keep_from && !is_newest {
+                let size = dir_size(&dir);
+                if std::fs::remove_dir_all(&dir).is_ok() {
+                    removed += 1;
+                    reclaimed += size;
+                }
+                continue;
+            }
+            let modified = std::fs::metadata(&dir)
+                .and_then(|meta| meta.modified())
+                .unwrap_or(SystemTime::UNIX_EPOCH);
+            let size = dir_size(&dir);
+            survivors.push((modified, dir, size, is_newest));
+        }
+    }
+    // The store's cap: the oldest turns go first, and a session's newest
+    // turn is never something the cap may spend.
+    survivors.sort_by_key(|(modified, _, _, is_newest)| (*is_newest, *modified));
+    let mut total: u64 = survivors
+        .iter()
+        .filter(|(_, _, _, is_newest)| !*is_newest)
+        .map(|(_, _, size, _)| size)
+        .sum();
+    for (_, dir, size, is_newest) in &survivors {
+        if total <= max_bytes {
+            break;
+        }
+        if *is_newest {
+            continue;
+        }
+        if std::fs::remove_dir_all(dir).is_ok() {
+            removed += 1;
+            reclaimed += size;
+            total = total.saturating_sub(*size);
+        }
+    }
+    (removed, reclaimed)
+}
 
 /// The directories a checkpoint never enters: version control's own
 /// state, the build outputs, and the vendored dependencies. A snapshot
@@ -897,6 +1050,45 @@ mod tests {
         assert_eq!(removed2, 30, "a one-byte cap keeps nothing");
         assert_eq!(list(&store, "s-1").len(), 0);
         assert_eq!(list(&store, "s-2").len(), 0);
+        let _ = std::fs::remove_dir_all(tree.parent().unwrap());
+    }
+
+    /// The timer's retention must never take the checkpoint a rewind
+    /// points at: a face whose store was trimmed past its newest turn
+    /// would offer a rewind to a turn that no longer exists. The plain
+    /// `prune` may empty a store; the live one may not, at any cap.
+    #[test]
+    fn live_prune_keeps_every_sessions_newest_turn_at_any_cap() {
+        let (tree, store) = scratch("prune-live");
+        std::fs::write(tree.join("a.txt"), "one\n").unwrap();
+        for turn in 1..=25u64 {
+            capture(&tree, &store, "s-1", turn).unwrap();
+        }
+        for turn in 1..=3u64 {
+            capture(&tree, &store, "s-2", turn).unwrap();
+        }
+        // The per-session keep still holds: 25 turns trim to 20.
+        let (removed, _) = prune_live(&store, 20, u64::MAX);
+        assert_eq!(removed, 5, "the oldest five of s-1 go");
+        assert_eq!(list(&store, "s-1").len(), 20);
+        // A one-byte cap would have `prune` empty both sessions. The live
+        // pass keeps each session's newest turn and nothing else, which
+        // is the invariant the rewind button rests on.
+        let (removed2, _) = prune_live(&store, 20, 0);
+        // Twenty on s-1 plus three on s-2 survive the keep; one each stays.
+        assert_eq!(removed2, 21, "every turn but the two newest went");
+        let kept = list(&store, "s-1");
+        assert_eq!(kept.len(), 1, "one turn survives on s-1");
+        assert_eq!(kept[0].turn, 25, "and it is the newest");
+        assert_eq!(list(&store, "s-2").len(), 1);
+        // A capture still writing has no manifest yet: it is not a turn
+        // the pass may see, let alone delete.
+        let inflight = store.join("s-1").join("26");
+        std::fs::create_dir_all(inflight.join("files")).unwrap();
+        std::fs::write(inflight.join("files/partial.bin"), vec![0u8; 4096]).unwrap();
+        let (removed3, _) = prune_live(&store, 20, 0);
+        assert_eq!(removed3, 0, "an in-flight capture is invisible to the pass");
+        assert!(inflight.exists(), "and it is still there for its run");
         let _ = std::fs::remove_dir_all(tree.parent().unwrap());
     }
 
