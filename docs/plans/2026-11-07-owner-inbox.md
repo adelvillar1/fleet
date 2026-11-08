@@ -179,7 +179,8 @@ The rail row and the badge ride the existing rail markup.
       lost to the stash at the switch to master, so the plan read as
       complete while its own C0 artifact was absent from the tree; they
       were restored from the stash's untracked tree on 2026-11-07, each
-      verified a real PNG of 2144 × 1800.)*
+      verified a real PNG — 8 at 2144 × 1800 for the 1024 width and 8 at
+      2976 × 1800 for the 1440, matching the two widths they claim.)*
 - [x] **C1 — the read is one bounded document.** `GET /api/owner-inbox`
       returns seats, incomplete onboarding steps, unanswered room asks,
       failed cron jobs, and failing doctor checks in one response,
