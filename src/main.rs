@@ -152,7 +152,8 @@ fn dispatch_sync(args: &[String]) -> ExitCode {
             recall,
             view,
             probes,
-        }) => sessions_command(recall.as_deref(), view.as_deref(), &probes),
+            kind,
+        }) => sessions_command(recall.as_deref(), view.as_deref(), &probes, kind.as_deref()),
         // The remote surface's own commands: none of them awaits, so they
         // live in the sync half with the rest.
         Ok(Command::Pair) => pair_command(),
@@ -458,7 +459,14 @@ async fn chat_command(options: &ChatOptions) -> ExitCode {
     // the job store fresh every tick, so `fleet cron add` from another
     // shell is picked up within a second, and each fire is an ordinary
     // headless run in its own session log. Its named lines ride stderr.
-    fleet::cron::Scheduler::spawn(home.clone(), None, prepared.decision.model.clone());
+    // The chat's route is prepared on its first task, so the scheduler
+    // takes the pin when the chat has one (the served model for a pinned
+    // run); an unpinned chat rides the daily cadence.
+    fleet::cron::Scheduler::spawn(
+        home.clone(),
+        None,
+        options.model.clone().unwrap_or_default(),
+    );
     // The skills are loaded once per chat session and declared on every
     // run in it: the files can change between runs, and the per-run
     // `skills` record is what pins what each run actually saw.
@@ -3560,7 +3568,12 @@ async fn compact_command(session_id: Option<&str>, force: bool) -> ExitCode {
 /// through the six-channel ranker, where a session IS a trajectory and
 /// the direction channel reads the record itself. A positional opens
 /// one session's log as cards.
-fn sessions_command(recall: Option<&str>, view: Option<&str>, probes: &[String]) -> ExitCode {
+fn sessions_command(
+    recall: Option<&str>,
+    view: Option<&str>,
+    probes: &[String],
+    kind: Option<&str>,
+) -> ExitCode {
     let home = match fleet_home() {
         Ok(home) => home,
         Err(message) => {
@@ -3616,7 +3629,10 @@ fn sessions_command(recall: Option<&str>, view: Option<&str>, probes: &[String])
         print!("{}", fleet::session_recall::render_hits(&hits, instruction));
         return ExitCode::SUCCESS;
     }
-    let summaries = match session::list(&home) {
+    // `--kind` filters the archive by the `start` record's kind — the
+    // lesson sessions the Learning surface lists. Absent is the whole
+    // archive, which is the surface's own default.
+    let summaries = match session::list_kind(&home, kind) {
         Ok(summaries) => summaries,
         Err(error) => {
             eprintln!("fleet: {error}");
