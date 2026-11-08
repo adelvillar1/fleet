@@ -1460,7 +1460,7 @@ pub fn mcp_prompt_spec() -> ToolSpec {
 pub fn recall_spec() -> ToolSpec {
     ToolSpec::function(
         RECALL_TOOL,
-        "Ask the harness what it already holds, before searching the tree from scratch. Say what you are about to do in one sentence; this returns the memory facts that match (with scores, kinds and dates) and the skills whose descriptions match, by the name `use_skill` takes. It is a read — nothing written, no hit recorded, no model called — so it is cheap enough to ask twice.",
+        "Ask the harness what it already holds, before searching the tree from scratch. Say what you are about to do in one sentence; this returns the memory facts that match (with scores, kinds and dates) and the skills whose descriptions match, by the name `use_skill` takes. It is a read — nothing written, no hit recorded, no model called — so it is cheap enough to ask twice. When the question is about the corpus or the code and the wording is unknown, `hybrid_search` is the wider net: it fuses the lexical and vector routes and returns source-linked passages. Treat sufficient results as read evidence; stop once they answer.",
         serde_json::json!({
             "type": "object",
             "properties": {
@@ -1472,6 +1472,109 @@ pub fn recall_spec() -> ToolSpec {
             "required": ["instruction"],
         }),
     )
+}
+
+pub const HYBRID_SEARCH_TOOL: &str = "hybrid_search";
+
+/// The request declaration for `hybrid_search`: the fused lexical and vector
+/// search over a workspace's corpus and source outlines.
+///
+/// The description carries the routing discipline — semantic when the wording
+/// or location is unknown, `grep` when exact lookup suffices, and stop once
+/// the evidence is sufficient — the same protocol zvec-grep's tool ships.
+pub fn hybrid_search_spec() -> ToolSpec {
+    ToolSpec::function(
+        HYBRID_SEARCH_TOOL,
+        "Search a workspace by meaning and by exact words at once: the lexical (BM25) and vector routes fuse over the indexed corpus and the source outlines, and the results are source-linked passages. Use it when the wording or the location is unknown — architecture, call chains, dependencies, design rationale, or a symbol you cannot name exactly. Use `grep` when exact lookup alone is sufficient. Results carry the source location and the passage; treat sufficient results as read evidence and stop.",
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "root": {
+                    "type": "string",
+                    "description": "The workspace root — a repository checkout. Its name keys the indexed corpus."
+                },
+                "query": {
+                    "type": "string",
+                    "description": "What you are looking for, in your own words."
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "The most results to return. Default 5, maximum 20."
+                }
+            },
+            "required": ["root", "query"]
+        }),
+    )
+}
+
+/// Run the hybrid search: open the lane's cached corpus for the workspace,
+/// fuse the routes, and format the source-linked passages.
+pub fn run_hybrid_search(arguments: &serde_json::Value) -> Result<ToolOutcome, String> {
+    let root = arguments
+        .get("root")
+        .and_then(|value| value.as_str())
+        .unwrap_or_default();
+    let query = arguments
+        .get("query")
+        .and_then(|value| value.as_str())
+        .unwrap_or_default();
+    if query.trim().is_empty() {
+        return Ok(ToolOutcome {
+            output: "error: the search needs a `query`".to_string(),
+            truncated: false,
+        });
+    }
+    let limit = arguments
+        .get("limit")
+        .and_then(|value| value.as_u64())
+        .unwrap_or(5)
+        .clamp(1, 20) as usize;
+    let root = std::path::PathBuf::from(root);
+    let project = project_key(&root);
+    let store = crate::hybrid::HybridStore::open_with_outlines(
+        &crate::hybrid::store_root(),
+        &project,
+        &root,
+    )?;
+    let hits = store.search(query, limit);
+    if hits.is_empty() {
+        return Ok(ToolOutcome {
+            output: format!("no passage matched `{query}` in `{project}`"),
+            truncated: false,
+        });
+    }
+    let mut output = String::new();
+    for hit in hits {
+        output.push_str(&format!("{}  {:.4}\n{}\n\n", hit.key, hit.score, hit.text));
+    }
+    Ok(ToolOutcome {
+        output,
+        truncated: false,
+    })
+}
+
+/// The project key for a workspace root: the lane's own resolution — the
+/// repository's top-level basename, else the root's own name.
+fn project_key(root: &std::path::Path) -> String {
+    let top = std::process::Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .arg("rev-parse")
+        .arg("--show-toplevel")
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string());
+    top.and_then(|top| {
+        std::path::PathBuf::from(top)
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+    })
+    .or_else(|| {
+        root.file_name()
+            .map(|name| name.to_string_lossy().to_string())
+    })
+    .unwrap_or_else(|| "default".to_string())
 }
 
 pub fn goal_spec() -> ToolSpec {
@@ -1909,6 +2012,7 @@ pub fn known_tool_names() -> Vec<&'static str> {
         DECK_TOOL,
         FRAME_TOOL,
         REVIEW_FRAME_TOOL,
+        HYBRID_SEARCH_TOOL,
         VISION_TOOL,
         WEB_TOOL,
         READ_DOCUMENT_TOOL,
@@ -1954,7 +2058,7 @@ impl Tool {
             Tool::WriteFile => "Create or replace a whole file, atomically. Use edit for a change to part of an existing file: this tool loses anything you do not reproduce exactly. The parent directory must already exist.",
             Tool::ListDir => "List a directory's entries, directories marked with a trailing slash. depth (default 1, maximum 8) lists nested levels. Capped at 1000 entries.",
             Tool::Edit => "Replace one exact passage in a file you have already read. Use this for every change to an existing file; do not rewrite the file with write_file. old_string must match byte for byte, including indentation, and must appear exactly once - include two or three surrounding lines to make it unique. Do not use line numbers: they shift. Zero matches names the closest line; several matches name their lines. Returns the changed line and a diff.",
-            Tool::Grep => "Search file contents. Prefer this over bash grep: results are capped, counted, and say when they were cut. output_mode is files (default), content, or count; context adds lines around a content match, type filters by language, and multiline lets the pattern span lines (both rg only, and the grep fallback names what it dropped). Honors .gitignore when rg is installed. When the cap is hit, narrow the pattern or add glob.",
+            Tool::Grep => "Search file contents. Prefer this over bash grep: results are capped, counted, and say when they were cut. output_mode is files (default), content, or count; context adds lines around a content match, type filters by language, and multiline lets the pattern span lines (both rg only, and the grep fallback names what it dropped). Honors .gitignore when rg is installed. When the cap is hit, narrow the pattern or add glob. This is the exact-lookup tool: one definition, literal, filename, key, error message, regex. When the wording or the location is unknown, use `hybrid_search` instead — it fuses the lexical and vector routes over the corpus and the source outlines and returns source-linked passages. Treat sufficient results as read evidence; stop once they answer, and do not re-run a similar search to reconfirm.",
             Tool::Glob => "Find files by path pattern: * and ? within a segment, ** across segments, for example src/**/*.rs. Newest first, capped at 100, and it honors .gitignore when rg is installed (the walker says when it fell back). Use it to locate files; use grep to find contents.",
             Tool::ApplyPatch => "Apply a content-anchored patch across files in one call: `*** Update File:`, `*** Add File:`, `*** Delete File:` sections; inside an update, ` context`, `-removed`, `+added`, with `@@` between hunks. There are no line numbers by design — each hunk matches its own context, so a stale read fails by name instead of corrupting the file. Every hunk for a file is checked before that file is written; earlier files stay written if a later one is refused, and the result names which landed.",
             Tool::RepoMap => "A token-budgeted map of the repository: files ranked by how often their definitions are referenced elsewhere, with their top-level definitions and line numbers. Use it on arrival to find where something lives. It is a heuristic — pattern-matched definitions and a reference count, not a parser — and it says so.",
@@ -4228,6 +4332,72 @@ mod tests {
     /// measurement before any shortening; this is that measurement,
     /// pinned so a future edit to the description cannot quietly change
     /// the number.
+    #[test]
+    fn the_hybrid_search_tool_answers_over_a_fixture_store() {
+        let _lock = crate::TEST_ENV_LOCK.lock();
+        let base = std::env::temp_dir().join(format!("fleet-hybrid-tool-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let workspace = base.join("fixture");
+        let store = base
+            .join("vectors")
+            .join("fixture")
+            .join("embeddinggemma-2");
+        std::fs::create_dir_all(workspace.join("src")).unwrap();
+        std::fs::create_dir_all(&store).unwrap();
+        std::fs::write(
+            workspace.join("src").join("engine.rs"),
+            "pub fn resolve_query_signature() -> Vec<Hit> { todo!() }\n",
+        )
+        .unwrap();
+        let manifest = serde_json::json!({
+            "model": "embeddinggemma-2", "dims": 2, "count": 1,
+            "entries": [{ "key": "doc", "sha256": "aa", "text": "the router selects a model" }]
+        });
+        std::fs::write(store.join("manifest.json"), manifest.to_string()).unwrap();
+        let mut bytes = Vec::new();
+        for value in [1.0f32, 0.0] {
+            bytes.extend_from_slice(&value.to_ne_bytes());
+        }
+        std::fs::write(store.join("vectors.bin"), bytes).unwrap();
+        std::env::set_var("BLEND1_VECTORS_DIR", base.join("vectors"));
+        let outcome = run_hybrid_search(&serde_json::json!({
+            "root": workspace.to_string_lossy(),
+            "query": "resolve_query_signature",
+        }))
+        .expect("the search answers");
+        std::env::remove_var("BLEND1_VECTORS_DIR");
+        assert!(
+            outcome.output.contains("engine.rs"),
+            "the source outline is found: {}",
+            outcome.output
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn the_search_and_recall_descriptions_carry_the_retrieval_discipline() {
+        let grep = serde_json::to_value(Tool::Grep.spec()).unwrap();
+        let grep = grep["function"]["description"].as_str().unwrap();
+        assert!(
+            grep.contains("hybrid_search"),
+            "the grep tool routes to the hybrid: {grep}"
+        );
+        assert!(
+            grep.contains("stop once they answer"),
+            "the grep tool carries the stopping rule: {grep}"
+        );
+        let recall = serde_json::to_value(recall_spec()).unwrap();
+        let recall = recall["function"]["description"].as_str().unwrap();
+        assert!(
+            recall.contains("hybrid_search"),
+            "the recall tool routes to the hybrid: {recall}"
+        );
+        assert!(
+            recall.contains("stop once they answer"),
+            "the recall tool carries the stopping rule: {recall}"
+        );
+    }
+
     #[test]
     fn the_ui_tool_refuses_a_bad_spec_and_saves_a_good_one() {
         // A spec that breaks the vocabulary is refused by name, and no

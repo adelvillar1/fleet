@@ -34,14 +34,17 @@ pub mod explain;
 pub mod extract;
 pub mod filelock;
 pub mod fileops;
+pub mod fusion;
 pub mod graph;
 pub mod gui;
 pub mod home;
+pub mod hybrid;
 pub mod improve;
 pub mod install;
 pub mod judge;
 pub mod lane_client;
 pub mod lanes;
+pub mod lexical;
 /// The one lock every env-mutating test in the crate takes: the
 /// environment is process-global, and separate per-module locks let
 /// two tests' env windows overlap (found live: a view test's
@@ -61,6 +64,7 @@ pub mod memory;
 pub mod net;
 pub mod nomenclature;
 pub mod onboard;
+pub mod outline;
 pub mod perception;
 pub mod plan_graph;
 pub mod plugins;

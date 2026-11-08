@@ -193,10 +193,13 @@ pub const MAX_VISIBLE_TOOLS: usize = 36;
 /// catalog's `ui` tool (the component-catalog plan's C7): the closed
 /// vocabulary rides the system prompt, so the declaration is a schema
 /// pointer plus a short contract, and it put the surface at 10,224
-/// against thirty-one — so it moves to 10,300. The measurement is pinned
-/// by `the_native_surface_fits_its_own_bounds`, which is the gate that
-/// caught all four crossings.
-pub const MAX_DEFINITION_TOKENS: usize = 10_300;
+/// against thirty-one — so it moves to 10,300. The fifth is the hybrid
+/// retrieval's `hybrid_search` tool (the hybrid-retrieval plan's C7): the
+/// retrieval discipline rides the tool's own description, and it put the
+/// surface at 10,621 against thirty-two — so it moves to 10,700. The
+/// measurement is pinned by `the_native_surface_fits_its_own_bounds`,
+/// which is the gate that caught all five crossings.
+pub const MAX_DEFINITION_TOKENS: usize = 10_700;
 
 /// How many requests a `tool_search` activation stays declared for. An
 /// activation is an answer to ONE question, not a permanent grant: the
@@ -2270,6 +2273,7 @@ impl<'a> Agent<'a> {
         specs.push(tools::frame_spec());
         specs.push(tools::review_frame_spec());
         specs.push(tools::ui_spec());
+        specs.push(tools::hybrid_search_spec());
         // The extraction leg, in the live path's position after the deck:
         // declared unguarded because the named absence lives in the
         // result, not the declaration (E2-C3).
@@ -2405,6 +2409,12 @@ impl<'a> Agent<'a> {
         // the system prompt.
         if admitted(tools::UI_TOOL) {
             specs.push(tools::ui_spec());
+        }
+        // The hybrid search: the fused lexical and vector routes over a
+        // workspace's corpus and source outlines, beside the other
+        // workspace-reading tools.
+        if admitted(tools::HYBRID_SEARCH_TOOL) {
+            specs.push(tools::hybrid_search_spec());
         }
         // The extraction leg rides every run whose machine carries the
         // credentials: a typed read beside the decision tier, declared
@@ -4571,6 +4581,16 @@ impl<'a> Agent<'a> {
                     }
                     settled(run.outcome.output)
                 }
+            });
+        }
+        if name == tools::HYBRID_SEARCH_TOOL {
+            // The hybrid search: the fused lexical and vector routes over a
+            // workspace's corpus and source outlines. A missing store is a
+            // model-visible error naming the project, not a panic.
+            let arguments = parse_arguments(&call.function.arguments);
+            return Ok(match tools::run_hybrid_search(&arguments) {
+                Err(error) => settled(format!("error: {error}")),
+                Ok(outcome) => settled(outcome.output),
             });
         }
         if name == tools::FRAME_TOOL {
@@ -11578,6 +11598,9 @@ mod tests {
                 // The catalog's `ui`: the closed-vocabulary component page,
                 // beside the deck and the frame in the deliverable family.
                 "ui",
+                // The hybrid retrieval's `hybrid_search`: the fused lexical
+                // and vector routes over a workspace's corpus and outlines.
+                "hybrid_search",
                 // The extraction leg rides the deck's slot: a typed read
                 // beside the decision tier, declared when the machine
                 // carries the credentials and named-absent otherwise.
@@ -11647,7 +11670,7 @@ mod tests {
         // computation over a value the model writes, and neither touches
         // anything outside itself. So does `plan`: it drafts a plan
         // document's declaration, which is the repo's own state.
-        assert_eq!(plain.declarations().len(), 31);
+        assert_eq!(plain.declarations().len(), 32);
         assert_eq!(plain.system_prompt(None), default_prompt());
         let _ = std::fs::remove_dir_all(&home);
         let _ = std::fs::remove_dir_all(&root);
@@ -15809,7 +15832,15 @@ mod tier_tests {
         let core: Vec<crate::api::ToolSpec> = (0..24)
             .map(|i| {
                 if i < 17 {
-                    big(CORE_KEEP[i])
+                    // The repeat count is the fixture's over-budget budget:
+                    // the core must exceed the surface bound at its current
+                    // value, so the tier has a tail to withhold. 80 repeats is
+                    // ~18k tokens against a 10,700 bound.
+                    crate::api::ToolSpec::function(
+                        CORE_KEEP[i],
+                        "a deliberately verbose tool description. ".repeat(80),
+                        serde_json::json!({"type": "object"}),
+                    )
                 } else {
                     big(&format!("special{i}"))
                 }
