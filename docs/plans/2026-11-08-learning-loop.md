@@ -216,8 +216,16 @@ as the problem sessions' turns.
       (pinned on the file's own text); the session's records carry the
       held and the answer, and the probe's carry the thinking and the
       confidence.*
-- [ ] **C10 — the gate.** fmt, clippy, release build, test — exit
+- [x] **C10 — the gate.** fmt, clippy, release build, test — exit
       codes read directly, the whole suite.
+      *Landed: `cargo fmt --all -- --check` exit 0, `cargo clippy
+      --all-targets -- -D warnings` exit 0, `cargo build --release`
+      exit 0, `cargo test` green — 1,999 lib tests and every
+      integration suite, the two lanes tests green under
+      `BROWSER_CHROME` (the environmental input the browser lane needs);
+      the face harness 998 checks across 117 cases; `plan_check.py`
+      exit 0. The live CLI proof: `fleet sessions --kind teaching` lists
+      the teaching session, `--kind practice` none, the default both.*
 - [x] **C11 — the docs.** `docs/features/learning.md` (new), the
       surfaces doc's rail inventory, and the memory doc's proposition
       type and premises field.
