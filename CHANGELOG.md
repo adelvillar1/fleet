@@ -34,7 +34,11 @@ paste path landed beside them.
   never its id: a session's ids do not restart with the process, so the
   owner's store held turns 13..16 written an hour after turns 493..512 —
   ordering by id would have spared the oldest turn and deleted the live one.
-  The daily maintenance script gained the leg for a machine whose face is
+  The store cap also counts every byte the store keeps: summing only the
+  spendable turns let a 5.2 GiB store report itself as under a 5 GiB cap,
+  so the verb's own sentence was false and the pass stopped early. It now
+  measures live — 5.07 GiB before a pass, 4.95 GiB when it returns. The
+  daily maintenance script gained the leg for a machine whose face is
   not running.
 - **KI-479 — the cache sweep had never once done its last tier.** It ran
   `cargo clean` under launchd's `PATH`, where `rustc` does not resolve, so

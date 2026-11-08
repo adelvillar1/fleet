@@ -167,13 +167,15 @@ pub fn prune_live(store: &Path, keep_turns: usize, max_bytes: u64) -> (usize, u6
         }
     }
     // The store's cap: the oldest turns go first, and a session's newest
-    // turn is never something the cap may spend.
+    // turn is never something the cap may spend. The total counts every
+    // survivor including the spared ones, so the cap the verb prints is
+    // the size the store actually holds: counting only the spendable
+    // bytes let a 5.2 GiB store report itself under a 5 GiB cap. When the
+    // spared turns alone exceed the cap the pass stops with them intact —
+    // the floor is not something it can spend, and it does not pretend
+    // otherwise.
     survivors.sort_by_key(|(captured_at, _, _, is_newest)| (*is_newest, *captured_at));
-    let mut total: u64 = survivors
-        .iter()
-        .filter(|(_, _, _, is_newest)| !*is_newest)
-        .map(|(_, _, size, _)| size)
-        .sum();
+    let mut total: u64 = survivors.iter().map(|(_, _, size, _)| size).sum();
     for (_, dir, size, is_newest) in &survivors {
         if total <= max_bytes {
             break;
@@ -1143,6 +1145,57 @@ mod tests {
             "the highest id survives on its clock, and it is not the turn the id rule would have spared"
         );
         assert!(newest.exists(), "the newest capture survives");
+        let _ = std::fs::remove_dir_all(tree.parent().unwrap());
+    }
+
+    /// The cap counts every byte the store keeps, spared turns included.
+    /// Counting only the spendable turns let the owner's store sit at
+    /// 5.2 GiB while the verb printed it as under a 5 GiB cap, and left
+    /// the oldest turns in place on a pass that believed it was done.
+    #[test]
+    fn the_store_cap_counts_the_turns_it_cannot_spend() {
+        let (tree, store) = scratch("capcount");
+        let sizes: Vec<u64> = vec![100_000; 10];
+        for (index, bytes) in sizes.iter().enumerate() {
+            let turn = index as u64 + 1;
+            let dir = store.join(format!("s-1/{turn}"));
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("manifest.json"), "{}").unwrap();
+            std::fs::write(dir.join("blob"), vec![b'x'; *bytes as usize]).unwrap();
+            // One second apart, oldest first: turn 10 is the newest.
+            let at = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000 + turn);
+            // A directory's clock is set through a handle on it: the pass
+            // reads `metadata(dir).modified()`, and `set_modified` lives on
+            // `File`, not on the `std::fs` functions.
+            std::fs::File::open(&dir).unwrap().set_modified(at).unwrap();
+        }
+        // Keep all ten by turn count, and cap the store at 700 KB. Each
+        // turn is 100_000 bytes of blob plus its manifest, so the ten sum
+        // to a little over 1 MB and the cap is reached by evicting the
+        // three oldest. The newest is spared at any cap.
+        // The cap is set to the exact size of the seven newest turns, so
+        // evicting the three oldest brings the store under it and any
+        // fourth eviction would be the pass over-spending.
+        let cap: u64 = (4..=10u64)
+            .map(|turn| dir_size(&store.join(format!("s-1/{turn}"))))
+            .sum();
+        let (removed, _) = prune_live(&store, 10, cap);
+        assert_eq!(removed, 3, "the oldest three go to reach the cap");
+        assert_eq!(list(&store, "s-1").len(), 7);
+        let left: u64 = list(&store, "s-1")
+            .iter()
+            .map(|snapshot| dir_size(&store.join(format!("s-1/{}", snapshot.turn))))
+            .sum();
+        assert!(
+            left <= cap,
+            "the store is at or under its cap: {left} of {cap}"
+        );
+        assert!(
+            store.join("s-1/10").exists(),
+            "the newest turn is never spent on the cap"
+        );
+        assert!(store.join("s-1/7").exists(), "the survivors are the newest");
+        assert!(!store.join("s-1/3").exists(), "the oldest go first");
         let _ = std::fs::remove_dir_all(tree.parent().unwrap());
     }
 
