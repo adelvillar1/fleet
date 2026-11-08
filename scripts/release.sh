@@ -140,6 +140,21 @@ fi
 [ -n "$NOTES_FILE" ] || NOTES_FILE=/tmp/release-notes.md
 
 VERSION=$(printf '%s' "$TAG" | sed 's/^v//')
+
+# The updater's signing key BEFORE the build: with createUpdaterArtifacts on
+# the bundler signs the .app.tar.gz at build time (TAURI_SIGNING_PRIVATE_KEY
+# accepts a PATH; the 0.6.0 face build proved it). A missing key would kill
+# the cut mid-build instead of up front.
+KEYFILE=/tmp/fleet-updater-key
+if [ ! -f "$KEYFILE" ]; then
+  echo "release.sh: the updater private key is not at $KEYFILE" >&2
+  echo "release.sh: extract it from the vault:" >&2
+  echo "  export FLEET_VAULT_PASSPHRASE=... && fleet vault get FLEET_TAURI_UPDATE_KEY > $KEYFILE" >&2
+  echo "release.sh: then re-run this mode. Nothing was cut." >&2
+  exit 1
+fi
+export TAURI_SIGNING_PRIVATE_KEY="$KEYFILE" TAURI_SIGNING_PRIVATE_KEY_PASSWORD=""
+
 echo "== building the $TAG binaries (release) =="
 cargo build --release > /tmp/release-build.log 2>&1 ||
   { echo "cargo build failed — /tmp/release-build.log"; exit 1; }
@@ -171,9 +186,9 @@ if ! gh release view "$TAG" --json name >/dev/null 2>&1; then
   [ -f "$NOTES_FILE" ] || die "no release $TAG and no notes file to create it with"
   gh release create "$TAG" --title "$TAG" --notes-file "$NOTES_FILE" || die "gh release create failed"
 fi
-gh release upload "$TAG" "$DMG" "$TARBALL" --clobber ||
+gh release upload "$TAG" "$DMG" "$TARBALL" "$APP_TAR" "$APP_TAR.sig" --clobber ||
   die "gh release upload failed"
-echo "uploaded: $(basename "$DMG"), $(basename "$TARBALL")"
+echo "uploaded: $(basename "$DMG"), $(basename "$TARBALL"), $(basename "$APP_TAR") + .sig"
 
 # ---- the feed: latest.json, the v2 updater's channel ----------------------
 #
@@ -209,16 +224,9 @@ fi
 echo "== signing the updater artifact =="
 command -v cargo >/dev/null 2>&1 || die "cargo is not on PATH — the signer needs it"
 export PATH="$HOME/.cargo/bin:$PATH"
-KEYFILE=/tmp/fleet-updater-key
-if [ ! -f "$KEYFILE" ]; then
-  echo "release.sh: the updater private key is not at $KEYFILE" >&2
-  echo "release.sh: extract it from the vault:" >&2
-  echo "  export FLEET_VAULT_PASSPHRASE=... && fleet vault get FLEET_TAURI_UPDATE_KEY > $KEYFILE" >&2
-  echo "release.sh: then re-run this mode. Nothing was cut." >&2
-  exit 1
-fi
-# -k takes the key's CONTENTS, not a path — the path form fails with
-# "failed to decode base64 secret key" (proved with the live key 2026-11-08).
+# KEYFILE was already checked above the build (createUpdaterArtifacts signs
+# there too, via TAURI_SIGNING_PRIVATE_KEY). -k takes the key's CONTENTS,
+# not a path — the path form fails to decode (proved live 2026-11-08).
 cargo-tauri signer sign -k "$(cat "$KEYFILE")" "$APP_TAR" --password ""
 [ -f "$APP_TAR.sig" ] || die "the signer left no .sig beside $APP_TAR"
 
