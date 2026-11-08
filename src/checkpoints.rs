@@ -105,18 +105,19 @@ fn human_bytes(bytes: u64) -> String {
 /// captured is not seen, and every session keeps the turn its rewind
 /// points at.
 ///
-/// The caps are the same ones; only the eviction order changes. The
-/// per-session keep is `keep_turns`, and the store's byte cap is
-/// measured over the turns that may really go — so a store holding
-/// nothing but each session's newest turn reports nothing rather than
-/// spending the pass on what it must not free.
+/// The caps are the same ones [`prune`] enforces; the eviction order is
+/// what changes. A turn's **clock** orders it, never its id: the ids are
+/// a session's own count and they do not restart with the process, so a
+/// face reopened inside a session writes turn 13 an hour after turn 512.
+/// Measured on the owner's store — 13..16 written at 09:12 beside
+/// 493..512 written at 01:08 — which is why ordering by id would have
+/// spared the oldest turn and deleted the live one.
 pub fn prune_live(store: &Path, keep_turns: usize, max_bytes: u64) -> (usize, u64) {
     let mut removed = 0usize;
     let mut reclaimed = 0u64;
-    // `(modified, dir, bytes, is_a_sessions_newest)`. The newest turn of
-    // a session is sorted last and never evicted: it is the checkpoint a
-    // face's rewind button points at, and the one the run that is live
-    // just wrote.
+    // `(captured_at, dir, bytes, is_a_sessions_newest)`. A session's
+    // newest turn sorts last and is never evicted: it is the checkpoint
+    // a face's rewind points at and the one a live run just wrote.
     let mut survivors: Vec<(SystemTime, PathBuf, u64, bool)> = Vec::new();
     let Ok(sessions) = std::fs::read_dir(store) else {
         return (0, 0);
@@ -129,7 +130,7 @@ pub fn prune_live(store: &Path, keep_turns: usize, max_bytes: u64) -> (usize, u6
         // A turn counts only once its manifest landed: the capture
         // writes the manifest after the files, so a directory without
         // one is a capture still writing and is left alone.
-        let mut ids: Vec<u64> = std::fs::read_dir(&sess_path)
+        let mut turns: Vec<(SystemTime, u64)> = std::fs::read_dir(&sess_path)
             .into_iter()
             .flatten()
             .filter_map(|entry| entry.ok())
@@ -138,38 +139,36 @@ pub fn prune_live(store: &Path, keep_turns: usize, max_bytes: u64) -> (usize, u6
                 if !path.is_dir() || !path.join("manifest.json").exists() {
                     return None;
                 }
-                entry
-                    .file_name()
-                    .to_str()
-                    .and_then(|name| name.parse::<u64>().ok())
+                let id = entry.file_name().to_str()?.parse::<u64>().ok()?;
+                let at = std::fs::metadata(&path)
+                    .and_then(|meta| meta.modified())
+                    .unwrap_or(SystemTime::UNIX_EPOCH);
+                Some((at, id))
             })
             .collect();
-        ids.sort_unstable();
-        let Some(&newest) = ids.last() else {
-            continue;
-        };
-        let keep_from = ids.len().saturating_sub(keep_turns);
-        for (index, id) in ids.iter().enumerate() {
+        // Newest first, so the first `keep_turns` are the ones to keep
+        // whatever the id sequence did.
+        turns.sort_unstable();
+        turns.reverse();
+        for (index, (captured_at, id)) in turns.iter().enumerate() {
             let dir = sess_path.join(id.to_string());
-            let is_newest = *id == newest;
-            if index < keep_from && !is_newest {
-                let size = dir_size(&dir);
-                if std::fs::remove_dir_all(&dir).is_ok() {
-                    removed += 1;
-                    reclaimed += size;
-                }
+            // The first entry is the newest capture, whatever its id.
+            let is_newest = index == 0;
+            let size = dir_size(&dir);
+            // Newest first, so the first `keep_turns` are the keepers.
+            if index < keep_turns || is_newest {
+                survivors.push((*captured_at, dir, size, is_newest));
                 continue;
             }
-            let modified = std::fs::metadata(&dir)
-                .and_then(|meta| meta.modified())
-                .unwrap_or(SystemTime::UNIX_EPOCH);
-            let size = dir_size(&dir);
-            survivors.push((modified, dir, size, is_newest));
+            if std::fs::remove_dir_all(&dir).is_ok() {
+                removed += 1;
+                reclaimed += size;
+            }
         }
     }
     // The store's cap: the oldest turns go first, and a session's newest
     // turn is never something the cap may spend.
-    survivors.sort_by_key(|(modified, _, _, is_newest)| (*is_newest, *modified));
+    survivors.sort_by_key(|(captured_at, _, _, is_newest)| (*is_newest, *captured_at));
     let mut total: u64 = survivors
         .iter()
         .filter(|(_, _, _, is_newest)| !*is_newest)
@@ -1089,6 +1088,61 @@ mod tests {
         let (removed3, _) = prune_live(&store, 20, 0);
         assert_eq!(removed3, 0, "an in-flight capture is invisible to the pass");
         assert!(inflight.exists(), "and it is still there for its run");
+        let _ = std::fs::remove_dir_all(tree.parent().unwrap());
+    }
+
+    /// The ids are a session's own count and do not restart with the
+    /// process: a face reopened inside a session writes turn 13 after
+    /// turn 512. Ordering by id would spare the oldest capture and delete
+    /// the live one, so the pass must order by the capture's clock.
+    #[test]
+    fn live_prune_spares_the_newest_capture_not_the_highest_turn_id() {
+        let (tree, store) = scratch("prune-live-clock");
+        std::fs::write(tree.join("a.txt"), "one\n").unwrap();
+        for turn in 493..=512u64 {
+            capture(&tree, &store, "s-1", turn).unwrap();
+        }
+        // The restart: the same session keeps counting from 13, and these
+        // are the newest captures by an hour.
+        for turn in 13..=16u64 {
+            capture(&tree, &store, "s-1", turn).unwrap();
+        }
+        let newest = store.join("s-1").join("16");
+        let newer = std::time::SystemTime::now() + std::time::Duration::from_secs(60);
+        for turn in 13..=16u64 {
+            let dir = store.join("s-1").join(turn.to_string());
+            std::fs::File::options()
+                .write(true)
+                .open(dir.join("manifest.json"))
+                .unwrap()
+                .set_modified(newer)
+                .unwrap();
+        }
+        let (removed, _) = prune_live(&store, 20, u64::MAX);
+        assert_eq!(removed, 4, "the 24 turns trim to 20");
+        assert_eq!(list(&store, "s-1").len(), 20);
+        // The 20 newest captures are the restarted 13..=16 plus the 16
+        // newest of the first run — so the four that go are 493..=496,
+        // the oldest captures. Turn 512, the highest id in the store, is
+        // one of the keepers on its clock alone; ordering by id would
+        // have made it the spared turn and 13 the deleted one.
+        for turn in 493..=496u64 {
+            assert!(
+                !store.join(format!("s-1/{turn}")).exists(),
+                "turn {turn} is an old capture and goes"
+            );
+        }
+        for turn in 13..=16u64 {
+            assert!(
+                store.join(format!("s-1/{turn}")).exists(),
+                "turn {turn} is a newest capture and stays"
+            );
+        }
+        assert!(
+            store.join("s-1/512").exists(),
+            "the highest id survives on its clock, and it is not the turn the id rule would have spared"
+        );
+        assert!(newest.exists(), "the newest capture survives");
         let _ = std::fs::remove_dir_all(tree.parent().unwrap());
     }
 

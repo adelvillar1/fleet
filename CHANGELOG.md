@@ -30,8 +30,12 @@ paste path landed beside them.
   lines for its whole life. The retention now runs on a 15-minute timer for
   the life of the process that creates the debris (`gui::serve` and the
   chat), through a live-safe pass that never deletes a capture still writing
-  and never takes the turn a rewind points at. The daily maintenance script
-  gained the leg for a machine whose face is not running.
+  and never takes the turn a rewind points at. A turn's clock orders it,
+  never its id: a session's ids do not restart with the process, so the
+  owner's store held turns 13..16 written an hour after turns 493..512 —
+  ordering by id would have spared the oldest turn and deleted the live one.
+  The daily maintenance script gained the leg for a machine whose face is
+  not running.
 - **KI-479 — the cache sweep had never once done its last tier.** It ran
   `cargo clean` under launchd's `PATH`, where `rustc` does not resolve, so
   cargo exited 101 and cleaned nothing while the script reported "the dev
