@@ -24,6 +24,7 @@ pub mod compaction;
 pub mod cron;
 pub mod deck;
 pub mod delegate;
+pub mod demand;
 pub mod desk;
 pub mod doctor;
 pub mod documents;

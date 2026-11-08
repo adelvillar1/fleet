@@ -437,6 +437,7 @@ async fn the_delegate_beat_opens_the_shared_session_once() {
         home: &home,
         day: day.clone(),
         dry_run: false,
+        session: None,
         lane: LaneSource::Counting(std::sync::Arc::clone(&log)),
     })
     .await;
@@ -476,6 +477,7 @@ async fn judge_over_asks(
         home,
         day: day.to_string(),
         dry_run,
+        session: None,
         lane: LaneSource::Scripted(lane),
     })
     .await
@@ -1889,6 +1891,75 @@ fn no_synchronous_path_references_the_delegation_beat() {
 
 // --- the beat, end to end over the scripted lane ---
 
+/// The re-run decision: a confident wrong re-dispatches; a right, a
+/// tentative wrong, and an insufficient verdict all let it stand.
+#[test]
+fn a_confident_wrong_reruns_and_the_rest_stand() {
+    let confident_wrong = crate::delegate::ProbeVerdict {
+        verdict: "wrong".to_string(),
+        confidence: 0.9,
+        reason: "the child missed the brief".to_string(),
+    };
+    assert!(crate::delegate::should_rerun(&confident_wrong));
+    let tentative_wrong = crate::delegate::ProbeVerdict {
+        verdict: "wrong".to_string(),
+        confidence: 0.5,
+        reason: String::new(),
+    };
+    assert!(!crate::delegate::should_rerun(&tentative_wrong));
+    let right = crate::delegate::ProbeVerdict {
+        verdict: "right".to_string(),
+        confidence: 0.95,
+        reason: String::new(),
+    };
+    assert!(!crate::delegate::should_rerun(&right));
+    let insufficient = crate::delegate::ProbeVerdict {
+        verdict: "insufficient".to_string(),
+        confidence: 0.9,
+        reason: String::new(),
+    };
+    assert!(
+        crate::delegate::should_rerun(&insufficient),
+        "an insufficient outcome is a stalled trajectory — it re-runs too"
+    );
+}
+
+/// The probe's lane path: the child's log is read, the scripted lane
+/// answers a `block` verdict at 0.9, and the grade reads it as a
+/// confident wrong — the re-run decision's input.
+#[tokio::test]
+async fn the_probe_reads_the_child_log_and_the_lane_verdict() {
+    let root = scratch("probe");
+    let log = root.join("child.jsonl");
+    std::fs::write(
+        &log,
+        "{\"type\":\"user\",\"content\":\"the brief: sort the list\"}\n{\"type\":\"end\",\"stop_reason\":\"completed\",\"turns\":2}\n",
+    )
+    .unwrap();
+    let mut row = delegation_row("sess-child", "glide", "hard", "completed");
+    row.log = log.display().to_string();
+    let lane = scripted_lane(
+        r#"{"verdict":"block","confidence":0.9,"reason":"the brief drove away"}"#,
+        1,
+    )
+    .expect("the scripted lane");
+    let mut session = crate::judge::LaneSession::open(
+        &crate::lanes::LaneSource::Scripted(lane),
+        crate::delegate::DELEGATE_LANE,
+        crate::delegate::DELEGATE_TOOL,
+        crate::delegate::DELEGATE_TASK,
+    )
+    .await
+    .expect("the lane opens");
+    let probe = crate::delegate::probe_outcome(&mut session, &row)
+        .await
+        .expect("the probe answers");
+    assert_eq!(probe.verdict, "wrong", "a `block` verdict grades wrong");
+    assert!((probe.confidence - 0.9).abs() < 1e-9);
+    assert!(crate::delegate::should_rerun(&probe));
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 #[tokio::test]
 async fn a_days_delegations_are_judged_beside_themselves_and_the_rows_land() {
     let home = scratch("judged-home");
@@ -2066,6 +2137,7 @@ async fn a_lane_that_cannot_answer_fails_open_naming_its_reason() {
         home: &home,
         day: day(),
         dry_run: false,
+        session: None,
         lane,
     })
     .await;

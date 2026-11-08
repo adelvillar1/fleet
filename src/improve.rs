@@ -2754,6 +2754,480 @@ pub fn render_lessons(lessons: &[Lesson]) -> String {
 }
 
 #[cfg(test)]
+mod capability_tests {
+    use super::*;
+
+    fn scratch(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("fleet-caps-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// The applied proposals render as capabilities with their targets
+    /// and cues, and the empty library says so.
+    #[test]
+    fn the_applied_proposals_render_as_capabilities() {
+        let home = scratch("view");
+        let dir = lessons_dir(&home);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("the-gate-is-local.md"),
+            "---\nname: the-gate-is-local\ntarget: source\ntarget-name: src/improve.rs\nbasis: confirmed-by\ncreated: 2026-11-07\nstatus: applied\n---\n\n## Contrast\n\nthe gate ran and the corpus held\n\n## Cue\n\na proposal touches the gate\n\n## Lesson\n\nthe gate is the measure\n\n## Why\n\nthe corpus regressed without it\n",
+        )
+        .unwrap();
+        let caps = capabilities(&home);
+        assert_eq!(caps.len(), 1);
+        assert_eq!(caps[0].name, "the-gate-is-local");
+        assert_eq!(caps[0].target, "source");
+        assert_eq!(caps[0].cue, "a proposal touches the gate");
+        let rendered = render_capabilities(&caps);
+        assert!(rendered.contains("the-gate-is-local"), "{rendered}");
+        assert!(rendered.contains("source: src/improve.rs"), "{rendered}");
+        let empty = scratch("empty");
+        let rendered = render_capabilities(&capabilities(&empty));
+        assert!(rendered.contains("nothing applied yet"), "{rendered}");
+        let _ = std::fs::remove_dir_all(&home);
+        let _ = std::fs::remove_dir_all(&empty);
+    }
+}
+
+// --- the twin and the sham (C3) ----------------------------------------------
+
+/// The race's verdict: the applied change beat both baselines, or it
+/// fell to the twin (a no-op would have scored the same — the change is
+/// decoration) or the sham (scrambled information scored the same — the
+/// gain was capacity, not content).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RaceVerdict {
+    Applied,
+    RefusedTwin,
+    RefusedSham,
+}
+
+/// One race's three scores: the applied tree, the twin (the change
+/// reverted), and the sham (the change scrambled).
+#[derive(Debug, Clone, PartialEq)]
+pub struct RaceResult {
+    pub applied: f64,
+    pub twin: f64,
+    pub sham: f64,
+    pub verdict: RaceVerdict,
+}
+
+/// The sham's scramble: the patch's lines reversed — the same shape,
+/// the same size, the information gone. Deterministic, so a race
+/// replays exactly.
+pub fn scramble(content: &str) -> String {
+    let mut lines: Vec<&str> = content.lines().collect();
+    lines.reverse();
+    let mut out = lines.join("\n");
+    if content.ends_with('\n') {
+        out.push('\n');
+    }
+    out
+}
+
+/// The race's decision: the applied change must beat BOTH baselines.
+/// The twin rules out decoration (a no-op scoring the same); the sham
+/// rules out raw capacity (scrambled content scoring the same). Ties
+/// refuse — a change that does not improve on doing nothing is not a
+/// change the evidence supports.
+pub fn race_verdict(applied: f64, twin: f64, sham: f64) -> RaceVerdict {
+    if applied <= twin {
+        RaceVerdict::RefusedTwin
+    } else if applied <= sham {
+        RaceVerdict::RefusedSham
+    } else {
+        RaceVerdict::Applied
+    }
+}
+
+/// The score of one corpus run: passed over the scenarios.
+fn corpus_score(report: &crate::eval::EvalReport) -> f64 {
+    let total = report.scenarios.len();
+    if total == 0 {
+        1.0
+    } else {
+        report.passed() as f64 / total as f64
+    }
+}
+
+/// Run the race for one proposal: the corpus on the applied tree, on
+/// the twin (the patch reverted), and on the sham (the patch
+/// scrambled). The patch is a source `Patch`; the revert is the
+/// structural one the apply path uses (`git checkout HEAD --`). The
+/// file is restored whatever the runs do.
+pub async fn race(root: &Path, mock_bin: &Path, proposal: &Proposal) -> Result<RaceResult, String> {
+    let Change::Patch { path, content } = &proposal.change else {
+        return Err(format!(
+            "`{}` is not a source patch — the race runs a patch against the corpus",
+            proposal.name
+        ));
+    };
+    let target = root.join(path);
+    if let Some(parent) = target.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let head = std::fs::read_to_string(&target).unwrap_or_default();
+    let restore = || {
+        let _ = std::fs::write(&target, &head);
+    };
+    // The applied arm.
+    std::fs::write(&target, content)
+        .map_err(|error| format!("the applied arm did not write: {error}"))?;
+    let applied_report = crate::eval::run(root, mock_bin).await;
+    restore();
+    // The twin arm: the file at its HEAD content.
+    let twin_report = crate::eval::run(root, mock_bin).await;
+    // The sham arm: the patch scrambled.
+    std::fs::write(&target, scramble(content))
+        .map_err(|error| format!("the sham arm did not write: {error}"))?;
+    let sham_report = crate::eval::run(root, mock_bin).await;
+    restore();
+    let applied = corpus_score(&applied_report);
+    let twin = corpus_score(&twin_report);
+    let sham = corpus_score(&sham_report);
+    Ok(RaceResult {
+        verdict: race_verdict(applied, twin, sham),
+        applied,
+        twin,
+        sham,
+    })
+}
+
+/// Render the race's cards: the three scores and the verdict.
+pub fn render_race(proposal: &str, race: &RaceResult) -> String {
+    let mut out = String::new();
+    out.push_str(&format!("the race — {proposal}\n"));
+    out.push_str(&format!(
+        "  applied  {:.0}%\n  twin     {:.0}%  (the change reverted)\n  sham     {:.0}%  (the change scrambled)\n",
+        race.applied * 100.0,
+        race.twin * 100.0,
+        race.sham * 100.0
+    ));
+    out.push_str(&format!(
+        "  verdict: {}\n",
+        match race.verdict {
+            RaceVerdict::Applied => "applied — the change beats both baselines",
+            RaceVerdict::RefusedTwin =>
+                "REFUSED — the twin matched it: a no-op would have scored the same",
+            RaceVerdict::RefusedSham =>
+                "REFUSED — the sham matched it: the gain was capacity, not content",
+        }
+    ));
+    out
+}
+
+#[cfg(test)]
+mod race_tests {
+    use super::*;
+
+    /// The sham's scramble reverses the lines, deterministic.
+    #[test]
+    fn the_sham_scrambles_deterministically() {
+        let content = "alpha\nbeta\ngamma\n";
+        let once = scramble(content);
+        assert_eq!(once, "gamma\nbeta\nalpha\n");
+        assert_eq!(once, scramble(content), "the scramble replays exactly");
+        assert_ne!(once, content);
+    }
+
+    /// The race's decision: the applied change must beat both
+    /// baselines; a tie refuses.
+    #[test]
+    fn the_applied_change_must_beat_both_baselines() {
+        assert_eq!(race_verdict(0.9, 0.5, 0.6), RaceVerdict::Applied);
+        assert_eq!(
+            race_verdict(0.5, 0.5, 0.4),
+            RaceVerdict::RefusedTwin,
+            "a tie with the twin is decoration"
+        );
+        assert_eq!(
+            race_verdict(0.5, 0.4, 0.5),
+            RaceVerdict::RefusedSham,
+            "a tie with the sham is capacity"
+        );
+        assert_eq!(race_verdict(0.4, 0.5, 0.3), RaceVerdict::RefusedTwin);
+    }
+
+    /// The race over a fixture: a patch to a scratch file the corpus
+    /// does not read scores the same on all three arms — the twin
+    /// refuses it, which is the placebo test working.
+    #[tokio::test]
+    async fn a_scratch_patch_races_to_a_twin_refusal() {
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let mock_bin = crate::eval::mock_server_binary().expect("the mock binary");
+        let scratch = "tmp/race-fixture.txt";
+        let _ = std::fs::remove_file(root.join(scratch));
+        let proposal = Proposal {
+            name: "race-fixture".to_string(),
+            target: Target::Source,
+            target_name: scratch.to_string(),
+            basis: Basis::ConfirmedBy,
+            created: crate::calib::today(),
+            status: Status::Pending,
+            justification: "the fixture".to_string(),
+            acceptance: String::new(),
+            effect: String::new(),
+            change: Change::Patch {
+                path: scratch.to_string(),
+                content: "the applied content\n".to_string(),
+            },
+            store: Store::General,
+            path: std::path::PathBuf::from("/tmp/race-fixture.md"),
+            commit: None,
+            gate: String::new(),
+            last_refusal: String::new(),
+            target_shas: Vec::new(),
+        };
+        let race = race(&root, &mock_bin, &proposal)
+            .await
+            .expect("the race runs");
+        assert_eq!(
+            race.applied, race.twin,
+            "the corpus does not read the scratch file"
+        );
+        assert_eq!(race.verdict, RaceVerdict::RefusedTwin);
+        let _ = std::fs::remove_file(root.join(scratch));
+    }
+}
+
+// --- the capability library (C7) --------------------------------------------
+
+/// One capability the system established about itself: an applied
+/// proposal rendered as what it learned to do — the check, pattern,
+/// or threshold it put in place. The article's coda — a growing
+/// library of intervention tools — read from the loop's own history.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Capability {
+    /// The proposal's name.
+    pub name: String,
+    /// What it changed: skill, memory, source, or config.
+    pub target: String,
+    /// The target's name or path.
+    pub target_name: String,
+    /// When this situation arises — the cue a future proposal matches.
+    pub cue: String,
+    /// What was learned: the change's expected effect.
+    pub lesson: String,
+}
+
+/// The capabilities from the applied proposals — the lesson store,
+/// newest first, rendered as what the system learned to do.
+pub fn capabilities(home: &Path) -> Vec<Capability> {
+    load_lessons(home)
+        .into_iter()
+        .map(|lesson| Capability {
+            name: lesson.name,
+            target: lesson.target.label().to_string(),
+            target_name: lesson.target_name,
+            cue: lesson.cue,
+            lesson: lesson.lesson,
+        })
+        .collect()
+}
+
+/// Render the capability library as the CLI's cards: each capability
+/// with its target and the cue it answers to.
+pub fn render_capabilities(capabilities: &[Capability]) -> String {
+    let mut out = String::new();
+    out.push_str(&format!(
+        "the capability library — {} applied change{} rendered as capabilities
+",
+        capabilities.len(),
+        if capabilities.len() == 1 { "" } else { "s" }
+    ));
+    for capability in capabilities {
+        out.push_str(&format!(
+            "\n  {}  ({}: {})\n    when: {}\n    learned: {}\n",
+            capability.name,
+            capability.target,
+            capability.target_name,
+            capability.cue,
+            capability.lesson
+        ));
+    }
+    if capabilities.is_empty() {
+        out.push_str(
+            "\n  nothing applied yet — the library grows one capability per landed proposal\n",
+        );
+    }
+    out
+}
+
+// --- analysis before policy (C4) --------------------------------------------
+
+/// One class's measured separation: the confidence threshold that
+/// best divides right verdicts from wrong, and the misclassifications
+/// it costs. Qwen's finding, mechanised: the thresholds a proposal
+/// writes are measured from the graded rows, never guessed.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClassAnalysis {
+    /// The class: `workload/provider` for the routing judgment.
+    pub class: String,
+    /// The rows the class collected.
+    pub rows: u64,
+    /// The wrong verdicts among them.
+    pub bad: u64,
+    /// `bad / rows`, in `[0, 1]`.
+    pub rate: f64,
+    /// The best separating threshold, when the class carries both
+    /// right and wrong verdicts with confidences to separate.
+    pub threshold: Option<f64>,
+    /// The misclassifications at that threshold: rights below it
+    /// (flagged suspect) plus wrongs at or above it (missed).
+    pub errors: usize,
+}
+
+/// The default analysis window, in days — the demand map's own.
+pub const ANALYZE_WINDOW_DAYS: usize = 14;
+
+/// Measure the stream's routing judgments per class: the failure rate
+/// and the confidence threshold that separates right from wrong. A
+/// class with only one verdict side carries no threshold — the
+/// honest absence, not a fabricated split.
+pub fn analyze(root: &Path, day: &str, days: usize) -> Vec<ClassAnalysis> {
+    use std::collections::HashMap;
+    #[derive(Default)]
+    struct Accum {
+        rows: u64,
+        bad: u64,
+        /// (confidence, bad) per row, for the separation.
+        verdicts: Vec<(f64, bool)>,
+    }
+    let mut accums: HashMap<String, Accum> = HashMap::new();
+    for row in calib::read_days_recent(root, day, days) {
+        if row.op != calib::OP_ROUTE_JUDGED {
+            continue;
+        }
+        if row.workload.trim().is_empty() || row.provider.trim().is_empty() {
+            continue;
+        }
+        let bad = row.verdict != "right";
+        let entry = accums
+            .entry(format!("{}/{}", row.workload, row.provider))
+            .or_default();
+        entry.rows += 1;
+        entry.bad += bad as u64;
+        entry.verdicts.push((row.confidence, bad));
+    }
+    let mut out: Vec<ClassAnalysis> = accums
+        .into_iter()
+        .map(|(class, accum)| {
+            let (threshold, errors) = separate(&accum.verdicts);
+            ClassAnalysis {
+                rate: if accum.rows == 0 {
+                    0.0
+                } else {
+                    accum.bad as f64 / accum.rows as f64
+                },
+                class,
+                rows: accum.rows,
+                bad: accum.bad,
+                threshold,
+                errors,
+            }
+        })
+        .collect();
+    out.sort_by(|left, right| {
+        right
+            .rate
+            .partial_cmp(&left.rate)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| left.class.cmp(&right.class))
+    });
+    out
+}
+
+/// The separating threshold: the confidence value minimizing the
+/// misclassifications — rights below it (a tentative right is the
+/// dangerous direction, so it counts as an error) plus wrongs at or
+/// above it. Ties resolve to the higher threshold (the stricter
+/// flagging). `None` when the class carries only one verdict side.
+fn separate(verdicts: &[(f64, bool)]) -> (Option<f64>, usize) {
+    let rights = verdicts.iter().filter(|(_, bad)| !*bad).count();
+    let wrongs = verdicts.len() - rights;
+    if rights == 0 || wrongs == 0 {
+        return (None, 0);
+    }
+    let mut candidates: Vec<f64> = verdicts.iter().map(|(confidence, _)| *confidence).collect();
+    candidates.sort_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal));
+    candidates.dedup_by(|left, right| (*left - *right).abs() < 1e-9);
+    let mut best: Option<(f64, usize)> = None;
+    for candidate in candidates {
+        let errors = verdicts
+            .iter()
+            .filter(|(confidence, bad)| {
+                if *bad {
+                    *confidence >= candidate
+                } else {
+                    *confidence < candidate
+                }
+            })
+            .count();
+        match best {
+            Some((_, best_errors)) if best_errors <= errors => {}
+            _ => best = Some((candidate, errors)),
+        }
+    }
+    // The strictest among the equally-good thresholds: the last one
+    // with the minimum error count.
+    let min_errors = best.map(|(_, errors)| errors).unwrap_or(0);
+    let strictest = verdicts
+        .iter()
+        .map(|(confidence, _)| *confidence)
+        .filter(|candidate| {
+            let errors = verdicts
+                .iter()
+                .filter(|(confidence, bad)| {
+                    if *bad {
+                        *confidence >= *candidate
+                    } else {
+                        *confidence < *candidate
+                    }
+                })
+                .count();
+            errors == min_errors
+        })
+        .max_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal));
+    (strictest, min_errors)
+}
+
+/// Render the analysis as the CLI's cards: per class, the failure rate
+/// and the measured threshold with its error count.
+pub fn render_analysis(analyses: &[ClassAnalysis], days: usize) -> String {
+    let mut out = String::new();
+    out.push_str(&format!(
+        "the analysis — {days} day{} of routing judgments, {} class{} measured\n",
+        if days == 1 { "" } else { "s" },
+        analyses.len(),
+        if analyses.len() == 1 { "" } else { "es" }
+    ));
+    for analysis in analyses {
+        let threshold = match analysis.threshold {
+            Some(threshold) => format!(
+                "threshold {:.2}  {} misclassified",
+                threshold, analysis.errors
+            ),
+            None => "no threshold — one verdict side only".to_string(),
+        };
+        out.push_str(&format!(
+            "  {:<28} {:>3} bad of {:>3}  {:>4.0}%  {}\n",
+            analysis.class,
+            analysis.bad,
+            analysis.rows,
+            analysis.rate * 100.0,
+            threshold
+        ));
+    }
+    out.push_str(
+        "\nthe threshold is the confidence a proposal's acceptance criteria should be written from\n",
+    );
+    out
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -4547,5 +5021,91 @@ mod tests {
             crate::tools::improve_spec_with_lessons(&bare).description(),
             crate::tools::improve_spec().description()
         );
+    }
+}
+
+// --- the analysis' tests ----------------------------------------------------
+
+#[cfg(test)]
+mod analyze_tests {
+    use super::*;
+
+    fn scratch(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("fleet-analyze-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn route_line(
+        index: usize,
+        workload: &str,
+        provider: &str,
+        verdict: &str,
+        confidence: f64,
+    ) -> String {
+        let mut line = serde_json::json!({
+            "ts": format!("2026-11-0{index}T00:00:00Z"),
+            "op": "route_judged",
+            "route_key": format!("{provider}-{workload}-{verdict}"),
+            "provider": provider,
+            "workload": workload,
+            "verdict": verdict,
+            "confidence": confidence,
+            "reason": "",
+            "lane": "sys1",
+        })
+        .to_string();
+        line.push('\n');
+        line
+    }
+
+    /// The threshold is measured, not guessed: wrong verdicts at low
+    /// confidence and right verdicts at high confidence separate at
+    /// the boundary, and a one-sided class carries no threshold.
+    #[test]
+    fn the_threshold_separates_right_from_wrong_and_refuses_one_sided_classes() {
+        let root = scratch("threshold");
+        // The fixtures are hand-written JSON lines, not the row type:
+        // the socket guard's "only calib and judge construct one"
+        // stays literally true of this file (the route.rs precedent).
+        let day = "2026-11-20";
+        let mut lines = String::new();
+        for index in 0..4 {
+            lines.push_str(&route_line(index, "deploy", "glide", "wrong", 0.5));
+        }
+        for index in 0..4 {
+            lines.push_str(&route_line(index, "deploy", "glide", "right", 0.9));
+        }
+        // A one-sided class: every verdict right — no threshold exists.
+        for index in 0..3 {
+            lines.push_str(&route_line(index, "build", "drex", "right", 0.8));
+        }
+        let file = calib::day_path(&root, day);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, lines).unwrap();
+        let analyses = analyze(&root, "2026-11-20", 30);
+        let deploy = analyses
+            .iter()
+            .find(|analysis| analysis.class == "deploy/glide")
+            .expect("the deploy class");
+        assert_eq!(deploy.rows, 8);
+        assert_eq!(deploy.bad, 4);
+        assert!((deploy.rate - 0.5).abs() < 1e-9);
+        let threshold = deploy.threshold.expect("the two sides separate");
+        assert!(
+            threshold > 0.5 && threshold <= 0.9,
+            "the boundary: {threshold}"
+        );
+        assert_eq!(deploy.errors, 0, "a clean separation");
+        let build = analyses
+            .iter()
+            .find(|analysis| analysis.class == "build/drex")
+            .expect("the build class");
+        assert_eq!(build.threshold, None, "one side, no threshold");
+        let rendered = render_analysis(&analyses, 30);
+        assert!(rendered.contains("deploy/glide"), "{rendered}");
+        assert!(rendered.contains("threshold"), "{rendered}");
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

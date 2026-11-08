@@ -445,6 +445,7 @@ outcomes — never task text.
 | Module | Source |
 |---|---|
 | `memory.rs` | `docs/features/memory.md`; `docs/architecture/deep-dive-2026-10-15.md`; `docs/architecture/deep-dive-2026-11-07-memory-dreaming.md` |
+| `demand.rs` | `docs/features/self-maintenance.md`; `docs/architecture/deep-dive-2026-11-07-self-improvement.md` |
 | `dream.rs` | `docs/features/memory.md`; `docs/architecture/deep-dive-2026-11-07-memory-dreaming.md` |
 | `session_recall.rs` | `docs/features/memory.md`; `docs/architecture/deep-dive-2026-10-15.md` |
 | `skills.rs` | `docs/features/skills.md` |
@@ -478,6 +479,19 @@ the bar retires through the real supersede path, everything else is a
 `validate` calib row and a named skip. `fleet memories --validate`
 runs one pass on demand; `spawn_homekeeping` runs the cycle and the
 pass hourly in chat, the TUI, and the face.
+
+#### `demand.rs`
+The demand map (the self-improvement plan's C0): the phantom
+gradient's fleet instrument over the calibration stream. Per-class
+demand — the routing judgment's workload × provider, the eval
+corpus's scenarios, the delegation outcomes, the validate verdicts —
+each with its bad-rate, row count, and trend across the window's
+halves (`Trend`: improving, flat, worsening, thin). `fleet demand`
+prints it and lands one `demand` row; `fleet demand --cluster` groups
+the failures, surfaces the examples, and files a shape proposal per
+cluster at or over the threshold. The clustering beat, the race, the
+analysis, the gaps, the capability view, and the self-probe live
+beside it in `improve.rs`, `eval.rs`, and `delegate.rs`.
 
 #### `dream.rs`
 The dream pass's lane-owning validator: the sys1 lane session (opened

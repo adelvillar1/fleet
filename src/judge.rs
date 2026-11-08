@@ -171,6 +171,9 @@ pub struct JudgeRequest<'a> {
     /// Rehearse only: resolve the rows and show what would be asked — no
     /// ask, no row, no spend.
     pub dry_run: bool,
+    /// The run scope: judge one run's route rows (its input hash)
+    /// instead of the whole day — the timing instrument.
+    pub run: Option<String>,
     /// Where the lane comes from.
     pub lane: LaneSource,
 }
@@ -289,6 +292,19 @@ pub fn day_spend(root: &Path, home: &Path, day: &str) -> f64 {
 /// The route rows a batch judges, in the day's order.
 pub fn route_rows(rows: &[ReadRow]) -> Vec<&ReadRow> {
     rows.iter().filter(|row| row.op == OP_ROUTE).collect()
+}
+
+/// The run scope: keep one run's route rows (its input hash), or all
+/// of them. The timing instrument — a judgment can land while the
+/// run's context is live.
+pub fn filter_run<'a>(routes: Vec<&'a ReadRow>, run: &Option<String>) -> Vec<&'a ReadRow> {
+    match run {
+        Some(hash) => routes
+            .into_iter()
+            .filter(|row| row.input_hash == *hash)
+            .collect(),
+        None => routes,
+    }
 }
 
 /// The keys already judged in `rows`, so a batch neither re-asks nor
@@ -975,10 +991,12 @@ pub async fn judge(request: JudgeRequest<'_>) -> JudgeOutcome {
         home,
         day,
         dry_run,
+        run,
         lane,
     } = request;
     let rows = read_day(root, &day);
     let routes = route_rows(&rows);
+    let routes = filter_run(routes, &run);
     let already = judged_keys(&rows);
     let spent = day_spend(root, home, &day);
     let cap = budget_usd_day();

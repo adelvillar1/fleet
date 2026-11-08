@@ -3240,6 +3240,7 @@ async fn calibration_loop_closes(_mock_bin: PathBuf) -> ScenarioOutcome {
         home: &home,
         day: day.clone(),
         dry_run: true,
+        run: None,
         lane: crate::judge::LaneSource::Scripted(spec.clone()),
     })
     .await;
@@ -3273,6 +3274,7 @@ async fn calibration_loop_closes(_mock_bin: PathBuf) -> ScenarioOutcome {
         home: &home,
         day: day.clone(),
         dry_run: false,
+        run: None,
         lane: crate::judge::LaneSource::Scripted(spec.clone()),
     })
     .await;
@@ -3330,6 +3332,7 @@ async fn calibration_loop_closes(_mock_bin: PathBuf) -> ScenarioOutcome {
         home: &home,
         day: day.clone(),
         dry_run: false,
+        run: None,
         lane: crate::judge::LaneSource::Scripted(spec.clone()),
     })
     .await;
@@ -3561,6 +3564,7 @@ async fn calibration_loop_closes(_mock_bin: PathBuf) -> ScenarioOutcome {
         home: &home,
         day: day.clone(),
         dry_run: false,
+        run: None,
         lane: crate::judge::LaneSource::Scripted(third_lane.spec()),
     })
     .await;
@@ -3649,6 +3653,7 @@ async fn calibration_loop_closes(_mock_bin: PathBuf) -> ScenarioOutcome {
         home: &home,
         day: day.clone(),
         dry_run: false,
+        run: None,
         lane: crate::judge::LaneSource::Scripted(fail_lane.spec()),
     })
     .await;
@@ -4037,6 +4042,7 @@ async fn delegation_loop_closes(_mock_bin: PathBuf) -> ScenarioOutcome {
         home: &home,
         day: day.clone(),
         dry_run: true,
+        session: None,
         lane: crate::delegate::LaneSource::Scripted(lane.spec()),
     })
     .await;
@@ -4085,6 +4091,7 @@ async fn delegation_loop_closes(_mock_bin: PathBuf) -> ScenarioOutcome {
         home: &home,
         day: day.clone(),
         dry_run: false,
+        session: None,
         lane: crate::delegate::LaneSource::Scripted(lane.spec()),
     })
     .await;
@@ -4171,6 +4178,7 @@ async fn delegation_loop_closes(_mock_bin: PathBuf) -> ScenarioOutcome {
         home: &home,
         day: day.clone(),
         dry_run: false,
+        session: None,
         lane: crate::delegate::LaneSource::Scripted(lane.spec()),
     })
     .await;
@@ -4380,6 +4388,7 @@ async fn delegation_loop_closes(_mock_bin: PathBuf) -> ScenarioOutcome {
         home: &home,
         day: day.clone(),
         dry_run: false,
+        session: None,
         lane: crate::delegate::LaneSource::Scripted(lane.spec()),
     })
     .await;
@@ -5511,6 +5520,131 @@ async fn blend1_corpus_recall(mock_bin: PathBuf) -> ScenarioOutcome {
     )
 }
 
+// --- the gaps (C6) ------------------------------------------------------------
+
+/// One uncovered class: a failure class the stream shows that the
+/// corpus does not grade. The article's jaggedness rule — test the
+/// sizes between the ones you trained on — made mechanical: a class
+/// with failures and no scenario is a gap by definition.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Gap {
+    /// The class: `workload/provider`, an outcome, a verdict.
+    pub class: String,
+    /// The family the class belongs to.
+    pub family: String,
+    /// The bad rows the class collected.
+    pub bad: u64,
+    /// The rows the class collected.
+    pub rows: u64,
+    /// The examples that name the mode.
+    pub examples: Vec<String>,
+}
+
+/// The corpus's scenario names — the coverage the gaps are measured
+/// against.
+pub fn scenario_names() -> Vec<&'static str> {
+    corpus().iter().map(|scenario| scenario.name).collect()
+}
+
+/// The gaps over the window: the stream's failure classes with no
+/// corpus scenario. The eval family's classes ARE the corpus's
+/// scenarios (a run's own rows), so the gaps are the other families'
+/// classes plus any eval class the corpus no longer carries.
+pub fn gaps(root: &Path, day: &str, days: usize) -> Vec<Gap> {
+    let covered = scenario_names();
+    crate::demand::clusters(root, day, days)
+        .into_iter()
+        .filter(|cluster| {
+            if cluster.family == "eval" {
+                !covered.contains(&cluster.class.as_str())
+            } else {
+                true
+            }
+        })
+        .map(|cluster| Gap {
+            class: cluster.class,
+            family: cluster.family,
+            bad: cluster.bad,
+            rows: cluster.rows,
+            examples: cluster.examples,
+        })
+        .collect()
+}
+
+/// Render the gap report: the uncovered classes strongest first, each
+/// with its examples — the material a promoted scenario is written
+/// from.
+pub fn render_gaps(gaps: &[Gap], days: usize) -> String {
+    let mut out = String::new();
+    out.push_str(&format!(
+        "the gaps — {days} day{} of the stream, {} class{} with no corpus scenario\n",
+        if days == 1 { "" } else { "s" },
+        gaps.len(),
+        if gaps.len() == 1 { "" } else { "es" }
+    ));
+    if gaps.is_empty() {
+        out.push_str("\nevery failure class the stream shows is covered by the corpus\n");
+        return out;
+    }
+    for gap in gaps {
+        out.push_str(&format!(
+            "\n{:<28} {:>3} bad of {:>3}  ({})\n",
+            gap.class, gap.bad, gap.rows, gap.family
+        ));
+        for example in gap.examples.iter().take(3) {
+            out.push_str(&format!("      · {example}\n"));
+        }
+    }
+    out.push_str(
+        "\npromote one with `fleet eval --promote <class>` — the seed a corpus scenario is written from\n",
+    );
+    out
+}
+
+/// Promote a gap into a scenario seed under `<FLEET_HOME>/eval-gaps/`:
+/// the class, its stats, its examples, and the scenario's proposed
+/// shape — the material the owner (or a plan) turns into a corpus
+/// scenario. The seed is a proposal, not a scenario: the corpus is
+/// code, and the gate guards its change.
+pub fn promote(home: &Path, gap: &Gap) -> Result<std::path::PathBuf, String> {
+    let dir = home.join("eval-gaps");
+    std::fs::create_dir_all(&dir)
+        .map_err(|error| format!("could not create {}: {error}", dir.display()))?;
+    let slug: String = gap
+        .class
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() {
+                character.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let path = dir.join(format!("{}-{}.md", slug.trim_matches('-'), calib::today()));
+    let mut out = String::new();
+    out.push_str(&format!("# scenario seed: {}\n\n", gap.class));
+    out.push_str(&format!(
+        "class: {}\nfamily: {}\nwindow bad: {} of {} rows\n\n",
+        gap.class, gap.family, gap.bad, gap.rows
+    ));
+    out.push_str("## Examples the seed was grown from\n\n");
+    if gap.examples.is_empty() {
+        out.push_str("(no examples recorded)\n");
+    }
+    for example in &gap.examples {
+        out.push_str(&format!("- {example}\n"));
+    }
+    out.push_str("\n## Proposed scenario\n\n");
+    out.push_str(&format!(
+        "a mock-driven scenario named `{}` in the corpus: it drives the failure's own shape (the examples above) against the mock, asserts the outcome the class's bad rows name, and joins the corpus's fixed definition. The scenario's driver and assertion are the author's to write — the seed carries the evidence, not the code.\n",
+        gap.class
+    ));
+    std::fs::write(&path, out)
+        .map_err(|error| format!("could not write {}: {error}", path.display()))?;
+    Ok(path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -6003,5 +6137,78 @@ mod tests {
         let refused = grade_output(&weird).expect_err("unmeasured");
         assert!(refused.contains("could not be measured"), "{refused}");
         assert!(!refused.contains("regressed"), "{refused}");
+    }
+}
+
+#[cfg(test)]
+mod gap_tests {
+    use super::*;
+
+    /// The gap report: the stream's classes minus the corpus's
+    /// scenarios, and the promotion writes the seed.
+    #[test]
+    fn the_gaps_name_the_uncovered_classes_and_promotion_writes_the_seed() {
+        let root = std::env::temp_dir().join(format!("fleet-gaps-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        // A route class with failures — uncovered by definition. The
+        // fixture is a hand-written JSON line, not the row type: the
+        // socket guard's "only calib and judge construct one" stays
+        // literally true of this file (the route.rs precedent).
+        let day = "2026-11-20";
+        let mut lines = String::new();
+        for index in 0..6 {
+            lines.push_str(
+                &serde_json::json!({
+                    "ts": format!("2026-11-0{index}T00:00:00Z"),
+                    "op": "route_judged",
+                    "route_key": "glide-deploy-wrong",
+                    "provider": "glide",
+                    "workload": "deploy",
+                    "verdict": "wrong",
+                    "confidence": 0.5,
+                    "reason": "the route picked the wrong provider",
+                    "lane": "sys1",
+                })
+                .to_string(),
+            );
+            lines.push('\n');
+        }
+        let file = crate::calib::day_path(&root, day);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, lines).unwrap();
+        let gaps = gaps(&root, "2026-11-20", 30);
+        assert!(!gaps.is_empty(), "a route class is a gap");
+        assert!(
+            gaps.iter()
+                .any(|gap| gap.class == "deploy/glide" && gap.bad == 6),
+            "{gaps:?}"
+        );
+        // The corpus's own scenarios never read as gaps.
+        assert!(
+            !gaps
+                .iter()
+                .any(|gap| scenario_names().contains(&gap.class.as_str())),
+            "a covered scenario is not a gap"
+        );
+        let rendered = render_gaps(&gaps, 30);
+        assert!(rendered.contains("deploy/glide"), "{rendered}");
+        // The promotion writes the seed with the examples.
+        let gap = gaps
+            .iter()
+            .find(|gap| gap.class == "deploy/glide")
+            .unwrap()
+            .clone();
+        let home = std::env::temp_dir().join(format!("fleet-gaps-home-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        let path = promote(&home, &gap).expect("the seed writes");
+        let text = std::fs::read_to_string(&path).expect("the seed reads back");
+        assert!(text.contains("scenario seed: deploy/glide"), "{text}");
+        assert!(
+            text.contains("the route picked the wrong provider"),
+            "{text}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&home);
     }
 }

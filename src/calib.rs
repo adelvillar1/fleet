@@ -540,6 +540,25 @@ pub struct ValidateRow {
     pub lane: String,
 }
 
+/// One demand-map view (the self-improvement plan's C0): the headline
+/// of a `fleet demand` run — the window, how many classes the map
+/// counted, and the top demand class with its bad-rate. The map itself
+/// is recomputed from the stream on every read; the row is the audit
+/// trail that a view ran and what it saw.
+#[derive(Debug, Clone, Serialize)]
+pub struct DemandRow {
+    pub ts: String,
+    /// The window in days the view read.
+    pub window_days: usize,
+    /// How many classes the map counted.
+    pub classes: usize,
+    /// The class with the highest bad-rate among those with enough
+    /// rows; empty when every class was thin.
+    pub top_class: String,
+    /// That class's bad-rate, in `[0, 1]`.
+    pub top_rate: f64,
+}
+
 /// One delegated run, as the orchestrator records it the moment a
 /// subagent stops. The row the beat reads and the row the parent chain
 /// joins on.
@@ -684,6 +703,7 @@ pub enum Row {
     Curate(CurateRow),
     Shape(ShapeRow),
     Validate(ValidateRow),
+    Demand(DemandRow),
 }
 
 impl Row {
@@ -706,6 +726,7 @@ impl Row {
             Row::EmbedTiming(_) => OP_EMBED_TIMING,
             Row::Shape(_) => OP_SHAPE,
             Row::Validate(_) => OP_VALIDATE,
+            Row::Demand(_) => OP_DEMAND,
         }
     }
 
@@ -728,6 +749,7 @@ impl Row {
             Row::EmbedTiming(row) => &row.ts,
             Row::Shape(row) => &row.ts,
             Row::Validate(row) => &row.ts,
+            Row::Demand(row) => &row.ts,
         }
     }
 }
@@ -1018,6 +1040,10 @@ pub const OP_CURATE: &str = "curate";
 /// pass did about each — so a stamped `validated` basis is never a
 /// claim without a row behind it.
 pub const OP_VALIDATE: &str = "validate";
+/// The demand op: one demand-map view over the stream (the
+/// self-improvement plan's C0) — the phantom-gradient instrument's
+/// audit trail: the window, the classes counted, the top demand.
+pub const OP_DEMAND: &str = "demand";
 /// The delegation op: one delegated run, recorded by the orchestrator
 /// the moment a subagent stops. Keyed by the child's own session id —
 /// the join to the child's session log, the value
@@ -1030,7 +1056,7 @@ pub const OP_DELEGATION: &str = "delegation";
 /// calib` groups them. The three the reads used to drop — `verify`,
 /// `embed_timing`, `lifecycle` — ride their own row shapes; the face's
 /// rail carries them beside the rest (the calibration revamp, 2026-10-30).
-pub const OPS: [&str; 15] = [
+pub const OPS: [&str; 16] = [
     OP_ROUTE,
     OP_TOOL_SCREEN,
     OP_TURN,
@@ -1046,6 +1072,7 @@ pub const OPS: [&str; 15] = [
     OP_LIFECYCLE,
     OP_SHAPE,
     OP_VALIDATE,
+    OP_DEMAND,
 ];
 
 /// The verdict a `propose` row carries when the change landed: the gate
@@ -2013,6 +2040,11 @@ pub struct ReadRow {
     /// wrote, and for every other op.
     #[serde(default)]
     pub disposition: String,
+    /// What the pass did with a `validate` or `curate` verdict —
+    /// `stamped`, `superseded`, `skipped`, `curated`, `held`. Empty for
+    /// every other op.
+    #[serde(default)]
+    pub decision: String,
     /// The lane that answered a `route_judged` row: `sys1`. Empty for
     /// every other op.
     #[serde(default)]
@@ -4646,7 +4678,8 @@ mod tests {
                 "embed_timing",
                 "lifecycle",
                 "shape",
-                "validate"
+                "validate",
+                "demand"
             ]
         );
     }
