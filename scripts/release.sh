@@ -119,7 +119,10 @@ if [ "$MODE" = "tag" ]; then
     # divergence). Extract from the first `## v` heading to end of file;
     # refuse when the head section is not the tag being cut.
     NOTES_FILE=/tmp/release-notes.md
-    awk '/^## v/{found=1} found' CHANGELOG.md > "$NOTES_FILE"
+    # the head section only: a second `## v` heading stops the print,
+    # so one release's note never carries the next section's words
+    # (the found-to-EOF form pasted all four sections once — dry-run read).
+    awk '/^## v/{n++} n==1' CHANGELOG.md > "$NOTES_FILE"
     [ -s "$NOTES_FILE" ] || die "the changelog has no release section — write it first"
     head -1 "$NOTES_FILE" | grep -q "^## $TAG" ||
       die "the changelog's head section is not $TAG ($(head -1 "$NOTES_FILE")) — cut the version the changelog names"

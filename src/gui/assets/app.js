@@ -622,6 +622,12 @@
       ['path', { d: 'M4 17h3M11 17h9' }],
       ['circle', { cx: 9, cy: 17, r: 2 }]
     ],
+    // the shell introduces itself: a circle plate, a dot, a stem
+    about: [
+      ['circle', { cx: 12, cy: 12, r: 9 }],
+      ['path', { d: 'M12 11v6' }],
+      ['circle', { cx: 12, cy: 8, r: 1 }],
+    ],
     // a measured signal: two beats, not four peaks
     calibration: [['path', { d: 'M3 13h3.5l2.5-6 4 11 2.5-6H21' }]],
     // something that slots in
@@ -26112,7 +26118,7 @@
   // (tower). The harness pins it against the rail's own addresses.
   var BUILT = ['chat', 'inbox', 'design', 'huddles', 'desk', 'router', 'delegation', 'memory', 'skills',
     'sessions', 'calibration', 'second-brain', 'workspace-history', 'bots', 'vault',
-    'settings', 'plugins', 'learning'];
+    'settings', 'plugins', 'learning', 'about'];
 
   // The rail's badge: the surface that has something waiting says so,
   // and says nothing when it does not — an empty counter is decoration.

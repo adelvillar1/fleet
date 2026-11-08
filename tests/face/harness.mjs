@@ -7916,14 +7916,15 @@ async function theSettingsRailCarriesOneSectionAtATime() {
   await flush(80);
 
   // S1: one section at a time — the rail has eight rows, the body one.
+
   const railRows = page.rows('.section-rail-row');
   // U6 (settings-ux): the money section is gone — seven sections, and no
   // cap row anywhere on the face. The three caps stay writable from
   // `fleet settings`; the surface does not render them.
-  check('SET the rail declares the seven sections',
-    railRows.length === 7 &&
+  check('SET the rail declares the eight sections',
+    railRows.length === 8 &&
       railRows[0].textContent.includes('models') &&
-      railRows[6].textContent.includes('environment') &&
+      railRows[7].textContent.includes('environment') &&
       !railRows.some((row) => row.textContent.includes('money')),
     railRows.map((row) => row.textContent).join(' | '));
   const capText = page.rows('.cfg-item').filter((row) =>
@@ -10173,14 +10174,14 @@ async function theConnectCardSaysWhatHappened() {
     await flush();
     const links = page.IDS['rail-tree'].find((one) =>
       String(one.className || '').split(/\s+/).includes('surfaces-link'));
-    check('ICONS the main rail lists eighteen destinations', links.length === 18,
+    check('ICONS the main rail lists nineteen destinations', links.length === 19,
       'links=' + links.length);
     const shapes = links.map((link) => {
       const svg = link.find((one) => one.name === 'svg')[0];
       return svg ? svg.children.map((shape) => JSON.stringify(shape.attrs || {})).join('|') : '';
     });
     check('ICONS every destination draws its own mark',
-      shapes.every(Boolean) && new Set(shapes).size === 18,
+      shapes.every(Boolean) && new Set(shapes).size === 19,
       'distinct=' + new Set(shapes).size + ' empty=' + shapes.filter((one) => !one).length);
   }
 
