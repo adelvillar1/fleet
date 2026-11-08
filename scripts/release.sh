@@ -217,7 +217,9 @@ if [ ! -f "$KEYFILE" ]; then
   echo "release.sh: then re-run this mode. Nothing was cut." >&2
   exit 1
 fi
-cargo-tauri signer sign -k "$KEYFILE" "$APP_TAR" --password ""
+# -k takes the key's CONTENTS, not a path — the path form fails with
+# "failed to decode base64 secret key" (proved with the live key 2026-11-08).
+cargo-tauri signer sign -k "$(cat "$KEYFILE")" "$APP_TAR" --password ""
 [ -f "$APP_TAR.sig" ] || die "the signer left no .sig beside $APP_TAR"
 
 echo "== generating latest.json =="
