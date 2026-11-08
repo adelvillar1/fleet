@@ -12,6 +12,37 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.6.0 — 2026-11-08
+
+The self-updater. The shell now asks the release feed from inside the app
+and installs its own next version — 0.6.0 is the last manual install, and
+every release after it is a button.
+
+- **The updater channel.** `src/update.rs` fetches the pinned GitHub feed
+  (`releases/latest/download/latest.json`), refuses malformed feeds and
+  refusals (a refused check is never read as up-to-date), version-gates
+  "behind" against "same"/"ahead", verifies the CLI tarball's sha256, and
+  stages + atomically renames the new binary in place. Pinned by 8 unit
+  tests.
+- **The face routes.** `GET /api/update/check` and
+  `POST /api/update/apply` on the face's server, carried by the bridge
+  (`Bridge::check`, `Bridge::update_apply`), stamping the settings' last
+  check.
+- **The shell's own updater.** `tauri-plugin-updater` is wired into
+  `src-tauri` (pubkey, endpoint, `createUpdaterArtifacts`) with
+  `withGlobalTauri` so the plugin's JS API is reachable; the About pane's
+  apply button downloads, installs the new bundle and relaunches
+  (`restart_app`).
+- **The About pane.** A new System group pane: this build, how it was
+  installed, the release feed's answer (candidate / refused /
+  nothing-newer), the apply button lives here; the settings' `update`
+  card points at it.
+- **release.sh cuts the feed.** The three-way version refusal (tauri.conf
+  ↔ dmg name ↔ bundled literal), the `.app.tar.gz` discovery, the
+  `cargo-tauri signer sign` with an empty passphrase, `latest.json`
+  generation (the shell row's minisign signature, the CLI row's sha256)
+  and its upload alongside the dmg and the tarball.
+
 ## v0.5.1 — 2026-11-08
 
 The diligence release, born from the loop it names. The once-daily

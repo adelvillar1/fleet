@@ -3102,7 +3102,9 @@ impl Bridge {
     /// two list surfaces and the rules as the third, the env status by
     /// name, the cron jobs, and the SOUL.md slot. Every value rides the
     /// readers the CLI reads, so the browser and `fleet settings`
-    /// cannot disagree about what the home holds.
+    /// cannot disagree about what the home holds. The update card's
+    /// field rides it too — the last check stamp and the installed
+    /// version/mode, computed at read time, never a live feed call.
     pub async fn settings(&self) -> Value {
         let home = self.home.clone();
         match tokio::task::spawn_blocking(move || settings_read(&home)).await {
@@ -3206,6 +3208,69 @@ impl Bridge {
             .await
             .map_err(|_| "the settings write did not land".to_string())??;
         Ok(json!({ "type": "settings_write", "op": op_for_reply, "wrote": landed }))
+    }
+
+    /// The update card's check: one bounded feed fetch, the stamp
+    /// written to the home's config before anything is answered, and
+    /// the field merged over the settings document. Two invariants:
+    /// the check applies on press, so a stamp exists even when the
+    /// fetch refuses or names the same version; and a refused or
+    /// malformed feed can never read as up-to-date — the refusal rides
+    /// the field, the card decides how to say it.
+    pub async fn check(&self) -> Value {
+        let home = self.home.clone();
+        // The stamp first, unconditionally: the press happened. The
+        // fetch's own outcome never gates the stamp. `last_check` is
+        // the stamped minute in UTC — the same shape the cron surfaces
+        // already render, so the card reads it without a formatter.
+        let stamped = stamp_check(&home).await;
+        let mut field = tokio::task::spawn_blocking(|| {
+            crate::update::check_field(crate::update::current_version())
+        })
+        .await
+        .unwrap_or_else(|_| json!({"refused": {"reason": "the check did not land"}}));
+        field["last_check"] = stamped.into();
+        let mut document = self.settings().await;
+        if let Some(object) = document.as_object_mut() {
+            object.insert("update".to_string(), field);
+        }
+        document
+    }
+
+    /// The apply button's step: the CLI channel's self-update over the
+    /// running binary — fetch, assert the feed's sha256, stage beside
+    /// the binary, one atomic rename — then the same merged document
+    /// back so the card paints the state the apply confirmed. The
+    /// refusals are the step that would have failed, named in the
+    /// error half of the result (dev build, behind-gap, a feed or
+    /// artifact that did not answer); an ok half answers "same" or
+    /// "ahead", and a desktop apply rides the tauri updater plugin.
+    pub async fn update_apply(&self) -> Result<Value, String> {
+        let stamped = stamp_check(&self.home).await;
+        let outcome = tokio::task::spawn_blocking(|| {
+            crate::update::self_update(&std::env::current_exe().unwrap_or_default())
+        })
+        .await
+        .map_err(|_| "the update did not land".to_string())?;
+        let mut field = match &outcome {
+            Ok(step) => {
+                // Nothing rides the field about the running process
+                // after an install: the binary on disk is what the
+                // receipt names, the running process is still the old
+                // one until launchd restarts it.
+                json!({"applied": step, "serving": crate::update::current_version()})
+            }
+            Err(reason) => json!({"refused": {"reason": reason, "applied": false}}),
+        };
+        field["last_check"] = stamped.into();
+        let mut document = self.settings().await;
+        if let Some(object) = document.as_object_mut() {
+            object.insert("update".to_string(), field);
+        }
+        match outcome {
+            Ok(_) => Ok(document),
+            Err(reason) => Err(reason),
+        }
     }
 
     /// The second-brain panel's document: the six derived state files,
@@ -8788,7 +8853,39 @@ fn lane_row_state(lane: &Value) -> (String, String) {
     (state.to_string(), lane_phrase(role))
 }
 
+/// The update card's one stamping step: the minute written to the
+/// home's config now, before the fetch answers, so the card's
+/// "checked at" is the moment the owner pressed — not the moment the
+/// feed answered, and never fabricated from a refusal. The only caller
+/// of the settings writer for the stamp: the face and the CLI share
+/// the key through the settings table, never a second file.
+async fn stamp_check(home: &std::path::Path) -> Option<String> {
+    let home = home.to_path_buf();
+    let wrote = tokio::task::spawn_blocking({
+        let home = home.clone();
+        move || crate::settings::set(&home, "update_last_check", &crate::boards::now_stamp())
+    })
+    .await;
+    match wrote {
+        Ok(Ok(())) => crate::settings::read_config_leaf(&home, "update_last_check"),
+        Ok(Err(reason)) => {
+            eprintln!("settings: the update stamp did not land: {reason}");
+            None
+        }
+        Err(_) => {
+            eprintln!("settings: the update stamp did not land (worker refused)");
+            None
+        }
+    }
+}
+
 fn settings_read(home: &std::path::Path) -> Value {
+    // The update card's last check stamp: one settings-table read off
+    // the config file the table serves from, so a check that stamped
+    // the config is the stamp this document answers. Unset reads as
+    // null — the card then shows "never checked" instead of a
+    // fabricated date.
+    let last_check = crate::settings::read_config_leaf(home, "update_last_check");
     let scalars = crate::settings::states(home)
         .into_iter()
         .map(|state| {
@@ -8974,6 +9071,17 @@ fn settings_read(home: &std::path::Path) -> Value {
         "rules": rules,
         "env": env,
         "cron": cron,
+        // The update card's own field, beside the scalars: the last
+        // check stamp this home holds, the running build's version and
+        // install mode. The candidate/refused halves live only in the
+        // check's answer — a settings read never asks the feed.
+        "update": {
+            "last_check": last_check,
+            "current": crate::update::current_version(),
+            "installed_via": crate::update::installed_via(
+                &std::env::current_exe().unwrap_or_default(),
+            ),
+        },
         "soul": {
             "present": soul.is_some(),
             "text": soul.unwrap_or_default(),

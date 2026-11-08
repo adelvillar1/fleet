@@ -156,6 +156,14 @@ pub const SETTINGS: &[Setting] = &[
         summary: "The port the webhook channel binds. The service reads it; `--channels` is an \
                   override of the door, not the only one.",
     },
+    Setting {
+        key: "update_last_check",
+        kind: Kind::Text,
+        file: File::Config,
+        summary: "The update card's last check stamp, written by /api/update/check. Not a \
+                  knob — the stamp rides the settings read so the card can say when the feed \
+                  was last asked.",
+    },
     // --- routing.json: the preference table and its gates ---------------
     Setting {
         key: "gates.min_confidence",
@@ -709,6 +717,18 @@ fn lookup(document: &Value, key: &str) -> Option<Value> {
         cursor = cursor.get(*segment)?;
     }
     (!cursor.is_object() && !cursor.is_array()).then(|| cursor.clone())
+}
+
+/// One settings-table key's value straight off the home's config
+/// document, rendered the way the pane renders it. The update stamp's
+/// read: the face's settings document and the CLI both answer from
+/// this one function, so a stamped check cannot disagree with itself
+/// about what the home holds. A config file that does not parse reads
+/// as unset, exactly as `states` reads it.
+pub fn read_config_leaf(home: &Path, key: &str) -> Option<String> {
+    let (config_path, _, _) = paths(home);
+    let document = read_json(&config_path).unwrap_or(Value::Object(Map::new()));
+    lookup(&document, key).map(|value| render_value(&value))
 }
 
 /// One JSON value as the pane's display string. A toggle renders as its

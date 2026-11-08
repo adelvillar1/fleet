@@ -174,3 +174,80 @@ fi
 gh release upload "$TAG" "$DMG" "$TARBALL" --clobber ||
   die "gh release upload failed"
 echo "uploaded: $(basename "$DMG"), $(basename "$TARBALL")"
+
+# ---- the feed: latest.json, the v2 updater's channel ----------------------
+#
+# The feed is only true when the tree's declaration, the bundled literal
+# and the dmg's filename agree — the three-way check the plan pinned.
+# A disagreement names the legs that did not agree and refuses the cut.
+echo "== reading the feed's version three ways =="
+CONF_VERSION=$(python3 -c "import json;print(json.load(open('$REPO_ROOT/src-tauri/tauri.conf.json'))['version'])")
+BUNDLEDMG=$(basename "$DMG")
+case "$BUNDLEDMG" in
+  fleet_${VERSION}*_aarch64.dmg) ;;
+  *) die "the dmg's name ($BUNDLEDMG) does not carry $VERSION" ;;
+esac
+DESKTOP_BIN="$REPO_ROOT/src-tauri/target/release/fleet-desktop"
+[ -f "$DESKTOP_BIN" ] || DESKTOP_BIN="$REPO_ROOT/target/release/fleet-desktop"
+[ -f "$DESKTOP_BIN" ] || die "no fleet-desktop binary at src-tauri/target or target/release"
+STRINGS_HIT=$(strings "$DESKTOP_BIN" | grep -c " ${VERSION}$" || true)
+[ "$STRINGS_HIT" != "0" ] || die "the bundled binary does not carry the literal $VERSION"
+if [ "$CONF_VERSION" != "$VERSION" ]; then
+  die "the three-way version check failed: tauri.conf.json says $CONF_VERSION, the tag says $VERSION"
+fi
+
+# The update artifact the plugin installs: the .app.tar.gz the config's
+# createUpdaterArtifacts generated beside the dmg.
+APP_TAR=$(ls "$REPO_ROOT"/src-tauri/target/release/bundle/macos/*.tar.gz 2>/dev/null | head -1)
+if [ -z "$APP_TAR" ]; then
+  for cand in "$REPO_ROOT"/target/release/bundle/macos/*.tar.gz; do
+    [ -f "$cand" ] && APP_TAR="$cand" && break
+  done
+fi
+[ -n "$APP_TAR" ] || die "no .app.tar.gz updater artifact beside the dmg — createUpdaterArtifacts generated none"
+
+echo "== signing the updater artifact =="
+command -v cargo >/dev/null 2>&1 || die "cargo is not on PATH — the signer needs it"
+export PATH="$HOME/.cargo/bin:$PATH"
+KEYFILE=/tmp/fleet-updater-key
+if [ ! -f "$KEYFILE" ]; then
+  echo "release.sh: the updater private key is not at $KEYFILE" >&2
+  echo "release.sh: extract it from the vault:" >&2
+  echo "  export FLEET_VAULT_PASSPHRASE=... && fleet vault get FLEET_TAURI_UPDATE_KEY > $KEYFILE" >&2
+  echo "release.sh: then re-run this mode. Nothing was cut." >&2
+  exit 1
+fi
+cargo-tauri signer sign -k "$KEYFILE" "$APP_TAR" --password ""
+[ -f "$APP_TAR.sig" ] || die "the signer left no .sig beside $APP_TAR"
+
+echo "== generating latest.json =="
+LATEST=/tmp/fleet-latest.json
+python3 - "$VERSION" "$TAG" "$(basename "$DMG")" "$(basename "$APP_TAR")" "$DMG" "$APP_TAR" > "$LATEST" <<'PYEOF'
+import hashlib, json, sys, datetime
+version, tag, dmg_name, tar_name, dmg_path, tar_path = sys.argv[1:]
+def sha(path):
+    h = hashlib.sha256()
+    with open(path, 'rb') as f:
+        for chunk in iter(lambda: f.read(1 << 20), b''):
+            h.update(chunk)
+    return h.hexdigest()
+base = "https://github.com/adelvillar1/fleet/releases/download/" + tag + "/"
+feed = {
+    "version": version,
+    "notes": "fleet " + version + ". See the release page for what changed.",
+    "pub_date": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    "platforms": {
+        "darwin-aarch64": {
+            "signature": open(tar_path + ".sig", "rb").read().decode().strip(),
+            "url": base + tar_name,
+        }
+    },
+    "cli": {"url": base + "fleet-aarch64-apple-darwin.tar.gz", "signature": sha(tar_path)},
+}
+open('/tmp/fleet-latest.json', 'w').write(json.dumps(feed, indent=2) + "\n")
+PYEOF
+[ -s "$LATEST" ] || die "latest.json was not generated"
+python3 -c "import json;d=json.load(open('$LATEST'));assert d['version']=='$VERSION' and 'darwin-aarch64' in d['platforms'] and 'cli' in d, 'the feed is missing a leg'" ||
+  die "the generated feed failed its own leg read"
+gh release upload "$TAG" "$LATEST" --clobber || die "gh release upload of latest.json failed"
+echo "uploaded: latest.json (the updater's channel + the cli row)"

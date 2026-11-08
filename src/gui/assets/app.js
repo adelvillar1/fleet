@@ -255,7 +255,12 @@
     ['second-brain', 'second brain'],
     ['workspace-history', 'workspace history'],
     ['bots', 'bots'],
-    ['plugins', 'plugins']
+    ['plugins', 'plugins'],
+    // The update work's own pane (2026-11-08): this build's version,
+    // how it was installed, and the release feed's answer. The About
+    // pane is the shell's — the apply button lives there because the
+    // CLI channel cannot replace the shell's bundle.
+    ['about', 'about']
   ];
 
   // The same surfaces, grouped by what the owner came to do rather
@@ -308,7 +313,8 @@
       ['vault', 'vault'],
       ['settings', 'settings'],
       ['calibration', 'calibration'],
-      ['plugins', 'plugins']
+      ['plugins', 'plugins'],
+      ['about', 'about']
     ]]
   ];
 
@@ -603,6 +609,13 @@
       ['path', { d: 'M8.5 10V7.2a3.5 3.5 0 0 1 7 0V10' }],
       ['circle', { cx: 12, cy: 15, r: 1.1 }]
     ],
+    // the update card's mark: one arrow landing into a tray (the
+    // release arriving as the already-installed app)
+    update: [
+      ['path', { d: 'M12 3.5v11' }],
+      ['path', { d: 'M7.5 10l4.5 4.5L16.5 10' }],
+      ['path', { d: 'M4 15.5v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3' }]
+    ],
     settings: [
       ['path', { d: 'M4 7h9M17 7h3' }],
       ['circle', { cx: 15, cy: 7, r: 2 }],
@@ -795,6 +808,8 @@
 
   var el = {
     panelDesk: document.getElementById('panel-desk'),
+    panelAbout: document.getElementById('panel-about'),
+    aboutBoard: document.getElementById('about-board'),
     deskBoard: document.getElementById('desk-board'),
     rail: document.getElementById('rail'),
     railTree: document.getElementById('rail-tree'),
@@ -19128,6 +19143,27 @@
           ];
         }
       },
+      // The update card (the update work, 2026-11-08): one row whose
+      // card is the check-and-apply flow. The About pane hosts the
+      // apply button itself; this card carries the state and the
+      // check, so the settings board answers "what do I run" and the
+      // About pane answers "what am I running".
+      {
+        id: 'update', icon: 'update', name: 'update',
+        badge: 0,
+        changed: !!(read.update && read.update.candidate),
+        paint: function () {
+          return [cfgList('the update', 'what this build is, and what the release feed names',
+            [cfgItem({
+              id: 'update', kind: 'update', name: 'the update card',
+              value: read.update && read.update.candidate
+                ? read.update.candidate + ' is available'
+                : (read.update && read.update.last_check ? 'checked at ' +
+                  read.update.last_check : 'not checked yet'),
+              card: function () { return updateSections(read.update || {}); }
+            })])];
+        }
+      },
       {
         id: 'environment', icon: 'environment', name: 'environment',
         badge: env.length, badgeTitle: 'names in this section',
@@ -23408,6 +23444,241 @@
   // The vault's own surface. The Settings page keeps its section card;
   // this is the first-class destination, so onboarding is one click from
   // the rail rather than a scroll through the settings page.
+  // The about pane (the update work, 2026-11-08). One receipt card:
+  // this build's version and install mode from the read at hand, then
+  // the release feed's answer — current, candidate, or the named
+  // refusal. The apply button lives here because the CLI channel
+  // cannot replace the shell's bundle; the press rides the tauri
+  // updater when the shell carries it, and names the channel it did
+  // not find otherwise (a browser face's apply is the CLI's `fleet
+  // update`, never a pretend swap).
+  function paintAbout() {
+    var read = face.settings;
+    el.aboutBoard.textContent = '';
+    el.aboutBoard.appendChild(surfaceHead('System', 'About',
+      'This build, and whether the release feed names a newer one. The press ' +
+      'applies what the feed carries \u2014 the shell through the updater, the CLI ' +
+      'face through its own binary swap.', null));
+    if (!read) {
+      var waiting = boardCard(12, 'reading', null, null);
+      waiting.appendChild(node('p', 'board-empty',
+        'The version read has not landed yet. It reads this build\u2019s own declarations ' +
+        'and, on the about check, the release feed.'));
+      el.aboutBoard.appendChild(waiting);
+      return;
+    }
+    var update = read.update || {};
+    var via = update.installed_via || 'source';
+    var viaTitle = via === 'dmg' ? 'the installed app'
+      : (via === 'dev-build' ? 'a dev build \u2014 it does not update the checkout'
+        : 'the CLI face at ~/.fleet/bin/fleet');
+    // After an apply the field carries serving (what this process was
+    // built as) and applied (what the binary on disk now is); a fresh
+    // check carries current directly.
+    var running = update.current || update.serving || '';
+    var card = boardCard(12, 'this build',
+      running || 'an unknown version',
+      'The version this build was compiled with, and how it was installed. The ' +
+      'applied version takes over at the next restart.');
+    var rows = node('div', 'cfg-form');
+    rows.appendChild(node('p', 'knob-summary', 'version ' + (running || 'unknown') +
+      ' \u00b7 installed ' + viaTitle));
+    if (update.applied && update.serving) {
+      rows.appendChild(node('p', 'cfg-note',
+        'the binary on disk is the feed\u2019s artifact \u2014 this process still serves ' +
+        update.serving + '; the next restart serves the new one.'));
+    }
+    if (update.last_check) {
+      rows.appendChild(node('p', 'cfg-note', 'the feed was last asked at ' +
+        update.last_check));
+    }
+    card.appendChild(rows);
+
+    // The feed's answer, from the check at hand: same, candidate, or
+    // the named refusal. no-network never reads as up to date.
+    var feedCard = boardCard(12, 'the release feed', null, null);
+    var answer = node('div', 'cfg-form');
+    if (update.refused) {
+      answer.appendChild(node('p', 'knob-summary',
+        'the feed did not answer: ' + (update.refused.reason || 'no reason given')));
+      answer.appendChild(node('p', 'cfg-note',
+        'No answer is not the same as up to date. Press check again when the ' +
+        'network is back.'));
+    } else if (update.candidate) {
+      answer.appendChild(node('p', 'knob-summary',
+        'the feed names ' + update.candidate + ' \u2014 this build is behind.'));
+      if (update.notes) {
+        answer.appendChild(node('p', 'cfg-note', String(update.notes)));
+      }
+      var apply = node('button', 'replay-button replay-resume', 'update to ' +
+        update.candidate);
+      apply.type = 'button';
+      apply.addEventListener('click', function () { pressApply(apply, update); });
+      answer.appendChild(apply);
+    } else {
+      answer.appendChild(node('p', 'knob-summary',
+        'the feed names ' + (update.current || 'this build') +
+        ' \u2014 nothing newer. The check stamp rides the feed\u2019s own answer.'));
+    }
+    feedCard.appendChild(answer);
+    var refresh = node('button', 'replay-button', 'check the feed again');
+    refresh.type = 'button';
+    refresh.addEventListener('click', function () {
+      refresh.disabled = true;
+      fetch('/api/update/check', { headers: { accept: 'application/json' } })
+        .then(function (reply) {
+          if (reply.status !== 200) throw new Error(String(reply.status));
+          return reply.json();
+        })
+        .then(function (document) {
+          face.settings = document;
+          paintAbout();
+        })
+        .catch(function () {
+          refresh.disabled = false;
+        });
+    });
+    feedCard.appendChild(refresh);
+    el.aboutBoard.appendChild(card);
+    el.aboutBoard.appendChild(feedCard);
+  }
+
+  /// The apply button's press. The shell is the only place the tauri
+  /// updater exists; everywhere else the CLI channel is the fix and is
+  /// named as one \u2014 never a pretend swap of a process that cannot
+  /// swap itself.
+  function pressApply(button, update) {
+    if (update.installed_via === 'dmg' && window.__TAURI__ && window.__TAURI__.updater) {
+      button.disabled = true;
+      window.__TAURI__.updater.check().then(function (update2) {
+        if (!update2) {
+          notice('the feed no longer names an update',
+            'the check raced \u2014 refresh and read again');
+          button.disabled = false;
+          return;
+        }
+        return update2.downloadAndInstall(function () { }).then(function () {
+          // The install happened; the relaunch serves the new bundle.
+          return restartApp();
+        });
+      }).catch(function (error) {
+        notice('the update did not land', String(error && error.message || error));
+        button.disabled = false;
+      });
+      return;
+    }
+    if (update.installed_via === 'dev-build') {
+      notice('a dev build does not update the checkout',
+        'build it again instead \u2014 the checkout is the dev build\u2019s own source');
+      return;
+    }
+    // The CLI face: its binary is what `fleet update` swaps atomically.
+    button.disabled = true;
+    post('/api/update/apply', {}).then(function (reply) {
+      if (reply.status !== 200) {
+        notice('the update did not land',
+          (reply.body && (reply.body.error ||
+            (reply.body.refused && reply.body.refused.reason))) || 'no reason given');
+        button.disabled = false;
+        return;
+      }
+      face.settings = reply.body;
+      paintAbout();
+    }).catch(function () {
+      notice('the updates surface is unreachable',
+        'the apply never left this page \u2014 check the face is still running');
+      button.disabled = false;
+    });
+  }
+
+  /// The shell's own restart, through the one command the bridge serves
+  /// for it. A browser face never carries it; the CLI channel's swap
+  /// needs no restart from the page \u2014 launchd serves the new inode
+  /// at the next restart contract.
+  function restartApp() {
+    if (window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke) {
+      window.__TAURI__.core.invoke('restart_app').catch(function (error) {
+        notice('the restart did not land', String(error));
+      });
+      return;
+    }
+    window.location.reload();
+  }
+
+  // The update card's sections: the state at read time, the check
+  // press, what it answered. The card builder returns [[label, node]] —
+  // a bare node threw on the press (KI-400), and the drawer's
+  // renderSections walks the list. The apply button lives in the About
+  // pane; the card's link carries the owner there.
+  function updateSections(update) {
+    var said = node('p', 'derivation');
+    said.setAttribute('role', 'alert');
+    said.hidden = true;
+    var act = node('button', 'replay-button replay-resume', 'check the release feed');
+    act.type = 'button';
+    act.addEventListener('click', function () {
+      act.disabled = true;
+      fetch('/api/update/check', { headers: { accept: 'application/json' } })
+        .then(function (reply) {
+          if (reply.status !== 200) throw new Error(String(reply.status));
+          return reply.json();
+        })
+        .then(function (document) {
+          face.settings = document;
+          var fresh = document.update || {};
+          said.hidden = false;
+          if (fresh.refused) {
+            said.dataset.tone = 'bad';
+            said.textContent = 'the feed did not answer: ' +
+              (fresh.refused.reason || 'no reason given') +
+              ' \u2014 no answer is not up to date';
+          } else if (fresh.candidate) {
+            said.dataset.tone = 'good';
+            said.textContent = 'the feed names ' + fresh.candidate +
+              ' \u2014 the About pane carries the apply button';
+          } else {
+            said.dataset.tone = 'good';
+            said.textContent = 'nothing newer \u2014 this build answers the feed';
+          }
+          act.disabled = false;
+          if (face.panel === 'settings') paintSettings();
+        })
+        .catch(function () {
+          said.hidden = false;
+          said.dataset.tone = 'bad';
+          said.textContent = 'the check did not land \u2014 is the face still running?';
+          act.disabled = false;
+        });
+    });
+    var sections = [
+      ['what it does', node('p', 'derivation',
+        'asks the release feed for the newest cut \u2014 one bounded fetch, and the ask ' +
+        'is stamped in the settings document.')]
+    ];
+    if (update.refused) {
+      sections.push(['what the feed answered', node('p', 'derivation',
+        'refused: ' + (update.refused.reason || 'no reason given') +
+        ' \u2014 no answer is not up to date; press the check below when the network is back.')]);
+    } else if (update.candidate) {
+      sections.push(['what the feed answered', node('p', 'derivation',
+        update.candidate + ' is available' + (update.notes ? ' \u2014 ' + update.notes : '') +
+        '. The apply button lives in the About pane.')]);
+    } else if (update.last_check) {
+      sections.push(['what the feed answered', node('p', 'derivation',
+        'checked at ' + update.last_check + ' \u2014 nothing newer than this build.')]);
+    } else {
+      sections.push(['what the feed answered', node('p', 'derivation',
+        'the feed has not been asked yet from this process.')]);
+    }
+    sections.push(['the check', act], ['what it answered', said]);
+    if (update.installed_via === 'dev-build') {
+      sections.push(['what apply does here', node('p', 'derivation',
+        'a dev build does not update the checkout \u2014 build it again instead. ' +
+        'The installed app updates itself; the checkout is rebuilt by hand.')]);
+    }
+    return sections;
+  }
+
   function paintVault() {
     var read = face.settings;
     el.vaultBoard.textContent = '';
@@ -24211,7 +24482,6 @@
   // can never forget to hide another — the failure mode the explicit
   // hide-lists were one new surface away from.
   var PANEL_EL = {
-
     inbox: document.getElementById('panel-inbox'),
     chat: el.panelChat,
     router: el.panelRouter,
@@ -24229,6 +24499,8 @@
     settings: el.panelSettings,
     plugins: el.panelPlugins,
     desk: el.panelDesk,
+    // The about pane: this build's receipt, the release feed's answer.
+    about: el.panelAbout,
     // An installed bundle mounts here: one panel for every plugin the
     // owner presses, because the bundle brings its own page and this
     // face only supplies the frame.
@@ -24396,6 +24668,22 @@
           paintSettings();
           if (item) openSettingsRow(item);
         });
+      },
+      about: function () {
+        // The about pane (the update work, 2026-11-08): the build's own
+        // receipt and the release feed's answer ride one GET, the same
+        // /api/update/check the settings board's update card rides.
+        paintAbout();
+        fetch('/api/update/check', { headers: { accept: 'application/json' } })
+          .then(function (reply) {
+            if (reply.status !== 200) throw new Error(String(reply.status));
+            return reply.json();
+          })
+          .then(function (document) {
+            face.settings = document;
+            if (PANEL_EL.about && !PANEL_EL.about.hidden) paintAbout();
+          })
+          .catch(function () { });
       }
     };
     if (arrive[address]) arrive[address]();

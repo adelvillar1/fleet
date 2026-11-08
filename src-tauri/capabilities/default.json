@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "The shell's own window: it loads the loopback origin the app serves, so it needs no core permission beyond the default.",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "updater:default"]
 }

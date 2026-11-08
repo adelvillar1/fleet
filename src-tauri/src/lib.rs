@@ -293,6 +293,8 @@ pub fn run() {
     }
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .invoke_handler(tauri::generate_handler![restart_app])
         .setup(|app| {
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
@@ -353,6 +355,16 @@ pub fn gui_options(port: u16) -> fleet::gui::GuiOptions {
 /// service-worker container on macOS (Tauri #13031).
 pub fn face_url(port: u16) -> String {
     format!("http://{}:{port}", fleet::gui::DEFAULT_HOST)
+}
+
+/// The apply button's last step: the updater swapped the bundle under
+/// the running process, so the process itself exits and relaunches —
+/// the new `Contents/MacOS/fleet-desktop` serves the same loopback
+/// origin the face already had. `AppHandle::restart` walks the exit
+/// events and re-execs the bundle's own binary.
+#[tauri::command]
+fn restart_app(app: tauri::AppHandle) {
+    app.restart();
 }
 
 async fn start_face() -> Result<String, String> {

@@ -88,7 +88,12 @@ docs/plans/*.graph.json
 
 # The release/version scripts' write locks — the same filelock seam as the
 # memory and doc locks (KI-062's shape): runtime state, not repo content.
+# The source tree's sidecars are the same seam — beside files the face
+# edits under src/ and src-tauri/ (the root Cargo.lock is content and stays
+# tracked; the `**` keeps any nested build config's sidecar covered too).
 /scripts/*.lock
+/src/**/*.lock
+/src-tauri/**/*.lock
 
 # CHANGELOG lock sidecar, same seam
 CHANGELOG.md.lock

@@ -1335,6 +1335,24 @@ async fn serve_connection(
             )
             .await
         }
+        // The update card's check: one bounded feed fetch on the press,
+        // the settings stamp written before the answer, and the
+        // settings document back merged with the update field. A feed
+        // that did not answer or does not parse reads as the refusal it
+        // is — never as "up to date" — because the field carries the
+        // refusal verbatim and the card paints it.
+        ("GET", "/api/update/check") => {
+            write_reply(&mut stream, api(200, bridge.check().await)).await
+        }
+        // The update card's apply: the CLI channel's self-update —
+        // fetch, sha256 assert, stage beside the running binary, one
+        // atomic rename. A refusal keeps the running process exactly as
+        // it is (the rename is the last instruction), and answers 409
+        // with the step that would have failed, named.
+        ("POST", "/api/update/apply") => match bridge.update_apply().await {
+            Ok(document) => write_reply(&mut stream, api(200, document)).await,
+            Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
+        },
         // Name a session: the owner's title for the archive.
         ("POST", "/api/session/title") => {
             let body = match read_body(&mut stream, &request, rest).await {

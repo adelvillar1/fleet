@@ -24,18 +24,23 @@ for f in Cargo.toml src-tauri/Cargo.toml src-tauri/tauri.conf.json; do
 done
 
 # The Cargo.lock's own `name = "fleet"` / `name = "fleet-desktop"` entries
-# carry the version. Regenerate rather than hand-edit (rustup minimal profile
-# has no `cargo metadata`; `cargo update --workspace --dry-run` … no — the
-# honest route is a no-op cargo command that refreshes lock versions).
-if command -v cargo >/dev/null 2>&1; then
-  cargo update --workspace --precise "$(cargo pkgid -q fleet 2>/dev/null | sed 's/.*#//')" >/dev/null 2>&1 || true
-fi
-if grep -q "$OLD" Cargo.lock; then
-  sed -i '' "s/$OLD/$NEW/g" Cargo.lock
-  echo "  Cargo.lock (sed)"
-else
-  echo "  Cargo.lock — old literal not present"
-fi
+# carry the version — and ONLY those. A blind sed moves every other crate
+# carrying the same literal (approx 0.5.1, ghash 0.5.1) and mangles crates
+# one digit apart (crossbeam-channel 0.5.17 turned into 0.6.07 — an
+# unparseable lock, caught by the next cargo invocation).
+python3 - "$OLD" "$NEW" <<'PYEOF'
+import sys
+old, new = sys.argv[1], sys.argv[2]
+lines = open("Cargo.lock").read().split("\n")
+moved = 0
+for i in range(len(lines) - 1):
+    if lines[i] in ('name = "fleet"', 'name = "fleet-desktop"'):
+        assert lines[i + 1].startswith("version = "), lines[i + 1]
+        if old in lines[i + 1]:
+            lines[i + 1] = lines[i + 1].replace(old, new)
+            moved += 1
+print(f"  Cargo.lock (fleet/fleet-desktop entries moved: {moved})")
+PYEOF
 
 echo "== remaining sites carrying $OLD (judge each) =="
 grep -rn --exclude-dir=.git --exclude-dir=target --exclude-dir=node_modules \

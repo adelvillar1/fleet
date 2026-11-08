@@ -148,6 +148,7 @@ fn dispatch_sync(args: &[String]) -> ExitCode {
             println!("fleet {}", env!("CARGO_PKG_VERSION"));
             ExitCode::SUCCESS
         }
+        Ok(Command::Update) => update_command(),
         Ok(Command::SessionsView {
             recall,
             view,
@@ -2738,6 +2739,30 @@ fn convention_command(options: &cli::ConventionOptions) -> ExitCode {
         fleet::tools::convention_result(&root, &serde_json::json!({ "concept": options.concept }));
     print!("{answer}");
     ExitCode::SUCCESS
+}
+
+/// `fleet update`: the CLI's own channel — feed, gap, hash, rename.
+///
+/// The exit codes: success on `same` (nothing to do is a success, not
+/// a failure) and on `ahead` (the new inode is on disk). A refusal
+/// prints its name and exits 1, so a scripted update sees the reason.
+fn update_command() -> ExitCode {
+    let exe = std::env::current_exe().unwrap_or_default();
+    match fleet::update::self_update(&exe) {
+        Ok(gap) if gap == "same" => {
+            println!("fleet: the release feed names this build's version — nothing to do");
+            ExitCode::SUCCESS
+        }
+        Ok(_) => {
+            let version = fleet::update::current_version();
+            println!("fleet: updated in place; the next restart serves {version}");
+            ExitCode::SUCCESS
+        }
+        Err(reason) => {
+            eprintln!("fleet: update: {reason}");
+            ExitCode::FAILURE
+        }
+    }
 }
 
 /// `fleet graph [--file <path>]`: the declared dependency graph as

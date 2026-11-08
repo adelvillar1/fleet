@@ -769,6 +769,14 @@
     <div class="board" id="plugins-board"></div>
   </main>
 
+  <!-- The about pane: this build's version, how it was installed, and
+       the update card. The apply button lives here because the CLI
+       channel cannot replace the shell — the running process is the
+       bundle the tauri updater swaps. -->
+  <main class="stage stage-board" id="panel-about" hidden>
+    <div class="board" id="about-board"></div>
+  </main>
+
   <!-- A bundle's own page. The bridge serves a bundle on a CSP that refuses
        framing, so the face cannot point a frame at it: it reads the page's
        bytes and renders them in a sandboxed frame that never shares this

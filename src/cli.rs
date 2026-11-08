@@ -142,6 +142,9 @@ pub enum Command {
     Plugins(PluginsOptions),
     /// Print the version.
     Version,
+    /// Self-update: the release feed's binary asset, hash-asserted,
+    /// renamed over the running inode.
+    Update,
     /// Print help.
     Help,
 }
@@ -842,6 +845,13 @@ usage:
                                 edges, the critical path, and what is
                                 holding each node — the home's
                                 `graph.json`, or `--file`'s
+  fleet update                  self-update: read the release feed,
+                                hash-assert the CLI artifact, and
+                                replace the running binary with one
+                                same-directory rename; the printout is
+                                the gap the feed names (same/ahead), and
+                                launchd's restart contract puts the new
+                                binary on the port
   fleet skills [--proposed] [--curate] [--show <name>] [--duplicates]
                                 the loaded skills; --proposed lists the drafts
                                 awaiting the gate, --curate files usage-scan
@@ -1045,6 +1055,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "plugins" => parse_plugins(rest),
         "devices" => parse_devices(rest),
         "version" | "--version" | "-V" => no_flags(rest, Command::Version),
+        "update" => parse_update(rest),
         "help" | "--help" | "-h" => Ok(Command::Help),
         other => Err(format!("unknown command `{other}` — try `fleet help`")),
     }
@@ -3177,6 +3188,12 @@ fn no_flags(args: &[String], command: Command) -> Result<Command, String> {
     }
 }
 
+/// `fleet update`: no flags — the verb reads its world (the feed, its
+/// own path) and nothing else.
+fn parse_update(args: &[String]) -> Result<Command, String> {
+    no_flags(args, Command::Update)
+}
+
 /// Read a flag's value out of a file: the route for a value a shell
 /// would mangle — a JSON blob, a diff, a transcript.
 ///
@@ -3678,6 +3695,10 @@ mod tests {
         );
         assert_eq!(parse(&args(&["version"])).unwrap(), Command::Version);
         assert_eq!(parse(&args(&["--help"])).unwrap(), Command::Help);
+        // `fleet update`: the self-update verb takes no options.
+        assert_eq!(parse(&args(&["update"])).unwrap(), Command::Update);
+        assert!(parse(&args(&["update", "--force"])).is_err());
+        assert!(parse(&args(&["update", "--json"])).is_err());
         assert!(parse(&args(&["sessions", "--all"])).is_err());
         // A second positional is refused by name: the surface opens one
         // session at a time.

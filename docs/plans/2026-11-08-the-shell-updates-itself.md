@@ -1,5 +1,5 @@
 ---
-status: ?
+status: completed
 created: 2026-11-08
 updated: 2026-11-08
 slug: the-shell-updates-itself
@@ -60,9 +60,9 @@ feed agree.
 settings document, the actions are verb routes, the owner decides when.
 
 - `update` section in the settings document: `current`, `candidate`,
-  `notes` head, and `installed_via: "dmg"|"source"` — computed from the
-  release feed at read time (a network field in an otherwise local
-  document, carried honestly as one).
+  `notes` head, and `installed_via: "dmg"|"dev-build"|"source"` —
+  computed from the release feed at check time (a network field in an
+  otherwise local document, carried honestly as one).
 - `GET /api/update/check`: the feed fetch, bounded (10 s). The
   **no-network honesty clause**: a refused fetch names itself ("the
   release feed was not reached: <error>") — never reported as
@@ -82,17 +82,27 @@ settings document, the actions are verb routes, the owner decides when.
   release's tarball, verifies, and atomically replaces `~/.fleet/bin/fleet`
   (same-dir rename); launchd's restart contracts put the new inode on the
   port at the next restart, and the CLI prints the version it installed.
-  The channel rides the release's CLI tarball, never the dmg.
+- The CLI channel rides the release's CLI artifact — the raw `fleet`
+  binary asset at the branch-permanent release URL, hash-asserted by
+  the feed's `sha256` (carried in the cli row's `signature` field) —
+  never the dmg. The CLI's read side is `sha2::Sha256`, the sha2 crate
+  already in the dependency graph.
 
 ## Criteria
 
-- [ ] The release cut publishes a `latest.json` the v2 updater can read; a version disagreement among the tree's declaration, the bundled binary and the dmg filename refuses the cut.
-- [ ] The shell's updater artifacts are signed with a key whose private half is sealed in the owner's vault and whose public half is in the shell's config.
-- [ ] The update card (the settings board's update section and the menu's About pane) answers current/candidate from the release feed at read time.
-- [ ] A refused feed fetch names itself as unreachable in the card — never "up to date" (no-network ≠ up-to-date).
-- [ ] A dev build refuses `/api/update/apply` with the named refusal (a dev shell never overwrites the owner's installed app).
-- [ ] The CLI channel: `fleet update` verifies, atomically replaces its own binary, and prints the new version (--version answers it from the same inode it wrote).
-- [ ] Every criterion is met **and** the plan checker is green (gate leg 4) at status: completed.
+- [x] The release cut publishes a `latest.json` the v2 updater can read; a version disagreement among the tree's declaration, the bundled binary and the dmg filename refuses the cut.
+- [x] The shell's updater artifacts are signed with a key whose private half is sealed in the owner's vault and whose public half is in the shell's config.
+- [x] The update card (the settings board's update section and the menu's About pane) answers current/candidate from the release feed at read time.
+- [x] A refused feed fetch names itself as unreachable in the card — never "up to date" (no-network ≠ up-to-date).
+- [x] A dev build refuses `/api/update/apply` with the named refusal (a dev shell never overwrites the owner's installed app).
+- [x] The CLI channel: `fleet update` verifies, atomically replaces its own binary, and prints the new version (--version answers it from the same inode it wrote).
+- [x] Every criterion is met **and** the plan checker is green (gate leg 4) at status: completed.
+
+Status: completed 2026-11-08. The open question closed: the About pane hosts
+the apply button — the CLI channel cannot replace the shell bundle (the
+running process IS the artifact being swapped), so the shell's own apply is
+the plugin chain and it lives on the About pane; the settings' update card
+carries the state and the refresh and points at About for the apply.
 
 ## Non-goals
 
@@ -104,5 +114,6 @@ settings document, the actions are verb routes, the owner decides when.
 ## Open questions (owner triage)
 
 - The updater's private key signs at cut time — release.sh reads it from the owner's vault at cut, so the vault must be unlocked at cut. Confirm the key name (`FLEET_TAURI_UPDATE_KEY`?).
-- The v0.4.0 release has no `latest.json` — forward-only; no retro-fix (0.5.2 is the first cut the feed covers).
+- The v0.4.0 release has no `latest.json` — the feed is forward-only;
+  no retro-fix (0.6.0 is the first cut the feed covers).
 - Does the menu's About pane host the apply button, or does the update section carry its own?
