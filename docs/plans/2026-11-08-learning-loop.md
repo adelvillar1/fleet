@@ -1,5 +1,5 @@
 ---
-status: active
+status: completed
 created: 2026-11-08
 updated: 2026-11-08
 slug: learning-loop
@@ -124,11 +124,12 @@ as the problem sessions' turns.
 
 ## Acceptance criteria
 
-- [ ] **C0 — the mockup.** `docs/plans/mockups/2026-11-08-learning/`
+- [x] **C0 — the mockup.** `docs/plans/mockups/2026-11-08-learning/`
       holds the Learning rail section and pane in the app's own
       tokens, measured in every theme (no overflow, ink ≥ 4.5:1), the
       PNGs read in a light and a dark theme, and the owner reads it
       before the pane's code lands.
+      *Read by the owner 2026-11-08; the pane's code follows it.*
 - [x] **C1 — the lesson session kind.** `src/session.rs`'s `Start`
       record carries the kind; the session list and the face's
       session surface filter by it; pinned by `src/session.rs` tests.
@@ -192,10 +193,17 @@ as the problem sessions' turns.
       recall test), and `record_practice` landing one `practice` fact
       per problem — the setting, the answer, and whether it held; the
       exercises ride the chain's field.*
-- [ ] **C7 — the face surface.** The Learning rail section and pane
+- [x] **C7 — the face surface.** The Learning rail section and pane
       (fed by the mockup) show the active lesson, the graph, the
       practice entry, and the history; pinned by a
       `tests/face/harness.mjs` case.
+      *Landed 88ae9d5: the Learning rail group and the pane's four
+      sections (the lesson's coarse view, position and holds; the
+      graph's propositions and chains; the practice's entry and
+      outcomes; the history's sessions), the bridge's one learning
+      document, and the learning start's seam; the harness case pins the
+      rail, the nodes' states, the position, the holds, the chains, the
+      outcomes, the history, and both entries' posts.*
 - [x] **C8 — the feeds.** The demand map's classes include the
       learning rows' confusions, and the capability gaps land through
       the improve store and the drafter; pinned by tests over a
@@ -326,15 +334,11 @@ green (2,024 lib tests, the integration suites, the face harness's
 998 checks, fmt and clippy clean), and the branch is fast-forwardable
 to master.
 
-Two gates remain, and they are the owner's:
+The owner read the mockup on 2026-11-08, so the pane's code lands.
+One gate remains, and it is the owner's:
 
-- **C0's last leg.** The mockup
-  (`docs/plans/mockups/2026-11-08-learning/`, measured and read in a
-  light and a dark theme) is read by the owner before the pane's code
-  lands — the pane's code is written and committed in the branch, and
-  the merge waits on this read.
 - **The live proof.** The owner's first lesson runs end to end — the
   probe brackets, the plan draws, the teaching moves one checked step
   at a time, the graph accumulates, and the friction's proposals land
   in the stores. The harness and the module tests pin the machinery;
-  the lesson itself is the owner's.
+  the lesson itself is the owner's, run after the delivery.
