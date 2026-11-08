@@ -149,6 +149,46 @@ pin must be the learner's own articulation of what they want to be
 true, not a goal you supply for them. When you pin it, say it back in
 their words and ask whether you have it right."#;
 
+/// Record a lesson plan on the substrate (the learning plan's C3): one
+/// `lesson-plan` fact naming the goal, the teaching order, and the
+/// coarse view the learner reads. The plan is project knowledge, not a
+/// silo — the recall, the dream pass, and the face's Learning pane read
+/// it like any other fact.
+pub fn record_plan(
+    memory: &Memory,
+    session: &str,
+    plan: &crate::graph::LessonPlan,
+) -> Result<(), String> {
+    // The description is the goal's own proposition — what the lesson
+    // teaches toward — never the node's id, which is a join and not a
+    // sentence the recall or the learner can read.
+    let description = plan
+        .goal_proposition()
+        .unwrap_or(plan.goal.as_str())
+        .to_string();
+    let request = memory::Remember {
+        name: format!("lesson-plan-{session}"),
+        description,
+        fact_type: "lesson-plan".to_string(),
+        shape: Vec::new(),
+        phrases: Vec::new(),
+        missing: Vec::new(),
+        basis: Basis::ConfirmedBy,
+        tier: Tier::Durable,
+        valid_until: String::new(),
+        source: session.to_string(),
+        body: format!(
+            "teaching order: {}\n\n{}",
+            plan.teaching_order().join(" \u{2192} "),
+            plan.coarse_view()
+        ),
+    };
+    memory
+        .remember(&request)
+        .map_err(|error| format!("the lesson plan did not land: {error}"))?;
+    Ok(())
+}
+
 /// Record a probe session on the substrate: the answers as facts (the
 /// `probe` type, each with its thinking and confidence), the bracket
 /// as a fact, and one `learn_probe` calibration row naming the session
@@ -433,5 +473,41 @@ mod tests {
         assert_eq!(role.description, "the owner's own");
         assert_eq!(role.overlay, "owner voice");
         let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn the_lesson_plan_lands_as_a_fact_with_its_teaching_order() {
+        let root = scratch("plan");
+        let memory = Memory::load(&root);
+        let nodes = vec![
+            crate::graph::LessonNode {
+                id: "holds".to_string(),
+                proposition: "a request runs until its handler returns".to_string(),
+                premises: Vec::new(),
+                cost: 1,
+            },
+            crate::graph::LessonNode {
+                id: "goal".to_string(),
+                proposition: "why a blocked handler stalls the request".to_string(),
+                premises: vec!["holds".to_string()],
+                cost: 2,
+            },
+        ];
+        let plan = crate::graph::build_lesson_plan("goal", &nodes).expect("the tree builds");
+        record_plan(&memory, "2026-11-08-abc", &plan).expect("the plan lands");
+        let facts = memory.facts();
+        let fact = facts
+            .iter()
+            .find(|fact| fact.name == "lesson-plan-2026-11-08-abc")
+            .expect("the plan fact");
+        assert_eq!(fact.fact_type, "lesson-plan");
+        assert_eq!(fact.description, "why a blocked handler stalls the request");
+        assert!(
+            fact.body.contains("teaching order: goal \u{2192} holds"),
+            "{}",
+            fact.body
+        );
+        assert!(fact.body.contains("graph TD"), "{}", fact.body);
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

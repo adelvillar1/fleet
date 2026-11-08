@@ -1662,3 +1662,176 @@ fn a_zero_cost_dependency_still_holds_its_dependent() {
     assert!(!unlock.is_unlocked());
     assert!(unlock.waiting.contains(&"free".to_string()));
 }
+
+// --- the lesson plan (the learning plan's C3) --------------------------------
+
+/// One lesson proposition, in the test's own short hand.
+fn lesson_node(id: &str, proposition: &str, premises: &[&str], cost: u64) -> LessonNode {
+    LessonNode {
+        id: id.to_string(),
+        proposition: proposition.to_string(),
+        premises: premises.iter().map(|premise| premise.to_string()).collect(),
+        cost,
+    }
+}
+
+#[test]
+fn the_lesson_plan_builds_the_tree_and_the_critical_path_is_the_teaching_order() {
+    // A chain: the foundation the learner holds, one step on it, and the
+    // goal the step reaches. The teaching order is the chain — the
+    // longest walk from a foundation to the goal.
+    let nodes = vec![
+        lesson_node("holds", "a request runs until its handler returns", &[], 1),
+        lesson_node(
+            "blocks",
+            "a handler that blocks stalls the request",
+            &["holds"],
+            2,
+        ),
+        lesson_node(
+            "goal",
+            "why a blocked handler stalls the whole request",
+            &["blocks"],
+            2,
+        ),
+    ];
+    let plan = build_lesson_plan("goal", &nodes).expect("the tree builds");
+    assert_eq!(
+        plan.teaching_order(),
+        ids(&["goal", "blocks", "holds"]),
+        "the critical path is the teaching order, goal first"
+    );
+    assert_eq!(plan.foundations().len(), 1);
+    assert_eq!(plan.foundations()[0].id, "holds");
+    assert_eq!(
+        plan.goal_proposition(),
+        Some("why a blocked handler stalls the whole request")
+    );
+    assert_eq!(
+        plan.proposition("blocks"),
+        Some("a handler that blocks stalls the request")
+    );
+    // The coarse view is the Mermaid DAG the learner reads: every node
+    // labelled with its own proposition, every edge the single step.
+    let coarse = plan.coarse_view();
+    assert!(coarse.starts_with("graph TD\n"), "{coarse}");
+    assert!(
+        coarse.contains("    holds[\"a request runs until its handler returns\"]"),
+        "{coarse}"
+    );
+    assert!(coarse.contains("    holds --> blocks\n"), "{coarse}");
+    assert!(coarse.contains("    blocks --> goal\n"), "{coarse}");
+}
+
+#[test]
+fn the_lesson_plan_teaches_the_longest_chain_first_in_a_branching_tree() {
+    // A diamond: two routes from the foundation to the goal, one longer.
+    // The teaching order follows the longer chain, and the shorter branch
+    // is still on the path — the tree is the whole dependency graph, not
+    // only the critical path.
+    let nodes = vec![
+        lesson_node(
+            "holds",
+            "the request runs until the handler returns",
+            &[],
+            1,
+        ),
+        lesson_node(
+            "short",
+            "the handler returns when it is done",
+            &["holds"],
+            1,
+        ),
+        lesson_node("long", "a blocked handler does not return", &["holds"], 3),
+        lesson_node(
+            "deeper",
+            "a stalled request holds its connection",
+            &["long"],
+            2,
+        ),
+        lesson_node(
+            "goal",
+            "why a blocked handler stalls the request",
+            &["short", "deeper"],
+            1,
+        ),
+    ];
+    let plan = build_lesson_plan("goal", &nodes).expect("the tree builds");
+    assert_eq!(
+        plan.teaching_order(),
+        ids(&["goal", "deeper", "long", "holds"]),
+        "the longer chain leads the teaching order"
+    );
+    // Every node is on the goal's path, so nothing is refused.
+    assert_eq!(plan.nodes.len(), 5);
+}
+
+#[test]
+fn the_lesson_plan_refuses_a_premise_that_names_nothing() {
+    let nodes = vec![lesson_node("goal", "the goal", &["missing"], 1)];
+    let error = build_lesson_plan("goal", &nodes).expect_err("a premise naming nothing");
+    assert!(error.contains("does not declare"), "{error}");
+}
+
+#[test]
+fn the_lesson_plan_refuses_a_goal_that_names_no_node() {
+    let nodes = vec![lesson_node("holds", "what the learner holds", &[], 1)];
+    let error = build_lesson_plan("elsewhere", &nodes).expect_err("a goal naming no node");
+    assert!(error.contains("names no declared proposition"), "{error}");
+}
+
+#[test]
+fn the_lesson_plan_refuses_a_cycle() {
+    let nodes = vec![
+        lesson_node("a", "a", &["b"], 1),
+        lesson_node("b", "b", &["a"], 1),
+    ];
+    let error = build_lesson_plan("a", &nodes).expect_err("a cycle");
+    assert!(error.contains("cycle"), "{error}");
+}
+
+#[test]
+fn the_lesson_plan_refuses_an_off_path_proposition() {
+    // A proposition the goal never reaches is not part of the minimal
+    // tree — the theory teaches nothing off-path.
+    let nodes = vec![
+        lesson_node("holds", "what the learner holds", &[], 1),
+        lesson_node("goal", "the goal", &["holds"], 1),
+        lesson_node("aside", "a true but unrelated fact", &["holds"], 1),
+    ];
+    let error = build_lesson_plan("goal", &nodes).expect_err("an off-path step");
+    assert!(error.contains("off the path"), "{error}");
+}
+
+#[test]
+fn the_lesson_plan_refuses_a_proposition_with_no_text() {
+    let nodes = vec![lesson_node("goal", "   ", &[], 1)];
+    let error = build_lesson_plan("goal", &nodes).expect_err("a blank proposition");
+    assert!(error.contains("names no proposition"), "{error}");
+    let error = build_lesson_plan("goal", &[]).expect_err("an empty tree");
+    assert!(error.contains("no propositions"), "{error}");
+}
+
+#[test]
+fn a_mermaid_label_escapes_the_characters_that_would_read_as_structure() {
+    let nodes = vec![lesson_node(
+        "goal",
+        "a fact with a \"quote\" and\na newline",
+        &[],
+        1,
+    )];
+    let plan = build_lesson_plan("goal", &nodes).expect("the tree builds");
+    let coarse = plan.coarse_view();
+    assert!(
+        coarse.contains("a fact with a #quot;quote#quot; and a newline"),
+        "the quotes are escaped and the newline flattened: {coarse}"
+    );
+    assert!(
+        coarse
+            .lines()
+            .filter(|line| line.contains("a fact with a"))
+            .count()
+            == 1,
+        "the label is one line: {coarse}"
+    );
+}

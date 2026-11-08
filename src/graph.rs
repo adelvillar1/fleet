@@ -1519,6 +1519,206 @@ impl Graph {
     }
 }
 
+// --- the lesson plan -------------------------------------------------------
+
+/// One proposition a lesson teaches, as the plan declares it (the
+/// learning plan's C3): a single reasoning step the teaching moves
+/// through, resting on the propositions before it.
+///
+/// The theory's own unit: teaching is facts in the right order, one
+/// reasoning step at a time, and each step attaches to what is held by
+/// a single step. A proposition with no premises is a foundation —
+/// something the learner already holds (the bracket's current) or an
+/// unconditionally true, simply motivated fact.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LessonNode {
+    /// The proposition's own id — the join to the graph's node.
+    pub id: String,
+    /// The proposition itself, in one sentence the learner can hold.
+    pub proposition: String,
+    /// The propositions this one rests on, by id. Empty is a
+    /// foundation.
+    pub premises: Vec<String>,
+    /// The estimated cost in teaching steps. It shapes the critical
+    /// path; it never gates anything.
+    pub cost: u64,
+}
+
+/// A lesson's minimal tree (the learning plan's C3): the propositions
+/// from the bracketed current state to the goal, the single-step
+/// dependencies, and the critical path as the teaching order.
+///
+/// The tree is the smallest dependency graph from what the learner
+/// holds to the goal — nothing held re-taught, nothing off-path
+/// taught. The build validates that: a premise naming no declared
+/// proposition, a goal naming no node, a cycle, or a proposition the
+/// goal never reaches is refused by name rather than taught.
+#[derive(Debug)]
+pub struct LessonPlan {
+    /// The dependency graph: the nodes, the single-step edges, the
+    /// costs. Its critical path is the teaching order.
+    pub graph: Graph,
+    /// The propositions, in declaration order.
+    pub nodes: Vec<LessonNode>,
+    /// The goal the tree teaches toward — the probe's pinned goal.
+    pub goal: String,
+}
+
+impl LessonPlan {
+    /// The teaching order: the graph's critical path, the longest chain
+    /// of single steps. The teaching moves in this order, because each
+    /// step attaches to what is held by one step and a shorter order
+    /// would step on ground not yet laid.
+    pub fn teaching_order(&self) -> Vec<String> {
+        self.graph.critical_path()
+    }
+
+    /// The proposition a node carries.
+    pub fn proposition(&self, id: &str) -> Option<&str> {
+        self.nodes
+            .iter()
+            .find(|node| node.id == id)
+            .map(|node| node.proposition.as_str())
+    }
+
+    /// The foundations: the propositions with no premises — what the
+    /// learner already holds, or an unconditionally true fact.
+    pub fn foundations(&self) -> Vec<&LessonNode> {
+        self.nodes
+            .iter()
+            .filter(|node| node.premises.is_empty())
+            .collect()
+    }
+
+    /// The goal's own proposition, when the goal names a node.
+    pub fn goal_proposition(&self) -> Option<&str> {
+        self.proposition(&self.goal)
+    }
+
+    /// The coarse view the learner reads: a Mermaid DAG of the tree.
+    /// The plan's resolution does not leak into the lesson — the
+    /// learner sees the map, never the teaching's own reasoning about
+    /// it. Replaceable: the DAG is the shape, not the renderer.
+    pub fn coarse_view(&self) -> String {
+        let mut out = String::from("graph TD\n");
+        for node in &self.nodes {
+            out.push_str(&format!(
+                "    {}[\"{}\"]\n",
+                node.id,
+                mermaid_label(&node.proposition)
+            ));
+        }
+        for node in &self.nodes {
+            for premise in &node.premises {
+                out.push_str(&format!("    {} --> {}\n", premise, node.id));
+            }
+        }
+        out
+    }
+}
+
+/// One label inside a Mermaid node: the proposition's own text, with
+/// the characters Mermaid would read as structure escaped and the
+/// newlines flattened — a label is one line.
+fn mermaid_label(text: &str) -> String {
+    text.replace('"', "#quot;")
+        .replace('\n', " ")
+        .trim()
+        .to_string()
+}
+
+/// Build the minimal tree from the bracketed states (the learning
+/// plan's C3). The goal is the probe's pinned goal; the nodes are the
+/// teaching's proposed propositions. The build refuses a tree that
+/// cannot be taught, each by name:
+///
+/// - a premise that names no declared proposition — the step would
+///   attach to nothing;
+/// - a goal that names no node — the tree would teach toward a
+///   proposition it does not hold;
+/// - a cycle — a lesson cannot teach in a circle;
+/// - a proposition the goal never reaches — an off-path step is not
+///   part of the minimal tree.
+pub fn build_lesson_plan(goal: &str, nodes: &[LessonNode]) -> Result<LessonPlan, String> {
+    if nodes.is_empty() {
+        return Err(
+            "the plan declares no propositions — a lesson with nothing to teach".to_string(),
+        );
+    }
+    // The declared ids, so a premise can be checked against the tree
+    // rather than only against the graph's own cycle rule — `add`
+    // tolerates an unresolved prereq (the verification condition holds
+    // it), and a lesson cannot teach a step that attaches to nothing.
+    let mut declared: Vec<&str> = Vec::with_capacity(nodes.len());
+    for node in nodes {
+        if declared.contains(&node.id.as_str()) {
+            return Err(format!(
+                "`{}` is declared twice — a proposition the teaching would step on twice",
+                node.id
+            ));
+        }
+        declared.push(node.id.as_str());
+    }
+    let mut graph = Graph::new();
+    for node in nodes {
+        if node.proposition.trim().is_empty() {
+            return Err(format!(
+                "`{}` names no proposition — a step the learner cannot hold",
+                node.id
+            ));
+        }
+        for premise in &node.premises {
+            if !declared.contains(&premise.as_str()) {
+                return Err(format!(
+                    "`{}` rests on `{premise}`, which the plan does not declare — a step \
+                     cannot attach to nothing",
+                    node.id
+                ));
+            }
+        }
+        graph
+            .add(Node::new(node.id.clone(), node.cost).with_prereqs(node.premises.clone()))
+            .map_err(|error| error.to_string())?;
+    }
+    if graph.node(goal).is_none() {
+        return Err(format!(
+            "the goal `{goal}` names no declared proposition — the tree would teach toward nothing"
+        ));
+    }
+    // Every proposition must be on the goal's own chain: walking the
+    // premises back from the goal, each node must appear. A node that
+    // does not is off the path from what the learner holds, and the
+    // minimal tree teaches nothing off-path.
+    let mut reached = vec![false; nodes.len()];
+    let mut stack = vec![goal.to_string()];
+    while let Some(id) = stack.pop() {
+        let Some(index) = graph.index_of(&id) else {
+            continue;
+        };
+        if reached[index] {
+            continue;
+        }
+        reached[index] = true;
+        for premise in &nodes[index].premises {
+            stack.push(premise.clone());
+        }
+    }
+    for (index, node) in nodes.iter().enumerate() {
+        if !reached[index] {
+            return Err(format!(
+                "`{}` is off the path from what the learner holds to the goal — the minimal \
+                 tree teaches nothing off-path",
+                node.id
+            ));
+        }
+    }
+    Ok(LessonPlan {
+        graph,
+        nodes: nodes.to_vec(),
+        goal: goal.to_string(),
+    })
+}
+
 // --- the surface -----------------------------------------------------------
 
 /// The card width, the house width `calib`, `eval`, `judge`, and the

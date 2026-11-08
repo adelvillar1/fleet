@@ -129,14 +129,22 @@ as the problem sessions' turns.
       tokens, measured in every theme (no overflow, ink ≥ 4.5:1), the
       PNGs read in a light and a dark theme, and the owner reads it
       before the pane's code lands.
-- [ ] **C1 — the lesson session kind.** `src/session.rs`'s `Start`
+- [x] **C1 — the lesson session kind.** `src/session.rs`'s `Start`
       record carries the kind; the session list and the face's
       session surface filter by it; pinned by `src/session.rs` tests.
-- [ ] **C2 — the prober and the probe loop.** The `prober` role under
+      *Landed 50b380f: `Start.kind` carries `teaching`/`practice`,
+      `Session::create_lesson`, `Session::list_kind`, `fleet sessions
+      --kind`, and the face's sessions read `?kind=`; the session tests
+      pin the kind's survival and the filter's exactness.*
+- [x] **C2 — the prober and the probe loop.** The `prober` role under
       `<home>/roles/` and `src/lesson.rs`'s probe loop ask the
       learner, capture each answer with its thinking and confidence,
       bracket the current state, and pin the goal; pinned by
       `src/lesson.rs` tests with the scripted reply.
+      *Landed 50b380f: `seed_prober` (never overwriting an owner's
+      file), the `ProbeConversation` seam with `probe_loop` asking one
+      question at a time, and `record_probe` landing the answers and the
+      bracket as `probe` facts plus one `learn_probe` row.*
 - [ ] **C3 — the plan.** The minimal tree builds in `src/graph.rs`
       from the bracketed states: the nodes, the single-step
       dependencies, the critical path as the teaching order; the
