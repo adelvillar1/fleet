@@ -771,7 +771,15 @@ async fn route_with(
         ("GET", "/api/sessions") => {
             let session = asked_session(bridge, request);
             let q = decode_query(&request.query, "q");
-            api(200, bridge.sessions(&session, &q).await)
+            // The kind filter (the learning plan's C1): absent is the
+            // whole archive, which is the listener's own read.
+            let kind = decode_query(&request.query, "kind");
+            let kind = if kind.is_empty() {
+                None
+            } else {
+                Some(kind.as_str())
+            };
+            api(200, bridge.sessions(&session, &q, kind).await)
         }
         ("GET", "/api/inbox") => api(200, bridge.inbox(50).await),
         ("GET", "/api/session") => {

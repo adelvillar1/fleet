@@ -1069,7 +1069,7 @@ impl Bridge {
             "delegation" => Ok(self.delegation("").await),
             "memory" => Ok(self.memory().await),
             "skills" => Ok(self.skills().await),
-            "sessions" => Ok(self.sessions("", "").await),
+            "sessions" => Ok(self.sessions("", "", None).await),
             "huddles" => Ok(self.huddles("").await),
             "usage" => Ok(self.usage()),
             "related" => Ok(self.related("", "", 20).await),
@@ -1150,7 +1150,7 @@ impl Bridge {
         // The four reads are independent; run them together so the
         // welcome's first paint pays the slowest one, not their sum.
         let (sessions, memory, skills, delegation) = tokio::join!(
-            self.sessions(&launch, ""),
+            self.sessions(&launch, "", None),
             self.memory(),
             self.skills(),
             self.delegation(&launch)
@@ -2143,10 +2143,11 @@ impl Bridge {
     /// The sessions panel's document: the archive as the summaries the
     /// log heads carry, newest first, with the session this face
     /// anchors named so the panel can say which row is live.
-    pub async fn sessions(&self, current: &str, query: &str) -> Value {
+    pub async fn sessions(&self, current: &str, query: &str, kind: Option<&str>) -> Value {
         let home = self.home.clone();
         let current = current.to_string();
         let query = query.to_string();
+        let kind = kind.map(str::to_string);
         // The live facts come from the face's own state, not the log: an
         // approval and a driving run are process truths, and the archive
         // is where the owner looks when they are waiting on one.
@@ -2162,8 +2163,10 @@ impl Bridge {
                     .collect(),
             }
         };
-        match tokio::task::spawn_blocking(move || sessions_read(&home, &current, &live, &query))
-            .await
+        match tokio::task::spawn_blocking(move || {
+            sessions_read(&home, &current, &live, &query, kind.as_deref())
+        })
+        .await
         {
             Ok(document) => document,
             Err(_) => json!({
@@ -7273,7 +7276,7 @@ fn conversations_document(home: &std::path::Path, live: &LiveFace, bound: usize)
         .into_iter()
         .map(|role| role.name)
         .collect();
-    let document = sessions_read(home, "", live, "");
+    let document = sessions_read(home, "", live, "", None);
     let rows = document
         .get("sessions")
         .and_then(Value::as_array)
@@ -7387,7 +7390,7 @@ fn inbox_document(
     seats: &std::collections::HashMap<String, String>,
     bound: usize,
 ) -> Value {
-    let document = sessions_read(home, "", live, "");
+    let document = sessions_read(home, "", live, "", None);
     let rows = document
         .get("sessions")
         .and_then(Value::as_array)
@@ -7487,7 +7490,13 @@ fn inbox_document(
     })
 }
 
-fn sessions_read(home: &std::path::Path, current: &str, live: &LiveFace, query: &str) -> Value {
+fn sessions_read(
+    home: &std::path::Path,
+    current: &str,
+    live: &LiveFace,
+    query: &str,
+    kind: Option<&str>,
+) -> Value {
     let titles = load_titles(home);
     let archived = load_archived(home);
     let probes = load_probes(home);
@@ -7499,6 +7508,16 @@ fn sessions_read(home: &std::path::Path, current: &str, live: &LiveFace, query: 
                 "refused": [format!("the archive could not be read: {error}")],
             })
         }
+    };
+    // The kind filter (the learning plan's C1): the Learning surface
+    // reads the lesson sessions by their `start` record's kind. Absent
+    // is the whole archive, which is the work list's own read.
+    let entries: Vec<session::SessionSummary> = match kind {
+        Some(kind) => entries
+            .into_iter()
+            .filter(|entry| entry.kind.as_deref() == Some(kind))
+            .collect(),
+        None => entries,
     };
     // The content pass (D9): only when the query asks, and only over
     // the newest SEARCH_BOUND logs — the bound rides the document so a
@@ -12852,7 +12871,7 @@ mod tests {
             ),
         );
         let live = LiveFace::default();
-        let document = sessions_read(&home, "", &live, "deployment notes");
+        let document = sessions_read(&home, "", &live, "deployment notes", None);
         let rows = document["sessions"].as_array().unwrap();
         let matched: Vec<&str> = rows
             .iter()
@@ -12872,7 +12891,7 @@ mod tests {
             hit.iter().any(|line| line.contains("deployment notes")),
             "the owner's line rides the row: {hit:?}"
         );
-        let document = sessions_read(&home, "", &live, "deploy.md");
+        let document = sessions_read(&home, "", &live, "deploy.md", None);
         let rows = document["sessions"].as_array().unwrap();
         let hit = rows
             .iter()
@@ -12887,9 +12906,9 @@ mod tests {
             Some(SEARCH_BOUND as u64)
         );
         assert_eq!(document["search"]["searched"].as_u64(), Some(2));
-        let plain = sessions_read(&home, "", &live, "");
+        let plain = sessions_read(&home, "", &live, "", None);
         assert!(plain["search"].is_null(), "no query, no bound named");
-        let document = sessions_read(&home, "", &live, "nothing says this");
+        let document = sessions_read(&home, "", &live, "nothing says this", None);
         assert!(document["sessions"]
             .as_array()
             .unwrap()
@@ -15615,7 +15634,7 @@ mod tests {
             driving: Some(working_id.clone()),
             seats: Default::default(),
         };
-        let document = sessions_read(&home, "", &live, "");
+        let document = sessions_read(&home, "", &live, "", None);
         let rows = document["sessions"].as_array().expect("rows");
         let row = |id: &str| {
             rows.iter()
@@ -15687,7 +15706,7 @@ mod tests {
             driving: None,
             seats: Default::default(),
         };
-        let document = sessions_read(&home, "", &live, "");
+        let document = sessions_read(&home, "", &live, "", None);
         let counts = &document["counts"];
         // The owner's paused conversation is the one "needs you"; the
         // scheduled run paused at its gate counts nothing on the rail.
@@ -15747,7 +15766,7 @@ mod tests {
         };
 
         // Before the mark: the kind-less row reads as the owner's.
-        let before = sessions_read(&home, "", &live, "");
+        let before = sessions_read(&home, "", &live, "", None);
         let row = |doc: &Value, id: &str| {
             doc["sessions"]
                 .as_array()
@@ -15763,7 +15782,7 @@ mod tests {
         let marked = mark_probes(&home, std::slice::from_ref(&legacy_id)).expect("the mark");
         assert_eq!(marked, vec![legacy_id.clone()]);
 
-        let after = sessions_read(&home, "", &live, "");
+        let after = sessions_read(&home, "", &live, "", None);
         assert_eq!(row(&after, &born_id)["class"], "probe");
         assert_eq!(row(&after, &legacy_id)["class"], "probe");
         let counts = &after["counts"];
@@ -15868,7 +15887,7 @@ mod tests {
         let oldest = ids[0].clone();
         let newest = ids[ids.len() - 1].clone();
 
-        let document = sessions_read(&home, "", &LiveFace::default(), "");
+        let document = sessions_read(&home, "", &LiveFace::default(), "", None);
         let rows = document["sessions"].as_array().expect("rows");
         assert_eq!(rows.len(), SEARCH_BOUND);
         assert_eq!(rows[0]["id"], newest.as_str(), "the newest log leads");
@@ -15890,7 +15909,7 @@ mod tests {
         })
         .unwrap();
         drop(log);
-        let document = sessions_read(&home, "", &LiveFace::default(), "needle-zqxv");
+        let document = sessions_read(&home, "", &LiveFace::default(), "needle-zqxv", None);
         let rows = document["sessions"].as_array().expect("rows");
         let found = row_of(rows, &newest);
         assert_eq!(
@@ -15936,7 +15955,7 @@ mod tests {
         let archived = bridge.session_archive(&id, true).expect("archived");
         assert_eq!(archived["archived"], true);
         let live = LiveFace::default();
-        let document = sessions_read(&home, "", &live, "");
+        let document = sessions_read(&home, "", &live, "", None);
         let rows = document["sessions"].as_array().expect("rows");
         assert_eq!(row_of(rows, &id)["state"], "archived");
         assert_eq!(document["counts"]["archived"], 1);
@@ -15948,7 +15967,7 @@ mod tests {
 
         // Unarchive restores the computed state and empties the registry.
         bridge.session_archive(&id, false).expect("restored");
-        let document = sessions_read(&home, "", &live, "");
+        let document = sessions_read(&home, "", &live, "", None);
         let rows = document["sessions"].as_array().expect("rows");
         assert_eq!(row_of(rows, &id)["state"], "active");
         assert_eq!(document["counts"]["archived"], 0);
@@ -16185,7 +16204,7 @@ mod tests {
         }
         // The archive shows both as conversations (one now carrying its
         // first message).
-        let document = bridge.sessions("", "").await;
+        let document = bridge.sessions("", "", None).await;
         let rows = document["sessions"].as_array().expect("rows");
         for id in [&first, &second] {
             let row = rows

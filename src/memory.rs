@@ -3304,7 +3304,7 @@ fn lock_fact(path: &Path) -> crate::filelock::FileLock {
 /// file never took. The best-effort callers (the recall-count bump,
 /// the cycle's stamps) keep their own logging and their own
 /// consequence for a failed rewrite.
-fn rewrite_field(path: &Path, key: &str, value: &str) -> Result<(), WriteError> {
+pub fn rewrite_field(path: &Path, key: &str, value: &str) -> Result<(), WriteError> {
     // KI-062: the whole read-modify-write runs under a per-fact lock.
     // The consolidation cycle's bounded rewrites and a concurrent run's
     // recall-count bump both re-read, edit one line, and rename over the
@@ -4449,7 +4449,7 @@ pub fn edit(root: &Path, request: &FactEdit) -> Result<Fact, WriteError> {
 
 /// One tag list as the frontmatter renders it: `[]` when empty, the
 /// bracket form otherwise.
-fn render_list(entries: &[String]) -> String {
+pub fn render_list(entries: &[String]) -> String {
     if entries.is_empty() {
         return "[]".to_string();
     }
@@ -13029,7 +13029,7 @@ mod tests {
                     },
                 )
         };
-        let report = dream(&root, "2026-11-07", None, None, judge);
+        let report = dream(&root, &calib::today(), None, None, judge);
         assert_eq!(
             report.retired,
             vec![
@@ -13123,7 +13123,7 @@ mod tests {
                 confidence: 0.0,
             })
         };
-        let report = dream(&root, "2026-11-07", None, None, judge);
+        let report = dream(&root, &calib::today(), None, None, judge);
         assert_eq!(seen, vec!["has-a-source".to_string()]);
         assert_eq!(report.judged, vec!["has-a-source".to_string()]);
         assert_eq!(report.skipped.len(), 1, "the unverifiable named");

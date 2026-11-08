@@ -1514,9 +1514,13 @@ async fn serve_connection(
             let query = query_value(&request.query, "q")
                 .unwrap_or_default()
                 .to_string();
+            // The kind filter (the learning plan's C1): the Learning
+            // surface reads the lesson sessions by their `start`
+            // record's kind. Absent is the whole archive.
+            let kind = query_value(&request.query, "kind").filter(|kind| !kind.is_empty());
             write_reply(
                 &mut stream,
-                api(200, bridge.sessions(&session, &query).await),
+                api(200, bridge.sessions(&session, &query, kind).await),
             )
             .await
         }

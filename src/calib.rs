@@ -559,6 +559,22 @@ pub struct DemandRow {
     pub top_rate: f64,
 }
 
+/// One probe session's record (the learning plan's C3): the answers
+/// the prober captured and the bracket they drew. The answers
+/// themselves land as facts (the `probe` type); the row is the audit
+/// trail that a probe ran, how much it captured, and the goal it
+/// pinned — the join to the lesson session's log.
+#[derive(Debug, Clone, Serialize)]
+pub struct LearnProbeRow {
+    pub ts: String,
+    /// The lesson session's id.
+    pub session: String,
+    /// How many answers the probe captured.
+    pub answers: u64,
+    /// The pinned goal, as the bracket recorded it.
+    pub goal: String,
+}
+
 /// One delegated run, as the orchestrator records it the moment a
 /// subagent stops. The row the beat reads and the row the parent chain
 /// joins on.
@@ -704,6 +720,7 @@ pub enum Row {
     Shape(ShapeRow),
     Validate(ValidateRow),
     Demand(DemandRow),
+    LearnProbe(LearnProbeRow),
 }
 
 impl Row {
@@ -727,6 +744,7 @@ impl Row {
             Row::Shape(_) => OP_SHAPE,
             Row::Validate(_) => OP_VALIDATE,
             Row::Demand(_) => OP_DEMAND,
+            Row::LearnProbe(_) => OP_LEARN_PROBE,
         }
     }
 
@@ -750,6 +768,7 @@ impl Row {
             Row::Shape(row) => &row.ts,
             Row::Validate(row) => &row.ts,
             Row::Demand(row) => &row.ts,
+            Row::LearnProbe(row) => &row.ts,
         }
     }
 }
@@ -1044,6 +1063,11 @@ pub const OP_VALIDATE: &str = "validate";
 /// self-improvement plan's C0) — the phantom-gradient instrument's
 /// audit trail: the window, the classes counted, the top demand.
 pub const OP_DEMAND: &str = "demand";
+/// The learn-probe op: one probe session's record (the learning plan's
+/// C3) — the audit trail that a probe ran and the goal it pinned. The
+/// answers themselves are facts; the row is the join to the lesson
+/// session's log.
+pub const OP_LEARN_PROBE: &str = "learn_probe";
 /// The delegation op: one delegated run, recorded by the orchestrator
 /// the moment a subagent stops. Keyed by the child's own session id —
 /// the join to the child's session log, the value
@@ -1056,7 +1080,7 @@ pub const OP_DELEGATION: &str = "delegation";
 /// calib` groups them. The three the reads used to drop — `verify`,
 /// `embed_timing`, `lifecycle` — ride their own row shapes; the face's
 /// rail carries them beside the rest (the calibration revamp, 2026-10-30).
-pub const OPS: [&str; 16] = [
+pub const OPS: [&str; 17] = [
     OP_ROUTE,
     OP_TOOL_SCREEN,
     OP_TURN,
@@ -1073,6 +1097,7 @@ pub const OPS: [&str; 16] = [
     OP_SHAPE,
     OP_VALIDATE,
     OP_DEMAND,
+    OP_LEARN_PROBE,
 ];
 
 /// The verdict a `propose` row carries when the change landed: the gate
@@ -4679,7 +4704,8 @@ mod tests {
                 "lifecycle",
                 "shape",
                 "validate",
-                "demand"
+                "demand",
+                "learn_probe"
             ]
         );
     }

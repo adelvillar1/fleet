@@ -23,6 +23,10 @@ pub enum Command {
         recall: Option<String>,
         view: Option<String>,
         probes: Vec<String>,
+        /// `--kind <kind>`: only the sessions whose `start` record
+        /// carries this kind — the lesson sessions the Learning
+        /// surface lists. Absent is the whole archive.
+        kind: Option<String>,
     },
     /// Fold one session's stored context on demand.
     Compact {
@@ -1166,6 +1170,7 @@ fn parse_sessions(args: &[String]) -> Result<Command, String> {
     let mut recall: Option<String> = None;
     let mut view: Option<String> = None;
     let mut probes: Vec<String> = Vec::new();
+    let mut kind: Option<String> = None;
     let mut index = 0;
     while index < args.len() {
         let arg = args[index].as_str();
@@ -1173,6 +1178,7 @@ fn parse_sessions(args: &[String]) -> Result<Command, String> {
             "--help" | "-h" => return Ok(Command::Help),
             "--recall" => recall = Some(take_value(args, &mut index, arg)?),
             "--probe" => probes.push(take_value(args, &mut index, arg)?),
+            "--kind" => kind = Some(take_value(args, &mut index, arg)?),
             _ if arg.starts_with('-') && arg != "-" => {
                 return Err(format!("unknown sessions option `{arg}`"));
             }
@@ -1191,6 +1197,7 @@ fn parse_sessions(args: &[String]) -> Result<Command, String> {
         recall,
         view,
         probes,
+        kind,
     })
 }
 
@@ -3657,6 +3664,7 @@ mod tests {
                 recall: None,
                 view: None,
                 probes: Vec::new(),
+                kind: None,
             }
         );
         assert_eq!(parse(&args(&["lanes"])).unwrap(), Command::Lanes);
@@ -3685,6 +3693,7 @@ mod tests {
                 recall: Some("the router pin".to_string()),
                 view: None,
                 probes: Vec::new(),
+                kind: None,
             }
         );
         assert!(parse(&args(&["lanes", "--json"])).is_err());

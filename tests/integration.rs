@@ -657,6 +657,7 @@ async fn parse_surfaces_the_documented_commands() {
             recall: None,
             view: None,
             probes: Vec::new(),
+            kind: None,
         })
     );
     assert_eq!(

@@ -42,6 +42,7 @@ pub mod install;
 pub mod judge;
 pub mod lane_client;
 pub mod lanes;
+pub mod lesson;
 /// The one lock every env-mutating test in the crate takes: the
 /// environment is process-global, and separate per-module locks let
 /// two tests' env windows overlap (found live: a view test's

@@ -35,6 +35,17 @@ pub const SUBAGENT_KIND: &str = "subagent";
 /// `fleet sessions` name one without opening its log.
 pub const SCHEDULED_KIND: &str = "scheduled";
 
+/// The `kind` a lesson session's `start` record carries (the learning
+/// plan's C1): the measure → plan → teach loop's own session. A lesson
+/// is the owner's work in a real log, not a delegated child — the kind
+/// is what the Learning surface and `fleet sessions --kind` filter by.
+pub const LESSON_KIND: &str = "teaching";
+/// The `kind` a practice session's `start` record carries (the learning
+/// plan's C1): the separate problem sessions where the knowledge must
+/// come to mind unnamed. Distinct from a lesson so the two are filtered
+/// apart rather than read as one run.
+pub const PRACTICE_KIND: &str = "practice";
+
 /// The `kind` a verification run's `start` record carries. A probe is a
 /// run that exists to check the harness — the session is the evidence,
 /// not a conversation — so `fleet run --probe` stamps it at birth and
@@ -704,6 +715,17 @@ impl Session {
         Session::open_new(&dir, model, Some(PROBE_KIND), None, None)
     }
 
+    /// Create a learning session's log under `sessions_dir(home)`,
+    /// marked with the lesson kind — the learning plan's C1. The kind is
+    /// the lesson's own: a teaching session teaches, a practice session
+    /// practices, and the two are filtered apart by the Learning
+    /// surface. The same seam the other kinds use: real work in a real
+    /// log the archive keeps whole.
+    pub fn create_lesson(home: &Path, model: &str, kind: &str) -> io::Result<Session> {
+        let dir = crate::home::ensure_sessions_dir(home)?;
+        Session::open_new(&dir, model, Some(kind), None, None)
+    }
+
     /// The one place a log is created: the id, the file, and the `start`
     /// record.
     fn open_new(
@@ -1313,6 +1335,16 @@ pub fn list(home: &Path) -> io::Result<Vec<SessionSummary>> {
     Ok(entries)
 }
 
+/// The sessions whose `start` record carries `kind`, oldest first — the
+/// filter the Learning surface and `fleet sessions --kind` read. `None`
+/// selects the sessions with no kind at all, which is the owner's own
+/// conversations rather than the archive's whole population.
+pub fn list_kind(home: &Path, kind: Option<&str>) -> io::Result<Vec<SessionSummary>> {
+    let mut entries = list(home)?;
+    entries.retain(|entry| entry.kind.as_deref() == kind);
+    Ok(entries)
+}
+
 /// Rebuild the wire messages a log represents: `start`/`end` are bookkeeping,
 /// everything else is model-visible.
 ///
@@ -1555,6 +1587,33 @@ mod tests {
         let reopened = Session::open(&session.path).unwrap();
         assert_eq!(reopened.kind(), Some(PROBE_KIND));
         std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn a_lesson_log_carries_its_kind_and_the_list_filters_by_it() {
+        let home = temp_home("lesson-kinds");
+        let teaching = Session::create_lesson(&home, "deepseek-flash", LESSON_KIND).unwrap();
+        let practice = Session::create_lesson(&home, "deepseek-flash", PRACTICE_KIND).unwrap();
+        let plain = Session::create(&home, "deepseek-flash").unwrap();
+        assert_eq!(teaching.kind(), Some(LESSON_KIND));
+        assert_eq!(practice.kind(), Some(PRACTICE_KIND));
+        assert_eq!(plain.kind(), None);
+        // The kind survives the reopen: the log's own first line is the
+        // truth, not the constructor's argument.
+        let reopened = Session::open(&teaching.path).unwrap();
+        assert_eq!(reopened.kind(), Some(LESSON_KIND));
+        // The filter is exact: a lesson kind selects its own, and `None`
+        // is the owner's own conversations — never the whole archive.
+        let lessons = list_kind(&home, Some(LESSON_KIND)).unwrap();
+        assert_eq!(lessons.len(), 1, "only the teaching session");
+        assert_eq!(lessons[0].id, teaching.id());
+        let practice_sessions = list_kind(&home, Some(PRACTICE_KIND)).unwrap();
+        assert_eq!(practice_sessions.len(), 1);
+        assert_eq!(practice_sessions[0].id, practice.id());
+        let ordinary = list_kind(&home, None).unwrap();
+        assert_eq!(ordinary.len(), 1, "only the kind-less session");
+        assert_eq!(ordinary[0].id, plain.id());
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     use super::*;
