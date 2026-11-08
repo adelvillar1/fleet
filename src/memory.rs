@@ -13063,8 +13063,12 @@ mod tests {
             .iter()
             .find(|fact| fact.name == "descriptions-ride-unbounded")
             .unwrap();
+        // The retirement stamps `valid-until` from the real UTC day, not
+        // from the date this test passes to `dream` (the supersede path
+        // reads `calib::today()`), so the assertion follows the real day —
+        // a hardcoded date here failed at the UTC rollover.
         assert!(
-            retired.forgotten("2026-11-07"),
+            retired.forgotten(&crate::calib::today()),
             "the contradicted fact is expired on disk"
         );
         assert!(

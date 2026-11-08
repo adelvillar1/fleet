@@ -55,7 +55,12 @@ wait. The home state names
 the counts (facts known, skills in reach, runs under this home), the
 method in three words — plan, delegate, verify — and where a run's work
 goes: local to the machine, turns to the providers that serve them, a
-document escalated to Perception to Nace.
+document escalated to Perception to Nace. A run can also hand you a
+**deliverable**: a deck (a presentation, infographic or poster, with an
+optional editable PowerPoint), a canvas frame (a designed page on a board),
+or a **component page** built from the catalog — a checked, self-contained
+HTML page for another project, its vocabulary closed and its refusals named
+(`docs/features/catalog.md`).
 
 **Work — design.** The board — Fleet's native descendant of the owner's
 **design-canvas** project: the canvas, the frame model and the contract came

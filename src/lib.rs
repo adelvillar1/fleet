@@ -16,6 +16,7 @@ pub mod boards;
 pub mod calib;
 pub mod canvas;
 pub mod capabilities;
+pub mod catalog;
 pub mod channels;
 pub mod checkpoints;
 pub mod cli;

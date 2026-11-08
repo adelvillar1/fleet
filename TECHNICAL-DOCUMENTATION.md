@@ -347,7 +347,8 @@ the refine snapshot, and the board the model named.
 The closed built-in tool set — now including the design canvas's
 `frame` (a complete page onto a board) and `review_frame` (a structured
 review onto a frame), beside `deck` as the family of structured
-deliverables a surface renders. Every failure is a model-visible result, never a
+deliverables a surface renders, and `ui` (a checked component page from
+the catalog, `catalog.rs`). Every failure is a model-visible result, never a
 panic. This module also declares the tool vocabulary the dynamic surfaces
 assemble: built-ins, `mcp__<svc>__<tool>`, skills, memory tools, `subagent`,
 and `web`. [`Tool::execute`] is the unrestricted run (the process's working
@@ -631,6 +632,7 @@ batch-only by construction.
 | `tui/` | `docs/architecture/deep-dive-2026-10-15.md`; `docs/architecture/overview.md` |
 | `gui/` | `docs/features/gui.md` |
 | `checkpoints.rs` | `docs/features/gui.md` (the trust trio) |
+| `catalog.rs` | `docs/features/catalog.md`; the component catalog's vocabulary, spec, check and render |
 | `deck.rs` | `docs/features/gui.md`; the deck pipeline's render stage |
 | `desk.rs` | `docs/features/desk.md`; `docs/plans/2026-11-05-desk-ux.md` |
 | `vault.rs` | AES-256-GCM at rest, keyed by a passphrase |
