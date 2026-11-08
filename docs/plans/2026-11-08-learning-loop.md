@@ -154,11 +154,18 @@ as the problem sessions' turns.
       cycle, an off-path proposition, a blank, a duplicate), the
       critical path as the teaching order, the Mermaid coarse view, and
       the plan's `lesson-plan` fact.*
-- [ ] **C4 — the teaching loop.** The teacher role and the lesson
+- [x] **C4 — the teaching loop.** The teacher role and the lesson
       flow move one reasoning step at a time — predict, explain,
       check — with the confusions repaired before continuing and the
       goal's self-evidence the terminal condition; pinned by
       `src/lesson.rs` tests.
+      *Landed e063b4f: the teacher role's seed, the
+      `TeachingConversation` seam with `teach` (the foundations never
+      re-taught, the repairs bounded, an unrepaired confusion stops the
+      lesson, and the learner's own "obviously true" is the only
+      terminal condition), and `record_lesson` landing one `check`
+      fact per step plus the lesson's own fact. `teaching_order` reads
+      the critical path as the spine, foundation first.*
 - [ ] **C5 — the knowledge graph.** The propositions and chains land
       as facts (the `proposition` type, the `premises` field through
       `Remember::parse`); the extraction pipeline runs over the
