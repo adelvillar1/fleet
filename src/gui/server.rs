@@ -1321,6 +1321,20 @@ async fn serve_connection(
                 Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
             }
         }
+        // Ask the running app what it is: the KI-481 ship turn's
+        // "diligent versioning" — the owner asks the live app for its
+        // version instead of diffing binaries. The crate's own
+        // declaration, compiled in.
+        ("GET", "/api/version") => {
+            write_reply(
+                &mut stream,
+                api(
+                    200,
+                    json!({"name": env!("CARGO_PKG_NAME"), "version": env!("CARGO_PKG_VERSION")}),
+                ),
+            )
+            .await
+        }
         // Name a session: the owner's title for the archive.
         ("POST", "/api/session/title") => {
             let body = match read_body(&mut stream, &request, rest).await {
@@ -4068,6 +4082,31 @@ mod tests {
             None,
             budget,
         )
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_version_route_names_the_running_app() {
+        // The KI-481 ship turn's diligence: the owner asks the live app
+        // what it is instead of diffing binaries on disk. The reply is
+        // the crate's compiled-in declaration, so this assert is the
+        // build's own version and reds the moment the route drops or
+        // answers with something else.
+        let (home, _) = archive_home();
+        let (bridge, _) = Bridge::detached(home, "deepseek-flash".to_string(), None);
+        let (server, port) = Server::bind("127.0.0.1", 0, Arc::new(bridge))
+            .await
+            .expect("bind");
+        tokio::spawn(async move {
+            let _ = server.serve().await;
+        });
+        let reply = get(port, "/api/version", "");
+        assert!(reply.starts_with("HTTP/1.1 200"), "{reply}");
+        let version = env!("CARGO_PKG_VERSION");
+        assert!(
+            reply.contains(&format!("\"version\":\"{version}\"")),
+            "the version is the declaration: {reply}"
+        );
+        assert!(reply.contains("\"name\":\"fleet\""), "{reply}");
     }
 
     #[tokio::test(flavor = "multi_thread")]
