@@ -1,5 +1,5 @@
 ---
-status: active
+status: completed
 created: 2026-11-07
 updated: 2026-11-07
 slug: component-catalog
@@ -77,16 +77,16 @@ before the first compile.
 
 ## Acceptance criteria
 
-- [ ] **C0 — the mockup is drawn, measured, read, and owner-read.** `docs/plans/mockups/2026-11-07-component-catalog/` holds the catalog as static HTML in fleet's own tokens — every kind with its props, plus one sample spec rendered end to end — measured rendered in every theme (no overflow, no clipped text, ink ≥ 4.5:1), the PNGs read in a light and a dark theme, and the owner reads it before any code of C1+ lands.
-- [ ] **C1 — the catalog table is data-driven.** `src/catalog.rs` ships a component table in which every entry has a unique kind, a non-empty description, and typed props, and a unit test asserts all three.
-- [ ] **C2 — the spec round-trips.** `src/catalog.rs` defines `UiSpec` (`root` plus `elements`), and a unit test parses a fixture spec from JSON and re-serializes it to an equal value.
-- [ ] **C3 — the validator refuses.** `catalog::check` returns a named refusal for a spec with an unknown component kind, a missing required prop, and a dangling child id, and a unit test asserts each refusal names the element and the fault.
-- [ ] **C4 — a known-good spec passes.** `catalog::check` returns zero refusals for a known-good fixture spec, and a unit test pins that.
-- [ ] **C5 — the render is complete.** `catalog::render` returns a complete HTML document for the known-good fixture, and a unit test asserts the output carries one marker per element and stays under the frame's size cap.
-- [ ] **C6 — the catalog feeds the prompt.** The system prompt names every catalog kind with its description, and a unit test asserts each kind appears in the assembled prompt.
-- [ ] **C7 — the `ui` tool refuses a bad spec.** The `ui` tool in `src/tools.rs` runs `catalog::check` before rendering and refuses a bad spec by name, and a unit test drives the handler with a bad spec and asserts the refusal.
-- [ ] **C8 — the gate is green.** The four-leg gate runs clean: `cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings`, `cargo build --release`, and `cargo test` each exit 0 on the merged tree.
-- [ ] **C9 — the docs land.** `docs/features/catalog.md` documents the catalog, the spec shape, the check rules, and the `ui` tool, and `TECHNICAL-DOCUMENTATION.md`'s module reference names `catalog.rs`.
+- [x] **C0 — the mockup is drawn, measured, read, and owner-read.** `docs/plans/mockups/2026-11-07-component-catalog/` holds the catalog as static HTML in fleet's own tokens — every kind with its props, plus one sample spec rendered end to end — measured rendered in every theme (no overflow, no clipped text, ink ≥ 4.5:1), the PNGs read in a light and a dark theme, and the owner reads it before any code of C1+ lands.
+- [x] **C1 — the catalog table is data-driven.** `src/catalog.rs` ships a component table in which every entry has a unique kind, a non-empty description, and typed props, and a unit test asserts all three.
+- [x] **C2 — the spec round-trips.** `src/catalog.rs` defines `UiSpec` (`root` plus `elements`), and a unit test parses a fixture spec from JSON and re-serializes it to an equal value.
+- [x] **C3 — the validator refuses.** `catalog::check` returns a named refusal for a spec with an unknown component kind, a missing required prop, and a dangling child id, and a unit test asserts each refusal names the element and the fault.
+- [x] **C4 — a known-good spec passes.** `catalog::check` returns zero refusals for a known-good fixture spec, and a unit test pins that.
+- [x] **C5 — the render is complete.** `catalog::render` returns a complete HTML document for the known-good fixture, and a unit test asserts the output carries one marker per element and stays under the frame's size cap.
+- [x] **C6 — the catalog feeds the prompt.** The system prompt names every catalog kind with its description, and a unit test asserts each kind appears in the assembled prompt.
+- [x] **C7 — the `ui` tool refuses a bad spec.** The `ui` tool in `src/tools.rs` runs `catalog::check` before rendering and refuses a bad spec by name, and a unit test drives the handler with a bad spec and asserts the refusal.
+- [x] **C8 — the gate is green.** The four-leg gate runs clean: `cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings`, `cargo build --release`, and `cargo test` each exit 0 on the merged tree.
+- [x] **C9 — the docs land.** `docs/features/catalog.md` documents the catalog, the spec shape, the check rules, and the `ui` tool, and `TECHNICAL-DOCUMENTATION.md`'s module reference names `catalog.rs`.
 
 ## Files to be touched
 
