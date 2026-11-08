@@ -93,7 +93,7 @@ cargo test                                 exit 0
   lib          2025 passed; 0 failed; 3 ignored
   integration   168 passed; 0 failed; 4 ignored
   face            1 passed; 0 failed
-python3 scripts/ki_ledger.py               exit 0   (473 rows, 6 open)
+python3 scripts/ki_ledger.py               exit 0   (474 rows, 7 open)
 python3 scripts/plan_check.py              exit 0
 ```
 
@@ -105,6 +105,27 @@ the gate now measures the code, not the machine.
 session is the proof: it checks that a completed plan's boxes are
 ticked, not that the ticked boxes are true. A box ticked on faith passes
 it exactly as a box ticked on evidence does.
+
+### The one run that was not green (KI-474)
+
+After the six commits, one `cargo test` exited **101**. The repeat loop
+was written `cargo test >/dev/null 2>&1; echo $?`, so the exit code
+survived and the reason did not — no failing test, no panic, no module.
+That is the row: the discarded output is the defect, not a gap in
+reporting it.
+
+Since then, thirteen consecutive runs exit 0 with the same totals
+(lib 2025, integration 168), one of them under six CPU burners on this
+ten-core machine. Nothing reproduced it, and the recap does not claim to
+know what it was. The nearest candidate was `DERIVE_BUDGET` and its
+wall-clock test, and that is ruled out by reading it rather than by
+guessing: `real_tree_vocabulary()` returns `None` when the derivation
+stops early and its callers `return` — a loaded machine buys a loud skip,
+not a red.
+
+Filed as KI-474, `open — watching`, with its next-action cell fixing the
+loop (capture to a log and read it; do not rerun to green) so a
+recurrence names itself instead of repeating this.
 
 ## Plans closed
 
@@ -160,7 +181,8 @@ reading as though the artifacts had always been there.
 
 ## Delivery
 
-Six commits on `master`, explicit paths only:
+Six commits on `master` before the recap, explicit paths only, and a
+seventh filing the run that was not green:
 
 | Commit | What |
 |---|---|
@@ -170,6 +192,7 @@ Six commits on `master`, explicit paths only:
 | `d93be84` | `docs` — the debris gone, KI-470/471/472 filed, six plans closed, CLAUDE.md's version |
 | `6e54580` | `fix(inbox)` — KI-473: the ask's `kind` and `at` carried through the fold, the 17 mockups and gui.md's section recovered from `stash@{0}` |
 | `378a848` | `docs(recap)` — this file, with the mockups' two widths stated right |
+| `94ca3a0` | `docs(known-issues)` — KI-474, the unexplained exit 101, filed watching |
 
 Uncommitted and left alone: the substrate's own churn — 15 `memories/`
 recall-count bumps and the day's `events.jsonl` — which `daily-maintenance`
@@ -204,3 +227,7 @@ more.
   services tree predates the `find_chrome` fix, which is exactly what made
   those two integration cases fail while they pointed at it. A rebuild and
   dmg install closes it; nothing in the repo does.
+- **KI-474 is watching, not solved.** One `cargo test` exited 101 without
+  leaving its reason. Thirteen later runs, one of them under load, are
+  green; nothing here claims to know what it was. The row's next-action
+  cell is the whole remedy until a recurrence names itself.
