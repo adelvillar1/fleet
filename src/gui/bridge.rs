@@ -81,6 +81,13 @@ pub enum Command {
     /// Plan this task: the run plans and does not write, and its final
     /// message records as a plan the owner edits and builds.
     Plan(String, String, Option<PathBuf>),
+    /// Run this task in a learning session: the session's `start`
+    /// record carries the lesson kind (`teaching` or `practice`) and
+    /// the role whose overlay rides the run — the prober, the teacher,
+    /// or the practitioner. An empty kind is an ordinary run; an empty
+    /// role is a session with no persona (the overlay then rides the
+    /// lead persona the session already names, as every run does).
+    RunAs(String, String, Option<PathBuf>, String, String),
     /// Re-anchor to this archived session's log. The next task replays
     /// it and continues it; the route is judged fresh, because the
     /// conversation the judgment serves is not the one that was judged.
@@ -1471,6 +1478,20 @@ impl Bridge {
             Err(_) => json!({
                 "type": "memory",
                 "refused": ["the memory read did not land"],
+            }),
+        }
+    }
+
+    /// The Learning pane's one document: the active lesson, the
+    /// proposition graph, the practice outcomes, and the history.
+    pub async fn learning(&self) -> Value {
+        let home = self.home.clone();
+        let memories = self.memories.clone();
+        match tokio::task::spawn_blocking(move || learning_document(&home, &memories)).await {
+            Ok(document) => document,
+            Err(_) => json!({
+                "type": "learning",
+                "refused": ["the learning read did not land"],
             }),
         }
     }
@@ -4019,6 +4040,23 @@ impl Bridge {
         self.full_access_floor(folder.as_deref(), lock(&self.state).permissions)?;
         self.dispatch(session, task, |session, task| {
             Command::Run(session.to_string(), task.to_string(), folder)
+        })
+    }
+
+    /// Hand the browser's task to the agent thread as a learning run:
+    /// the session's `start` record carries the lesson kind and the role
+    /// whose overlay rides the run. An empty kind is an ordinary run.
+    pub fn run_as(&self, session: &str, task: &str, kind: &str, role: &str) -> Result<(), String> {
+        let folder = self.run_folder(session, None)?;
+        self.full_access_floor(folder.as_deref(), lock(&self.state).permissions)?;
+        self.dispatch(session, task, |session, task| {
+            Command::RunAs(
+                session.to_string(),
+                task.to_string(),
+                folder,
+                kind.to_string(),
+                role.to_string(),
+            )
         })
     }
 
@@ -7487,6 +7525,216 @@ fn inbox_document(
         "read_at": epoch_millis(),
         "bound": bound,
         "sessions": out,
+    })
+}
+
+/// The plan fact's own shape, read back: the teaching order and the
+/// tree's nodes with their premises. The writer put them there (the
+/// lesson plan's C3); the Learning pane reads the map the learner saw.
+#[derive(Default)]
+struct PlanShape {
+    order: Vec<String>,
+    /// The node id, its proposition, and its premises.
+    nodes: Vec<(String, String, Vec<String>)>,
+}
+
+/// Read the plan fact's body: the `teaching order:` line's arrow chain
+/// and the Mermaid DAG's node labels and edges. A body that does not
+/// carry them reads as no plan — the pane says so rather than inventing
+/// a map.
+fn plan_shape(body: &str) -> PlanShape {
+    let mut shape = PlanShape {
+        order: Vec::new(),
+        nodes: Vec::new(),
+    };
+    for line in body.lines() {
+        if let Some(rest) = line.strip_prefix("teaching order: ") {
+            shape.order = rest
+                .split(" \u{2192} ")
+                .map(|step| step.trim().to_string())
+                .filter(|step| !step.is_empty())
+                .collect();
+        }
+    }
+    for line in body.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("graph TD") {
+            continue;
+        }
+        if let Some((from, to)) = trimmed.split_once(" --> ") {
+            let from = from.trim();
+            let to = to.trim();
+            if let Some(slot) = shape.nodes.iter_mut().find(|(id, _, _)| id == to) {
+                if !slot.2.iter().any(|seen| seen == from) {
+                    slot.2.push(from.to_string());
+                }
+            }
+            continue;
+        }
+        // A node: `id["the proposition"]`.
+        if let Some(open) = trimmed.find("[\"") {
+            let id = trimmed[..open].trim();
+            let rest = &trimmed[open + 2..];
+            if let Some(close) = rest.find("\"]") {
+                if !id.is_empty() && !id.contains(' ') {
+                    let proposition = rest[..close].to_string();
+                    if !shape.nodes.iter().any(|(seen, _, _)| seen == id) {
+                        shape.nodes.push((id.to_string(), proposition, Vec::new()));
+                    }
+                }
+            }
+        }
+    }
+    shape
+}
+
+/// The Learning document (the learning plan's C7): the active lesson's
+/// plan, position, and the propositions the learner holds; the
+/// proposition graph; the practice outcomes; and the history. The face's
+/// Learning pane reads this one document.
+fn learning_document(home: &std::path::Path, memories: &std::path::Path) -> Value {
+    let lessons =
+        crate::session::list_kind(home, Some(crate::session::LESSON_KIND)).unwrap_or_default();
+    let practice_sessions =
+        crate::session::list_kind(home, Some(crate::session::PRACTICE_KIND)).unwrap_or_default();
+    let facts = crate::memory::load_facts(memories);
+    let _ = crate::calib::today();
+    // The active lesson: the newest session that has not ended, else
+    // the newest — the lesson the owner is in or last took.
+    let active = lessons
+        .iter()
+        .rev()
+        .find(|summary| !summary.ended)
+        .or(lessons.last());
+    let lesson = match active {
+        Some(session) => {
+            let plan = facts
+                .iter()
+                .find(|fact| fact.name == format!("lesson-plan-{}", session.id));
+            let checks: Vec<&crate::memory::Fact> = facts
+                .iter()
+                .filter(|fact| fact.name.starts_with(&format!("check-{}-", session.id)))
+                .collect();
+            let outcome = facts
+                .iter()
+                .find(|fact| fact.name == format!("lesson-{}", session.id));
+            let shape = plan.map(|fact| plan_shape(&fact.body)).unwrap_or_default();
+            let mut marked = 0;
+            let nodes: Vec<serde_json::Value> = shape
+                .order
+                .iter()
+                .map(|id| {
+                    let (_, proposition, premises) = shape
+                        .nodes
+                        .iter()
+                        .find(|(seen, _, _)| seen == id)
+                        .cloned()
+                        .unwrap_or_else(|| (id.clone(), String::new(), Vec::new()));
+                    let held = checks.iter().any(|fact| {
+                        fact.name == format!("check-{}-{}", session.id, id)
+                            && fact.body.contains("held: true")
+                    });
+                    // The states the pane shows: the steps the learner
+                    // has held, the one they are on, the next, the rest.
+                    let state = if held {
+                        "held"
+                    } else {
+                        let word = match marked {
+                            0 => "current",
+                            1 => "next",
+                            _ => "later",
+                        };
+                        marked += 1;
+                        word
+                    };
+                    serde_json::json!({
+                        "id": id,
+                        "proposition": proposition,
+                        "premises": premises,
+                        "state": state,
+                    })
+                })
+                .collect();
+            let holds: Vec<serde_json::Value> = shape
+                .nodes
+                .iter()
+                .filter(|(_, _, premises)| premises.is_empty())
+                .map(|(id, proposition, _)| {
+                    serde_json::json!({
+                        "id": id,
+                        "proposition": proposition,
+                    })
+                })
+                .collect();
+            let checked = nodes
+                .iter()
+                .filter(|node| node.get("state").and_then(Value::as_str) == Some("held"))
+                .count();
+            serde_json::json!({
+                "id": session.id,
+                "goal": plan.map(|fact| fact.description.clone()).unwrap_or_default(),
+                "ended": session.ended,
+                "position": if nodes.is_empty() {
+                    serde_json::Value::Null
+                } else {
+                    serde_json::json!({
+                        "step": checked + 1,
+                        "total": nodes.len(),
+                        "checked": checked,
+                    })
+                },
+                "nodes": nodes,
+                "holds": holds,
+                "self_evidence": outcome
+                    .map(|fact| fact.body.clone())
+                    .unwrap_or_default(),
+            })
+        }
+        None => serde_json::Value::Null,
+    };
+    // The graph: the propositions and their chains.
+    let propositions: Vec<serde_json::Value> = facts
+        .iter()
+        .filter(|fact| fact.fact_type == "proposition" && fact.superseded_by.trim().is_empty())
+        .map(|fact| {
+            serde_json::json!({
+                "name": fact.name,
+                "claim": fact.description,
+                "premises": fact.premises,
+            })
+        })
+        .collect();
+    // The practice outcomes: what happened, never a mastery rating.
+    let practice: Vec<serde_json::Value> = facts
+        .iter()
+        .filter(|fact| fact.fact_type == "practice" && fact.superseded_by.trim().is_empty())
+        .map(|fact| {
+            serde_json::json!({
+                "name": fact.name,
+                "setting": fact.description,
+                "held": fact.body.contains("held: true"),
+                "exercises": fact.premises,
+            })
+        })
+        .collect();
+    let history_row = |summary: &crate::session::SessionSummary| {
+        serde_json::json!({
+            "id": summary.id,
+            "title": summary.last_plan.clone().or(summary.first_text.clone()).unwrap_or_default(),
+            "ended": summary.ended,
+            "created": summary.created,
+        })
+    };
+    let history: Vec<serde_json::Value> = lessons.iter().rev().map(history_row).collect();
+    let practice_history: Vec<serde_json::Value> =
+        practice_sessions.iter().rev().map(history_row).collect();
+    serde_json::json!({
+        "type": "learning",
+        "read_at": epoch_millis(),
+        "lesson": lesson,
+        "graph": { "propositions": propositions },
+        "practice": { "outcomes": practice },
+        "history": { "lessons": history, "practice": practice_history },
     })
 }
 
@@ -11676,8 +11924,17 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
                 // consumes it: the two share one body, and the flag is
                 // the only difference between a run and a plan.
                 let plan_mode = matches!(command, Command::Plan(_, _, _));
+                // The learning seam: the session's kind and the role
+                // whose overlay rides the run. Read here because the
+                // match consumes the command.
+                let learning = match &command {
+                    Command::RunAs(_, _, _, kind, role) => Some((kind.clone(), role.clone())),
+                    _ => None,
+                };
                 match command {
-                    Command::Run(driving, task, folder) | Command::Plan(driving, task, folder) => {
+                    Command::Run(driving, task, folder)
+                    | Command::Plan(driving, task, folder)
+                    | Command::RunAs(driving, task, folder, _, _) => {
                         // The session this task drives. An empty name is
                         // the face's own launch session, which is created
                         // on this first task: a face that is opened and
@@ -11689,7 +11946,23 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
                         let driving = if driving.is_empty() {
                             match &current_session {
                                 Some(id) => id.clone(),
-                                None => match Session::create(&home, &model) {
+                                None => {
+                                    // The learning seam: a lesson or
+                                    // practice session, born with the
+                                    // role whose overlay the run rides.
+                                    // An empty kind is an ordinary run.
+                                    let born = match &learning {
+                                        Some((kind, role)) if !kind.is_empty() => {
+                                            let personas = if role.is_empty() {
+                                                None
+                                            } else {
+                                                Some(vec![role.clone()])
+                                            };
+                                            Session::create_lesson(&home, &model, kind, personas)
+                                        }
+                                        _ => Session::create(&home, &model),
+                                    };
+                                    match born {
                                     Ok(fresh) => {
                                         let id = fresh.id().to_string();
                                         current_session = Some(id.clone());
@@ -11707,7 +11980,8 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
                                         )));
                                         continue;
                                     }
-                                },
+                                    }
+                                }
                             }
                         } else {
                             current_session = Some(driving.clone());

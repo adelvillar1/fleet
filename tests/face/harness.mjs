@@ -343,6 +343,9 @@ function boot(options) {
     if (pathOnly === '/api/sessions') {
       return Promise.resolve({ status: 200, json: () => Promise.resolve(documents.sessions || emptySessions()) });
     }
+    if (pathOnly === '/api/learning') {
+      return Promise.resolve({ status: 200, json: () => Promise.resolve(documents.learning || emptyLearning()) });
+    }
     // The rail's read only: the creation POST falls through to the
     // default reply, exactly as it would reach the server's own route.
     if (pathOnly === '/api/desk' && method === 'GET') {
@@ -1092,6 +1095,54 @@ const emptySessions = () => ({
   type: 'sessions', read_at: 'now', current: '',
   counts: { needs: 0, working: 0, background: 0, earlier: 0, total: 0 },
   sessions: [],
+});
+
+// The learning pane's empty read: no lesson yet, an empty graph, no
+// outcomes, no history. The fixture the rail and the sections paint.
+const emptyLearning = () => ({
+  type: 'learning', read_at: 'now',
+  lesson: null,
+  graph: { propositions: [] },
+  practice: { outcomes: [] },
+  history: { lessons: [], practice: [] },
+  refused: [],
+});
+
+// A lesson in flight: the plan's coarse view (the nodes with their
+// states), the position, what the learner holds, one proposition, one
+// practice outcome, and the history's sessions.
+const learningDoc = () => ({
+  type: 'learning', read_at: 'now',
+  lesson: {
+    id: '2026-11-08-abc', goal: 'why a blocked handler stalls the request',
+    ended: false,
+    position: { step: 3, total: 4, checked: 2 },
+    nodes: [
+      { id: 'holds', proposition: 'a request runs until its handler returns', premises: [], state: 'held' },
+      { id: 'blocks', proposition: 'a handler that blocks does not return', premises: ['holds'], state: 'held' },
+      { id: 'goal', proposition: 'why a blocked handler stalls the request', premises: ['blocks'], state: 'current' },
+      { id: 'beyond', proposition: 'the connection stays open while the handler is blocked', premises: ['goal'], state: 'later' },
+    ],
+    holds: [
+      { id: 'holds', proposition: 'a request runs until its handler returns' },
+      { id: 'blocks', proposition: 'a handler that blocks does not return' },
+    ],
+    self_evidence: '',
+  },
+  graph: { propositions: [
+    { name: 'a-blocked-handler-stalls', claim: 'a blocked handler stalls the whole request',
+      premises: ['a-request-runs-until-its-handler-returns'] },
+  ] },
+  practice: { outcomes: [
+    { name: 'practice-2026-11-08-abc-0',
+      setting: 'a server\u2019s handler stops mid-request and never comes back',
+      held: true, exercises: ['a-blocked-handler-stalls'] },
+  ] },
+  history: {
+    lessons: [{ id: '2026-11-08-abc', title: 'the lesson', ended: false, created: '2026-11-08T09:00:00Z' }],
+    practice: [{ id: '2026-11-07-def', title: 'practice', ended: true, created: '2026-11-07T09:00:00Z' }],
+  },
+  refused: [],
 });
 
 const emptyHuddles = () => ({
@@ -8513,6 +8564,128 @@ const memoryDoc = (() => {
   };
 })();
 
+// The Learning surface (the learning plan's C7): the mockup's four
+// sections ride the section rail's own idiom; the lesson shows the
+// plan's coarse view, the position, and what the learner holds; the
+// graph shows the propositions and their chains; the practice shows the
+// entry and the outcomes; the history shows the sessions. The lesson
+// and practice entries post the learning start with the kind and the
+// role whose overlay the run rides.
+async function theLearningRailCarriesTheFourSections() {
+  const bootLearning = (hash) => boot({
+    width: 1440, hash,
+    documents: {
+      learning: learningDoc(), state: (asked) => emptyState(asked),
+      onboard: onboardDoc({ door: false }),
+    },
+  });
+
+  const page = bootLearning('#/learning');
+  page.open();
+  await flush(80);
+
+  // The rail: the four sections, the lesson first.
+  const railRows = page.rows('.section-rail-row');
+  const railText = railRows.map((row) => row.textContent);
+  check('LEARN the rail carries the four sections',
+    railRows.length === 4 &&
+      railText[0].includes('the lesson') && railText[1].includes('the graph') &&
+      railText[2].includes('practice') && railText[3].includes('history'),
+    railText.join(' | '));
+  check('LEARN one section renders at a time',
+    page.rows('.section-body').length === 1 &&
+      page.rows('.section-body')[0].dataset.section === 'lesson',
+    page.rows('.section-body').map((b) => b.dataset.section).join(','));
+
+  // The lesson pane: the plan's coarse view, the position, the holds.
+  const nodes = page.rows('.lr-node');
+  check('LEARN the lesson shows the plan\u2019s nodes with their states',
+    nodes.length === 4 &&
+      nodes[0].dataset.state === 'held' &&
+      nodes[2].dataset.state === 'current' &&
+      nodes[3].dataset.state === 'later' &&
+      /you are here/.test(nodes[2].textContent),
+    nodes.map((n) => n.dataset.state + ':' + n.textContent).join(' | '));
+  const board = page.text('learning-board');
+  check('LEARN the lesson names the position',
+    /position: step 3 of 4/.test(board), board.slice(0, 200));
+  check('LEARN the lesson names what the learner holds',
+    board.includes('what you hold') &&
+      board.includes('a request runs until its handler returns'),
+    board.slice(0, 400));
+
+  // The graph section is an address, and it carries the chains.
+  const graph = bootLearning('#/learning/graph');
+  await flush();
+  graph.open();
+  await flush(80);
+  check('LEARN the graph section is an address',
+    graph.rows('.section-body')[0].dataset.section === 'graph', 'graph route');
+  const props = graph.rows('.lr-prop');
+  check('LEARN the graph shows the propositions and their chains',
+    props.length === 1 &&
+      props[0].textContent.includes('a blocked handler stalls the whole request') &&
+      props[0].textContent.includes('because a-request-runs-until-its-handler-returns'),
+    props.map((p) => p.textContent).join(' | '));
+
+  // The practice section carries the entry and the outcomes.
+  const practice = bootLearning('#/learning/practice');
+  await flush();
+  practice.open();
+  await flush(80);
+  check('LEARN the practice section carries the entry',
+    practice.rows('.lr-start').length === 1 &&
+      /start a practice/.test(practice.rows('.lr-start')[0].textContent),
+    practice.rows('.lr-start').map((b) => b.textContent).join(' | '));
+  const outcomes = practice.rows('.lr-outcome');
+  check('LEARN the practice shows the outcomes as evidence',
+    outcomes.length === 1 && outcomes[0].dataset.held === 'true' &&
+      /held/.test(outcomes[0].textContent),
+    outcomes.map((o) => o.dataset.held + ':' + o.textContent).join(' | '));
+  practice.rows('.lr-start')[0].click();
+  await flush(60);
+  const starts = practice.calls.filter((call) =>
+    call.url === '/api/learning/start' && call.method === 'POST');
+  check('LEARN the practice entry posts the learning start',
+    starts.length === 1 &&
+      String(starts[0].body).includes('"kind":"practice"') &&
+      String(starts[0].body).includes('"role":"practitioner"'),
+    JSON.stringify(starts));
+
+  // The history section lists the sessions, both kinds.
+  const history = bootLearning('#/learning/history');
+  await flush();
+  history.open();
+  await flush(80);
+  const rows = history.rows('.lr-history');
+  check('LEARN the history shows both kinds',
+    rows.length === 2 && rows[0].textContent.includes('open') &&
+      rows[1].textContent.includes('ended'),
+    rows.map((r) => r.textContent).join(' | '));
+
+  // An empty lesson offers the start.
+  const empty = boot({
+    width: 1440, hash: '#/learning',
+    documents: { learning: emptyLearning(), state: (asked) => emptyState(asked),
+      onboard: onboardDoc({ door: false }) },
+  });
+  empty.open();
+  await flush(80);
+  const start = empty.rows('.lr-start');
+  check('LEARN an empty lesson offers the start',
+    start.length === 1 && /start a lesson/.test(start[0].textContent),
+    start.map((b) => b.textContent).join(' | '));
+  start[0].click();
+  await flush(60);
+  const lessonStarts = empty.calls.filter((call) =>
+    call.url === '/api/learning/start' && call.method === 'POST');
+  check('LEARN the lesson entry posts the teaching kind under the prober',
+    lessonStarts.length === 1 &&
+      String(lessonStarts[0].body).includes('"kind":"teaching"') &&
+      String(lessonStarts[0].body).includes('"role":"prober"'),
+    JSON.stringify(lessonStarts));
+}
+
 async function theMemoryRailCarriesTheQueueAndTheVerbs() {
   const bootMemory = (hash) => boot({
     width: 1440, hash,
@@ -9849,7 +10022,7 @@ async function theConnectCardSaysWhatHappened() {
     await flush();
     const groups = page.IDS['rail-tree'].find((one) =>
       String(one.className || '').split(/\s+/).includes('surfaces-group'));
-    check('ICONS the rail carries four group controls', groups.length === 4,
+    check('ICONS the rail carries five group controls', groups.length === 5,
       'groups=' + groups.length);
     check('ICONS a group starts open',
       groups[0].getAttribute('aria-expanded') === 'true' &&
@@ -9879,22 +10052,22 @@ async function theConnectCardSaysWhatHappened() {
       open ? 'folded=' + open.dataset.folded : 'no section');
   }
 
-  // Fifteen destinations, fifteen drawings (C4): no destination shares a
-  // mark with another, and none wears the unknown state.
-  async function theMainRailDrawsFifteenMarks() {
+  // Eighteen destinations, eighteen drawings (C4): no destination shares
+  // a mark with another, and none wears the unknown state.
+  async function theMainRailDrawsEighteenMarks() {
     const page = boot({ documents: {} });
     page.open();
     await flush();
     const links = page.IDS['rail-tree'].find((one) =>
       String(one.className || '').split(/\s+/).includes('surfaces-link'));
-    check('ICONS the main rail lists seventeen destinations', links.length === 17,
+    check('ICONS the main rail lists eighteen destinations', links.length === 18,
       'links=' + links.length);
     const shapes = links.map((link) => {
       const svg = link.find((one) => one.name === 'svg')[0];
       return svg ? svg.children.map((shape) => JSON.stringify(shape.attrs || {})).join('|') : '';
     });
     check('ICONS every destination draws its own mark',
-      shapes.every(Boolean) && new Set(shapes).size === 17,
+      shapes.every(Boolean) && new Set(shapes).size === 18,
       'distinct=' + new Set(shapes).size + ' empty=' + shapes.filter((one) => !one).length);
   }
 
@@ -10512,7 +10685,7 @@ const cases = [
   ['ICONS every key the face asks for is drawn', everyIconKeyTheFaceAsksForIsDrawn],
   ['ICONS the rail toggle is the icon alone', theRailToggleIsTheIconAlone],
   ['ICONS the rail\u2019s groups fold', theRailsGroupsFold],
-  ['ICONS the main rail draws fifteen distinct marks', theMainRailDrawsFifteenMarks],
+  ['ICONS the main rail draws eighteen distinct marks', theMainRailDrawsEighteenMarks],
   ['ICONS the bots rail wears its initials', theBotsRailWearsItsInitials],
   ['PALETTE the palette agrees with the rail', thePaletteAgreesWithTheRail],
   ['PLUGINS the management surface and the two tiers\' frames', thePluginsSurfaceManagesTheChains],
@@ -10606,6 +10779,7 @@ const cases = [
   ['BOTS the bots rail groups by persona', theBotsRailGroupsByPersona],
   ['SKILL the skills rail carries the categories and the pane', theSkillsRailCarriesOneSectionAtATime],
   ['MEM the memory rail carries the queue and the verbs', theMemoryRailCarriesTheQueueAndTheVerbs],
+  ['LEARN the learning rail carries the four sections', theLearningRailCarriesTheFourSections],
   ['WORKSPACE the workspace rail carries the projects and the pane', theWorkspaceRailCarriesTheProjectsAndThePane],
   ['CAL the calibration rail carries the gate and the day', theCalibrationRailCarriesTheGateAndTheDay],
   ['LAND the landing greets the owner\u2019s work', theLandingGreetsTheOwnersWork],

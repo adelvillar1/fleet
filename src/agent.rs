@@ -193,10 +193,14 @@ pub const MAX_VISIBLE_TOOLS: usize = 36;
 /// catalog's `ui` tool (the component-catalog plan's C7): the closed
 /// vocabulary rides the system prompt, so the declaration is a schema
 /// pointer plus a short contract, and it put the surface at 10,224
-/// against thirty-one — so it moves to 10,300. The measurement is pinned
-/// by `the_native_surface_fits_its_own_bounds`, which is the gate that
-/// caught all four crossings.
-pub const MAX_DEFINITION_TOKENS: usize = 10_300;
+/// against thirty-one — so it moves to 10,300. The fifth is the learning
+/// record's `premises` field (the learning plan's C5): the chain's
+/// joint-premise structure rides the `remember` and `supersede` schemas,
+/// and it put the surface at 10,390 against thirty-two — so it moves to
+/// 10,400. The measurement is pinned by
+/// `the_native_surface_fits_its_own_bounds`, which is the gate that
+/// caught all five crossings.
+pub const MAX_DEFINITION_TOKENS: usize = 10_400;
 
 /// How many requests a `tool_search` activation stays declared for. An
 /// activation is an answer to ONE question, not a permanent grant: the
@@ -15710,10 +15714,17 @@ mod tier_tests {
     /// cannot fully fit.
     #[test]
     fn an_over_budget_core_withholds_its_unranked_tail_and_names_them() {
+        // The verbosity is a fixture, not a calibration: the core must
+        // be CLEARLY over the bound, not a handful of tokens above it.
+        // At 40 repetitions the synthetic core sat 12 tokens over
+        // 10,300 — a bound move (not a surface growth) tripped the
+        // withholding, which is the load-sensitive test the house rule
+        // names as a defect. 50 puts it well past any bound this
+        // surface can reach without a real crossing.
         let big = |name: &str| {
             crate::api::ToolSpec::function(
                 name,
-                "a deliberately verbose tool description. ".repeat(40),
+                "a deliberately verbose tool description. ".repeat(50),
                 serde_json::json!({"type": "object"}),
             )
         };

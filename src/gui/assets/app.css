@@ -10296,3 +10296,65 @@ body[data-work="collapsed"] .room-back { display: grid; }
 .ib-actions button.danger { color: var(--dsw-alias-down); border-color: var(--dsw-alias-down); }
 .ib-row .ib-pill { padding: 1px 8px; border-radius: var(--radius-pill); font-size: var(--text-xs); font-weight: 600; background: var(--dsw-alias-surface-raised); color: var(--dsw-alias-ink-secondary); margin-right: 6px; }
 .surfaces-badge { margin-left: auto; min-width: 18px; padding: 1px 6px; border-radius: var(--radius-pill); background: var(--dsw-alias-down); color: #fff; font-size: var(--text-xs); font-weight: 700; font-variant-numeric: tabular-nums; text-align: center; }
+
+/* ---- the learning surface (the learning plan's C7) -------------------------- */
+
+/* The lesson's nodes: the plan's coarse view, each step with its state. */
+.lr-pos { color: var(--dsw-alias-ink-tertiary); font-size: var(--text-sm); margin: 2px 0 10px; }
+.lr-goal { color: var(--dsw-alias-ink); font-size: var(--text-base); margin: 0 0 12px; }
+.lr-nodes { display: flex; flex-direction: column; gap: 6px; }
+.lr-node {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+  border: 1px solid var(--dsw-alias-surface-raised);
+  border-radius: var(--radius-md, 8px);
+  padding: 8px 10px;
+  font-size: var(--text-base);
+}
+.lr-node[data-state="held"] { opacity: 0.72; }
+.lr-node[data-state="current"] { border-color: var(--dsw-alias-accent, #2b6cb0); }
+.lr-prop { color: var(--dsw-alias-ink); }
+.lr-node .lr-dep { color: var(--dsw-alias-ink-tertiary); font-size: var(--text-sm); white-space: nowrap; }
+.lr-node[data-state="current"] .lr-dep { color: var(--dsw-alias-accent, #2b6cb0); font-weight: 600; }
+.lr-sub { color: var(--dsw-alias-ink-secondary); font-size: var(--text-sm); letter-spacing: 0.04em; text-transform: uppercase; margin: 16px 0 6px; }
+.lr-holds { display: flex; flex-direction: column; gap: 6px; }
+.lr-hold {
+  border-left: 3px solid var(--dsw-alias-accent, #2b6cb0);
+  padding: 6px 10px;
+  font-size: var(--text-base);
+  background: var(--dsw-alias-surface-raised);
+}
+.lr-note { color: var(--dsw-alias-ink-tertiary); font-size: var(--text-sm); margin: 12px 0 0; }
+
+/* The graph's propositions and their chains. */
+.lr-claim { display: block; color: var(--dsw-alias-ink); }
+.lr-premises { display: block; color: var(--dsw-alias-ink-tertiary); font-size: var(--text-sm); margin-top: 2px; }
+
+/* The practice's outcomes. */
+.lr-outcome {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+  padding: 8px 10px; border-radius: var(--radius-md, 8px);
+  border: 1px solid var(--dsw-alias-surface-raised);
+  margin: 6px 0; font-size: var(--text-base);
+}
+.lr-outcome[data-held="true"] { border-left: 3px solid var(--dsw-alias-accent, #2b6cb0); }
+.lr-outcome[data-held="false"] { border-left: 3px solid transparent; opacity: 0.8; }
+.lr-outcome .lr-dep { color: var(--dsw-alias-ink-tertiary); font-size: var(--text-sm); white-space: nowrap; }
+
+/* The history's sessions. */
+.lr-history {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+  padding: 7px 0; border-bottom: 1px solid var(--dsw-alias-surface-raised);
+  font-size: var(--text-base);
+}
+.lr-history .lr-dep { color: var(--dsw-alias-ink-tertiary); font-size: var(--text-sm); }
+
+/* The lesson and practice entries. */
+.lr-start {
+  display: inline-flex; align-items: center; gap: 8px;
+  margin: 10px 0 0; padding: 7px 14px;
+  border-radius: var(--radius-pill, 999px);
+  border: 1px solid var(--dsw-alias-accent, #2b6cb0);
+  background: transparent; color: var(--dsw-alias-accent, #2b6cb0);
+  font-size: var(--text-base); font-weight: 600; cursor: pointer;
+}
+.lr-start:hover { background: var(--dsw-alias-accent-wash, rgba(43, 108, 176, 0.12)); }

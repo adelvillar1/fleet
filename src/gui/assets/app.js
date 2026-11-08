@@ -243,6 +243,9 @@
     ['memory', 'memory'],
     ['skills', 'skills'],
     ['sessions', 'sessions'],
+    // Learning is work the owner opens the way they open a chat: a
+    // lesson, the proposition graph, a practice, the history.
+    ['learning', 'learning'],
     ['huddles', 'huddles'],
     ['desk', 'desk'],
     ['calibration', 'calibration'],
@@ -294,6 +297,12 @@
       ['skills', 'skills'],
       ['second-brain', 'second brain'],
       ['workspace-history', 'workspace history']
+    ]],
+    // Learning: the measure → plan → teach loop's own surface. The
+    // lesson is the owner's work in a real session, the graph is the
+    // propositions it built, the practice is the unnamed retrieval.
+    ['learning', 'learning', [
+      ['learning', 'learning']
     ]],
     ['system', 'system', [
       ['bots', 'bots'],
@@ -516,6 +525,33 @@
       ['path', { d: 'M4.6 18.5c.5-3 2.6-4.6 4.9-4.6s4.4 1.6 4.9 4.6' }],
       ['circle', { cx: 16.8, cy: 9.6, r: 2.2 }],
       ['path', { d: 'M15.2 14.4c2 .2 3.6 1.6 4 4.1' }]
+    ],
+    // the learning group's own mark: a path rising one step at a time,
+    // the loop's measure → plan → teach
+    learning: [
+      ['path', { d: 'M4 19h4v-4h4v-4h4V7h4' }],
+      ['circle', { cx: 18.5, cy: 5.5, r: 1.4 }],
+    ],
+    // the learning rail's four: the lesson's ascending steps
+    lesson: [['path', { d: 'M4 19h4v-4h4v-4h4V7h4' }]],
+    // the graph: three propositions and the chain between them
+    graph: [
+      ['circle', { cx: 5.5, cy: 6.5, r: 2.3 }],
+      ['circle', { cx: 18.5, cy: 8.5, r: 2.3 }],
+      ['circle', { cx: 12, cy: 17.5, r: 2.3 }],
+      ['path', { d: 'M7.7 7.4l8.6 7.6M17 10.6l-3.7 4.8M7.3 8.9l3.4 6.4' }],
+    ],
+    // the practice: a cycle, the repetition the retrieval needs
+    practice: [
+      ['path', { d: 'M17 3l3 3-3 3' }],
+      ['path', { d: 'M20 6H8a5 5 0 0 0-5 5' }],
+      ['path', { d: 'M7 21l-3-3 3-3' }],
+      ['path', { d: 'M4 18h12a5 5 0 0 0 5-5' }],
+    ],
+    // the history: a clock, the sessions already run
+    history: [
+      ['circle', { cx: 12, cy: 12, r: 8.5 }],
+      ['path', { d: 'M12 7.5V12l3 3' }],
     ],
     // a fork: work entering the chain and leaving it on one of two paths
     router: [
@@ -829,6 +865,7 @@
     panelChat: document.getElementById('panel-chat'),
     panelRouter: document.getElementById('panel-router'),
     panelDelegation: document.getElementById('panel-delegation'),
+    panelLearning: document.getElementById('panel-learning'),
     panelMemory: document.getElementById('panel-memory'),
     panelSkills: document.getElementById('panel-skills'),
     workCol: document.getElementById('work-col'),
@@ -925,6 +962,8 @@
     routerBoard: document.getElementById('router-board'),
     delegationBoard: document.getElementById('delegation-board'),
     memoryBoard: document.getElementById('memory-board'),
+    learningRail: document.getElementById('learning-rail'),
+    learningBoard: document.getElementById('learning-board'),
     memoryRail: document.getElementById('memory-rail'),
     skillsBoard: document.getElementById('skills-board'),
     skillsRail: document.getElementById('skills-rail'),
@@ -7377,6 +7416,303 @@
     el0.textContent = 'Since your last visit: ' + parts.join(' \u00b7 ');
   }
 
+  // ---- the learning surface (the learning plan's C7) ------------------------
+  // The mockup's four sections: the lesson (the plan's coarse view and
+  // the position), the graph (the propositions and their chains), the
+  // practice (the entry and the outcomes), the history (the sessions).
+
+  function learningSectionId() {
+    var raw = (window.location.hash || '').replace(/^#\/?/, '');
+    var parts = raw.split('/');
+    if (parts[0] === 'learning' && parts[1]) return decodeURIComponent(parts[1]);
+    try {
+      var stored = window.localStorage.getItem('fleet-learning-section');
+      if (stored) return stored;
+    } catch (error) { }
+    return 'lesson';
+  }
+
+  function rememberLearningSection(id) {
+    try { window.localStorage.setItem('fleet-learning-section', id); } catch (error) { }
+  }
+
+  function readLearning(force) {
+    var now = Date.now();
+    if (!force && face.learning && now - face.learningAt < 4000) return Promise.resolve();
+    face.learningAt = now;
+    return fetch('/api/learning', { headers: { accept: 'application/json' } })
+      .then(function (reply) {
+        if (reply.status === 401) throw new Error('token');
+        return reply.json();
+      })
+      .then(function (doc) {
+        face.learning = doc;
+        if (face.panel === 'learning') paintLearning();
+      })
+      .catch(function () {
+        // KI-380's own rule: a read that dies says so, then re-arms.
+        connectionDown('the learning read');
+        window.setTimeout(function () { readLearning(true); }, 5000);
+      });
+  }
+
+  function learningSections(read) {
+    var lesson = read ? read.lesson : null;
+    var open = lesson && lesson.nodes
+      ? lesson.nodes.filter(function (node) { return node.state !== 'held'; }).length
+      : 0;
+    return [
+      { id: 'lesson', name: 'the lesson', icon: 'lesson', badge: open || null,
+        badgeTitle: open + ' steps open' },
+      { id: 'graph', name: 'the graph', icon: 'graph',
+        badge: read && read.graph ? read.graph.propositions.length : null,
+        badgeTitle: 'propositions' },
+      { id: 'practice', name: 'practice', icon: 'practice',
+        badge: read && read.practice ? read.practice.outcomes.length : null,
+        badgeTitle: 'outcomes' },
+      { id: 'history', name: 'history', icon: 'history',
+        badge: read && read.history ? read.history.lessons.length + read.history.practice.length : null,
+        badgeTitle: 'sessions' }
+    ];
+  }
+
+  function paintLearningRail(read) {
+    if (!el.learningRail) return;
+    var sections = read ? learningSections(read) : [];
+    sectionRail(el.learningRail, sections.map(function (section) {
+      return {
+        id: section.id, icon: section.icon, name: section.name,
+        badge: section.badge, badgeTitle: section.badgeTitle
+      };
+    }), {
+      current: read ? learningSectionId() : 'lesson',
+      folded: !!face.learningRailFolded,
+      store: 'fleet-learning-rail',
+      onPick: function (id) {
+        rememberLearningSection(id);
+        window.location.hash = '#/learning/' + id;
+        paintLearning();
+        var row = el.learningRail.querySelector('[data-section="' + id + '"]');
+        if (row && row.focus) row.focus();
+      },
+      onFold: function (folded) {
+        face.learningRailFolded = folded;
+        try {
+          window.localStorage.setItem('fleet-learning-rail', folded ? 'folded' : 'open');
+        } catch (error) { }
+        paintLearningRail(face.learning);
+      }
+    });
+  }
+
+  /// One learning session's start: a teaching session under the
+  /// prober's overlay, or a practice session under the practitioner's.
+  /// The bridge births the session with the lesson kind and the role's
+  /// persona, so the overlay rides the run's own seam; the new
+  /// session's id arrives on the event stream, and the conversation
+  /// opens on it.
+  function startLearning(kind, role, task) {
+    return fetch('/api/learning/start', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'accept': 'application/json' },
+      body: JSON.stringify({ task: task, kind: kind, role: role })
+    }).then(function (reply) {
+      return reply.json().then(function (doc) {
+        return { status: reply.status, doc: doc };
+      });
+    }).then(function (result) {
+      if (result.status !== 200) {
+        notice('the learning session did not start',
+          (result.doc && result.doc.error) || 'the face said no without a reason');
+        return;
+      }
+      notice('the learning session is open',
+        (result.doc.kind === 'practice' ? 'practice' : 'the lesson') + ' \u00b7 ' + result.doc.role);
+      window.location.hash = '#/chat';
+      readLearning(true);
+      readSessions(true);
+    }).catch(function () {
+      connectionDown('the learning start');
+    });
+  }
+
+  function learningStartButton(kind, role, task, label) {
+    var button = node('button', 'lr-start');
+    button.type = 'button';
+    button.appendChild(node('span', null, label));
+    button.addEventListener('click', function () { startLearning(kind, role, task); });
+    return button;
+  }
+
+  // The lesson pane: the plan's coarse view, the position, and what the
+  // learner holds. The mockup's own design.
+  function learningLessonCard(read) {
+    var lesson = read.lesson;
+    var card = boardCard(12, 'the lesson', null, null);
+    if (!lesson) {
+      card.appendChild(node('p', 'board-empty',
+        'no lesson yet. Start one and the prober asks what you hold, where it ends, and what you are reaching for.'));
+      card.appendChild(learningStartButton('teaching', 'prober',
+        'let\u2019s start a lesson \u2014 what do you want to understand?', 'start a lesson'));
+      return card;
+    }
+    if (lesson.position) {
+      card.appendChild(node('p', 'lr-pos',
+        'position: step ' + lesson.position.step + ' of ' + lesson.position.total +
+        ' \u00b7 ' + lesson.position.checked + ' checked'));
+    }
+    if (lesson.goal) {
+      card.appendChild(node('p', 'lr-goal', 'goal: ' + lesson.goal));
+    }
+    var list = node('div', 'lr-nodes');
+    (lesson.nodes || []).forEach(function (step) {
+      var row = node('div', 'lr-node');
+      row.dataset.state = step.state;
+      row.appendChild(node('span', 'lr-prop', step.proposition || step.id));
+      var dep = node('span', 'lr-dep');
+      dep.textContent = step.state === 'held' ? 'held'
+        : step.state === 'current' ? 'you are here'
+          : step.state === 'next' ? 'next' : 'later';
+      row.appendChild(dep);
+      list.appendChild(row);
+    });
+    card.appendChild(list);
+    if (lesson.holds && lesson.holds.length) {
+      card.appendChild(node('h3', 'lr-sub', 'what you hold'));
+      var holds = node('div', 'lr-holds');
+      lesson.holds.forEach(function (hold) {
+        holds.appendChild(node('div', 'lr-hold', hold.proposition || hold.id));
+      });
+      card.appendChild(holds);
+    }
+    card.appendChild(node('p', 'lr-note',
+      'a foundation is never re-taught; each step attaches to what you hold by a single step.'));
+    return card;
+  }
+
+  // The graph pane: the propositions and their chains, read off the
+  // substrate — the ideas and their connections, never a mastery.
+  function learningGraphCard(read) {
+    var card = boardCard(12, 'the graph', null, null);
+    var rows = read.graph ? read.graph.propositions : [];
+    if (!rows.length) {
+      card.appendChild(node('p', 'board-empty',
+        'no propositions yet. A lesson\u2019s teaching prose is extracted into the graph once the lesson completes.'));
+      return card;
+    }
+    rows.forEach(function (row) {
+      var item = node('div', 'lr-prop');
+      item.appendChild(node('span', 'lr-claim', row.claim));
+      if (row.premises && row.premises.length) {
+        item.appendChild(node('span', 'lr-premises', 'because ' + row.premises.join(' + ')));
+      } else {
+        item.appendChild(node('span', 'lr-premises', 'a foundation'));
+      }
+      card.appendChild(item);
+    });
+    return card;
+  }
+
+  // The practice pane: the entry and the outcomes — what happened,
+  // never a score.
+  function learningPracticeCard(read) {
+    var card = boardCard(12, 'practice', null, null);
+    card.appendChild(node('p', 'board-empty',
+      'practice poses varied problems that require the knowledge to come to mind unnamed. One problem is active at a time.'));
+    card.appendChild(learningStartButton('practice', 'practitioner',
+      'start a practice \u2014 pose a problem that needs what I hold', 'start a practice'));
+    var rows = read.practice ? read.practice.outcomes : [];
+    if (rows.length) {
+      card.appendChild(node('h3', 'lr-sub', 'the outcomes'));
+      rows.forEach(function (row) {
+        var item = node('div', 'lr-outcome');
+        item.dataset.held = row.held ? 'true' : 'false';
+        item.appendChild(node('span', 'lr-claim', row.setting));
+        item.appendChild(node('span', 'lr-dep', row.held ? 'held' : 'did not hold'));
+        card.appendChild(item);
+      });
+    }
+    return card;
+  }
+
+  // The history pane: the lesson and practice sessions, newest first.
+  function learningHistoryCard(read) {
+    var card = boardCard(12, 'history', null, null);
+    var lessons = read.history ? read.history.lessons : [];
+    var practice = read.history ? read.history.practice : [];
+    if (!lessons.length && !practice.length) {
+      card.appendChild(node('p', 'board-empty', 'no learning sessions yet.'));
+      return card;
+    }
+    var row = function (one) {
+      var item = node('div', 'lr-history');
+      item.dataset.ended = one.ended ? 'true' : 'false';
+      item.appendChild(node('span', 'lr-claim', one.title || one.id));
+      item.appendChild(node('span', 'lr-dep', one.ended ? 'ended' : 'open'));
+      card.appendChild(item);
+    };
+    if (lessons.length) {
+      card.appendChild(node('h3', 'lr-sub', 'lessons'));
+      lessons.forEach(row);
+    }
+    if (practice.length) {
+      card.appendChild(node('h3', 'lr-sub', 'practice'));
+      practice.forEach(row);
+    }
+    return card;
+  }
+
+  function paintLearningSection(id) {
+    var read = face.learning;
+    if (!read) return;
+    Array.prototype.slice.call(el.learningBoard.children).forEach(function (child) {
+      if (child.classList && child.classList.contains('section-body')) {
+        el.learningBoard.removeChild(child);
+      }
+    });
+    var body = node('div', 'section-body');
+    body.dataset.section = id;
+    var card = id === 'graph' ? learningGraphCard(read)
+      : id === 'practice' ? learningPracticeCard(read)
+        : id === 'history' ? learningHistoryCard(read)
+          : learningLessonCard(read);
+    body.appendChild(card);
+    el.learningBoard.appendChild(body);
+  }
+
+  function paintLearning() {
+    if (!el.learningBoard) return;
+    el.learningBoard.textContent = '';
+    var read = face.learning;
+    if (!read) {
+      el.learningBoard.appendChild(surfaceHead('Learning', 'learning',
+        'The measure \u2192 plan \u2192 teach loop: what you hold, the plan\u2019s coarse view, the propositions it built, and the practice.', null));
+      var waiting = boardCard(12, 'reading', null, null);
+      waiting.appendChild(node('p', 'board-empty',
+        'The learning read has not landed yet. It reads the home\u2019s learning sessions and the corpus, both this machine\u2019s own.'));
+      el.learningBoard.appendChild(waiting);
+      paintLearningRail(null);
+      return;
+    }
+    if (refusals(read)) {
+      el.learningBoard.appendChild(surfaceHead('Learning', 'learning', null, null));
+      var refused = boardCard(12, 'refused', null, null);
+      refused.appendChild(node('p', 'board-empty', refusals(read).join('; ')));
+      el.learningBoard.appendChild(refused);
+      paintLearningRail(null);
+      return;
+    }
+    el.learningBoard.appendChild(surfaceHead('Learning', 'learning',
+      'The measure \u2192 plan \u2192 teach loop: what you hold, the plan\u2019s coarse view, the propositions it built, and the practice.',
+      surfaceInstrument('the loop',
+        read.graph ? read.graph.propositions.length : 0,
+        (read.history ? read.history.lessons.length : 0) + ' lessons \u00b7 ' +
+        (read.history ? read.history.practice.length : 0) + ' practice',
+        [])));
+    paintLearningSection(learningSectionId());
+    paintLearningRail(read);
+  }
+
   function readMemory(force) {
     var now = Date.now();
     if (!force && face.memory && now - face.memoryAt < 4000) return Promise.resolve();
@@ -8517,6 +8853,7 @@
     var waits = [];
     if (!face.memory) waits.push(readMemory(false));
     if (!face.skills) waits.push(readSkills(false));
+    if (!face.learning) waits.push(readLearning(false));
     return Promise.all(waits).catch(function () { });
   }
 
@@ -23788,6 +24125,7 @@
     delegation: el.panelDelegation,
     memory: el.panelMemory,
     skills: el.panelSkills,
+    learning: el.panelLearning,
 
     calibration: el.panelCalibration,
     design: el.panelDesign,
@@ -23877,6 +24215,7 @@
       delegation: function () { paintDelegation(); readDelegation(true).then(paintDelegation); },
       memory: function () { paintMemory(); readMemory(true).then(paintMemory); },
       skills: function () { paintSkills(); readSkills(true).then(paintSkills); },
+      learning: function () { paintLearning(); readLearning(true).then(paintLearning); },
       bots: function () {
         paintBots();
         readBots(true).then(paintBots);
@@ -25392,7 +25731,7 @@
   // (tower). The harness pins it against the rail's own addresses.
   var BUILT = ['chat', 'inbox', 'design', 'huddles', 'desk', 'router', 'delegation', 'memory', 'skills',
     'sessions', 'calibration', 'second-brain', 'workspace-history', 'bots', 'vault',
-    'settings', 'plugins'];
+    'settings', 'plugins', 'learning'];
 
   // The rail's badge: the surface that has something waiting says so,
   // and says nothing when it does not — an empty counter is decoration.

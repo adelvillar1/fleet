@@ -721,9 +721,14 @@ impl Session {
     /// practices, and the two are filtered apart by the Learning
     /// surface. The same seam the other kinds use: real work in a real
     /// log the archive keeps whole.
-    pub fn create_lesson(home: &Path, model: &str, kind: &str) -> io::Result<Session> {
+    pub fn create_lesson(
+        home: &Path,
+        model: &str,
+        kind: &str,
+        personas: Option<Vec<String>>,
+    ) -> io::Result<Session> {
         let dir = crate::home::ensure_sessions_dir(home)?;
-        Session::open_new(&dir, model, Some(kind), None, None)
+        Session::open_new(&dir, model, Some(kind), None, personas)
     }
 
     /// The one place a log is created: the id, the file, and the `start`
@@ -1592,8 +1597,9 @@ mod tests {
     #[test]
     fn a_lesson_log_carries_its_kind_and_the_list_filters_by_it() {
         let home = temp_home("lesson-kinds");
-        let teaching = Session::create_lesson(&home, "deepseek-flash", LESSON_KIND).unwrap();
-        let practice = Session::create_lesson(&home, "deepseek-flash", PRACTICE_KIND).unwrap();
+        let teaching = Session::create_lesson(&home, "deepseek-flash", LESSON_KIND, None).unwrap();
+        let practice =
+            Session::create_lesson(&home, "deepseek-flash", PRACTICE_KIND, None).unwrap();
         let plain = Session::create(&home, "deepseek-flash").unwrap();
         assert_eq!(teaching.kind(), Some(LESSON_KIND));
         assert_eq!(practice.kind(), Some(PRACTICE_KIND));

@@ -1524,6 +1524,44 @@ async fn serve_connection(
             )
             .await
         }
+        // The Learning pane's one read: the active lesson, the
+        // proposition graph, the practice outcomes, and the history.
+        ("GET", "/api/learning") => {
+            write_reply(&mut stream, api(200, bridge.learning().await)).await
+        }
+        // A learning session's start: the task, the lesson kind, and the
+        // role whose overlay rides the run. The session is born with the
+        // kind and the persona, so the overlay rides the run's own seam.
+        ("POST", "/api/learning/start") => {
+            let body = match read_body(&mut stream, &request, rest).await {
+                Ok(body) => body,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            let (task, kind, role) = match learning_start_of(&body) {
+                Ok(start) => start,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            let session = asked_session(bridge, &request);
+            match bridge.run_as(&session, &task, &kind, &role) {
+                Ok(()) => {
+                    write_reply(
+                        &mut stream,
+                        api(
+                            200,
+                            json!({
+                                "type": "learning-start",
+                                "task": task,
+                                "kind": kind,
+                                "role": role,
+                                "accepted": true,
+                            }),
+                        ),
+                    )
+                    .await
+                }
+                Err(message) => write_reply(&mut stream, api(409, json!({"error": message}))).await,
+            }
+        }
         // The huddle rail: the owner's rooms in three groups, off the same
         // live facts and state words the work list reads.
         ("GET", "/api/huddles") => {
@@ -2394,6 +2432,29 @@ fn task_of(body: &str) -> Result<String, String> {
         .and_then(serde_json::Value::as_str)
         .map(str::to_string)
         .ok_or_else(|| "a run's body is a JSON object with a task string".to_string())
+}
+
+/// A learning start's body: the task, the lesson kind, and the role
+/// whose overlay rides the run. The kind and the role are required —
+/// the whole point of the seam is which lesson session this is and
+/// whose voice the model hears.
+fn learning_start_of(body: &str) -> Result<(String, String, String), String> {
+    let parsed: serde_json::Value = serde_json::from_str(body)
+        .map_err(|error| format!("fleet gui could not read the learning start's body: {error}"))?;
+    let task = parsed
+        .get("task")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "a learning start's body is a JSON object with a task string".to_string())?;
+    let kind = parsed
+        .get("kind")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| {
+            "a learning start names the lesson `kind` — teaching or practice".to_string()
+        })?;
+    let role = parsed.get("role").and_then(serde_json::Value::as_str).ok_or_else(|| {
+        "a learning start names the `role` whose overlay rides the run — prober, teacher, or practitioner".to_string()
+    })?;
+    Ok((task.to_string(), kind.to_string(), role.to_string()))
 }
 
 /// The per-run turn budget a run's body names, when it names one.
