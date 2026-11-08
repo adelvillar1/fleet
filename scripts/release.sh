@@ -249,9 +249,9 @@ fi
 
 echo "== generating latest.json =="
 LATEST=/tmp/fleet-latest.json
-python3 - "$VERSION" "$TAG" "$(basename "$DMG")" "$(basename "$APP_TAR")" "$DMG" "$APP_TAR" > "$LATEST" <<'PYEOF'
+python3 - "$VERSION" "$TAG" "$(basename "$DMG")" "$(basename "$APP_TAR")" "$DMG" "$APP_TAR" "$TARBALL" > "$LATEST" <<'PYEOF'
 import hashlib, json, sys, datetime
-version, tag, dmg_name, tar_name, dmg_path, tar_path = sys.argv[1:]
+version, tag, dmg_name, tar_name, dmg_path, tar_path, cli_tarball = sys.argv[1:]
 def sha(path):
     h = hashlib.sha256()
     with open(path, 'rb') as f:
@@ -269,7 +269,8 @@ feed = {
             "url": base + tar_name,
         }
     },
-    "cli": {"url": base + "fleet-aarch64-apple-darwin.tar.gz", "signature": sha(tar_path)},
+    "cli": {"url": base + "fleet-aarch64-apple-darwin.tar.gz", "signature": sha(pkgdir)},
+
 }
 open('/tmp/fleet-latest.json', 'w').write(json.dumps(feed, indent=2) + "\n")
 PYEOF
