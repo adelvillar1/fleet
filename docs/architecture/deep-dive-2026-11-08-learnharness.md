@@ -147,6 +147,30 @@ The rail gains a **Learning** section; the feature's components:
    lesson's gap says the eval corpus lacks Z". The dream pass reads
    the teaching prose for the extraction and the learner's records
    for the confusions, in one pass over the same records.
+8. **The capability feed.** The learning record's friction also
+   names what the project *lacks* — and the lack's kind decides the
+   surface, each with machinery that already exists:
+   - **Personas.** A lesson that repeatedly needs an expertise the
+     project has no one in signals a role — the roles module, and
+     the huddle's `author_persona` precedent (a domain the room has
+     no one in is bridged by authoring a purpose-built persona).
+   - **Skills.** A lesson's procedure that recurs — the steps that
+     worked, the checks that caught the confusions — signals a
+     skill, and the self-authoring drafter is its consumer (the
+     drafter already files `proposed: true` drafts from sessions;
+     the teaching prose is skill-shaped feedstock).
+   - **Tools.** Friction no tool addresses — the learner's workflow
+     needing a capability the compiled-in tool set lacks — signals
+     a tool, and the `improve` proposal store is its backlog.
+   - **Workflows.** A lesson's procedure that repeats across lessons
+     signals a workflow — the cron's scheduled runs, the plan
+     templates, the huddle workflows are its consumers.
+   The classifying rule is the friction's lack kind, and the
+   huddle's capability-gap card is the precedent: the signal
+   already exists in one surface; the learning record generalizes
+   it. Each proposal lands through its surface's own gate — the
+   role overlay's approval, the drafter's owner-gated drafts, the
+   improve store, the cron — never a silent self-application.
 
 ## The first steps (the plan's shape)
 
@@ -156,8 +180,8 @@ start: the probe answers and the checks are facts and calib rows,
 not a parallel store), then the prober role and the probe loop, then
 the plan (the graph integration), then the teaching loop, then the
 graph's chain facts and their extraction, then the practice, then
-the face surface, with the self-improvement feed wired at each
-step the evidence lands.
+the face surface, with the self-improvement and
+capability feeds wired at each step the evidence lands.
 The theory's demands are the acceptance criteria: the prober's states
 are precise (the plan's ceiling), the teaching moves in single
 checked steps, the plan's resolution does not leak, the logistics are
