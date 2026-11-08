@@ -2387,15 +2387,17 @@ async function pasteAttachesAndTheAtTypeaheadReferences() {
   check('C4 a pasted file becomes an attach chip',
     chips.length === 1 && chips[0].textContent.includes('note.md'),
     String(chips.length));
-  // The five-file bound: the sixth paste refuses by name.
-  for (let i = 0; i < 5; i += 1) {
+  // The attachment bound: eight files attach and the ninth refuses.
+  // The number matches the server's MAX_ATTACHMENTS (src/gui/server.rs),
+  // raised from five by KI-475 so a screenshot turn fits.
+  for (let i = 0; i < 10; i += 1) {
     page.fireOn('task', 'paste', {
       clipboardData: { files: [{ name: `f${i}.md`, size: 10, text: 'x' }], items: [] },
     });
     await flush(20);
   }
-  check('C4 five files attach and the sixth refuses',
-    page.IDS['attach-chips'].children.length === 5,
+  check('C4 eight files attach and the ninth refuses',
+    page.IDS['attach-chips'].children.length === 8,
     String(page.IDS['attach-chips'].children.length));
   const page2 = boot({ width: 1440, hash: '#/sessions/ref-1', documents: doc });
   await flush();

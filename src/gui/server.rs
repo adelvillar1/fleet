@@ -117,10 +117,30 @@ const HEARTBEAT: Duration = Duration::from_secs(5);
 /// sends the terminator from holding a task forever.
 const MAX_HEAD_BYTES: usize = 16 * 1024;
 
-/// The largest request body this surface reads. A task is a paragraph
-/// and a decision is a word; the cap is what stops a peer that declares
-/// a length and never sends it from holding a task forever.
-const MAX_BODY_BYTES: usize = 64 * 1024;
+/// The largest request body this surface reads. The cap is what stops a
+/// peer that declares a length and never sends it from holding a task
+/// forever — it is a sanity bound, not a product limit.
+///
+/// It was 64 KiB, sized for a paragraph and a word. The owner's ruling
+/// (2026-11-08) retired that as artificial: the models this surface
+/// reaches carry a million-token window, and a run must carry several
+/// screenshots, which no 64 KiB request could hold. The number is now
+/// large enough for a real multimodal turn and still a bound, so the
+/// refusal keeps a meaning (KI-378 raised; KI-475 records the ruling).
+const MAX_BODY_BYTES: usize = 25 * 1024 * 1024;
+
+/// How many files one turn may attach. A screenshot-heavy turn is the
+/// case the owner named; the bound stays so a runaway page cannot post
+/// an unbounded list.
+const MAX_ATTACHMENTS: usize = 8;
+
+/// The largest one attachment may be. A retina screenshot is a few
+/// megabytes; 8 MiB holds one without holding an arbitrary blob.
+const ATTACHMENT_BYTE_CAP: usize = 8 * 1024 * 1024;
+
+/// The largest the attachments together may be. Under the request's own
+/// bound, so a body that passes this cannot then fail on its length.
+const ATTACHMENTS_TOTAL_CAP: usize = 20 * 1024 * 1024;
 
 /// One launch's face: the listener, the token, the address the owner
 /// was given, and the bridge to the agent thread the actions speak to.
@@ -2306,8 +2326,14 @@ trim the payload (for a run, put the bulk in a file: attach it and name it in th
 /// with a `task` string is a malformed request, and saying so is the
 /// whole reply.
 /// The turn's attached files, framed ahead of the task. The browser read
-/// the text the owner picked; the server owns the bounds — five files,
-/// 256 KB each, 512 KB together — and refuses a name that is a path.
+/// the text the owner picked; the server owns the bounds — eight files,
+/// 8 MiB each, 20 MiB together — and refuses a name that is a path.
+///
+/// The per-file and total bounds were 256 KB and 512 KB, which the
+/// 64 KiB request cap made unreachable: the smaller number always won,
+/// so KI-378's advice to "put the bulk in a file" could not be followed.
+/// The owner's ruling (2026-11-08) raised both, and this is the side
+/// that has to be able to hold what a screenshot turn carries.
 fn with_attachments(body: &str, task: &str) -> Result<String, String> {
     let parsed: serde_json::Value = serde_json::from_str(body)
         .map_err(|e| format!("fleet gui could not read the run's body: {e}"))?;
@@ -2320,8 +2346,10 @@ fn with_attachments(body: &str, task: &str) -> Result<String, String> {
     if rows.is_empty() {
         return Ok(task.to_string());
     }
-    if rows.len() > 5 {
-        return Err("at most five files can be attached to one turn".to_string());
+    if rows.len() > MAX_ATTACHMENTS {
+        return Err(format!(
+            "at most {MAX_ATTACHMENTS} files can be attached to one turn"
+        ));
     }
     let mut framed = String::from("Attached files, provided by the owner for this turn:\n");
     let mut total = 0usize;
@@ -2343,8 +2371,11 @@ fn with_attachments(body: &str, task: &str) -> Result<String, String> {
             .get("text")
             .and_then(serde_json::Value::as_str)
             .unwrap_or_default();
-        if text.len() > 256 * 1024 {
-            return Err(format!("{name} is larger than the 256 KB attachment bound"));
+        if text.len() > ATTACHMENT_BYTE_CAP {
+            return Err(format!(
+                "{name} is larger than the {} MB attachment bound",
+                ATTACHMENT_BYTE_CAP / (1024 * 1024)
+            ));
         }
         total += text.len();
         // The parser is part of the record: a local read and a hosted
@@ -2390,8 +2421,11 @@ fn with_attachments(body: &str, task: &str) -> Result<String, String> {
         };
         framed.push_str(&format!("\n--- {head} ---\n{text}\n"));
     }
-    if total > 512 * 1024 {
-        return Err("the attachments together are larger than the 512 KB bound".to_string());
+    if total > ATTACHMENTS_TOTAL_CAP {
+        return Err(format!(
+            "the attachments together are larger than the {} MB bound",
+            ATTACHMENTS_TOTAL_CAP / (1024 * 1024)
+        ));
     }
     framed.push_str("\n--- end of attachments ---\n\n");
     framed.push_str(task);
@@ -3337,18 +3371,40 @@ mod tests {
 
     #[tokio::test]
     async fn an_oversized_body_is_refused_in_the_products_words() {
-        // KI-378's open half (O2): the cap the send path meets is the
+        // KI-378's send half: the cap the send path meets is the
         // request's own boundary, and the refusal names it the way the
         // product does — the bound and the way around it — instead of
-        // as a transport fact.
-        let head = "POST /api/run HTTP/1.1\r\ncontent-length: 100000\r\n\r\n";
-        let request = Request::parse(head).expect("a well-formed head");
+        // as a transport fact. KI-475 raised the number (the owner's
+        // ruling: models carry a million-token window and a run must
+        // carry several screenshots); the wording is what this pins.
+        let past = MAX_BODY_BYTES + 1;
+        let head = format!("POST /api/run HTTP/1.1\r\ncontent-length: {past}\r\n\r\n");
+        let request = Request::parse(&head).expect("a well-formed head");
         let error = read_body(&mut tokio::io::empty(), &request, Vec::new())
             .await
             .expect_err("a body past the cap is refused");
         assert!(error.contains("one request may carry up to"), "{error}");
         assert!(error.contains("attach"), "{error}");
-        assert!(error.contains("100000"), "{error}");
+        assert!(error.contains(&past.to_string()), "{error}");
+    }
+
+    #[tokio::test]
+    async fn a_screenshot_sized_body_is_read_rather_than_refused() {
+        // The raise, pinned as a sentence: a body carrying several
+        // screenshots (single-digit megabytes) passes the read. The old
+        // 64 KiB cap refused one image, which made KI-378's own advice —
+        // put the bulk in a file — impossible to follow.
+        let one = 3 * 1024 * 1024;
+        let carried = 3 * one;
+        let head = format!("POST /api/run HTTP/1.1\r\ncontent-length: {carried}\r\n\r\n");
+        let request = Request::parse(&head).expect("a well-formed head");
+        let body = vec![b'x'; carried];
+        let rest = tokio::io::BufReader::new(std::io::Cursor::new(body));
+        let read = read_body(&mut tokio::io::BufReader::new(rest), &request, Vec::new())
+            .await
+            .expect("a three-screenshot body is a request this surface reads");
+        assert_eq!(read.len(), carried);
+        assert!(carried > 64 * 1024, "the old cap would have refused this");
     }
 
     #[test]

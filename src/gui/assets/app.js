@@ -10109,9 +10109,16 @@
     return 'this format needs Nace perception; you will be asked before it is sent';
   }
 
+  // The attachment bounds, matched to the server's:
+  // src/gui/server.rs MAX_ATTACHMENTS and ATTACHMENT_BYTE_CAP. They were
+  // five files at 256 KB, sized under a 64 KiB request cap; the owner's
+  // ruling (2026-11-08) raised both so a screenshot turn fits.
+  var ATTACH_LIMIT = 8;
+  var ATTACH_BYTE_LIMIT = 8 * 1024 * 1024;
+
   function attachDocument(rel, consent) {
-    if (face.attachments.length >= 5) {
-      notice('at most five attachments', 'remove one before adding another');
+    if (face.attachments.length >= ATTACH_LIMIT) {
+      notice('at most ' + ATTACH_LIMIT + ' attachments', 'remove one before adding another');
       return;
     }
     docConsent(false);
@@ -10215,12 +10222,13 @@
 
   function attachFiles(files) {
     Array.prototype.forEach.call(files, function (file) {
-      if (face.attachments.length >= 5) {
-        notice('at most five files can be attached', file.name + ' was not added');
+      if (face.attachments.length >= ATTACH_LIMIT) {
+        notice('at most ' + ATTACH_LIMIT + ' files can be attached', file.name + ' was not added');
         return;
       }
-      if (file.size > 256 * 1024) {
-        notice('the file is larger than the 256 KB bound', file.name + ' was not added');
+      if (file.size > ATTACH_BYTE_LIMIT) {
+        notice('the file is larger than the ' + (ATTACH_BYTE_LIMIT / (1024 * 1024)) + ' MB bound',
+          file.name + ' was not added');
         return;
       }
       if (!/\.(md|txt|rs|js|json|toml|yaml|yml|css|html|py|sh|ts|tsx|jsx)$/i.test(file.name)) {
