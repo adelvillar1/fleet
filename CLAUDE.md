@@ -163,6 +163,10 @@ No staging/production split: solo tool, no hosted surface. If a deploy surface e
 
 ## Session protocol
 
+The skill chains — the composition order (warmup → plan → build →
+recap; think → check; hunt → check; the learning chains) — are in
+`docs/architecture/skill-chains.md`.
+
 warmup (this file → latest recap → active plans) → plan (`docs/plans/`) → build (run the gate locally) → recap (`docs/recaps/` — the ledger must be well-formed before the document is generated: `python3 scripts/ki_ledger.py docs/known-issues.md` reports zero problems, since a malformed row shifts its cells and misreports the open count; then `scripts/cache-sweep.sh`, the recap step's closing sweep, because cargo never prunes: KI-279, 159 GiB of dead test binaries — automated daily by `scripts/daily-maintenance.sh` (the LaunchAgent), so a missed recap no longer means an unbounded target) → commit with explicit paths. During the build: `scripts/edit-preflight.sh` names the structure guards the edit will meet, before the first compile (the inventory: `docs/architecture/structure-guards.md`); iterate with scoped test runs (`cargo test -p fleet --lib <name>`), run the whole four-leg gate once, at the end, and say one line between compile cycles. The one-command form of the pre-push checks:
 `python3 scripts/ki_ledger.py` (the ledger is well-formed) and
 `python3 scripts/plan_check.py` (no completed plan carries an unticked
