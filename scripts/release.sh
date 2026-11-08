@@ -272,10 +272,12 @@ feed = {
             "url": base + tar_name,
         }
     },
-    "cli": {"url": base + "fleet-aarch64-apple-darwin.tar.gz", "signature": sha(pkgdir)},
+    "cli": {"url": base + "fleet-aarch64-apple-darwin.tar.gz", "signature": sha(cli_tarball)},
 
 }
-open(LATEST, 'w').write(json.dumps(feed, indent=2) + "\n")
+# the shell's redirect owns the file: the heredoc stdout IS $LATEST, no
+# exported var and no hardcoded scratch path can detach the feed from its name
+print(json.dumps(feed, indent=2) + "\n")
 PYEOF
 [ -s "$LATEST" ] || die "latest.json was not generated"
 python3 -c "import json;d=json.load(open('$LATEST'));assert d['version']=='$VERSION' and 'darwin-aarch64' in d['platforms'] and 'cli' in d, 'the feed is missing a leg'" ||
