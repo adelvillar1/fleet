@@ -4668,20 +4668,26 @@ async fn explain_command(options: &cli::ExplainOptions) -> ExitCode {
 }
 
 /// Probe the platform shell without changing anything.
-/// Free space on the volume that holds `path`, in kibibytes: the answer
-/// `df -k` gives, parsed rather than re-derived — the CLI has no statvfs
-/// binding and one more dependency for four numbers is not worth it.
+/// Free space on the volume that holds `path`, in kibibytes: the volume's
+/// own answer through `statvfs`, never a shell-out — a doctor that needs
+/// `df` on PATH reports a broken machine when the PATH is merely narrow.
+#[cfg(unix)]
 fn free_kib(path: &std::path::Path) -> Option<u64> {
-    let out = std::process::Command::new("df")
-        .arg("-k")
-        .arg(path)
-        .output()
-        .ok()?;
-    let text = String::from_utf8_lossy(&out.stdout);
-    let line = text.lines().rev().find(|line| !line.trim().is_empty())?;
-    let fields: Vec<&str> = line.split_whitespace().collect();
-    // filesystem 1K-blocks used available capacity iused ifree %iused mounted
-    fields.get(3).and_then(|field| field.parse().ok())
+    use std::os::unix::ffi::OsStrExt;
+    let path = std::ffi::CString::new(path.as_os_str().as_bytes()).ok()?;
+    // SAFETY: `path` is a valid NUL-terminated name and `stats` a valid
+    // out-pointer; statvfs writes only into the struct it is given.
+    let mut stats: libc::statvfs = unsafe { std::mem::zeroed() };
+    let rc = unsafe { libc::statvfs(path.as_ptr(), &mut stats) };
+    if rc != 0 {
+        return None;
+    }
+    Some((stats.f_bavail as u64).saturating_mul(stats.f_frsize as u64) / 1024)
+}
+
+#[cfg(not(unix))]
+fn free_kib(_path: &std::path::Path) -> Option<u64> {
+    None
 }
 
 fn shell_probe() -> Result<&'static str, String> {

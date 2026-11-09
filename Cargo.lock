@@ -1152,6 +1152,7 @@ dependencies = [
  "base64 0.22.1",
  "crossterm",
  "hkdf",
+ "libc",
  "png",
  "rand",
  "ratatui",
