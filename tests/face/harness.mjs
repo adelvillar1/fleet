@@ -65,8 +65,14 @@ function matchesSimple(el, sel) {
       const set = property === true || property === 'true' || property === '';
       if (!mirrored && !set) return false;
     } else {
-      const value = typeof el[attr.name] === 'string' ? el[attr.name] : null;
-      if (value !== attr.value) return false;
+      // The attribute's own value, not a property of that name: a real
+      // DOM's `[data-status="running"]` reads the attribute — the stub
+      // mirrors dataset writes into attrs (the dataset lesson above),
+      // so the read goes there. A property named the same (`el.name`
+      // mirrors `name="..."`) still wins when it holds the string.
+      const held = el.attrs && el.attrs[attr.name] !== undefined
+        ? String(el.attrs[attr.name]) : (typeof el[attr.name] === 'string' ? el[attr.name] : null);
+      if (held !== attr.value) return false;
     }
   }
   return Boolean(tag || ids.length || classes.length || attrs.length);
@@ -10963,6 +10969,48 @@ function faceStripState(page) {
   return 'hidden=' + String(strip.hidden);
 }
 
+// KI-485's live half: the run END settles the orphaned calls a stop
+// leaves behind — the shape this conversation itself hit twice on
+// 2026-11-09 (the owner stopped two long sleep-polls, and the rows
+// ticked "running 1700s" against nothing). The live event path's
+// sweep mirrors the replay path's.
+async function aFinishedRunSettlesItsOrphanedToolCalls() {
+  const page = boot({
+    width: 1440,
+    hash: '#/sessions/dens-live',
+    documents: {
+      sessions: {
+        type: 'sessions', read_at: 'now', current: '',
+        counts: { needs: 0, working: 1, background: 0, earlier: 0, yours: 1, total: 1 },
+        sessions: [row('dens-live', 'working', { title: 'the live run' })],
+      },
+      state: (asked) => ({ ...emptyState(asked), session: asked, running: true }),
+    },
+  });
+  await flush();
+  page.open();
+  await flush();
+  page.push({ type: 'message', role: 'owner', text: 'watch the poll' });
+  page.push({ type: 'turn', turn: 1 });
+  page.push({ type: 'tool_call', tool: 'bash', summary: 'a long poll',
+    arguments: '{"command":"sleep 115"}' });
+  page.push({ type: 'tool_call', tool: 'bash', summary: 'a second call',
+    arguments: '{"command":"tail a log"}' });
+  await flush();
+  const pending = page.rows('.card-row.tool[data-status="running"]');
+  check('KI-485 live: two calls stand before the end', pending.length === 2,
+    String(pending.length));
+  page.push({ type: 'failed', reason: 'stopped by the owner' });
+  await flush();
+  const after = page.rows('.card-row.tool');
+  check('KI-485 live: both rows settled, none running',
+    after.length === 2 && after.every((r) => r.dataset.status !== 'running'),
+    after.map((r) => r.dataset.status).join(' | '));
+  check('KI-485 live: the rows wear the interrupted resolution',
+    after.every((r) => r.textContent.includes('interrupted')),
+    after.map((r) => r.textContent.slice(0, 80)).join(' | '));
+}
+
 const cases = [
   ['HEALTH the working line reads the health, not the turn', theWorkingLineReadsTheHealthNotTheTurn],
   ['HEALTH a reopened conversation seeds its health and the floor names itself', aReopenedConversationSeedsItsHealth],
@@ -11087,6 +11135,7 @@ const cases = [
   ['KI-483 the update refusal answers where the press stands', theUpdateRefusalAnswersWhereThePressStands],
   ['KI-483 the About pane reads the feed on arrival', theAboutPaneReadsTheFeedOnArrival],
   ['KI-485 a log cut off at a tool call does not replay as running', anInterruptedToolCallReplaysAsInterrupted],
+  ['KI-485 a finished run settles its orphaned tool calls', aFinishedRunSettlesItsOrphanedToolCalls],
 ];
 
 for (const [name, run] of cases) {

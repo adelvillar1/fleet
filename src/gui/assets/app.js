@@ -3160,6 +3160,17 @@
         notifyIfHidden('fleet \u00b7 the run ' + (event.type === 'finished' ? 'finished' : 'failed'),
           event.stop_reason || 'the outcome is in the conversation');
         closeAssistant();
+        // The run's end settles its own unpaired calls too (KI-485):
+        // a stop kills the process between a tool_call and its result,
+        // and without this the row's seconds tick reads "running -
+        // 1700s-" against a run that no longer exists. The live path's
+        // half of the sweep the replay path already paints.
+        face.pending.slice().forEach(function (unpaired) {
+          resolveTool({ type: 'tool_result',
+            tool: unpaired.el.dataset.tool || '',
+            approved: false,
+            resolution: 'interrupted' });
+        });
         // The exchange is over: its tool and thinking rows fold under
         // their marks, each mark naming what it hides — and only the
         // run that finished live. A log replayed into the page keeps
