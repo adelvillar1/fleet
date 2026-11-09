@@ -91,6 +91,33 @@ Both script paths were smoked: the floor refusal names the numbers, the pass
 prints them (`disk: 101 GiB free (floor 20)`), and the doctor answers
 `disk ok 100 GiB free (floor 20 GiB)` on the shipped build.
 
+## Does a 15 MB app need 29 GiB of target? (the owner's challenge)
+
+No — and the measurement says why, in one number: **12.8 GiB of `target/` was
+the same crate compiled ~95 times.** `libfleet-*.rlib` × 40 and
+`libfleet_desktop-*.rlib` × 51, ~128 MB each, because `lto = true` embeds the
+bitcode in every copy and cargo never evicts a superseded artifact — one new
+copy per build and per cut, beside a 26 MB binary (the dmg ~10 MB). The rest
+was the ordinary working set of a 1050-crate graph in two profiles.
+
+Two legs close it, and the owner's rule names the third:
+
+- **dedupe** (`cache-sweep.sh`): keep the newest `rlib`/`rmeta` per crate name
+  *and extension*, drop the superseded compiles. First run: 12.8 GiB; `target`
+  29 → 16 GiB, the volume 101.5 → 113.9 GiB free. The shipped binary, the
+  bundle and the dependencies' current artifacts are never named.
+- **clean_failed**: a red build's artifacts and incremental state are the
+  diagnosis, so they are kept for `FLEET_FAILED_GRACE_MIN` (60) and removed
+  after it — "there is no need to accumulate files for failed builds past
+  diagnosis". `release-gate-run.sh` writes `.failed-build` on a red leg and
+  clears it on a green one; the maintenance's lane leg honours the same marker.
+  Smoked on a scratch lane: a fresh marker is kept and named, an old one
+  cleans the directory whole.
+
+So the honest ceiling: a release-only build of this graph is ~3 GiB, both
+profiles plus incremental ~8–10 GiB, and everything above that is either a
+duplicate or a corpse.
+
 ## Files changed
 
 - `src/gui/assets/app.js` — `placeComposer` / `composerSurface` / `surfaceSend`

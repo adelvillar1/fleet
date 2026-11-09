@@ -112,6 +112,16 @@ for lane in /private/tmp/fleet-*-target; do
         say "  lane busy, skipped: $lane"
         continue
     fi
+    # A lane whose last leg was red keeps its debris for the diagnosis
+    # window only (FLEET_FAILED_GRACE_MIN, default 60): past it the files
+    # are a record nobody will read (the owner's rule, 2026-11-09).
+    if [ -f "$lane/.failed-build" ]; then
+        age_min=$(( ( $(date +%s) - $(stat -f %m "$lane/.failed-build" 2>/dev/null || echo 0) ) / 60 ))
+        if [ "$age_min" -lt "${FAILED_GRACE_MIN:-60}" ]; then
+            say "  lane keeps a failed build (${age_min}m): $lane — kept for diagnosis"
+            continue
+        fi
+    fi
     size_mib=$(du -sm "$lane" 2>/dev/null | cut -f1)
     # A cap as well as an age: a lane that grew to tens of gigabytes
     # inside the warm window is the incident this leg exists for, and
@@ -126,6 +136,7 @@ for lane in /private/tmp/fleet-*-target; do
     ( cd "$REPO" && CARGO_TARGET_DIR="$lane" cargo clean --manifest-path Cargo.toml ) \
         >>"$LOG" 2>&1 && say "  lane cleaned: $lane (${before:-?}K)" \
         || say "  lane clean failed: $lane; tomorrow retries"
+    rm -f "$lane/.failed-build" 2>/dev/null || true
 done
 # The gate's own worktree, when it outlived its run: git owns the removal,
 # and a worktree git no longer lists is a directory nobody owns.
