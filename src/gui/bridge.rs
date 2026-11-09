@@ -13385,6 +13385,132 @@ mod goal_tests {
         let _ = std::fs::remove_dir_all(&home);
     }
 
+    /// The desk's iteration, end to end: the first press opens the
+    /// deliverable's thread — a session of kind `desk`, seeded with the
+    /// brief as its first message, attached to the deliverable's own
+    /// record — and the run it dispatches carries that session, the
+    /// owner's words, and the deliverable's project as its folder.
+    #[tokio::test]
+    async fn a_desk_iteration_opens_the_deliverables_thread() {
+        let home = std::env::temp_dir().join(format!("fleet-desk-chat-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        let project = home.join("project");
+        std::fs::create_dir_all(&project).unwrap();
+        let created = crate::desk::create(
+            &home,
+            "the-beta-brief",
+            "The beta brief",
+            "the owner",
+            "the updater makes releases a button",
+            Vec::new(),
+            Some(project.to_string_lossy().into_owned()),
+        )
+        .expect("the deliverable must be created");
+        assert_eq!(created.session, None, "a fresh deliverable has no thread");
+
+        let (mut bridge, _sources) = Bridge::detached(home.clone(), "test-model".to_string(), None);
+        // Stand the command door open with no agent behind it: the run is
+        // accepted and handed over, never executed.
+        let mut commands = bridge.connect();
+        let reply = bridge
+            .desk_chat("the-beta-brief", r#"{"text":"make the claim sharper"}"#)
+            .await
+            .expect("the iteration must land");
+        let session = reply["session"]
+            .as_str()
+            .expect("a session id rides back")
+            .to_string();
+        let path = crate::session::session_path(&home, &session);
+        assert!(path.exists(), "the thread's log must exist");
+
+        let summary = crate::session::summarize(&path).expect("the log must summarize");
+        assert_eq!(
+            summary.kind.as_deref(),
+            Some("desk"),
+            "the thread is a desk session"
+        );
+
+        let records = crate::session::replay(&path).expect("the log must replay");
+        let first_owner = records.iter().find_map(|record| match record {
+            crate::session::Record::User { content } => Some(content.clone()),
+            _ => None,
+        });
+        let first = first_owner.expect("the brief must be the thread's first message");
+        assert!(first.starts_with("[the desk brief]"), "{first}");
+        assert!(
+            first.contains("the updater makes releases a button"),
+            "{first}"
+        );
+        assert!(
+            !first.contains("make the claim sharper"),
+            "the brief is seeded before the owner's words: {first}"
+        );
+
+        let stored = crate::desk::load(&home, "the-beta-brief").expect("the store must read");
+        assert_eq!(stored.session.as_deref(), Some(session.as_str()));
+
+        let handed = commands.try_recv().expect("the run must be dispatched");
+        match handed {
+            Command::Run(driving, task, folder, _) => {
+                assert_eq!(driving, session);
+                assert_eq!(task, "make the claim sharper");
+                // `/var` and `/private/var` are one folder on macOS: the
+                // resolver canonicalizes, so the expectation does too.
+                assert_eq!(
+                    folder.as_deref(),
+                    Some(project.canonicalize().unwrap().as_path())
+                );
+            }
+            _ => panic!("expected a run, not another command"),
+        }
+
+        // The first run ends: the door has no agent, so the test records
+        // the finish the agent would — through the same seam every event
+        // crosses, which clears the session's running flag and closes the
+        // run's row in the log.
+        record(
+            &bridge.state,
+            &bridge.events,
+            &session,
+            json!({"type": "finished", "stop_reason": "completed"}),
+        );
+        // The second press continues the same thread: no second session,
+        // no second brief, and the new words dispatch after the first.
+        let again = bridge
+            .desk_chat(
+                "the-beta-brief",
+                r#"{"text":"and answer the rollback gap"}"#,
+            )
+            .await
+            .expect("the second iteration must land");
+        assert_eq!(
+            again["session"].as_str(),
+            Some(session.as_str()),
+            "the thread is reused, not re-created"
+        );
+        let records = crate::session::replay(&path).expect("the log must replay");
+        let briefs = records
+            .iter()
+            .filter(|record| match record {
+                crate::session::Record::User { content } => content.starts_with("[the desk brief]"),
+                _ => false,
+            })
+            .count();
+        assert_eq!(briefs, 1, "the brief is seeded once");
+        let second = commands
+            .try_recv()
+            .expect("the second run must be dispatched");
+        match second {
+            Command::Run(driving, task, _, _) => {
+                assert_eq!(driving, session);
+                assert_eq!(task, "and answer the rollback gap");
+            }
+            _ => panic!("expected a run, not another command"),
+        }
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
     /// The inbox's decisions (the inbox-controls plan): the sidecar
     /// round-trips, the signature rule is what returns a dismissed row,
     /// an archived row outlives its fact, and the archive is capped.

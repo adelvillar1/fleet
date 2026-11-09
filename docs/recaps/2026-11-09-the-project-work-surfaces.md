@@ -99,9 +99,15 @@ four legs were green at both cuts.
 
 ## Open questions / next steps
 
-- **No desk deliverables exist on this machine**, so the desk's iteration was
-  proven by the harness and the route's refusals rather than a live run. The
-  owner's first brief will show the thread opening with the brief in it.
+- **No desk deliverables exist on this machine**, so the desk's iteration has no
+  live press behind it — but it is no longer unproven: the bridge test
+  `a_desk_iteration_opens_the_deliverables_thread` drives `desk_chat` twice
+  through the command door and asserts the whole path (the session born with
+  kind `desk`, the brief as its first message, the deliverable's `session`
+  field written, the run dispatched with the deliverable's project as its
+  folder, and the second press reusing the same thread without a second
+  brief). The owner's first brief will show the thread opening with the brief
+  in it.
 - Moving an artifact between projects (a drag) and cross-project views beyond
   unbound stay out of scope, as the plan says.
 - The same shell could carry the memory, skills and sessions rails later; the
