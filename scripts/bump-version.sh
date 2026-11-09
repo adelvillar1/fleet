@@ -31,7 +31,8 @@ done
 python3 - "$OLD" "$NEW" <<'PYEOF'
 import sys
 old, new = sys.argv[1], sys.argv[2]
-lines = open("Cargo.lock").read().split("\n")
+path = "Cargo.lock"
+lines = open(path).read().split("\n")
 moved = 0
 for i in range(len(lines) - 1):
     if lines[i] in ('name = "fleet"', 'name = "fleet-desktop"'):
@@ -39,6 +40,10 @@ for i in range(len(lines) - 1):
         if old in lines[i + 1]:
             lines[i + 1] = lines[i + 1].replace(old, new)
             moved += 1
+# The write the first version of this leg forgot: it printed "moved: 2"
+# over a mutation that never reached the file, and the next cargo run
+# rebuilt the lock back to the old version (found 2026-11-09, KI-490).
+open(path, "w").write("\n".join(lines))
 print(f"  Cargo.lock (fleet/fleet-desktop entries moved: {moved})")
 PYEOF
 

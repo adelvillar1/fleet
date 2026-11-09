@@ -12,6 +12,42 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.6.5 — 2026-11-09
+
+The updater installs.
+
+- **KI-486 fixed.** The CLI channel wrote the release's gzip tarball over
+  the running binary: the feed's cli row hashed that tarball, so every
+  assertion passed and the swap destroyed what it installed. The release
+  now ships the channel's artifact as a raw binary
+  (`fleet-aarch64-apple-darwin`) and the feed names it; before the
+  rename the staged file must **run and answer `--version` with the
+  feed's version**, so a tarball, a truncation or a foreign build refuses
+  and leaves the tree untouched. The replaced binary is kept as
+  `<name>.prev`, the receipt names the version the feed installed, and a
+  bundled executable refuses by name — the `.app` updates through its
+  own window.
+- **KI-487 fixed.** The shell's update press never reached the network:
+  the window loads a loopback `http` origin, which Tauri classifies as
+  remote, while the capability compiled local-only. The capability now
+  names that origin as a remote context and grants the app's own
+  `restart_app`; the shell binds its listener once and hands it to the
+  server, so the port the window trusts is never left free for another
+  process to take.
+- **KI-488 fixed.** The About pane painted "nothing newer" before any
+  feed read, and kept it when the read failed. It now says the feed has
+  not been asked until the check answers, and a failed check paints the
+  refusal beside the press.
+- **KI-489 fixed.** `dangerousInsecureTransportProtocol` is gone: the
+  updater's transport is HTTPS and nothing else, per the owner's rule
+  that an update is fetched from GitHub, never from the local machine.
+- The cut reads its own feed back anonymously and hashes the served
+  artifact against the feed's signature — an upload is not a
+  publication.
+- **KI-490 fixed.** `scripts/bump-version.sh` printed "moved: 2" over a
+  `Cargo.lock` mutation it never wrote, so the lock kept the old
+  version and the next cargo run agreed with it.
+
 ## v0.6.4 — 2026-11-09
 
 A session that was interrupted stays interrupted on the screen.
