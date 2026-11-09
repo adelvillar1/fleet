@@ -4256,6 +4256,75 @@ async function aQueuedFlushNamesItsOwnConversation() {
     JSON.stringify(runs.map((c) => c.url)));
 }
 
+// KI-495 (the owner's report): with a message queued, the send button
+// did nothing. Two shapes carry it. First, the idle press: a queue can
+// outlive the run that made it — a state read that says idle while the
+// queue still waits — and Send must dispatch the head rather than try
+// to queue an empty composer. Second, a face that attached to a
+// running chat has no process card until a process event lands, and
+// the Stop it shows must actually stop.
+async function aQueuedMessageSendsFromTheIdleButton() {
+  let phase = 0;
+  const page = boot({
+    hash: '#/chat',
+    documents: {
+      state: (asked) => ({
+        ...emptyState(asked), session: asked,
+        running: phase === 0,
+        driving: phase === 0 ? asked : '',
+      }),
+    },
+  });
+  await flush();
+  page.open();
+  await flush();
+  // While the run works, a send queues.
+  page.IDS.task.value = 'the queued words';
+  page.fireOn('composer', 'submit', {});
+  await flush();
+  check('KI-495 the send behind the run queues',
+    page.text('queue-count').includes('1'), page.text('queue-count'));
+  check('KI-495 no run started while the queue waited',
+    page.calls.filter((c) => c.url.startsWith('/api/run')).length === 0);
+  // The run is over (a state read says so) and the queue still waits.
+  phase = 1;
+  page.open();
+  await flush();
+  const before = page.calls.filter((c) => c.url.startsWith('/api/run')).length;
+  page.fireOn('send', 'click', {});
+  await flush();
+  const runs = page.calls.filter((c) => c.url.startsWith('/api/run'));
+  check('KI-495 the idle Send dispatches the queued message',
+    runs.length === before + 1, JSON.stringify(page.calls.map((c) => c.url)));
+  check('KI-495 the dispatched run carries the queued words',
+    runs.length === before + 1 && String(runs[runs.length - 1].body || '').includes('the queued words'),
+    JSON.stringify(runs.map((c) => c.body)));
+  check('KI-495 the queue is empty after the press',
+    page.IDS['queue-chip'].hidden === true, page.IDS['queue-count'].textContent);
+}
+
+async function aStopWorksWithoutAProcessCard() {
+  const page = boot({
+    hash: '#/chat',
+    documents: {
+      state: (asked) => ({ ...emptyState(asked), session: asked, running: true, driving: asked }),
+    },
+  });
+  await flush();
+  page.open();
+  await flush();
+  const send = page.IDS.send;
+  check('KI-495 a running chat labels the button Stop',
+    send.dataset.mode === 'stop' && send.getAttribute('aria-label') === 'stop the run',
+    JSON.stringify({ mode: send.dataset.mode, label: send.getAttribute('aria-label') }));
+  const before = page.calls.filter((c) => c.url === '/api/stop').length;
+  page.fireOn('send', 'click', {});
+  await flush();
+  const stops = page.calls.filter((c) => c.url === '/api/stop').length;
+  check('KI-495 the press stops the run the face attached to',
+    stops === before + 1, JSON.stringify(page.calls.map((c) => c.url)));
+}
+
 // RE (the reload-reattach plan): a reload restores what was showing.
 // The conversation the face held is remembered across reloads — written
 // wherever a real conversation binds, cleared by the deliberate detach —
@@ -11156,6 +11225,8 @@ const cases = [
   ['NEW New mints at the press and the send names it', newMintsImmediatelyAndTheSendNamesIt],
   ['REG a send beside a working run mints and names its own conversation', aSendBesideARunMintsAndNamesItsOwnConversation],
   ['REG a queued flush names its own conversation', aQueuedFlushNamesItsOwnConversation],
+  ['KI-495 a queued message sends from the idle Send', aQueuedMessageSendsFromTheIdleButton],
+  ['KI-495 a stop works without a process card', aStopWorksWithoutAProcessCard],
   ['RE the open conversation is remembered', theOpenConversationIsRemembered],
   ['RE a reload at the chat address re-attaches', aReloadAtTheChatAddressReattaches],
   ['RE the pane returns with the reload', thePaneReturnsWithTheReload],

@@ -8651,31 +8651,36 @@
   // loop reads before its next model call, so the latency is one step
   // and the card says "stopping" until the run's own end record lands.
   function stopRun() {
-    if (!face.process || !face.process.active || face.process.stopping) return;
+    // What makes a stop possible is the face's belief that a run is in
+    // flight, not the local process card: a face that attached to a
+    // running chat (a reload, a conversation opened mid-run) learns
+    // `running` from the state read and has no card until a process
+    // event lands, and a Stop that silently returned there was a dead
+    // control under a live run (KI-495).
+    if (!face.running && !face.seat) return;
+    if (face.process && face.process.stopping) return;
     // The reply races the run's own end record: a stop can be accepted
     // just as the answer lands. The card belongs to this run only, so a
     // late reply never overwrites the run that already ended.
-    var p = face.process;
-    el.processStop.disabled = true;
+    var p = face.process && face.process.active ? face.process : null;
+    if (el.processStop) el.processStop.disabled = true;
+    var refused = function (note) {
+      notice('the stop was refused', note);
+      if (p && face.process === p && p.active) paintProcessControls(p);
+      else if (el.processStop) el.processStop.disabled = false;
+    };
     post('/api/stop', {}).then(function (reply) {
       if (reply.status === 200) {
-        if (face.process === p && p.active) {
+        if (p && face.process === p && p.active) {
           p.stopping = true;
           p.last = 'stopping \u00b7 the run ends at its next step';
           paintProcess();
         }
         return;
       }
-      if (face.process === p && p.active) {
-        notice('the stop was refused',
-          (reply.body && reply.body.error) || 'the server did not take it');
-        paintProcessControls(p);
-      }
+      refused((reply.body && reply.body.error) || 'the server did not take it');
     }).catch(function () {
-      if (face.process === p && p.active) {
-        notice('the stop was refused', 'the server did not answer');
-        paintProcessControls(p);
-      }
+      refused('the server did not answer');
     });
   }
 
@@ -9588,6 +9593,18 @@
       event.preventDefault();
       if (face.running || !!face.seat) {
         stopRun();
+        return;
+      }
+      // An idle press with nothing typed and a message waiting is the
+      // queue's own send: the head dispatches now instead of the press
+      // doing nothing — the owner pressed Send with a queue on screen
+      // and nothing happened (KI-495). Typed words still send
+      // themselves, and a run working in another conversation keeps
+      // the queue waiting for its end, as the chip says.
+      var typed = el.task.value.trim();
+      if (!typed && (face.queued || []).length &&
+          !(face.driving && face.driving !== face.session)) {
+        flushQueue();
         return;
       }
       send();

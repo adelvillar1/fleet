@@ -12,6 +12,26 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.6.7 — 2026-11-09
+
+The send button works with a message queued.
+
+- **KI-495 fixed.** Two shapes, one control. An idle press with
+  nothing typed and a message waiting ran the send path, which tried to
+  queue the empty composer and returned — no run, no queue change, no
+  line anywhere, so a queue that outlived its run could not be moved at
+  all. And a face that attached to a running chat (a reload, a
+  conversation opened mid-run) learns `running` from the state read but
+  has no process card until a process event lands: the Stop it showed
+  returned silently, a dead control under a live run. The press now
+  sends the queue's head when the face is idle with nothing typed (a
+  run working in another conversation still keeps the queue waiting),
+  and Stop fires whenever the face believes a run is in flight — the
+  process card only decides what the reply paints.
+- Red-proven both ways: with the change reverted, the two new harness
+  cases fail with no `/api/run` and no `/api/stop` posted and the
+  queue still reading `queued · 1`.
+
 ## v0.6.6 — 2026-11-09
 
 The release the updater installs.
