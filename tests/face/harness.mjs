@@ -892,6 +892,23 @@ function boot(options) {
           asked: parsed.query, declared }),
       });
     }
+    // The inbox's decisions (the inbox-controls plan): the op and the key
+    // go out, and a case scripts the answer so the pane repaints from a
+    // document rather than guessing at the new state. Unscripted, the
+    // case's own inbox document answers.
+    if (pathOnly === '/api/inbox' && method === 'POST') {
+      const sent = init && init.body ? JSON.parse(init.body) : {};
+      const scripted = typeof documents.inboxReply === 'function'
+        ? documents.inboxReply(sent)
+        : documents.inboxReply;
+      const reply = scripted == null
+        ? { status: 200, body: documents.inbox }
+        : scripted;
+      return Promise.resolve({
+        status: reply.status || 200,
+        json: () => Promise.resolve(reply.body || reply),
+      });
+    }
     // The update card's two verbs (KI-483's pin): the About pane's
     // arrival read and the apply press ride these routes. A case
     // scripts each — a refusal must reach the pane the press stands
@@ -4501,6 +4518,242 @@ async function aVanishedConversationIsNamed() {
     page.IDS.empty.hidden === false, 'empty hidden: ' + page.IDS.empty.hidden);
 }
 
+
+// IBC (the inbox-controls plan): the queue can be worked. Every control
+// does something the owner can see — the setup rows open their own
+// services, the menu's verbs post a decision and repaint from the
+// document, the segments and filters say honest counts, and a refusal
+// paints in the pane that asked.
+function inboxDoc(over) {
+  return Object.assign({
+    type: 'inbox', seats: [], onboarding: [], asks: [], cron: [], doctor: [],
+    archived: [], total: 0,
+  }, over || {});
+}
+
+const INBOX_STATE = (asked) => ({ ...emptyState(asked), session: asked });
+const INBOX_SESSIONS = {
+  type: 'sessions', read_at: 'now', current: '',
+  counts: { needs: 0, working: 0, background: 0, earlier: 0, total: 0 },
+  sessions: [],
+};
+
+async function theSetupRowOpensItsOwnSurface() {
+  const doc = {
+    sessions: INBOX_SESSIONS,
+    state: INBOX_STATE,
+    inbox: inboxDoc({
+      onboarding: [
+        { id: 'vault', name: 'one passphrase seals them', why: 'the keys are plain',
+          key: 'onboard:vault', signature: 'v1', label: 'one passphrase seals them', class: 'onboard' },
+        { id: 'github', name: 'check claims again', why: 'no account',
+          key: 'onboard:github', signature: 'g1', label: 'check claims again', class: 'onboard' },
+      ],
+      total: 2,
+    }),
+  };
+  const page = boot({ width: 1440, hash: '#/inbox', documents: doc });
+  await flush();
+  page.open();
+  await flush(80);
+  const vaultRow = page.rows('.ib-row').find((r) => r.textContent.includes('one passphrase'));
+  const vault = [...vaultRow.querySelectorAll('button')].find((b) => b.textContent === 'set it up');
+  vault.click();
+  await flush(80);
+  check('IBC the vault step opens the vault, not the conversation',
+    page.window.location.hash === '#/vault', page.window.location.hash);
+  page.window.location.hash = '#/inbox';
+  await flush(80);
+  const githubRow = page.rows('.ib-row').find((r) => r.textContent.includes('check claims'));
+  const github = [...githubRow.querySelectorAll('button')].find((b) => b.textContent === 'set it up');
+  github.click();
+  await flush(80);
+  check('IBC the github step opens its own surface',
+    page.window.location.hash === '#/settings', page.window.location.hash);
+}
+
+async function aDismissalPostsAndRepaints() {
+  const before = inboxDoc({
+    cron: [{ name: 'nightly-sweep', outcome: 'failed', schedule: '0 3 * * *',
+      task: 'sweep the stale branches', last_run: '03:00', runs: 12, successes: 11,
+      key: 'cron:nightly-sweep', signature: 's1', label: 'failed · nightly-sweep', class: 'cron' }],
+    total: 1,
+  });
+  const after = inboxDoc({ total: 0 });
+  const doc = {
+    sessions: INBOX_SESSIONS,
+    state: INBOX_STATE,
+    inbox: before,
+    inboxReply: () => ({ status: 200, body: after }),
+  };
+  const page = boot({ width: 1440, hash: '#/inbox', documents: doc });
+  await flush();
+  page.open();
+  await flush(80);
+  const row = page.rows('.ib-row')[0];
+  const dismiss = [...row.querySelectorAll('button')].find((b) => b.textContent === 'dismiss');
+  dismiss.click();
+  await flush(80);
+  const posts = page.calls.filter((c) => c.url === '/api/inbox');
+  check('IBC the dismiss posts its op and key',
+    posts.length === 1 && String(posts[0].body).includes('"op":"dismiss"') &&
+      String(posts[0].body).includes('"key":"cron:nightly-sweep"'),
+    JSON.stringify(posts.map((c) => c.body)));
+  check('IBC the row leaves on the answer',
+    page.rows('.ib-row').length === 0, String(page.rows('.ib-row').length));
+  check('IBC the empty state returns', page.IDS['ib-empty'].hidden === false,
+    String(page.IDS['ib-empty'].hidden));
+}
+
+async function aRefusedDecisionPaintsInThePane() {
+  const doc = {
+    sessions: INBOX_SESSIONS,
+    state: INBOX_STATE,
+    inbox: inboxDoc({
+      cron: [{ name: 'nightly-sweep', outcome: 'failed', schedule: '0 3 * * *',
+        task: 'sweep', last_run: '03:00', key: 'cron:nightly-sweep', signature: 's1',
+        label: 'failed · nightly-sweep', class: 'cron' }],
+      total: 1,
+    }),
+    inboxReply: () => ({ status: 400, body: { error: 'no inbox row is keyed cron:nightly-sweep — it resolved' } }),
+  };
+  const page = boot({ width: 1440, hash: '#/inbox', documents: doc });
+  await flush();
+  page.open();
+  await flush(80);
+  const row = page.rows('.ib-row')[0];
+  const dismiss = [...row.querySelectorAll('button')].find((b) => b.textContent === 'dismiss');
+  dismiss.click();
+  await flush(80);
+  const refusal = page.rows('.ib-refusal')[0];
+  check('IBC a refused decision paints in the pane that asked',
+    Boolean(refusal) && refusal.textContent.includes('it resolved'),
+    refusal ? refusal.textContent : 'no .ib-refusal in the pane');
+  check('IBC the row stays when the decision was refused',
+    page.rows('.ib-row').length === 1, String(page.rows('.ib-row').length));
+}
+
+async function anArchivedRowLivesInItsSegment() {
+  const waiting = inboxDoc({
+    cron: [{ name: 'nightly-sweep', outcome: 'failed', schedule: '0 3 * * *',
+      task: 'sweep', last_run: '03:00', key: 'cron:nightly-sweep', signature: 's1',
+      label: 'failed · nightly-sweep', class: 'cron' }],
+    total: 1,
+  });
+  const archivedDoc = inboxDoc({
+    total: 0,
+    archived: [{ key: 'cron:nightly-sweep', class: 'cron', label: 'failed · nightly-sweep',
+      signature: 's1', at: '2026-11-09T10:00Z', live: true }],
+  });
+  let replied = archivedDoc;
+  const doc = {
+    sessions: INBOX_SESSIONS,
+    state: INBOX_STATE,
+    inbox: waiting,
+    inboxReply: () => ({ status: 200, body: replied }),
+  };
+  const page = boot({ width: 1440, hash: '#/inbox', documents: doc });
+  await flush();
+  page.open();
+  await flush(80);
+  // The menu's archive verb.
+  const more = page.rows('.ib-row')[0].querySelector('.ib-more');
+  more.click();
+  await flush(40);
+  const archive = page.rows('.ib-menu button').find((b) => b.textContent === 'archive');
+  check('IBC the row carries its menu', Boolean(archive),
+    page.rows('.ib-menu button').map((b) => b.textContent).join('|'));
+  archive.click();
+  await flush(80);
+  const posts = page.calls.filter((c) => c.url === '/api/inbox');
+  check('IBC the archive posts its op',
+    posts.length === 1 && String(posts[0].body).includes('"op":"archive"'),
+    JSON.stringify(posts.map((c) => c.body)));
+  // The archived segment holds it, with the day and the restore.
+  const archivedTab = page.rows('.ib-seg button').find((b) => /^Archived/.test(b.textContent));
+  check('IBC the archived segment counts the row',
+    Boolean(archivedTab) && archivedTab.textContent.includes('1'),
+    archivedTab ? archivedTab.textContent : 'no archived segment');
+  archivedTab.click();
+  await flush(40);
+  const archRow = page.rows('.ib-row')[0];
+  check('IBC the archived row shows what it was and when it went',
+    Boolean(archRow) && archRow.textContent.includes('nightly-sweep') &&
+      archRow.textContent.includes('archived'),
+    archRow ? archRow.textContent.slice(0, 120) : 'no archived row');
+  const restore = [...archRow.querySelectorAll('button')].find((b) => b.textContent === 'restore');
+  replied = waiting;
+  restore.click();
+  await flush(80);
+  const restores = page.calls.filter((c) => c.url === '/api/inbox' &&
+    String(c.body).includes('"op":"restore"'));
+  check('IBC the restore posts its op', restores.length === 1,
+    JSON.stringify(page.calls.filter((c) => c.url === '/api/inbox').map((c) => c.body)));
+  // Back on the Waiting segment the row is there again.
+  const waitingTab = page.rows('.ib-seg button').find((b) => /^Waiting/.test(b.textContent));
+  waitingTab.click();
+  await flush(40);
+  check('IBC the restored row is back in Waiting',
+    page.rows('.ib-row').length === 1, String(page.rows('.ib-row').length));
+}
+
+async function aSeatsMenuOnlyOpens() {
+  const doc = {
+    sessions: INBOX_SESSIONS,
+    state: INBOX_STATE,
+    inbox: inboxDoc({
+      seats: [{ session: 'seat-s1', tool: 'bash', label: 'rm -rf /tmp/x', summary: 'destructive',
+        key: 'seat:seat-s1', signature: 'x1', label2: '', class: 'seat' }],
+      total: 1,
+    }),
+  };
+  const page = boot({ width: 1440, hash: '#/inbox', documents: doc });
+  await flush();
+  page.open();
+  await flush(80);
+  page.rows('.ib-row')[0].querySelector('.ib-more').click();
+  await flush(40);
+  const verbs = page.rows('.ib-menu button').map((b) => b.textContent);
+  check('IBC a seat\u2019s menu only opens the conversation',
+    verbs.length === 1 && verbs[0] === 'open', verbs.join('|'));
+  check('IBC a seat still carries its three answers',
+    ['once', 'always', 'deny'].every((word) =>
+      page.rows('.ib-row')[0].textContent.includes(word)),
+    page.rows('.ib-row')[0].textContent.slice(0, 120));
+}
+
+async function theInboxKeyboardWalks() {
+  const doc = {
+    sessions: INBOX_SESSIONS,
+    state: INBOX_STATE,
+    inbox: inboxDoc({
+      cron: [{ name: 'nightly-sweep', outcome: 'failed', schedule: '0 3 * * *',
+        task: 'sweep', last_run: '03:00', key: 'cron:nightly-sweep', signature: 's1',
+        label: 'failed · nightly-sweep', class: 'cron' }],
+      doctor: [{ check: 'api', why: 'the API did not answer',
+        key: 'doctor:api', signature: 'd1', label: 'api', class: 'doctor' }],
+      total: 2,
+    }),
+  };
+  const page = boot({ width: 1440, hash: '#/inbox', documents: doc });
+  await flush();
+  page.open();
+  await flush(80);
+  page.fireOn('ib-body', 'keydown', { key: 'j', preventDefault() {} });
+  await flush(40);
+  const rows = page.rows('.ib-row');
+  check('IBC j selects the next row',
+    rows[1] && rows[1].dataset.current === 'true', JSON.stringify(rows.map((r) => r.dataset.current)));
+  page.fireOn('ib-body', 'keydown', { key: 'd', preventDefault() {} });
+  await flush(40);
+  check('IBC d opens the selected row\u2019s menu',
+    page.rows('.ib-menu button').length >= 2, String(page.rows('.ib-menu button').length));
+  page.fireOn('ib-body', 'keydown', { key: 'Enter', preventDefault() {} });
+  await flush(80);
+  check('IBC enter runs the selected row\u2019s verb',
+    page.window.location.hash === '#/settings', page.window.location.hash);
+}
+
 // IB (the owner-inbox plan): one queue of everything waiting on the
 // owner — seats answerable in place, the onboarding ladder, huddle
 // questions, cron failures, doctor findings — fed by one read, badged
@@ -4625,7 +4878,7 @@ async function anAskJumpsToItsRoom() {
   page.open();
   await flush(80);
   const ask = page.rows('.ib-row').find((r) => r.dataset.class === 'ask');
-  const answer = [...ask.querySelectorAll('button')].find((b) => b.textContent === 'answer');
+  const answer = [...ask.querySelectorAll('button')].find((b) => /^answer/.test(b.textContent));
   answer.click();
   await flush(80);
   check('IB the ask\u2019s answer opens the room',
@@ -11233,6 +11486,12 @@ const cases = [
   ['RE a deliberate detach stays detached across reloads', aDeliberateDetachStaysDetached],
   ['RE a vanished conversation is named', aVanishedConversationIsNamed],
   ['IB the inbox collects everything waiting', theInboxCollectsEverythingWaiting],
+  ['IBC the setup row opens its own surface', theSetupRowOpensItsOwnSurface],
+  ['IBC a dismissal posts and repaints', aDismissalPostsAndRepaints],
+  ['IBC a refused decision paints in the pane', aRefusedDecisionPaintsInThePane],
+  ['IBC an archived row lives in its segment', anArchivedRowLivesInItsSegment],
+  ['IBC a seat\u2019s menu only opens', aSeatsMenuOnlyOpens],
+  ['IBC the keyboard walks the queue', theInboxKeyboardWalks],
   ['IB a seat answers in place', aSeatAnswersInPlace],
   ['IB the empty inbox is the honest absence', theInboxIsEmptyHonestly],
   ['IB an ask jumps to its room', anAskJumpsToItsRoom],

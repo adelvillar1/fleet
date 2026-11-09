@@ -3857,6 +3857,29 @@ impl Bridge {
                 .await
                 .unwrap_or_default()
         };
+        // Every row carries its own identity and the fact's fingerprint:
+        // the key names the row across reads, the signature changes when
+        // the fact does — a dismissal hides a condition, never the next
+        // report of a new one (KI-497).
+        let mut seats = inbox_rows("seat", seats);
+        let mut onboarding = inbox_rows("onboard", onboarding);
+        let mut asks = inbox_rows("ask", asks);
+        let mut cron = inbox_rows("cron", cron);
+        let mut doctor = inbox_rows("doctor", doctor);
+        // The owner's decisions: a dismissed row is hidden while its
+        // signature holds, and an archived row lives in its own list —
+        // kept with the day it went, restorable, alive or resolved.
+        let decisions = load_inbox(&self.home);
+        for rows in [
+            &mut seats,
+            &mut onboarding,
+            &mut asks,
+            &mut cron,
+            &mut doctor,
+        ] {
+            rows.retain(|row| !inbox_dismissed(&decisions, row));
+        }
+        let archived = inbox_archived(&decisions, &[&seats, &onboarding, &asks, &cron, &doctor]);
         let total = seats.len() + onboarding.len() + asks.len() + cron.len() + doctor.len();
         json!({
             "type": "inbox",
@@ -3865,8 +3888,90 @@ impl Bridge {
             "asks": asks,
             "cron": cron,
             "doctor": doctor,
+            "archived": archived,
             "total": total,
         })
+    }
+
+    /// One inbox decision: dismiss, archive, restore, undismiss. The row
+    /// must exist in the read at the moment of the decision, so a stale
+    /// key is a refusal rather than a mark nobody will ever see.
+    pub async fn inbox_op(&self, body: &str) -> Result<Value, String> {
+        let arguments: Value = serde_json::from_str(body)
+            .map_err(|error| format!("the inbox decision is not a JSON object: {error}"))?;
+        let field = |name: &str| {
+            arguments
+                .get(name)
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+        };
+        let op = field("op").ok_or_else(|| "an inbox decision names its op".to_string())?;
+        let key = field("key")
+            .ok_or_else(|| "an inbox decision names the row it is about".to_string())?;
+        let home = self.home.clone();
+        match op.as_str() {
+            "dismiss" | "archive" => {
+                let document = self.owner_inbox().await;
+                let row = inbox_row(&document, &key)
+                    .ok_or_else(|| format!("no inbox row is keyed {key} — it resolved"))?;
+                let sign = |field: &str| {
+                    row.get(field)
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string()
+                };
+                let mark = InboxMark {
+                    signature: sign("signature"),
+                    at: crate::boards::now_stamp(),
+                    label: sign("label"),
+                    class: sign("class"),
+                };
+                let archiving = op == "archive";
+                tokio::task::spawn_blocking(move || {
+                    let mut decisions = load_inbox(&home);
+                    if archiving {
+                        decisions.dismissed.remove(&key);
+                        decisions.archived.insert(key, mark);
+                    } else {
+                        decisions.archived.remove(&key);
+                        decisions.dismissed.insert(key, mark);
+                    }
+                    save_inbox(&home, &mut decisions)
+                })
+                .await
+                .map_err(|_| "the inbox decision did not land".to_string())??;
+            }
+            "restore" => {
+                tokio::task::spawn_blocking(move || {
+                    let mut decisions = load_inbox(&home);
+                    if decisions.archived.remove(&key).is_none() {
+                        return Err(format!("nothing archived is keyed {key}"));
+                    }
+                    save_inbox(&home, &mut decisions)
+                })
+                .await
+                .map_err(|_| "the inbox decision did not land".to_string())??;
+            }
+            "undismiss" => {
+                tokio::task::spawn_blocking(move || {
+                    let mut decisions = load_inbox(&home);
+                    if decisions.dismissed.remove(&key).is_none() {
+                        return Err(format!("nothing dismissed is keyed {key}"));
+                    }
+                    save_inbox(&home, &mut decisions)
+                })
+                .await
+                .map_err(|_| "the inbox decision did not land".to_string())??;
+            }
+            other => {
+                return Err(format!(
+                    "`{other}` is not an inbox decision — dismiss, archive, restore or undismiss"
+                ))
+            }
+        }
+        Ok(self.owner_inbox().await)
     }
 
     pub async fn onboard(&self) -> Value {
@@ -6351,6 +6456,272 @@ fn save_workdirs(home: &std::path::Path, workdirs: &std::collections::HashMap<St
         return;
     }
     let _ = std::fs::rename(&temp, &path);
+}
+
+// --- the inbox's decisions (the inbox-controls plan) -----------------------
+
+/// The decisions sidecar: what the owner dismissed (hidden while the
+/// fact's signature holds) and what they archived (kept, restorable).
+const INBOX_FILE: &str = "inbox.json";
+
+/// One row's identity and the fact's fingerprint, written with the
+/// decision: a row whose signature has changed is a new fact and comes
+/// back on its own (a fresh ask, a new cron failure, a step that moved).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct InboxMark {
+    signature: String,
+    /// The day the decision was made, in the same stamp the other
+    /// sidecars carry.
+    at: String,
+    /// What the row said, so an archived row outlives its own fact.
+    label: String,
+    class: String,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+struct InboxDecisions {
+    #[serde(default)]
+    dismissed: std::collections::BTreeMap<String, InboxMark>,
+    #[serde(default)]
+    archived: std::collections::BTreeMap<String, InboxMark>,
+}
+
+fn inbox_path(home: &std::path::Path) -> PathBuf {
+    home.join(INBOX_FILE)
+}
+
+/// The decisions, read fresh: a missing or unreadable file is an empty
+/// set — the inbox is a view, and a lost sidecar must not fail it.
+fn load_inbox(home: &std::path::Path) -> InboxDecisions {
+    std::fs::read_to_string(inbox_path(home))
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default()
+}
+
+/// Write the decisions atomically, pruned: the archive keeps the newest
+/// 200 rows and nothing older than 90 days, so a decade of dismissals
+/// cannot become a directory.
+fn save_inbox(home: &std::path::Path, decisions: &mut InboxDecisions) -> Result<(), String> {
+    prune_inbox(decisions);
+    let text = serde_json::to_string_pretty(&*decisions)
+        .map_err(|error| format!("the inbox decisions did not serialize: {error}"))?;
+    let path = inbox_path(home);
+    let temp = path.with_extension(format!("{}.tmp", std::process::id()));
+    std::fs::write(&temp, text)
+        .map_err(|error| format!("the inbox decisions did not write: {error}"))?;
+    std::fs::rename(&temp, &path)
+        .map_err(|error| format!("the inbox decisions did not land: {error}"))
+}
+
+fn prune_inbox(decisions: &mut InboxDecisions) {
+    const KEEP: usize = 200;
+    let today = crate::calib::today();
+    // The stamp is `YYYY-MM-DDTHH:MMZ`, so the date part compares as a
+    // string against today's own.
+    let too_old = |mark: &InboxMark| -> bool {
+        let day = mark.at.split('T').next().unwrap_or_default();
+        !day.is_empty() && day < today.as_str() && age_days(day) > 90
+    };
+    decisions.archived.retain(|_, mark| !too_old(mark));
+    decisions.dismissed.retain(|_, mark| !too_old(mark));
+    if decisions.archived.len() > KEEP {
+        let mut stamps: Vec<(String, String)> = decisions
+            .archived
+            .iter()
+            .map(|(key, mark)| (mark.at.clone(), key.clone()))
+            .collect();
+        stamps.sort();
+        let drop_count = stamps.len() - KEEP;
+        for (_, key) in stamps.into_iter().take(drop_count) {
+            decisions.archived.remove(&key);
+        }
+    }
+}
+
+/// A day's distance from today, in days, from `YYYY-MM-DD` strings. A
+/// stamp that does not parse is "not old", so pruning never guesses.
+fn age_days(day: &str) -> i64 {
+    let parse = |text: &str| -> Option<(i64, i64, i64)> {
+        let mut parts = text.split('-');
+        let y = parts.next()?.parse().ok()?;
+        let m = parts.next()?.parse().ok()?;
+        let d = parts.next()?.parse().ok()?;
+        Some((y, m, d))
+    };
+    let (Some((y, m, d)), Some((ty, tm, td))) = (parse(day), parse(crate::calib::today().as_str()))
+    else {
+        return 0;
+    };
+    let days_of = |y: i64, m: i64, d: i64| -> i64 {
+        // A civil-date day count (Howard Hinnant's algorithm), month 1-12.
+        let y = if m <= 2 { y - 1 } else { y };
+        let era = if y >= 0 { y } else { y - 399 } / 400;
+        let yoe = y - era * 400;
+        let mp = (m + 9) % 12;
+        let doy = (153 * mp + 2) / 5 + d - 1;
+        let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+        era * 146097 + doe
+    };
+    days_of(ty, tm, td) - days_of(y, m, d)
+}
+
+/// The key that names a row across reads: its class and its own id.
+fn inbox_rows(class: &str, rows: Vec<Value>) -> Vec<Value> {
+    rows.into_iter()
+        .map(|mut row| {
+            let id = match class {
+                "seat" => row
+                    .get("session")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
+                "onboard" => row.get("id").and_then(Value::as_str).unwrap_or_default(),
+                "ask" => row
+                    .get("session")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
+                "cron" => row.get("name").and_then(Value::as_str).unwrap_or_default(),
+                _ => row.get("check").and_then(Value::as_str).unwrap_or_default(),
+            }
+            .to_string();
+            let signature = match class {
+                "seat" => format!(
+                    "{}|{}|{}",
+                    row.get("tool").and_then(Value::as_str).unwrap_or_default(),
+                    row.get("label").and_then(Value::as_str).unwrap_or_default(),
+                    row.get("summary")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default(),
+                ),
+                "onboard" => format!(
+                    "{}|{}",
+                    row.get("name").and_then(Value::as_str).unwrap_or_default(),
+                    row.get("why").and_then(Value::as_str).unwrap_or_default(),
+                ),
+                "ask" => row
+                    .get("at")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+                    .unwrap_or_else(|| {
+                        row.get("words")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_string()
+                    }),
+                "cron" => format!(
+                    "{}|{}",
+                    row.get("last_run")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default(),
+                    row.get("outcome")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default(),
+                ),
+                _ => row
+                    .get("why")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+            };
+            let label = match class {
+                "seat" => format!(
+                    "{} \u{00b7} {}",
+                    row.get("tool").and_then(Value::as_str).unwrap_or_default(),
+                    row.get("label").and_then(Value::as_str).unwrap_or_default(),
+                ),
+                "onboard" => row
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+                "ask" => format!(
+                    "{} \u{00b7} {}",
+                    row.get("kind").and_then(Value::as_str).unwrap_or("ask"),
+                    row.get("from").and_then(Value::as_str).unwrap_or_default(),
+                ),
+                "cron" => format!(
+                    "{} \u{00b7} {}",
+                    row.get("outcome")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default(),
+                    row.get("name").and_then(Value::as_str).unwrap_or_default(),
+                ),
+                _ => row
+                    .get("check")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+            };
+            if let Some(object) = row.as_object_mut() {
+                object.insert("key".into(), json!(format!("{class}:{id}")));
+                object.insert("signature".into(), json!(signature));
+                object.insert("label".into(), json!(label.trim()));
+                object.insert("class".into(), json!(class));
+            }
+            row
+        })
+        .collect()
+}
+
+/// Whether the owner's dismissal still hides this row: the stashed
+/// signature must match the row's own.
+fn inbox_dismissed(decisions: &InboxDecisions, row: &Value) -> bool {
+    let key = row.get("key").and_then(Value::as_str).unwrap_or_default();
+    let signature = row
+        .get("signature")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    decisions
+        .dismissed
+        .get(key)
+        .is_some_and(|mark| mark.signature == signature)
+}
+
+/// The archived list as the face reads it: every archived mark with the
+/// day it went, and whether its fact is still waiting (`live`) — a row
+/// archived and since resolved still shows, honestly.
+fn inbox_archived(decisions: &InboxDecisions, waiting: &[&Vec<Value>]) -> Vec<Value> {
+    let mut rows: Vec<Value> = decisions
+        .archived
+        .iter()
+        .map(|(key, mark)| {
+            let live = waiting.iter().any(|rows| {
+                rows.iter().any(|row| {
+                    row.get("key").and_then(Value::as_str) == Some(key.as_str())
+                        && row.get("signature").and_then(Value::as_str)
+                            == Some(mark.signature.as_str())
+                })
+            });
+            json!({
+                "key": key,
+                "class": mark.class,
+                "label": mark.label,
+                "signature": mark.signature,
+                "at": mark.at,
+                "live": live,
+            })
+        })
+        .collect();
+    rows.sort_by(|a, b| {
+        let at = |row: &Value| {
+            row.get("at")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string()
+        };
+        at(b).cmp(&at(a))
+    });
+    rows
+}
+
+/// The row a decision names, when the read carries it.
+fn inbox_row(document: &Value, key: &str) -> Option<Value> {
+    ["seats", "onboarding", "asks", "cron", "doctor"]
+        .iter()
+        .filter_map(|class| document.get(*class).and_then(Value::as_array))
+        .flatten()
+        .find(|row| row.get("key").and_then(Value::as_str) == Some(key))
+        .cloned()
 }
 
 /// The viewer's language for one file, from its extension — the handful
@@ -12685,6 +13056,94 @@ mod goal_tests {
         assert_eq!(session_goal(&home, &s1), None);
         assert_eq!(session_goal_done(&home, &s1).as_deref(), Some("the work"));
         let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// The inbox's decisions (the inbox-controls plan): the sidecar
+    /// round-trips, the signature rule is what returns a dismissed row,
+    /// an archived row outlives its fact, and the archive is capped.
+    #[test]
+    fn the_inbox_decisions_round_trip_and_the_signature_returns_a_row() {
+        let home =
+            std::env::temp_dir().join(format!("fleet-inbox-decisions-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        let mut decisions = InboxDecisions::default();
+        decisions.dismissed.insert(
+            "cron:nightly-sweep".into(),
+            InboxMark {
+                signature: "03:00|failed".into(),
+                at: "2026-11-09T10:00Z".into(),
+                label: "failed · nightly-sweep".into(),
+                class: "cron".into(),
+            },
+        );
+        decisions.archived.insert(
+            "onboard:vault".into(),
+            InboxMark {
+                signature: "v1".into(),
+                at: "2026-11-08T09:00Z".into(),
+                label: "one passphrase seals them".into(),
+                class: "onboard".into(),
+            },
+        );
+        save_inbox(&home, &mut decisions).expect("the decisions must write");
+        let loaded = load_inbox(&home);
+        assert_eq!(loaded.dismissed.len(), 1);
+        assert_eq!(loaded.archived.len(), 1);
+        // The same fact stays hidden; a new run's signature does not.
+        let same = json!({"key": "cron:nightly-sweep", "signature": "03:00|failed"});
+        let changed = json!({"key": "cron:nightly-sweep", "signature": "04:00|failed"});
+        assert!(
+            inbox_dismissed(&loaded, &same),
+            "the same fact stays dismissed"
+        );
+        assert!(
+            !inbox_dismissed(&loaded, &changed),
+            "a new failure comes back"
+        );
+        // An archived row with no live fact still reads, honestly resolved.
+        let archived = inbox_archived(&loaded, &[]);
+        assert_eq!(archived.len(), 1);
+        assert_eq!(archived[0]["label"], "one passphrase seals them");
+        assert_eq!(archived[0]["live"], false);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// The archive keeps the newest 200 rows and drops nothing else.
+    #[test]
+    fn the_inbox_archive_is_capped() {
+        let mut decisions = InboxDecisions::default();
+        for n in 0..205 {
+            decisions.archived.insert(
+                format!("cron:job-{n}"),
+                InboxMark {
+                    signature: format!("s{n}"),
+                    at: format!("2026-11-09T10:{:02}Z", n % 60),
+                    label: format!("job-{n}"),
+                    class: "cron".into(),
+                },
+            );
+        }
+        prune_inbox(&mut decisions);
+        assert_eq!(decisions.archived.len(), 200);
+    }
+
+    /// Every row carries the key its decisions are filed under and the
+    /// fact's own signature, so a dismissal can name it.
+    #[test]
+    fn every_inbox_row_carries_its_key_and_signature() {
+        let rows = inbox_rows(
+            "cron",
+            vec![json!({
+                "name": "nightly-sweep",
+                "outcome": "failed",
+                "last_run": "03:00",
+            })],
+        );
+        assert_eq!(rows[0]["key"], "cron:nightly-sweep");
+        assert_eq!(rows[0]["signature"], "03:00|failed");
+        assert_eq!(rows[0]["label"], "failed · nightly-sweep");
+        assert_eq!(rows[0]["class"], "cron");
     }
 
     #[tokio::test]

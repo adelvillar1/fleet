@@ -4653,93 +4653,356 @@
     }, 0);
   }
 
+  // --- the inbox's controls (the inbox-controls plan) ---------------------
+
+  // The five classes in the queue's reading order: the row class, the
+  // document's key, the group's words, the row's tone, the filter chip.
+  var INBOX_CLASSES = [
+    { cls: 'seat', doc: 'seats', group: 'waiting for your answer', tone: 'seat', chip: 'answers' },
+    { cls: 'onboard', doc: 'onboarding', group: 'setting fleet up', tone: 'setup', chip: 'setup' },
+    { cls: 'ask', doc: 'asks', group: 'questions from the rooms', tone: 'ask', chip: 'questions' },
+    { cls: 'cron', doc: 'cron', group: 'the machinery needs a decision', tone: 'bad', chip: 'machinery' },
+    { cls: 'doctor', doc: 'doctor', group: 'the doctor\u2019s findings', tone: 'bad', chip: 'doctor' }
+  ];
+
+  // Each onboarding step's own surface. The ladder's rows used to send
+  // every step to `#/chat` — the conversation the owner was already
+  // reading — so the button did nothing visible (KI-496). One table, and
+  // a new step has one place to land.
+  var ONBOARD_SURFACES = {
+    vault: '#/vault',
+    github: '#/settings',
+    home: '#/chat',
+    'first-llm': '#/settings',
+    lanes: '#/settings',
+    projects: '#/settings',
+    roster: '#/settings'
+  };
+
+  function onboardSurface(step) {
+    return ONBOARD_SURFACES[(step && step.id) || ''] || '#/settings';
+  }
+
+  // The row's own surface, for the menu's "open" verb.
+  function inboxSurface(row) {
+    if (row.class === 'seat') return '#/sessions/' + encodeURIComponent(row.session || '');
+    if (row.class === 'ask') return '#/huddles/' + encodeURIComponent(row.session || '');
+    if (row.class === 'onboard') return onboardSurface(row);
+    return '#/settings';
+  }
+
+  // One decision through the face's one route: the answer is the fresh
+  // document, so the pane repaints from the same read the queue rides.
+  // A refusal paints in the pane that asked — never the transcript two
+  // panes away (the KI-483 lesson), and a press is never silent.
+  function inboxDecide(row, op) {
+    face.inboxOpen = null;
+    post('/api/inbox', { op: op, key: row.key }).then(function (reply) {
+      if (reply.status !== 200) {
+        face.inboxRefusal = (reply.body && reply.body.error) ||
+          'the face said no without a reason';
+        paintInbox();
+        return;
+      }
+      face.inboxRefusal = null;
+      face.inbox = reply.body;
+      paintInbox();
+    }).catch(function () {
+      face.inboxRefusal = 'the face did not answer';
+      paintInbox();
+    });
+  }
+
+  // The selection the keyboard moves: the visible rows, in paint order.
+  function inboxRowsHere() {
+    if (!el.inboxBody) return [];
+    return Array.prototype.slice.call(el.inboxBody.querySelectorAll('.ib-row'));
+  }
+
+  function inboxMove(step) {
+    var rows = inboxRowsHere();
+    if (!rows.length) return;
+    var at = Number(face.inboxAt) || 0;
+    at = Math.max(0, Math.min(rows.length - 1, at + step));
+    face.inboxAt = at;
+    paintInbox();
+    var fresh = inboxRowsHere()[at];
+    if (fresh && fresh.scrollIntoView) fresh.scrollIntoView({ block: 'nearest' });
+  }
+
+  function inboxKey(event) {
+    if (event.metaKey || event.ctrlKey || event.altKey) return;
+    var rows = inboxRowsHere();
+    var current = rows[Number(face.inboxAt) || 0] || null;
+    if (event.key === 'j' || event.key === 'ArrowDown') {
+      event.preventDefault();
+      inboxMove(1);
+    } else if (event.key === 'k' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      inboxMove(-1);
+    } else if (event.key === 'd') {
+      if (!current) return;
+      event.preventDefault();
+      face.inboxOpen = face.inboxOpen === current.dataset.key ? null : current.dataset.key;
+      paintInbox();
+    } else if (event.key === 'Enter') {
+      if (!current) return;
+      var primary = current.querySelector('button.primary');
+      if (primary) {
+        event.preventDefault();
+        primary.click();
+      }
+    }
+  }
+
+  // The row's menu: every verb its own facts allow. A seat's only verb
+  // is opening the conversation — it is a live gate holding a run, so it
+  // cannot be hidden (deny is its dismissal).
+  function inboxMenuVerbs(row) {
+    var verbs = [{ label: 'open', hint: 'the place this names', run: function () {
+      face.inboxOpen = null;
+      window.location.hash = inboxSurface(row);
+    } }];
+    if (row.class === 'seat') return verbs;
+    verbs.push({ label: 'dismiss', hint: 'hides it until the fact changes',
+      run: function () { inboxDecide(row, 'dismiss'); } });
+    verbs.push({ label: 'archive', hint: 'keeps it under Archived',
+      run: function () { inboxDecide(row, 'archive'); } });
+    return verbs;
+  }
+
   function paintInbox() {
     paintRailCounts();
     if (!el.inboxBody) return;
     var doc = face.inbox;
-    if (!doc || refusals(doc)) return;
     el.inboxBody.textContent = '';
-    var total = inboxTotal(doc);
-    if (el.inboxTotal) {
-      el.inboxTotal.textContent = total + ' waiting';
-      el.inboxTotal.hidden = total === 0;
+    if (!doc || refusals(doc)) {
+      if (el.inboxEmpty) el.inboxEmpty.hidden = true;
+      return;
     }
-    if (el.inboxEmpty) el.inboxEmpty.hidden = total !== 0;
-    if (!total) return;
-    // The ask's age is a span, not a raw stamp: `roomAge` already reads an
-    // ISO time and answers "now"/"3h"/"2d" — the same words the room rows
-    // use, so the inbox and the rail cannot disagree about what "when" is.
+    var waiting = inboxTotal(doc);
+    var archived = doc.archived || [];
+    var tab = face.inboxTab === 'archived' ? 'archived' : 'waiting';
+    if (el.inboxTotal) {
+      el.inboxTotal.textContent = waiting + ' waiting';
+      el.inboxTotal.hidden = waiting === 0;
+    }
+    if (face.inboxRefusal) {
+      var refusal = node('p', 'ib-refusal', face.inboxRefusal);
+      refusal.setAttribute('role', 'alert');
+      el.inboxBody.appendChild(refusal);
+    }
+
+    // The head's controls: the two segments, then the class filters.
+    var tools = node('div', 'ib-tools');
+    var seg = node('div', 'ib-seg');
+    seg.setAttribute('role', 'tablist');
+    [['waiting', 'Waiting \u00b7 ' + waiting], ['archived', 'Archived \u00b7 ' + archived.length]]
+      .forEach(function (pair) {
+        var button = node('button', null, pair[1]);
+        button.type = 'button';
+        button.setAttribute('role', 'tab');
+        button.setAttribute('aria-selected', String(tab === pair[0]));
+        button.addEventListener('click', function () {
+          face.inboxTab = pair[0];
+          face.inboxAt = 0;
+          face.inboxOpen = null;
+          paintInbox();
+        });
+        seg.appendChild(button);
+      });
+    tools.appendChild(seg);
+    if (tab === 'waiting' && waiting > 0) {
+      var filters = [{ cls: '', label: 'all', n: waiting }].concat(
+        INBOX_CLASSES.map(function (c) {
+          return { cls: c.cls, label: c.chip, n: (doc[c.doc] || []).length };
+        }).filter(function (f) { return f.n > 0; }));
+      filters.forEach(function (f) {
+        var chip = node('button', 'ib-chip', f.label + ' \u00b7 ' + f.n);
+        chip.type = 'button';
+        chip.setAttribute('aria-pressed', String((face.inboxFilter || '') === f.cls));
+        chip.addEventListener('click', function () {
+          face.inboxFilter = f.cls;
+          face.inboxAt = 0;
+          face.inboxOpen = null;
+          paintInbox();
+        });
+        tools.appendChild(chip);
+      });
+      var hint = node('span', 'ib-hint', 'j / k moves \u00b7 enter opens \u00b7 d dismisses');
+      hint.style.marginLeft = 'auto';
+      tools.appendChild(hint);
+    }
+    el.inboxBody.appendChild(tools);
+
+    if (tab === 'archived') {
+      if (el.inboxEmpty) el.inboxEmpty.hidden = archived.length > 0;
+      if (!archived.length) {
+        if (el.inboxEmpty) el.inboxEmpty.textContent = 'nothing archived is waiting on you';
+        return;
+      }
+      if (el.inboxEmpty) el.inboxEmpty.hidden = true;
+      var archGroup = node('div', 'ib-group ib-arch');
+      archGroup.appendChild(node('div', 'ib-group-head',
+        [node('span', null, 'archived'), node('span', 'n', String(archived.length))]));
+      archived.forEach(function (row) {
+        var r = node('div', 'ib-row');
+        r.dataset.class = row.class || '';
+        r.dataset.tone = row.class === 'onboard' ? 'setup'
+          : (row.class === 'ask' ? 'ask' : (row.class === 'seat' ? 'seat' : 'bad'));
+        r.dataset.key = row.key || '';
+        var what = node('div', 'ib-what');
+        what.appendChild(node('div', 'ib-title', row.label || row.key || ''));
+        what.appendChild(node('div', 'ib-age',
+          'archived ' + roomAge(row.at) + ' ago \u00b7 ' +
+          (row.live ? 'the fact is still waiting' : 'the fact has since resolved')));
+        var act = node('div', 'ib-actions');
+        var restore = node('button', null, 'restore');
+        restore.type = 'button';
+        restore.addEventListener('click', function () { inboxDecide(row, 'restore'); });
+        act.appendChild(restore);
+        r.appendChild(what);
+        r.appendChild(act);
+        archGroup.appendChild(r);
+      });
+      el.inboxBody.appendChild(archGroup);
+      return;
+    }
+
+    if (!waiting) {
+      if (el.inboxEmpty) {
+        el.inboxEmpty.textContent = 'nothing needs you';
+        el.inboxEmpty.hidden = false;
+      }
+      return;
+    }
+    if (el.inboxEmpty) el.inboxEmpty.hidden = true;
+
+    var filter = face.inboxFilter || '';
+    var atlas = 0;
+    var selected = Number(face.inboxAt) || 0;
     var age = function (at) { return at ? roomAge(at) : ''; };
-    var group = function (label, n) {
+    INBOX_CLASSES.forEach(function (kind) {
+      var rows = doc[kind.doc] || [];
+      if (!rows.length) return;
+      if (filter && filter !== kind.cls) return;
       var g = node('div', 'ib-group');
       g.appendChild(node('div', 'ib-group-head',
-        [node('span', null, label), node('span', 'n', String(n))]));
-      el.inboxBody.appendChild(g);
-      return g;
-    };
-    var row = function (g, cls, title, where, why, since, actions) {
-      var r = node('div', 'ib-row');
-      r.dataset.class = cls;
-      var what = node('div', 'ib-what');
-      what.appendChild(node('div', 'ib-title', title));
-      if (where) what.appendChild(node('div', 'ib-where', where));
-      if (why) what.appendChild(node('div', 'ib-why', why));
-      if (since) what.appendChild(node('div', 'ib-age', since));
-      var act = node('div', 'ib-actions');
-      (actions || []).forEach(function (a) {
-        var b = node('button', a.cls || null, a.label);
-        b.type = 'button';
-        b.addEventListener('click', a.run);
-        act.appendChild(b);
-      });
-      r.appendChild(what);
-      r.appendChild(act);
-      g.appendChild(r);
-    };
-    (doc.seats || []).forEach(function (seat) {
-      var g = group('waiting for your answer', (doc.seats || []).length);
-      var act = function (decision) {
-        return function () {
-          post('/api/approve?session=' + encodeURIComponent(seat.session),
-            { decision: decision }).then(function () { readInbox(true); });
+        [node('span', null, kind.group), node('span', 'n', String(rows.length))]));
+      rows.forEach(function (row) {
+        var r = node('div', 'ib-row');
+        r.dataset.class = kind.cls;
+        r.dataset.tone = kind.tone;
+        r.dataset.key = row.key || '';
+        r.dataset.signature = row.signature || '';
+        if (atlas === selected) r.dataset.current = 'true';
+        atlas += 1;
+        var what = node('div', 'ib-what');
+        var title = '';
+        var where = '';
+        var why = '';
+        if (kind.cls === 'seat') {
+          title = (row.tool || '') + (row.label ? ' \u00b7 ' + row.label : '');
+          where = 'in ' + conversationName(row.session);
+          why = row.verdict || row.summary || '';
+        } else if (kind.cls === 'onboard') {
+          title = row.name || row.id || '';
+          where = 'the onboarding ladder' + (row.step ? ' \u00b7 step ' + row.step : '');
+          why = row.why || '';
+        } else if (kind.cls === 'ask') {
+          title = (row.kind === 'review' ? 'review' : 'ask') +
+            (row.from ? ' \u00b7 ' + row.from + ' asks' : '');
+          why = '\u201c' + (row.words || '') + '\u201d';
+        } else if (kind.cls === 'cron') {
+          title = (row.outcome || 'failed') + ' \u00b7 ' + (row.name || '');
+          where = (row.schedule || '') + (row.last_run ? ' \u00b7 last ran ' + row.last_run : '');
+          why = row.task || '';
+        } else {
+          title = row.check || '';
+          why = row.why || '';
+        }
+        what.appendChild(node('div', 'ib-title', title));
+        if (where) what.appendChild(node('div', 'ib-where', where));
+        if (why) what.appendChild(node('div', 'ib-why', why));
+        if (kind.cls === 'ask' && row.at) {
+          what.appendChild(node('div', 'ib-age', age(row.at)));
+        }
+        var act = node('div', 'ib-actions');
+        var act1 = function (label, fn, primary) {
+          var b = node('button', primary ? 'primary' : null, label);
+          b.type = 'button';
+          b.addEventListener('click', fn);
+          act.appendChild(b);
+          return b;
         };
-      };
-      row(g, 'seat', (seat.tool || '') + (seat.label ? ' \u00b7 ' + seat.label : ''),
-        'in ' + conversationName(seat.session),
-        seat.verdict || seat.summary, '',
-        [
-          { label: 'once', cls: 'primary', run: act('once') },
-          { label: 'always', run: act('always') },
-          { label: 'deny', cls: 'danger', run: act('deny') },
-        ]);
+        if (kind.cls === 'seat') {
+          var decide = function (decision) {
+            return function () {
+              post('/api/approve?session=' + encodeURIComponent(row.session),
+                { decision: decision }).then(function () { readInbox(true); });
+            };
+          };
+          act1('once', decide('once'), true);
+          act1('always', decide('always'), false);
+          var deny = act1('deny', decide('deny'), false);
+          deny.classList.add('danger');
+        } else if (kind.cls === 'onboard') {
+          act1('set it up', function () { window.location.hash = onboardSurface(row); }, true);
+          act1('not now', function () { inboxDecide(row, 'dismiss'); }, false);
+        } else if (kind.cls === 'ask') {
+          act1('answer in the room', function () {
+            window.location.hash = '#/huddles/' + encodeURIComponent(row.session || '');
+          }, true);
+          act1('dismiss', function () { inboxDecide(row, 'dismiss'); }, false);
+        } else if (kind.cls === 'cron') {
+          act1('open the job', function () { window.location.hash = '#/settings'; }, true);
+          act1('dismiss', function () { inboxDecide(row, 'dismiss'); }, false);
+        } else {
+          act1('open doctor', function () { window.location.hash = '#/settings'; }, true);
+          act1('dismiss', function () { inboxDecide(row, 'dismiss'); }, false);
+        }
+        var more = node('button', 'ib-more', '\u22ef');
+        more.type = 'button';
+        more.title = 'more: open, dismiss, archive';
+        more.setAttribute('aria-label', 'more actions for this row');
+        more.setAttribute('aria-expanded',
+          String(face.inboxOpen === (row.key || '')));
+        more.addEventListener('click', function (event) {
+          event.preventDefault();
+          face.inboxOpen = face.inboxOpen === row.key ? null : row.key;
+          paintInbox();
+        });
+        act.appendChild(more);
+        r.appendChild(what);
+        r.appendChild(act);
+        if (face.inboxOpen === row.key) {
+          var menu = node('div', 'ib-menu');
+          menu.setAttribute('role', 'menu');
+          inboxMenuVerbs(Object.assign({}, row, { class: kind.cls })).forEach(function (verb) {
+            var b = node('button', null, verb.label);
+            b.type = 'button';
+            b.setAttribute('role', 'menuitem');
+            if (verb.hint) b.title = verb.hint;
+            b.addEventListener('click', function (event) {
+              event.preventDefault();
+              verb.run();
+            });
+            menu.appendChild(b);
+          });
+          r.appendChild(menu);
+        }
+        g.appendChild(r);
+      });
+      el.inboxBody.appendChild(g);
     });
-    (doc.onboarding || []).forEach(function (step) {
-      var g = group('setting fleet up', (doc.onboarding || []).length);
-      row(g, 'onboard', step.name || step.id,
-        'the onboarding ladder' + (step.step ? ' \u00b7 step ' + step.step : ''),
-        step.why, '',
-        [{ label: 'set it up', cls: 'primary', run: function () { window.location.hash = '#/chat'; } }]);
-    });
-    (doc.asks || []).forEach(function (ask) {
-      var g = group('questions from the huddles', (doc.asks || []).length);
-      row(g, 'ask', (ask.kind === 'review' ? 'review' : 'ask') +
-        (ask.from ? ' \u00b7 ' + ask.from + ' asks' : ''), '',
-        '\u201c' + (ask.words || '') + '\u201d', age(ask.at),
-        [{ label: 'answer', cls: 'primary', run: function () {
-          window.location.hash = '#/huddles/' + encodeURIComponent(ask.session);
-        } }]);
-    });
-    (doc.cron || []).forEach(function (job) {
-      var g = group('the machinery needs a decision', (doc.cron || []).length);
-      row(g, 'cron', (job.outcome || 'failed') + ' \u00b7 ' + (job.name || ''),
-        (job.schedule || '') + (job.last_run ? ' \u00b7 last ran ' + job.last_run : ''),
-        job.task, '',
-        [{ label: 'the settings', run: function () { window.location.hash = '#/settings'; } }]);
-    });
-    (doc.doctor || []).forEach(function (check) {
-      var g = group('the doctor\u2019s findings', (doc.doctor || []).length);
-      row(g, 'doctor', check.check, '', check.why, '', []);
-    });
+  }
+
+  // The pane's keyboard: the queue is a list, so j/k walk it, enter runs
+  // the selected row's own verb, and d opens its menu. Bound once — the
+  // pane element persists while its rows are rebuilt.
+  if (el.inboxBody) {
+    el.inboxBody.tabIndex = 0;
+    el.inboxBody.addEventListener('keydown', inboxKey);
   }
 
   function readOnboard(force) {
@@ -19252,7 +19515,10 @@
   function paintSettings() {
     var read = face.settings;
     el.settingsBoard.textContent = '';
-    if (!read) {
+    // A document without its lists is a read that did not land, not a
+    // settings page: painting it would throw on the first `.length` and
+    // leave the pane blank (found by the inbox harness's route walk).
+    if (!read || !read.scalars) {
       el.settingsBoard.appendChild(pageHead('System', 'Settings',
         'Every knob this home carries, written through the same writer the CLI uses.',
         null));

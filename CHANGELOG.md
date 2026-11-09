@@ -12,6 +12,31 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.6.8 — 2026-11-09
+
+The inbox can be worked.
+
+- **KI-496 fixed.** Every onboarding row's only button set the hash to
+  `#/chat` — the conversation the owner was already reading — so the
+  setup press did nothing visible. Each ladder step now lands on its own
+  surface through one table (`vault` → `#/vault`, `github` → the settings
+  account card, the rest → `#/settings`), and *not now* is a dismiss.
+- **KI-497 fixed.** The inbox is a derived view, so a row could only
+  leave by its fact resolving: there was no dismiss and no archive.
+  `~/.fleet/inbox.json` now keeps the owner's decisions, keyed by the
+  row (`class:id`) with the fact's own signature — a dismissed row comes
+  back when its fact changes, and an archived row keeps its day and stays
+  restorable, even after its fact resolves.
+- The pane gains the **Waiting / Archived** segments, class filters with
+  counts, a **context menu on every row** (`open`, `dismiss`, `archive`;
+  a seat's menu carries only `open` — a seat holds a run and cannot be
+  hidden), and a keyboard (`j`/`k` move, `enter` runs the row's own verb,
+  `d` opens its menu).
+- A refused decision now paints its reason **in the inbox pane**, beside
+  the row that asked — never only in the transcript two panes away.
+- The settings paint no longer throws on a document without its lists
+  (a read that did not land now shows the waiting card).
+
 ## v0.6.7 — 2026-11-09
 
 The send button works with a message queued.

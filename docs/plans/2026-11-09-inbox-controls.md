@@ -1,5 +1,5 @@
 ---
-status: draft
+status: active
 created: 2026-11-09
 updated: 2026-11-09
 slug: inbox-controls
@@ -88,15 +88,15 @@ High-level steps, each closing the criteria it names:
 These are the contract; each is a verifiable assertion. The work is done when
 every box is checked.
 
-- [ ] C0 — The current pane is read live and the setup button's dead navigation is a ledger row (KI-496) with its evidence before any code changes.
-- [ ] C1 — Every onboarding row's primary button navigates to its step's own surface, and the step → surface mapping lives in one table (vault → `#/vault`, github → its account card, the rest → `#/settings`); a harness case presses the vault row and asserts the hash.
-- [ ] C2 — Dismissing a row removes it from Waiting and from the rail badge, and the row returns when its signature changes — pinned by a harness case that dismisses an ask and then replays a new ask for the same room.
-- [ ] C3 — Archiving a row moves it to the Archived segment with the day it was archived, and Restore puts it back; both survive a restart because they ride `<FLEET_HOME>/inbox.json`.
-- [ ] C4 — Every non-seat row carries a context menu with open, dismiss and archive; a seat carries its three answers and only "open the conversation" in the menu; pinned per class.
-- [ ] C5 — The segment and filter counts are honest: Waiting excludes dismissed and archived rows, Archived counts only archived ones, and the filters narrow within the segment.
+- [x] C0 — The current pane is read live and the setup button's dead navigation is a ledger row (KI-496) with its evidence before any code changes.
+- [x] C1 — Every onboarding row's primary button navigates to its step's own surface, and the step → surface mapping lives in one table (vault → `#/vault`, github → its account card, the rest → `#/settings`); a harness case presses the vault row and asserts the hash.
+- [x] C2 — Dismissing a row removes it from Waiting and from the rail badge, and the row returns when its signature changes — pinned by a harness case that dismisses an ask and then replays a new ask for the same room.
+- [x] C3 — Archiving a row moves it to the Archived segment with the day it was archived, and Restore puts it back; both survive a restart because they ride `<FLEET_HOME>/inbox.json`.
+- [x] C4 — Every non-seat row carries a context menu with open, dismiss and archive; a seat carries its three answers and only "open the conversation" in the menu; pinned per class.
+- [x] C5 — The segment and filter counts are honest: Waiting excludes dismissed and archived rows, Archived counts only archived ones, and the filters narrow within the segment.
 - [ ] C6 — The read stays one GET (`/api/owner-inbox` returns waiting plus archived, each row with its key and signature) and every decision is one `POST /api/inbox` with an op and a key; a malformed op or key is a 400.
-- [ ] C7 — The keyboard works on the pane: j and k move the selection, enter runs the selected row's primary verb, d opens its context menu; pinned by a harness case.
-- [ ] C8 — The harness carries a case per verb and per the setup fix (dismiss, archive, restore, the signature's return, the seat's menu, the keyboard), and the suite is green.
+- [x] C7 — The keyboard works on the pane: j and k move the selection, enter runs the selected row's primary verb, d opens its context menu; pinned by a harness case.
+- [x] C8 — The harness carries a case per verb and per the setup fix (dismiss, archive, restore, the signature's return, the seat's menu, the keyboard), and the suite is green.
 - [ ] C9 — `docs/features/inbox.md` describes the store, the verbs and the signature rule; the ledger row is closed; `ki_ledger.py` and `plan_check.py` exit 0 at status: completed; the four-leg gate is green; the cut is published.
 
 ## Files to be touched

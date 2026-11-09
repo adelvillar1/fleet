@@ -663,6 +663,21 @@ async fn serve_connection(
                 Err(message) => write_reply(&mut stream, bad_request(&message)).await,
             }
         }
+        // The inbox's decisions: dismiss, archive, restore, undismiss.
+        // The answer is the fresh document, so the pane repaints from the
+        // same read the queue rides rather than guessing at the new
+        // state; a malformed op, a key the read no longer carries, or a
+        // restore of nothing archived is a 400 with the reason named.
+        ("POST", "/api/inbox") => {
+            let body = match read_body(&mut stream, &request, rest).await {
+                Ok(body) => body,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            match bridge.inbox_op(&body).await {
+                Ok(document) => write_reply(&mut stream, api(200, document)).await,
+                Err(message) => write_reply(&mut stream, bad_request(&message)).await,
+            }
+        }
         // The owner's two instructions to the run in flight. Both write
         // the control file the agent's turn loop already reads before
         // every model call; the route only names what the write means.
