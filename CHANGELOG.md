@@ -12,6 +12,21 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.6.10 — 2026-11-09
+
+The inbox's group headers say their words again.
+
+- **KI-499 fixed.** Every group header read as a type name —
+  `[object HTMLSpanElement]` — where "setting fleet up" and "the
+  machinery needs a decision" belonged: the header was built with
+  `node(name, className, text)` and handed a list of elements, which the
+  helper writes as text. Both heads are built by appending now, and the
+  harness pins all five (`IB the group heads say their words, not a type
+  name`); with the old shape restored it fails with `[object Object]`
+  for every head.
+- Found by the redesigned inbox's own live read, which is the point of
+  reading the surface after shipping it.
+
 ## v0.6.9 — 2026-11-09
 
 The archive leaves the queue.

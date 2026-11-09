@@ -4843,8 +4843,10 @@
       }
       if (el.inboxEmpty) el.inboxEmpty.hidden = true;
       var archGroup = node('div', 'ib-group ib-arch');
-      archGroup.appendChild(node('div', 'ib-group-head',
-        [node('span', null, 'archived'), node('span', 'n', String(archived.length))]));
+      var archHead = node('div', 'ib-group-head');
+      archHead.appendChild(node('span', null, 'archived'));
+      archHead.appendChild(node('span', 'n', String(archived.length)));
+      archGroup.appendChild(archHead);
       archived.forEach(function (row) {
         var r = node('div', 'ib-row');
         r.dataset.class = row.class || '';
@@ -4887,8 +4889,14 @@
       if (!rows.length) return;
       if (filter && filter !== kind.cls) return;
       var g = node('div', 'ib-group');
-      g.appendChild(node('div', 'ib-group-head',
-        [node('span', null, kind.group), node('span', 'n', String(rows.length))]));
+      // The head is built by appending: `node`'s third argument is
+      // TEXT, and a list of elements handed to it stringifies to
+      // "[object HTMLSpanElement]" — the shape this pane had shipped
+      // with, its group words replaced by a type name.
+      var head = node('div', 'ib-group-head');
+      head.appendChild(node('span', null, kind.group));
+      head.appendChild(node('span', 'n', String(rows.length)));
+      g.appendChild(head);
       rows.forEach(function (row) {
         var r = node('div', 'ib-row');
         r.dataset.class = kind.cls;

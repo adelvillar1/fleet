@@ -4800,6 +4800,11 @@ async function theInboxCollectsEverythingWaiting() {
   check('IB the ask carries its words',
     ask && ask.textContent.includes('do we ship it behind the flag?'),
     ask ? ask.textContent.slice(0, 80) : 'no ask row');
+  const heads = page.rows('.ib-group-head').map((h) => h.textContent);
+  check('IB the group heads say their words, not a type name',
+    heads.length === 5 && heads.every((h) => !/\[object/.test(h)) &&
+      heads.join('|').includes('setting fleet up'),
+    heads.join(' | '));
 }
 
 async function aSeatAnswersInPlace() {
