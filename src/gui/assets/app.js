@@ -4833,6 +4833,24 @@
       hint.style.marginLeft = 'auto';
       tools.appendChild(hint);
     }
+    // The dismissals' own toggle rides the tools in every waiting
+    // state — an inbox emptied by dismissals must still offer the way
+    // back (the counts row is where the eye is).
+    if (tab === 'waiting') {
+      var hiddenRows = doc.dismissed || [];
+      if (hiddenRows.length) {
+        var hiddenChip = node('button', 'ib-chip',
+          'dismissed \u00b7 ' + hiddenRows.length);
+        hiddenChip.type = 'button';
+        hiddenChip.setAttribute('aria-pressed', String(!!face.inboxShowDismissed));
+        hiddenChip.title = 'the rows you dismissed \u2014 bring one back from here';
+        hiddenChip.addEventListener('click', function () {
+          face.inboxShowDismissed = !face.inboxShowDismissed;
+          paintInbox();
+        });
+        tools.appendChild(hiddenChip);
+      }
+    }
     el.inboxBody.appendChild(tools);
 
     if (tab === 'archived') {
@@ -4876,6 +4894,7 @@
         el.inboxEmpty.textContent = 'nothing needs you';
         el.inboxEmpty.hidden = false;
       }
+      paintDismissed(doc.dismissed);
       return;
     }
     if (el.inboxEmpty) el.inboxEmpty.hidden = true;
@@ -5003,6 +5022,38 @@
       });
       el.inboxBody.appendChild(g);
     });
+    paintDismissed(doc.dismissed);
+  }
+
+  // The dismissed rows, behind their toggle: a dismissal with no way
+  // back is a trap, and the op that undoes it exists either way.
+  function paintDismissed(dismissed) {
+    var rows = dismissed || [];
+    if (!face.inboxShowDismissed || !rows.length) return;
+    var dg = node('div', 'ib-group ib-dismissed');
+    var dhead = node('div', 'ib-group-head');
+    dhead.appendChild(node('span', null, 'dismissed'));
+    dhead.appendChild(node('span', 'n', String(rows.length)));
+    dg.appendChild(dhead);
+    rows.forEach(function (row) {
+      var r = node('div', 'ib-row');
+      r.dataset.class = row.class || '';
+      r.dataset.key = row.key || '';
+      var what = node('div', 'ib-what');
+      what.appendChild(node('div', 'ib-title', row.label || row.key || ''));
+      what.appendChild(node('div', 'ib-age',
+        'dismissed ' + roomAge(row.at) + ' ago \u00b7 ' +
+        (row.live ? 'the fact is still waiting' : 'the fact has since resolved')));
+      var act = node('div', 'ib-actions');
+      var back = node('button', null, 'bring back');
+      back.type = 'button';
+      back.addEventListener('click', function () { inboxDecide(row, 'undismiss'); });
+      act.appendChild(back);
+      r.appendChild(what);
+      r.appendChild(act);
+      dg.appendChild(r);
+    });
+    el.inboxBody.appendChild(dg);
   }
 
   // The pane's keyboard: the queue is a list, so j/k walk it, enter runs

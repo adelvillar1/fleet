@@ -12,6 +12,19 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.6.11 — 2026-11-09
+
+A dismissal is never a trap.
+
+- The read now carries the **dismissed** rows (their day and whether
+  their fact is still waiting), and the pane offers them behind one
+  quiet toggle — `dismissed · N` — with a **bring back** on each. The
+  `undismiss` op existed from 0.6.8 but nothing in the interface could
+  reach it: a row dismissed by mistake had no way home until its fact
+  changed. Pinned by `IBC a dismissed row can come back` (the toggle
+  counts, the row names itself, the press posts the undismiss and the
+  row returns).
+
 ## v0.6.10 — 2026-11-09
 
 The inbox's group headers say their words again.

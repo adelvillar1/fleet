@@ -4754,6 +4754,55 @@ async function theInboxKeyboardWalks() {
     page.window.location.hash === '#/settings', page.window.location.hash);
 }
 
+
+// IBC: a dismissal is never a trap. The pane offers the dismissed rows
+// behind one toggle, each with a bring-back that posts the undismiss.
+async function aDismissedRowCanComeBack() {
+  const before = inboxDoc({
+    total: 0,
+    dismissed: [{ key: 'cron:nightly-sweep', class: 'cron', label: 'failed · nightly-sweep',
+      signature: 's1', at: '2026-11-09T10:00Z', live: true }],
+  });
+  const after = inboxDoc({
+    total: 1,
+    cron: [{ name: 'nightly-sweep', outcome: 'failed', schedule: '0 3 * * *',
+      task: 'sweep', last_run: '03:00', key: 'cron:nightly-sweep', signature: 's1',
+      label: 'failed · nightly-sweep', class: 'cron' }],
+  });
+  const doc = {
+    sessions: INBOX_SESSIONS,
+    state: INBOX_STATE,
+    inbox: before,
+    inboxReply: () => ({ status: 200, body: after }),
+  };
+  const page = boot({ width: 1440, hash: '#/inbox', documents: doc });
+  await flush();
+  page.open();
+  await flush(80);
+  const toggle = page.rows('.ib-chip').find((c) => /^dismissed/.test(c.textContent));
+  check('IBC the dismissed toggle counts what it hides',
+    Boolean(toggle) && toggle.textContent.includes('1'),
+    page.rows('.ib-chip').map((c) => c.textContent).join('|'));
+  toggle.click();
+  await flush(40);
+  const row = page.rows('.ib-dismissed .ib-row')[0];
+  check('IBC the dismissed row names itself and its day',
+    Boolean(row) && row.textContent.includes('nightly-sweep') &&
+      row.textContent.includes('dismissed'),
+    row ? row.textContent.slice(0, 120) : 'no dismissed row');
+  const back = [...row.querySelectorAll('button')].find((b) => b.textContent === 'bring back');
+  check('IBC the dismissed row carries its bring-back', Boolean(back), 'no button');
+  back.click();
+  await flush(80);
+  const posts = page.calls.filter((c) => c.url === '/api/inbox');
+  check('IBC the bring-back posts the undismiss',
+    posts.length === 1 && String(posts[0].body).includes('"op":"undismiss"') &&
+      String(posts[0].body).includes('"key":"cron:nightly-sweep"'),
+    JSON.stringify(posts.map((c) => c.body)));
+  check('IBC the row is back in the queue after the undismiss',
+    page.rows('.ib-row').length === 1, String(page.rows('.ib-row').length));
+}
+
 // IB (the owner-inbox plan): one queue of everything waiting on the
 // owner — seats answerable in place, the onboarding ladder, huddle
 // questions, cron failures, doctor findings — fed by one read, badged
@@ -11497,6 +11546,7 @@ const cases = [
   ['IBC an archived row lives in its segment', anArchivedRowLivesInItsSegment],
   ['IBC a seat\u2019s menu only opens', aSeatsMenuOnlyOpens],
   ['IBC the keyboard walks the queue', theInboxKeyboardWalks],
+  ['IBC a dismissed row can come back', aDismissedRowCanComeBack],
   ['IB a seat answers in place', aSeatAnswersInPlace],
   ['IB the empty inbox is the honest absence', theInboxIsEmptyHonestly],
   ['IB an ask jumps to its room', anAskJumpsToItsRoom],

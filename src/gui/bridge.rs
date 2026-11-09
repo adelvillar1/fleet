@@ -3893,6 +3893,13 @@ impl Bridge {
             &decisions,
             &[&live[0], &live[1], &live[2], &live[3], &live[4]],
         );
+        // The dismissals ride the document too: a dismissal with no way
+        // back is a trap, and the pane shows them behind one toggle with
+        // a bring-back on each (the op exists either way).
+        let dismissed = inbox_marks(
+            &decisions.dismissed,
+            &[&live[0], &live[1], &live[2], &live[3], &live[4]],
+        );
         let total = seats.len() + onboarding.len() + asks.len() + cron.len() + doctor.len();
         json!({
             "type": "inbox",
@@ -3902,6 +3909,7 @@ impl Bridge {
             "cron": cron,
             "doctor": doctor,
             "archived": archived,
+            "dismissed": dismissed,
             "total": total,
         })
     }
@@ -6702,6 +6710,45 @@ fn inbox_hidden(decisions: &InboxDecisions, row: &Value) -> bool {
 fn inbox_archived(decisions: &InboxDecisions, waiting: &[&Vec<Value>]) -> Vec<Value> {
     let mut rows: Vec<Value> = decisions
         .archived
+        .iter()
+        .map(|(key, mark)| {
+            let live = waiting.iter().any(|rows| {
+                rows.iter().any(|row| {
+                    row.get("key").and_then(Value::as_str) == Some(key.as_str())
+                        && row.get("signature").and_then(Value::as_str)
+                            == Some(mark.signature.as_str())
+                })
+            });
+            json!({
+                "key": key,
+                "class": mark.class,
+                "label": mark.label,
+                "signature": mark.signature,
+                "at": mark.at,
+                "live": live,
+            })
+        })
+        .collect();
+    rows.sort_by(|a, b| {
+        let at = |row: &Value| {
+            row.get("at")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string()
+        };
+        at(b).cmp(&at(a))
+    });
+    rows
+}
+
+/// A mark map as rows the pane can draw — the archive's and the
+/// dismissals' lists share this shape: the day it went, and whether the
+/// fact is still waiting.
+fn inbox_marks(
+    marks: &std::collections::BTreeMap<String, InboxMark>,
+    waiting: &[&Vec<Value>],
+) -> Vec<Value> {
+    let mut rows: Vec<Value> = marks
         .iter()
         .map(|(key, mark)| {
             let live = waiting.iter().any(|rows| {
