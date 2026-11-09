@@ -12,6 +12,20 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.6.6 — 2026-11-09
+
+The release the updater installs.
+
+- **No behaviour change from 0.6.5.** This cut exists to be the first
+  release a fixed channel installs: 0.6.5 carries the updater's fix and
+  was installed by hand (its predecessor's compiled-in ACL could not
+  reach the updater), and 0.6.6 is what the 0.6.5 shell's About press
+  and `fleet update` on a 0.6.5 copy install — the end-to-end proof the
+  two channels work.
+- The release also carries the feed's own read-back (0.6.5's cut): the
+  published `latest.json` names the raw CLI artifact and the served
+  bytes hash to its signature.
+
 ## v0.6.5 — 2026-11-09
 
 The updater installs.
