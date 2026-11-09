@@ -137,6 +137,50 @@ clean_failed() {
     echo "  failed build cleaned after diagnosis: $(human "${before_kb:-0}") (${marker%/.failed-build})"
 }
 
+# Build-script outputs and bundles, kept the same way as artifacts: the
+# newest per name is what the next build reuses; the older ones are outputs of
+# a job that finished (2026-11-09: 342 dirs, 1.4 GiB across the two profiles,
+# and dmgs from 0.4.0-beta.1 beside 0.6.20's).
+prune_build_dirs() {
+    dir="$1"
+    [ -d "$dir" ] || return 0
+    names=$(find "$dir" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sed 's#.*/##' \
+        | sed -E 's/-[0-9a-f]{4,}$//' | sort -u)
+    for name in $names; do
+        all=$(ls -dt "$dir/$name"-* 2>/dev/null)
+        [ "$(printf '%s\n' "$all" | wc -l | tr -d ' ')" -gt "$KEEP_ARTIFACTS" ] || continue
+        older=$(printf '%s\n' "$all" | tail -n +$((KEEP_ARTIFACTS + 1)))
+        bytes=$(printf '%s\n' "$older" | tr '\n' '\0' | xargs -0 du -ck 2>/dev/null | tail -1 | awk '{print $1}')
+        [ "$DRY" -eq 1 ] || printf '%s\n' "$older" | tr '\n' '\0' | xargs -0 rm -rf
+        dedupe_freed_kb=$((dedupe_freed_kb + ${bytes:-0}))
+    done
+}
+
+prune_bundles() {
+    dir="$1"
+    [ -d "$dir" ] || return 0
+    # A bundle that never finished leaves its staging dmg behind as
+    # `rw.<pid>.fleet_<version>_<arch>.dmg` — a mount image for a build that
+    # died, not a build worth keeping. An hour's grace keeps a bundle that is
+    # still running untouched.
+    staging=$(find "$dir" -maxdepth 1 -name 'rw.*.fleet_*.dmg' -mmin +60 2>/dev/null)
+    if [ -n "$staging" ]; then
+        bytes=$(printf '%s\n' "$staging" | tr '\n' '\0' | xargs -0 du -ck 2>/dev/null | tail -1 | awk '{print $1}')
+        echo "  bundles: dropping $(printf '%s\n' "$staging" | wc -l | tr -d ' ') abandoned staging dmg(s) ($(human "${bytes:-0}"))"
+        [ "$DRY" -eq 1 ] || printf '%s\n' "$staging" | tr '\n' '\0' | xargs -0 rm -f
+        dedupe_freed_kb=$((dedupe_freed_kb + ${bytes:-0}))
+    fi
+    # Keep the newest two finished dmgs: the current cut and its predecessor,
+    # which is what a re-cut or a rollback needs.
+    all=$(ls -t "$dir"/fleet_*.dmg 2>/dev/null)
+    [ "$(printf '%s\n' "$all" | wc -l | tr -d ' ')" -gt 2 ] || return 0
+    older=$(printf '%s\n' "$all" | tail -n +3)
+    bytes=$(printf '%s\n' "$older" | tr '\n' '\0' | xargs -0 du -ck 2>/dev/null | tail -1 | awk '{print $1}')
+    echo "  bundles: dropping $(printf '%s\n' "$older" | wc -l | tr -d ' ') older dmg(s) ($(human "${bytes:-0}"))"
+    [ "$DRY" -eq 1 ] || printf '%s\n' "$older" | tr '\n' '\0' | xargs -0 rm -f
+    dedupe_freed_kb=$((dedupe_freed_kb + ${bytes:-0}))
+}
+
 free_kb() { df -k "$1" | awk 'NR==2 {print $4}'; }
 human() { awk -v kb="$1" 'BEGIN { if (kb >= 1048576) printf "%.1f GiB", kb/1048576; else printf "%.0f MiB", kb/1024 }'; }
 
@@ -158,6 +202,10 @@ for target in $targets; do
         echo "$(basename "$(dirname "$target")"): debug $(human "$before_kb"), $stale files older than ${DAYS}d would go (dry run)"
         dedupe_deps "$target/debug/deps"
         dedupe_deps "$target/release/deps"
+        prune_build_dirs "$target/debug/build"
+        prune_build_dirs "$target/release/build"
+        prune_bundles "$target/release/bundle/dmg"
+        prune_bundles "$target/release/bundle/macos"
         continue
     fi
     find "$debug" -type f -mtime +"$DAYS" -delete 2>/dev/null
@@ -208,6 +256,10 @@ for target in $targets; do
     echo "$(basename "$(dirname "$target")"): debug $(human "$before_kb") → $(human "$after_kb"); $action"
     dedupe_deps "$target/debug/deps"
     dedupe_deps "$target/release/deps"
+    prune_build_dirs "$target/debug/build"
+    prune_build_dirs "$target/release/build"
+    prune_bundles "$target/release/bundle/dmg"
+    prune_bundles "$target/release/bundle/macos"
     clean_failed "$target"
     swept_any=1
 done

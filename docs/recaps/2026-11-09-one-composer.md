@@ -114,6 +114,15 @@ Two legs close it, and the owner's rule names the third:
   Smoked on a scratch lane: a fresh marker is kept and named, an old one
   cleans the directory whole.
 
+The same line applies to a **successful** build: keep what the next build
+reuses (dependencies' artifacts, the current build-script outputs, the
+fingerprints, the incremental state — that is the difference between a
+one-minute build and a ten-minute one), and drop what has finished its job.
+That meant releasing the gate's lane the moment a cut is published (8 GiB the
+working tree never reads), the abandoned staging dmgs (`rw.<pid>.fleet_*.dmg`,
+78 MiB), the superseded build-script outputs (1.3 GiB of 342 dirs), the old
+bundles (the newest two stay) and gate logs past a week.
+
 So the honest ceiling: a release-only build of this graph is ~3 GiB, both
 profiles plus incremental ~8–10 GiB, and everything above that is either a
 duplicate or a corpse.

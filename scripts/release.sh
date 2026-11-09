@@ -376,3 +376,21 @@ if served != published:
     sys.exit("the served artifact's sha256 is not the feed's signature")
 print("the published feed names %s; the cli row serves the raw binary, sha256 %s" % (feed["version"], served[:12]))
 PYEOF
+
+# The cut is finished, so the lane that built it is finished too: a gate lane
+# is a detached worktree's private target dir, and the working tree never
+# reads it. Keeping it would be 8 GiB of temp files for a job that is done
+# (2026-11-09, the owner's rule: nothing kept past the work it did).
+# FLEET_KEEP_GATE_LANE=1 keeps it warm instead, which only pays when the next
+# cut follows within the hour.
+if [ "${FLEET_KEEP_GATE_LANE:-0}" = "1" ]; then
+  echo "== the gate lane is kept warm (FLEET_KEEP_GATE_LANE=1): $RELEASE_TARGET"
+else
+  lane_before=$(du -sm "$RELEASE_TARGET" 2>/dev/null | cut -f1)
+  CARGO_TARGET_DIR="$RELEASE_TARGET" cargo clean --manifest-path "$REPO_ROOT/Cargo.toml" \
+    >/dev/null 2>&1 || true
+  echo "== the cut is done: the gate lane released (${lane_before:-0} MiB freed; the next cut builds cold)"
+fi
+# The gate's own logs are the diagnosis of a red run and nothing else; a green
+# run's are history. The sweep keeps the newest, the maintenance prunes the
+# rest by age.

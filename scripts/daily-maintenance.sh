@@ -138,6 +138,17 @@ for lane in /private/tmp/fleet-*-target; do
         || say "  lane clean failed: $lane; tomorrow retries"
     rm -f "$lane/.failed-build" 2>/dev/null || true
 done
+# The gate's logs and the release notes are the diagnosis of one run; past a
+# week they are history nobody reads (the owner's rule, 2026-11-09). The
+# newest of each name is kept so the last failure is always readable.
+for pattern in /tmp/gate-*.log /tmp/gate-*.exit /tmp/release-*.log; do
+    for f in $pattern; do
+        [ -f "$f" ] || continue
+        find "$f" -mtime +"${GATE_LOG_DAYS:-7}" -delete 2>/dev/null &&
+            say "  gate log pruned: $(basename "$f")"
+    done
+done
+
 # The gate's own worktree, when it outlived its run: git owns the removal,
 # and a worktree git no longer lists is a directory nobody owns.
 if [ -d /private/tmp/fleet-release-gate ] &&
