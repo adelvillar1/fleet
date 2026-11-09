@@ -80,6 +80,19 @@ when every box is checked.
 - [ ] C8 — The live proof: 0.6.5 is cut with these fixes and installed by hand once, because 0.6.4's compiled-in ACL cannot reach the updater; then 0.6.6 is cut and the 0.6.5 shell's About press installs it, the app relaunches, and `GET /api/version` on the shell's port answers 0.6.6, while `fleet update` on a copy of the 0.6.5 CLI installs 0.6.6 and leaves the 0.6.5 binary beside it as `.prev`.
 - [ ] C9 — The ledger closes KI-486, KI-487, KI-488 and KI-489 with their evidence, each deep-dive finding records the fix that answered it, and `python3 scripts/ki_ledger.py` and `python3 scripts/plan_check.py` both report zero problems at status: completed.
 
+## Progress (2026-11-09, v0.6.5 → v0.6.6)
+
+C0–C7 are ticked from this session's own evidence. C8's **CLI half is proven
+live**: `fleet update` on a copy of the 0.6.5 binary installed 0.6.6 and kept
+`fleet.prev` at 0.6.5, and the About pane's press in a browser installed 0.6.6
+over `~/.fleet/bin/fleet` the same way. C8's **shell half is not**: this
+session's machine composited no windows (a window capture by id and a
+full-screen capture both came back empty while the page was loaded and holding
+its event stream), so the in-window press could not be aimed. The one
+remaining step is a press on a machine with a display: open the installed
+0.6.5 app, open About, press `update to 0.6.6`; it should download, install,
+relaunch, and serve 0.6.6. C9 follows it.
+
 ## Files to be touched
 
 **Backend / API:**
