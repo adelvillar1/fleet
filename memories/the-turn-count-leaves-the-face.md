@@ -8,7 +8,7 @@ tier: durable
 shape: [rendering, resolved]
 phrases: [make invisible the turn count on the main sessions, turn 3 · 4 tools · thought 2s, the context indicator is already implemented, turn count is meaningless to users, paintWorking, summarizeRun]
 missing: []
-recall-count: 17
+recall-count: 18
 superseded-by:
 valid-until:
 ---
