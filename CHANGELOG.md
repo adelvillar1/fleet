@@ -12,6 +12,25 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.6.17 — 2026-11-09
+
+The composer moves to the centre, and the pane carries the work.
+
+- **The layout both surfaces now use** (the owner's correction): the
+  centre column is the artifact's **conversation and composer**, and the
+  right-hand column is the app's own **collapsible pane** — the same one
+  sessions, design and huddles carry — with a new leading tab,
+  **`the work`**, whose content is whatever the route is about: the
+  desk's deliverable (or its shelf and brief), learning's plan, graph,
+  practice and history. The projects rail stays on the left.
+- The tab appears and hides with the route (`syncPaneContext`): a
+  surface with no context hides it, and a pane showing it on a route
+  that has none falls back to the run tab, so no tab is ever a dead end.
+- Learning's pane stopped being a section rail: the pane is a plain
+  board with the same shell as the desk.
+- The message list is bounded (300 px) so the composer lands in view,
+  and only one pane body shows at a time.
+
 ## v0.6.16 — 2026-11-09
 
 The shells span the board.

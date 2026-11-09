@@ -1185,6 +1185,22 @@ const emptyLearning = () => ({
 // A lesson in flight: the plan's coarse view (the nodes with their
 // states), the position, what the learner holds, one proposition, one
 // practice outcome, and the history's sessions.
+
+// The desk's surface is two columns now: the board (the projects rail and
+// the conversation) and the pane's context tab (the deliverable's work).
+// A text read of "the surface" is both.
+const deskSurface = (page) => {
+  const board = page.ids && page.ids['desk-board']
+    ? page.ids['desk-board'] : page.el('desk-board');
+  const ctx = page.el('pane-context');
+  return String(board.textContent || '') + '\n' + String(ctx.textContent || '');
+};
+const learnSurface = (page) => {
+  const board = page.el('learning-board');
+  const ctx = page.el('pane-context');
+  return String(board.textContent || '') + '\n' + String(ctx.textContent || '');
+};
+
 const learningDoc = () => ({
   type: 'learning', read_at: 'now',
   lesson: {
@@ -9292,7 +9308,7 @@ async function theLearningRailCarriesTheFourSections() {
       nodes[3].dataset.state === 'later' &&
       /you are here/.test(nodes[2].textContent),
     nodes.map((n) => n.dataset.state + ':' + n.textContent).join(' | '));
-  const board = page.text('learning-board');
+  const board = learnSurface(page);
   check('LEARN the lesson names the position',
     /position: step 3 of 4/.test(board), board.slice(0, 200));
   check('LEARN the lesson names what the learner holds',
@@ -10833,7 +10849,9 @@ async function theConnectCardSaysWhatHappened() {
     page.open();
     await flush();
 
-    const board = page.el('desk-board');
+    // The deliverable's work — the end band included — is the pane's
+    // context tab; the board carries the rail and the conversation.
+    const board = page.el('pane-context');
     const band = board.find((one) => String(one.className).includes('dk-endband'))[0];
     const walk = band && band.find((one) => String(one.textContent).trim() === 'walk the stages')[0];
     check('DESK the walk action is on the band (KI-447)', Boolean(walk),
@@ -10881,16 +10899,20 @@ async function theConnectCardSaysWhatHappened() {
     // The refuse-to-end state is stated before the fold: the gate is a
     // sibling of the review, not an ornament inside it (C5).
     const board = page.el('desk-board');
-    // The deliverable's cards now live in the work column of the projects
-    // shell; the order the case grades is theirs, inside that column.
-    const work = page.rows('.pw-work')[0];
+    // The deliverable's cards live in the centre of the projects shell,
+    // above its conversation; the order the case grades is theirs.
+    const work = page.rows('#pane-context')[0];
+    // The end band closes the work column; nothing follows it there.
     const order = (work ? work.children : board.children).map((child) => child.className);
     const gateAt = order.findIndex((one) => one.split(' ').includes('dk-gate'));
     const reviewAt = order.findIndex((one) => one.split(' ').includes('dk-sec'));
     check('DESK the refusals sit above the review (C5)', gateAt >= 0 && reviewAt > gateAt,
       'gate=' + gateAt + ' review=' + reviewAt);
+    // The end band closes the deliverable's own cards; the conversation
+    // sits below them, so it is the only thing that may follow.
+    const bandAt = order.findIndex((one) => one.split(' ').includes('dk-endband'));
     check('DESK the way out is pinned after everything (C6)',
-      order[order.length - 1].split(' ').includes('dk-endband'), order.join(' | ').slice(0, 160));
+      bandAt === order.length - 1, order.join(' | ').slice(0, 160));
 
     // C1, the headline defect — pinned on the whole painted tree. The
     // shipped face emitted `hsection`, `hrow-name`, `chip-ok`, `chip-warn`,
@@ -10898,7 +10920,9 @@ async function theConnectCardSaysWhatHappened() {
     // anywhere in the stylesheet, so every state chip was the same grey.
     // Grepping a hand-written list of names would pass while a new painter
     // invented another bare class; this walks what was actually painted.
-    const painted = [board].concat(board.find(() => true));
+    const ctx = page.el('pane-context');
+    const painted = [board].concat(board.find(() => true))
+      .concat([ctx]).concat(ctx.find(() => true));
     const classed = [];
     painted.forEach((n) => String(n.className || '').split(/\s+/).forEach((c) => {
       if (c) classed.push(c);
@@ -10911,7 +10935,7 @@ async function theConnectCardSaysWhatHappened() {
       painted.length > 40 && classed.length > 60,
       'elements=' + painted.length + ' classes=' + classed.length);
 
-    const detail = page.text('desk-board');
+    const detail = deskSurface(page);
     check('DESK the head names the deliverable and the binding',
       detail.includes("The landing page's copy") && detail.includes('/Users/someone/Projects/landing'),
       detail.slice(0, 160));
@@ -10992,7 +11016,9 @@ async function theConnectCardSaysWhatHappened() {
     shelfPage.open();
     await flush();
 
-    const shelf = shelfPage.text('desk-board');
+    // The shelf is the pane's context tab now (the centre is the
+    // conversation).
+    const shelf = shelfPage.text('pane-context');
     check('DESK the shelf greets the place', shelf.includes('The desk'), 'no greeting');
     check('DESK the row carries the binding', shelf.includes('/Users/someone/Projects/landing'),
       'no binding');
@@ -11028,7 +11054,7 @@ async function theConnectCardSaysWhatHappened() {
         bareOnes.length === 0, bareOnes.slice(0, 8).join(', '));
       return { nodes: nodes.length, classes: uniq.length };
     };
-    const shelfWalk = deskBare(shelfPage.el('desk-board'), 'shelf and brief');
+    const shelfWalk = deskBare(shelfPage.el('pane-context'), 'shelf and brief');
     check('DESK the shelf walk covered the shelf and the brief (C1)',
       shelfWalk.nodes > 60 && shelfWalk.classes > 40,
       'elements=' + shelfWalk.nodes + ' classes=' + shelfWalk.classes);
@@ -11062,7 +11088,7 @@ async function theConnectCardSaysWhatHappened() {
     check('DESK an empty brief sends nothing (C14)', refused.length === 0,
       'posts=' + refused.length);
     check('DESK the empty submit names the fields it waits for (C14)',
-      fresh.text('desk-board').includes('not sent') && fresh.text('desk-board').includes('the name'),
+      deskSurface(fresh).includes('not sent') && deskSurface(fresh).includes('the name'),
       'no need line');
     check('DESK the empty submit moves the cursor to the field (C14)',
       fresh.sandbox.document.activeElement === composer.find((one) => one.id === 'dk-name')[0],
@@ -11085,7 +11111,7 @@ async function theConnectCardSaysWhatHappened() {
     check('DESK the composer closed after the apply', fresh.rows('.dk-brief').length === 0,
       'still open');
     check('DESK the applied brief opens the deliverable it made',
-      fresh.text('desk-board').includes('the beta brief'), 'shelf only');
+      deskSurface(fresh).includes('the beta brief'), 'shelf only');
 
     // C11: the remove is held, not silent — the first press only arms it
     // and says so, the second is the one that writes.

@@ -40,17 +40,22 @@ goal. The load-bearing ideas, each of which is a rule the code carries:
 the owner opens the way they open a chat, not a category of its own.
 
 The pane is the same shell the desk rides: **the projects rail on the
-left, the lesson's work in the middle, its thread on the right.**
+left, the lesson's conversation and composer in the centre, and the
+app's own collapsible pane on the right**, whose leading tab (`the
+work`) carries the lesson's plan, the graph, the practice and the
+history.
 
 - **The rail** reads `GET /api/projects`: every project with its lesson
   count, and the selected project's lessons under it. A lesson's project
   is its session's own working directory — the fact the archive groups
   by — so a lesson born in a folder lands under it and one born without
   lands in the unbound bucket.
-- **The work** carries the four sections as chips (the lesson, the
-  graph, the practice, the history), the lesson's plan beside them.
-- **The thread** is the lesson session's own log, replayed — a lesson is
-  a real session, so its conversation is the thread. The composer
+- **The work** (the pane's leading tab) carries the four sections as
+  chips — the lesson, the graph, the practice, the history — with the
+  lesson's plan beside them.
+- **The conversation** is the lesson session's own log, replayed — a
+  lesson is a real session, so its thread is the conversation in the
+  centre. The composer
   beneath answers, asks, or says "next step"; its role chip is the role
   the run rides (teacher / practitioner), and the practice chip starts a
   practice beside the lesson (`POST /api/learning/start`). A run into an

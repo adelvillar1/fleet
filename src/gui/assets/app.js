@@ -854,6 +854,8 @@
     pairClose: document.getElementById('pair-close'),
     pane: document.getElementById('pane'),
     paneOpen: document.getElementById('pane-open'),
+    tabContext: document.getElementById('tab-context'),
+    paneContext: document.getElementById('pane-context'),
     commands: document.getElementById('commands'),
     paneClose: document.getElementById('pane-close'),
     paneTree: document.getElementById('pane-tree'),
@@ -982,7 +984,6 @@
     routerBoard: document.getElementById('router-board'),
     delegationBoard: document.getElementById('delegation-board'),
     memoryBoard: document.getElementById('memory-board'),
-    learningRail: document.getElementById('learning-rail'),
     learningBoard: document.getElementById('learning-board'),
     memoryRail: document.getElementById('memory-rail'),
     skillsBoard: document.getElementById('skills-board'),
@@ -7857,35 +7858,6 @@
     ];
   }
 
-  function paintLearningRail(read) {
-    if (!el.learningRail) return;
-    var sections = read ? learningSections(read) : [];
-    sectionRail(el.learningRail, sections.map(function (section) {
-      return {
-        id: section.id, icon: section.icon, name: section.name,
-        badge: section.badge, badgeTitle: section.badgeTitle
-      };
-    }), {
-      current: read ? learningSectionId() : 'lesson',
-      folded: !!face.learningRailFolded,
-      store: 'fleet-learning-rail',
-      onPick: function (id) {
-        rememberLearningSection(id);
-        window.location.hash = '#/learning/' + id;
-        paintLearning();
-        var row = el.learningRail.querySelector('[data-section="' + id + '"]');
-        if (row && row.focus) row.focus();
-      },
-      onFold: function (folded) {
-        face.learningRailFolded = folded;
-        try {
-          window.localStorage.setItem('fleet-learning-rail', folded ? 'folded' : 'open');
-        } catch (error) { }
-        paintLearningRail(face.learning);
-      }
-    });
-  }
-
   /// One learning session's start: a teaching session under the
   /// prober's overlay, or a practice session under the practitioner's.
   /// The bridge births the session with the lesson kind and the role's
@@ -8073,7 +8045,6 @@
       waiting.appendChild(node('p', 'board-empty',
         'The learning read has not landed yet. It reads the home\u2019s learning sessions and the corpus, both this machine\u2019s own.'));
       el.learningBoard.appendChild(waiting);
-      paintLearningRail(null);
       return;
     }
     if (refusals(read)) {
@@ -8081,7 +8052,6 @@
       var refused = boardCard(12, 'refused', null, null);
       refused.appendChild(node('p', 'board-empty', refusals(read).join('; ')));
       el.learningBoard.appendChild(refused);
-      paintLearningRail(null);
       return;
     }
     el.learningBoard.appendChild(surfaceHead('Learning', 'learning',
@@ -8093,32 +8063,19 @@
         [])));
     // The projects rail on the pane's own left column; the work and the
     // lesson's thread beside it.
-    paintProjectsRail(el.learningRail, 'learning');
-    var grid = node('div', 'pw-we');
-    var work = node('div', 'pw-work');
-    var thread = node('div', 'pw-thread');
-    grid.appendChild(work);
-    grid.appendChild(thread);
-    el.learningBoard.appendChild(grid);
-    var chips = node('div', 'pw-sections');
-    learningSections(read).forEach(function (section) {
-      var chip = node('button', 'pw-chip' + (learningSectionId() === section.id ? ' on' : ''),
-        section.name);
-      chip.type = 'button';
-      chip.addEventListener('click', function () {
-        rememberLearningSection(section.id);
-        window.location.hash = '#/learning/' + section.id;
-        paintLearning();
-      });
-      chips.appendChild(chip);
-    });
-    work.appendChild(chips);
-    paintLearningSection(learningSectionId(), work);
+    // The same shell the desk rides: the projects rail, then the centre
+    // (the lesson's work, its conversation, the composer). The right-hand
+    // column is the app's own pane.
+    var shell = pwShell(el.learningBoard);
+    paintProjectsRail(shell.rail, 'learning');
+    // The centre is the lesson's conversation; the plan, the graph, the
+    // practice and the history are the pane's context tab.
     var lesson = read.lesson || {};
     var session = face.learnPick || lesson.id || '';
-    paintLearningThread(thread, read, session);
+    paintLearningThread(shell.center, read, session);
     readProjects(false);
     if (session) readThread(session, false);
+    if (!el.pane.hidden && paneContextAvailable()) paintPaneContext();
   }
 
   /// The lesson's thread: its own session's log and the composer that
@@ -8148,7 +8105,9 @@
           'a practice beside ' + (lesson.title || 'this lesson'));
       })
     ];
-    paintThreadInto(into, {
+    var chat = node('div', 'pw-chat');
+    into.appendChild(chat);
+    paintThreadInto(chat, {
       title: 'the thread',
       session: session,
       placeholder: 'answer, ask, or say \u201cnext step\u201d\u2026',
@@ -11310,6 +11269,67 @@
   // artifact's work in the middle, and the thread with the composer on the
   // right. Everything below is shared by the desk and by learning.
 
+  // ---- the pane's context tab -------------------------------------------
+  //
+  // The right column is the app's pane, and on the two work surfaces its
+  // first tab is what the route is about: the desk's deliverable (or its
+  // shelf), learning's sections. The centre is the conversation; the work
+  // lives here, collapsible like every other surface's pane.
+
+  function paneContextAvailable() {
+    return face.panel === 'desk' || face.panel === 'learning';
+  }
+
+  function paintPaneContext() {
+    if (!el.paneContext) return;
+    el.paneContext.textContent = '';
+    if (face.panel === 'desk') {
+      if (face.deskOpenDesk) {
+        paintDeskProject(face.deskOpenDesk, el.paneContext);
+      } else if (face.deskView === 'composer') {
+        paintDeskComposer(el.paneContext);
+      } else {
+        paintDeskShelf(el.paneContext);
+      }
+      return;
+    }
+    if (face.panel === 'learning') {
+      var read = face.learning;
+      if (!read) {
+        el.paneContext.appendChild(node('p', 'pw-quiet', 'reading the lesson\u2026'));
+        return;
+      }
+      var chips = node('div', 'pw-sections');
+      learningSections(read).forEach(function (section) {
+        var chip = node('button', 'pw-chip' + (learningSectionId() === section.id ? ' on' : ''),
+          section.name);
+        chip.type = 'button';
+        chip.addEventListener('click', function () {
+          rememberLearningSection(section.id);
+          window.location.hash = '#/learning/' + section.id;
+          paintPaneContext();
+        });
+        chips.appendChild(chip);
+      });
+      el.paneContext.appendChild(chips);
+      paintLearningSection(learningSectionId(), el.paneContext);
+    }
+  }
+
+  /// Keep the context tab honest across routes: a surface without one
+  /// hides it, and a pane showing it on a route that has none falls back
+  /// to the run tab.
+  function syncPaneContext() {
+    if (!el.tabContext) return;
+    var available = paneContextAvailable();
+    el.tabContext.hidden = !available;
+    if (!available && face.paneTab === 'context') {
+      showPaneTab('run');
+      return;
+    }
+    if (available && !el.pane.hidden && face.paneTab === 'context') paintPaneContext();
+  }
+
   function readProjects(force) {
     var now = Date.now();
     if (!force && face.projects && now - face.projectsAt < 4000) return Promise.resolve();
@@ -11328,16 +11348,18 @@
   }
 
   function pwShell(board) {
+    // The surface's own columns: the projects rail, then the centre —
+    // the artifact's work, its conversation, and the composer. The
+    // right-hand column is the app's own pane (run, files, preview,
+    // web), the same one sessions, design and huddles carry.
     var shell = node('div', 'pw-shell');
     var rail = node('aside', 'pw-rail');
     rail.setAttribute('aria-label', 'projects');
-    var work = node('div', 'pw-work');
-    var thread = node('div', 'pw-thread');
+    var center = node('div', 'pw-center');
     shell.appendChild(rail);
-    shell.appendChild(work);
-    shell.appendChild(thread);
+    shell.appendChild(center);
     board.appendChild(shell);
-    return { rail: rail, work: work, thread: thread };
+    return { rail: rail, center: center };
   }
 
   function pwName(path) {
@@ -11496,6 +11518,15 @@
     line.textContent = reason;
   }
 
+  /// One conversation block inside a column: its own container, so the
+  /// thread's clear never wipes the work painted above it.
+  function pwChat(into, opts) {
+    var chat = node('div', 'pw-chat');
+    into.appendChild(chat);
+    paintThreadInto(chat, opts);
+    return chat;
+  }
+
   function pwComposer(into, opts) {
     var wrap = node('div', 'pw-composer');
     if (opts.chips && opts.chips.length) {
@@ -11570,29 +11601,26 @@
     board.className = 'board dk-board';
     var shell = pwShell(board);
     paintProjectsRail(shell.rail, 'desk');
+    // The centre is the conversation; the deliverable's work is the
+    // pane's context tab beside it.
     if (face.deskOpenDesk) {
-      paintDeskProject(face.deskOpenDesk, shell.work);
-      paintDeskThread(shell.thread, face.deskOpenDesk);
-    } else if (face.deskView === 'composer') {
-      paintDeskComposer(shell.work);
-      paintThreadInto(shell.thread, {
-        title: 'a new deliverable',
-        empty: 'the thread opens once the brief is made \u2014 the brief is its first message',
-      });
+      paintDeskChat(shell.center, face.deskOpenDesk);
     } else {
-      paintDeskShelf(shell.work);
-      paintThreadInto(shell.thread, {
-        title: 'the thread',
-        empty: 'open a deliverable to iterate on it',
+      pwChat(shell.center, {
+        title: 'the conversation',
+        empty: face.deskView === 'composer'
+          ? 'the conversation opens once the brief is made \u2014 the brief is its first message'
+          : 'open a deliverable to iterate on it',
       });
     }
     readProjects(false);
+    if (!el.pane.hidden && paneContextAvailable()) paintPaneContext();
   }
 
   /// The selected deliverable's thread: the replay of its own session and
   /// the composer that iterates on it. The chips are the brief's state made
   /// visible and pressable; each one does something to this pane.
-  function paintDeskThread(into, desk) {
+  function paintDeskChat(into, desk) {
     var standing = (desk.refusals || []).length + (desk.number_refusals || []).length;
     var chips = [
       pwChip('project \u00b7 ' + pwName(desk.project), true,
@@ -11642,7 +11670,11 @@
         below.appendChild(node('p', 'pw-quiet', 'the end gate is clear'));
       }
     }
-    paintThreadInto(into, {
+    // The conversation is its own container inside the centre: the work
+    // cards above it are not the thread's to clear.
+    var chat = node('div', 'pw-chat');
+    into.appendChild(chat);
+    paintThreadInto(chat, {
       title: 'the thread',
       session: desk.session || '',
       placeholder: 'iterate on ' + (desk.name || 'this deliverable') + '\u2026',
@@ -25443,7 +25475,14 @@
       delegation: function () { paintDelegation(); readDelegation(true).then(paintDelegation); },
       memory: function () { paintMemory(); readMemory(true).then(paintMemory); },
       skills: function () { paintSkills(); readSkills(true).then(paintSkills); },
-      learning: function () { paintLearning(); readLearning(true).then(paintLearning); },
+      learning: function () {
+        // The right column is the app's pane, the same one the other
+        // work surfaces carry; it stays the owner's to close.
+        if (el.pane.hidden) openPane();
+        showPaneTab('context');
+        paintLearning();
+        readLearning(true).then(paintLearning);
+      },
       bots: function () {
         paintBots();
         readBots(true).then(paintBots);
@@ -25460,6 +25499,10 @@
         // `#/desk/<slug>` opens that deliverable; a slug the store does
         // not carry names itself (the room rule: a stale address is a
         // named refusal, never a blank surface).
+        // The right column is the app's pane, the same one the other
+        // work surfaces carry; it stays the owner's to close.
+        if (el.pane.hidden) openPane();
+        showPaneTab('context');
         var asked = face.focus && face.focus.id ? face.focus.id : '';
         paintDesk();
         readDesk(true).then(function () {
@@ -25560,6 +25603,7 @@
       }
     };
     if (arrive[address]) arrive[address]();
+    syncPaneContext();
     // The home is a place, not the absence of a conversation: arriving
     // here detaches from the one being read — the pointer clears, the
     // welcome shows — and touches nothing server-side. The conversation
@@ -26852,10 +26896,18 @@
   function showPaneTab(which) {
     face.paneTab = which;
     try { window.localStorage.setItem('fleet-pane-tab', which); } catch (error) { }
+    var context = which === 'context';
     var run = which === 'run';
     var files = which === 'files';
     var preview = which === 'preview';
     var web = which === 'web';
+    if (context && !paneContextAvailable()) context = false;
+    if (el.tabContext) {
+      el.tabContext.hidden = !paneContextAvailable();
+      el.tabContext.classList.toggle('active', context);
+      el.tabContext.setAttribute('aria-selected', context ? 'true' : 'false');
+    }
+    if (el.paneContext) el.paneContext.hidden = !context;
     el.tabRun.classList.toggle('active', run);
     el.tabFiles.classList.toggle('active', files);
     el.tabPreview.classList.toggle('active', preview);
@@ -26868,7 +26920,8 @@
     el.paneFiles.hidden = !files;
     el.panePreviewPanel.hidden = !preview;
     el.paneWeb.hidden = !web;
-    if (run) paintProcess();
+    if (context) paintPaneContext();
+    else if (run) paintProcess();
     else if (files) paintTree();
     else if (preview) paintPreview();
     else paintWeb();

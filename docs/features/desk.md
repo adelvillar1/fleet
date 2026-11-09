@@ -76,7 +76,11 @@ artifact it produces.
 ## The surface
 
 The pane is one shell, shared with learning: **the projects rail on the
-left, the deliverable's work in the middle, its thread on the right.**
+left, the deliverable's conversation and composer in the centre, and the
+app's own collapsible pane on the right** — the same pane sessions,
+design and huddles carry, whose leading tab (`the work`) carries the
+deliverable: the brief, the claims, the coverage verdict, the outline,
+the review and the end gate.**
 
 - **The rail** reads `GET /api/projects`: every project with its
   deliverable count (the bound folder's basename), and the selected
@@ -85,10 +89,10 @@ left, the deliverable's work in the middle, its thread on the right.**
   deliverable opens it.
 - **The work** is the deliverable's loop — the brief, the claims with
   their sentences, the coverage verdict, the outline with its named
-  gaps, the review and the end gate — unchanged, inside the shell's
-  middle column.
-- **The thread** is the deliverable's own conversation: a session of
-  kind `desk`, born on the first iteration and seeded with the brief
+  gaps, the review and the end gate — in the pane's `the work` tab,
+  beside the conversation it belongs to.
+- **The conversation** is the deliverable's own session: kind `desk`,
+  born on the first iteration and seeded with the brief
   (the brief is its first message, so the model reads the artifact from
   the log). The composer beneath iterates on it through
   `POST /api/desk/<slug>/chat`, which runs the ordinary run path with

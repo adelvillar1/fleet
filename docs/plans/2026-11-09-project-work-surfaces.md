@@ -118,6 +118,19 @@ the shells landing in one column of the board's twelve-column grid). The visual
 read of both surfaces shows three clean columns, and the live presses are in the
 recap.
 
+
+### The layout revision (the owner's correction, v0.6.17)
+
+The plan's shell first put the work in the middle and the thread on the
+right. The owner corrected the pattern: **the composer belongs in the
+centre** (chat-centric, as the conversation's own idiom), and the right
+column is **the app's collapsible pane** with a context tab whose
+content is whatever the route is about — the desk's deliverable, the
+lesson's sections. The rail is unchanged. Everything the criteria name
+still holds (the rails, the threads, the composers, the chips, the
+empty states); only the columns moved. The pane's tab hides on routes
+with no context, so it is never a dead control.
+
 ## Files to be touched
 
 **Backend / API:**

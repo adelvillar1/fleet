@@ -743,8 +743,7 @@
        sections ride the same rail idiom the memory and skills panels
        use; the lesson and practice entries start a learning session
        under the role whose overlay the run rides. -->
-  <main class="stage stage-board stage-split" id="panel-learning" hidden>
-    <nav class="section-rail" id="learning-rail" aria-label="learning sections"></nav>
+  <main class="stage stage-board" id="panel-learning" hidden>
     <div class="board" id="learning-board"></div>
   </main>
 
@@ -1050,6 +1049,11 @@
          aria-valuenow="440" tabindex="0" title="drag to resize · double-click resets · arrow keys too"></div>
     <header class="pane-head">
       <div class="pane-tabs" role="tablist" aria-label="pane view">
+        <!-- The surface's own context: the desk's deliverable, learning's
+             lesson. It leads the tabs where a surface has one, because it
+             is what the surface is about. -->
+        <button class="pane-tab" id="tab-context" type="button" role="tab"
+                aria-controls="pane-context" aria-selected="false" hidden>the work</button>
         <button class="pane-tab active" id="tab-run" type="button" role="tab"
                 aria-controls="pane-run" aria-selected="true">run</button>
         <button class="pane-tab" id="tab-files" type="button" role="tab"
@@ -1079,6 +1083,8 @@
       <div class="dock-object-body" id="dock-object-body"></div>
     </section>
 
+    <div class="pane-body" id="pane-context" role="tabpanel"
+         aria-labelledby="tab-context" hidden></div>
     <div class="pane-body" id="pane-run" role="tabpanel" aria-labelledby="tab-run">
     <section class="card process-card" id="process-card">
       <header class="card-head">
