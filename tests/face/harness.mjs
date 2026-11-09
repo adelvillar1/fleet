@@ -424,6 +424,15 @@ function boot(options) {
         : documents.huddles;
       return Promise.resolve({ status: 200, json: () => Promise.resolve(doc || emptyHuddles()) });
     }
+    if (pathOnly === '/api/projects' && method === 'GET') {
+      return Promise.resolve({
+        status: 200,
+        json: () => Promise.resolve(documents.projects || {
+          type: 'projects', projects: [],
+          unbound: { deliverables: [], lessons: [] },
+        }),
+      });
+    }
     if (pathOnly === '/api/session') {
       return Promise.resolve({ status: 200, json: () => Promise.resolve(documents.branch || {}) });
     }
@@ -4810,6 +4819,153 @@ async function aDismissedRowCanComeBack() {
     page.rows('.ib-row').length === 1, String(page.rows('.ib-row').length));
 }
 
+
+// PWS (the project-work plan): both work surfaces are one pattern — the
+// projects rail, the artifact's work, and the thread with the composer.
+// Every control here is pressed and its effect read, because a surface
+// with a dead button is worse than no surface.
+function projectsDoc(over) {
+  return Object.assign({
+    type: 'projects',
+    projects: [{
+      path: '/Users/someone/Projects/landing',
+      name: 'landing',
+      deliverables: [{ slug: 'landing-copy', name: "The landing page's copy", needs: true }],
+      lessons: [{ id: '2026-11-08-abc', title: 'the lesson', ended: false }],
+      practices: [],
+    }],
+    unbound: { deliverables: [], lessons: [] },
+  }, over || {});
+}
+
+async function theDeskOrganisesByProjectAndThread() {
+  const page = boot({
+    hash: '#/desk',
+    documents: {
+      // The deliverable has a thread: its own session, whose replay the
+      // thread renders.
+      desk: { projects: [Object.assign(deskProject(), { session: 'desk-s1' })] },
+      projects: projectsDoc(),
+      branch: { type: 'replay', cards: [
+        { type: 'message', role: 'owner', text: 'make the fold claim sharper' },
+        { type: 'message', role: 'assistant', text: 're-read the labs note' },
+      ] },
+    },
+  });
+  await flush();
+  page.open();
+  await flush(120);
+
+  const rail = page.rows('.pw-rail .pw-proj');
+  check('PWS the desk rail lists the project', rail.length === 1 &&
+    /landing/.test(rail[0].textContent), rail.map((r) => r.textContent).join('|'));
+  rail[0].click();
+  await flush(60);
+  const kid = page.rows('.pw-kid');
+  check('PWS the project expands to its deliverable',
+    kid.length === 1 && /landing page/.test(kid[0].textContent),
+    kid.map((k) => k.textContent).join('|'));
+  kid[0].click();
+  await flush(120);
+  check('PWS the deliverable opens its work',
+    page.rows('.dk-sec').length > 0, String(page.rows('.dk-sec').length));
+  check('PWS the deliverable opens its thread',
+    page.rows('.pw-msgs .replay-line').length === 2,
+    String(page.rows('.pw-msgs .replay-line').length));
+
+  // The composer posts the iteration with the deliverable in its address.
+  const box = page.rows('.pw-box')[0];
+  box.value = 'tighten the fold claim';
+  page.rows('.pw-send')[0].click();
+  await flush(120);
+  const posts = page.calls.filter((c) => c.url === '/api/desk/landing-copy/chat');
+  check('PWS the composer posts the iteration on the deliverable',
+    posts.length === 1 && String(posts[0].body).includes('tighten the fold claim'),
+    JSON.stringify(page.calls.filter((c) => c.url.indexOf('/api/desk/') === 0).map((c) => c.url)));
+
+  // The chips act: sources opens the list, review shows the gate.
+  const sources = page.rows('.pw-chips .pw-chip').find((c) => /^sources/.test(c.textContent));
+  check('PWS the composer carries the sources chip', Boolean(sources),
+    page.rows('.pw-chip').map((c) => c.textContent).join('|'));
+  sources.click();
+  await flush(60);
+  check('PWS the sources chip opens the list',
+    page.rows('.pw-source').length >= 1, String(page.rows('.pw-source').length));
+  const review = page.rows('.pw-chips .pw-chip').find((c) => /^review/.test(c.textContent));
+  review.click();
+  await flush(60);
+  check('PWS the review chip shows the end gate',
+    page.rows('.pw-refusal').length >= 1 || page.rows('.pw-quiet').some((q) => /gate is clear/.test(q.textContent)),
+    page.rows('.pw-refusal').map((r) => r.textContent).join('|'));
+}
+
+async function theLearningOrganisesByProjectAndThread() {
+  const lesson = learningDoc();
+  lesson.lesson.project = '/Users/someone/Projects/landing';
+  const page = boot({
+    hash: '#/learning',
+    documents: {
+      learning: lesson,
+      projects: projectsDoc(),
+      branch: { type: 'replay', cards: [
+        { type: 'message', role: 'owner', text: 'why does a blocked handler stall' },
+        { type: 'message', role: 'assistant', text: 'one step from what you hold' },
+      ] },
+      state: (asked) => emptyState(asked),
+      onboard: onboardDoc({ door: false }),
+    },
+  });
+  await flush();
+  page.open();
+  await flush(160);
+
+  const rail = page.rows('.pw-rail .pw-proj');
+  check('PWS the learning rail lists the project', rail.length === 1 &&
+    /landing/.test(rail[0].textContent), rail.map((r) => r.textContent).join('|'));
+  rail[0].click();
+  await flush(60);
+  const kid = page.rows('.pw-kid');
+  check('PWS the project expands to its lesson',
+    kid.length === 1 && /the lesson/.test(kid[0].textContent),
+    kid.map((k) => k.textContent).join('|'));
+  kid[0].click();
+  await flush(160);
+  check('PWS the lesson opens its thread',
+    page.rows('.pw-msgs .replay-line').length === 2,
+    String(page.rows('.pw-msgs .replay-line').length));
+
+  // The composer answers into the lesson's own session.
+  const box = page.rows('.pw-box')[0];
+  box.value = 'because the socket stays open';
+  page.rows('.pw-send')[0].click();
+  await flush(120);
+  const posts = page.calls.filter((c) => c.url.indexOf('/api/learning/start') === 0);
+  check('PWS the composer answers into the lesson session',
+    posts.length === 1 && posts[0].url.includes('session=2026-11-08-abc') &&
+      String(posts[0].body).includes('because the socket stays open'),
+    JSON.stringify(posts.map((c) => c.url)));
+
+  // The role chip flips what the next run rides.
+  const role = page.rows('.pw-chips .pw-chip').find((c) => /^role/.test(c.textContent));
+  check('PWS the composer carries the role chip',
+    Boolean(role) && /teacher/.test(role.textContent), role ? role.textContent : 'missing');
+  role.click();
+  await flush(60);
+  const flipped = page.rows('.pw-chips .pw-chip').find((c) => /^role/.test(c.textContent));
+  check('PWS the role chip flips the run\u2019s role',
+    Boolean(flipped) && /practitioner/.test(flipped.textContent),
+    flipped ? flipped.textContent : 'missing');
+
+  // The practice chip starts a practice (a new session, its own kind).
+  const practice = page.rows('.pw-chips .pw-chip').find((c) => c.textContent === 'practice');
+  practice.click();
+  await flush(120);
+  const started = page.calls.filter((c) => c.url === '/api/learning/start');
+  check('PWS the practice chip starts a practice',
+    started.length === 1 && String(started[0].body).includes('"kind":"practice"'),
+    JSON.stringify(started.map((c) => c.body).slice(0, 1)));
+}
+
 // IB (the owner-inbox plan): one queue of everything waiting on the
 // owner — seats answerable in place, the onboarding ladder, huddle
 // questions, cron failures, doctor findings — fed by one read, badged
@@ -9101,10 +9257,12 @@ async function theLearningRailCarriesTheFourSections() {
   page.open();
   await flush(80);
 
-  // The rail: the four sections, the lesson first.
-  const railRows = page.rows('.section-rail-row');
+  // The four sections are the work column's chips now — the pane's own
+  // rail became the projects rail (the project-work plan), so the
+  // sections moved to where the work is.
+  const railRows = page.rows('.pw-sections .pw-chip');
   const railText = railRows.map((row) => row.textContent);
-  check('LEARN the rail carries the four sections',
+  check('LEARN the work column carries the four sections',
     railRows.length === 4 &&
       railText[0].includes('the lesson') && railText[1].includes('the graph') &&
       railText[2].includes('practice') && railText[3].includes('history'),
@@ -10723,7 +10881,10 @@ async function theConnectCardSaysWhatHappened() {
     // The refuse-to-end state is stated before the fold: the gate is a
     // sibling of the review, not an ornament inside it (C5).
     const board = page.el('desk-board');
-    const order = board.children.map((child) => child.className);
+    // The deliverable's cards now live in the work column of the projects
+    // shell; the order the case grades is theirs, inside that column.
+    const work = page.rows('.pw-work')[0];
+    const order = (work ? work.children : board.children).map((child) => child.className);
     const gateAt = order.findIndex((one) => one.split(' ').includes('dk-gate'));
     const reviewAt = order.findIndex((one) => one.split(' ').includes('dk-sec'));
     check('DESK the refusals sit above the review (C5)', gateAt >= 0 && reviewAt > gateAt,
@@ -11554,6 +11715,8 @@ const cases = [
   ['IBC a seat\u2019s menu only opens', aSeatsMenuOnlyOpens],
   ['IBC the keyboard walks the queue', theInboxKeyboardWalks],
   ['IBC a dismissed row can come back', aDismissedRowCanComeBack],
+  ['PWS the desk is projects, work and a thread', theDeskOrganisesByProjectAndThread],
+  ['PWS learning is projects, the lesson and its thread', theLearningOrganisesByProjectAndThread],
   ['IB a seat answers in place', aSeatAnswersInPlace],
   ['IB the empty inbox is the honest absence', theInboxIsEmptyHonestly],
   ['IB an ask jumps to its room', anAskJumpsToItsRoom],

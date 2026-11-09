@@ -75,6 +75,31 @@ artifact it produces.
 
 ## The surface
 
+The pane is one shell, shared with learning: **the projects rail on the
+left, the deliverable's work in the middle, its thread on the right.**
+
+- **The rail** reads `GET /api/projects`: every project with its
+  deliverable count (the bound folder's basename), and the selected
+  project's deliverables under it. The unbound bucket lists deliverables
+  with no project. Pressing a project filters the rail; pressing a
+  deliverable opens it.
+- **The work** is the deliverable's loop — the brief, the claims with
+  their sentences, the coverage verdict, the outline with its named
+  gaps, the review and the end gate — unchanged, inside the shell's
+  middle column.
+- **The thread** is the deliverable's own conversation: a session of
+  kind `desk`, born on the first iteration and seeded with the brief
+  (the brief is its first message, so the model reads the artifact from
+  the log). The composer beneath iterates on it through
+  `POST /api/desk/<slug>/chat`, which runs the ordinary run path with
+  the deliverable's project as its folder. A run still walks the loop
+  through `POST /api/desk/<slug>/run`; the thread is the conversation
+  about it.
+- **The composer's chips** are the brief's state made visible and
+  pressable: the project (selects it in the rail), the deliverable
+  (re-reads), `sources` (the brief's source list), `review` (the end
+  gate's standing refusals). A refusal paints beside the composer.
+
 The shelf, the deliverable and the brief are three views of one store,
 and every word on them is derived from that store rather than kept by
 the browser.

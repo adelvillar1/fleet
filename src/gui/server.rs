@@ -1060,6 +1060,30 @@ async fn serve_connection(
                 }
             }
         }
+        // One iteration on a deliverable: the owner's words go into the
+        // deliverable's own conversation (created and seeded on the first
+        // press) and the run is the ordinary run path with the
+        // deliverable's project as its folder. A malformed body is a 400;
+        // a run that cannot start is a 409 naming why.
+        ("POST", path) if path.starts_with("/api/desk/") && path.ends_with("/chat") => {
+            let slug = percent_decode(
+                path.trim_start_matches("/api/desk/")
+                    .trim_end_matches("/chat"),
+            );
+            let body = match read_body(&mut stream, &request, rest).await {
+                Ok(body) => body,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            match bridge.desk_chat(&slug, &body).await {
+                Ok(document) => write_reply(&mut stream, api(200, document)).await,
+                Err(crate::gui::bridge::DeskChatError::Bad(message)) => {
+                    write_reply(&mut stream, bad_request(&message)).await
+                }
+                Err(crate::gui::bridge::DeskChatError::Refused(message)) => {
+                    write_reply(&mut stream, api(409, json!({ "error": message }))).await
+                }
+            }
+        }
         // Walk a desk's stages from the face (the desk plan's C10). The
         // face could read a deliverable and never advance one: the walk
         // lived only in `fleet desk run`, so a refusal the owner could
@@ -1621,7 +1645,12 @@ async fn serve_connection(
         // The Learning pane's one read: the active lesson, the
         // proposition graph, the practice outcomes, and the history.
         ("GET", "/api/learning") => {
-            write_reply(&mut stream, api(200, bridge.learning().await)).await
+            // The lesson the pane shows: the rail's pick, when it names
+            // one; absent is the active lesson.
+            let asked = query_value(&request.query, "session")
+                .filter(|id| !id.is_empty())
+                .map(|id| id.to_string());
+            write_reply(&mut stream, api(200, bridge.learning(asked).await)).await
         }
         // A learning session's start: the task, the lesson kind, and the
         // role whose overlay rides the run. The session is born with the
@@ -1668,6 +1697,12 @@ async fn serve_connection(
         // fails to parse is a named row, not a silent absence: the face
         // paints it beside the deliverables so a corrupt document is
         // something the owner can see and remove (the desk plan's C12).
+        // The projects both work surfaces organise by: one document, the
+        // union of the desk's bound deliverables and the lessons' own
+        // working directories, with the unbound bucket named.
+        ("GET", "/api/projects") => {
+            write_reply(&mut stream, api(200, bridge.projects().await)).await
+        }
         ("GET", "/api/desk") => {
             let mut projects: Vec<serde_json::Value> = Vec::new();
             let mut unreadable: Vec<serde_json::Value> = Vec::new();

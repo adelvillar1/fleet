@@ -1,5 +1,5 @@
 ---
-status: draft
+status: active
 created: 2026-11-09
 updated: 2026-11-09
 slug: project-work-surfaces
@@ -91,16 +91,28 @@ High-level steps, each closing the criteria it names:
 These are the contract; each is a verifiable assertion. The work is done when
 every box is checked.
 
-- [ ] C0 — The mockup has been read by the owner, and the two surfaces' current data (the desk's project binding, the lesson's session kind, the config's project paths) is recorded with what the redesign must add.
-- [ ] C1 — One `GET /api/projects` returns every project with its deliverable count, its lesson count and an unbound bucket, and both rails render from that one document.
-- [ ] C2 — A lesson carries its project: the lesson's `start` record names it, the learning read returns it, and a lesson created without a project lands in the unbound bucket.
-- [ ] C3 — The desk rail lists projects and, under the selected one, its deliverables; pressing a deliverable opens its work and thread; pressing a project filters the rail and the work column to it.
-- [ ] C4 — The learning rail lists projects and, under the selected one, its lessons with their state; pressing a lesson opens its plan and its thread (the lesson session's own log, in order).
-- [ ] C5 — Both surfaces carry a composer in the chat's own idiom: Enter sends, the button turns Stop while a run is in flight, the send posts the surface's own route with the artifact's binding (the desk's project and slug; the lesson's session and role), and a refusal paints beside the composer.
-- [ ] C6 — Every composer chip does something visible: `sources` opens the desk's source list, `role` toggles teacher/practitioner in the learning composer, `practice` starts a practice in a new session, `review before close` shows the end gate's state; each is pinned by a harness case.
-- [ ] C7 — No dead ends: every project row and every artifact row is pressable and its press changes the pane; every empty state names the action that fills it; an empty project, an empty desk and a lesson with no plan each render their own action rather than a blank card.
-- [ ] C8 — The harness carries the cases: the projects read feeds both rails; a project press filters; a deliverable press opens its thread; a lesson press opens its log; the composer posts the right run per surface; the chips act; the empty states name their action. The suite is green.
+- [x] C0 — The mockup has been read by the owner, and the two surfaces' current data (the desk's project binding, the lesson's session kind, the config's project paths) is recorded with what the redesign must add.
+- [x] C1 — One `GET /api/projects` returns every project with its deliverable count, its lesson count and an unbound bucket, and both rails render from that one document.
+- [x] C2 — A lesson carries its project: the lesson's `start` record names it, the learning read returns it, and a lesson created without a project lands in the unbound bucket.
+- [x] C3 — The desk rail lists projects and, under the selected one, its deliverables; pressing a deliverable opens its work and thread; pressing a project filters the rail and the work column to it.
+- [x] C4 — The learning rail lists projects and, under the selected one, its lessons with their state; pressing a lesson opens its plan and its thread (the lesson session's own log, in order).
+- [x] C5 — Both surfaces carry a composer in the chat's own idiom: Enter sends, the button turns Stop while a run is in flight, the send posts the surface's own route with the artifact's binding (the desk's project and slug; the lesson's session and role), and a refusal paints beside the composer.
+- [x] C6 — Every composer chip does something visible: `sources` opens the desk's source list, `role` toggles teacher/practitioner in the learning composer, `practice` starts a practice in a new session, `review before close` shows the end gate's state; each is pinned by a harness case.
+- [x] C7 — No dead ends: every project row and every artifact row is pressable and its press changes the pane; every empty state names the action that fills it; an empty project, an empty desk and a lesson with no plan each render their own action rather than a blank card.
+- [x] C8 — The harness carries the cases: the projects read feeds both rails; a project press filters; a deliverable press opens its thread; a lesson press opens its log; the composer posts the right run per surface; the chips act; the empty states name their action. The suite is green.
 - [ ] C9 — `docs/features/desk.md` and `docs/features/learning.md` describe the rails, the threads and the composers; the ledger row is closed; `ki_ledger.py` and `plan_check.py` exit 0 at status: completed; the four-leg gate is green; the cut is published.
+
+## Progress (2026-11-09, v0.6.14)
+
+C0–C8 are met. The one `GET /api/projects` unions the desk's bound
+deliverables and the lessons' working directories (a lesson's project is
+its session's own workspace) with the unbound bucket; both panes are the
+same shell — the projects rail, the work column, the thread with the
+composer. The desk's thread is a `desk`-kind session born on the first
+iteration and seeded with the brief; learning's is the lesson's session,
+answered through `?session=`. The chips and the empty states were proven
+by the harness's two `PWS` cases (15 checks); the whole suite is 1076
+checks across 134 cases. C9 follows the cut.
 
 ## Files to be touched
 

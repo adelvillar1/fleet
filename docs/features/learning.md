@@ -38,8 +38,29 @@ goal. The load-bearing ideas, each of which is a rule the code carries:
 
 `#/learning` sits in the **work** group of the rail — learning is work
 the owner opens the way they open a chat, not a category of its own.
-The pane is the section rail's own idiom — the same split the memory and
-skills panels use — with the mockup's four sections:
+
+The pane is the same shell the desk rides: **the projects rail on the
+left, the lesson's work in the middle, its thread on the right.**
+
+- **The rail** reads `GET /api/projects`: every project with its lesson
+  count, and the selected project's lessons under it. A lesson's project
+  is its session's own working directory — the fact the archive groups
+  by — so a lesson born in a folder lands under it and one born without
+  lands in the unbound bucket.
+- **The work** carries the four sections as chips (the lesson, the
+  graph, the practice, the history), the lesson's plan beside them.
+- **The thread** is the lesson session's own log, replayed — a lesson is
+  a real session, so its conversation is the thread. The composer
+  beneath answers, asks, or says "next step"; its role chip is the role
+  the run rides (teacher / practitioner), and the practice chip starts a
+  practice beside the lesson (`POST /api/learning/start`). A run into an
+  existing lesson names that session (`?session=`), so the composer
+  never forks a second conversation beside the log.
+- **No dead ends:** an empty rail offers the one act that fills it
+  ("start a lesson"), a lesson with no plan renders its own action, and
+  a run in flight turns the composer's button into Stop.
+
+The sections themselves are the mockup's four:
 
 - **the lesson** — the plan's coarse view: each step with its state
   (*held*, *you are here*, *next*, *later*), the position (`step 3 of

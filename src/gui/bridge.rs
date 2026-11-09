@@ -1484,10 +1484,112 @@ impl Bridge {
 
     /// The Learning pane's one document: the active lesson, the
     /// proposition graph, the practice outcomes, and the history.
-    pub async fn learning(&self) -> Value {
+    /// One read of what both work surfaces organise by: the union of
+    /// what carries a project today — the desk's deliverables (their
+    /// bound folder) and the lessons (their session's working directory)
+    /// — with an unbound bucket for the rest. One document, so the two
+    /// rails cannot disagree about a project's name or its counts.
+    pub async fn projects(&self) -> Value {
+        let home = self.home.clone();
+        tokio::task::spawn_blocking(move || {
+            // path -> (name, deliverables, lessons, practices)
+            let mut rows: Vec<(String, Value)> = Vec::new();
+            let mut at: std::collections::BTreeMap<String, usize> =
+                std::collections::BTreeMap::new();
+            let mut unbound_deliverables: Vec<Value> = Vec::new();
+            let mut unbound_lessons: Vec<Value> = Vec::new();
+            let slot = |rows: &mut Vec<(String, Value)>,
+                        at: &mut std::collections::BTreeMap<String, usize>,
+                        path: &str|
+             -> usize {
+                if let Some(index) = at.get(path) {
+                    return *index;
+                }
+                let name = std::path::Path::new(path)
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .filter(|name| !name.is_empty())
+                    .unwrap_or_else(|| path.to_string());
+                rows.push((
+                    path.to_string(),
+                    json!({ "path": path, "name": name,
+                            "deliverables": [], "lessons": [], "practices": [] }),
+                ));
+                let index = rows.len() - 1;
+                at.insert(path.to_string(), index);
+                index
+            };
+            for row in crate::desk::project_rows(&home) {
+                let Ok(desk) = row else { continue };
+                let entry = json!({
+                    "slug": desk.slug,
+                    "name": desk.name,
+                    "needs": !desk.refusals.is_empty() || !desk.number_refusals.is_empty(),
+                });
+                match desk.project.as_deref() {
+                    Some(path) => {
+                        let index = slot(&mut rows, &mut at, path);
+                        if let Some(list) = rows[index].1["deliverables"].as_array_mut() {
+                            list.push(entry);
+                        }
+                    }
+                    None => unbound_deliverables.push(entry),
+                }
+            }
+            for (kind, key) in [
+                (crate::session::LESSON_KIND, "lessons"),
+                (crate::session::PRACTICE_KIND, "practices"),
+            ] {
+                for summary in crate::session::list_kind(&home, Some(kind)).unwrap_or_default() {
+                    let entry = json!({
+                        "id": summary.id,
+                        "title": summary
+                            .last_plan
+                            .clone()
+                            .or(summary.first_text.clone())
+                            .unwrap_or_default(),
+                        "ended": summary.ended,
+                    });
+                    match summary.workspace.as_deref() {
+                        Some(path) => {
+                            let index = slot(&mut rows, &mut at, path);
+                            if let Some(list) = rows[index].1[key].as_array_mut() {
+                                list.push(entry);
+                            }
+                        }
+                        None => unbound_lessons.push(entry),
+                    }
+                }
+            }
+            rows.sort_by(|a, b| {
+                let name =
+                    |row: &(String, Value)| row.1["name"].as_str().unwrap_or_default().to_string();
+                name(a).to_lowercase().cmp(&name(b).to_lowercase())
+            });
+            let projects: Vec<Value> = rows.into_iter().map(|(_, row)| row).collect();
+            json!({
+                "type": "projects",
+                "projects": projects,
+                "unbound": {
+                    "deliverables": unbound_deliverables,
+                    "lessons": unbound_lessons,
+                },
+            })
+        })
+        .await
+        .unwrap_or_else(
+            |_| json!({"type": "projects", "refused": ["the projects read did not land"]}),
+        )
+    }
+
+    pub async fn learning(&self, asked: Option<String>) -> Value {
         let home = self.home.clone();
         let memories = self.memories.clone();
-        match tokio::task::spawn_blocking(move || learning_document(&home, &memories)).await {
+        match tokio::task::spawn_blocking(move || {
+            learning_document(&home, &memories, asked.as_deref())
+        })
+        .await
+        {
             Ok(document) => document,
             Err(_) => json!({
                 "type": "learning",
@@ -3914,6 +4016,82 @@ impl Bridge {
         })
     }
 
+    /// One iteration on a deliverable: the owner's words go into the
+    /// deliverable's own conversation — created on the first press and
+    /// seeded with the brief, so the model reads the whole artifact from
+    /// the log — and the run is the ordinary run path with the
+    /// deliverable's project as its folder. The thread is a session like
+    /// every other; the desk's cards stay the loop's own read.
+    pub async fn desk_chat(&self, slug: &str, body: &str) -> Result<Value, DeskChatError> {
+        let arguments: Value = serde_json::from_str(body).map_err(|error| {
+            DeskChatError::Bad(format!("the desk iteration is not a JSON object: {error}"))
+        })?;
+        let text = arguments
+            .get("text")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        if text.is_empty() {
+            return Err(DeskChatError::Bad("an iteration needs words".to_string()));
+        }
+        let mode = match arguments
+            .get("mode")
+            .and_then(Value::as_str)
+            .unwrap_or("ask")
+        {
+            "full" | "yes" => crate::approvals::Mode::Yes,
+            "auto" | "yes-guarded" | "guarded" => crate::approvals::Mode::YesGuarded,
+            _ => crate::approvals::Mode::Ask,
+        };
+        let pin = arguments
+            .get("pin")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|pin| !pin.is_empty())
+            .map(str::to_string);
+        let home = self.home.clone();
+        let model = self.model.clone();
+        let slug = slug.to_string();
+        let asking = slug.clone();
+        let (session, folder) =
+            tokio::task::spawn_blocking(move || -> Result<(String, Option<String>), String> {
+                let desk = crate::desk::load(&home, &asking)?;
+                if let Some(id) = desk.session.as_deref() {
+                    if crate::session::session_path(&home, id).exists() {
+                        return Ok((id.to_string(), desk.project.clone()));
+                    }
+                }
+                let born = crate::session::Session::create_lesson(&home, &model, "desk", None)
+                    .map_err(|error| format!("the deliverable's thread could not open: {error}"))?;
+                let id = born.id().to_string();
+                let mut born = born;
+                born.record(&crate::session::Record::User {
+                    content: desk_brief(&desk),
+                })
+                .map_err(|error| format!("the brief did not land in the thread: {error}"))?;
+                crate::desk::attach_session(&home, &asking, &id)?;
+                Ok((id, desk.project.clone()))
+            })
+            .await
+            .map_err(|_| DeskChatError::Refused("the desk iteration did not start".to_string()))?
+            .map_err(DeskChatError::Refused)?;
+        self.run_with_budget(
+            &session,
+            &text,
+            mode,
+            pin,
+            folder.as_deref(),
+            None,
+            Vec::new(),
+        )
+        .map_err(|error| match error {
+            RunError::BadRequest(message) => DeskChatError::Bad(message),
+            RunError::Refused(message) => DeskChatError::Refused(message),
+        })?;
+        Ok(json!({ "type": "desk_chat", "slug": slug, "session": session }))
+    }
+
     /// One inbox decision: dismiss, archive, restore, undismiss. The row
     /// must exist in the read at the moment of the decision, so a stale
     /// key is a refusal rather than a mark nobody will ever see.
@@ -5480,6 +5658,14 @@ impl std::fmt::Display for AnswerError {
 }
 
 impl std::error::Error for AnswerError {}
+
+/// What a desk iteration's refusal means for the route: a bad request is
+/// the page's to correct, a refused run is the page's to wait on.
+#[derive(Debug)]
+pub enum DeskChatError {
+    Bad(String),
+    Refused(String),
+}
 
 /// Why a run did not start, with the answer the browser gives: a
 /// request that breaks one of the face's rules is a 400, and a face
@@ -8206,7 +8392,11 @@ fn plan_shape(body: &str) -> PlanShape {
 /// plan, position, and the propositions the learner holds; the
 /// proposition graph; the practice outcomes; and the history. The face's
 /// Learning pane reads this one document.
-fn learning_document(home: &std::path::Path, memories: &std::path::Path) -> Value {
+fn learning_document(
+    home: &std::path::Path,
+    memories: &std::path::Path,
+    asked: Option<&str>,
+) -> Value {
     let lessons =
         crate::session::list_kind(home, Some(crate::session::LESSON_KIND)).unwrap_or_default();
     let practice_sessions =
@@ -8215,10 +8405,13 @@ fn learning_document(home: &std::path::Path, memories: &std::path::Path) -> Valu
     let _ = crate::calib::today();
     // The active lesson: the newest session that has not ended, else
     // the newest — the lesson the owner is in or last took.
-    let active = lessons
-        .iter()
-        .rev()
-        .find(|summary| !summary.ended)
+    // The lesson the pane shows: the one asked for when the rail picked
+    // one (a real lesson session), else the newest that has not ended,
+    // else the newest.
+    let asked = asked.filter(|id| lessons.iter().any(|summary| summary.id == *id));
+    let active = asked
+        .and_then(|id| lessons.iter().find(|summary| summary.id == id))
+        .or_else(|| lessons.iter().rev().find(|summary| !summary.ended))
         .or(lessons.last());
     let lesson = match active {
         Some(session) => {
@@ -8287,6 +8480,12 @@ fn learning_document(home: &std::path::Path, memories: &std::path::Path) -> Valu
             serde_json::json!({
                 "id": session.id,
                 "goal": plan.map(|fact| fact.description.clone()).unwrap_or_default(),
+                "id": session.id,
+                "title": session
+                    .last_plan
+                    .clone()
+                    .or(session.first_text.clone())
+                    .unwrap_or_default(),
                 "ended": session.ended,
                 "position": if nodes.is_empty() {
                     serde_json::Value::Null
@@ -8337,6 +8536,11 @@ fn learning_document(home: &std::path::Path, memories: &std::path::Path) -> Valu
             "title": summary.last_plan.clone().or(summary.first_text.clone()).unwrap_or_default(),
             "ended": summary.ended,
             "created": summary.created,
+            // The project a lesson belongs to: its session's own working
+            // directory, the same fact the archive groups by. A session
+            // born with no workspace is unbound, and the rail says so.
+            "project": summary.workspace,
+            "project_inferred": summary.workspace_inferred,
         })
     };
     let history: Vec<serde_json::Value> = lessons.iter().rev().map(history_row).collect();
@@ -8350,6 +8554,59 @@ fn learning_document(home: &std::path::Path, memories: &std::path::Path) -> Valu
         "practice": { "outcomes": practice },
         "history": { "lessons": history, "practice": practice_history },
     })
+}
+
+/// The first message a deliverable's thread carries: the brief in the
+/// model's own reading, so an iteration never needs a second fetch to
+/// know what it is working on. It is logged like any other message — the
+/// model sees exactly what the log holds.
+fn desk_brief(desk: &crate::desk::DeskProject) -> String {
+    let sources = if desk.sources.is_empty() {
+        "none yet".to_string()
+    } else {
+        desk.sources
+            .iter()
+            .map(|source| match source.kind {
+                crate::desk::SourceKind::File => format!("file {}", source.path),
+                crate::desk::SourceKind::Fact => format!("fact {}", source.path),
+                crate::desk::SourceKind::Url => format!(
+                    "page {}",
+                    source.url.clone().unwrap_or_else(|| source.path.clone())
+                ),
+            })
+            .collect::<Vec<String>>()
+            .join(", ")
+    };
+    let stages: Vec<String> = desk
+        .stages
+        .iter()
+        .map(|(stage, state)| {
+            let word = match state {
+                crate::desk::StageState::Pending => "pending",
+                crate::desk::StageState::Running => "running",
+                crate::desk::StageState::Done => "done",
+                crate::desk::StageState::Refused { .. } => "refused",
+            };
+            format!("{} {word}", stage.name())
+        })
+        .collect();
+    let standing = desk.refusals.len() + desk.number_refusals.len();
+    format!(
+        "[the desk brief] {name} · for {audience}\nThe claim: {claim}\nThe project: {project}\n         The sources: {sources}\nThe loop: {stages}\nThe end gate: {gate}\n         This conversation iterates on that deliverable; the loop's cards stay in the desk view.",
+        name = desk.name,
+        audience = desk.audience,
+        claim = desk.claim,
+        project = desk
+            .project
+            .clone()
+            .unwrap_or_else(|| "unbound".to_string()),
+        stages = stages.join(", "),
+        gate = if standing == 0 {
+            "clear".to_string()
+        } else {
+            format!("{standing} standing")
+        },
+    )
 }
 
 fn sessions_read(

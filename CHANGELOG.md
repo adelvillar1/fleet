@@ -12,6 +12,34 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.6.14 — 2026-11-09
+
+The desk and learning, organised by project and worked in a thread.
+
+- **KI-501 fixed.** Both surfaces are one shell now: **the projects rail on
+  the left, the artifact's work in the middle, its thread on the right.**
+  The rail reads one `GET /api/projects` — the desk's bound deliverables
+  and the lessons' own working directories, with an unbound bucket — so a
+  project is one name and one count wherever it is read.
+- **The desk iterates in a conversation.** A deliverable's thread is a
+  session of kind `desk`, born on the first iteration and seeded with the
+  brief; `POST /api/desk/<slug>/chat` runs the ordinary run path with the
+  deliverable's project as its folder. The loop's cards stay where they
+  were, beside the thread.
+- **Learning answers in the lesson.** The thread is the lesson session's
+  own log; the composer sends into that session (`?session=`), its role
+  chip is the role the run rides, and the practice chip starts a practice
+  beside it. The four sections moved to chips in the work column now that
+  the pane's rail is the projects rail.
+- The composer's chips act: the project selects it in the rail, the
+  artifact re-reads, `sources` opens the brief's source list, `review`
+  shows the end gate, `role` flips, `practice` starts one. An empty rail
+  offers the act that fills it, and a refusal paints beside the composer.
+- Pinned by `PWS the desk is projects, work and a thread` and `PWS
+  learning is projects, the lesson and its thread`: the rail lists,
+  expands, opens, the thread replays, the composer posts the right run,
+  and every chip changes something. 1076 harness checks / 134 cases.
+
 ## v0.6.13 — 2026-11-09
 
 The press answers at once.

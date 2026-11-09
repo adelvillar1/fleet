@@ -7819,7 +7819,9 @@
     var now = Date.now();
     if (!force && face.learning && now - face.learningAt < 4000) return Promise.resolve();
     face.learningAt = now;
-    return fetch('/api/learning', { headers: { accept: 'application/json' } })
+    var asked = face.learnPick
+      ? '?session=' + encodeURIComponent(face.learnPick) : '';
+    return fetch('/api/learning' + asked, { headers: { accept: 'application/json' } })
       .then(function (reply) {
         if (reply.status === 401) throw new Error('token');
         return reply.json();
@@ -8041,12 +8043,13 @@
     return card;
   }
 
-  function paintLearningSection(id) {
+  function paintLearningSection(id, into) {
     var read = face.learning;
     if (!read) return;
-    Array.prototype.slice.call(el.learningBoard.children).forEach(function (child) {
+    var board = into || el.learningBoard;
+    Array.prototype.slice.call(board.children).forEach(function (child) {
       if (child.classList && child.classList.contains('section-body')) {
-        el.learningBoard.removeChild(child);
+        board.removeChild(child);
       }
     });
     var body = node('div', 'section-body');
@@ -8056,7 +8059,7 @@
         : id === 'history' ? learningHistoryCard(read)
           : learningLessonCard(read);
     body.appendChild(card);
-    el.learningBoard.appendChild(body);
+    board.appendChild(body);
   }
 
   function paintLearning() {
@@ -8088,8 +8091,86 @@
         (read.history ? read.history.lessons.length : 0) + ' lessons \u00b7 ' +
         (read.history ? read.history.practice.length : 0) + ' practice',
         [])));
-    paintLearningSection(learningSectionId());
-    paintLearningRail(read);
+    // The projects rail on the pane's own left column; the work and the
+    // lesson's thread beside it.
+    paintProjectsRail(el.learningRail, 'learning');
+    var grid = node('div', 'pw-we');
+    var work = node('div', 'pw-work');
+    var thread = node('div', 'pw-thread');
+    grid.appendChild(work);
+    grid.appendChild(thread);
+    el.learningBoard.appendChild(grid);
+    var chips = node('div', 'pw-sections');
+    learningSections(read).forEach(function (section) {
+      var chip = node('button', 'pw-chip' + (learningSectionId() === section.id ? ' on' : ''),
+        section.name);
+      chip.type = 'button';
+      chip.addEventListener('click', function () {
+        rememberLearningSection(section.id);
+        window.location.hash = '#/learning/' + section.id;
+        paintLearning();
+      });
+      chips.appendChild(chip);
+    });
+    work.appendChild(chips);
+    paintLearningSection(learningSectionId(), work);
+    var lesson = read.lesson || {};
+    var session = face.learnPick || lesson.id || '';
+    paintLearningThread(thread, read, session);
+    readProjects(false);
+    if (session) readThread(session, false);
+  }
+
+  /// The lesson's thread: its own session's log and the composer that
+  /// answers, asks, or says "next step". The role chip is the role the
+  /// run rides; the practice chip starts one beside the lesson.
+  function paintLearningThread(into, read, session) {
+    var lesson = (read && read.lesson) || {};
+    var role = face.learnRole || 'teacher';
+    var chips = [
+      pwChip('project \u00b7 ' + pwName(lesson.project), true,
+        lesson.project || 'this lesson has no project yet', function () {
+          if (!face.pwProject) face.pwProject = {};
+          face.pwProject.learning = lesson.project || '';
+          paintLearning();
+        }),
+      pwChip(lesson.title || 'the lesson', true, 'refresh the thread from the log', function () {
+        readLearning(true);
+        if (session) readThread(session, true);
+      }),
+      pwChip('role \u00b7 ' + role, true,
+        'the role this run rides \u2014 press to switch teacher and practitioner', function () {
+          face.learnRole = role === 'teacher' ? 'practitioner' : 'teacher';
+          paintLearning();
+        }),
+      pwChip('practice', false, 'start a practice beside this lesson', function () {
+        startLearning('practice', 'practitioner',
+          'a practice beside ' + (lesson.title || 'this lesson'));
+      })
+    ];
+    paintThreadInto(into, {
+      title: 'the thread',
+      session: session,
+      placeholder: 'answer, ask, or say \u201cnext step\u201d\u2026',
+      empty: 'a lesson starts with a question \u2014 say what you already hold',
+      note: 'the check rides your words \u00b7 a practice starts beside the lesson',
+      chips: chips,
+      send: function (text) {
+        var target = face.learnPick || ((face.learning || {}).lesson || {}).id || '';
+        post('/api/learning/start' + (target
+          ? '?session=' + encodeURIComponent(target) : ''),
+          { task: text, kind: 'teaching', role: role }).then(function (reply) {
+          if (reply.status !== 200) {
+            pwRefuse(into, (reply.body && reply.body.error) || 'the learning run was refused');
+            return;
+          }
+          readLearning(true);
+          if (target) readThread(target, true);
+        }).catch(function () {
+          pwRefuse(into, 'the learning run did not reach the far side');
+        });
+      },
+    });
   }
 
   function readMemory(force) {
@@ -11222,18 +11303,373 @@
 
   // ---- the shelf -----------------------------------------------------
 
+
+  // ---- the projects shell (the project-work plan) ------------------------
+  //
+  // Both work surfaces are one pattern: the projects rail on the left, the
+  // artifact's work in the middle, and the thread with the composer on the
+  // right. Everything below is shared by the desk and by learning.
+
+  function readProjects(force) {
+    var now = Date.now();
+    if (!force && face.projects && now - face.projectsAt < 4000) return Promise.resolve();
+    face.projectsAt = now;
+    return fetch('/api/projects', { headers: { accept: 'application/json' } })
+      .then(function (reply) {
+        if (reply.status === 401) throw new Error('token');
+        return reply.json();
+      })
+      .then(function (doc) {
+        face.projects = doc;
+        if (face.panel === 'desk') paintDesk();
+        if (face.panel === 'learning') paintLearning();
+      })
+      .catch(function () { });
+  }
+
+  function pwShell(board) {
+    var shell = node('div', 'pw-shell');
+    var rail = node('aside', 'pw-rail');
+    rail.setAttribute('aria-label', 'projects');
+    var work = node('div', 'pw-work');
+    var thread = node('div', 'pw-thread');
+    shell.appendChild(rail);
+    shell.appendChild(work);
+    shell.appendChild(thread);
+    board.appendChild(shell);
+    return { rail: rail, work: work, thread: thread };
+  }
+
+  function pwName(path) {
+    var text = String(path || '').replace(/\/+$/, '');
+    var parts = text.split('/');
+    return parts[parts.length - 1] || text || 'unbound';
+  }
+
+  /// The projects rail: each project with its artifact count, and the
+  /// selected project's artifacts under it. Pressing a project toggles it;
+  /// pressing an artifact opens it where the surface's work lives.
+  function paintProjectsRail(rail, surface) {
+    rail.textContent = '';
+    rail.classList.add('pw-rail');
+    rail.appendChild(node('div', 'pw-railhead', 'projects'));
+    var doc = face.projects;
+    if (!doc || refusals(doc)) {
+      rail.appendChild(node('p', 'pw-quiet',
+        doc ? refusals(doc).join('; ') : 'reading the projects\u2026'));
+      return;
+    }
+    var selected = (face.pwProject || {})[surface] || '';
+    var paintProject = function (path, name, deliverables, lessons) {
+      var row = node('div', 'pw-proj');
+      row.dataset.on = String(selected === path && path !== '');
+      row.dataset.path = path;
+      var title = node('div', 'pw-proj-t');
+      title.appendChild(node('span', '', name));
+      title.appendChild(node('span', 'n',
+        String((deliverables || []).length + (lessons || []).length)));
+      row.appendChild(title);
+      var note = surface === 'desk'
+        ? ((deliverables || []).length + ' deliverable' + ((deliverables || []).length === 1 ? '' : 's'))
+        : ((lessons || []).length + ' lesson' + ((lessons || []).length === 1 ? '' : 's'));
+      row.appendChild(node('div', 'pw-proj-w', note));
+      row.addEventListener('click', function () {
+        if (!face.pwProject) face.pwProject = {};
+        face.pwProject[surface] = selected === path ? '' : path;
+        if (surface === 'desk') {
+          face.deskOpenDesk = null;
+          face.deskView = 'shelf';
+          paintDesk();
+        } else {
+          paintLearning();
+        }
+      });
+      rail.appendChild(row);
+      if (selected !== path || path === '') return;
+      var kids = node('div', 'pw-kids');
+      // The surface's own artifacts only: the desk lists deliverables and
+      // learning lists lessons, so neither rail grows a row it cannot
+      // open.
+      if (surface === 'desk') {
+        (deliverables || []).forEach(function (item) {
+          var kid = node('div', 'pw-kid');
+          kid.dataset.key = 'desk:' + item.slug;
+          kid.dataset.state = item.needs ? 'needs' : '';
+          kid.appendChild(node('span', 'dot'));
+          kid.appendChild(node('span', 't', item.name || item.slug));
+          kid.addEventListener('click', function () { openDeskDeliverable(item.slug); });
+          kids.appendChild(kid);
+        });
+      } else {
+        (lessons || []).forEach(function (item) {
+          var kid = node('div', 'pw-kid');
+          kid.dataset.key = 'lesson:' + item.id;
+          kid.dataset.state = item.ended ? 'done' : 'needs';
+          kid.appendChild(node('span', 'dot'));
+          kid.appendChild(node('span', 't', item.title || item.id));
+          kid.addEventListener('click', function () { openLesson(item.id); });
+          kids.appendChild(kid);
+        });
+      }
+      if (kids.children.length) rail.appendChild(kids);
+    };
+    (doc.projects || []).forEach(function (project) {
+      paintProject(project.path, project.name, project.deliverables, project.lessons);
+    });
+    var un = doc.unbound || {};
+    if ((un.deliverables || []).length || (un.lessons || []).length) {
+      paintProject('', 'unbound', un.deliverables, un.lessons);
+    }
+    if (!(doc.projects || []).length && !(un.deliverables || []).length &&
+        !(un.lessons || []).length) {
+      // An empty rail is never a blank column: it names the one act that
+      // fills it.
+      rail.appendChild(pwChip(surface === 'desk' ? 'start a brief' : 'start a lesson',
+        false, '', function () {
+          if (surface === 'desk') {
+            face.deskView = 'composer';
+            face.deskOpenDesk = null;
+            paintDesk();
+          } else {
+            startLearning('teaching', 'prober', 'let\u2019s start a lesson');
+          }
+        }));
+    }
+  }
+
+  function openDeskDeliverable(slug) {
+    var found = (face.desk || []).filter(function (d) { return d.slug === slug; })[0];
+    if (!found) return;
+    face.deskOpenDesk = found;
+    face.deskView = 'project';
+    paintDesk();
+  }
+
+  function openLesson(id) {
+    face.learnPick = id;
+    readLearning(true).then(function () {
+      if (face.panel === 'learning') paintLearning();
+    });
+  }
+
+  /// One thread's replay: the session's own cards, read on the paint and
+  /// refreshed when stale. A thread is a session like every other, so the
+  /// transcript and the thread cannot disagree about what was said.
+  function readThread(session, force) {
+    if (!session) return Promise.resolve();
+    face.threads = face.threads || {};
+    var held = face.threads[session];
+    var now = Date.now();
+    if (!force && held && now - held.at < 2000) return Promise.resolve();
+    face.threads[session] = { at: now, doc: held ? held.doc : null };
+    return fetch('/api/session?id=' + encodeURIComponent(session),
+      { headers: { accept: 'application/json' } })
+      .then(function (reply) { return reply.json(); })
+      .then(function (doc) {
+        var before = held && held.doc ? JSON.stringify(held.doc.cards || []) : '';
+        face.threads[session] = { at: Date.now(), doc: doc };
+        if (before === JSON.stringify(doc.cards || [])) return;
+        if (face.panel === 'desk') paintDesk();
+        if (face.panel === 'learning') paintLearning();
+      })
+      .catch(function () { });
+  }
+
+  function pwChip(label, on, title, run) {
+    var chip = node('button', 'pw-chip' + (on ? ' on' : ''), label);
+    chip.type = 'button';
+    if (title) chip.title = title;
+    chip.setAttribute('aria-pressed', String(!!on));
+    chip.addEventListener('click', run);
+    return chip;
+  }
+
+  /// The composer's refusal, painted where the press stands — never only
+  /// in the transcript two panes away.
+  function pwRefuse(into, reason) {
+    var line = into.querySelector ? into.querySelector('.pw-refusal') : null;
+    if (!line) {
+      line = node('p', 'pw-refusal');
+      line.setAttribute('role', 'alert');
+      into.appendChild(line);
+    }
+    line.textContent = reason;
+  }
+
+  function pwComposer(into, opts) {
+    var wrap = node('div', 'pw-composer');
+    if (opts.chips && opts.chips.length) {
+      var chips = node('div', 'pw-chips');
+      opts.chips.forEach(function (chip) { chips.appendChild(chip); });
+      wrap.appendChild(chips);
+    }
+    if (opts.below) wrap.appendChild(opts.below);
+    var field = node('div', 'pw-field');
+    var box = node('textarea', 'pw-box');
+    box.rows = 1;
+    box.placeholder = opts.placeholder || 'iterate\u2026';
+    box.setAttribute('aria-label', opts.placeholder || 'iterate');
+    var busy = !!face.running;
+    var button = node('button', 'pw-send' + (busy ? ' stop' : ''), busy ? 'stop' : 'send');
+    button.type = 'button';
+    button.title = busy ? 'stop the run' : 'send \u00b7 enter';
+    var sendNow = function () {
+      var text = box.value.trim();
+      if (!text || face.running) return;
+      box.value = '';
+      opts.send(text);
+    };
+    box.addEventListener('keydown', function (event) {
+      if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault();
+        sendNow();
+      }
+    });
+    button.addEventListener('click', function () {
+      if (face.running) {
+        stopRun();
+        return;
+      }
+      sendNow();
+    });
+    field.appendChild(box);
+    field.appendChild(button);
+    wrap.appendChild(field);
+    if (opts.note) wrap.appendChild(node('p', 'pw-note', opts.note));
+    into.appendChild(wrap);
+  }
+
+  function paintThreadInto(into, opts) {
+    into.textContent = '';
+    var head = node('div', 'pw-thread-head');
+    head.appendChild(node('span', '', opts.title || 'the thread'));
+    into.appendChild(head);
+    var held = opts.session && face.threads ? face.threads[opts.session] : null;
+    var doc = held ? held.doc : null;
+    var list = node('div', 'pw-msgs');
+    if (doc && refusals(doc)) {
+      list.appendChild(node('p', 'pw-quiet', refusals(doc).join('; ')));
+    } else if (doc) {
+      (doc.cards || []).forEach(function (entry) { list.appendChild(replayLine(entry)); });
+      if (!(doc.cards || []).length) {
+        list.appendChild(node('p', 'pw-quiet', opts.empty || 'nothing said yet'));
+      }
+    } else {
+      list.appendChild(node('p', 'pw-quiet',
+        opts.session ? 'reading the thread\u2026' : (opts.empty || 'nothing said yet')));
+    }
+    into.appendChild(list);
+    pwComposer(into, opts);
+    if (opts.session) readThread(opts.session, false);
+  }
+
   function paintDesk() {
     var board = el.deskBoard;
     if (!board) return;
     board.textContent = '';
     board.className = 'board dk-board';
-    if (face.deskOpenDesk) return paintDeskProject(face.deskOpenDesk);
-    if (face.deskView === 'composer') return paintDeskComposer();
-    return paintDeskShelf();
+    var shell = pwShell(board);
+    paintProjectsRail(shell.rail, 'desk');
+    if (face.deskOpenDesk) {
+      paintDeskProject(face.deskOpenDesk, shell.work);
+      paintDeskThread(shell.thread, face.deskOpenDesk);
+    } else if (face.deskView === 'composer') {
+      paintDeskComposer(shell.work);
+      paintThreadInto(shell.thread, {
+        title: 'a new deliverable',
+        empty: 'the thread opens once the brief is made \u2014 the brief is its first message',
+      });
+    } else {
+      paintDeskShelf(shell.work);
+      paintThreadInto(shell.thread, {
+        title: 'the thread',
+        empty: 'open a deliverable to iterate on it',
+      });
+    }
+    readProjects(false);
   }
 
-  function paintDeskShelf() {
-    var board = el.deskBoard;
+  /// The selected deliverable's thread: the replay of its own session and
+  /// the composer that iterates on it. The chips are the brief's state made
+  /// visible and pressable; each one does something to this pane.
+  function paintDeskThread(into, desk) {
+    var standing = (desk.refusals || []).length + (desk.number_refusals || []).length;
+    var chips = [
+      pwChip('project \u00b7 ' + pwName(desk.project), true,
+        desk.project || 'unbound \u2014 this deliverable has no project yet',
+        function () {
+          if (!face.pwProject) face.pwProject = {};
+          face.pwProject.desk = desk.project || '';
+          paintDesk();
+        }),
+      pwChip(desk.name || desk.slug, true, 'refresh the thread from the log', function () {
+        readDesk(true).then(function () { openDeskDeliverable(desk.slug); });
+        readThread(desk.session || '', true);
+      }),
+      pwChip('sources \u00b7 ' + (desk.sources || []).length, !!face.pwDeskSources,
+        'the sources the brief carries', function () {
+          face.pwDeskSources = !face.pwDeskSources;
+          paintDesk();
+        }),
+      pwChip('review \u00b7 ' + (standing ? standing + ' standing' : 'clear'),
+        !!face.pwDeskReview,
+        'the end gate: a deliverable cannot close while a refusal stands', function () {
+          face.pwDeskReview = !face.pwDeskReview;
+          paintDesk();
+        })
+    ];
+    var below = null;
+    if (face.pwDeskSources) {
+      below = node('div', 'pw-sources');
+      (desk.sources || []).forEach(function (source) {
+        below.appendChild(node('div', 'pw-source',
+          (source.type || 'file') + ' \u00b7 ' + (source.url || source.path || '')));
+      });
+      if (!(desk.sources || []).length) below.appendChild(node('p', 'pw-quiet', 'no sources yet'));
+    }
+    if (face.pwDeskReview) {
+      below = below || node('div', 'pw-sources');
+      if (standing) {
+        (desk.refusals || []).forEach(function (row) {
+          below.appendChild(node('p', 'pw-refusal',
+            'refused \u00b7 ' + (row.assertion || 'an unsourced assertion')));
+        });
+        (desk.number_refusals || []).forEach(function (row) {
+          below.appendChild(node('p', 'pw-refusal',
+            'number \u00b7 ' + (row.text || row.number || 'an unsourced figure')));
+        });
+      } else {
+        below.appendChild(node('p', 'pw-quiet', 'the end gate is clear'));
+      }
+    }
+    paintThreadInto(into, {
+      title: 'the thread',
+      session: desk.session || '',
+      placeholder: 'iterate on ' + (desk.name || 'this deliverable') + '\u2026',
+      empty: 'say what to change \u2014 the first press opens the conversation with the brief',
+      note: 'enter sends \u00b7 the run reads the brief, the sources and the thread',
+      chips: chips,
+      below: below,
+      send: function (text) {
+        post('/api/desk/' + encodeURIComponent(desk.slug) + '/chat',
+          { text: text, mode: face.permissions }).then(function (reply) {
+          if (reply.status !== 200) {
+            pwRefuse(into, (reply.body && reply.body.error) || 'the iteration was refused');
+            return;
+          }
+          var session = reply.body && reply.body.session;
+          readThread(session, true).then(function () {
+            readDesk(true).then(function () { openDeskDeliverable(desk.slug); });
+          });
+        }).catch(function () {
+          pwRefuse(into, 'the iteration did not reach the far side');
+        });
+      },
+    });
+  }
+
+  function paintDeskShelf(into) {
+    var board = into || el.deskBoard;
     var projects = face.desk || [];
     var unreadable = face.deskUnreadable || [];
     var needs = projects.filter(function (d) { return deskState(d).needs; });
@@ -11533,10 +11969,10 @@
       });
   }
 
-  function paintDeskProject(desk) {
-    var board = el.deskBoard;
+  function paintDeskProject(desk, into) {
+    var board = into || el.deskBoard;
     board.textContent = '';
-    board.className = 'board dk-board';
+    if (!into) board.className = 'board dk-board';
     var counts = deskCounts(desk);
     var stands = desk.stands || '';
 
@@ -11986,8 +12422,8 @@
 
   // ---- the composer --------------------------------------------------
 
-  function paintDeskComposer() {
-    var board = el.deskBoard;
+  function paintDeskComposer(into) {
+    var board = into || el.deskBoard;
     var prefill = face.deskPrefill || {};
     var sources = (face.deskSourceDraft || []).slice();
 

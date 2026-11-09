@@ -195,6 +195,12 @@ pub struct DeskProject {
     /// and discovery falls to meaning.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shape: Option<String>,
+    /// The conversation this deliverable is worked in, once one was
+    /// started: the desk's thread is an ordinary session, and the
+    /// deliverable's own document carries its id so the thread survives
+    /// every read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session: Option<String>,
     /// The bound workspace project folder — the board's binding law,
     /// an absolute path when one was named. Unbound desk work is
     /// allowed but second-class.
@@ -311,6 +317,7 @@ pub fn create(
         claim: claim.to_string(),
         sources,
         project,
+        session: None,
         stages: STAGES.map(|s| (s, StageState::Pending)).to_vec(),
         claims: Vec::new(),
         refusals: Vec::new(),
@@ -332,6 +339,16 @@ pub fn create(
 /// digest is regenerated here — the one funnel every write path
 /// crosses, so no path can move the document without refreshing its
 /// knowledge account.
+/// Bind a deliverable to the session its thread lives in. Written once,
+/// on the first iteration, and read by every later one.
+pub fn attach_session(home: &Path, slug: &str, session: &str) -> Result<DeskProject, String> {
+    let mut desk = load(home, slug)?;
+    desk.session = Some(session.to_string());
+    desk.updated = crate::calib::stamp();
+    save(home, &desk)?;
+    Ok(desk)
+}
+
 pub fn save(home: &Path, desk: &DeskProject) -> Result<(), String> {
     let path = project_path(home, &desk.slug);
     let dir = path
@@ -1789,6 +1806,7 @@ pub fn project_json(desk: &DeskProject) -> serde_json::Value {
         "claim": desk.claim,
         "shape": desk.shape,
         "project": desk.project,
+        "session": desk.session,
         "sources": desk.sources.iter().map(|source| serde_json::json!({
             "type": match source.kind {
                 SourceKind::File => "file",
@@ -1871,6 +1889,7 @@ mod tests {
             name: "The landing page's copy".to_string(),
             audience: "the beta cohort".to_string(),
             claim: "the fold earns its keep".to_string(),
+            session: None,
             sources: vec![Source {
                 kind: SourceKind::Url,
                 path: "sources/brief-source.txt".to_string(),
