@@ -12,6 +12,17 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.6.16 — 2026-11-09
+
+The shells span the board.
+
+- 0.6.15's two shells landed in one column of the board's own twelve-
+  column grid, so both panes squeezed to a twelfth of the width: the
+  sections stacked and the thread overlapped the work. Found by the
+  visual read of the shipped surface. `.pw-shell` and `.pw-we` now span
+  every column (`grid-column: 1 / -1`), and the desk and learning read
+  as three columns — the projects rail, the work, the thread.
+
 ## v0.6.15 — 2026-11-09
 
 The lesson's thread names its project.
