@@ -12,6 +12,14 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.6.19 — 2026-11-09
+
+The same content as v0.6.18, cut again because v0.6.18's assets never
+uploaded: the release was tagged while a co-tenant's commit landed on the
+branch, the assets build refused to run off-tag, and an empty release held
+`releases/latest` until it was marked a prerelease. v0.6.19 carries the
+section below, and the changelog keeps 0.6.18 as the record.
+
 ## v0.6.18 — 2026-11-09
 
 One composer, the app's list column, the artifact in the centre, its

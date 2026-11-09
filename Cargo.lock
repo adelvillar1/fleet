@@ -1145,7 +1145,7 @@ dependencies = [
 
 [[package]]
 name = "fleet"
-version = "0.6.18"
+version = "0.6.19"
 dependencies = [
  "aes-gcm",
  "arboard",
@@ -1173,7 +1173,7 @@ dependencies = [
 
 [[package]]
 name = "fleet-desktop"
-version = "0.6.18"
+version = "0.6.19"
 dependencies = [
  "fleet",
  "serde_json",
