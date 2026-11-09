@@ -1,0 +1,510 @@
+<!doctype html>
+<html lang="en" data-theme="paper">
+<head>
+<meta charset="utf-8">
+<title>fleet · desk + learning — mockup</title>
+<style>
+/* tokens inlined from src/gui/assets/app.css so the mockup reads right offline */
+:root {
+  --dsw-static-paper-900: rgb(246, 244, 239);
+  --dsw-static-paper-800: rgb(252, 251, 248);
+  --dsw-static-paper-700: rgb(239, 236, 230);
+  --dsw-static-paper-600: rgb(228, 224, 216);
+  --dsw-static-paper-500: rgb(208, 203, 194);
+  --dsw-static-paper-400: rgb(154, 158, 163);
+  --dsw-static-paper-300: rgb(82, 88, 96);
+  --dsw-static-paper-200: rgb(52, 56, 62);
+  --dsw-static-paper-100: rgb(24, 26, 29);
+
+  --dsw-static-deepseek-700: rgb(30, 62, 140);
+  --dsw-static-deepseek-600: rgb(37, 78, 176);
+  --dsw-static-deepseek-500: rgb(47, 95, 208);
+  --dsw-static-deepseek-400: rgb(86, 132, 232);
+  --dsw-static-deepseek-300: rgb(148, 176, 236);
+
+  --dsw-static-ink-900: rgb(20, 22, 25);
+  --dsw-static-ink-800: rgb(28, 31, 35);
+  --dsw-static-ink-700: rgb(38, 42, 47);
+  --dsw-static-ink-600: rgb(58, 63, 70);
+  --dsw-static-ink-500: rgb(94, 100, 108);
+  --dsw-static-ink-400: rgb(130, 137, 146);
+  --dsw-static-ink-300: rgb(160, 166, 174);
+  --dsw-static-ink-200: rgb(196, 201, 207);
+  --dsw-static-ink-100: rgb(236, 238, 241);
+
+  --dsw-static-hairline-on-light: rgb(24 26 29 / 10%);
+  --dsw-static-hairline-on-dark: rgb(255 255 255 / 10%);
+  --dsw-static-ok-on-light: rgb(22, 110, 46);
+  --dsw-static-down-on-light: rgb(176, 36, 32);
+  --dsw-static-warn-on-light: rgb(122, 82, 8);
+  --dsw-static-ok-on-dark: rgb(74, 190, 110);
+  --dsw-static-down-on-dark: rgb(240, 106, 99);
+  --dsw-static-warn-on-dark: rgb(220, 166, 66);
+  --dsw-static-accent-text-on-light: var(--dsw-static-deepseek-600);
+
+  --dsw-static-graph-900: rgb(10, 12, 16);
+  --dsw-static-graph-800: rgb(15, 18, 23);
+  --dsw-static-graph-700: rgb(21, 25, 31);
+  --dsw-static-graph-500: rgb(58, 66, 77);
+  --dsw-static-graph-400: rgb(132, 142, 155);
+  --dsw-static-graph-300: rgb(160, 170, 184);
+  --dsw-static-graph-200: rgb(192, 200, 210);
+  --dsw-static-graph-100: rgb(232, 238, 244);
+
+  --dsw-static-contrast-page: rgb(255, 255, 255);
+  --dsw-static-contrast-surface: rgb(255, 255, 255);
+  --dsw-static-contrast-raised: rgb(238, 238, 238);
+  --dsw-static-contrast-ink: rgb(0, 0, 0);
+  --dsw-static-contrast-secondary: rgb(38, 38, 38);
+  --dsw-static-contrast-tertiary: rgb(70, 70, 70);
+  --dsw-static-contrast-hairline: rgb(0 0 0 / 20%);
+  --dsw-static-contrast-accent-text: rgb(20, 60, 150);
+  --dsw-static-ok-on-contrast: rgb(0, 104, 32);
+  --dsw-static-down-on-contrast: rgb(176, 20, 20);
+  --dsw-static-warn-on-contrast: rgb(124, 82, 6);
+
+  /* Chart mix colours that read on both grounds. */
+  --dsw-static-mix-teal: rgb(58, 154, 136);
+  --dsw-static-mix-sand: rgb(176, 138, 74);
+  --dsw-static-mix-slate: rgb(112, 124, 140);
+
+  /* --- the alias tier: what the colours mean ------------------------ */
+  --dsw-alias-page: rgb(246, 244, 239);
+  --dsw-alias-surface: rgb(252, 251, 248);
+  --dsw-alias-surface-raised: rgb(239, 236, 230);
+  --dsw-alias-surface-overlay: rgb(255, 255, 255);
+  --dsw-alias-hairline: rgb(24 26 29 / 10%);
+  --dsw-alias-hairline-strong: rgb(24 26 29 / 17%);
+  --dsw-alias-ink: rgb(24, 26, 29);
+  --dsw-alias-ink-secondary: rgb(82, 88, 96);
+  --dsw-alias-ink-tertiary: rgb(94, 102, 112);
+  --dsw-alias-accent: rgb(47, 95, 208);
+  --dsw-alias-accent-deep: rgb(37, 78, 176);
+  --dsw-alias-accent-lift: rgb(37, 78, 176);
+  --dsw-alias-accent-wash: color-mix(in srgb, var(--dsw-alias-accent) 10%, transparent);
+  --dsw-alias-ok: rgb(22, 110, 46);
+  --dsw-alias-down: rgb(176, 36, 32);
+  --dsw-alias-warn: rgb(122, 82, 8);
+  --dsw-alias-gradient: linear-gradient(135deg, rgb(63, 108, 218), rgb(37, 78, 176));
+  --lane-0: rgb(13, 118, 110);
+  --lane-1: rgb(109, 58, 216);
+  --lane-2: rgb(176, 84, 10);
+  --lane-3: rgb(190, 24, 93);
+  --lane-4: rgb(12, 116, 150);
+  --lane-5: rgb(84, 124, 12);
+
+  --shadow-1: 0 1px 2px rgb(24 26 29 / 6%), 0 1px 1px rgb(24 26 29 / 4%);
+  --shadow-2: 0 18px 40px -24px rgb(24 26 29 / 30%), 0 2px 6px rgb(24 26 29 / 6%);
+  --shadow-3: 0 32px 80px -32px rgb(24 26 29 / 38%), 0 8px 24px -12px rgb(24 26 29 / 18%);
+  --shadow-lift: var(--shadow-2);
+
+  /* --- component tokens -------------------------------------------- */
+  --topbar-bg: color-mix(in srgb, var(--dsw-alias-page) 86%, transparent);
+  --topbar-height: 58px;
+  --rail-width: 236px;
+  --rail-width-icons: 66px;
+  --aside-width: 320px;
+  --pane-width: 440px;
+  --drawer-width: 440px;
+  --card-bg: var(--dsw-alias-surface);
+  --card-radius: 14px;
+  --card-radius-inner: 10px;
+  --card-hairline: 1px solid var(--dsw-alias-hairline);
+  --card-pad: 20px;
+  --card-value: 26px;
+  --card-label: 10.5px;
+  --bubble-bg: color-mix(in srgb, var(--dsw-alias-accent) 8%, var(--dsw-alias-surface));
+  --bubble-radius: 14px;
+  --composer-bg: var(--dsw-alias-surface);
+  --composer-radius: 16px;
+  --seat-bg: color-mix(in srgb, var(--dsw-alias-accent) 7%, var(--dsw-alias-surface));
+
+  --font-display: "New York", ui-serif, Georgia, "Iowan Old Style", "Times New Roman", serif;
+  --font-text: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica,
+    Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", Menlo, Consolas,
+    monospace;
+
+  --text-xs: 10.5px;
+  --text-sm: 12px;
+  --text-base: 13.5px;
+  --text-md: 15px;
+  --text-lg: 18px;
+  --text-xl: 24px;
+  --display: 34px;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  --radius-sm: 7px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+  --radius-pill: 999px;
+
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+  --fast: 120ms;
+  --medium: 180ms;
+}
+
+/* The warm dark console. A collector for long evening runs; not the
+   default, and it keeps the same structure and type scale as paper. */
+:root[data-theme="console"] {
+  --dsw-alias-page: rgb(14, 15, 18);
+  --dsw-alias-surface: rgb(20, 22, 26);
+  --dsw-alias-surface-raised: rgb(28, 31, 36);
+  --dsw-alias-surface-overlay: rgb(32, 35, 41);
+  --dsw-alias-hairline: rgb(255 255 255 / 8%);
+  --dsw-alias-hairline-strong: rgb(255 255 255 / 15%);
+  --dsw-alias-ink: rgb(235, 231, 228);
+  --dsw-alias-ink-secondary: rgb(166, 175, 188);
+  --dsw-alias-ink-tertiary: rgb(138, 148, 163);
+  --dsw-alias-accent: rgb(96, 143, 255);
+  --dsw-alias-accent-deep: rgb(66, 112, 230);
+  --dsw-alias-accent-lift: rgb(143, 178, 255);
+  --dsw-alias-accent-wash: color-mix(in srgb, var(--dsw-alias-accent) 14%, transparent);
+  --dsw-alias-ok: rgb(74, 190, 110);
+  --dsw-alias-down: rgb(240, 106, 99);
+  --dsw-alias-warn: rgb(220, 166, 66);
+  --dsw-alias-gradient: linear-gradient(135deg, rgb(96, 143, 255), rgb(66, 112, 230));
+  --lane-0: rgb(45, 212, 191);
+  --lane-1: rgb(167, 139, 250);
+  --lane-2: rgb(251, 191, 36);
+  --lane-3: rgb(251, 113, 133);
+  --lane-4: rgb(56, 189, 248);
+  --lane-5: rgb(163, 230, 53);
+  --shadow-1: 0 1px 2px rgb(0 0 0 / 30%);
+  --shadow-2: 0 18px 40px -20px rgb(0 0 0 / 65%), 0 2px 6px rgb(0 0 0 / 25%);
+  --shadow-3: 0 32px 80px -28px rgb(0 0 0 / 80%), 0 8px 24px -12px rgb(0 0 0 / 45%);
+  --shadow-lift: var(--shadow-2);
+  --topbar-bg: color-mix(in srgb, var(--dsw-alias-page) 82%, transparent);
+}
+
+/* A cool neutral dark, for an owner who finds the console too warm. */
+:root[data-theme="graphite"] {
+  --dsw-alias-page: rgb(10, 12, 16);
+  --dsw-alias-surface: rgb(15, 18, 23);
+  --dsw-alias-surface-raised: rgb(21, 25, 31);
+  --dsw-alias-surface-overlay: rgb(27, 32, 39);
+  --dsw-alias-hairline: rgb(255 255 255 / 8%);
+  --dsw-alias-hairline-strong: rgb(255 255 255 / 15%);
+  --dsw-alias-ink: rgb(232, 238, 244);
+  --dsw-alias-ink-secondary: rgb(160, 170, 184);
+  --dsw-alias-ink-tertiary: rgb(132, 144, 160);
+  --dsw-alias-accent: rgb(94, 148, 255);
+  --dsw-alias-accent-deep: rgb(62, 112, 232);
+  --dsw-alias-accent-lift: rgb(143, 178, 255);
+  --dsw-alias-accent-wash: color-mix(in srgb, var(--dsw-alias-accent) 14%, transparent);
+  --dsw-alias-ok: rgb(74, 190, 110);
+  --dsw-alias-down: rgb(240, 106, 99);
+  --dsw-alias-warn: rgb(220, 166, 66);
+  --dsw-alias-gradient: linear-gradient(135deg, rgb(94, 148, 255), rgb(62, 112, 232));
+  --lane-0: rgb(94, 210, 190);
+  --lane-1: rgb(158, 134, 240);
+  --lane-2: rgb(235, 180, 60);
+  --lane-3: rgb(240, 120, 135);
+  --lane-4: rgb(90, 180, 235);
+  --lane-5: rgb(150, 210, 70);
+  --shadow-1: 0 1px 2px rgb(0 0 0 / 32%);
+  --shadow-2: 0 18px 40px -20px rgb(0 0 0 / 70%), 0 2px 6px rgb(0 0 0 / 28%);
+  --shadow-3: 0 32px 80px -28px rgb(0 0 0 / 85%), 0 8px 24px -12px rgb(0 0 0 / 50%);
+  --shadow-lift: var(--shadow-2);
+  --topbar-bg: color-mix(in srgb, var(--dsw-alias-page) 82%, transparent);
+}
+
+/* The accessibility theme: pure ground, near-black ink, no atmosphere. */
+:root[data-theme="contrast"] {
+  --dsw-alias-page: rgb(255, 255, 255);
+  --dsw-alias-surface: rgb(255, 255, 255);
+  --dsw-alias-surface-raised: rgb(238, 238, 238);
+  --dsw-alias-surface-overlay: rgb(255, 255, 255);
+  --dsw-alias-hairline: rgb(0 0 0 / 22%);
+  --dsw-alias-hairline-strong: rgb(0 0 0 / 45%);
+  --dsw-alias-ink: rgb(0, 0, 0);
+  --dsw-alias-ink-secondary: rgb(38, 38, 38);
+  --dsw-alias-ink-tertiary: rgb(70, 70, 70);
+  --dsw-alias-accent: rgb(24, 66, 160);
+  --dsw-alias-accent-deep: rgb(16, 48, 122);
+  --dsw-alias-accent-lift: rgb(20, 60, 150);
+  --dsw-alias-accent-wash: color-mix(in srgb, var(--dsw-alias-accent) 10%, transparent);
+  --dsw-alias-ok: rgb(0, 104, 32);
+  --dsw-alias-down: rgb(176, 20, 20);
+  --dsw-alias-warn: rgb(124, 82, 6);
+  --dsw-alias-gradient: linear-gradient(135deg, rgb(20, 60, 150), rgb(16, 48, 122));
+  --lane-0: rgb(0, 150, 136);
+  --lane-1: rgb(122, 48, 226);
+  --lane-2: rgb(190, 88, 0);
+  --lane-3: rgb(200, 16, 96);
+  --lane-4: rgb(0, 118, 172);
+  --lane-5: rgb(96, 138, 0);
+  --shadow-1: 0 1px 2px rgb(0 0 0 / 12%);
+  --shadow-2: 0 12px 28px -20px rgb(0 0 0 / 30%);
+  --shadow-3: 0 24px 60px -28px rgb(0 0 0 / 35%);
+  --shadow-lift: var(--shadow-2);
+  --topbar-bg: rgb(255, 255, 255);
+}
+
+/* ----------------------------------------------------------------- base */
+
+* { box-sizing: border-box; }
+
+</style>
+<style>
+  body { margin: 0; background: var(--dsw-alias-surface); font-family: var(--font-text, -apple-system, sans-serif); }
+  .mk-themebar { position: fixed; top: 10px; right: 14px; display: flex; gap: 6px; z-index: 9; }
+  .mk-themebar button { font: var(--text-xs, 11px)/1 var(--font-text); padding: 5px 8px; border-radius: 6px; border: 1px solid var(--dsw-alias-hairline-strong); background: var(--dsw-alias-surface); color: var(--dsw-alias-ink-secondary); cursor: pointer; }
+  .mk-tabs { display: flex; gap: 6px; padding: 18px 24px 0; }
+  .mk-tabs button { font: 12px/1 var(--font-text); padding: 7px 12px; border-radius: 8px 8px 0 0; border: 1px solid var(--dsw-alias-hairline-strong); border-bottom: 0; background: var(--dsw-alias-surface-raised); color: var(--dsw-alias-ink-secondary); cursor: pointer; }
+  .mk-tabs button[aria-selected="true"] { background: var(--dsw-alias-surface); color: var(--dsw-alias-ink); font-weight: 600; }
+  .mk-pane[hidden] { display: none; }
+  .mk-pane { display: grid; grid-template-columns: 216px minmax(0,1fr) 340px; gap: 14px; padding: 16px 24px 24px; border-top: 1px solid var(--dsw-alias-hairline-strong); }
+  .mk-head { grid-column: 1 / -1; display: flex; align-items: baseline; gap: 12px; }
+  .mk-title { font-size: 17px; font-weight: 620; letter-spacing: -0.01em; color: var(--dsw-alias-ink); }
+  .mk-sub { font-size: 11.5px; color: var(--dsw-alias-ink-tertiary); }
+  .mk-spacer { flex: 1; }
+  /* the projects rail */
+  .mk-rail { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+  .mk-railhead { font-size: 9.5px; font-weight: 600; letter-spacing: .11em; text-transform: uppercase; color: var(--dsw-alias-ink-tertiary); margin-bottom: 2px; }
+  .mk-proj { border: 1px solid var(--dsw-alias-hairline-strong); border-radius: 9px; background: var(--dsw-alias-surface); padding: 8px 10px; cursor: pointer; }
+  .mk-proj[data-on="true"] { border-color: var(--dsw-alias-accent); background: var(--dsw-alias-accent-wash); }
+  .mk-proj .t { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; font-weight: 600; color: var(--dsw-alias-ink); }
+  .mk-proj .n { font-size: 10.5px; color: var(--dsw-alias-ink-tertiary); font-variant-numeric: tabular-nums; }
+  .mk-proj .w { font-size: 10.5px; color: var(--dsw-alias-ink-tertiary); margin-top: 2px; }
+  .mk-kids { margin: 6px 0 0 8px; padding-left: 10px; border-left: 1px solid var(--dsw-alias-hairline-strong); display: flex; flex-direction: column; gap: 3px; }
+  .mk-kid { display: flex; gap: 6px; align-items: baseline; font-size: 11px; color: var(--dsw-alias-ink-secondary); padding: 4px 6px; border-radius: 6px; cursor: pointer; }
+  .mk-kid[data-on="true"] { background: var(--dsw-alias-surface-raised); color: var(--dsw-alias-ink); font-weight: 600; }
+  .mk-kid .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--dsw-alias-hairline-strong); flex: 0 0 auto; }
+  .mk-kid[data-state="needs"] .dot { background: var(--dsw-alias-warn); }
+  .mk-kid[data-state="done"] .dot { background: var(--dsw-alias-ok, #2f7d4f); }
+  /* the work column */
+  .mk-work { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+  .mk-card { border: 1px solid var(--dsw-alias-hairline-strong); border-radius: 10px; background: var(--card-bg, var(--dsw-alias-surface)); padding: 11px 13px; }
+  .mk-card h4 { margin: 0 0 6px; font-size: 9.5px; font-weight: 600; letter-spacing: .11em; text-transform: uppercase; color: var(--dsw-alias-ink-tertiary); }
+  .mk-card p { margin: 0; font-size: 11.5px; color: var(--dsw-alias-ink-secondary); line-height: 1.5; }
+  .mk-row { display: flex; align-items: flex-start; gap: 8px; padding: 6px 0; border-top: 1px solid var(--dsw-alias-hairline-strong); }
+  .mk-row:first-of-type { border-top: 0; }
+  .mk-row .q { flex: 1; min-width: 0; font-size: 11.5px; color: var(--dsw-alias-ink); }
+  .mk-row .src { font-size: 10px; color: var(--dsw-alias-ink-tertiary); margin-top: 2px; }
+  .mk-pill { font-size: 10px; padding: 2px 7px; border-radius: 999px; background: var(--dsw-alias-surface-raised); color: var(--dsw-alias-ink-secondary); white-space: nowrap; }
+  .mk-pill.bad { background: var(--dsw-alias-surface); color: var(--dsw-alias-down); border: 1px solid var(--dsw-alias-down); }
+  .mk-pill.ok { background: var(--dsw-alias-surface); color: var(--dsw-alias-ok, #2f7d4f); border: 1px solid var(--dsw-alias-ok, #2f7d4f); }
+  .mk-steps { display: flex; flex-direction: column; gap: 6px; }
+  .mk-step { display: flex; gap: 8px; align-items: baseline; font-size: 11.5px; }
+  .mk-step .n { width: 16px; height: 16px; border-radius: 50%; border: 1px solid var(--dsw-alias-hairline-strong); display: grid; place-items: center; font-size: 9.5px; color: var(--dsw-alias-ink-tertiary); flex: 0 0 auto; }
+  .mk-step[data-state="held"] .n { background: var(--dsw-alias-surface-raised); color: var(--dsw-alias-ink-secondary); }
+  .mk-step[data-state="here"] { font-weight: 600; color: var(--dsw-alias-ink); }
+  .mk-step[data-state="here"] .n { border-color: var(--dsw-alias-accent); color: var(--dsw-alias-accent); }
+  .mk-step .s { font-size: 10px; color: var(--dsw-alias-ink-tertiary); }
+  /* the thread + composer */
+  .mk-thread { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+  .mk-msg { border: 1px solid var(--dsw-alias-hairline-strong); border-radius: 10px; padding: 9px 11px; font-size: 11.5px; line-height: 1.5; color: var(--dsw-alias-ink); }
+  .mk-msg.owner { background: var(--dsw-alias-accent-wash); border-color: var(--dsw-alias-accent); }
+  .mk-msg .who { font-size: 9.5px; text-transform: uppercase; letter-spacing: .1em; color: var(--dsw-alias-ink-tertiary); margin-bottom: 3px; }
+  .mk-msg .ev { margin-top: 6px; padding-top: 6px; border-top: 1px dashed var(--dsw-alias-hairline-strong); font-size: 10.5px; color: var(--dsw-alias-ink-tertiary); }
+  .mk-composer { border: 1px solid var(--dsw-alias-hairline-strong); border-radius: 12px; background: var(--composer-bg, var(--dsw-alias-surface)); padding: 9px 10px; }
+  .mk-chips { display: flex; gap: 5px; flex-wrap: wrap; margin-bottom: 7px; }
+  .mk-chip { font-size: 10px; padding: 3px 8px; border-radius: 999px; border: 1px solid var(--dsw-alias-hairline-strong); color: var(--dsw-alias-ink-secondary); }
+  .mk-chip.on { border-color: var(--dsw-alias-accent); color: var(--dsw-alias-ink); background: var(--dsw-alias-accent-wash); }
+  .mk-field { display: flex; align-items: center; gap: 8px; }
+  .mk-field .box { flex: 1; font-size: 11.5px; color: var(--dsw-alias-ink-tertiary); padding: 7px 9px; border: 1px solid var(--dsw-alias-hairline-strong); border-radius: 8px; background: var(--dsw-alias-surface); }
+  .mk-send { font: 11.5px/1 var(--font-text); padding: 8px 14px; border-radius: 8px; border: 1px solid var(--dsw-alias-accent); background: var(--dsw-alias-accent-wash); color: var(--dsw-alias-accent-lift); font-weight: 600; cursor: pointer; }
+  .mk-note { font-size: 10px; color: var(--dsw-alias-ink-tertiary); margin-top: 6px; }
+</style>
+</head>
+<body>
+<div class="mk-themebar">
+  <button data-theme-set="paper">paper</button>
+  <button data-theme-set="console">console</button>
+  <button data-theme-set="graphite">graphite</button>
+  <button data-theme-set="contrast">contrast</button>
+</div>
+
+<div class="mk-tabs">
+  <button id="tab-desk" aria-selected="true">the desk</button>
+  <button id="tab-learn" aria-selected="false">learning</button>
+</div>
+
+<!-- ======================= THE DESK ======================= -->
+<section class="mk-pane" id="pane-desk">
+  <div class="mk-head">
+    <div class="mk-title">The desk</div>
+    <div class="mk-sub">knowledge work, organised by project</div>
+    <span class="mk-spacer"></span>
+    <div class="mk-sub">4 deliverables · 1 need you</div>
+  </div>
+
+  <!-- projects rail -->
+  <aside class="mk-rail" aria-label="projects">
+    <div class="mk-railhead">projects</div>
+    <div class="mk-proj" data-on="true">
+      <div class="t"><span>fleet</span><span class="n">3</span></div>
+      <div class="w">the product's own knowledge work</div>
+      <div class="mk-kids">
+        <div class="mk-kid" data-on="true" data-state="needs"><span class="dot"></span><span>the 0.7 launch brief</span></div>
+        <div class="mk-kid" data-state="done"><span class="dot"></span><span>the updater release note</span></div>
+        <div class="mk-kid"><span class="dot"></span><span>the memory audit</span></div>
+      </div>
+    </div>
+    <div class="mk-proj">
+      <div class="t"><span>client work</span><span class="n">2</span></div>
+      <div class="w">harbor's onboarding deck</div>
+    </div>
+    <div class="mk-proj">
+      <div class="t"><span>unbound</span><span class="n">1</span></div>
+      <div class="w">deliverables with no project yet</div>
+    </div>
+  </aside>
+
+  <!-- the work column -->
+  <div class="mk-work">
+    <div class="mk-card">
+      <h4>the brief</h4>
+      <p><strong>the 0.7 launch brief</strong> · a product brief for the beta's next cut. One claim:
+        the updater makes releases a button. Sources: 3 files, 4 facts, 1 page.</p>
+    </div>
+    <div class="mk-card">
+      <h4>the claims · 6 read, 5 carry</h4>
+      <div class="mk-row"><div class="q">the updater installs a raw binary and proves it runs
+        <div class="src">CHANGELOG.md · “the staged file must run and answer --version”</div></div><span class="mk-pill">0.91</span></div>
+      <div class="mk-row"><div class="q">a failed install leaves the running binary untouched
+        <div class="src">src/update.rs · “no partial install survives”</div></div><span class="mk-pill">0.88</span></div>
+      <div class="mk-row"><div class="q">updates arrive from GitHub only
+        <div class="src">the owner's ruling fact · 2026-11-09</div></div><span class="mk-pill ok">0.94</span></div>
+    </div>
+    <div class="mk-card">
+      <h4>coverage · 4 / 5</h4>
+      <p>one material gap: no cost comparison for the two install paths.</p>
+    </div>
+    <div class="mk-card">
+      <h4>the outline</h4>
+      <p>1 the release problem · 2 the channels · <strong>GAP: what a rollback costs</strong> · 3 the button</p>
+    </div>
+    <div class="mk-card">
+      <h4>review · the end gate</h4>
+      <div class="mk-row"><div class="q">the draft asserts “zero downtime” with no source</div><span class="mk-pill bad">refused</span></div>
+      <div class="mk-row"><div class="q">4 figures checked · all canonical</div><span class="mk-pill ok">clean</span></div>
+      <p class="mk-note">the deliverable cannot end while a refusal stands — answer it in the thread.</p>
+    </div>
+  </div>
+
+  <!-- the thread + composer -->
+  <div class="mk-thread">
+    <div class="mk-msg owner"><div class="who">you</div>make the churn claim sharper and answer the rollback gap with the 0.6.x record</div>
+    <div class="mk-msg"><div class="who">the desk · run 14</div>Re-read the 0.6.x release notes: the rollback gap is now answered by two rollback runs, and the churn sentence carries its source.
+      <div class="ev">2 sources read · claims 6 → 7 · coverage 4 → 5 · the refusal still stands on “zero downtime”</div></div>
+    <div class="mk-msg owner"><div class="who">you</div>drop the zero-downtime sentence — it is unsourced</div>
+    <div class="mk-msg"><div class="who">the desk · run 15</div>Dropped. The end gate is clear: 7 claims, all sourced, coverage 5, no refusal standing.
+      <div class="ev">the deliverable is ready to close · the digest will land under the fleet project</div></div>
+    <div class="mk-composer">
+      <div class="mk-chips">
+        <span class="mk-chip on">project · fleet</span>
+        <span class="mk-chip on">the 0.7 launch brief</span>
+        <span class="mk-chip">sources · 8</span>
+        <span class="mk-chip on">review before close</span>
+      </div>
+      <div class="mk-field">
+        <div class="box">iterate on this deliverable…</div>
+        <button class="mk-send">send</button>
+      </div>
+      <div class="mk-note">enter sends · the run reads the same sources and the whole thread</div>
+    </div>
+  </div>
+</section>
+
+<!-- ======================= LEARNING ======================= -->
+<section class="mk-pane" id="pane-learn" hidden>
+  <div class="mk-head">
+    <div class="mk-title">Learning</div>
+    <div class="mk-sub">the measure → plan → teach loop, organised by project</div>
+    <span class="mk-spacer"></span>
+    <div class="mk-sub">5 lessons · 2 in progress</div>
+  </div>
+
+  <aside class="mk-rail" aria-label="projects">
+    <div class="mk-railhead">projects</div>
+    <div class="mk-proj" data-on="true">
+      <div class="t"><span>fleet</span><span class="n">3</span></div>
+      <div class="w">the product's own machinery</div>
+      <div class="mk-kids">
+        <div class="mk-kid" data-on="true" data-state="needs"><span class="dot"></span><span>how the router picks a model</span></div>
+        <div class="mk-kid" data-state="done"><span class="dot"></span><span>how recall ranks a fact</span></div>
+        <div class="mk-kid"><span class="dot"></span><span>how a run folds its context</span></div>
+      </div>
+    </div>
+    <div class="mk-proj">
+      <div class="t"><span>the router study</span><span class="n">2</span></div>
+      <div class="w">reading beyond the roster</div>
+    </div>
+    <div class="mk-proj">
+      <div class="t"><span>unbound</span><span class="n">1</span></div>
+      <div class="w">a lesson with no project yet</div>
+    </div>
+  </aside>
+
+  <div class="mk-work">
+    <div class="mk-card">
+      <h4>the lesson · step 3 of 4 · 2 checked</h4>
+      <div class="mk-steps">
+        <div class="mk-step" data-state="held"><span class="n">✓</span><span>what you hold: a workload is a judged shape <span class="s">· held</span></span></div>
+        <div class="mk-step" data-state="held"><span class="n">✓</span><span>the chain is ordered by the roster's preference table <span class="s">· checked</span></span></div>
+        <div class="mk-step" data-state="here"><span class="n">3</span><span>the failover tail is appended, never routed <span class="s">· you are here</span></span></div>
+        <div class="mk-step"><span class="n">4</span><span>every walk closes on the tail <span class="s">· next</span></span></div>
+      </div>
+    </div>
+    <div class="mk-card">
+      <h4>the propositions this lesson built</h4>
+      <div class="mk-row"><div class="q">a walk's order is built, not looked up<div class="src">from step 2 · confirmed by you</div></div><span class="mk-pill ok">held</span></div>
+      <div class="mk-row"><div class="q">the tail is appended after every candidate fails<div class="src">from step 3 · awaiting your words</div></div><span class="mk-pill">new</span></div>
+    </div>
+    <div class="mk-card">
+      <h4>the practice beside it</h4>
+      <p>two exercises on this project's lessons · the last one checked 2 of 3 steps.</p>
+    </div>
+  </div>
+
+  <div class="mk-thread">
+    <div class="mk-msg owner"><div class="who">you</div>go one step at a time — why is the tail appended rather than routed?</div>
+    <div class="mk-msg"><div class="who">the teacher · step 3</div>Because no workload names it as a candidate: it is the reserve, so the builder appends it after the chain it routed. One step from what you hold.
+      <div class="ev">one step · attached to “a walk's order is built” · the check follows your answer</div></div>
+    <div class="mk-msg owner"><div class="who">you</div>so if a provider fails mid-walk the order does not change</div>
+    <div class="mk-msg"><div class="who">the teacher</div>That is the step after this one. Say it in your own words and the check will mark it held.
+      <div class="ev">step 3 still open · 2 of 4 checked</div></div>
+    <div class="mk-composer">
+      <div class="mk-chips">
+        <span class="mk-chip on">project · fleet</span>
+        <span class="mk-chip on">the lesson: the router</span>
+        <span class="mk-chip on">role · teacher</span>
+        <span class="mk-chip">practice</span>
+      </div>
+      <div class="mk-field">
+        <div class="box">answer, ask, or say “next step”…</div>
+        <button class="mk-send">send</button>
+      </div>
+      <div class="mk-note">the check rides your words · a practice starts beside the lesson</div>
+    </div>
+  </div>
+</section>
+
+<script>
+  document.querySelectorAll('[data-theme-set]').forEach(function (b) {
+    b.addEventListener('click', function () { document.documentElement.dataset.theme = b.dataset.themeSet; });
+  });
+  function show(which) {
+    var desk = which === 'desk';
+    document.getElementById('pane-desk').hidden = !desk;
+    document.getElementById('pane-learn').hidden = desk;
+    document.getElementById('tab-desk').setAttribute('aria-selected', String(desk));
+    document.getElementById('tab-learn').setAttribute('aria-selected', String(!desk));
+  }
+  document.getElementById('tab-desk').addEventListener('click', function () { show('desk'); });
+  document.getElementById('tab-learn').addEventListener('click', function () { show('learn'); });
+</script>
+</body>
+</html>
