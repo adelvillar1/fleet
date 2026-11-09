@@ -340,6 +340,28 @@ fresh settings document, whose `update` key is then overwritten wholesale —
 this (the shell takes the plugin branch), which is the path already misreporting
 the mode.
 
+## 5b. What answered each finding (v0.6.5, 2026-11-09)
+
+The plan is `docs/plans/2026-11-09-updater-that-installs.md`; this is the map
+from finding to fix, so a later reader can go from the symptom to the code.
+
+| Finding | Fix | Where |
+|---|---|---|
+| D1 / KI-486 | the release ships the cli artifact as a **raw binary** and the feed names it; before the rename the staged file must run and answer `--version` with the feed's version; the replaced binary is kept as `<exe>.prev`; a bundle refuses by name | `src/update.rs` (`self_update_over`, `staged_version`, `previous_for`), `scripts/release.sh` |
+| D2 / KI-487 | the capability names the loopback origin as a remote context and grants `restart_app`; the shell binds its listener once and hands it to the server | `src-tauri/capabilities/default.json`, `src-tauri/permissions/app.toml`, `src-tauri/src/lib.rs`, `gui::serve_with`, `Server::bind_on` |
+| D3 / KI-488 | the pane says the feed has not been asked until the check answers, and a failed check paints the refusal beside the press | `src/gui/assets/app.js`, two face-harness cases |
+| D4 | the plan's criterion and KI-483's claim are superseded by this plan, and the ledger rows for KI-486..489 carry the real verification state | `docs/plans/2026-11-09-updater-that-installs.md`, `docs/known-issues.md` |
+| G1 | the install leg takes its feed and artifact through an injected `Source`; six tests drive it with no network | `src/update.rs` |
+| G2 | the exec-and-version probe, run before the rename | `src/update.rs` |
+| G3 | `<exe>.prev`, copied before the rename | `src/update.rs` |
+| G4 | the port race is closed (bind once, hand the listener over); the grant stays loopback-only | `src-tauri/src/lib.rs`, `src/gui/mod.rs`, `src/gui/server.rs` |
+| G5 | **not fixed, by design** — the two installs still drift; a product question, out of the plan's scope | — |
+| S1 / KI-489 | `dangerousInsecureTransportProtocol` removed | `src-tauri/tauri.conf.json` |
+| S3 | still generic — the feed's notes line is unchanged; a candidate for a later pass | `scripts/release.sh` |
+| S4 | the cut reads its feed back anonymously and hashes the served artifact | `scripts/release.sh` |
+| S5 | the apply answer carries `installed_via` (and `installed`, `previous`) | `src/gui/bridge.rs`, `src/gui/assets/app.js` |
+| S2 | unchanged — a pre-release still compares equal to its release; harmless while the project ships none | `src/update.rs` |
+
 ## 6. Assumptions to confirm
 
 1. **The artifact's shape.** The plan says raw binary; the release ships a
