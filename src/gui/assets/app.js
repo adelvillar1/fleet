@@ -817,6 +817,8 @@
     panelAbout: document.getElementById('panel-about'),
     aboutBoard: document.getElementById('about-board'),
     deskBoard: document.getElementById('desk-board'),
+    deskDock: document.getElementById('desk-dock'),
+    deskBar: document.getElementById('desk-bar'),
     rail: document.getElementById('rail'),
     railTree: document.getElementById('rail-tree'),
     railToggle: document.getElementById('rail-toggle'),
@@ -985,6 +987,8 @@
     delegationBoard: document.getElementById('delegation-board'),
     memoryBoard: document.getElementById('memory-board'),
     learningBoard: document.getElementById('learning-board'),
+    learningDock: document.getElementById('learning-dock'),
+    learningBar: document.getElementById('learning-bar'),
     memoryRail: document.getElementById('memory-rail'),
     skillsBoard: document.getElementById('skills-board'),
     skillsRail: document.getElementById('skills-rail'),
@@ -3676,7 +3680,7 @@
     var item = face.queued.shift();
     paintQueue();
     el.task.value = item.text;
-    send(item.session);
+    send(item.session, item.surface);
   }
 
   // One control into the run in flight: the body is written verbatim to
@@ -8045,6 +8049,7 @@
       waiting.appendChild(node('p', 'board-empty',
         'The learning read has not landed yet. It reads the home\u2019s learning sessions and the corpus, both this machine\u2019s own.'));
       el.learningBoard.appendChild(waiting);
+      if (el.learningBar) el.learningBar.textContent = '';
       return;
     }
     if (refusals(read)) {
@@ -8052,83 +8057,68 @@
       var refused = boardCard(12, 'refused', null, null);
       refused.appendChild(node('p', 'board-empty', refusals(read).join('; ')));
       el.learningBoard.appendChild(refused);
+      if (el.learningBar) el.learningBar.textContent = '';
       return;
     }
-    el.learningBoard.appendChild(surfaceHead('Learning', 'learning',
-      'The measure \u2192 plan \u2192 teach loop: what you hold, the plan\u2019s coarse view, the propositions it built, and the practice.',
-      surfaceInstrument('the loop',
+    // The surface's own column, the same one the desk and the conversation
+    // ride: the list is the app's work column, the centre is the lesson
+    // itself, and the pane is its properties.
+    var shell = pwShell(el.learningBoard);
+    // The centre is the lesson itself — its section's work — then the
+    // thread that teaches it, then the one composer pinned underneath.
+    // Its properties and settings are the pane's context tab.
+    var lesson = read.lesson || {};
+    var session = face.learnPick || lesson.id || '';
+    if (session) {
+      var work = node('div', 'pw-lessonwork');
+      work.appendChild(surfaceInstrument('the loop',
         read.graph ? read.graph.propositions.length : 0,
         (read.history ? read.history.lessons.length : 0) + ' lessons \u00b7 ' +
         (read.history ? read.history.practice.length : 0) + ' practice',
-        [])));
-    // The projects rail on the pane's own left column; the work and the
-    // lesson's thread beside it.
-    // The same shell the desk rides: the projects rail, then the centre
-    // (the lesson's work, its conversation, the composer). The right-hand
-    // column is the app's own pane.
-    var shell = pwShell(el.learningBoard);
-    paintProjectsRail(shell.rail, 'learning');
-    // The centre is the lesson's conversation; the plan, the graph, the
-    // practice and the history are the pane's context tab.
-    var lesson = read.lesson || {};
-    var session = face.learnPick || lesson.id || '';
-    paintLearningThread(shell.center, read, session);
+        []));
+      shell.center.appendChild(work);
+      paintLearningSection(learningSectionId(), work);
+      paintLearningThread(shell.center, read, session);
+    } else {
+      // No lesson at all: the surface reads like the conversation's own
+      // welcome, and the composer under it starts the first question.
+      pwWelcome(shell.center, {
+        eyebrow: 'fleet \u00b7 learning',
+        title: 'What are we learning?',
+        lede: 'Start from what you already hold. The lesson plans the smallest next step, '
+          + 'teaches it, and checks it against your own words \u2014 never a syllabus.',
+        steps: [
+          ['Measure', 'what you hold'],
+          ['Plan', 'the smallest next step'],
+          ['Teach', 'one checked step at a time'],
+        ],
+        note: 'Say what you already hold below \u2014 the first question is the lesson.',
+      });
+    }
+    // The pane shows the lesson's properties once there is a lesson:
+    // the route asks for the tab, the paint takes it when it can.
+    if (face.wantContext && paneContextAvailable() && !el.pane.hidden) {
+      face.wantContext = false;
+      showPaneTab('context');
+    }
+    // The lesson always carries the one composer, pinned at the bottom.
+    paintSurfaceDock('learning');
+    placeComposer(el.learningDock);
     readProjects(false);
+    if (face.panel === 'learning') paintWork();
     if (session) readThread(session, false);
     if (!el.pane.hidden && paneContextAvailable()) paintPaneContext();
   }
 
-  /// The lesson's thread: its own session's log and the composer that
-  /// answers, asks, or says "next step". The role chip is the role the
-  /// run rides; the practice chip starts one beside the lesson.
+  /// The lesson's thread under its work in the centre: the session's own
+  /// log, which is what the one composer answers into.
   function paintLearningThread(into, read, session) {
-    var lesson = (read && read.lesson) || {};
-    var role = face.learnRole || 'teacher';
-    var chips = [
-      pwChip('project \u00b7 ' + pwName(lesson.project), true,
-        lesson.project || 'this lesson has no project yet', function () {
-          if (!face.pwProject) face.pwProject = {};
-          face.pwProject.learning = lesson.project || '';
-          paintLearning();
-        }),
-      pwChip(lesson.title || 'the lesson', true, 'refresh the thread from the log', function () {
-        readLearning(true);
-        if (session) readThread(session, true);
-      }),
-      pwChip('role \u00b7 ' + role, true,
-        'the role this run rides \u2014 press to switch teacher and practitioner', function () {
-          face.learnRole = role === 'teacher' ? 'practitioner' : 'teacher';
-          paintLearning();
-        }),
-      pwChip('practice', false, 'start a practice beside this lesson', function () {
-        startLearning('practice', 'practitioner',
-          'a practice beside ' + (lesson.title || 'this lesson'));
-      })
-    ];
     var chat = node('div', 'pw-chat');
     into.appendChild(chat);
     paintThreadInto(chat, {
       title: 'the thread',
       session: session,
-      placeholder: 'answer, ask, or say \u201cnext step\u201d\u2026',
       empty: 'a lesson starts with a question \u2014 say what you already hold',
-      note: 'the check rides your words \u00b7 a practice starts beside the lesson',
-      chips: chips,
-      send: function (text) {
-        var target = face.learnPick || ((face.learning || {}).lesson || {}).id || '';
-        post('/api/learning/start' + (target
-          ? '?session=' + encodeURIComponent(target) : ''),
-          { task: text, kind: 'teaching', role: role }).then(function (reply) {
-          if (reply.status !== 200) {
-            pwRefuse(into, (reply.body && reply.body.error) || 'the learning run was refused');
-            return;
-          }
-          readLearning(true);
-          if (target) readThread(target, true);
-        }).catch(function () {
-          pwRefuse(into, 'the learning run did not reach the far side');
-        });
-      },
     });
   }
 
@@ -8857,18 +8847,19 @@
     el.task.setSelectionRange(text.length, text.length);
   }
 
-  function send(queuedSession) {
+  function send(queuedSession, queuedSurface) {
     // While a run is in flight the composer queues: one slot, sent the
     // moment the run ends. The queue is the face's own state — a reload
     // drops it, and the chip says so. A flush carries the session its
     // message was typed for, so a queued message can never drain into
     // a different conversation (2026-11-05).
+    var here = queuedSurface !== undefined ? queuedSurface : composerSurface();
     if (queuedSession === undefined &&
         (face.running || face.seat ||
         (face.driving && face.driving !== face.session))) {
       var pending = el.task.value.trim();
       if (pending) {
-        face.queued.push({ text: pending, session: face.session });
+        face.queued.push({ text: pending, session: face.session, surface: here });
         el.task.value = '';
         grow();
         clearDraft();
@@ -8876,6 +8867,9 @@
       }
       return;
     }
+    // The one composer speaks for the place it stands in: on a work
+    // surface its words are that surface's run, not the conversation's.
+    if (here) { surfaceSend(here); return; }
     if (face.planMode) { planSend(); return; }
     // An edit in flight (D3): rewind to the turn before the original
     // run, then post the edit as the next run. The confirm is the
@@ -11276,8 +11270,17 @@
   // shelf), learning's sections. The centre is the conversation; the work
   // lives here, collapsible like every other surface's pane.
 
+  /// The context tab exists only for an artifact: with nothing selected
+  /// (or nothing in the project at all) the pane has no properties to
+  /// show, and a pane of empty cards would be a column nobody reads.
   function paneContextAvailable() {
-    return face.panel === 'desk' || face.panel === 'learning';
+    if (face.panel === 'desk') return Boolean(face.deskOpenDesk) || face.deskView === 'composer';
+    if (face.panel === 'learning') {
+      var read = face.learning || {};
+      var lesson = read.lesson || {};
+      return Boolean(face.learnPick || lesson.id);
+    }
+    return false;
   }
 
   function paintPaneContext() {
@@ -11285,11 +11288,9 @@
     el.paneContext.textContent = '';
     if (face.panel === 'desk') {
       if (face.deskOpenDesk) {
-        paintDeskProject(face.deskOpenDesk, el.paneContext);
+        paintDeskProperties(face.deskOpenDesk, el.paneContext);
       } else if (face.deskView === 'composer') {
         paintDeskComposer(el.paneContext);
-      } else {
-        paintDeskShelf(el.paneContext);
       }
       return;
     }
@@ -11299,21 +11300,139 @@
         el.paneContext.appendChild(node('p', 'pw-quiet', 'reading the lesson\u2026'));
         return;
       }
-      var chips = node('div', 'pw-sections');
-      learningSections(read).forEach(function (section) {
-        var chip = node('button', 'pw-chip' + (learningSectionId() === section.id ? ' on' : ''),
-          section.name);
-        chip.type = 'button';
-        chip.addEventListener('click', function () {
-          rememberLearningSection(section.id);
-          window.location.hash = '#/learning/' + section.id;
-          paintPaneContext();
-        });
-        chips.appendChild(chip);
-      });
-      el.paneContext.appendChild(chips);
-      paintLearningSection(learningSectionId(), el.paneContext);
+      paintLearningProperties(read, el.paneContext);
     }
+  }
+
+  /// The right pane on a work surface: the open artifact's properties and
+  /// settings, not its work. The work is the centre screen, the
+  /// communication is the one composer, and this column says what the
+  /// artifact is bound to and lets its settings change — in the pane's own
+  /// card, facts and ghost-button idiom, the one the run tab uses.
+  function paneCard(title, facts, body) {
+    var card = node('section', 'card');
+    var head = node('header', 'card-head');
+    head.appendChild(node('h2', null, title));
+    card.appendChild(head);
+    if (facts && facts.length) {
+      var list = node('dl', 'facts');
+      facts.forEach(function (pair) {
+        if (pair[1] === undefined || pair[1] === null || pair[1] === '') return;
+        var row = node('div', 'fact');
+        row.appendChild(node('dt', null, pair[0]));
+        row.appendChild(node('dd', null, pair[1]));
+        list.appendChild(row);
+      });
+      card.appendChild(list);
+    }
+    if (body) body(card);
+    return card;
+  }
+
+  function paintDeskProperties(desk, into) {
+    var standing = (desk.refusals || []).length + (desk.number_refusals || []).length;
+    into.appendChild(paneCard('properties', [
+      ['deliverable', desk.name || desk.slug],
+      ['project', desk.project || 'unbound'],
+      ['shape', desk.shape || 'presentation'],
+      ['end gate', standing ? standing + ' standing' : 'clear'],
+      ['updated', desk.updated || undefined],
+    ]));
+
+    var sources = node('div', 'pw-sources');
+    (desk.sources || []).forEach(function (source) {
+      sources.appendChild(node('div', 'pw-source',
+        (source.type || 'file') + ' \u00b7 ' + (source.url || source.path || '')));
+    });
+    if (!(desk.sources || []).length) {
+      sources.appendChild(node('p', 'pw-quiet', 'no sources yet'));
+    }
+    into.appendChild(paneCard('the sources', [
+      ['carried', String((desk.sources || []).length)],
+    ], function (card) { card.appendChild(sources); }));
+
+    var gate = node('div', 'pw-sources');
+    if (standing) {
+      (desk.refusals || []).forEach(function (row) {
+        gate.appendChild(node('p', 'pw-refusal',
+          'refused \u00b7 ' + (row.assertion || 'an unsourced assertion')));
+      });
+      (desk.number_refusals || []).forEach(function (row) {
+        gate.appendChild(node('p', 'pw-refusal',
+          'number \u00b7 ' + (row.text || row.number || 'an unsourced figure')));
+      });
+    } else {
+      gate.appendChild(node('p', 'pw-quiet', 'the end gate is clear'));
+    }
+    into.appendChild(paneCard('the end gate', null, function (card) { card.appendChild(gate); }));
+
+    var settings = node('div', 'pane-settings');
+    var pick = node('button', 'ghost', 'select the project');
+    pick.type = 'button';
+    pick.title = 'select this project in the work column';
+    pick.addEventListener('click', function () {
+      if (!face.pwProject) face.pwProject = {};
+      face.pwProject.desk = desk.project || '';
+      paintDesk();
+    });
+    settings.appendChild(pick);
+    into.appendChild(paneCard('settings', null, function (card) { card.appendChild(settings); }));
+  }
+
+  function paintLearningProperties(read, into) {
+    var lesson = (read || {}).lesson || {};
+    var session = face.learnPick || lesson.id || '';
+    var role = face.learnRole || 'teacher';
+    into.appendChild(paneCard('properties', [
+      ['lesson', lesson.title || undefined],
+      ['project', lesson.project || 'unbound'],
+      ['role', role],
+      ['lesson id', session || undefined],
+    ]));
+
+    var settings = node('div', 'pane-settings');
+    var flip = node('button', 'ghost', 'ride ' + role);
+    flip.type = 'button';
+    flip.title = 'the role this run rides \u2014 press to switch teacher and practitioner';
+    flip.addEventListener('click', function () {
+      face.learnRole = role === 'teacher' ? 'practitioner' : 'teacher';
+      paintLearning();
+    });
+    settings.appendChild(flip);
+    if (session) {
+      var practice = node('button', 'ghost', 'start a practice');
+      practice.type = 'button';
+      practice.title = 'start a practice beside this lesson';
+      practice.addEventListener('click', function () {
+        startLearning('practice', 'practitioner',
+          'a practice beside ' + (lesson.title || 'this lesson'));
+      });
+      settings.appendChild(practice);
+    }
+    var pick = node('button', 'ghost', 'select the project');
+    pick.type = 'button';
+    pick.title = 'select this project in the work column';
+    pick.addEventListener('click', function () {
+      if (!face.pwProject) face.pwProject = {};
+      face.pwProject.learning = lesson.project || '';
+      paintLearning();
+    });
+    settings.appendChild(pick);
+    into.appendChild(paneCard('settings', null, function (card) { card.appendChild(settings); }));
+
+    var chips = node('div', 'pw-sections');
+    learningSections(read).forEach(function (section) {
+      var chip = node('button', 'pw-chip' + (learningSectionId() === section.id ? ' on' : ''),
+        section.name);
+      chip.type = 'button';
+      chip.addEventListener('click', function () {
+        rememberLearningSection(section.id);
+        window.location.hash = '#/learning/' + section.id;
+        paintLearning();
+      });
+      chips.appendChild(chip);
+    });
+    into.appendChild(paneCard('the sections', null, function (card) { card.appendChild(chips); }));
   }
 
   /// Keep the context tab honest across routes: a surface without one
@@ -11348,18 +11467,15 @@
   }
 
   function pwShell(board) {
-    // The surface's own columns: the projects rail, then the centre —
-    // the artifact's work, its conversation, and the composer. The
-    // right-hand column is the app's own pane (run, files, preview,
-    // web), the same one sessions, design and huddles carry.
+    // The centre screen: the artifact's work, its conversation, and the
+    // composer pinned underneath. The list of artifacts is the app's own
+    // work column beside it, and the right column is the app's own pane —
+    // no surface draws a second rail of either.
     var shell = node('div', 'pw-shell');
-    var rail = node('aside', 'pw-rail');
-    rail.setAttribute('aria-label', 'projects');
     var center = node('div', 'pw-center');
-    shell.appendChild(rail);
     shell.appendChild(center);
     board.appendChild(shell);
-    return { rail: rail, center: center };
+    return { center: center };
   }
 
   function pwName(path) {
@@ -11368,96 +11484,6 @@
     return parts[parts.length - 1] || text || 'unbound';
   }
 
-  /// The projects rail: each project with its artifact count, and the
-  /// selected project's artifacts under it. Pressing a project toggles it;
-  /// pressing an artifact opens it where the surface's work lives.
-  function paintProjectsRail(rail, surface) {
-    rail.textContent = '';
-    rail.classList.add('pw-rail');
-    rail.appendChild(node('div', 'pw-railhead', 'projects'));
-    var doc = face.projects;
-    if (!doc || refusals(doc)) {
-      rail.appendChild(node('p', 'pw-quiet',
-        doc ? refusals(doc).join('; ') : 'reading the projects\u2026'));
-      return;
-    }
-    var selected = (face.pwProject || {})[surface] || '';
-    var paintProject = function (path, name, deliverables, lessons) {
-      var row = node('div', 'pw-proj');
-      row.dataset.on = String(selected === path && path !== '');
-      row.dataset.path = path;
-      var title = node('div', 'pw-proj-t');
-      title.appendChild(node('span', '', name));
-      title.appendChild(node('span', 'n',
-        String((deliverables || []).length + (lessons || []).length)));
-      row.appendChild(title);
-      var note = surface === 'desk'
-        ? ((deliverables || []).length + ' deliverable' + ((deliverables || []).length === 1 ? '' : 's'))
-        : ((lessons || []).length + ' lesson' + ((lessons || []).length === 1 ? '' : 's'));
-      row.appendChild(node('div', 'pw-proj-w', note));
-      row.addEventListener('click', function () {
-        if (!face.pwProject) face.pwProject = {};
-        face.pwProject[surface] = selected === path ? '' : path;
-        if (surface === 'desk') {
-          face.deskOpenDesk = null;
-          face.deskView = 'shelf';
-          paintDesk();
-        } else {
-          paintLearning();
-        }
-      });
-      rail.appendChild(row);
-      if (selected !== path || path === '') return;
-      var kids = node('div', 'pw-kids');
-      // The surface's own artifacts only: the desk lists deliverables and
-      // learning lists lessons, so neither rail grows a row it cannot
-      // open.
-      if (surface === 'desk') {
-        (deliverables || []).forEach(function (item) {
-          var kid = node('div', 'pw-kid');
-          kid.dataset.key = 'desk:' + item.slug;
-          kid.dataset.state = item.needs ? 'needs' : '';
-          kid.appendChild(node('span', 'dot'));
-          kid.appendChild(node('span', 't', item.name || item.slug));
-          kid.addEventListener('click', function () { openDeskDeliverable(item.slug); });
-          kids.appendChild(kid);
-        });
-      } else {
-        (lessons || []).forEach(function (item) {
-          var kid = node('div', 'pw-kid');
-          kid.dataset.key = 'lesson:' + item.id;
-          kid.dataset.state = item.ended ? 'done' : 'needs';
-          kid.appendChild(node('span', 'dot'));
-          kid.appendChild(node('span', 't', item.title || item.id));
-          kid.addEventListener('click', function () { openLesson(item.id); });
-          kids.appendChild(kid);
-        });
-      }
-      if (kids.children.length) rail.appendChild(kids);
-    };
-    (doc.projects || []).forEach(function (project) {
-      paintProject(project.path, project.name, project.deliverables, project.lessons);
-    });
-    var un = doc.unbound || {};
-    if ((un.deliverables || []).length || (un.lessons || []).length) {
-      paintProject('', 'unbound', un.deliverables, un.lessons);
-    }
-    if (!(doc.projects || []).length && !(un.deliverables || []).length &&
-        !(un.lessons || []).length) {
-      // An empty rail is never a blank column: it names the one act that
-      // fills it.
-      rail.appendChild(pwChip(surface === 'desk' ? 'start a brief' : 'start a lesson',
-        false, '', function () {
-          if (surface === 'desk') {
-            face.deskView = 'composer';
-            face.deskOpenDesk = null;
-            paintDesk();
-          } else {
-            startLearning('teaching', 'prober', 'let\u2019s start a lesson');
-          }
-        }));
-    }
-  }
 
   function openDeskDeliverable(slug) {
     var found = (face.desk || []).filter(function (d) { return d.slug === slug; })[0];
@@ -11507,69 +11533,176 @@
   }
 
   /// The composer's refusal, painted where the press stands — never only
-  /// in the transcript two panes away.
-  function pwRefuse(into, reason) {
-    var line = into.querySelector ? into.querySelector('.pw-refusal') : null;
-    if (!line) {
-      line = node('p', 'pw-refusal');
-      line.setAttribute('role', 'alert');
-      into.appendChild(line);
-    }
-    line.textContent = reason;
+  /// in the transcript two panes away. It is state, not a node: the dock
+  /// repaints from the same read, so a repaint does not lose the reason.
+  function pwRefuse(reason) {
+    face.surfaceRefusal = reason || '';
+    paintSurfaceDock(composerSurface() || face.panel);
   }
 
-  /// One conversation block inside a column: its own container, so the
-  /// thread's clear never wipes the work painted above it.
-  function pwChat(into, opts) {
-    var chat = node('div', 'pw-chat');
-    into.appendChild(chat);
-    paintThreadInto(chat, opts);
-    return chat;
+  // ---- one composer for every place that speaks ---------------------------
+  //
+  // The conversation's composer is THE composer: one field, one run bar,
+  // one queue, one Stop. A surface that speaks borrows that element rather
+  // than drawing a second one beside it — the owner's rule (2026-11-09):
+  // "the composer component should remain identical to session, and
+  // huddles". It moves into the surface's dock and comes home when the
+  // route leaves, so the two can never drift apart: there is only one.
+  var composerHome = null;
+
+  /// The one composer, borrowed by a surface, keeps its focus on that
+  /// surface's work: the field says what the words are for, and the run
+  /// bar under it is the same one every chat carries.
+  function setComposerFocus(kind) {
+    if (!el.task) return;
+    if (kind === 'desk') {
+      var desk = face.deskOpenDesk;
+      el.task.placeholder = desk
+        ? 'iterate on ' + (desk.name || 'this deliverable') + '\u2026'
+        : 'say what you want made \u2014 it opens the brief\u2026';
+      return;
+    }
+    if (kind === 'learning') {
+      el.task.placeholder = 'answer, ask, or say \u201cnext step\u201d\u2026';
+      return;
+    }
+    el.task.placeholder = (composerHome && composerHome.placeholder) ||
+      'Ask fleet for something\u2026';
   }
 
-  function pwComposer(into, opts) {
-    var wrap = node('div', 'pw-composer');
-    if (opts.chips && opts.chips.length) {
-      var chips = node('div', 'pw-chips');
-      opts.chips.forEach(function (chip) { chips.appendChild(chip); });
-      wrap.appendChild(chips);
+  function placeComposer(host) {
+    if (!el.composer) return;
+    if (!composerHome) {
+      // The place the field was declared in is its home. A page whose
+      // markup the test stub flattens has no parent chain, so the panel
+      // is the answer there; a browser always has the column.
+      composerHome = {
+        parent: el.composer.parentNode || el.panelChat,
+        next: el.composer.nextSibling,
+        placeholder: el.task ? el.task.placeholder : '',
+      };
     }
-    if (opts.below) wrap.appendChild(opts.below);
-    var field = node('div', 'pw-field');
-    var box = node('textarea', 'pw-box');
-    box.rows = 1;
-    box.placeholder = opts.placeholder || 'iterate\u2026';
-    box.setAttribute('aria-label', opts.placeholder || 'iterate');
-    var busy = !!face.running;
-    var button = node('button', 'pw-send' + (busy ? ' stop' : ''), busy ? 'stop' : 'send');
-    button.type = 'button';
-    button.title = busy ? 'stop the run' : 'send \u00b7 enter';
-    var sendNow = function () {
-      var text = box.value.trim();
-      if (!text || face.running) return;
-      box.value = '';
-      opts.send(text);
-    };
-    box.addEventListener('keydown', function (event) {
-      if (event.key === 'Enter' && !event.shiftKey) {
-        event.preventDefault();
-        sendNow();
-      }
-    });
-    button.addEventListener('click', function () {
-      if (face.running) {
-        stopRun();
+    var target = host || composerHome.parent;
+    if (!target || el.composer.parentNode === target) return;
+    if (host) host.appendChild(el.composer);
+    else composerHome.parent.insertBefore(el.composer, composerHome.next);
+    setComposerFocus(host === el.deskDock ? 'desk'
+      : host === el.learningDock ? 'learning' : null);
+  }
+
+  /// Which place the composer is standing in. The element's own home is
+  /// the answer: a surface that borrowed it is the one it speaks for.
+  function composerSurface() {
+    var host = el.composer && el.composer.parentNode;
+    if (!host) return null;
+    if (el.deskDock && host === el.deskDock) return 'desk';
+    if (el.learningDock && host === el.learningDock) return 'learning';
+    return null;
+  }
+
+  /// The one composer's words to the place it stands in. A desk iteration
+  /// and a lesson answer are the chat's own gesture with a different
+  /// address: Enter sends, the button is Stop while a run is in flight,
+  /// and a refusal paints in the strip above the field.
+  function surfaceSend(kind) {
+    var text = el.task.value.trim();
+    if (!text || face.running) return;
+    var path = '';
+    var body = null;
+    if (kind === 'desk') {
+      var desk = face.deskOpenDesk;
+      if (!desk) {
+        // Nothing open: the words become the brief. The form opens with
+        // them as its claim, so typing on the empty desk is the first
+        // step of making a deliverable rather than a sentence into a
+        // void.
+        face.deskPrefill = { claim: text };
+        face.deskView = 'composer';
+        face.deskOpenDesk = null;
+        el.task.value = '';
+        grow();
+        clearDraft();
+        face.surfaceRefusal = '';
+        paintDesk();
+        if (el.pane && el.pane.hidden) openPane();
+        showPaneTab('context');
+        if (face.deskNameField && face.deskNameField.focus) face.deskNameField.focus();
         return;
       }
-      sendNow();
+      path = '/api/desk/' + encodeURIComponent(desk.slug) + '/chat';
+      body = { text: text, mode: face.permissions };
+    } else if (kind === 'learning') {
+      var lesson = (face.learning || {}).lesson || {};
+      var session = face.learnPick || lesson.id || '';
+      path = '/api/learning/start' +
+        (session ? '?session=' + encodeURIComponent(session) : '');
+      body = { task: text, kind: 'teaching', role: face.learnRole || 'teacher' };
+    } else {
+      return;
+    }
+    el.task.value = '';
+    grow();
+    clearDraft();
+    face.surfaceRefusal = '';
+    paintSurfaceDock(kind);
+    post(path, body).then(function (reply) {
+      if (reply.status !== 200) {
+        el.task.value = text;
+        grow();
+        pwRefuse((reply.body && reply.body.error) || 'the run was refused');
+        return;
+      }
+      if (kind === 'desk') {
+        var born = (reply.body && reply.body.session) || desk.session || '';
+        readThread(born, true).then(function () {
+          readDesk(true).then(function () {
+            if (face.deskOpenDesk) openDeskDeliverable(face.deskOpenDesk.slug);
+          });
+        });
+      } else {
+        readLearning(true);
+        var into = face.learnPick || ((face.learning || {}).lesson || {}).id || '';
+        if (into) readThread(into, true);
+      }
+    }).catch(function () {
+      el.task.value = text;
+      grow();
+      pwRefuse('the words did not reach the far side');
     });
-    field.appendChild(box);
-    field.appendChild(button);
-    wrap.appendChild(field);
-    if (opts.note) wrap.appendChild(node('p', 'pw-note', opts.note));
-    into.appendChild(wrap);
   }
 
+  /// The strip above the composer carries one thing: the refusal a press
+  /// earned. The binding it used to show is the pane's properties now —
+  /// the strip exists so a refusal paints where the press stands, never
+  /// only in the transcript.
+  function paintSurfaceDock(kind) {
+    var bar = kind === 'desk' ? el.deskBar : kind === 'learning' ? el.learningBar : null;
+    if (!bar) return;
+    setComposerFocus(kind);
+    bar.textContent = '';
+    if (face.surfaceRefusal) {
+      var line = node('p', 'pw-refusal');
+      line.setAttribute('role', 'alert');
+      line.textContent = face.surfaceRefusal;
+      bar.appendChild(line);
+    }
+  }
+
+  /// A work surface with nothing open reads like the conversation's own
+  /// welcome — the same .empty component, its eyebrow, headline and lede,
+  /// in the centre where the transcript would be. No new type styles: the
+  /// design system's own, with this surface's words.
+  function pwWelcome(into, opts) {
+    var card = node('div', 'empty');
+    card.appendChild(node('p', 'empty-eyebrow', opts.eyebrow));
+    card.appendChild(node('h1', null, opts.title));
+    card.appendChild(node('p', 'empty-lede', opts.lede));
+    if (opts.note) card.appendChild(node('p', 'empty-meta', opts.note));
+    into.appendChild(card);
+  }
+
+  /// The thread's own cards: the head and the replay. The composer is not
+  /// part of it — it is the app's one composer, in the surface's dock.
   function paintThreadInto(into, opts) {
     into.textContent = '';
     var head = node('div', 'pw-thread-head');
@@ -11590,113 +11723,57 @@
         opts.session ? 'reading the thread\u2026' : (opts.empty || 'nothing said yet')));
     }
     into.appendChild(list);
-    pwComposer(into, opts);
     if (opts.session) readThread(opts.session, false);
   }
 
+  // The desk's surface: the app's work column (the projects and their
+  // deliverables), the centre — the deliverable's work and its thread —
+  // the right pane (its properties and settings), and the one composer
+  // pinned at the bottom of the column.
   function paintDesk() {
     var board = el.deskBoard;
     if (!board) return;
     board.textContent = '';
     board.className = 'board dk-board';
     var shell = pwShell(board);
-    paintProjectsRail(shell.rail, 'desk');
-    // The centre is the conversation; the deliverable's work is the
-    // pane's context tab beside it.
     if (face.deskOpenDesk) {
-      paintDeskChat(shell.center, face.deskOpenDesk);
-    } else {
-      pwChat(shell.center, {
-        title: 'the conversation',
-        empty: face.deskView === 'composer'
-          ? 'the conversation opens once the brief is made \u2014 the brief is its first message'
-          : 'open a deliverable to iterate on it',
+      paintDeskProject(face.deskOpenDesk, shell.center);
+      var chat = node('div', 'pw-chat');
+      shell.center.appendChild(chat);
+      paintThreadInto(chat, {
+        title: 'the thread',
+        session: face.deskOpenDesk.session || '',
+        empty: 'say what to change \u2014 the first press opens the conversation with the brief',
       });
+    } else {
+      paintDeskWelcome(shell.center);
     }
+    if (face.wantContext && paneContextAvailable() && !el.pane.hidden) {
+      face.wantContext = false;
+      showPaneTab('context');
+    }
+    paintSurfaceDock('desk');
+    placeComposer(el.deskDock);
     readProjects(false);
+    if (face.panel === 'desk') paintWork();
     if (!el.pane.hidden && paneContextAvailable()) paintPaneContext();
   }
 
-  /// The selected deliverable's thread: the replay of its own session and
-  /// the composer that iterates on it. The chips are the brief's state made
-  /// visible and pressable; each one does something to this pane.
-  function paintDeskChat(into, desk) {
-    var standing = (desk.refusals || []).length + (desk.number_refusals || []).length;
-    var chips = [
-      pwChip('project \u00b7 ' + pwName(desk.project), true,
-        desk.project || 'unbound \u2014 this deliverable has no project yet',
-        function () {
-          if (!face.pwProject) face.pwProject = {};
-          face.pwProject.desk = desk.project || '';
-          paintDesk();
-        }),
-      pwChip(desk.name || desk.slug, true, 'refresh the thread from the log', function () {
-        readDesk(true).then(function () { openDeskDeliverable(desk.slug); });
-        readThread(desk.session || '', true);
-      }),
-      pwChip('sources \u00b7 ' + (desk.sources || []).length, !!face.pwDeskSources,
-        'the sources the brief carries', function () {
-          face.pwDeskSources = !face.pwDeskSources;
-          paintDesk();
-        }),
-      pwChip('review \u00b7 ' + (standing ? standing + ' standing' : 'clear'),
-        !!face.pwDeskReview,
-        'the end gate: a deliverable cannot close while a refusal stands', function () {
-          face.pwDeskReview = !face.pwDeskReview;
-          paintDesk();
-        })
-    ];
-    var below = null;
-    if (face.pwDeskSources) {
-      below = node('div', 'pw-sources');
-      (desk.sources || []).forEach(function (source) {
-        below.appendChild(node('div', 'pw-source',
-          (source.type || 'file') + ' \u00b7 ' + (source.url || source.path || '')));
-      });
-      if (!(desk.sources || []).length) below.appendChild(node('p', 'pw-quiet', 'no sources yet'));
-    }
-    if (face.pwDeskReview) {
-      below = below || node('div', 'pw-sources');
-      if (standing) {
-        (desk.refusals || []).forEach(function (row) {
-          below.appendChild(node('p', 'pw-refusal',
-            'refused \u00b7 ' + (row.assertion || 'an unsourced assertion')));
-        });
-        (desk.number_refusals || []).forEach(function (row) {
-          below.appendChild(node('p', 'pw-refusal',
-            'number \u00b7 ' + (row.text || row.number || 'an unsourced figure')));
-        });
-      } else {
-        below.appendChild(node('p', 'pw-quiet', 'the end gate is clear'));
-      }
-    }
-    // The conversation is its own container inside the centre: the work
-    // cards above it are not the thread's to clear.
-    var chat = node('div', 'pw-chat');
-    into.appendChild(chat);
-    paintThreadInto(chat, {
-      title: 'the thread',
-      session: desk.session || '',
-      placeholder: 'iterate on ' + (desk.name || 'this deliverable') + '\u2026',
-      empty: 'say what to change \u2014 the first press opens the conversation with the brief',
-      note: 'enter sends \u00b7 the run reads the brief, the sources and the thread',
-      chips: chips,
-      below: below,
-      send: function (text) {
-        post('/api/desk/' + encodeURIComponent(desk.slug) + '/chat',
-          { text: text, mode: face.permissions }).then(function (reply) {
-          if (reply.status !== 200) {
-            pwRefuse(into, (reply.body && reply.body.error) || 'the iteration was refused');
-            return;
-          }
-          var session = reply.body && reply.body.session;
-          readThread(session, true).then(function () {
-            readDesk(true).then(function () { openDeskDeliverable(desk.slug); });
-          });
-        }).catch(function () {
-          pwRefuse(into, 'the iteration did not reach the far side');
-        });
-      },
+  /// The desk with nothing open: the welcome, in the centre where the
+  /// conversation would be. The composer beneath is the first step: its
+  /// words open the brief with the claim already written.
+  function paintDeskWelcome(into) {
+    var projects = face.desk || [];
+    pwWelcome(into, {
+      eyebrow: 'fleet \u00b7 the desk',
+      title: 'What are we making stand?',
+      lede: 'Name the deliverable and the one claim it must carry. The desk reads the sources, '
+        + 'shows every claim with the sentence behind it, and refuses to call the work done '
+        + 'while something stands.',
+      note: projects.length
+        ? 'Pick a deliverable in the projects rail to iterate on it, or say what you want '
+          + 'made below \u2014 the brief is the thread\u2019s first message.'
+        : 'Say what you want made below and the brief opens with it as the claim.',
     });
   }
 
@@ -11728,7 +11805,12 @@
     });
 
     if (!projects.length) {
-      board.appendChild(dkEmpty());
+      // In the pane, the welcome is the centre's now: this column says
+      // what is true and points at it rather than repeating the card.
+      board.appendChild(into
+        ? node('p', 'pw-quiet',
+          'nothing made yet \u2014 the composer below opens the first brief')
+        : dkEmpty());
       return;
     }
 
@@ -12491,6 +12573,10 @@
     };
 
     var nameInput = field('dk-name', 'name', "the landing page's copy", prefill.name, true);
+    // The composer's own send opens this form with the words as the
+    // claim; the name is the one field it cannot fill, so the caret
+    // lands there.
+    face.deskNameField = nameInput;
     var audienceInput = field('dk-audience', 'who it is for', 'the founding teams', prefill.audience);
     var claimInput = field('dk-claim', 'what it must make stand', 'the beta paid for itself in six weeks',
       prefill.claim, true, true,
@@ -13621,10 +13707,19 @@
   // question is "what needs me" before "what exists".
   function paintWork() {
     if (!el.workList) return;
-    // The column is one component with two tenants: the archive's rows, or
-    // the rooms of the huddles surface.
+    // The column is one component with four tenants: the archive's rows,
+    // the rooms of the huddles surface, the desk's deliverables and the
+    // lesson's sessions. One list, one idiom; only the objects change.
     if (face.panel === 'huddles') {
       paintRooms();
+      return;
+    }
+    if (face.panel === 'desk') {
+      paintDeskColumn();
+      return;
+    }
+    if (face.panel === 'learning') {
+      paintLearningColumn();
       return;
     }
     el.workHead.textContent = '';
@@ -13775,6 +13870,168 @@
     head.appendChild(node('span', null, name));
     head.appendChild(node('span', 'work-group-why', String(count)));
     return head;
+  }
+
+  // ---- the list column's project tenants --------------------------------
+  //
+  // The desk and learning ride the app's own work column — the same head,
+  // the same rows, the same fold — and only the objects on it change: the
+  // desk's deliverables, learning's lessons. A second rail beside the
+  // app's would be a second list to keep right.
+
+  function paintDeskColumn() { paintProjectColumn('desk'); }
+  function paintLearningColumn() { paintProjectColumn('learning'); }
+
+  function paintProjectColumn(surface) {
+    if (!el.workList) return;
+    var desk = surface === 'desk';
+    var noun = desk ? 'deliverable' : 'lesson';
+    var plural = desk ? 'deliverables' : 'lessons';
+    el.workHead.textContent = '';
+    el.workList.textContent = '';
+    var doc = face.projects;
+    var groups = [];
+    var total = 0;
+    var needs = 0;
+    if (doc && !refusals(doc)) {
+      (doc.projects || []).forEach(function (project) {
+        var kids = (desk ? project.deliverables : project.lessons) || [];
+        if (kids.length) groups.push({ path: project.path, name: project.name, kids: kids });
+        total += kids.length;
+        kids.forEach(function (kid) { if (desk ? kid.needs : !kid.ended) needs += 1; });
+      });
+      var un = doc.unbound || {};
+      var unKids = (desk ? un.deliverables : un.lessons) || [];
+      if (unKids.length) {
+        groups.push({ path: '', name: 'unbound', kids: unKids });
+        total += unKids.length;
+        unKids.forEach(function (kid) { if (desk ? kid.needs : !kid.ended) needs += 1; });
+      }
+    }
+    if (workFolded()) {
+      var expand = node('button', 'work-expand');
+      expand.type = 'button';
+      expand.setAttribute('aria-expanded', 'false');
+      expand.setAttribute('aria-label', 'expand the list');
+      expand.title = 'expand the list';
+      expand.textContent = '\u203a';
+      expand.addEventListener('click', function () { foldWork(false); });
+      el.workHead.appendChild(expand);
+      el.workHead.appendChild(node('span', 'work-folded-label', desk ? 'the desk' : 'learning'));
+      if (needs) el.workHead.appendChild(node('span', 'work-folded-badge', String(needs)));
+      return;
+    }
+    var head = node('div', 'work-title');
+    head.appendChild(node('h2', null, desk ? 'the desk' : 'learning'));
+    head.appendChild(node('span', 'work-count', !doc ? 'reading\u2026'
+      : total + ' ' + (total === 1 ? noun : plural)
+        + (needs ? ' \u00b7 ' + needs + ' need you' : '')));
+    var fresh = node('button', 'work-new');
+    fresh.type = 'button';
+    fresh.appendChild(node('span', null, '+'));
+    fresh.appendChild(node('span', null, 'New'));
+    fresh.title = desk ? 'a new deliverable' : 'a new lesson';
+    fresh.addEventListener('click', function () {
+      if (desk) {
+        face.deskView = 'composer';
+        face.deskOpenDesk = null;
+        paintDesk();
+      } else {
+        startLearning('teaching', 'prober', 'let\u2019s start a lesson');
+      }
+    });
+    head.appendChild(fresh);
+    var fold = node('button', 'work-fold');
+    fold.type = 'button';
+    fold.setAttribute('aria-expanded', 'true');
+    fold.setAttribute('aria-label', 'collapse the ' + plural);
+    fold.title = 'collapse the ' + plural;
+    fold.textContent = '\u2039';
+    fold.addEventListener('click', function () { foldWork(true); });
+    head.appendChild(fold);
+    el.workHead.appendChild(head);
+
+    if (!doc) {
+      el.workList.appendChild(node('p', 'board-empty', 'Reading the projects\u2026'));
+      return;
+    }
+    if (refusals(doc)) {
+      el.workList.appendChild(node('p', 'board-empty',
+        'The projects could not be read: ' + refusals(doc).join('; ')));
+      return;
+    }
+    if (!groups.length) {
+      el.workList.appendChild(node('p', 'board-empty', desk
+        ? 'nothing made yet \u2014 say what you want below and the brief opens'
+        : 'no lesson yet \u2014 say what you already hold below'));
+    }
+    // A project the server could not parse names itself in the list: a
+    // named absence, never a row that silently vanishes from the count.
+    if (desk) {
+      var broken = face.deskUnreadable || [];
+      if (broken.length) {
+        var brokenLabel = node('div', 'rooms-group');
+        brokenLabel.appendChild(node('span', null, 'unreadable'));
+        brokenLabel.appendChild(node('span', 'n', String(broken.length)));
+        el.workList.appendChild(brokenLabel);
+        broken.forEach(function (row) {
+          el.workList.appendChild(node('p', 'board-empty',
+            row.slug + ' cannot be read \u2014 ' + (row.error || 'the document is not valid JSON')));
+        });
+      }
+    }
+    groups.forEach(function (group) {
+      var label = node('div', 'rooms-group');
+      label.appendChild(node('span', null, group.name));
+      label.appendChild(node('span', 'n', String(group.kids.length)));
+      el.workList.appendChild(label);
+      group.kids.forEach(function (kid) {
+        el.workList.appendChild(projectKidRow(kid, surface, group.name));
+      });
+    });
+  }
+
+  // One deliverable or lesson, in the column's own row idiom: the state
+  // bar, the name, and a meta line that says what it is. The desk's state
+  // is the deliverable's own (its refusals, its walk), read from the desk
+  // document — the list says what the store knows, not what a count said.
+  function projectKidRow(kid, surface, projectName) {
+    var desk = surface === 'desk';
+    var button = node('button', 'work-row');
+    button.type = 'button';
+    var full = desk ? (face.desk || []).filter(function (d) { return d.slug === kid.slug; })[0] : null;
+    var tone = full ? deskState(full) : null;
+    var state = desk ? (tone ? tone.edge : (kid.needs ? 's-warn' : 's-idle'))
+      : (kid.ended ? 's-done' : 's-warn');
+    button.dataset.state = state;
+    var open = desk ? face.deskOpenDesk : null;
+    var id = desk ? kid.slug : kid.id;
+    var here = desk ? Boolean(open && open.slug === id)
+      : String(face.learnPick || '') === String(id);
+    if (here) button.setAttribute('aria-current', 'true');
+    if (projectName) button.title = projectName;
+    button.appendChild(node('span', 'work-bar'));
+    var body = node('span', 'work-body');
+    body.appendChild(node('span', 'work-name', desk ? (kid.name || kid.slug) : (kid.title || kid.id)));
+    var meta = node('span', 'work-meta');
+    var word = node('span', 'work-state', desk
+      ? (tone ? tone.word : (kid.needs ? 'needs you' : 'holding'))
+      : (kid.ended ? 'held' : 'in progress'));
+    word.dataset.state = tone ? tone.tone : '';
+    meta.appendChild(word);
+    meta.appendChild(node('span', null, '\u00b7'));
+    meta.appendChild(node('span', null, desk ? 'deliverable' : 'lesson'));
+    if (projectName) {
+      meta.appendChild(node('span', null, '\u00b7'));
+      meta.appendChild(node('span', null, projectName));
+    }
+    body.appendChild(meta);
+    button.appendChild(body);
+    button.addEventListener('click', function () {
+      if (desk) openDeskDeliverable(kid.slug);
+      else openLesson(kid.id);
+    });
+    return button;
   }
 
   // One row: the state in words, the age, the project, and — for
@@ -25442,6 +25699,10 @@
     // conversation with the work column beside it, so the two are one
     // place with one verb (open in place) instead of a list you leave.
     var work = address === 'sessions' || address === 'huddles';
+    // The list column is the app's own on every working surface; what
+    // changes is the objects on it — conversations, rooms, deliverables,
+    // lessons. Never a second rail beside the app's.
+    var withList = work || address === 'desk' || address === 'learning';
     closeDrawer();
     face.panel = address;
     usageRecord('panels', address, 'opens');
@@ -25450,7 +25711,7 @@
       : (focusId ? { panel: address, id: focusId } : null);
     try { window.localStorage.setItem('fleet-panel', address); } catch (error) { }
     markRail();
-    setWork(work);
+    setWork(withList);
     Object.keys(PANEL_EL).forEach(function (key) {
       // A panel the served page lacks binds null (a real browser
       // tolerates it; only the harness refuses). One null must not
@@ -25460,6 +25721,11 @@
       PANEL_EL[key].hidden = work ? key !== 'chat' : key !== address;
     });
     var panelHere = PANEL_EL[address] || (work ? el.panelChat : null);
+    // The composer follows the route: it stays the conversation's own on
+    // every surface, and the two work surfaces borrow that same element
+    // into their dock. One composer, never a second one beside it.
+    placeComposer(panelHere === el.panelDesk ? el.deskDock
+      : panelHere === el.panelLearning ? el.learningDock : null);
     el.panelLater.hidden = Boolean(panelHere);
     if (!panelHere) {
       var named = known || [which, which];
@@ -25479,7 +25745,7 @@
         // The right column is the app's pane, the same one the other
         // work surfaces carry; it stays the owner's to close.
         if (el.pane.hidden) openPane();
-        showPaneTab('context');
+        face.wantContext = true;
         paintLearning();
         readLearning(true).then(paintLearning);
       },
@@ -25502,7 +25768,7 @@
         // The right column is the app's pane, the same one the other
         // work surfaces carry; it stays the owner's to close.
         if (el.pane.hidden) openPane();
-        showPaneTab('context');
+        face.wantContext = true;
         var asked = face.focus && face.focus.id ? face.focus.id : '';
         paintDesk();
         readDesk(true).then(function () {

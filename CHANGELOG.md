@@ -12,6 +12,36 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.6.18 — 2026-11-09
+
+One composer, the app's list column, the artifact in the centre, its
+properties in the pane.
+
+- **The desk and learning borrow the conversation's composer.** The bespoke
+  composer each surface drew is gone: the field, the run bar, the queue and
+  the Stop are the chat's own element, moved into the surface's column and
+  back when the route leaves. Its focus changes per surface — the desk's
+  words iterate on the open deliverable or open the brief with the claim
+  already written; learning's words answer into the lesson's session.
+- **The list column is the app's own.** The second projects rail is gone:
+  the desk lists deliverables and learning lists lessons on the same work
+  column sessions and huddles ride — same head, rows, fold and counts. A
+  desk row carries the deliverable's real state (`1 refusal stands`,
+  `all five stages done`, `not started`), and a project the server could not
+  parse names itself in the list.
+- **The centre is the artifact**, not just its conversation: the desk shows
+  the deliverable's cards (stage rail, claims, coverage, outline, review, end
+  band) and then its thread; learning shows the lesson's section and then its
+  thread. With nothing open, both show the surface's welcome in the
+  conversation's own empty-state component.
+- **The right pane is properties and settings** — project, shape, sources,
+  the end gate, the role, the sections — in the pane's card, facts and ghost
+  button idiom. It exists only while an artifact is open; otherwise the tab is
+  absent and the pane falls back to the run.
+- **The composer's fields collapse by its own width** (a container query):
+  a work surface's column is narrower than the conversation's, and the run
+  bar drops its words for icons instead of overflowing.
+
 ## v0.6.17 — 2026-11-09
 
 The composer moves to the centre, and the pane carries the work.

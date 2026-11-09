@@ -13,6 +13,23 @@ the design record it implements is
 the screens it was built against live in
 `docs/plans/mockups/2026-11-08-learning/`.
 
+## The surface
+
+Learning rides the app's conversation layout, the same one the desk carries:
+
+- **The list column** is the app's work column, with the lessons on it,
+  grouped by project, each row naming its state and the project it belongs to.
+- **The centre** is the lesson itself — the instrument, the section's work
+  (plan, graph, practice or history) and, under it, the lesson session's own
+  thread. With no lesson it is the surface's welcome, in the conversation's
+  own empty-state idiom.
+- **The composer** pinned at the bottom is the conversation's composer, the
+  same element every chat carries: its words answer into the lesson's session.
+- **The right pane** carries the lesson's properties (project, role, lesson
+  id) and its settings — the role the run rides, the practice, the project —
+  and the four section chips that choose which part of the lesson the centre
+  shows. The tab is absent with no lesson.
+
 ## The theory it implements
 
 The loop is the LearnHarness design, read against the repo: the agents

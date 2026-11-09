@@ -82,6 +82,11 @@ function descendantAll(root, sel) {
   const chain = String(sel || '').trim().split(/\s+/).filter(Boolean);
   if (!chain.length) return [];
   const out = [];
+  // A real document has one path to a node; this stub's root lists every
+  // id flat, so a node the app reparents (the composer, which the work
+  // surfaces borrow) is reachable twice. The dedupe keeps the selector
+  // answering like a browser's: one element, once.
+  const seen = new Set();
   const holdsChain = (el) => {
     if (!matchesSimple(el, chain[chain.length - 1])) return false;
     let node = el.parentNode;
@@ -93,7 +98,10 @@ function descendantAll(root, sel) {
     return index < 0;
   };
   const walk = (node) => {
-    node.children.forEach((child) => { if (holdsChain(child)) out.push(child); walk(child); });
+    node.children.forEach((child) => {
+      if (holdsChain(child) && !seen.has(child)) { seen.add(child); out.push(child); }
+      walk(child);
+    });
   };
   walk(root);
   return out;
@@ -197,8 +205,18 @@ class El {
   get options() { return this.children.filter((child) => child.name === 'option'); }
   get firstChild() { return this.children.length ? this.children[0] : null; }
   get firstElementChild() { return this.firstChild; }
-  appendChild(child) { child.parentNode = this; this.children.push(child); return child; }
+  // A real DOM moves a node: appending a child that belongs to another
+  // parent takes it out of that parent first. The composer is one
+  // element the work surfaces borrow, so the stub must move it, not copy
+  // it — a second entry would make one field answer two parents.
+  appendChild(child) {
+    if (child.parentNode && child.parentNode !== this) child.parentNode.removeChild(child);
+    child.parentNode = this;
+    this.children.push(child);
+    return child;
+  }
   insertBefore(child, before) {
+    if (child.parentNode) child.parentNode.removeChild(child);
     child.parentNode = this;
     const at = before ? this.children.indexOf(before) : -1;
     if (at < 0) this.children.push(child);
@@ -4872,13 +4890,13 @@ async function theDeskOrganisesByProjectAndThread() {
   page.open();
   await flush(120);
 
-  const rail = page.rows('.pw-rail .pw-proj');
-  check('PWS the desk rail lists the project', rail.length === 1 &&
-    /landing/.test(rail[0].textContent), rail.map((r) => r.textContent).join('|'));
-  rail[0].click();
-  await flush(60);
-  const kid = page.rows('.pw-kid');
-  check('PWS the project expands to its deliverable',
+  // The list column is the app's own work column: the projects as its
+  // groups, the deliverables as its rows. Only the objects change.
+  const groups = page.rows('#work-list .rooms-group');
+  check('PWS the desk column groups the projects', groups.length === 1 &&
+    /landing/.test(groups[0].textContent), groups.map((g) => g.textContent).join('|'));
+  const kid = page.rows('#work-list .work-row');
+  check('PWS the project lists its deliverable',
     kid.length === 1 && /landing page/.test(kid[0].textContent),
     kid.map((k) => k.textContent).join('|'));
   kid[0].click();
@@ -4889,30 +4907,39 @@ async function theDeskOrganisesByProjectAndThread() {
     page.rows('.pw-msgs .replay-line').length === 2,
     String(page.rows('.pw-msgs .replay-line').length));
 
-  // The composer posts the iteration with the deliverable in its address.
-  const box = page.rows('.pw-box')[0];
+  // The composer on this surface IS the conversation's own element, moved
+  // into the dock — one component, never a second one beside it.
+  check('PWS the desk composer is the conversation\u2019s own',
+    page.rows('#desk-dock #composer').length === 1 &&
+      page.rows('#composer').length === 1,
+    page.rows('#composer').length + ' composer(s) on the page');
+  const box = page.rows('#task')[0];
   box.value = 'tighten the fold claim';
-  page.rows('.pw-send')[0].click();
+  page.rows('#send')[0].click();
   await flush(120);
   const posts = page.calls.filter((c) => c.url === '/api/desk/landing-copy/chat');
   check('PWS the composer posts the iteration on the deliverable',
     posts.length === 1 && String(posts[0].body).includes('tighten the fold claim'),
     JSON.stringify(page.calls.filter((c) => c.url.indexOf('/api/desk/') === 0).map((c) => c.url)));
 
-  // The chips act: sources opens the list, review shows the gate.
-  const sources = page.rows('.pw-chips .pw-chip').find((c) => /^sources/.test(c.textContent));
-  check('PWS the composer carries the sources chip', Boolean(sources),
-    page.rows('.pw-chip').map((c) => c.textContent).join('|'));
-  sources.click();
-  await flush(60);
-  check('PWS the sources chip opens the list',
-    page.rows('.pw-source').length >= 1, String(page.rows('.pw-source').length));
-  const review = page.rows('.pw-chips .pw-chip').find((c) => /^review/.test(c.textContent));
-  review.click();
-  await flush(60);
-  check('PWS the review chip shows the end gate',
-    page.rows('.pw-refusal').length >= 1 || page.rows('.pw-quiet').some((q) => /gate is clear/.test(q.textContent)),
-    page.rows('.pw-refusal').map((r) => r.textContent).join('|'));
+  // The pane carries the deliverable's properties and settings.
+  const props = page.rows('#pane-context .facts .fact');
+  check('PWS the pane carries the deliverable\u2019s properties',
+    props.length >= 4 && /project/.test(props.map((r) => r.textContent).join('|')),
+    props.map((r) => r.textContent).join('|'));
+  check('PWS the pane lists the sources and the end gate',
+    page.rows('#pane-context .pw-source').length >= 1 ||
+      page.rows('#pane-context .pw-quiet').some((q) => /no sources yet/.test(q.textContent)),
+    String(page.rows('#pane-context .pw-source').length));
+
+  // Leaving the surface returns the one composer to the conversation: it
+  // cannot stand in two places at once.
+  page.window.location.hash = '#/chat';
+  await flush(140);
+  check('PWS the composer comes home to the conversation',
+    page.rows('#panel-chat #composer').length === 1 &&
+      page.rows('#desk-dock #composer').length === 0,
+    page.rows('#desk-dock #composer').length + ' still docked');
 }
 
 async function theLearningOrganisesByProjectAndThread() {
@@ -4935,13 +4962,12 @@ async function theLearningOrganisesByProjectAndThread() {
   page.open();
   await flush(160);
 
-  const rail = page.rows('.pw-rail .pw-proj');
-  check('PWS the learning rail lists the project', rail.length === 1 &&
-    /landing/.test(rail[0].textContent), rail.map((r) => r.textContent).join('|'));
-  rail[0].click();
-  await flush(60);
-  const kid = page.rows('.pw-kid');
-  check('PWS the project expands to its lesson',
+  // The list column is the app's own work column, with the lessons on it.
+  const groups = page.rows('#work-list .rooms-group');
+  check('PWS the learning column groups the projects', groups.length === 1 &&
+    /landing/.test(groups[0].textContent), groups.map((g) => g.textContent).join('|'));
+  const kid = page.rows('#work-list .work-row');
+  check('PWS the project lists its lesson',
     kid.length === 1 && /the lesson/.test(kid[0].textContent),
     kid.map((k) => k.textContent).join('|'));
   kid[0].click();
@@ -4950,10 +4976,15 @@ async function theLearningOrganisesByProjectAndThread() {
     page.rows('.pw-msgs .replay-line').length === 2,
     String(page.rows('.pw-msgs .replay-line').length));
 
-  // The composer answers into the lesson's own session.
-  const box = page.rows('.pw-box')[0];
+  // The composer answers into the lesson's own session — and it is the
+  // conversation's own element, borrowed into this dock.
+  check('PWS the learning composer is the conversation\u2019s own',
+    page.rows('#learning-dock #composer').length === 1 &&
+      page.rows('#composer').length === 1,
+    page.rows('#composer').length + ' composer(s) on the page');
+  const box = page.rows('#task')[0];
   box.value = 'because the socket stays open';
-  page.rows('.pw-send')[0].click();
+  page.rows('#send')[0].click();
   await flush(120);
   const posts = page.calls.filter((c) => c.url.indexOf('/api/learning/start') === 0);
   check('PWS the composer answers into the lesson session',
@@ -4961,23 +4992,24 @@ async function theLearningOrganisesByProjectAndThread() {
       String(posts[0].body).includes('because the socket stays open'),
     JSON.stringify(posts.map((c) => c.url)));
 
-  // The role chip flips what the next run rides.
-  const role = page.rows('.pw-chips .pw-chip').find((c) => /^role/.test(c.textContent));
-  check('PWS the composer carries the role chip',
+  // The pane's settings flip what the next run rides.
+  const role = page.rows('#pane-context .pane-settings .ghost').find((c) => /ride/.test(c.textContent));
+  check('PWS the pane carries the role setting',
     Boolean(role) && /teacher/.test(role.textContent), role ? role.textContent : 'missing');
   role.click();
   await flush(60);
-  const flipped = page.rows('.pw-chips .pw-chip').find((c) => /^role/.test(c.textContent));
-  check('PWS the role chip flips the run\u2019s role',
+  const flipped = page.rows('#pane-context .pane-settings .ghost').find((c) => /ride/.test(c.textContent));
+  check('PWS the role setting flips the run\u2019s role',
     Boolean(flipped) && /practitioner/.test(flipped.textContent),
     flipped ? flipped.textContent : 'missing');
 
-  // The practice chip starts a practice (a new session, its own kind).
-  const practice = page.rows('.pw-chips .pw-chip').find((c) => c.textContent === 'practice');
+  // The practice setting starts a practice (a new session, its own kind).
+  const practice = page.rows('#pane-context .pane-settings .ghost')
+    .find((c) => c.textContent === 'start a practice');
   practice.click();
   await flush(120);
   const started = page.calls.filter((c) => c.url === '/api/learning/start');
-  check('PWS the practice chip starts a practice',
+  check('PWS the practice setting starts a practice',
     started.length === 1 && String(started[0].body).includes('"kind":"practice"'),
     JSON.stringify(started.map((c) => c.body).slice(0, 1)));
 }
@@ -9273,12 +9305,11 @@ async function theLearningRailCarriesTheFourSections() {
   page.open();
   await flush(80);
 
-  // The four sections are the work column's chips now — the pane's own
-  // rail became the projects rail (the project-work plan), so the
-  // sections moved to where the work is.
-  const railRows = page.rows('.pw-sections .pw-chip');
+  // The sections are the pane's settings: the lesson itself renders in the
+  // centre, and these four chips choose which part of it.
+  const railRows = page.rows('#pane-context .pw-sections .pw-chip');
   const railText = railRows.map((row) => row.textContent);
-  check('LEARN the work column carries the four sections',
+  check('LEARN the pane carries the four sections',
     railRows.length === 4 &&
       railText[0].includes('the lesson') && railText[1].includes('the graph') &&
       railText[2].includes('practice') && railText[3].includes('history'),
@@ -9365,7 +9396,8 @@ async function theLearningRailCarriesTheFourSections() {
       rows[1].textContent.includes('ended'),
     rows.map((r) => r.textContent).join(' | '));
 
-  // An empty lesson offers the start.
+  // With no lesson the centre is the welcome, and the list column's New is
+  // the act: it starts the first teaching session under the prober.
   const empty = boot({
     width: 1440, hash: '#/learning',
     documents: { learning: emptyLearning(), state: (asked) => emptyState(asked),
@@ -9373,10 +9405,13 @@ async function theLearningRailCarriesTheFourSections() {
   });
   empty.open();
   await flush(80);
-  const start = empty.rows('.lr-start');
+  check('LEARN an empty lesson shows the welcome',
+    empty.rows('.empty h1').length === 1 &&
+      /learning/i.test(empty.rows('.empty h1')[0].textContent),
+    empty.rows('.empty h1').map((h) => h.textContent).join(' | '));
+  const start = empty.rows('#work-head .work-new');
   check('LEARN an empty lesson offers the start',
-    start.length === 1 && /start a lesson/.test(start[0].textContent),
-    start.map((b) => b.textContent).join(' | '));
+    start.length === 1, String(start.length));
   start[0].click();
   await flush(60);
   const lessonStarts = empty.calls.filter((call) =>
@@ -10849,9 +10884,9 @@ async function theConnectCardSaysWhatHappened() {
     page.open();
     await flush();
 
-    // The deliverable's work — the end band included — is the pane's
-    // context tab; the board carries the rail and the conversation.
-    const board = page.el('pane-context');
+    // The deliverable's work — the end band included — is the centre
+    // screen; the pane carries its properties and settings.
+    const board = page.rows('#desk-board .pw-center')[0];
     const band = board.find((one) => String(one.className).includes('dk-endband'))[0];
     const walk = band && band.find((one) => String(one.textContent).trim() === 'walk the stages')[0];
     check('DESK the walk action is on the band (KI-447)', Boolean(walk),
@@ -10899,20 +10934,20 @@ async function theConnectCardSaysWhatHappened() {
     // The refuse-to-end state is stated before the fold: the gate is a
     // sibling of the review, not an ornament inside it (C5).
     const board = page.el('desk-board');
-    // The deliverable's cards live in the centre of the projects shell,
-    // above its conversation; the order the case grades is theirs.
-    const work = page.rows('#pane-context')[0];
-    // The end band closes the work column; nothing follows it there.
+    // The deliverable's cards live in the centre, above its conversation;
+    // the order the case grades is theirs.
+    const work = page.rows('#desk-board .pw-center')[0];
     const order = (work ? work.children : board.children).map((child) => child.className);
     const gateAt = order.findIndex((one) => one.split(' ').includes('dk-gate'));
     const reviewAt = order.findIndex((one) => one.split(' ').includes('dk-sec'));
     check('DESK the refusals sit above the review (C5)', gateAt >= 0 && reviewAt > gateAt,
       'gate=' + gateAt + ' review=' + reviewAt);
-    // The end band closes the deliverable's own cards; the conversation
-    // sits below them, so it is the only thing that may follow.
+    // The end band closes the deliverable's own cards; the thread is the
+    // only thing that may follow it on the centre screen.
     const bandAt = order.findIndex((one) => one.split(' ').includes('dk-endband'));
     check('DESK the way out is pinned after everything (C6)',
-      bandAt === order.length - 1, order.join(' | ').slice(0, 160));
+      bandAt >= 0 && order.slice(bandAt + 1).every((one) => one.split(' ').includes('pw-chat')),
+      order.join(' | ').slice(0, 160));
 
     // C1, the headline defect — pinned on the whole painted tree. The
     // shipped face emitted `hsection`, `hrow-name`, `chip-ok`, `chip-warn`,
@@ -11011,32 +11046,46 @@ async function theConnectCardSaysWhatHappened() {
           projects: [deskProject()],
           unreadable: [{ slug: 'stale-one', error: 'the document is not valid JSON' }],
         },
+        // The list column reads the projects document; the deliverable's
+        // own work reads the desk's.
+        projects: projectsDoc(),
       },
     });
     shelfPage.open();
     await flush();
 
-    // The shelf is the pane's context tab now (the centre is the
-    // conversation).
-    const shelf = shelfPage.text('pane-context');
-    check('DESK the shelf greets the place', shelf.includes('The desk'), 'no greeting');
-    check('DESK the row carries the binding', shelf.includes('/Users/someone/Projects/landing'),
-      'no binding');
-    check('DESK the row carries the evidence status',
-      shelf.includes('1 asserted') && shelf.includes('1 contested') && shelf.includes('1 unsourced'),
-      shelf.slice(0, 200));
-    check('DESK the row says which state it is in',
-      shelf.includes('1 refusal stands'), 'no state pill');
+    // The list is the app's work column and the greeting is the centre's
+    // own welcome; the pane is empty until a deliverable is open.
+    const column = shelfPage.text('work-list');
+    const welcome = shelfPage.text('desk-board');
+    check('DESK the list column greets the place',
+      welcome.includes('What are we making stand?'), welcome.slice(0, 120));
+    check('DESK the pane stays empty with nothing open',
+      shelfPage.text('pane-context') === '', shelfPage.text('pane-context').slice(0, 80));
+    const row = shelfPage.rows('#work-list .work-row')[0];
+    check('DESK the row carries the binding',
+      Boolean(row) && row.title === 'landing' && /landing/.test(row.textContent),
+      row ? row.title + ' / ' + row.textContent : 'no row');
     // C12: the unreadable project is a named row, never a silent absence.
     check('DESK an unreadable project names itself (C12)',
-      shelf.includes('stale-one cannot be read') && shelf.includes('the document is not valid JSON'),
-      'no broken row');
+      column.includes('stale-one cannot be read') &&
+        column.includes('the document is not valid JSON'),
+      column.slice(0, 300));
     // C13: the row is a real button, so Tab reaches it and Enter presses it.
-    const card = shelfPage.rows('.dk-card').find((one) =>
+    const card = shelfPage.rows('#work-list .work-row').find((one) =>
       one.textContent.includes("The landing page's copy"));
-    check('DESK the shelf row is a real button (C13)',
+    check('DESK the row is a real button (C13)',
       Boolean(card) && card.name === 'button' && card.type === 'button',
       card ? card.name + '/' + card.type : 'no card');
+    card.click();
+    await flush(120);
+    const opened = shelfPage.text('desk-board');
+    check('DESK the row says which state it is in',
+      /1 refusal stands/.test(column), column.slice(0, 200));
+    check('DESK the deliverable carries its evidence status',
+      opened.includes('1 asserted') && opened.includes('1 contested') &&
+        opened.includes('1 unsourced'),
+      opened.slice(0, 200));
 
     // The same walk over the shelf's paint and the brief's, so the pin
     // covers every view the desk owns rather than the one it was written
@@ -11054,7 +11103,7 @@ async function theConnectCardSaysWhatHappened() {
         bareOnes.length === 0, bareOnes.slice(0, 8).join(', '));
       return { nodes: nodes.length, classes: uniq.length };
     };
-    const shelfWalk = deskBare(shelfPage.el('pane-context'), 'shelf and brief');
+    const shelfWalk = deskBare(shelfPage.el('desk-board'), 'the desk surface');
     check('DESK the shelf walk covered the shelf and the brief (C1)',
       shelfWalk.nodes > 60 && shelfWalk.classes > 40,
       'elements=' + shelfWalk.nodes + ' classes=' + shelfWalk.classes);
@@ -11062,7 +11111,7 @@ async function theConnectCardSaysWhatHappened() {
     // The composer: the brief applies on submit, and a submit missing a
     // required field sends nothing and says what it waits for (C14).
     const fresh = shelfPage;
-    const newButton = fresh.rows('.dk-btn').find((one) => one.textContent === 'new deliverable');
+    const newButton = fresh.rows('#work-head .work-new')[0];
     newButton.click();
     await flush();
     const composer = fresh.rows('.dk-brief')[0];
@@ -11177,31 +11226,47 @@ async function theConnectCardSaysWhatHappened() {
     };
     const compare = boot({
       hash: '#/desk',
-      documents: { desk: { projects: [deskProject(), clean(), fresh2()], unreadable: [] } },
+      documents: {
+        desk: { projects: [deskProject(), clean(), fresh2()], unreadable: [] },
+        projects: {
+          type: 'projects',
+          projects: [{
+            path: '/Users/someone/Projects/landing', name: 'landing',
+            deliverables: [
+              { slug: 'landing-copy', name: "The landing page's copy", needs: true },
+              { slug: 'clean-one', name: 'A clean deliverable', needs: false },
+              { slug: 'fresh-one', name: 'A deliverable just made', needs: false },
+            ],
+            lessons: [], practices: [],
+          }],
+          unbound: { deliverables: [], lessons: [] },
+        },
+      },
     });
     compare.open();
     await flush();
-    const byName = (needle) => compare.rows('.dk-card').find((one) => one.textContent.includes(needle));
+    const byName = (needle) => compare.rows('#work-list .work-row')
+      .find((one) => one.textContent.includes(needle));
     const refusedCard = byName("The landing page's copy");
     const cleanCard = byName('A clean deliverable');
     const freshCard = byName('A deliverable just made');
     check('DESK the refused, clean and fresh rows all stand (C3)',
       Boolean(refusedCard) && Boolean(cleanCard) && Boolean(freshCard),
-      'cards=' + compare.rows('.dk-card').length);
-    const pillOf = (card) => card ? card.find((n) => String(n.className || '').split(' ').includes('dk-pill'))[0] : null;
+      'rows=' + compare.rows('#work-list .work-row').length);
+    const pillOf = (card) => card ? card.find((n) => String(n.className || '').split(' ').includes('work-state'))[0] : null;
     const rp = pillOf(refusedCard), cp = pillOf(cleanCard), fp = pillOf(freshCard);
     check('DESK a refused row is distinguishable without opening it (C3)',
       Boolean(rp) && rp.textContent.includes('1 refusal stands')
-        && rp.className.includes('down') && !cp.textContent.includes('refusal'),
-      rp ? rp.textContent : 'no pill');
+        && rp.dataset.state === 'down' && !cp.textContent.includes('refusal'),
+      rp ? rp.textContent + '/' + rp.dataset.state : 'no pill');
     check('DESK a finished row says so and a never-walked row says so (C3)',
       cp.textContent.includes('all five stages done') && fp.textContent.includes('not started')
-        && cp.className !== fp.className,
+        && cp.dataset.state !== fp.dataset.state,
       'clean=' + cp.textContent + ' fresh=' + fp.textContent);
     check('DESK the refused row carries a different left edge than a clean one (C3)',
-      refusedCard.className.includes('s-warn') && cleanCard.className.includes('s-done')
-        && freshCard.className.includes('s-idle'),
-      refusedCard.className + ' | ' + cleanCard.className + ' | ' + freshCard.className);
+      refusedCard.dataset.state === 's-warn' && cleanCard.dataset.state === 's-done'
+        && freshCard.dataset.state === 's-idle',
+      refusedCard.dataset.state + ' | ' + cleanCard.dataset.state + ' | ' + freshCard.dataset.state);
     // C4: each tone is its own token, and the word rides beside the dot.
     const rule = (sel) => {
       const at = CSS.indexOf(sel);
@@ -11216,9 +11281,9 @@ async function theConnectCardSaysWhatHappened() {
     check('DESK every state also carries a word, not a colour alone (C4)',
       [rp, cp, fp].every((p) => p && p.textContent.replace(/\s+/g, ' ').trim().length > 6),
       [rp, cp, fp].map((p) => p && p.textContent).join(' | '));
-    check('DESK the three tones are three different classes (C4)',
-      new Set([rp, cp, fp].map((p) => String(p.className).split(' ').filter((c) => c !== 'dk-pill').join(' '))).size >= 2,
-      [rp, cp, fp].map((p) => p.className).join(' | '));
+    check('DESK the three tones are three different states (C4)',
+      new Set([rp, cp, fp].map((p) => String(p.dataset.state))).size === 3,
+      [rp, cp, fp].map((p) => p.dataset.state).join(' | '));
   }
 
 
@@ -11800,7 +11865,7 @@ for (const [name, run] of cases) {
   try {
     await run();
   } catch (error) {
-    failures.push(name + ' threw — ' + (error && error.stack ? error.stack.split('\n').slice(0, 4).join(' | ') : error));
+    failures.push(name + ' threw — ' + (error && error.stack ? error.stack.split('\n').slice(0, 8).join(' | ') : error));
   }
 }
 

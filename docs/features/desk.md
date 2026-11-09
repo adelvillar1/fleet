@@ -12,6 +12,30 @@ huddles names the meeting and design names the practice.
 apart and both live in the face: the desk is the surface, a deck is one
 artifact it produces.
 
+## The surface
+
+The desk is the app's own conversation layout, with the artifacts swapped in:
+
+- **The list column** is the app's work column — the same head, rows and fold
+  sessions and huddles ride. On the desk its objects are the projects (the
+  groups) and their deliverables (the rows), each row carrying the state the
+  store reports: `1 refusal stands`, `all five stages done`, `not started`. A
+  project the server could not parse names itself in the list rather than
+  vanishing from the count.
+- **The centre** is the deliverable: its work (the stage rail, the claims with
+  their sentences, the coverage, the outline, the review, the end band) and,
+  under it, the thread that produced it. With nothing open it is the surface's
+  welcome, in the conversation's own empty-state idiom.
+- **The composer** pinned at the bottom is the conversation's composer —
+  literally the same element, moved into this column, never a second one
+  drawn beside it. Its focus changes: with a deliverable open its words are
+  that deliverable's iteration; with none, they open the brief with the claim
+  already written and the caret on the name.
+- **The right pane** carries the deliverable's properties and settings —
+  project, shape, sources, the end gate, updated — in the pane's own card,
+  facts and ghost-button idiom. With nothing selected the tab is absent and
+  the pane falls back to the run.
+
 ## The loop
 
 1. **The brief.** One composer, three fields — name, audience, the

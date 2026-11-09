@@ -3214,6 +3214,43 @@ body[data-object-card="open"] .dock-object {
   .composer-hint { display: none; }
 }
 
+/* The same collapse, judged by the composer's OWN width: a work surface's
+   column is narrower than the conversation's (the list column and the pane
+   take their room), and the fields must drop their words rather than
+   overflow the column. The composer is its own container, so this is the
+   same rule the window's breakpoint applies — not a second design. */
+@container (max-width: 620px) {
+  .composer :is(.runbar-route, .runbar-folder) {
+    position: relative;
+    width: var(--ctl-h);
+    padding: 0;
+    justify-content: center;
+  }
+  .composer :is(.runbar-route, .runbar-folder) select,
+  .composer :is(.runbar-route, .runbar-folder) button {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0;
+  }
+  .composer .perm-field {
+    position: relative;
+    width: var(--ctl-h);
+    padding: 0;
+    justify-content: center;
+  }
+  .composer .perm-field select {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0;
+  }
+  .composer .foot-btn.plan { width: var(--ctl-h); padding: 0; }
+  .composer .foot-btn.plan .foot-label { display: none; }
+}
+
 /* Below the width where three labeled fields and the send actions fit
    on one line, the provider and folder keep their icon and drop the
    word. The native control still covers the whole field, so a tap opens
@@ -10385,40 +10422,52 @@ body[data-work="collapsed"] .room-back { display: grid; }
    visual read of 0.6.15). Two columns: the projects rail and the centre
    — the right-hand column is the app's own pane, like every other work
    surface. */
-.pw-shell { grid-column: 1 / -1; display: grid; grid-template-columns: 216px minmax(0, 1fr); gap: 14px; align-items: start; }
+.pw-shell { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; align-items: start; }
 .pw-center { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .pw-chat { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
-.pw-rail { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
-.pw-railhead { font-size: 9.5px; font-weight: 600; letter-spacing: 0.11em; text-transform: uppercase; color: var(--dsw-alias-ink-tertiary); margin-bottom: 2px; }
-.pw-proj { border: 1px solid var(--dsw-alias-hairline-strong); border-radius: var(--radius-md); background: var(--dsw-alias-surface); padding: 8px 10px; cursor: pointer; }
-.pw-proj[data-on="true"] { border-color: var(--dsw-alias-accent); background: var(--dsw-alias-accent-wash); }
-.pw-proj-t { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; font-weight: 600; color: var(--dsw-alias-ink); }
-.pw-proj-t .n { font-size: 10.5px; color: var(--dsw-alias-ink-tertiary); font-variant-numeric: tabular-nums; }
-.pw-proj-w { font-size: 10.5px; color: var(--dsw-alias-ink-tertiary); margin-top: 2px; }
-.pw-kids { margin: 6px 0 0 8px; padding-left: 10px; border-left: 1px solid var(--dsw-alias-hairline-strong); display: flex; flex-direction: column; gap: 3px; }
-.pw-kid { display: flex; gap: 6px; align-items: baseline; font-size: 11px; color: var(--dsw-alias-ink-secondary); padding: 4px 6px; border-radius: var(--radius-sm); cursor: pointer; }
-.pw-kid[data-on="true"] { background: var(--dsw-alias-surface-raised); color: var(--dsw-alias-ink); font-weight: 600; }
-.pw-kid .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--dsw-alias-hairline-strong); flex: 0 0 auto; }
-.pw-kid[data-state="needs"] .dot { background: var(--dsw-alias-warn); }
-.pw-kid[data-state="done"] .dot { background: var(--dsw-alias-ok, #2f7d4f); }
 .pw-work { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .pw-sections { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
 .pw-thread { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .pw-thread-head { font-size: 9.5px; font-weight: 600; letter-spacing: 0.11em; text-transform: uppercase; color: var(--dsw-alias-ink-tertiary); }
-.pw-msgs { display: flex; flex-direction: column; gap: 6px; max-height: 300px; overflow-y: auto; padding-right: 2px; }
+.pw-msgs { display: flex; flex-direction: column; gap: 6px; overflow-y: auto; padding-right: 2px; }
 .pw-quiet { font-size: 11px; color: var(--dsw-alias-ink-tertiary); margin: 0; }
-.pw-composer { border: 1px solid var(--dsw-alias-hairline-strong); border-radius: var(--radius-lg, 12px); background: var(--composer-bg); padding: 9px 10px; }
-.pw-chips { display: flex; gap: 5px; flex-wrap: wrap; margin-bottom: 7px; }
+.pw-chips { display: flex; gap: 5px; flex-wrap: wrap; }
 .pw-chip { font: var(--text-xs)/1 var(--font-text); padding: 4px 8px; border-radius: var(--radius-pill); border: 1px solid var(--dsw-alias-hairline-strong); background: transparent; color: var(--dsw-alias-ink-secondary); cursor: pointer; white-space: nowrap; }
 .pw-chip.on { border-color: var(--dsw-alias-accent); color: var(--dsw-alias-ink); background: var(--dsw-alias-accent-wash); }
-.pw-field { display: flex; align-items: center; gap: 8px; }
-.pw-box { flex: 1; min-width: 0; font: var(--text-sm)/1.4 var(--font-text); color: var(--dsw-alias-ink); padding: 7px 9px; border: 1px solid var(--dsw-alias-hairline-strong); border-radius: var(--radius-sm); background: var(--dsw-alias-surface); resize: none; }
-.pw-send { font: var(--text-sm)/1 var(--font-text); padding: 8px 14px; border-radius: var(--radius-sm); border: 1px solid var(--dsw-alias-accent); background: var(--dsw-alias-accent-wash); color: var(--dsw-alias-accent-lift); font-weight: 600; cursor: pointer; }
-.pw-send.stop { border-color: var(--dsw-alias-down); color: var(--dsw-alias-down); background: var(--dsw-alias-surface); }
-.pw-note { font-size: var(--text-xs); color: var(--dsw-alias-ink-tertiary); margin: 6px 0 0; }
 .pw-sources { margin: 2px 0 7px; display: flex; flex-direction: column; gap: 3px; }
 .pw-source { font-size: 10.5px; color: var(--dsw-alias-ink-secondary); overflow-wrap: anywhere; }
 .pw-refusal { font-size: 10.5px; color: var(--dsw-alias-down); margin: 4px 0 0; }
+
+/* The two work surfaces are the conversation's own column (see .column):
+   the board scrolls, the refusal strip sits under it, and the one composer
+   is the column's last child — pinned exactly as the chat's is. Nothing
+   here re-implements the composer's place. */
+.column > .board {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 26px 32px 20px;
+}
+/* The pane's settings row: the design system's ghost buttons, side by
+   side, wrapping rather than clipping. */
+.pane-settings { display: flex; flex-wrap: wrap; gap: 6px; padding-top: 4px; }
+/* The lesson's work in the centre, above its thread. */
+.pw-lessonwork { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+
+.work-dock-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: min(820px, calc(100% - 64px));
+  margin: 0 auto;
+}
+
+/* The work surfaces' welcome is the conversation's own .empty component:
+   the surface's centre is a flex column, so the card centres itself the
+   way the chat's does. No new type styles. */
+.column > .board .empty { margin: 4vh auto 0; }
+
+}
 
 /* The learning pane: its own rail is the projects rail, and the board is
    the work column beside the lesson's thread. */

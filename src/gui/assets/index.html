@@ -743,8 +743,14 @@
        sections ride the same rail idiom the memory and skills panels
        use; the lesson and practice entries start a learning session
        under the role whose overlay the run rides. -->
-  <main class="stage stage-board" id="panel-learning" hidden>
-    <div class="board" id="learning-board"></div>
+  <main class="stage" id="panel-learning" hidden>
+    <!-- The conversation's own column: the lesson's work scrolls, the
+         refusal strip sits under it, and the composer — the app's one
+         composer, borrowed — is the column's last child. -->
+    <div class="column" id="learning-dock">
+      <div class="board" id="learning-board"></div>
+      <div class="work-dock-bar" id="learning-bar"></div>
+    </div>
   </main>
 
   <!-- The archive's panel retired into the work column above: the same
@@ -927,8 +933,14 @@
        which brief, its evidence status. The composer is a brief, not a
        blank canvas, and it applies on submit. The deliverable carries its
        stage rail and its review beside the claims' own sentences. -->
-  <main class="stage stage-board" id="panel-desk" hidden>
-    <div class="board" id="desk-board"></div>
+  <main class="stage" id="panel-desk" hidden>
+    <!-- The conversation's own column: the deliverable's work scrolls, the
+         refusal strip sits under it, and the composer — the app's one
+         composer, borrowed — is the column's last child. -->
+    <div class="column" id="desk-dock">
+      <div class="board dk-board" id="desk-board"></div>
+      <div class="work-dock-bar" id="desk-bar"></div>
+    </div>
   </main>
 
   <!-- Author a persona for a gap (the huddles plan's C5): a consultant for
