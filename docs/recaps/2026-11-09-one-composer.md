@@ -67,6 +67,30 @@ took the volume from **1.6 GiB to 121 GiB free**. `daily-maintenance.sh` gains
 leg 8: lanes are kept while warm (3 days) and cleaned whole once cold, and a
 lane with a build in flight is skipped.
 
+## Keeping the drive (the owner's next question: "how do we fix this for good?")
+
+Cleaning once is not a fix. Four bounds now hold the caches, and one
+observable names them:
+
+1. **A floor before a build.** `scripts/release.sh` refuses to start either
+   mode on a volume below `FLEET_DISK_FLOOR_GIB` (20), naming the numbers and
+   the lanes — a build that dies mid-link on ENOSPC is the failure nobody can
+   read.
+2. **A cap on the gate's own lane.** The same preflight cleans the lane when it
+   passes `FLEET_GATE_TARGET_MAX_GIB` (20), so it cannot grow back to 69 GiB.
+3. **A size cap beside the age sweep.** `daily-maintenance.sh`'s lane leg now
+   cleans a lane that is over the cap even inside the warm window; warmth must
+   not shield the incident it exists for.
+4. **The doctor says the number.** `fleet doctor` gains a `disk` line, judged
+   against the same 20 GiB floor, naming the holders when it fails. It reads
+   the volume through `statvfs` — not `df` — because a check that needs a
+   binary on PATH reports a broken machine when the PATH is merely narrow
+   (the install tests proved it inside the first gate run of this change).
+
+Both script paths were smoked: the floor refusal names the numbers, the pass
+prints them (`disk: 101 GiB free (floor 20)`), and the doctor answers
+`disk ok 100 GiB free (floor 20 GiB)` on the shipped build.
+
 ## Files changed
 
 - `src/gui/assets/app.js` — `placeComposer` / `composerSurface` / `surfaceSend`
@@ -80,8 +104,11 @@ lane with a build in flight is skipped.
 - `tests/face/harness.mjs` — the `PWS`, `LEARN` and `DESK` cases re-pointed at
   the column, the centre and the pane; three new pins.
 - `scripts/daily-maintenance.sh` — leg 8, the build lanes.
+- `src/doctor.rs`, `src/main.rs` — the `disk` check (`evaluate_disk`,
+  `free_kib` via `statvfs`) and its pin.
+- `scripts/release.sh` — `preflight_disk` (floor + lane cap) in both modes.
 - Docs: `docs/features/desk.md`, `docs/features/learning.md`, `CHANGELOG.md`
-  (0.6.18, 0.6.19), `docs/known-issues.md` (KI-502, KI-503).
+  (0.6.18, 0.6.19, 0.6.20), `docs/known-issues.md` (KI-502, KI-503).
 
 ## Open questions / next steps
 
