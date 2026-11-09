@@ -12,6 +12,22 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.6.13 — 2026-11-09
+
+The press answers at once.
+
+- A decision's read is not instant — the inbox document probes the
+  doctor — so a press that waited for the reply changed nothing on
+  screen for seconds and read as a dead button. `dismiss`, `archive`,
+  `restore` and `undismiss` now paint the row's fate in the same tick
+  (the row goes, or comes back) and the hint says `working — dismissing`
+  while the reply rides; the reply reconciles, and a refusal rolls the
+  paint back and names its reason in the pane. Red-proven: with the
+  optimistic paint removed, `IBC the dismiss answers before the reply
+  lands` fails with the idle hint still showing.
+- The ages read as words, not "now ago": `dismissed just now`,
+  `archived 2h ago`.
+
 ## v0.6.12 — 2026-11-09
 
 A dismissal is never a trap.

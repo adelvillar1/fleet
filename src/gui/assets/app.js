@@ -4679,6 +4679,14 @@
     roster: '#/settings'
   };
 
+  // "now", not "now ago": the age's words are a span, and the span is
+  // already the when.
+  function whenWords(at) {
+    var age = at ? roomAge(at) : '';
+    if (!age) return 'earlier';
+    return age === 'now' ? 'just now' : age + ' ago';
+  }
+
   function onboardSurface(step) {
     return ONBOARD_SURFACES[(step && step.id) || ''] || '#/settings';
   }
@@ -4697,7 +4705,15 @@
   // panes away (the KI-483 lesson), and a press is never silent.
   function inboxDecide(row, op) {
     face.inboxOpen = null;
+    // The press answers at once: the row goes (dismiss/archive) or comes
+    // back (restore/undismiss) in the pane immediately, and the reply
+    // reconciles. The read behind the reply is not instant — it probes
+    // the doctor — and a press that changes nothing for seconds reads as
+    // a dead button (the owner's own report, and the reason this exists).
+    face.inboxActing = { key: row.key, op: op };
+    paintInbox();
     post('/api/inbox', { op: op, key: row.key }).then(function (reply) {
+      face.inboxActing = null;
       if (reply.status !== 200) {
         face.inboxRefusal = (reply.body && reply.body.error) ||
           'the face said no without a reason';
@@ -4708,6 +4724,7 @@
       face.inbox = reply.body;
       paintInbox();
     }).catch(function () {
+      face.inboxActing = null;
       face.inboxRefusal = 'the face did not answer';
       paintInbox();
     });
@@ -4780,6 +4797,8 @@
       if (el.inboxEmpty) el.inboxEmpty.hidden = true;
       return;
     }
+    var acting = face.inboxActing || null;
+    var hiddenByAct = function (key) { return !!acting && acting.key === key; };
     var waiting = inboxTotal(doc);
     var archived = doc.archived || [];
     var tab = face.inboxTab === 'archived' ? 'archived' : 'waiting';
@@ -4829,7 +4848,8 @@
         });
         tools.appendChild(chip);
       });
-      var hint = node('span', 'ib-hint', 'j / k moves \u00b7 enter opens \u00b7 d dismisses');
+      var hint = node('span', 'ib-hint',
+        acting ? 'working \u2014 ' + acting.op + 'ing' : 'j / k moves \u00b7 enter opens \u00b7 d dismisses');
       hint.style.marginLeft = 'auto';
       tools.appendChild(hint);
     }
@@ -4874,7 +4894,7 @@
         var what = node('div', 'ib-what');
         what.appendChild(node('div', 'ib-title', row.label || row.key || ''));
         what.appendChild(node('div', 'ib-age',
-          'archived ' + roomAge(row.at) + ' ago \u00b7 ' +
+          'archived ' + whenWords(row.at) + ' \u00b7 ' +
           (row.live ? 'the fact is still waiting' : 'the fact has since resolved')));
         var act = node('div', 'ib-actions');
         var restore = node('button', null, 'restore');
@@ -4917,6 +4937,7 @@
       head.appendChild(node('span', 'n', String(rows.length)));
       g.appendChild(head);
       rows.forEach(function (row) {
+        if (hiddenByAct(row.key)) return;
         var r = node('div', 'ib-row');
         r.dataset.class = kind.cls;
         r.dataset.tone = kind.tone;
@@ -5036,13 +5057,14 @@
     dhead.appendChild(node('span', 'n', String(rows.length)));
     dg.appendChild(dhead);
     rows.forEach(function (row) {
+      if (face.inboxActing && face.inboxActing.key === row.key) return;
       var r = node('div', 'ib-row');
       r.dataset.class = row.class || '';
       r.dataset.key = row.key || '';
       var what = node('div', 'ib-what');
       what.appendChild(node('div', 'ib-title', row.label || row.key || ''));
       what.appendChild(node('div', 'ib-age',
-        'dismissed ' + roomAge(row.at) + ' ago \u00b7 ' +
+        'dismissed ' + whenWords(row.at) + ' \u00b7 ' +
         (row.live ? 'the fact is still waiting' : 'the fact has since resolved')));
       var act = node('div', 'ib-actions');
       var back = node('button', null, 'bring back');

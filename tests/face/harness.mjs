@@ -4593,6 +4593,13 @@ async function aDismissalPostsAndRepaints() {
   const row = page.rows('.ib-row')[0];
   const dismiss = [...row.querySelectorAll('button')].find((b) => b.textContent === 'dismiss');
   dismiss.click();
+  // The press answers before the reply: the row leaves in the same tick,
+  // and the hint says what is riding (a press that waits on the read
+  // reads as a dead button).
+  check('IBC the dismiss answers before the reply lands',
+    page.rows('.ib-row').length === 0 &&
+      /working/.test(page.rows('.ib-hint').map((h) => h.textContent).join('')),
+    page.rows('.ib-hint').map((h) => h.textContent).join('|'));
   await flush(80);
   const posts = page.calls.filter((c) => c.url === '/api/inbox');
   check('IBC the dismiss posts its op and key',
