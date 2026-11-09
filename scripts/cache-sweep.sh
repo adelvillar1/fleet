@@ -41,6 +41,20 @@ set -u
 
 DAYS="${FLEET_SWEEP_DAYS:-7}"
 THRESHOLD_GB="${FLEET_SWEEP_THRESHOLD_GB:-15}"
+# Compiled artifacts kept per crate name and extension: TWO, for the two live
+# configurations this repo actually builds.
+#
+# One would be enough against history — cargo's unit hash is source plus
+# flags, so a changed crate mints a new hash and the older copies can never be
+# what the next build wants. But the same crate is built under more than one
+# configuration here, and each gets its own hash and its own rlib: a plain
+# `cargo build --release` and a `cargo tauri build` produce two different
+# fleet-desktop rlibs (measured 2026-11-09: 86 MB each, both with a live
+# fingerprint), and switching between them costs a full LTO rebuild (3m18s
+# measured). Keep the newest copy of each live configuration and nothing more;
+# five copies would be 640 MiB per crate per profile paying for a third
+# configuration that does not exist.
+KEEP_ARTIFACTS="${FLEET_KEEP_ARTIFACTS:-2}"
 DRY=0
 ALL=0
 ONLY=""
@@ -86,9 +100,9 @@ dedupe_deps() {
         for name in $names; do
             # Newest first; everything after the head is a superseded compile.
             all=$(ls -t "$deps/$name"-*."$ext" 2>/dev/null)
-            [ "$(printf '%s\n' "$all" | wc -l | tr -d ' ')" -gt 1 ] || continue
-            older=$(printf '%s\n' "$all" | tail -n +2)
-            kept=$(printf '%s\n' "$all" | head -1)
+            [ "$(printf '%s\n' "$all" | wc -l | tr -d ' ')" -gt "$KEEP_ARTIFACTS" ] || continue
+            older=$(printf '%s\n' "$all" | tail -n +$((KEEP_ARTIFACTS + 1)))
+            kept=$(printf '%s\n' "$all" | head -"$KEEP_ARTIFACTS" | tr '\n' ' ')
             bytes=$(printf '%s\n' "$older" | tr '\n' '\0' | xargs -0 du -ck 2>/dev/null | tail -1 | awk '{print $1}')
             echo "  $(basename "$kept"): dropping $(printf '%s\n' "$older" | wc -l | tr -d ' ') older ($(human "${bytes:-0}"))"
             [ "$DRY" -eq 1 ] || printf '%s\n' "$older" | tr '\n' '\0' | xargs -0 rm -f

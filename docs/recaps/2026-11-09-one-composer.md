@@ -118,6 +118,19 @@ So the honest ceiling: a release-only build of this graph is ~3 GiB, both
 profiles plus incremental ~8–10 GiB, and everything above that is either a
 duplicate or a corpse.
 
+**How many copies to keep: two, not five.** One is right against history — a
+unit's hash is its source plus its flags, so a changed crate mints a new hash
+and the older copies can never be what the next build wants. But this repo
+builds the same crate under more than one configuration, and each gets its own
+hash and its own rlib: a plain `cargo build --release` and a `cargo tauri build`
+left two different fleet-desktop rlibs (86 MB each, measured 2026-11-09), both
+with a live fingerprint; dropping either costs a full LTO rebuild (3m18s
+measured). So the rule is one copy per live configuration, and two is the
+count this tree produces; five would be 640 MiB per crate per profile paying
+for a third configuration that does not exist. `FLEET_KEEP_ARTIFACTS` sets it,
+default 2 — and at 1 the sweep finds only 64 MiB more than at 2, which is the
+size of the argument.
+
 ## Files changed
 
 - `src/gui/assets/app.js` — `placeComposer` / `composerSurface` / `surfaceSend`
