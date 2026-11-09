@@ -19,6 +19,36 @@ and one of them fails loudly only after the damage.
 
 ---
 
+## 0. The owner's ruling (2026-11-09): the update comes from GitHub, never from the local machine
+
+Recorded verbatim from the dive's answer: *"the update should be fetched from
+github, never from the local machine."* Operationally that fixes the
+provenance of every byte an update installs:
+
+- the feed and the artifact are read from
+  `github.com/adelvillar1/fleet/releases/...` and from nowhere else — no local
+  path, no local HTTP server, no LAN peer, no file the owner drops beside the
+  binary;
+- no configuration may repoint the source: the endpoint is the pinned constant
+  (`src/update.rs:35`) and the pinned config URL (`src-tauri/tauri.conf.json:45-47`),
+  not a settings key, an environment variable or a flag;
+- the machine is the **install target** and the **press surface** only. Writing
+  the verified artifact to `<exe>.update` and renaming it is the install, not a
+  source;
+- verification stays where it is: the shell's minisign signature against the
+  pinned public key, the CLI's sha256 against the feed's cli row. Both are read
+  from GitHub, so both are only as good as the transport — which is why a
+  plain-http endpoint is incompatible with this ruling (S1).
+
+What the code does today against that: the sources are already GitHub-only —
+`FEED` is a constant, the plugin's `endpoints` are pinned, nothing reads a
+local artifact — and the one hole is `dangerousInsecureTransportProtocol: true`,
+which permits a plain-http source and therefore a local or LAN one (filed as
+KI-489). What the ruling does **not** decide: who may press. A press from the
+loopback-served About pane still fetches every byte from GitHub; the ACL fix in
+D2 is therefore free to stay minimal (grant the press surface, not the source),
+while the port race in G4 is closed on its own terms.
+
 ## 1. The pipeline as designed
 
 Five stages, one owner each. Read this as the contract the code is supposed to
@@ -266,7 +296,9 @@ different: grant `remote` and accept the surface, or stop using an external
 origin (serve the shell's window from `tauri://` and let the page talk to the
 loopback API cross-origin, which costs the service-worker condition the
 loopback origin was chosen for). The port race should be closed either way —
-hold the listener and hand it to the server.
+hold the listener and hand it to the server. Neither option changes where the
+bytes come from: under the 2026-11-09 ruling (§0) both fetch from GitHub, so
+this is a question of attack surface, not of provenance.
 
 **G5 — the two installs drift.** Updating the bundle does not update
 `~/.fleet/bin/fleet`, and updating the CLI does not update the bundle. The
@@ -279,7 +311,10 @@ the owner's window is the bundle.
 
 **S1 — `dangerousInsecureTransportProtocol: true`**
 (`src-tauri/tauri.conf.json:44`) for a feed and artifacts that are all HTTPS.
-An unnecessary loosening; the name says why it should not be left on.
+Under the owner's 2026-11-09 ruling (§0) this is not a tidiness note: the flag
+is exactly what would let the update be fetched over plain http — from a local
+or LAN source — so it contradicts the provenance rule and must go with the
+next shell change. Filed as KI-489.
 
 **S2 — pre-releases compare equal to their release.** `parse_version` drops the
 `-rc.1`/`-beta.1` suffix (`src/update.rs:90-105`), so `0.6.0-rc.1` against a
@@ -327,7 +362,8 @@ the mode.
   `--version` against the feed's version before the rename; keep the previous
   binary; a `FEED` seam so the install leg has a test.
 - `src-tauri/capabilities/default.json`: the origin decision (D2), with
-  `restart_app` named in the same capability.
+  `restart_app` named in the same capability — and remember §0: the grant
+  widens who may press, never where the bytes come from.
 - `src-tauri/src/lib.rs`: close the port race — bind once, pass the listener to
   the server.
 - `src/gui/assets/app.js`: the About pane's pre-check paint (D3) must say
@@ -335,6 +371,8 @@ the mode.
   press will use.
 - `scripts/release.sh`: whichever artifact shape the owner picks; the feed's
   notes line; an anonymous read-back of the feed after upload.
+- `src-tauri/tauri.conf.json`: drop `dangerousInsecureTransportProtocol`
+  (S1/KI-489) — the provenance rule's one code hole.
 - The ledger's KI-483 row and the plan's criterion: corrected to their real
   verification state (D4).
 
