@@ -3870,6 +3870,16 @@ impl Bridge {
         // signature holds, and an archived row lives in its own list —
         // kept with the day it went, restorable, alive or resolved.
         let decisions = load_inbox(&self.home);
+        // The archive's "is it still waiting" read runs against the rows
+        // BEFORE the decisions hide them: an archived row's fact is by
+        // definition still in the read, and a resolved one says so.
+        let live = [
+            seats.clone(),
+            onboarding.clone(),
+            asks.clone(),
+            cron.clone(),
+            doctor.clone(),
+        ];
         for rows in [
             &mut seats,
             &mut onboarding,
@@ -3877,9 +3887,12 @@ impl Bridge {
             &mut cron,
             &mut doctor,
         ] {
-            rows.retain(|row| !inbox_dismissed(&decisions, row));
+            rows.retain(|row| !inbox_hidden(&decisions, row));
         }
-        let archived = inbox_archived(&decisions, &[&seats, &onboarding, &asks, &cron, &doctor]);
+        let archived = inbox_archived(
+            &decisions,
+            &[&live[0], &live[1], &live[2], &live[3], &live[4]],
+        );
         let total = seats.len() + onboarding.len() + asks.len() + cron.len() + doctor.len();
         json!({
             "type": "inbox",
@@ -6663,18 +6676,24 @@ fn inbox_rows(class: &str, rows: Vec<Value>) -> Vec<Value> {
         .collect()
 }
 
-/// Whether the owner's dismissal still hides this row: the stashed
-/// signature must match the row's own.
-fn inbox_dismissed(decisions: &InboxDecisions, row: &Value) -> bool {
+/// Whether the owner's decision still hides this row from the waiting
+/// queue: a dismissed OR archived mark whose signature matches the
+/// row's own.
+fn inbox_hidden(decisions: &InboxDecisions, row: &Value) -> bool {
     let key = row.get("key").and_then(Value::as_str).unwrap_or_default();
     let signature = row
         .get("signature")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    decisions
-        .dismissed
-        .get(key)
-        .is_some_and(|mark| mark.signature == signature)
+    let holds = |marks: &std::collections::BTreeMap<String, InboxMark>| {
+        marks
+            .get(key)
+            .is_some_and(|mark| mark.signature == signature)
+    };
+    // An archived row lives in the archive's own list, never in both:
+    // the live read showed the archive answering while the row stayed
+    // in the queue, because this check only knew about dismissals.
+    holds(&decisions.dismissed) || holds(&decisions.archived)
 }
 
 /// The archived list as the face reads it: every archived mark with the
@@ -13094,18 +13113,48 @@ mod goal_tests {
         let same = json!({"key": "cron:nightly-sweep", "signature": "03:00|failed"});
         let changed = json!({"key": "cron:nightly-sweep", "signature": "04:00|failed"});
         assert!(
-            inbox_dismissed(&loaded, &same),
+            inbox_hidden(&loaded, &same),
             "the same fact stays dismissed"
         );
-        assert!(
-            !inbox_dismissed(&loaded, &changed),
-            "a new failure comes back"
-        );
+        assert!(!inbox_hidden(&loaded, &changed), "a new failure comes back");
         // An archived row with no live fact still reads, honestly resolved.
         let archived = inbox_archived(&loaded, &[]);
         assert_eq!(archived.len(), 1);
         assert_eq!(archived[0]["label"], "one passphrase seals them");
         assert_eq!(archived[0]["live"], false);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// An archived row leaves the waiting queue and lives in the
+    /// archive — the live shape that showed the filter only knew about
+    /// dismissals. Driven through the bridge's own routes.
+    #[tokio::test]
+    async fn an_archived_row_leaves_the_waiting_queue() {
+        let home = std::env::temp_dir().join(format!("fleet-inbox-archive-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        let jobs = "{\"jobs\":[{\"name\":\"nightly-sweep\",\"schedule\":\"0 3 * * *\",\"task\":\"sweep\",\"auto_approve\":true,\"enabled\":true,\"last_outcome\":\"failed\",\"runs\":12,\"successes\":11}]}";
+        std::fs::create_dir_all(home.join("cron")).unwrap();
+        std::fs::write(home.join("cron/jobs.json"), jobs).unwrap();
+        let bridge = detached(&home);
+        let before = bridge.owner_inbox().await;
+        assert_eq!(before["cron"].as_array().unwrap().len(), 1, "{before}");
+        let after = bridge
+            .inbox_op(r#"{"op":"archive","key":"cron:nightly-sweep"}"#)
+            .await
+            .expect("the archive must land");
+        assert_eq!(
+            after["cron"].as_array().unwrap().len(),
+            0,
+            "an archived row must leave the waiting queue: {after}"
+        );
+        assert_eq!(after["archived"].as_array().unwrap().len(), 1, "{after}");
+        assert_eq!(after["archived"][0]["live"], true, "{after}");
+        let restored = bridge
+            .inbox_op(r#"{"op":"restore","key":"cron:nightly-sweep"}"#)
+            .await
+            .expect("the restore must land");
+        assert_eq!(restored["cron"].as_array().unwrap().len(), 1, "{restored}");
         let _ = std::fs::remove_dir_all(&home);
     }
 

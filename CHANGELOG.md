@@ -12,6 +12,21 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.6.9 — 2026-11-09
+
+The archive leaves the queue.
+
+- **The archived row stopped waiting.** 0.6.8's read filtered only the
+  dismissed decisions, so an archived row appeared in the Archived segment
+  *and* stayed in the waiting queue — found by the release's own live
+  check (`POST /api/inbox {"op":"archive"}` answered with the row still
+  in `total`). The filter now knows both decisions, and the archive's
+  "the fact is still waiting" flag is read before the decisions hide the
+  rows, so an archived row reads `live: true` while its fact is there.
+- Pinned by `an_archived_row_leaves_the_waiting_queue`, which drives the
+  bridge's own `inbox_op` and asserts the queue empties, the archive
+  holds the row, and a restore brings it back.
+
 ## v0.6.8 — 2026-11-09
 
 The inbox can be worked.
