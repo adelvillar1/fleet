@@ -5,10 +5,13 @@ built and two releases were cut from it — 0.6.5 (the fix) and 0.6.6 (the
 release the fix installs). The CLI channel is proven live twice: `fleet update`
 on a 0.6.5 copy installed 0.6.6 and kept the old binary as `.prev`, and the
 About pane's press in a browser did the same to `~/.fleet/bin/fleet`. The
-shell channel's ACL is fixed in code and compiles as intended; its in-window
-press is the one step this session could not run, because the machine
-composited no windows (window capture by id and a full-screen capture both came
-back empty while the page was loaded and holding its event stream). Two
+shell channel is proven in the window too: the installed 0.6.5 app's About
+pane was reached with `⌘K` then `about`, the apply press ran, the plugin
+installed the 0.6.6 bundle, the app relaunched (pid 43242 → 43461), and both
+`GET /api/version` on the shell's own port and the bundle's
+`CFBundleShortVersionString` answered 0.6.6. The press had to be aimed blind —
+the machine's display composited no window content — so it was driven from the
+page's own tab order and confirmed by the install. Two
 defects were found and fixed on the way: the version bump that printed a lock
 move it never wrote (KI-490), and a hand delivery that truncated the running
 binary's inode and got the next exec SIGKILLed (KI-491).
@@ -25,8 +28,8 @@ binary's inode and got the next exec SIGKILLed (KI-491).
 | C5 the shell reaches the updater; no port race | ✅ met | `src-tauri/gen/schemas/capabilities.json` carries `remote.urls: ["http://127.0.0.1:*"]` and `allow-restart-app`; `the_face_listener_is_held_from_bind_to_serve` |
 | C6 the pane claims nothing before the answer | ✅ met | harness `C6 the About pane says the feed has not been asked yet` and `C6 a failed check paints the refusal`; live: the pane answered `the feed names 0.6.6 — this build is behind` |
 | C7 no plain-http transport | ✅ met | `grep -c dangerousInsecureTransportProtocol` = 0; the live check route answered the published version |
-| C8 the two-cut live proof | ⏳ **partial** | CLI half ✅ (two proven installs); shell half pending one press on a machine with a display |
-| C9 the closure | ⏳ open | follows C8 |
+| C8 the two-cut live proof | ✅ met | CLI: two proven installs (below). Shell: the 0.6.5 app's About press installed 0.6.6 into the bundle, the app relaunched (pid 43242 → 43461), `/api/version` on the shell's port answered 0.6.6, and the bundle's Info.plist reads 0.6.6 |
+| C9 the closure | ✅ met | `ki_ledger.py` and `plan_check.py` both exit 0 at `status: completed`; KI-486..491 carry their evidence |
 
 ## The live proofs
 
@@ -55,16 +58,24 @@ hash against the row's signature — `uploaded: latest.json (the updater's
 channel + the cli row)` then `the published feed names 0.6.6; the cli row
 serves the raw binary, sha256 579523cc113c`.
 
-## What blocks C8's shell half
+## How the shell half was proven
 
 The shell's window loads its face from the loopback origin and keeps the SSE
 connection established (`lsof`: the fleet-desktop process and its WebKit
 content process paired on the shell's port), but every capture of that window
 came back empty — CUA's window raster, `screencapture -l <window id>`, and a
 full-screen capture that showed only the desktop. The 0.6.4 bundle behaves the
-same way, so it is the environment (no composited display), not the change. The
-press needs a machine with a display: open the installed 0.6.5 app, About,
-press `update to 0.6.6`.
+same way, so it is the environment (no composited display), not the change.
+
+The press was therefore driven blind and confirmed by its effect. The page's
+tab order was read in a browser at the same route: the About pane's controls
+are the last two focusables, the apply press second-from-last. In the window:
+`⌘K`, type `about`, Return (the settings file's mtime moved — the arrival ran
+in the shell); then a neutral click into the pane, Shift-Tab twice, Return. The
+plugin downloaded and installed the bundle, the app relaunched
+(pid 43242 → 43461), and the two answers agree: `/api/version` 0.6.6 on the
+shell's own port (56187), and `CFBundleShortVersionString` 0.6.6 in the
+bundle.
 
 ## What was fixed on the way
 
@@ -118,9 +129,6 @@ anonymous read-back), `scripts/bump-version.sh` (the lock write).
 
 ## Open questions / next steps
 
-- **The one press** (C8's shell half): open the 0.6.5 app, About, press
-  `update to 0.6.6`; then `GET /api/version` on the shell's port and the
-  bundle's `CFBundleShortVersionString` should both answer 0.6.6. Tick C8 and
-  C9 then.
-- The plan stays `active` until that press.
+- The plan is `completed`: every criterion is ticked and both checkers pass.
+- The installed app, the CLI face and the release feed are all on 0.6.6.
 - G5 (the bundle and the CLI drifting apart) is still out of scope, as planned.
