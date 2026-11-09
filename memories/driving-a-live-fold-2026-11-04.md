@@ -8,7 +8,7 @@ tier: durable
 shape: []
 phrases: []
 missing: []
-recall-count: 33
+recall-count: 5
 superseded-by:
 valid-until:
 ---
