@@ -31,8 +31,10 @@
 #   6. the plan-worktree sweep — dry-run by default: --live stays the
 #      owner's explicit act, which is the sweep's own rule;
 #   8. the build lanes — /tmp's gate and lane target dirs, kept while warm
-#      and cleaned whole when cold; the drive's own good-citizen rule
-#      (2026-11-09: 80 GiB of lanes on a drive with 1.6 GiB free).
+#      and cleaned whole when cold (2026-11-09: 80 GiB of lanes on a drive
+#      with 1.6 GiB free);
+#   9. the footprint — every store against the budget the owner declared,
+#      measured and recorded for `fleet doctor` to read.
 #   7. the orphan naming — untracked, non-ignored TOP-LEVEL entries are
 #      named in the log and never deleted: a stray directory is a
 #      question for the owner, not a file a script may remove.
@@ -157,7 +159,22 @@ if [ -d /private/tmp/fleet-release-gate ] &&
     say "  a stale release-gate worktree is present: /private/tmp/fleet-release-gate (named, not removed)"
 fi
 
-# 7. the orphan naming — read-only, always.
+# 9. the footprint — the budget table, measured and recorded. This is the
+#    leg that makes the rest accountable: every store is named with the
+#    budget the owner declared for it, and a store over its budget is a
+#    failure the log carries (the writers are meant to keep it under; the
+#    sweep is the fallback, not the plan).
+say "— footprint —"
+if [ -x "$REPO/scripts/footprint.sh" ]; then
+    "$REPO/scripts/footprint.sh" --record > /tmp/fleet-footprint.log 2>&1
+    if [ $? -eq 0 ]; then
+        say "  every store is inside its budget ($(tail -1 /tmp/fleet-footprint.log))"
+    else
+        while IFS= read -r line; do say "  $line"; done < /tmp/fleet-footprint.log
+    fi
+fi
+
+# 10. the orphan naming — read-only, always.
 orphans=$(git ls-files --others --exclude-standard 2>/dev/null | cut -d/ -f1 | sort -u | tr '\n' ' ')
 if [ -n "$orphans" ]; then
     say "— untracked at the top level, for the owner to name or ignore: $orphans"

@@ -4138,6 +4138,14 @@ fn doctor_checks() -> ExitCode {
     failed |= !disk_check.ok;
     println!("{}", doctor::render(&disk_check));
 
+    // The declared footprint, from the sidecar `scripts/footprint.sh
+    // --record` writes: the doctor must not walk 15 GiB on every call, and
+    // a budget the owner declared is only real if it is reported.
+    let (used_gib, budget_gib, age_min) = footprint_facts(home.as_deref());
+    let caches_check = doctor::evaluate_caches(used_gib, budget_gib, age_min);
+    failed |= !caches_check.ok;
+    println!("{}", doctor::render(&caches_check));
+
     let shell_check = doctor::evaluate_shell(shell_probe());
     failed |= !shell_check.ok;
     println!("{}", doctor::render(&shell_check));
@@ -4668,6 +4676,37 @@ async fn explain_command(options: &cli::ExplainOptions) -> ExitCode {
 }
 
 /// Probe the platform shell without changing anything.
+/// The footprint sidecar's numbers: what `scripts/footprint.sh --record`
+/// measured (target + lanes) against the budget it used, and how long ago.
+/// A missing sidecar is `None` — an honest "not measured yet", never a zero.
+fn footprint_facts(home: Option<&std::path::Path>) -> (Option<f64>, f64, Option<u64>) {
+    let budget = 20.0;
+    let path = match home {
+        Some(home) => home.join("footprint.json"),
+        None => return (None, budget, None),
+    };
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(_) => return (None, budget, None),
+    };
+    let doc: serde_json::Value = match serde_json::from_str(&text) {
+        Ok(doc) => doc,
+        Err(_) => return (None, budget, None),
+    };
+    let kib = |key: &str| doc.get(key).and_then(|v| v.as_u64()).unwrap_or(0);
+    let used = (kib("target_kib") + kib("lanes_kib")) as f64 / 1024.0 / 1024.0;
+    let budget = doc
+        .get("target_budget_gib")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(budget);
+    let age = std::fs::metadata(&path)
+        .and_then(|meta| meta.modified())
+        .ok()
+        .and_then(|modified| std::time::SystemTime::now().duration_since(modified).ok())
+        .map(|elapsed| elapsed.as_secs() / 60);
+    (Some(used), budget, age)
+}
+
 /// Free space on the volume that holds `path`, in kibibytes: the volume's
 /// own answer through `statvfs`, never a shell-out — a doctor that needs
 /// `df` on PATH reports a broken machine when the PATH is merely narrow.

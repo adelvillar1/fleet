@@ -156,6 +156,44 @@ pub fn evaluate_disk(free_kib: Option<u64>) -> Check {
     }
 }
 
+/// The declared footprint, measured by `scripts/footprint.sh --record`:
+/// the repo's target and the build lanes against the budgets the owner set.
+/// A store over its budget is a FAIL, because the writers are supposed to
+/// keep it under — rescue is the fallback, never the plan (2026-11-09).
+pub fn evaluate_caches(used_gib: Option<f64>, budget_gib: f64, age_min: Option<u64>) -> Check {
+    match used_gib {
+        None => Check {
+            name: "caches",
+            ok: true,
+            detail: format!(
+                "no measurement yet \u{2014} scripts/footprint.sh --record writes one (budget {budget_gib:.0} GiB)"
+            ),
+        },
+        Some(used) => {
+            let age = age_min
+                .map(|min| {
+                    if min < 120 {
+                        format!("measured {min}m ago")
+                    } else {
+                        format!("measured {}h ago", min / 60)
+                    }
+                })
+                .unwrap_or_else(|| "measured earlier".to_string());
+            Check {
+                name: "caches",
+                ok: used <= budget_gib,
+                detail: if used <= budget_gib {
+                    format!("{used:.1} GiB of {budget_gib:.0} GiB ({age})")
+                } else {
+                    format!(
+                        "{used:.1} GiB of {budget_gib:.0} GiB \u{2014} over budget; the sweep and the release preflight are meant to keep it under ({age})"
+                    )
+                },
+            }
+        }
+    }
+}
+
 /// The shell check from a probe outcome.
 pub fn evaluate_shell(probe: Result<&'static str, String>) -> Check {
     match probe {
@@ -2058,6 +2096,31 @@ mod tests {
         assert!(rendered.contains("KI-106"), "{rendered}");
         assert!(!rendered.contains("KI-105"), "{rendered}");
         let _ = std::fs::remove_file(&ledger);
+    }
+
+    #[test]
+    fn the_cache_line_reads_the_budget_and_names_an_overrun() {
+        let roomy = evaluate_caches(Some(15.0), 20.0, Some(3));
+        assert!(roomy.ok);
+        assert!(
+            roomy.detail.contains("15.0 GiB of 20 GiB"),
+            "{}",
+            roomy.detail
+        );
+        assert!(roomy.detail.contains("3m ago"), "{}", roomy.detail);
+        let over = evaluate_caches(Some(31.0), 20.0, Some(180));
+        assert!(!over.ok);
+        assert!(over.detail.contains("over budget"), "{}", over.detail);
+        assert!(over.detail.contains("3h ago"), "{}", over.detail);
+        // No measurement is honest, not a failure: the disk line already
+        // reports free space, and a fresh install has no sidecar yet.
+        let none = evaluate_caches(None, 20.0, None);
+        assert!(none.ok);
+        assert!(
+            none.detail.contains("no measurement yet"),
+            "{}",
+            none.detail
+        );
     }
 
     #[test]
