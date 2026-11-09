@@ -112,3 +112,28 @@ four legs were green at both cuts.
   unbound stay out of scope, as the plan says.
 - The same shell could carry the memory, skills and sessions rails later; the
   pattern is shared code, not three copies.
+
+## The layout revision (the owner's correction, v0.6.17)
+
+The first shell put the work in the middle and the thread on the right. The
+owner corrected the pattern on sight: **the composer belongs in the centre**,
+and the right column should be the app's own **collapsible pane**, the same one
+sessions, design and huddles carry.
+
+- The centre is now the artifact's conversation and composer.
+- The pane gains a leading tab, **`the work`**, whose content is whatever the
+  route is about: the desk's deliverable (or its shelf and brief), learning's
+  plan, graph, practice and history. The projects rail is unchanged.
+- The tab hides on routes with no context, and a pane showing it on such a
+  route falls back to the run tab (`syncPaneContext`) — no dead tab, no dead
+  end.
+- Learning's pane stopped being a section rail: it is a plain board with the
+  same shell as the desk, which also stopped the double-rail squeeze the first
+  layout suffered.
+- Two defects were found by the visual read of the revision and fixed in it:
+  every pane body showed at once (the context paint returned before the other
+  bodies were hidden), and the message list pushed the composer below the fold.
+
+The harness reads the surface as both columns now (`deskSurface`,
+`learnSurface`), and the desk's card and order cases read the pane's context.
+Gate green: 2072 lib tests, 1076 harness checks / 134 cases.
