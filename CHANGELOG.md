@@ -32,7 +32,10 @@ The press answers at once.
 
 A dismissal is never a trap.
 
-- **v0.6.11's cut was burned**: the version bump was piped through
+*Release and tag deleted 2026-11-09: 0.6.13 carries the same content plus the
+instant press, and nothing depends on the version being installable.*
+
+- **v0.6.11's cut was burned** (release and tag deleted 2026-11-09): the version bump was piped through
   `head`, SIGPIPE stopped the script after two sites, and the tree went
   to the tag with `tauri.conf.json` still at 0.6.10 while the two
   manifests said 0.6.11. The assets mode's three-way check refused

@@ -68,11 +68,12 @@ reverting the code (the group heads, the optimistic paint).
 
 ## The burned release (for the record)
 
-`v0.6.11` exists as an empty, prerelease-marked release; its tag points at a
-tree whose version sites disagree. 0.6.12 carries the same content correctly.
-Deleting the release and the tag is the owner's call (it is a destructive,
-outward-facing act), and the feed is unaffected — `releases/latest` names
-0.6.13.
+`v0.6.11` was an empty, prerelease-marked release whose tag pointed at a tree
+with disagreeing version sites; 0.6.12 carried the same content correctly. The
+owner asked for both to go on 2026-11-09 and both release-and-tag pairs were
+deleted (`gh release delete --cleanup-tag`), so the releases page runs 0.6.10 →
+0.6.13 and `releases/latest` still names 0.6.13. The changelog keeps both
+sections as the record of what happened.
 
 ## Files changed
 
