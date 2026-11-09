@@ -1,5 +1,5 @@
 ---
-status: active
+status: completed
 created: 2026-11-09
 updated: 2026-11-09
 slug: project-work-surfaces
@@ -100,11 +100,11 @@ every box is checked.
 - [x] C6 — Every composer chip does something visible: `sources` opens the desk's source list, `role` toggles teacher/practitioner in the learning composer, `practice` starts a practice in a new session, `review before close` shows the end gate's state; each is pinned by a harness case.
 - [x] C7 — No dead ends: every project row and every artifact row is pressable and its press changes the pane; every empty state names the action that fills it; an empty project, an empty desk and a lesson with no plan each render their own action rather than a blank card.
 - [x] C8 — The harness carries the cases: the projects read feeds both rails; a project press filters; a deliverable press opens its thread; a lesson press opens its log; the composer posts the right run per surface; the chips act; the empty states name their action. The suite is green.
-- [ ] C9 — `docs/features/desk.md` and `docs/features/learning.md` describe the rails, the threads and the composers; the ledger row is closed; `ki_ledger.py` and `plan_check.py` exit 0 at status: completed; the four-leg gate is green; the cut is published.
+- [x] C9 — `docs/features/desk.md` and `docs/features/learning.md` describe the rails, the threads and the composers; the ledger row is closed; `ki_ledger.py` and `plan_check.py` exit 0 at status: completed; the four-leg gate is green; the cut is published.
 
 ## Progress (2026-11-09, v0.6.14)
 
-C0–C8 are met. The one `GET /api/projects` unions the desk's bound
+C0–C9 are met. The one `GET /api/projects` unions the desk's bound
 deliverables and the lessons' working directories (a lesson's project is
 its session's own workspace) with the unbound bucket; both panes are the
 same shell — the projects rail, the work column, the thread with the
@@ -112,7 +112,11 @@ composer. The desk's thread is a `desk`-kind session born on the first
 iteration and seeded with the brief; learning's is the lesson's session,
 answered through `?session=`. The chips and the empty states were proven
 by the harness's two `PWS` cases (15 checks); the whole suite is 1076
-checks across 134 cases. C9 follows the cut.
+checks across 134 cases. C9 closed with the cut (v0.6.14, then 0.6.15 and 0.6.16 for the two defects the
+live read caught: the lesson's project missing from its own row in the read, and
+the shells landing in one column of the board's twelve-column grid). The visual
+read of both surfaces shows three clean columns, and the live presses are in the
+recap.
 
 ## Files to be touched
 
