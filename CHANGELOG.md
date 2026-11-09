@@ -12,6 +12,25 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.6.2 — 2026-11-08
+
+The update button answers where it is pressed.
+
+- **KI-483 fixed — the About pane's update button works.** The CLI
+  channel's apply read `feed.row("cli")`, but the feed parser kept only
+  the `platforms` table and release.sh ships the cli row as a top-level
+  `cli` object beside it — so every apply answered a 409 the button then
+  painted two panes away from where the owner pressed. The parser now
+  keeps the cli row (the format's two row shapes both live in the feed:
+  the plugin's rows under `platforms`, the CLI's row beside them), and
+  the refusal paints into the About pane's own feed answer. Pinned in
+  `update::` (revert-proven: the mapping removed fails compilation and
+  the dropped row fails at the 0.6.0 message) and in the face harness
+  (the 409 names itself in the pane, the button re-arms).
+- Honest note: this fix is compiled into >=0.6.2. A 0.6.0 face's button
+  stays dead on the CLI channel regardless of the feed; from a 0.6.0
+  dmg shell the working hop is the Tauri-native updater.
+
 ## v0.6.1 — 2026-11-08
 
 The fold budget followed the workloads' real serving pairs.

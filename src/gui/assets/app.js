@@ -23503,7 +23503,7 @@
     // The feed's answer, from the check at hand: same, candidate, or
     // the named refusal. no-network never reads as up to date.
     var feedCard = boardCard(12, 'the release feed', null, null);
-    var answer = node('div', 'cfg-form');
+    var answer = node('div', 'cfg-form feed-answer');
     if (update.refused) {
       answer.appendChild(node('p', 'knob-summary',
         'the feed did not answer: ' + (update.refused.reason || 'no reason given')));
@@ -23582,9 +23582,24 @@
     button.disabled = true;
     post('/api/update/apply', {}).then(function (reply) {
       if (reply.status !== 200) {
-        notice('the update did not land',
-          (reply.body && (reply.body.error ||
-            (reply.body.refused && reply.body.refused.reason))) || 'no reason given');
+        // KI-483's second half: `notice` paints the refusal into the
+        // transcript, two panes from where the owner pressed. The
+        // refusal must answer where the press stands — the About
+        // pane's own feed answer — so the press can never read as
+        // silence. The transcript card still paints for the record.
+        var reason = (reply.body && (reply.body.error ||
+          (reply.body.refused && reply.body.refused.reason))) || 'no reason given';
+        notice('the update did not land', reason);
+        var answer = el.aboutBoard.querySelector
+          ? el.aboutBoard.querySelector('.feed-answer')
+          : null;
+        if (answer) {
+          answer.textContent = '';
+          answer.appendChild(node('p', 'knob-summary',
+            'the update did not land \u2014 ' + reason));
+          answer.appendChild(node('p', 'cfg-note',
+            'The running face kept serving. Check the feed again once the reason is addressed.'));
+        }
         button.disabled = false;
         return;
       }

@@ -886,6 +886,31 @@ function boot(options) {
           asked: parsed.query, declared }),
       });
     }
+    // The update card's two verbs (KI-483's pin): the About pane's
+    // arrival read and the apply press ride these routes. A case
+    // scripts each — a refusal must reach the pane the press stands
+    // in, never only the transcript. Unscripted, both fall through to
+    // the default reply exactly as before.
+    if (pathOnly === '/api/update/check' && method === 'GET') {
+      const scripted = typeof documents.updateCheck === 'function'
+        ? documents.updateCheck()
+        : documents.updateCheck;
+      if (scripted == null) return Promise.resolve({ status: 200, json: () => Promise.resolve(opts.reply || {}) });
+      return Promise.resolve({
+        status: scripted.status || 200,
+        json: () => Promise.resolve(scripted.body || scripted),
+      });
+    }
+    if (pathOnly === '/api/update/apply' && method === 'POST') {
+      const scripted = typeof opts.updateReply === 'function'
+        ? opts.updateReply()
+        : opts.updateReply;
+      if (scripted == null) return Promise.resolve({ status: 200, json: () => Promise.resolve(opts.reply || {}) });
+      return Promise.resolve({
+        status: scripted.status || 200,
+        json: () => Promise.resolve(scripted.body || scripted),
+      });
+    }
     return Promise.resolve({ status: 200, json: () => Promise.resolve(opts.reply || {}) });
   };
 
@@ -10793,6 +10818,96 @@ function theDoorScrollsItsOwnForm() {
     persona.length + ' chars');
 }
 
+// KI-483's two halves, pinned the way KI-400 taught: a surface that
+// renders fine can still be unpressable, so pin the press, and assert
+// on a subtree the harness can reach (the About board's own nodes).
+//
+// Half one: the bridge's refusal (409, the CLI-channel reason in
+// `error`) must paint into the About pane's own feed answer — the
+// transcript card notice() also builds is two panes away and is why
+// the press read as silence in 0.6.0.
+async function theUpdateRefusalAnswersWhereThePressStands() {
+  const page = boot({
+    hash: '#/about',
+    documents: {
+      state: (asked) => emptyState(asked),
+      updateCheck: () => ({
+        type: 'settings',
+        update: {
+          current: '0.6.0',
+          installed_via: 'source',
+          candidate: '0.6.2',
+          notes: 'the cli row answers the cli channel',
+          pub_date: '2026-11-08T00:00:00Z',
+        },
+      }),
+    },
+    updateReply: () => ({ status: 409, body: { error: 'the feed carries no cli row' } }),
+  });
+  await flush();
+  page.open();
+  await flush();
+
+  const press = page.rows('.replay-button')
+    .find((b) => /^update to/.test(b.textContent.trim()));
+  check('KI-483 the candidate carries its apply press', Boolean(press),
+    page.rows('.replay-button').map((b) => b.textContent.trim()).join(' | '));
+  if (!press) return;
+
+  press.click();
+  await flush();
+
+  const posted = page.calls.filter((c) => c.method === 'POST' && c.url === '/api/update/apply');
+  check('KI-483 the press posts the apply once', posted.length === 1,
+    String(page.calls.filter((c) => c.url === '/api/update/apply').length));
+  const answer = page.rows('.feed-answer')[0];
+  check('KI-483 the refusal names itself in the pane',
+    Boolean(answer) && answer.textContent.includes('the update did not land') &&
+      answer.textContent.includes('the feed carries no cli row'),
+    answer ? answer.textContent : 'no .feed-answer in the about board');
+  check('KI-483 the press re-arms after the refusal', press.disabled === false,
+    String(press.disabled));
+}
+
+// Half two (the arrival read): opening About asks the feed once and
+// paints the answer where the press will stand — a candidate builds
+// its apply button from the same read.
+async function theAboutPaneReadsTheFeedOnArrival() {
+  let checks = 0;
+  const page = boot({
+    hash: '#/about',
+    documents: {
+      state: (asked) => emptyState(asked),
+      updateCheck: () => {
+        checks += 1;
+        return {
+          type: 'settings',
+          update: {
+            current: '0.6.0',
+            installed_via: 'source',
+            candidate: '0.6.2',
+            notes: 'the release notes',
+            pub_date: '2026-11-08T00:00:00Z',
+          },
+        };
+      },
+    },
+  });
+  await flush();
+  page.open();
+  await flush();
+
+  check('KI-483 the arrival asked the feed once', checks === 1, String(checks));
+  const answer = page.rows('.feed-answer')[0];
+  check('KI-483 the arrival paints the feed\u2019s candidate',
+    Boolean(answer) && answer.textContent.includes('the feed names 0.6.2'),
+    answer ? answer.textContent : 'no .feed-answer in the about board');
+  const press = page.rows('.replay-button')
+    .find((b) => /^update to/.test(b.textContent.trim()));
+  check('KI-483 the painted candidate carries the press', Boolean(press),
+    page.rows('.replay-button').map((b) => b.textContent.trim()).join(' | '));
+}
+
 const cases = [
   ['HEALTH the working line reads the health, not the turn', theWorkingLineReadsTheHealthNotTheTurn],
   ['HEALTH a reopened conversation seeds its health and the floor names itself', aReopenedConversationSeedsItsHealth],
@@ -10914,6 +11029,8 @@ const cases = [
   ['GOAL the goal chip and the uncapped finish', theGoalChipAndTheUncappedFinish],
   ['DESK a refused verb keeps its reason (KI-447)', aRefusedVerbKeepsItsReason],
   ['SEAM the room carries the desk and the hand', theRoomCarriesTheDeskAndTheHand],
+  ['KI-483 the update refusal answers where the press stands', theUpdateRefusalAnswersWhereThePressStands],
+  ['KI-483 the About pane reads the feed on arrival', theAboutPaneReadsTheFeedOnArrival],
 ];
 
 for (const [name, run] of cases) {

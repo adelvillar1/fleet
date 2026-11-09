@@ -121,24 +121,31 @@ pub fn version_gap(current: &str, candidate: &str) -> Result<&'static str, Strin
 
 /// The feed read once: the version it names, its notes and date, and
 /// the platform rows the plugin and the CLI read their artifacts from.
+/// The update format's two row shapes both live here: the plugin's
+/// rows sit under `platforms`, the CLI's row is a top-level `cli`
+/// object beside them — Tauri's own feed shape, not a second format.
 #[derive(Debug, Clone)]
 pub struct ReleaseFeed {
     pub version: String,
     pub notes: String,
     pub pub_date: String,
     pub platforms: Value,
+    pub cli: Option<Value>,
 }
 
 impl ReleaseFeed {
-    /// One platform row's branch-permanent artifact url, with the
-    /// row's signature field beside it: the minisign signature for the
-    /// shell's rows, the sha256 hex for the cli row.
+    /// One row's branch-permanent artifact url, with the row's
+    /// signature field beside it: the minisign signature for the
+    /// shell's platform rows, the sha256 hex for the cli row. The cli
+    /// row reads off the feed's top-level `cli` object; every other
+    /// key reads off `platforms`.
     fn row(&self, key: &str) -> Result<(String, Option<String>), String> {
-        let entry = self
-            .platforms
-            .get(key)
-            .and_then(Value::as_object)
-            .ok_or_else(|| format!("the feed carries no {key} row"))?;
+        let entry = if key == "cli" {
+            self.cli.as_ref().and_then(Value::as_object)
+        } else {
+            self.platforms.get(key).and_then(Value::as_object)
+        }
+        .ok_or_else(|| format!("the feed carries no {key} row"))?;
         let url = entry
             .get("url")
             .and_then(Value::as_str)
@@ -150,6 +157,37 @@ impl ReleaseFeed {
             .map(str::to_string);
         Ok((url, signature))
     }
+}
+
+/// Build the struct from one feed document. The one mapping the fix
+/// lives in: the cli row is the feed's top-level `cli` object — NOT
+/// under `platforms` (KI-483: the parser kept only `platforms`, so
+/// `row("cli")` refused a feed that carries the row, and every
+/// CLI-channel apply answered "the feed carries no cli row").
+fn parse(value: &Value) -> Result<ReleaseFeed, String> {
+    Ok(ReleaseFeed {
+        version: value
+            .get("version")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "the feed names no version".to_string())?
+            .to_string(),
+        notes: value
+            .get("notes")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        pub_date: value
+            .get("pub_date")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        platforms: value
+            .get("platforms")
+            .and_then(Value::as_object)
+            .map(|rows| Value::Object(rows.clone()))
+            .unwrap_or_else(|| json!({})),
+        cli: value.get("cli").cloned(),
+    })
 }
 
 /// Read the feed: one bounded HTTPS GET, parsed once. The one network
@@ -181,28 +219,7 @@ pub fn fetch() -> Result<ReleaseFeed, String> {
         .map_err(|error| format!("the feed did not read: {error}"))?;
     let value: Value = serde_json::from_str(&body)
         .map_err(|error| format!("the feed is not readable json: {error}"))?;
-    Ok(ReleaseFeed {
-        version: value
-            .get("version")
-            .and_then(Value::as_str)
-            .ok_or_else(|| "the feed names no version".to_string())?
-            .to_string(),
-        notes: value
-            .get("notes")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string(),
-        pub_date: value
-            .get("pub_date")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string(),
-        platforms: value
-            .get("platforms")
-            .and_then(Value::as_object)
-            .map(|rows| Value::Object(rows.clone()))
-            .unwrap_or_else(|| json!({})),
-    })
+    parse(&value)
 }
 
 /// The update card's field, computed at check time. The shape: the
@@ -411,5 +428,158 @@ mod tests {
         assert!(FEED.starts_with("https://github.com/adelvillar1/fleet/"));
         assert!(FEED.ends_with("/latest/download/latest.json"));
         assert_eq!(VAULT_KEY, "FLEET_TAURI_UPDATE_KEY");
+    }
+
+    /// The one feed shape release.sh ships: platform rows under
+    /// `platforms`, the CLI's row as a top-level `cli` object beside
+    /// them. Both channels must resolve their rows from it.
+    #[test]
+    fn feed_with_a_top_level_cli_row_answers_the_cli_channel() {
+        let feed = ReleaseFeed {
+            version: "0.6.2".into(),
+            notes: String::new(),
+            pub_date: "2026-11-08T00:00:00Z".into(),
+            platforms: json!({
+                "darwin-aarch64": {
+                    "url": "https://example.com/fleet.app.tar.gz",
+                    "signature": "minisign-b64"
+                }
+            }),
+            cli: Some(json!({
+                "url": "https://example.com/fleet-cli.tar.gz",
+                "signature": "abcdef1234567890"
+            })),
+        };
+
+        assert_eq!(
+            feed.row("cli").expect("cli row must resolve"),
+            (
+                "https://example.com/fleet-cli.tar.gz".to_string(),
+                Some("abcdef1234567890".to_string())
+            )
+        );
+        assert_eq!(
+            feed.row("darwin-aarch64")
+                .expect("platform rows still resolve"),
+            (
+                "https://example.com/fleet.app.tar.gz".to_string(),
+                Some("minisign-b64".to_string())
+            )
+        );
+    }
+
+    /// A feed with no cli row must still refuse the cli channel with
+    /// the same message — not a platform miss misreported.
+    #[test]
+    fn a_feed_without_a_cli_row_still_refuses_the_cli_channel() {
+        let feed = ReleaseFeed {
+            version: "0.6.2".into(),
+            notes: String::new(),
+            pub_date: "2026-11-08T00:00:00Z".into(),
+            platforms: json!({
+                "darwin-aarch64": {
+                    "url": "https://example.com/fleet.app.tar.gz",
+                    "signature": "minisign-b64"
+                }
+            }),
+            cli: None,
+        };
+
+        assert_eq!(
+            feed.row("cli").expect_err("no cli row must refuse"),
+            "the feed carries no cli row"
+        );
+    }
+
+    /// The cli row must not leak into the platform namespace: a feed
+    /// carrying only `cli` refuses a platform key.
+    #[test]
+    fn the_cli_row_does_not_answer_platform_keys() {
+        let feed = ReleaseFeed {
+            version: "0.6.2".into(),
+            notes: String::new(),
+            pub_date: "2026-11-08T00:00:00Z".into(),
+            platforms: json!({}),
+            cli: Some(json!({
+                "url": "https://example.com/fleet-cli.tar.gz",
+                "signature": "abcdef1234567890"
+            })),
+        };
+
+        assert_eq!(
+            feed.row("darwin-aarch64")
+                .expect_err("no platform row must refuse"),
+            "the feed carries no darwin-aarch64 row"
+        );
+    }
+
+    /// KI-483's shape end to end: the real parser must keep the feed's
+    /// top-level `cli` object, so `row("cli")` resolves from a real
+    /// fetched payload — no hand-built struct standing in for fetch().
+    #[test]
+    fn the_parser_keeps_the_feed_s_top_level_cli_object() {
+        let payload = serde_json::json!({
+            "version": "0.6.2",
+            "pub_date": "2026-11-08T00:00:00Z",
+            "notes": "",
+            "platforms": {
+                "darwin-aarch64": {
+                    "url": "https://example.com/fleet.app.tar.gz",
+                    "signature": "minisign-b64"
+                }
+            },
+            "cli": {
+                "url": "https://example.com/fleet-cli.tar.gz",
+                "signature": "abcdef1234567890"
+            }
+        });
+        let feed = parse(&payload).expect("the real parser must read the feed");
+
+        assert_eq!(
+            feed.row("cli").expect("cli row must survive the parse"),
+            (
+                "https://example.com/fleet-cli.tar.gz".to_string(),
+                Some("abcdef1234567890".to_string())
+            )
+        );
+        assert_eq!(
+            feed.row("darwin-aarch64")
+                .expect("the platform row must survive the parse"),
+            (
+                "https://example.com/fleet.app.tar.gz".to_string(),
+                Some("minisign-b64".to_string())
+            )
+        );
+    }
+
+    /// Revert-proof at the exact fault line: with the cli mapping
+    /// gone from the payload, the parser must refuse the cli channel
+    /// again — the way 0.6.0 did against a feed that carried the row.
+    #[test]
+    fn the_parser_dropping_the_cli_row_fails_the_way_0_6_0_did() {
+        let payload = serde_json::json!({
+            "version": "0.6.2",
+            "pub_date": "2026-11-08T00:00:00Z",
+            "notes": "",
+            "platforms": {
+                "darwin-aarch64": {
+                    "url": "https://example.com/fleet.app.tar.gz",
+                    "signature": "minisign-b64"
+                }
+            },
+            "cli": {
+                "url": "https://example.com/fleet-cli.tar.gz",
+                "signature": "abcdef1234567890"
+            }
+        });
+        let mut broken = payload.clone();
+        broken.as_object_mut().unwrap().remove("cli");
+        let feed = parse(&broken).expect("a platforms-only feed still parses");
+
+        assert_eq!(
+            feed.row("cli")
+                .expect_err("without the cli mapping the channel refuses"),
+            "the feed carries no cli row"
+        );
     }
 }
