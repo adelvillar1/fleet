@@ -1,5 +1,5 @@
 ---
-status: active
+status: completed
 created: 2026-11-09
 updated: 2026-11-09
 slug: inbox-controls
@@ -94,10 +94,10 @@ every box is checked.
 - [x] C3 — Archiving a row moves it to the Archived segment with the day it was archived, and Restore puts it back; both survive a restart because they ride `<FLEET_HOME>/inbox.json`.
 - [x] C4 — Every non-seat row carries a context menu with open, dismiss and archive; a seat carries its three answers and only "open the conversation" in the menu; pinned per class.
 - [x] C5 — The segment and filter counts are honest: Waiting excludes dismissed and archived rows, Archived counts only archived ones, and the filters narrow within the segment.
-- [ ] C6 — The read stays one GET (`/api/owner-inbox` returns waiting plus archived, each row with its key and signature) and every decision is one `POST /api/inbox` with an op and a key; a malformed op or key is a 400.
+- [x] C6 — The read stays one GET (`/api/owner-inbox` returns waiting plus archived, each row with its key and signature) and every decision is one `POST /api/inbox` with an op and a key; a malformed op or key is a 400.
 - [x] C7 — The keyboard works on the pane: j and k move the selection, enter runs the selected row's primary verb, d opens its context menu; pinned by a harness case.
 - [x] C8 — The harness carries a case per verb and per the setup fix (dismiss, archive, restore, the signature's return, the seat's menu, the keyboard), and the suite is green.
-- [ ] C9 — `docs/features/inbox.md` describes the store, the verbs and the signature rule; the ledger row is closed; `ki_ledger.py` and `plan_check.py` exit 0 at status: completed; the four-leg gate is green; the cut is published.
+- [x] C9 — `docs/features/inbox.md` describes the store, the verbs and the signature rule; the ledger row is closed; `ki_ledger.py` and `plan_check.py` exit 0 at status: completed; the four-leg gate is green; the cut is published.
 
 ## Files to be touched
 
