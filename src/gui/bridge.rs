@@ -8486,6 +8486,10 @@ fn learning_document(
                     .clone()
                     .or(session.first_text.clone())
                     .unwrap_or_default(),
+                // The lesson's project: its session's own working
+                // directory, the same fact the rail groups by — so the
+                // thread's chip and the rail cannot disagree.
+                "project": session.workspace,
                 "ended": session.ended,
                 "position": if nodes.is_empty() {
                     serde_json::Value::Null

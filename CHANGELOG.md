@@ -12,6 +12,17 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.6.15 — 2026-11-09
+
+The lesson's thread names its project.
+
+- 0.6.14's learning document returned each lesson's project in the
+  history rows but not on the lesson the pane shows, so the thread's
+  project chip read `unbound` while the rail had the lesson under its
+  folder. The read now carries it on the lesson too (its session's own
+  working directory), and the chip and the rail cannot disagree. Found
+  by the release's own live read.
+
 ## v0.6.14 — 2026-11-09
 
 The desk and learning, organised by project and worked in a thread.
