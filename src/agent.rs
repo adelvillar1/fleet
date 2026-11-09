@@ -8116,12 +8116,38 @@ fn is_external_name(token: &str, path: &str) -> bool {
     path.ends_with(".py") && PYTHON_BUILTINS.contains(&lowered.as_str())
 }
 
-/// Python triple-quoted strings removed, the code around them intact: a
-/// docstring is prose, and prose is not an identifier channel (KI-219's
-/// rule, scoped to the guard's own pass — the derivation's shared
-/// channel is untouched). A torn literal drops the tail: content inside
-/// an unclosed triple quote is string, not code, and the guard that
-/// polices it polices the wrong language.
+/// The words of a markdown write's MULTI-word inline backtick spans —
+/// the quoted shape the write guard exempts (KI-484). A span carrying
+/// several words reads as one quoted thing the author reproduced
+/// verbatim (a tool's stdout, a command's banner), while a single-word
+/// span stays a name the write chose — `RunOptions` is policed exactly
+/// as before. Spans are found on non-fenced lines only; a fenced block
+/// is code, and its names are identifiers. The token split is the
+/// channel reader's own `words()`, so a quoted word and its channel
+/// candidate can never disagree on their spelling.
+pub(crate) fn markdown_quoted_words(content: &str) -> std::collections::BTreeSet<String> {
+    let mut out = std::collections::BTreeSet::new();
+    let mut fenced = false;
+    for line in content.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            fenced = !fenced;
+            continue;
+        }
+        if fenced {
+            continue;
+        }
+        for span in crate::nomenclature::backtick_spans(line) {
+            let word_count = span.split_whitespace().count();
+            if word_count < 2 {
+                continue;
+            }
+            out.extend(crate::nomenclature::words(&span));
+        }
+    }
+    out
+}
+
 fn strip_python_docstrings(content: &str) -> String {
     let mut out = String::with_capacity(content.len());
     let mut rest = content;
@@ -8346,6 +8372,19 @@ fn guard_content(root: &std::path::Path, path: &str, content: &str) -> WriteGuar
     } else {
         crate::nomenclature::channel_tokens(path, content)
     };
+    // The words inside a MULTI-word inline backtick span of a markdown
+    // write are the quoted shape: the span reads as one quoted thing —
+    // a verbatim tool answer ("minisign -V confirms `the signature and
+    // its trusted comment verify`"), a command's own banner, a cited
+    // wire literal — not one coined identifier per word inside it
+    // (KI-484). The words still CARRY the span's evidence for the
+    // spelling convention; they are only excused from being refused as
+    // case variants, which is per-write, not derivation.
+    let quoted = if path.ends_with(".md") {
+        markdown_quoted_words(content)
+    } else {
+        std::collections::BTreeSet::new()
+    };
     let vocabulary = crate::nomenclature::vocabulary(root);
     let mut flagged: Vec<(String, String, String)> = Vec::new();
     let mut seen: Vec<String> = Vec::new();
@@ -8368,6 +8407,14 @@ fn guard_content(root: &std::path::Path, path: &str, content: &str) -> WriteGuar
         // refuses it teaches the model to route around the guard
         // through bash (KI-284).
         if is_unrenamable(&token, content) {
+            continue;
+        }
+        // A word inside a multi-word inline backtick span of this
+        // markdown write: the quoted shape's second half, the exemption
+        // itself (KI-484). The words are not the author's coinage to
+        // rename — the SPAN is the quote — and a refusal names a word
+        // the author may be quoting verbatim.
+        if quoted.contains(&token) {
             continue;
         }
         // The vocabulary's canonical form for this name, in both
@@ -15017,6 +15064,92 @@ You are auditing a change. Read the diff before you judge it.
             &serde_json::json!({"path":"src/x.rs","content":content}),
         );
         assert_eq!(guard, WriteGuard::Clean, "{guard:?}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_guard_admits_a_quoted_span_s_words_in_markdown_but_not_a_single_word_span() {
+        // KI-484, the recap refusal's own shape: a session recap quotes
+        // a tool's verbatim answer in a backtick span —
+        // `Signature and comment signature verified` — and the guard
+        // refused the span's first word as a case variant of the
+        // established `signature` (services/...providers.py:505). A
+        // multi-word span is ONE quoted thing the author reproduced,
+        // not one coined identifier per word; its words are exempt
+        // from the REFUSAL. The channel still carries them, so the
+        // vocabulary keeps counting what the project writes.
+        let root = vocabulary_root("guard-quoted-span");
+        // Establish `signature` the way the real tree does: two .rs
+        // files carrying the lowercase identifier, and one capitalised
+        // occurrence — inside the span under test — which alone would
+        // refuse.
+        std::fs::write(
+            root.join("src/verify.rs"),
+            "pub fn signature() -> u8 { 1 }\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("src/attest.rs"),
+            "pub fn check_signature() -> u8 { signature() }\n",
+        )
+        .unwrap();
+        crate::nomenclature::invalidate(&root);
+        let vocabulary = crate::nomenclature::vocabulary(&root);
+        assert!(
+            vocabulary.get("signature").is_some(),
+            "the fixture establishes signature"
+        );
+        let entry = vocabulary.get("signature").unwrap();
+        assert!(
+            !entry.writes_spelling("Signature"),
+            "the capitalized form is below the bar — the refusal fires WITHOUT the exemption"
+        );
+
+        // The fix, on the refusal's own shape: a multi-word span is
+        // exempt at the guard — the guard is a pure read, so the same
+        // content answers Clean only through the exemption itself; the
+        // revert-proof removes the exemption and watches this pin fail
+        // at exactly the word the 0.6.2 recap was refused for.
+        let recap_bullet = "## The cut\n\n- the tool verifies: `Signature and comment \
+signature verified`, exit 0\n";
+        let clean = write_guard(
+            &root,
+            &serde_json::json!({
+                "path":"docs/recaps/2026-11-09-b.md",
+                "content": recap_bullet
+            }),
+        );
+        assert_eq!(
+            clean,
+            WriteGuard::Clean,
+            "a multi-word quoted span's words are exempt: {clean:?}"
+        );
+
+        // The boundary: a SINGLE-word span is still a name the write
+        // chose — `RunOptions`' own pin, untouched.
+        let single = "the type is `Signature` in the proof\n";
+        let guard = write_guard(
+            &root,
+            &serde_json::json!({"path":"docs/recaps/2026-11-09-c.md","content":single}),
+        );
+        assert!(
+            matches!(guard, WriteGuard::Refused { .. }),
+            "a single-word span stays policed: {guard:?}"
+        );
+
+        // And the quoted shape is bounded to markdown: the same span
+        // in a .rs STRING is code naming, still policed (the
+        // every_occurrence rule already refuses it there; this is the
+        // markdown-only boundary of the new exemption).
+        let rust_span = "pub static LINE: &str = \"`Signature and comment signature verify`\";\n";
+        let guard = write_guard(
+            &root,
+            &serde_json::json!({"path":"src/x.rs","content":rust_span}),
+        );
+        assert!(
+            matches!(guard, WriteGuard::Refused { .. }),
+            "a quoted span in code still polices: {guard:?}"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 

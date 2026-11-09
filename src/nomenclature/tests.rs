@@ -1017,3 +1017,52 @@ fn the_real_tree_writes_the_canonical_spellings_the_guard_refused() {
         "the guard still refuses the camel form"
     );
 }
+
+#[test]
+fn the_tokenizer_and_the_spans_agree_with_the_guard_s_quoted_shape() {
+    // The guard's quoted-shape reader (KI-484) reuses both primitives —
+    // the same splitter, the same span finder — so a quoted word and
+    // its channel candidate can never disagree on their spelling. If
+    // either primitive changes shape, this pin names it.
+    let spans = backtick_spans("one `Signature and comment signature verify` two `RunOptions`");
+    assert_eq!(
+        spans,
+        vec![
+            "Signature and comment signature verify".to_string(),
+            "RunOptions".to_string(),
+        ]
+    );
+    // The span's own words split the way the channel's words() does.
+    assert_eq!(
+        super::words(&spans[0]),
+        vec![
+            "Signature".to_string(),
+            "and".to_string(),
+            "comment".to_string(),
+            "signature".to_string(),
+            "verify".to_string(),
+        ]
+    );
+    // The channel-side reader the guard mirrors, for the fixture line:
+    // the same line's channel candidates and the guard's quoted set
+    // intersect exactly on the span's words.
+    let line = "the output reads `Signature and comment signature verify` today";
+    let channel = channel_tokens("docs/note.md", line);
+    let quoted = crate::agent::markdown_quoted_words(line);
+    for word in ["Signature", "signature", "verify"] {
+        assert!(
+            quoted.contains(word),
+            "`{word}` is quoted: the guard exempts it"
+        );
+        assert!(
+            channel.iter().any(|token| token == word),
+            "`{word}` is a channel candidate: the guard must exempt it from REFUSAL, not from the vocabulary"
+        );
+    }
+    // A single-word span is the quoted shape's boundary: not exempt.
+    let single = "the type is `RunOptions` beside the proof";
+    assert!(
+        crate::agent::markdown_quoted_words(single).is_empty(),
+        "a single-word span stays policed"
+    );
+}

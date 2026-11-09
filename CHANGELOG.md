@@ -12,6 +12,26 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.6.3 — 2026-11-09
+
+The write guard stops refusing what the project quotes.
+
+- **KI-484 fixed.** The write-time guard polices each word a write
+  coins, but it read a markdown write's multi-word backtick span — a
+  tool's verbatim stdout quoted for the record — as one coined
+  identifier per word, and refused the recap that documented the 0.6.2
+  work (its `Signature and comment signature verified` line died
+  against the established `signature`). A multi-word inline span is now
+  exempt at the guard's own pass: it is one quoted thing, not one
+  coinage per word. The boundary holds: a single-word span still
+  polices, the same span in a Rust string still polices, fenced code
+  still polices, and the derivation is untouched — spans still carry
+  identifier evidence for the spelling convention. The span finder and
+  the word splitter are crate-visible and shared with the channel
+  reader, so the guard's reader cannot disagree with the vocabulary's.
+- Red-proven: with the exemption reverted, the guard pin fails naming
+  the same word the 0.6.2 recap was refused for.
+
 ## v0.6.2 — 2026-11-08
 
 The update button answers where it is pressed.

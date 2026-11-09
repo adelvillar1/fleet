@@ -1117,7 +1117,10 @@ fn strip_rust_comments(text: &str) -> String {
 /// with a letter or `_` and continues alphanumeric or `_`; a `-`
 /// between two word characters separates two words, so `write-time`
 /// yields `write` and `time`, while `--flag` yields `flag`.
-fn words(line: &str) -> Vec<String> {
+/// Crate-visible because the guard's own quoted-shape reader splits a
+/// span with the same splitter — the quoted word and its channel
+/// candidate must never disagree on their spelling.
+pub(crate) fn words(line: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     let mut current = String::new();
     for character in line.chars() {
@@ -1163,8 +1166,11 @@ fn path_words(line: &str) -> Vec<String> {
 
 /// The inline backtick spans on one prose line, in order. A line with
 /// an odd number of backticks yields the pairs it has; the trailing
-/// one opens nothing.
-fn backtick_spans(line: &str) -> Vec<String> {
+/// one opens nothing. Crate-visible because the write guard's quoted
+/// shape (KI-484) reads the SAME spans — the two readers of a markdown
+/// line must find the same spans or the exemption misses the words the
+/// channel made candidates.
+pub(crate) fn backtick_spans(line: &str) -> Vec<String> {
     let mut spans: Vec<String> = Vec::new();
     let mut rest = line;
     while let Some(open) = rest.find('`') {
