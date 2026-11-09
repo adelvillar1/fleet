@@ -12,9 +12,18 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
-## v0.6.11 — 2026-11-09
+## v0.6.12 — 2026-11-09
 
 A dismissal is never a trap.
+
+- **v0.6.11's cut was burned**: the version bump was piped through
+  `head`, SIGPIPE stopped the script after two sites, and the tree went
+  to the tag with `tauri.conf.json` still at 0.6.10 while the two
+  manifests said 0.6.11. The assets mode's three-way check refused
+  (the dmg came out named 0.6.10), the release exists with no assets,
+  and it briefly held `releases/latest` — so the feed 404'd until the
+  release was marked a prerelease and `latest` fell back to 0.6.10.
+  This cut is the same content with the version sites repaired.
 
 - The read now carries the **dismissed** rows (their day and whether
   their fact is still waiting), and the pane offers them behind one
