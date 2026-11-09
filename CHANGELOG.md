@@ -12,6 +12,23 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.6.4 — 2026-11-09
+
+A session that was interrupted stays interrupted on the screen.
+
+- **KI-485 fixed.** The owner returning to sessions saw bash tool rows
+  ticking "running · Ns…" forever and run cards pulsing "in flight":
+  nothing was running — the PAGE painted it. A log cut off at a bare
+  `tool_call` (every stop, crash, or face restart leaves one) replays
+  with no closing event to pair the row, and `toolRow`'s seconds
+  interval never clears without a paired result. The replay now sweeps
+  the unpaired calls and settles them with the honest end — "N ·
+  interrupted" — the same shape a live refusal paints. The paired rows
+  are untouched; the run card's own interrupted closure (KI-423) was
+  already in place beside them.
+- Red-proven: with the sweep removed, the pin fails with the row back
+  at "running · 0s" and the phantom text intact.
+
 ## v0.6.3 — 2026-11-09
 
 The write guard stops refusing what the project quotes.

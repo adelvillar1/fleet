@@ -9201,6 +9201,19 @@
     face.replaying = true;
     (state.events || []).forEach(apply);
     face.replaying = false;
+    // The unpaired calls from the replay: a log cut off at a tool_call
+    // (a stop, a crash, a face restart — the run never came back) leaves
+    // its row in face.pending, and nothing on the replay path pairs it.
+    // Without this sweep the row's seconds tick ticks "running ·
+    // Ns…" forever and the strip above it pulses "in flight" — a run
+    // that exists only because the page loaded. The KI-423 closure the
+    // run card already paints, now for the tool rows too (KI-485).
+    face.pending.slice().forEach(function (unpaired) {
+      resolveTool({ type: 'tool_result',
+        tool: unpaired.el.dataset.tool || '',
+        approved: false,
+        resolution: 'interrupted' });
+    });
     // The folds a live run applied survive the rebuild: the rows are
     // new, the state is the same — restored, never invented (R7).
     Object.keys(face.turnFolded).forEach(function (turn) {

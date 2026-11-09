@@ -10908,6 +10908,61 @@ async function theAboutPaneReadsTheFeedOnArrival() {
     page.rows('.replay-button').map((b) => b.textContent.trim()).join(' | '));
 }
 
+// KI-485: a session whose log ends on a bare tool_call — the shape a
+// stop, a crash, or a face restart leaves — must not replay as a live
+// run. Two asserts carry it: the tool row's status settles with the
+// `interrupted` resolution instead of ticking "running · Ns…", and the
+// run card closes `interrupted` instead of the strip pulsing in
+// flight. The paired case beside it proves the sweep only touches
+// unpaired calls.
+async function anInterruptedToolCallReplaysAsInterrupted() {
+  const events = [
+    { type: 'message', role: 'owner', text: 'look at the sessions' },
+    { type: 'turn', turn: 1 },
+    { type: 'tool_call', tool: 'bash', summary: 'tail the session log',
+      arguments: '{"command":"tail -2 the-log.jsonl"}' },
+    { type: 'tool_result', tool: 'bash', approved: true, preview: 'ok' },
+    { type: 'tool_call', tool: 'bash', summary: 'the call the restart orphaned',
+      arguments: '{"command":"pgrep -fl bash"}' },
+  ];
+  const page = boot({
+    hash: '#/sessions',
+    documents: {
+      sessions: emptySessions(),
+      state: (asked) => ({ ...emptyState(asked), session: asked, events, running: false }),
+    },
+  });
+  await flush();
+  page.open();
+  await flush();
+
+  const rows = page.rows('.card-row.tool');
+  check('KI-485 both calls landed as rows', rows.length === 2, String(rows.length));
+  const orphaned = rows[1];
+  check('KI-485 the unpaired call is not running',
+    orphaned.dataset.status !== 'running',
+    String(orphaned.dataset.status));
+  check('KI-485 the unpaired call wears the interrupted resolution',
+    orphaned.textContent.includes('interrupted'),
+    orphaned.textContent.slice(0, 120));
+  const paired = rows[0];
+  check('KI-485 the paired call stayed paired',
+    paired.dataset.status === 'ok',
+    String(paired.dataset.status));
+  check('KI-485 the paired call keeps its result preview',
+    paired.textContent.includes('ok'), paired.textContent.slice(0, 120));
+  // The run card's interrupted closure (KI-423's own rule, exercised
+  // beside the sweep): the log has no finished, and running is false.
+  check('KI-485 the run card closed, not in flight',
+    Boolean(faceStripState(page)), faceStripState(page) || 'no strip state');
+}
+
+function faceStripState(page) {
+  const strip = page.IDS['process-strip'];
+  if (!strip) return 'no strip';
+  return 'hidden=' + String(strip.hidden);
+}
+
 const cases = [
   ['HEALTH the working line reads the health, not the turn', theWorkingLineReadsTheHealthNotTheTurn],
   ['HEALTH a reopened conversation seeds its health and the floor names itself', aReopenedConversationSeedsItsHealth],
@@ -11031,6 +11086,7 @@ const cases = [
   ['SEAM the room carries the desk and the hand', theRoomCarriesTheDeskAndTheHand],
   ['KI-483 the update refusal answers where the press stands', theUpdateRefusalAnswersWhereThePressStands],
   ['KI-483 the About pane reads the feed on arrival', theAboutPaneReadsTheFeedOnArrival],
+  ['KI-485 a log cut off at a tool call does not replay as running', anInterruptedToolCallReplaysAsInterrupted],
 ];
 
 for (const [name, run] of cases) {
