@@ -182,6 +182,7 @@ fn dispatch_sync(args: &[String]) -> ExitCode {
         Ok(Command::Vault(options)) => vault_command(&options),
         Ok(Command::Remember(options)) => remember_command(&options),
         Ok(Command::Doctor(options)) => doctor_command(&options),
+        Ok(Command::Footprint) => footprint_command(),
         Ok(Command::Ki(options)) => ki_command(&options),
         Ok(Command::Install(options)) => install_command(&options),
         Ok(Command::Reload(options)) => reload_command(&options),
@@ -4727,6 +4728,37 @@ fn free_kib(path: &std::path::Path) -> Option<u64> {
 #[cfg(not(unix))]
 fn free_kib(_path: &std::path::Path) -> Option<u64> {
     None
+}
+
+/// `fleet footprint` — the resource awareness the owner asked for
+/// (2026-11-09): what this process tree holds right now (memory, processes),
+/// each graded deterministically against a declared ceiling. The disk side is
+/// `scripts/footprint.sh`'s budget table; the ambiguous case — a run inside
+/// its bound and idle — is a sys1 judgment, never this function's.
+fn footprint_command() -> ExitCode {
+    let text = match std::process::Command::new("ps")
+        .args(["-o", "pid=,ppid=,rss=", "-ax"])
+        .output()
+    {
+        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout).into_owned(),
+        _ => String::new(),
+    };
+    if text.is_empty() {
+        println!("footprint    FAIL  the process table could not be read (ps)");
+        return ExitCode::from(1);
+    }
+    let procs = fleet::footprint::parse_ps(&text);
+    let tree = fleet::footprint::tree_of(std::process::id(), &procs);
+    let mut failed = false;
+    for line in fleet::footprint::evaluate_tree(&tree) {
+        failed |= !line.ok();
+        println!("{}", fleet::footprint::render(&line));
+    }
+    println!("disk         the budget table is scripts/footprint.sh (stores against their declared budgets)");
+    if failed {
+        return ExitCode::from(1);
+    }
+    ExitCode::SUCCESS
 }
 
 fn shell_probe() -> Result<&'static str, String> {

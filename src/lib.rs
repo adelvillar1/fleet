@@ -35,6 +35,7 @@ pub mod explain;
 pub mod extract;
 pub mod filelock;
 pub mod fileops;
+pub mod footprint;
 pub mod fusion;
 pub mod graph;
 pub mod gui;

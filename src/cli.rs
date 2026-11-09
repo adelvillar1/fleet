@@ -103,6 +103,11 @@ pub enum Command {
     /// Environment and connectivity checks; `--diagnose` classifies one
     /// session's failure and drafts an evidence-cited recap.
     Doctor(DoctorOptions),
+    /// What this process tree holds right now — memory, processes, and the
+    /// declared disk budgets — graded against its ceilings. The resource
+    /// awareness the owner asked for (2026-11-09): deterministic for the
+    /// bounds, a sys1 judgment for the ambiguous.
+    Footprint,
     /// The ledger's run-time append: one hand-filed row under the next
     /// id, the id derived from the table while the ledger's own lock is
     /// held — the path a scheduled run files through instead of editing
@@ -1044,6 +1049,15 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "vault" => parse_vault(rest),
         "remember" => parse_remember(rest),
         "doctor" => parse_doctor(rest),
+        "footprint" => {
+            if !rest.is_empty() {
+                return Err(format!(
+                    "footprint takes no arguments (got {})",
+                    rest.join(" ")
+                ));
+            }
+            Ok(Command::Footprint)
+        }
         "ki" => parse_ki(rest),
         "install" => parse_install(rest),
         "reload" => parse_reload(rest),
