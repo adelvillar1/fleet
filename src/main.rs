@@ -2749,13 +2749,22 @@ fn convention_command(options: &cli::ConventionOptions) -> ExitCode {
 fn update_command() -> ExitCode {
     let exe = std::env::current_exe().unwrap_or_default();
     match fleet::update::self_update(&exe) {
-        Ok(gap) if gap == "same" => {
+        Ok(update) if !update.installed() => {
             println!("fleet: the release feed names this build's version — nothing to do");
             ExitCode::SUCCESS
         }
-        Ok(_) => {
-            let version = fleet::update::current_version();
-            println!("fleet: updated in place; the next restart serves {version}");
+        Ok(update) => {
+            // The receipt names the version the feed installed — the one
+            // on disk now, not the one this process was compiled with.
+            let kept = update
+                .previous
+                .as_ref()
+                .map(|path| format!(" (the previous binary is at {})", path.display()))
+                .unwrap_or_default();
+            println!(
+                "fleet: updated in place to {}; the next restart serves it{kept}",
+                update.version
+            );
             ExitCode::SUCCESS
         }
         Err(reason) => {

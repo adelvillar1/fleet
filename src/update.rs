@@ -279,6 +279,31 @@ fn download(url: &str, timeout: Duration) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
+/// The update's source: the feed and the artifact bytes. The production
+/// source is GitHub and nothing else (the owner's 2026-11-09 ruling —
+/// the update is fetched from GitHub, never from the local machine);
+/// the trait exists so a test can drive the install leg without a
+/// network, the seam the KI-472 lesson asks for at the one path where a
+/// wrong artifact costs the binary instead of a red test.
+pub trait Source {
+    fn feed(&self) -> Result<ReleaseFeed, String>;
+    fn artifact(&self, url: &str, timeout: Duration) -> Result<Vec<u8>, String>;
+}
+
+/// The only production source: the branch-permanent GitHub feed and the
+/// artifacts its rows name.
+pub struct Github;
+
+impl Source for Github {
+    fn feed(&self) -> Result<ReleaseFeed, String> {
+        fetch()
+    }
+
+    fn artifact(&self, url: &str, timeout: Duration) -> Result<Vec<u8>, String> {
+        download(url, timeout)
+    }
+}
+
 /// The running binary's own version, as the crate was compiled. The
 /// receipt the CLI prints after the rename — the version it just put
 /// on disk, whether or not this process ran it yet.
@@ -298,29 +323,125 @@ pub fn staging_for(exe: &Path) -> std::path::PathBuf {
     exe.with_file_name(format!("{name}.update"))
 }
 
-/// The CLI's own verb: the release's raw binary asset, asserted
-/// against the feed's sha256, written beside the running binary and
-/// renamed over it — one same-directory rename, so the replace is
-/// atomic and the running process keeps its own inode to the end. The
-/// preserved mode keeps the exec bit; the launchd agent's restart
-/// contract puts the new binary on the port at the next restart, and
-/// the receipt answers `--version` at `0.6.0`.
-///
-/// Builds refuse: a checkout's binary is the build's to replace, and
-/// the refusal names it. A feed behind the running version refuses:
-/// the feed must not pull a checkout down. Every other refusal is the
-/// step that would have failed, named before the rename — no partial
-/// install survives, because the rename is the last instruction.
-pub fn self_update(exe: &Path) -> Result<&'static str, String> {
-    if installed_via(exe) == MODE_BUILD {
-        return Err(
-            "a dev build does not update the checkout — build it again instead".to_string(),
-        );
+/// What one apply did, as the receipt and the card word it. `gap` is
+/// `same` when the feed names the running build and `ahead` when it
+/// installed one; `version` is the feed's version (the one on disk now);
+/// `previous` is the kept copy of the binary the rename replaced.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Update {
+    pub gap: &'static str,
+    pub version: String,
+    pub previous: Option<std::path::PathBuf>,
+}
+
+impl Update {
+    pub fn installed(&self) -> bool {
+        self.gap == "ahead"
     }
-    let feed = fetch()?;
+}
+
+/// The kept copy's path: the binary's own name with a `.prev` suffix,
+/// beside it, so a bad release is recoverable from the machine.
+pub fn previous_for(exe: &Path) -> std::path::PathBuf {
+    let name = exe
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| "fleet".to_string());
+    exe.with_file_name(format!("{name}.prev"))
+}
+
+/// The staged artifact's own answer to `--version`, read by executing
+/// it. This is the proof the channel never had: the bytes that were
+/// downloaded must be a binary that runs and names the feed's version,
+/// so a tarball, a truncation or a foreign build refuses before the
+/// rename rather than after it (KI-486).
+fn staged_version(path: &Path) -> Result<String, String> {
+    let output = std::process::Command::new(path)
+        .arg("--version")
+        .output()
+        .map_err(|error| format!("the staged artifact did not run: {error}"))?;
+    let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if !output.status.success() {
+        // A file the kernel will not execute reads the same way here
+        // whichever way it failed (a tarball's bytes reach `/bin/sh`'s
+        // fallback and exit 126; a bad Mach-O header is ENOEXEC) — the
+        // refusal names what happened, not a guess about the shape.
+        let said = if text.is_empty() {
+            String::new()
+        } else {
+            format!(" and said {text:?}")
+        };
+        return Err(format!(
+            "the staged artifact did not run: it answered {}{said}",
+            output.status
+        ));
+    }
+    // The binary prints `fleet <version>`; the last word is the answer.
+    let word = text
+        .split_whitespace()
+        .last()
+        .unwrap_or_default()
+        .to_string();
+    if parse_version(&word).is_err() {
+        return Err(format!(
+            "the staged artifact answered {text:?}, which is not a version"
+        ));
+    }
+    Ok(word)
+}
+
+/// The CLI's own verb: the release's **raw binary** asset — the shape
+/// the release ships and the feed's cli row names (`fleet-aarch64-apple-darwin`,
+/// no archive) — asserted against the feed's sha256, proven by running
+/// it, written beside the running binary and renamed over it. One
+/// same-directory rename, so the replace is atomic and the running
+/// process keeps its own inode to the end; the binary it replaced is
+/// kept as `<exe>.prev`. The launchd agent's restart contract puts the
+/// new binary on the port at the next restart, and the receipt names
+/// the version the feed installed.
+///
+/// Three refusals, each named before the rename:
+///
+/// - a dev build: a checkout's binary is the build's to replace;
+/// - a bundle: the `.app` updates through its own window (the About
+///   pane's plugin chain), never through this channel — writing a CLI
+///   binary over `Contents/MacOS/fleet-desktop` would break the shell;
+/// - a feed behind the running build: the feed must not pull a checkout
+///   down.
+///
+/// Every other refusal is the step that would have failed, named before
+/// the rename — no partial install survives, because the rename is the
+/// last instruction and the staged artifact must have answered
+/// `--version` with the feed's version first.
+pub fn self_update(exe: &Path) -> Result<Update, String> {
+    self_update_over(&Github, exe)
+}
+
+/// [`self_update`] over an injected source — the test seam.
+pub fn self_update_over(source: &dyn Source, exe: &Path) -> Result<Update, String> {
+    match installed_via(exe) {
+        MODE_BUILD => {
+            return Err(
+                "a dev build does not update the checkout — build it again instead".to_string(),
+            )
+        }
+        MODE_BUNDLE => {
+            return Err(
+                "a bundled app updates through its own window — this channel is the CLI's"
+                    .to_string(),
+            )
+        }
+        _ => {}
+    }
+    let feed = source.feed()?;
     let gap = version_gap(current_version(), &feed.version)?;
     if gap == "same" {
-        return Ok("same");
+        return Ok(Update {
+            gap,
+            version: feed.version,
+            previous: None,
+        });
     }
     if gap == "behind" {
         return Err(format!(
@@ -333,7 +454,7 @@ pub fn self_update(exe: &Path) -> Result<&'static str, String> {
     let expected = hash
         .ok_or_else(|| "the feed's cli row carries no sha256".to_string())?
         .to_ascii_lowercase();
-    let bytes = download(&url, FEED_TIMEOUT * 12)?;
+    let bytes = source.artifact(&url, FEED_TIMEOUT * 12)?;
     let digest = format!("{:x}", sha2::Sha256::digest(&bytes));
     if digest != expected {
         return Err(format!(
@@ -352,9 +473,35 @@ pub fn self_update(exe: &Path) -> Result<&'static str, String> {
                 std::fs::set_permissions(&staging, std::fs::Permissions::from_mode(mode | 0o111));
         }
     }
+    // The proof KI-486 was missing: the artifact must run and answer the
+    // feed's version. A refusal takes the staging file with it, so the
+    // tree is exactly as it was.
+    let answered = match staged_version(&staging) {
+        Ok(answered) => answered,
+        Err(reason) => {
+            let _ = std::fs::remove_file(&staging);
+            return Err(reason);
+        }
+    };
+    if answered != feed.version {
+        let _ = std::fs::remove_file(&staging);
+        return Err(format!(
+            "the staged artifact answers {answered}, not the feed's {}",
+            feed.version
+        ));
+    }
+    // The keep: a copy of the binary about to be replaced, taken before
+    // the rename so a bad release is recoverable from this machine.
+    let previous = previous_for(exe);
+    std::fs::copy(exe, &previous)
+        .map_err(|error| format!("the previous binary was not kept: {error}"))?;
     std::fs::rename(&staging, exe)
         .map_err(|error| format!("the atomic replace failed: {error}"))?;
-    Ok("ahead")
+    Ok(Update {
+        gap,
+        version: feed.version,
+        previous: Some(previous),
+    })
 }
 
 #[cfg(test)]
@@ -580,6 +727,211 @@ mod tests {
             feed.row("cli")
                 .expect_err("without the cli mapping the channel refuses"),
             "the feed carries no cli row"
+        );
+    }
+
+    // --- the install leg, over an injected source (the KI-472 seam) ------
+
+    /// A source a test owns: the feed and the artifact bytes, no network.
+    struct Fake {
+        feed: ReleaseFeed,
+        artifact: Result<Vec<u8>, String>,
+    }
+
+    impl Source for Fake {
+        fn feed(&self) -> Result<ReleaseFeed, String> {
+            Ok(self.feed.clone())
+        }
+
+        fn artifact(&self, _url: &str, _timeout: Duration) -> Result<Vec<u8>, String> {
+            self.artifact.clone()
+        }
+    }
+
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("fleet-update-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch");
+        dir
+    }
+
+    /// A feed one step ahead of the compiled build, whose cli row names
+    /// the artifact's own sha256 — the shape release.sh publishes.
+    fn ahead_feed(version: &str, hash: &str) -> ReleaseFeed {
+        ReleaseFeed {
+            version: version.to_string(),
+            notes: String::new(),
+            pub_date: "2026-11-09T00:00:00Z".into(),
+            platforms: json!({
+                "darwin-aarch64": {
+                    "url": "https://example.com/fleet.app.tar.gz",
+                    "signature": "minisign-b64"
+                }
+            }),
+            cli: Some(json!({
+                "url": "https://example.com/fleet-aarch64-apple-darwin",
+                "signature": hash
+            })),
+        }
+    }
+
+    /// A scripted stand-in for the release's raw binary: it runs and it
+    /// answers `--version` the way the real one does.
+    fn artifact_answering(version: &str) -> Vec<u8> {
+        format!("#!/bin/sh\necho \"fleet {version}\"\n").into_bytes()
+    }
+
+    fn digest(bytes: &[u8]) -> String {
+        format!("{:x}", sha2::Sha256::digest(bytes))
+    }
+
+    /// C2 — the install leg end to end: the staged artifact runs, the
+    /// rename replaces the binary, the replaced binary survives as
+    /// `.prev`, and the returned version is the one installed (not the
+    /// compiled-in one).
+    #[test]
+    fn the_install_leg_runs_the_artifact_and_keeps_the_previous_binary() {
+        let dir = scratch("install");
+        let exe = dir.join("fleet");
+        std::fs::write(&exe, b"the previous build").unwrap();
+        let artifact = artifact_answering("9.9.9");
+        let source = Fake {
+            feed: ahead_feed("9.9.9", &digest(&artifact)),
+            artifact: Ok(artifact.clone()),
+        };
+
+        let update = self_update_over(&source, &exe).expect("the install must land");
+
+        assert_eq!(update.gap, "ahead");
+        assert_eq!(update.version, "9.9.9");
+        assert_eq!(
+            std::fs::read(&exe).unwrap(),
+            artifact,
+            "the artifact is what the binary now holds"
+        );
+        let previous = update.previous.expect("the replaced binary is kept");
+        assert_eq!(previous, previous_for(&exe));
+        assert_eq!(
+            std::fs::read(&previous).unwrap(),
+            b"the previous build",
+            "the keep is the binary the rename replaced"
+        );
+        assert!(!staging_for(&exe).exists(), "no staging file survives");
+    }
+
+    /// A feed naming the running build touches nothing.
+    #[test]
+    fn a_same_feed_installs_nothing_and_keeps_no_previous() {
+        let dir = scratch("same");
+        let exe = dir.join("fleet");
+        std::fs::write(&exe, b"the running build").unwrap();
+        let source = Fake {
+            feed: ahead_feed(current_version(), "unused"),
+            artifact: Err("the artifact must not be asked for".to_string()),
+        };
+
+        let update = self_update_over(&source, &exe).expect("same is not a failure");
+
+        assert_eq!(update.gap, "same");
+        assert!(update.previous.is_none());
+        assert_eq!(std::fs::read(&exe).unwrap(), b"the running build");
+        assert!(!previous_for(&exe).exists());
+    }
+
+    /// C3, shape one — the gzip tarball the 0.6.x release actually
+    /// shipped (KI-486): the sha256 is the tarball's own, so the digest
+    /// check passes and the proof must stop it.
+    #[test]
+    fn a_tarball_artifact_is_refused_before_the_rename() {
+        let dir = scratch("tarball");
+        let exe = dir.join("fleet");
+        std::fs::write(&exe, b"the running build").unwrap();
+        let artifact = b"\x1f\x8b\x08\x00\x00\x00\x00\x00the tarball".to_vec();
+        let source = Fake {
+            feed: ahead_feed("9.9.9", &digest(&artifact)),
+            artifact: Ok(artifact),
+        };
+
+        let reason = self_update_over(&source, &exe).expect_err("a tarball is not a binary");
+
+        assert!(reason.contains("did not run"), "{reason}");
+        assert_eq!(std::fs::read(&exe).unwrap(), b"the running build");
+        assert!(!previous_for(&exe).exists());
+        assert!(
+            !staging_for(&exe).exists(),
+            "the refusal takes the staging file"
+        );
+    }
+
+    /// C3, shape two — a truncated artifact: the bytes are not a file
+    /// the kernel will execute.
+    #[test]
+    fn a_truncated_artifact_is_refused_before_the_rename() {
+        let dir = scratch("truncated");
+        let exe = dir.join("fleet");
+        std::fs::write(&exe, b"the running build").unwrap();
+        let artifact = b"\xcf\xfa\xed\xfe".to_vec();
+        let source = Fake {
+            feed: ahead_feed("9.9.9", &digest(&artifact)),
+            artifact: Ok(artifact),
+        };
+
+        let reason = self_update_over(&source, &exe).expect_err("a header is not a binary");
+
+        assert!(!reason.is_empty());
+        assert_eq!(std::fs::read(&exe).unwrap(), b"the running build");
+        assert!(!staging_for(&exe).exists());
+    }
+
+    /// C3, shape three — a real binary that is the wrong build: the
+    /// refusal names the answer it gave.
+    #[test]
+    fn a_foreign_binary_is_refused_by_its_own_answer() {
+        let dir = scratch("foreign");
+        let exe = dir.join("fleet");
+        std::fs::write(&exe, b"the running build").unwrap();
+        let artifact = artifact_answering("0.0.1");
+        let source = Fake {
+            feed: ahead_feed("9.9.9", &digest(&artifact)),
+            artifact: Ok(artifact),
+        };
+
+        let reason = self_update_over(&source, &exe).expect_err("the wrong build must refuse");
+
+        assert!(
+            reason.contains("answers 0.0.1") && reason.contains("9.9.9"),
+            "{reason}"
+        );
+        assert_eq!(std::fs::read(&exe).unwrap(), b"the running build");
+        assert!(!previous_for(&exe).exists());
+    }
+
+    /// C4 — a bundled executable never takes the CLI channel: the shell
+    /// updates through its own window, and a CLI binary must not land on
+    /// `Contents/MacOS/fleet-desktop`.
+    #[test]
+    fn a_bundled_executable_refuses_the_cli_channel_by_name() {
+        let dir = scratch("bundle");
+        let exe = dir.join("Fleet.app/Contents/MacOS/fleet-desktop");
+        std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
+        std::fs::write(&exe, b"the shell").unwrap();
+        let source = Fake {
+            feed: ahead_feed("9.9.9", "unused"),
+            artifact: Err("the artifact must not be asked for".to_string()),
+        };
+
+        let reason = self_update_over(&source, &exe).expect_err("the bundle must refuse");
+
+        assert!(reason.contains("own window"), "{reason}");
+        assert_eq!(std::fs::read(&exe).unwrap(), b"the shell");
+        assert!(!staging_for(&exe).exists());
+    }
+
+    #[test]
+    fn the_previous_path_sits_beside_the_binary() {
+        assert_eq!(
+            previous_for(Path::new("/Users/x/.fleet/bin/fleet")),
+            Path::new("/Users/x/.fleet/bin/fleet.prev")
         );
     }
 }

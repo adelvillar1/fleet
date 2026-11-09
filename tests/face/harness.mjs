@@ -10914,6 +10914,81 @@ async function theAboutPaneReadsTheFeedOnArrival() {
     page.rows('.replay-button').map((b) => b.textContent.trim()).join(' | '));
 }
 
+// C6 (KI-488): the pane claims nothing about the feed before the check
+// answers this visit. The settings read never asks the feed, so the
+// pre-check paint must say so — "nothing newer" from a read that never
+// asked is the one sentence the honesty clause forbids. The second case
+// carries the other half: a check request that fails paints the refusal
+// where the press stands, and never reads as up to date.
+function aboutSettings() {
+  return {
+    type: 'settings',
+    read_at: '2026-11-09T00:00:00Z',
+    scalars: [], lists: [], rules: [], env: [], cron: [],
+    soul: { present: false, text: '' },
+    update: { current: '0.6.4', installed_via: 'dmg' },
+    router: { pin: '', judged: ['quick'],
+      tiers: [{ workload: 'quick', candidates: ['a/one'], resolved: 'a/one', reverts: false }],
+      min_confidence: 0.5, default_workload: 'quick', allow_api_models: false, roster: [] },
+    catalog: { models: [], providers: [], tools: [], skills: [] },
+    lanes: { document: {}, lanes: [], refused: [] },
+    servers: { servers: [], refused: [] },
+    tools: { calls_per_turn: 0, definition_tokens: 0, disabled: [], last_sweep: '', window: 0 },
+    vault: { names: [], exists: true, passphrase: false, plaintext: [] },
+    roles: { dir: '/tmp', entries: [] },
+  };
+}
+
+async function theAboutPaneSaysTheFeedHasNotBeenAsked() {
+  const page = boot({
+    hash: '#/settings',
+    documents: {
+      settings: aboutSettings(),
+      updateCheck: () => ({
+        type: 'settings',
+        update: { current: '0.6.4', installed_via: 'dmg', candidate: '0.6.5' },
+      }),
+    },
+  });
+  await flush();
+  page.open();
+  await flush();
+  // Arrive at About: the paint happens now, the check answers later.
+  page.window.location.hash = '#/about';
+  const pending = page.rows('.feed-answer')[0];
+  check('C6 a fresh arrival says the feed has not been asked',
+    Boolean(pending) && pending.textContent.includes('not been asked') &&
+      !pending.textContent.includes('nothing newer'),
+    pending ? pending.textContent : 'no .feed-answer in the about board');
+  await flush();
+  const answered = page.rows('.feed-answer')[0];
+  check('C6 the answer replaces the pending line',
+    Boolean(answered) && answered.textContent.includes('the feed names 0.6.5'),
+    answered ? answered.textContent : 'no .feed-answer after the check');
+}
+
+async function aFailedCheckPaintsTheRefusal() {
+  const page = boot({
+    hash: '#/settings',
+    documents: {
+      settings: aboutSettings(),
+      updateCheck: () => ({ status: 500, body: {} }),
+    },
+  });
+  await flush();
+  page.open();
+  await flush();
+  page.window.location.hash = '#/about';
+  await flush();
+  const answer = page.rows('.feed-answer')[0];
+  check('C6 a failed check paints the refusal beside the press',
+    Boolean(answer) && answer.textContent.includes('did not answer'),
+    answer ? answer.textContent : 'no .feed-answer in the about board');
+  check('C6 a failed check never reads as up to date',
+    Boolean(answer) && !answer.textContent.includes('nothing newer'),
+    answer ? answer.textContent : 'no .feed-answer in the about board');
+}
+
 // KI-485: a session whose log ends on a bare tool_call — the shape a
 // stop, a crash, or a face restart leaves — must not replay as a live
 // run. Two asserts carry it: the tool row's status settles with the
@@ -11134,6 +11209,8 @@ const cases = [
   ['SEAM the room carries the desk and the hand', theRoomCarriesTheDeskAndTheHand],
   ['KI-483 the update refusal answers where the press stands', theUpdateRefusalAnswersWhereThePressStands],
   ['KI-483 the About pane reads the feed on arrival', theAboutPaneReadsTheFeedOnArrival],
+  ['C6 the About pane says the feed has not been asked yet', theAboutPaneSaysTheFeedHasNotBeenAsked],
+  ['C6 a failed check paints the refusal', aFailedCheckPaintsTheRefusal],
   ['KI-485 a log cut off at a tool call does not replay as running', anInterruptedToolCallReplaysAsInterrupted],
   ['KI-485 a finished run settles its orphaned tool calls', aFinishedRunSettlesItsOrphanedToolCalls],
 ];

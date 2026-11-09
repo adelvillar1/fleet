@@ -3253,14 +3253,32 @@ impl Bridge {
         .await
         .map_err(|_| "the update did not land".to_string())?;
         let mut field = match &outcome {
-            Ok(step) => {
-                // Nothing rides the field about the running process
-                // after an install: the binary on disk is what the
-                // receipt names, the running process is still the old
-                // one until launchd restarts it.
-                json!({"applied": step, "serving": crate::update::current_version()})
-            }
-            Err(reason) => json!({"refused": {"reason": reason, "applied": false}}),
+            Ok(update) if !update.installed() => json!({
+                "applied": "same",
+                "serving": crate::update::current_version(),
+                "installed": update.version,
+                // The mode rides the answer as well as the settings read:
+                // without it the pane's channel line falls back to
+                // `source` after an apply (deep-dive S5).
+                "installed_via": crate::update::installed_via(
+                    &std::env::current_exe().unwrap_or_default(),
+                ),
+            }),
+            Ok(update) => json!({
+                "applied": "ahead",
+                "serving": crate::update::current_version(),
+                "installed": update.version,
+                "previous": update.previous.as_ref().map(|path| path.display().to_string()),
+                "installed_via": crate::update::installed_via(
+                    &std::env::current_exe().unwrap_or_default(),
+                ),
+            }),
+            Err(reason) => json!({
+                "refused": {"reason": reason, "applied": false},
+                "installed_via": crate::update::installed_via(
+                    &std::env::current_exe().unwrap_or_default(),
+                ),
+            }),
         };
         field["last_check"] = stamped.into();
         let mut document = self.settings().await;

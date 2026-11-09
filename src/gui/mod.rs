@@ -114,6 +114,18 @@ pub fn prompt_line(base_url: &str) -> String {
 /// core over a different seat: one home, one fresh session, one agent
 /// thread behind the bridge.
 pub async fn serve(options: GuiOptions) -> Result<(), String> {
+    serve_with(options, None).await
+}
+
+/// [`serve`] around a listener the caller already bound — the desktop
+/// shell's path. The shell asks the OS for a port, keeps the socket and
+/// hands it over, so the origin its window loads is served from bind to
+/// accept with no release-and-rebind window (the deep dive's G4): the
+/// port the window was told about is the port this server owns.
+pub async fn serve_with(
+    options: GuiOptions,
+    prebound: Option<tokio::net::TcpListener>,
+) -> Result<(), String> {
     let user_home = std::env::var("HOME").ok();
     let home = crate::home::fleet_home(
         std::env::var("FLEET_HOME").ok().as_deref(),
@@ -132,8 +144,10 @@ pub async fn serve(options: GuiOptions) -> Result<(), String> {
     // that creates the debris — not a verb the owner has to remember
     // (KI-478: 68 GB of it, pruned by hand once).
     crate::checkpoints::spawn_reclaim(home.join("checkpoints"));
-    let (server, _port) =
-        server::Server::bind(&options.host, options.port, Arc::clone(&bridge)).await?;
+    let (server, _port) = match prebound {
+        Some(listener) => server::Server::bind_on(listener, Arc::clone(&bridge)).await?,
+        None => server::Server::bind(&options.host, options.port, Arc::clone(&bridge)).await?,
+    };
     let url = server.base_url().to_string();
     println!("fleet gui — the browser face is live");
     println!("  {url}");

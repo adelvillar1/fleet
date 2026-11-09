@@ -1,0 +1,11 @@
+# The app's own command permissions.
+#
+# The shell's window is not local content: it loads the loopback origin the
+# app serves, which Tauri classifies as Remote, so every command — the
+# plugin's and the app's own — needs an explicit capability entry. This is
+# the one app command the page may call.
+
+[[permission]]
+identifier = "allow-restart-app"
+description = "Relaunches the shell after the updater installed a new bundle. The About pane's update press is the only caller; the command takes no arguments and returns nothing."
+commands.allow = ["restart_app"]

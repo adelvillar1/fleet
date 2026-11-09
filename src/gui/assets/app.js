@@ -23513,10 +23513,11 @@
     var rows = node('div', 'cfg-form');
     rows.appendChild(node('p', 'knob-summary', 'version ' + (running || 'unknown') +
       ' \u00b7 installed ' + viaTitle));
-    if (update.applied && update.serving) {
+    if (update.applied === 'ahead' && update.serving) {
       rows.appendChild(node('p', 'cfg-note',
-        'the binary on disk is the feed\u2019s artifact \u2014 this process still serves ' +
-        update.serving + '; the next restart serves the new one.'));
+        'the binary on disk is ' + (update.installed || 'the feed\u2019s artifact') +
+        ' \u2014 this process still serves ' + update.serving +
+        '; the next restart serves it.'));
     }
     if (update.last_check) {
       rows.appendChild(node('p', 'cfg-note', 'the feed was last asked at ' +
@@ -23524,11 +23525,24 @@
     }
     card.appendChild(rows);
 
-    // The feed's answer, from the check at hand: same, candidate, or
-    // the named refusal. no-network never reads as up to date.
+    // The feed's answer, from the check at hand: pending, same, candidate,
+    // or the named refusal. Nothing is claimed about the feed before it
+    // has answered this visit — "nothing newer" without a read is the one
+    // sentence the honesty clause forbids (deep dive D3 / KI-488).
     var feedCard = boardCard(12, 'the release feed', null, null);
     var answer = node('div', 'cfg-form feed-answer');
-    if (update.refused) {
+    if (face.aboutPending) {
+      answer.appendChild(node('p', 'knob-summary',
+        'the feed has not been asked yet this visit.'));
+      answer.appendChild(node('p', 'cfg-note',
+        'The check is on its way; nothing is known about the feed until it answers.'));
+    } else if (face.aboutFailed) {
+      answer.appendChild(node('p', 'knob-summary',
+        'the check did not answer: ' + face.aboutFailed));
+      answer.appendChild(node('p', 'cfg-note',
+        'No answer is not the same as up to date. Press check the feed again when the ' +
+        'network is back.'));
+    } else if (update.refused) {
       answer.appendChild(node('p', 'knob-summary',
         'the feed did not answer: ' + (update.refused.reason || 'no reason given')));
       answer.appendChild(node('p', 'cfg-note',
@@ -23555,6 +23569,7 @@
     refresh.type = 'button';
     refresh.addEventListener('click', function () {
       refresh.disabled = true;
+      face.aboutFailed = null;
       fetch('/api/update/check', { headers: { accept: 'application/json' } })
         .then(function (reply) {
           if (reply.status !== 200) throw new Error(String(reply.status));
@@ -23562,10 +23577,13 @@
         })
         .then(function (document) {
           face.settings = document;
+          face.aboutPending = false;
           paintAbout();
         })
         .catch(function () {
-          refresh.disabled = false;
+          face.aboutPending = false;
+          face.aboutFailed = 'the check request did not answer';
+          paintAbout();
         });
     });
     feedCard.appendChild(refresh);
@@ -24717,7 +24735,12 @@
       about: function () {
         // The about pane (the update work, 2026-11-08): the build's own
         // receipt and the release feed's answer ride one GET, the same
-        // /api/update/check the settings board's update card rides.
+        // /api/update/check the settings board's update card rides. The
+        // paint before the answer says the feed has not been asked — a
+        // pane that claims "nothing newer" from a read that never asked
+        // is the honesty clause's one forbidden sentence (D3 / KI-488).
+        face.aboutPending = true;
+        face.aboutFailed = null;
         paintAbout();
         fetch('/api/update/check', { headers: { accept: 'application/json' } })
           .then(function (reply) {
@@ -24726,9 +24749,14 @@
           })
           .then(function (document) {
             face.settings = document;
+            face.aboutPending = false;
             if (PANEL_EL.about && !PANEL_EL.about.hidden) paintAbout();
           })
-          .catch(function () { });
+          .catch(function () {
+            face.aboutPending = false;
+            face.aboutFailed = 'the check request did not answer';
+            if (PANEL_EL.about && !PANEL_EL.about.hidden) paintAbout();
+          });
       }
     };
     if (arrive[address]) arrive[address]();

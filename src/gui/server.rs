@@ -166,6 +166,19 @@ impl Server {
         let listener = tokio::net::TcpListener::bind((address, port))
             .await
             .map_err(|e| format!("fleet gui cannot bind {address}:{port}: {e}"))?;
+        Self::bind_on(listener, bridge).await
+    }
+
+    /// Binds around a listener the caller already holds — the shell's
+    /// path. The desktop shell asks the OS for a port, **keeps** the
+    /// socket, and hands it over, so the origin its window loads is
+    /// served continuously from bind to accept: there is no window in
+    /// which another process could take the port and serve the page the
+    /// capability trusts (the deep dive's G4).
+    pub async fn bind_on(
+        listener: tokio::net::TcpListener,
+        bridge: Arc<Bridge>,
+    ) -> Result<(Server, u16), String> {
         let bound = listener
             .local_addr()
             .map_err(|e| format!("fleet gui cannot read its own address: {e}"))?;

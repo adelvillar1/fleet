@@ -1,7 +1,14 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "The shell's own window: it loads the loopback origin the app serves, so it needs no core permission beyond the default.",
+  "description": "The shell's window loads the loopback origin the app serves on a port this process bound and kept, so the capability names that origin as a remote context: the About pane's update press needs the updater plugin and the app's own restart, and nothing else is granted beyond the core default.",
   "windows": ["main"],
-  "permissions": ["core:default", "updater:default"]
+  "remote": {
+    "urls": ["http://127.0.0.1:*"]
+  },
+  "permissions": [
+    "core:default",
+    "updater:default",
+    "allow-restart-app"
+  ]
 }

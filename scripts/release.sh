@@ -189,6 +189,20 @@ printf '# %s\n\nThe CLI binary: the terminal face, the face'"'"'s server, the ag
 TARBALL="$PKGDIR/fleet-aarch64-apple-darwin.tar.gz"
 tar -czf "$TARBALL" -C "$PKGDIR" fleet-aarch64-apple-darwin
 
+# The CLI channel's update artifact: the RAW binary, no archive. The feed's
+# cli row names this file and hashes these bytes; the client installs them
+# byte for byte after proving they run and answer --version (KI-486 — the
+# tarball used to be what the channel wrote over the binary). The tarball
+# above stays for humans.
+echo "== staging the raw update artifact =="
+RAW_DIR=/tmp/fleet-cli-raw
+rm -rf "$RAW_DIR"
+mkdir -p "$RAW_DIR"
+RAW="$RAW_DIR/fleet-aarch64-apple-darwin"
+cp "$REPO_ROOT/target/release/fleet" "$RAW"
+chmod +x "$RAW"
+"$RAW" --version >/dev/null || die "the raw update artifact does not answer --version"
+
 # The update artifact the plugin installs: the .app.tar.gz the config's
 # createUpdaterArtifacts generated beside the dmg.
 APP_TAR=$(ls "$REPO_ROOT"/src-tauri/target/release/bundle/macos/*.tar.gz 2>/dev/null | head -1)
@@ -213,9 +227,9 @@ if ! gh release view "$TAG" --json name >/dev/null 2>&1; then
   [ -f "$NOTES_FILE" ] || die "no release $TAG and no notes file to create it with"
   gh release create "$TAG" --title "$TAG" --notes-file "$NOTES_FILE" || die "gh release create failed"
 fi
-gh release upload "$TAG" "$DMG" "$TARBALL" "$APP_TAR" "$APP_TAR.sig" --clobber ||
+gh release upload "$TAG" "$DMG" "$TARBALL" "$RAW" "$APP_TAR" "$APP_TAR.sig" --clobber ||
   die "gh release upload failed"
-echo "uploaded: $(basename "$DMG"), $(basename "$TARBALL"), $(basename "$APP_TAR") + .sig"
+echo "uploaded: $(basename "$DMG"), $(basename "$TARBALL"), $(basename "$RAW"), $(basename "$APP_TAR") + .sig"
 
 # ---- the feed: latest.json, the v2 updater's channel ----------------------
 #
@@ -252,9 +266,9 @@ echo "== generating latest.json =="
 # keeps the basename, and `/releases/latest/download/latest.json` 404d
 # under the scratch name `fleet-latest.json` in the v0.6.0 cut.
 LATEST=/tmp/latest.json
-python3 - "$VERSION" "$TAG" "$(basename "$DMG")" "$(basename "$APP_TAR")" "$DMG" "$APP_TAR" "$TARBALL" > "$LATEST" <<'PYEOF'
+python3 - "$VERSION" "$TAG" "$(basename "$DMG")" "$(basename "$APP_TAR")" "$DMG" "$APP_TAR" "$RAW" > "$LATEST" <<'PYEOF'
 import hashlib, json, sys, datetime
-version, tag, dmg_name, tar_name, dmg_path, tar_path, cli_tarball = sys.argv[1:]
+version, tag, dmg_name, tar_name, dmg_path, tar_path, cli_raw = sys.argv[1:]
 def sha(path):
     h = hashlib.sha256()
     with open(path, 'rb') as f:
@@ -272,7 +286,10 @@ feed = {
             "url": base + tar_name,
         }
     },
-    "cli": {"url": base + "fleet-aarch64-apple-darwin.tar.gz", "signature": sha(cli_tarball)},
+    # The CLI channel's row: the RAW binary (no archive) and its sha256.
+    # The client installs these bytes, so the hash must be this file's own
+    # (KI-486: the tarball was hashed and installed).
+    "cli": {"url": base + cli_raw.rsplit("/", 1)[-1], "signature": sha(cli_raw)},
 
 }
 # the shell's redirect owns the file: the heredoc stdout IS $LATEST, no
@@ -282,5 +299,44 @@ PYEOF
 [ -s "$LATEST" ] || die "latest.json was not generated"
 python3 -c "import json;d=json.load(open('$LATEST'));assert d['version']=='$VERSION' and 'darwin-aarch64' in d['platforms'] and 'cli' in d, 'the feed is missing a leg'" ||
   die "the generated feed failed its own leg read"
+python3 -c "import json;d=json.load(open('$LATEST'));u=d['cli']['url'];assert u.rsplit('/',1)[-1]=='$(basename "$RAW")', u" ||
+  die "the feed's cli row does not name the raw binary artifact"
 gh release upload "$TAG" "$LATEST" --clobber || die "gh release upload of latest.json failed"
 echo "uploaded: latest.json (the updater's channel + the cli row)"
+
+# ---- the publication read-back -------------------------------------------
+#
+# An upload is not a publication: the feed is only true when something
+# other than the uploader reads it. The branch-permanent URL is fetched
+# anonymously, its cli row is downloaded, and the bytes are hashed against
+# the row's own signature. GitHub's latest redirect can lag a fresh
+# upload, so the read is retried before it is called a refusal.
+echo "== reading the feed back anonymously =="
+READBACK=/tmp/latest-readback.json
+attempt=1
+while [ "$attempt" -le 6 ]; do
+  if curl -fsSL "https://github.com/adelvillar1/fleet/releases/latest/download/latest.json" -o "$READBACK" 2>/dev/null &&
+    python3 -c "import json,sys;d=json.load(open('$READBACK'));sys.exit(0 if d.get('version')=='$VERSION' else 1)" 2>/dev/null; then
+    break
+  fi
+  sleep 5
+  attempt=$((attempt + 1))
+done
+[ "$attempt" -le 6 ] || die "the published feed does not name $VERSION after 30s — the release is not published"
+python3 - "$READBACK" "$RAW" <<'PYEOF'
+import hashlib, json, sys, urllib.request
+feed_path, raw = sys.argv[1], sys.argv[2]
+feed = json.load(open(feed_path))
+row = feed["cli"]
+url, published = row["url"], row["signature"]
+local = hashlib.sha256(open(raw, "rb").read()).hexdigest()
+if url.rsplit("/", 1)[-1] != raw.rsplit("/", 1)[-1]:
+    sys.exit("the published feed's cli url names %s, not the raw artifact" % url)
+if published != local:
+    sys.exit("the published cli signature is not the raw artifact's sha256")
+with urllib.request.urlopen(url) as reply:
+    served = hashlib.sha256(reply.read()).hexdigest()
+if served != published:
+    sys.exit("the served artifact's sha256 is not the feed's signature")
+print("the published feed names %s; the cli row serves the raw binary, sha256 %s" % (feed["version"], served[:12]))
+PYEOF

@@ -369,12 +369,19 @@ fn restart_app(app: tauri::AppHandle) {
 
 async fn start_face() -> Result<String, String> {
     let host = fleet::gui::DEFAULT_HOST;
-    let port = ephemeral_port(host).await?;
+    // Bound here and handed over, never released: the window's origin is
+    // what the capability trusts, so the port it was told about must be
+    // owned by this process from bind to accept (the deep dive's G4).
+    let listener = bound_listener(host).await?;
+    let port = listener
+        .local_addr()
+        .map_err(|error| format!("no loopback port: {error}"))?
+        .port();
     let options = gui_options(port);
     // The face runs for the life of the process; the window closing ends
     // it (Tauri exits when the last window closes).
     tokio::spawn(async move {
-        if let Err(error) = fleet::gui::serve(options).await {
+        if let Err(error) = fleet::gui::serve_with(options, Some(listener)).await {
             eprintln!("fleet desktop: the face stopped: {error}");
         }
     });
@@ -383,14 +390,10 @@ async fn start_face() -> Result<String, String> {
     Ok(url)
 }
 
-/// Bind an ephemeral port and release it, so `gui::serve` can bind it.
-async fn ephemeral_port(host: &str) -> Result<u16, String> {
-    let listener = tokio::net::TcpListener::bind((host, 0))
+/// The face's listener, bound once and held for the server.
+async fn bound_listener(host: &str) -> Result<tokio::net::TcpListener, String> {
+    tokio::net::TcpListener::bind((host, 0))
         .await
-        .map_err(|error| format!("no loopback port: {error}"))?;
-    listener
-        .local_addr()
-        .map(|address| address.port())
         .map_err(|error| format!("no loopback port: {error}"))
 }
 
@@ -565,5 +568,21 @@ mod tests {
                 .all(|(_, outcome)| matches!(outcome, install::LaneOutcome::Skipped { .. })),
             "{results:?}"
         );
+    }
+
+    /// C5 — the face's listener is bound once and **held**: a connect
+    /// succeeds while the shell still owns the socket. The old shape
+    /// (bind, read the port, drop the listener, let the server re-bind)
+    /// left exactly that socket free for another process, and the
+    /// window's origin is what the capability trusts.
+    #[tokio::test]
+    async fn the_face_listener_is_held_from_bind_to_serve() {
+        let listener = bound_listener(fleet::gui::DEFAULT_HOST)
+            .await
+            .expect("a loopback port");
+        let port = listener.local_addr().expect("an address").port();
+        assert_ne!(port, 0);
+        std::net::TcpStream::connect(format!("{}:{port}", fleet::gui::DEFAULT_HOST))
+            .expect("the held port answers while the shell owns it");
     }
 }
