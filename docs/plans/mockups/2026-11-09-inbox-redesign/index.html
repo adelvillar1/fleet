@@ -1,0 +1,500 @@
+<!doctype html>
+<html lang="en" data-theme="paper">
+<head>
+<meta charset="utf-8">
+<title>fleet · inbox redesign — mockup</title>
+<!-- tokens inlined from src/gui/assets/app.css so the mockup reads correctly even when the face is not reachable -->
+<style>
+:root {
+  --dsw-static-paper-900: rgb(246, 244, 239);
+  --dsw-static-paper-800: rgb(252, 251, 248);
+  --dsw-static-paper-700: rgb(239, 236, 230);
+  --dsw-static-paper-600: rgb(228, 224, 216);
+  --dsw-static-paper-500: rgb(208, 203, 194);
+  --dsw-static-paper-400: rgb(154, 158, 163);
+  --dsw-static-paper-300: rgb(82, 88, 96);
+  --dsw-static-paper-200: rgb(52, 56, 62);
+  --dsw-static-paper-100: rgb(24, 26, 29);
+
+  --dsw-static-deepseek-700: rgb(30, 62, 140);
+  --dsw-static-deepseek-600: rgb(37, 78, 176);
+  --dsw-static-deepseek-500: rgb(47, 95, 208);
+  --dsw-static-deepseek-400: rgb(86, 132, 232);
+  --dsw-static-deepseek-300: rgb(148, 176, 236);
+
+  --dsw-static-ink-900: rgb(20, 22, 25);
+  --dsw-static-ink-800: rgb(28, 31, 35);
+  --dsw-static-ink-700: rgb(38, 42, 47);
+  --dsw-static-ink-600: rgb(58, 63, 70);
+  --dsw-static-ink-500: rgb(94, 100, 108);
+  --dsw-static-ink-400: rgb(130, 137, 146);
+  --dsw-static-ink-300: rgb(160, 166, 174);
+  --dsw-static-ink-200: rgb(196, 201, 207);
+  --dsw-static-ink-100: rgb(236, 238, 241);
+
+  --dsw-static-hairline-on-light: rgb(24 26 29 / 10%);
+  --dsw-static-hairline-on-dark: rgb(255 255 255 / 10%);
+  --dsw-static-ok-on-light: rgb(22, 110, 46);
+  --dsw-static-down-on-light: rgb(176, 36, 32);
+  --dsw-static-warn-on-light: rgb(122, 82, 8);
+  --dsw-static-ok-on-dark: rgb(74, 190, 110);
+  --dsw-static-down-on-dark: rgb(240, 106, 99);
+  --dsw-static-warn-on-dark: rgb(220, 166, 66);
+  --dsw-static-accent-text-on-light: var(--dsw-static-deepseek-600);
+
+  --dsw-static-graph-900: rgb(10, 12, 16);
+  --dsw-static-graph-800: rgb(15, 18, 23);
+  --dsw-static-graph-700: rgb(21, 25, 31);
+  --dsw-static-graph-500: rgb(58, 66, 77);
+  --dsw-static-graph-400: rgb(132, 142, 155);
+  --dsw-static-graph-300: rgb(160, 170, 184);
+  --dsw-static-graph-200: rgb(192, 200, 210);
+  --dsw-static-graph-100: rgb(232, 238, 244);
+
+  --dsw-static-contrast-page: rgb(255, 255, 255);
+  --dsw-static-contrast-surface: rgb(255, 255, 255);
+  --dsw-static-contrast-raised: rgb(238, 238, 238);
+  --dsw-static-contrast-ink: rgb(0, 0, 0);
+  --dsw-static-contrast-secondary: rgb(38, 38, 38);
+  --dsw-static-contrast-tertiary: rgb(70, 70, 70);
+  --dsw-static-contrast-hairline: rgb(0 0 0 / 20%);
+  --dsw-static-contrast-accent-text: rgb(20, 60, 150);
+  --dsw-static-ok-on-contrast: rgb(0, 104, 32);
+  --dsw-static-down-on-contrast: rgb(176, 20, 20);
+  --dsw-static-warn-on-contrast: rgb(124, 82, 6);
+
+  /* Chart mix colours that read on both grounds. */
+  --dsw-static-mix-teal: rgb(58, 154, 136);
+  --dsw-static-mix-sand: rgb(176, 138, 74);
+  --dsw-static-mix-slate: rgb(112, 124, 140);
+
+  /* --- the alias tier: what the colours mean ------------------------ */
+  --dsw-alias-page: rgb(246, 244, 239);
+  --dsw-alias-surface: rgb(252, 251, 248);
+  --dsw-alias-surface-raised: rgb(239, 236, 230);
+  --dsw-alias-surface-overlay: rgb(255, 255, 255);
+  --dsw-alias-hairline: rgb(24 26 29 / 10%);
+  --dsw-alias-hairline-strong: rgb(24 26 29 / 17%);
+  --dsw-alias-ink: rgb(24, 26, 29);
+  --dsw-alias-ink-secondary: rgb(82, 88, 96);
+  --dsw-alias-ink-tertiary: rgb(94, 102, 112);
+  --dsw-alias-accent: rgb(47, 95, 208);
+  --dsw-alias-accent-deep: rgb(37, 78, 176);
+  --dsw-alias-accent-lift: rgb(37, 78, 176);
+  --dsw-alias-accent-wash: color-mix(in srgb, var(--dsw-alias-accent) 10%, transparent);
+  --dsw-alias-ok: rgb(22, 110, 46);
+  --dsw-alias-down: rgb(176, 36, 32);
+  --dsw-alias-warn: rgb(122, 82, 8);
+  --dsw-alias-gradient: linear-gradient(135deg, rgb(63, 108, 218), rgb(37, 78, 176));
+  --lane-0: rgb(13, 118, 110);
+  --lane-1: rgb(109, 58, 216);
+  --lane-2: rgb(176, 84, 10);
+  --lane-3: rgb(190, 24, 93);
+  --lane-4: rgb(12, 116, 150);
+  --lane-5: rgb(84, 124, 12);
+
+  --shadow-1: 0 1px 2px rgb(24 26 29 / 6%), 0 1px 1px rgb(24 26 29 / 4%);
+  --shadow-2: 0 18px 40px -24px rgb(24 26 29 / 30%), 0 2px 6px rgb(24 26 29 / 6%);
+  --shadow-3: 0 32px 80px -32px rgb(24 26 29 / 38%), 0 8px 24px -12px rgb(24 26 29 / 18%);
+  --shadow-lift: var(--shadow-2);
+
+  /* --- component tokens -------------------------------------------- */
+  --topbar-bg: color-mix(in srgb, var(--dsw-alias-page) 86%, transparent);
+  --topbar-height: 58px;
+  --rail-width: 236px;
+  --rail-width-icons: 66px;
+  --aside-width: 320px;
+  --pane-width: 440px;
+  --drawer-width: 440px;
+  --card-bg: var(--dsw-alias-surface);
+  --card-radius: 14px;
+  --card-radius-inner: 10px;
+  --card-hairline: 1px solid var(--dsw-alias-hairline);
+  --card-pad: 20px;
+  --card-value: 26px;
+  --card-label: 10.5px;
+  --bubble-bg: color-mix(in srgb, var(--dsw-alias-accent) 8%, var(--dsw-alias-surface));
+  --bubble-radius: 14px;
+  --composer-bg: var(--dsw-alias-surface);
+  --composer-radius: 16px;
+  --seat-bg: color-mix(in srgb, var(--dsw-alias-accent) 7%, var(--dsw-alias-surface));
+
+  --font-display: "New York", ui-serif, Georgia, "Iowan Old Style", "Times New Roman", serif;
+  --font-text: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica,
+    Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", Menlo, Consolas,
+    monospace;
+
+  --text-xs: 10.5px;
+  --text-sm: 12px;
+  --text-base: 13.5px;
+  --text-md: 15px;
+  --text-lg: 18px;
+  --text-xl: 24px;
+  --display: 34px;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  --radius-sm: 7px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+  --radius-pill: 999px;
+
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+  --fast: 120ms;
+  --medium: 180ms;
+}
+
+/* The warm dark console. A collector for long evening runs; not the
+   default, and it keeps the same structure and type scale as paper. */
+:root[data-theme="console"] {
+  --dsw-alias-page: rgb(14, 15, 18);
+  --dsw-alias-surface: rgb(20, 22, 26);
+  --dsw-alias-surface-raised: rgb(28, 31, 36);
+  --dsw-alias-surface-overlay: rgb(32, 35, 41);
+  --dsw-alias-hairline: rgb(255 255 255 / 8%);
+  --dsw-alias-hairline-strong: rgb(255 255 255 / 15%);
+  --dsw-alias-ink: rgb(235, 231, 228);
+  --dsw-alias-ink-secondary: rgb(166, 175, 188);
+  --dsw-alias-ink-tertiary: rgb(138, 148, 163);
+  --dsw-alias-accent: rgb(96, 143, 255);
+  --dsw-alias-accent-deep: rgb(66, 112, 230);
+  --dsw-alias-accent-lift: rgb(143, 178, 255);
+  --dsw-alias-accent-wash: color-mix(in srgb, var(--dsw-alias-accent) 14%, transparent);
+  --dsw-alias-ok: rgb(74, 190, 110);
+  --dsw-alias-down: rgb(240, 106, 99);
+  --dsw-alias-warn: rgb(220, 166, 66);
+  --dsw-alias-gradient: linear-gradient(135deg, rgb(96, 143, 255), rgb(66, 112, 230));
+  --lane-0: rgb(45, 212, 191);
+  --lane-1: rgb(167, 139, 250);
+  --lane-2: rgb(251, 191, 36);
+  --lane-3: rgb(251, 113, 133);
+  --lane-4: rgb(56, 189, 248);
+  --lane-5: rgb(163, 230, 53);
+  --shadow-1: 0 1px 2px rgb(0 0 0 / 30%);
+  --shadow-2: 0 18px 40px -20px rgb(0 0 0 / 65%), 0 2px 6px rgb(0 0 0 / 25%);
+  --shadow-3: 0 32px 80px -28px rgb(0 0 0 / 80%), 0 8px 24px -12px rgb(0 0 0 / 45%);
+  --shadow-lift: var(--shadow-2);
+  --topbar-bg: color-mix(in srgb, var(--dsw-alias-page) 82%, transparent);
+}
+
+/* A cool neutral dark, for an owner who finds the console too warm. */
+:root[data-theme="graphite"] {
+  --dsw-alias-page: rgb(10, 12, 16);
+  --dsw-alias-surface: rgb(15, 18, 23);
+  --dsw-alias-surface-raised: rgb(21, 25, 31);
+  --dsw-alias-surface-overlay: rgb(27, 32, 39);
+  --dsw-alias-hairline: rgb(255 255 255 / 8%);
+  --dsw-alias-hairline-strong: rgb(255 255 255 / 15%);
+  --dsw-alias-ink: rgb(232, 238, 244);
+  --dsw-alias-ink-secondary: rgb(160, 170, 184);
+  --dsw-alias-ink-tertiary: rgb(132, 144, 160);
+  --dsw-alias-accent: rgb(94, 148, 255);
+  --dsw-alias-accent-deep: rgb(62, 112, 232);
+  --dsw-alias-accent-lift: rgb(143, 178, 255);
+  --dsw-alias-accent-wash: color-mix(in srgb, var(--dsw-alias-accent) 14%, transparent);
+  --dsw-alias-ok: rgb(74, 190, 110);
+  --dsw-alias-down: rgb(240, 106, 99);
+  --dsw-alias-warn: rgb(220, 166, 66);
+  --dsw-alias-gradient: linear-gradient(135deg, rgb(94, 148, 255), rgb(62, 112, 232));
+  --lane-0: rgb(94, 210, 190);
+  --lane-1: rgb(158, 134, 240);
+  --lane-2: rgb(235, 180, 60);
+  --lane-3: rgb(240, 120, 135);
+  --lane-4: rgb(90, 180, 235);
+  --lane-5: rgb(150, 210, 70);
+  --shadow-1: 0 1px 2px rgb(0 0 0 / 32%);
+  --shadow-2: 0 18px 40px -20px rgb(0 0 0 / 70%), 0 2px 6px rgb(0 0 0 / 28%);
+  --shadow-3: 0 32px 80px -28px rgb(0 0 0 / 85%), 0 8px 24px -12px rgb(0 0 0 / 50%);
+  --shadow-lift: var(--shadow-2);
+  --topbar-bg: color-mix(in srgb, var(--dsw-alias-page) 82%, transparent);
+}
+
+/* The accessibility theme: pure ground, near-black ink, no atmosphere. */
+:root[data-theme="contrast"] {
+  --dsw-alias-page: rgb(255, 255, 255);
+  --dsw-alias-surface: rgb(255, 255, 255);
+  --dsw-alias-surface-raised: rgb(238, 238, 238);
+  --dsw-alias-surface-overlay: rgb(255, 255, 255);
+  --dsw-alias-hairline: rgb(0 0 0 / 22%);
+  --dsw-alias-hairline-strong: rgb(0 0 0 / 45%);
+  --dsw-alias-ink: rgb(0, 0, 0);
+  --dsw-alias-ink-secondary: rgb(38, 38, 38);
+  --dsw-alias-ink-tertiary: rgb(70, 70, 70);
+  --dsw-alias-accent: rgb(24, 66, 160);
+  --dsw-alias-accent-deep: rgb(16, 48, 122);
+  --dsw-alias-accent-lift: rgb(20, 60, 150);
+  --dsw-alias-accent-wash: color-mix(in srgb, var(--dsw-alias-accent) 10%, transparent);
+  --dsw-alias-ok: rgb(0, 104, 32);
+  --dsw-alias-down: rgb(176, 20, 20);
+  --dsw-alias-warn: rgb(124, 82, 6);
+  --dsw-alias-gradient: linear-gradient(135deg, rgb(20, 60, 150), rgb(16, 48, 122));
+  --lane-0: rgb(0, 150, 136);
+  --lane-1: rgb(122, 48, 226);
+  --lane-2: rgb(190, 88, 0);
+  --lane-3: rgb(200, 16, 96);
+  --lane-4: rgb(0, 118, 172);
+  --lane-5: rgb(96, 138, 0);
+  --shadow-1: 0 1px 2px rgb(0 0 0 / 12%);
+  --shadow-2: 0 12px 28px -20px rgb(0 0 0 / 30%);
+  --shadow-3: 0 24px 60px -28px rgb(0 0 0 / 35%);
+  --shadow-lift: var(--shadow-2);
+  --topbar-bg: rgb(255, 255, 255);
+}
+
+/* ----------------------------------------------------------------- base */
+
+* { box-sizing: border-box; }
+
+</style>
+<link rel="stylesheet" href="http://127.0.0.1:3080/app.css">
+<style>
+  /* The mockup's own scope: prefix every class so the imported app.css
+     never collides (the house's scar). */
+  .ibx-wrap { max-width: 880px; margin: 0 auto; padding: 28px 24px 60px; font-family: var(--font-ui, -apple-system, sans-serif); }
+  .ibx-head { display: flex; align-items: baseline; gap: 14px; margin-bottom: 4px; }
+  .ibx-title { font-size: 19px; font-weight: 620; letter-spacing: -0.01em; color: var(--dsw-alias-ink); }
+  .ibx-sub { color: var(--dsw-alias-ink-tertiary); font-size: 11.5px; }
+  .ibx-tools { display: flex; align-items: center; gap: 8px; margin: 14px 0 20px; flex-wrap: wrap; }
+  .ibx-seg { display: inline-flex; border: var(--card-hairline); border-radius: 8px; overflow: hidden; }
+  .ibx-seg button { font: inherit; font-size: 11.5px; padding: 6px 12px; background: transparent; color: var(--dsw-alias-ink-secondary); border: 0; cursor: pointer; }
+  .ibx-seg button[aria-selected="true"] { background: var(--dsw-alias-surface-raised); color: var(--dsw-alias-ink); font-weight: 600; }
+  .ibx-chip { font-size: 11px; padding: 5px 10px; border-radius: 999px; border: var(--card-hairline); color: var(--dsw-alias-ink-secondary); background: transparent; cursor: pointer; }
+  .ibx-chip[aria-pressed="true"] { border-color: var(--dsw-alias-accent); color: var(--dsw-alias-ink); }
+  .ibx-spacer { flex: 1; }
+  .ibx-quiet { font-size: 11px; color: var(--dsw-alias-ink-tertiary); }
+  .ibx-group { margin: 0 0 18px; }
+  .ibx-grouphead { display: flex; align-items: baseline; gap: 8px; margin: 0 0 8px; color: var(--dsw-alias-ink-tertiary); font-size: 9.5px; font-weight: 600; letter-spacing: 0.11em; text-transform: uppercase; }
+  .ibx-grouphead .n { color: var(--dsw-alias-ink-secondary); }
+  .ibx-row { display: flex; align-items: flex-start; gap: 12px; padding: 12px 14px; border: var(--card-hairline); border-left-width: 3px; border-radius: var(--radius-md, 10px); background: var(--card-bg); margin-bottom: 8px; position: relative; }
+  .ibx-row[data-tone="seat"] { border-left-color: var(--dsw-alias-accent); }
+  .ibx-row[data-tone="ask"] { border-left-color: var(--dsw-alias-warn); }
+  .ibx-row[data-tone="bad"] { border-left-color: var(--dsw-alias-down); }
+  .ibx-row[data-tone="setup"] { border-left-color: var(--dsw-alias-hairline-strong); }
+  .ibx-what { flex: 1; min-width: 0; }
+  .ibx-t { font-size: 12.5px; font-weight: 600; color: var(--dsw-alias-ink); }
+  .ibx-w { font-size: 11.5px; color: var(--dsw-alias-ink-secondary); margin-top: 2px; }
+  .ibx-y { font-size: 11.5px; color: var(--dsw-alias-ink-tertiary); margin-top: 4px; line-height: 1.45; }
+  .ibx-age { font-size: 10.5px; color: var(--dsw-alias-ink-tertiary); margin-top: 6px; font-variant-numeric: tabular-nums; }
+  .ibx-acts { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+  .ibx-b { font: inherit; font-size: 11.5px; padding: 6px 11px; border-radius: 8px; border: var(--card-hairline); background: var(--dsw-alias-surface-raised); color: var(--dsw-alias-ink); cursor: pointer; white-space: nowrap; }
+  .ibx-b.primary { background: var(--dsw-alias-accent); color: var(--dsw-alias-accent-ink, #fff); border-color: transparent; font-weight: 600; }
+  .ibx-b.danger { color: var(--dsw-alias-down); }
+  .ibx-more { font: inherit; font-size: 14px; line-height: 1; padding: 6px 8px; border-radius: 8px; border: var(--card-hairline); background: transparent; color: var(--dsw-alias-ink-tertiary); cursor: pointer; }
+  .ibx-menu { position: absolute; right: 12px; top: 44px; z-index: 3; min-width: 168px; padding: 5px; border-radius: 10px; border: var(--card-hairline); background: var(--dsw-alias-surface-overlay, #fff); box-shadow: 0 12px 32px rgb(0 0 0 / 0.18); }
+  .ibx-menu button { display: block; width: 100%; text-align: left; font: inherit; font-size: 11.5px; padding: 7px 9px; border: 0; border-radius: 7px; background: transparent; color: var(--dsw-alias-ink); cursor: pointer; }
+  .ibx-menu button:hover { background: var(--dsw-alias-surface-raised); }
+  .ibx-menu .hint { display: block; font-size: 10px; color: var(--dsw-alias-ink-tertiary); margin-top: 1px; }
+  .ibx-menu hr { border: 0; border-top: var(--card-hairline); margin: 4px 6px; }
+  .ibx-empty { padding: 40px 16px; text-align: center; color: var(--dsw-alias-ink-tertiary); font-size: 12px; }
+  .ibx-foot { margin-top: 26px; padding-top: 14px; border-top: var(--card-hairline); display: flex; gap: 14px; }
+  .ibx-themebar { position: fixed; top: 10px; right: 14px; display: flex; gap: 6px; }
+  .ibx-themebar button { font: inherit; font-size: 10.5px; padding: 4px 8px; border-radius: 6px; border: var(--card-hairline); background: var(--dsw-alias-surface); color: var(--dsw-alias-ink-secondary); cursor: pointer; }
+  .ibx-arch { opacity: 0.92; }
+  .ibx-arch .ibx-t { color: var(--dsw-alias-ink-secondary); }
+</style>
+</head>
+<body>
+<div class="ibx-themebar">
+  <button data-theme-set="paper">paper</button>
+  <button data-theme-set="console">console</button>
+  <button data-theme-set="graphite">graphite</button>
+  <button data-theme-set="contrast">contrast</button>
+</div>
+
+<!-- ============ screen 1: waiting ============ -->
+<div class="ibx-wrap" id="waiting">
+  <div class="ibx-head">
+    <div class="ibx-title">Inbox</div>
+    <div class="ibx-sub">everything waiting on you, one queue</div>
+  </div>
+
+  <div class="ibx-tools">
+    <div class="ibx-seg" role="tablist">
+      <button aria-selected="true">Waiting · 6</button>
+      <button aria-selected="false">Archived · 2</button>
+    </div>
+    <button class="ibx-chip" aria-pressed="true">all</button>
+    <button class="ibx-chip" aria-pressed="false">answers</button>
+    <button class="ibx-chip" aria-pressed="false">setup</button>
+    <button class="ibx-chip" aria-pressed="false">machinery</button>
+    <span class="ibx-spacer"></span>
+    <span class="ibx-quiet">j / k moves · enter opens · d dismisses</span>
+  </div>
+
+  <!-- seats -->
+  <div class="ibx-group">
+    <div class="ibx-grouphead"><span>waiting for your answer</span><span class="n">1</span></div>
+    <div class="ibx-row" data-tone="seat">
+      <div class="ibx-what">
+        <div class="ibx-t">bash · rm -rf /tmp/build</div>
+        <div class="ibx-w">in the conversation “the updater that installs”</div>
+        <div class="ibx-y">destructive · the row is the run's own gate; it holds the turn until you answer</div>
+        <div class="ibx-age">open 4m</div>
+      </div>
+      <div class="ibx-acts">
+        <button class="ibx-b primary">once</button>
+        <button class="ibx-b">always</button>
+        <button class="ibx-b danger">deny</button>
+        <button class="ibx-more" title="more">…</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- setup -->
+  <div class="ibx-group">
+    <div class="ibx-grouphead"><span>setting fleet up</span><span class="n">2</span></div>
+    <div class="ibx-row" data-tone="setup">
+      <div class="ibx-what">
+        <div class="ibx-t">vault · the passphrase that seals your keys</div>
+        <div class="ibx-w">onboarding ladder · step 3 of 7</div>
+        <div class="ibx-y">without it, keys live in the plain env file instead of the sealed store</div>
+      </div>
+      <div class="ibx-acts">
+        <button class="ibx-b primary">open the vault</button>
+        <button class="ibx-b">not now</button>
+        <button class="ibx-more" title="more">…</button>
+      </div>
+    </div>
+    <div class="ibx-row" data-tone="setup">
+      <div class="ibx-what">
+        <div class="ibx-t">github · connect an account</div>
+        <div class="ibx-w">onboarding ladder · step 6 of 7</div>
+        <div class="ibx-y">the release, the issues and the PR review ride this account</div>
+      </div>
+      <div class="ibx-acts">
+        <button class="ibx-b primary">connect</button>
+        <button class="ibx-b">not now</button>
+        <button class="ibx-more" title="more">…</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- asks -->
+  <div class="ibx-group">
+    <div class="ibx-grouphead"><span>questions from the rooms</span><span class="n">1</span></div>
+    <div class="ibx-row" data-tone="ask">
+      <div class="ibx-what">
+        <div class="ibx-t">scholar asks · review</div>
+        <div class="ibx-w">in “the deck's hero”</div>
+        <div class="ibx-y">“the hero reads thin against the rest of the page — tighten it or land a second line?”</div>
+        <div class="ibx-age">2h</div>
+      </div>
+      <div class="ibx-acts">
+        <button class="ibx-b primary">answer in the room</button>
+        <button class="ibx-b">dismiss</button>
+        <button class="ibx-more" title="more">…</button>
+      </div>
+      <div class="ibx-menu">
+        <button>open the conversation<span class="hint">the run that raised it</span></button>
+        <button>mark answered<span class="hint">clears the row without a reply</span></button>
+        <hr>
+        <button>dismiss<span class="hint">hides it until the fact changes</span></button>
+        <button>archive<span class="hint">keeps it under Archived</span></button>
+      </div>
+    </div>
+  </div>
+
+  <!-- machinery -->
+  <div class="ibx-group">
+    <div class="ibx-grouphead"><span>the machinery needs a decision</span><span class="n">2</span></div>
+    <div class="ibx-row" data-tone="bad">
+      <div class="ibx-what">
+        <div class="ibx-t">failed · corpus-refresh-blend1</div>
+        <div class="ibx-w">daily at 04:00 · last ran yesterday</div>
+        <div class="ibx-y">the lane answered nothing; the job left its state fact unwritten</div>
+      </div>
+      <div class="ibx-acts">
+        <button class="ibx-b primary">open the job</button>
+        <button class="ibx-b">dismiss</button>
+        <button class="ibx-more" title="more">…</button>
+      </div>
+    </div>
+    <div class="ibx-row" data-tone="bad">
+      <div class="ibx-what">
+        <div class="ibx-t">doctor · layerfs-home</div>
+        <div class="ibx-w">the substrate check</div>
+        <div class="ibx-y">the worker does not answer — start it with `fleet install`</div>
+      </div>
+      <div class="ibx-acts">
+        <button class="ibx-b primary">open doctor</button>
+        <button class="ibx-b">dismiss</button>
+        <button class="ibx-more" title="more">…</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="ibx-foot">
+    <span class="ibx-quiet">dismiss hides a row until its fact changes · archive keeps it, restorable</span>
+    <span class="ibx-spacer"></span>
+    <button class="ibx-b">clear the ones already handled</button>
+  </div>
+</div>
+
+<!-- ============ screen 2: archived ============ -->
+<div class="ibx-wrap" id="archived" hidden>
+  <div class="ibx-head">
+    <div class="ibx-title">Inbox</div>
+    <div class="ibx-sub">everything waiting on you, one queue</div>
+  </div>
+  <div class="ibx-tools">
+    <div class="ibx-seg" role="tablist">
+      <button aria-selected="false">Waiting · 6</button>
+      <button aria-selected="true">Archived · 2</button>
+    </div>
+    <span class="ibx-spacer"></span>
+    <span class="ibx-quiet">archived rows keep their fact and the day they were archived</span>
+  </div>
+  <div class="ibx-group ibx-arch">
+    <div class="ibx-grouphead"><span>archived</span><span class="n">2</span></div>
+    <div class="ibx-row" data-tone="setup">
+      <div class="ibx-what">
+        <div class="ibx-t">projects · register a folder</div>
+        <div class="ibx-w">onboarding ladder · step 5 of 7</div>
+        <div class="ibx-age">archived 2d ago · the step is still open</div>
+      </div>
+      <div class="ibx-acts">
+        <button class="ibx-b">restore</button>
+        <button class="ibx-more" title="more">…</button>
+      </div>
+    </div>
+    <div class="ibx-row" data-tone="bad">
+      <div class="ibx-what">
+        <div class="ibx-t">failed · the nightly dream pass</div>
+        <div class="ibx-w">daily at 03:00 · last ran 6d ago</div>
+        <div class="ibx-age">archived 6d ago · the job has since run clean</div>
+      </div>
+      <div class="ibx-acts">
+        <button class="ibx-b">restore</button>
+        <button class="ibx-more" title="more">…</button>
+      </div>
+    </div>
+  </div>
+  <div class="ibx-quiet" style="margin-top:6px">an empty archive says so here — “nothing archived is waiting on you”</div>
+</div>
+
+<script>
+  document.querySelectorAll('[data-theme-set]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      document.documentElement.dataset.theme = b.dataset.themeSet;
+    });
+  });
+  var segs = document.querySelectorAll('.ibx-seg button');
+  segs.forEach(function (b, i) {
+    b.addEventListener('click', function () {
+      document.getElementById('waiting').hidden = i === 1;
+      document.getElementById('archived').hidden = i === 0;
+    });
+  });
+</script>
+</body>
+</html>
