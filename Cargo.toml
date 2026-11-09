@@ -1,6 +1,6 @@
 [package]
 name = "fleet"
-version = "0.6.19"
+version = "0.6.20"
 edition = "2021"
 description = "Fleet: a native Rust agent based on DeepSeek Harness"
 license = "MIT"

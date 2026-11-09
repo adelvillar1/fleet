@@ -14,6 +14,13 @@
 #   --skip-gate       skip the four-leg gate (tag mode only; explicit on
 #                     the command line, never defaulted)
 #
+# The build caches are bounded (2026-11-09, KI-502): the gate's lane is a
+# cache and nothing used to bound it — it reached 69 GiB while the drive sat
+# at 1.6 GiB free. `preflight_disk` cleans it once it is over
+# FLEET_GATE_TARGET_MAX_GIB (default 20) and refuses to start a build on a
+# volume below FLEET_DISK_FLOOR_GIB (default 20) — a build that dies mid-link
+# on ENOSPC is the failure nobody can read.
+#
 # prerequisites: gh (authenticated), python3, cargo + cargo-tauri on PATH,
 # a clean working tree (both modes). Nothing is cut from a dirty tree. The
 # gate runs on a detached worktree of HEAD — the standing rule that a
@@ -37,6 +44,33 @@ export PATH="$HOME/.cargo/bin:$HOME/.rustup/toolchains/stable-aarch64-apple-darw
 command -v cargo >/dev/null 2>&1 || die "cargo is not on PATH — install rust, or export the toolchain's bin before running"
 
 die() { echo "release.sh: $*" >&2; exit 1; }
+
+DISK_FLOOR_GIB=${FLEET_DISK_FLOOR_GIB:-20}
+LANE_MAX_GIB=${FLEET_GATE_TARGET_MAX_GIB:-20}
+
+# The volume's free space, in GiB, from `df -k`'s own answer.
+free_gib() {
+  df -k "$1" 2>/dev/null | awk 'NR==2 {print int($4 / 1024 / 1024)}'
+}
+
+# Bound the gate's lane and refuse a build that cannot finish. Both numbers
+# are named when they are the reason, so a refusal is actionable.
+preflight_disk() {
+  if [ -d "$RELEASE_TARGET" ]; then
+    lane_gib=$(du -sm "$RELEASE_TARGET" 2>/dev/null | cut -f1)
+    lane_gib=$(( ${lane_gib:-0} / 1024 ))
+    if [ "$lane_gib" -gt "$LANE_MAX_GIB" ]; then
+      echo "== the gate lane is ${lane_gib} GiB, over the ${LANE_MAX_GIB} GiB cap — cleaning it"
+      CARGO_TARGET_DIR="$RELEASE_TARGET" cargo clean --manifest-path "$REPO_ROOT/Cargo.toml" \
+        >/dev/null 2>&1 || true
+    fi
+  fi
+  free=$(free_gib "$REPO_ROOT")
+  [ -n "${free:-}" ] || die "the volume's free space could not be read (df -k)"
+  [ "$free" -ge "$DISK_FLOOR_GIB" ] ||
+    die "only ${free} GiB free on this volume (floor ${DISK_FLOOR_GIB}) — a build here dies mid-link. Run scripts/daily-maintenance.sh, or clean $RELEASE_TARGET and the other /private/tmp/fleet-*-target lanes."
+  echo "== disk: ${free} GiB free (floor ${DISK_FLOOR_GIB}); the gate lane is capped at ${LANE_MAX_GIB} GiB"
+}
 
 command -v gh >/dev/null 2>&1 || die "gh is not on PATH — it creates the release"
 command -v python3 >/dev/null 2>&1 || die "python3 is not on PATH — the ledger and the plan checker need it"
@@ -71,6 +105,7 @@ if [ "$MODE" = "tag" ]; then
   fi
 
   if [ "$SKIP_GATE" -ne 1 ]; then
+    preflight_disk
     echo "== gate: detached worktree of HEAD =="
     git worktree remove --force "$RELEASE_WORKTREE" >/dev/null 2>&1 || true
     git worktree add --detach "$RELEASE_WORKTREE" HEAD >/dev/null ||
@@ -163,6 +198,7 @@ if [ ! -f "$KEYFILE" ]; then
 fi
 export TAURI_SIGNING_PRIVATE_KEY="$KEYFILE" TAURI_SIGNING_PRIVATE_KEY_PASSWORD=""
 
+preflight_disk
 echo "== building the $TAG binaries (release) =="
 cargo build --release > /tmp/release-build.log 2>&1 ||
   { echo "cargo build failed — /tmp/release-build.log"; exit 1; }

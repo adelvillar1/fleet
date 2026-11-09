@@ -124,6 +124,38 @@ pub fn api_endpoint(base_url: &str) -> Option<(&str, u16)> {
     }
 }
 
+/// The free space the build caches are allowed to eat into. Twenty
+/// gigabytes is a comfortable full build (the gate's lane peaks near
+/// eighteen); below five a build dies mid-link with ENOSPC, which is the
+/// failure nobody can read. The 2026-11-09 incident held 1.6 GiB free
+/// while nothing on the machine said so (KI-502).
+pub const DISK_FLOOR_GIB: u64 = 20;
+
+/// The disk line from the volume's own answer, in kibibytes.
+pub fn evaluate_disk(free_kib: Option<u64>) -> Check {
+    match free_kib {
+        None => Check {
+            name: "disk",
+            ok: false,
+            detail: "the volume's free space could not be read; `df -k` names why".to_string(),
+        },
+        Some(kib) => {
+            let gib = kib / 1024 / 1024;
+            Check {
+                name: "disk",
+                ok: gib >= DISK_FLOOR_GIB,
+                detail: if gib >= DISK_FLOOR_GIB {
+                    format!("{gib} GiB free (floor {DISK_FLOOR_GIB} GiB)")
+                } else {
+                    format!(
+                        "{gib} GiB free, under the {DISK_FLOOR_GIB} GiB floor \u{2014} below 5 GiB a build dies mid-link; the build lanes under /private/tmp and ~/.fleet/checkpoints are the usual holders (scripts/daily-maintenance.sh reclaims them)"
+                    )
+                },
+            }
+        }
+    }
+}
+
 /// The shell check from a probe outcome.
 pub fn evaluate_shell(probe: Result<&'static str, String>) -> Check {
     match probe {
@@ -2026,6 +2058,34 @@ mod tests {
         assert!(rendered.contains("KI-106"), "{rendered}");
         assert!(!rendered.contains("KI-105"), "{rendered}");
         let _ = std::fs::remove_file(&ledger);
+    }
+
+    #[test]
+    fn the_disk_line_names_the_floor_and_the_holders() {
+        // 121 GiB free: healthy, and the detail says the floor it was
+        // judged against.
+        let roomy = evaluate_disk(Some(121 * 1024 * 1024));
+        assert!(roomy.ok);
+        assert!(roomy.detail.contains("121 GiB free"), "{}", roomy.detail);
+        assert!(roomy.detail.contains("floor 20 GiB"), "{}", roomy.detail);
+        // 1.6 GiB free — the incident's number: a FAIL that names the
+        // holders, so the report is actionable without a du.
+        let tight = evaluate_disk(Some(16 * 1024 * 100));
+        assert!(!tight.ok);
+        assert!(
+            tight.detail.contains("under the 20 GiB floor"),
+            "{}",
+            tight.detail
+        );
+        assert!(tight.detail.contains("build lanes"), "{}", tight.detail);
+        // An unreadable volume is named, never a silent pass.
+        let unread = evaluate_disk(None);
+        assert!(!unread.ok);
+        assert!(
+            unread.detail.contains("could not be read"),
+            "{}",
+            unread.detail
+        );
     }
 
     #[test]

@@ -112,7 +112,13 @@ for lane in /private/tmp/fleet-*-target; do
         say "  lane busy, skipped: $lane"
         continue
     fi
-    if [ -n "$(find "$lane" -type f -mtime -"${LANE_DAYS:-3}" 2>/dev/null | head -1)" ]; then
+    size_mib=$(du -sm "$lane" 2>/dev/null | cut -f1)
+    # A cap as well as an age: a lane that grew to tens of gigabytes
+    # inside the warm window is the incident this leg exists for, and
+    # warmth must not shield it (2026-11-09: 69 GiB in the gate lane).
+    if [ "${size_mib:-0}" -gt "$(( ${LANE_MAX_GIB:-20} * 1024 ))" ]; then
+        say "  lane over the ${LANE_MAX_GIB:-20} GiB cap: $lane (${size_mib} MiB) — cleaned"
+    elif [ -n "$(find "$lane" -type f -mtime -"${LANE_DAYS:-3}" 2>/dev/null | head -1)" ]; then
         say "  lane warm, kept: $lane ($(du -sh "$lane" 2>/dev/null | cut -f1))"
         continue
     fi

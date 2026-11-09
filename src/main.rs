@@ -4128,6 +4128,16 @@ fn doctor_checks() -> ExitCode {
     failed |= !api_check.ok;
     println!("{}", doctor::render(&api_check));
 
+    // The volume's own answer: the build caches live outside the repo (a
+    // gate must not trample the working tree's build), so free space is
+    // the fact that catches them before a build dies mid-link (KI-502).
+    let volume = home
+        .clone()
+        .unwrap_or_else(|| std::path::PathBuf::from(if cfg!(windows) { "C:\\" } else { "/" }));
+    let disk_check = doctor::evaluate_disk(free_kib(&volume));
+    failed |= !disk_check.ok;
+    println!("{}", doctor::render(&disk_check));
+
     let shell_check = doctor::evaluate_shell(shell_probe());
     failed |= !shell_check.ok;
     println!("{}", doctor::render(&shell_check));
@@ -4658,6 +4668,22 @@ async fn explain_command(options: &cli::ExplainOptions) -> ExitCode {
 }
 
 /// Probe the platform shell without changing anything.
+/// Free space on the volume that holds `path`, in kibibytes: the answer
+/// `df -k` gives, parsed rather than re-derived — the CLI has no statvfs
+/// binding and one more dependency for four numbers is not worth it.
+fn free_kib(path: &std::path::Path) -> Option<u64> {
+    let out = std::process::Command::new("df")
+        .arg("-k")
+        .arg(path)
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    let line = text.lines().rev().find(|line| !line.trim().is_empty())?;
+    let fields: Vec<&str> = line.split_whitespace().collect();
+    // filesystem 1K-blocks used available capacity iused ifree %iused mounted
+    fields.get(3).and_then(|field| field.parse().ok())
+}
+
 fn shell_probe() -> Result<&'static str, String> {
     #[cfg(unix)]
     {

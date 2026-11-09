@@ -12,6 +12,23 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.6.20 — 2026-11-09
+
+The build caches get a floor, a cap and a line in `fleet doctor`.
+
+- **`fleet doctor` reports the disk**, judged against a 20 GiB floor: below it
+  the line says what dies (a build mid-link) and who holds the space (the
+  `/private/tmp` build lanes and `~/.fleet/checkpoints`). The check is
+  hermetic and pinned; the live answer on this machine is `113 GiB free`.
+- **`scripts/release.sh` preflights the volume** before either mode builds: a
+  volume under `FLEET_DISK_FLOOR_GIB` (20) refuses the cut with the numbers,
+  and the gate's own lane is cleaned when it passes
+  `FLEET_GATE_TARGET_MAX_GIB` (20) instead of growing without bound.
+- **`scripts/daily-maintenance.sh` caps a lane by size as well as by age** — a
+  lane that grew to tens of gigabytes inside the warm window is cleaned, not
+  shielded by its warmth (the 69 GiB gate lane that took the drive to 1.6 GiB
+  free, KI-502).
+
 ## v0.6.19 — 2026-11-09
 
 The same content as v0.6.18, cut again because v0.6.18's assets never
