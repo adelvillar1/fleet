@@ -190,3 +190,25 @@ with no context, so it is never a dead control.
 - `docs/plans/mockups/2026-11-09-desk-learning/index.html` — measured (no overflow, no clipped text, ink 5.29–16.05:1) and read in paper and graphite.
 - The owner's report of 2026-11-09 (this plan's context).
 - `docs/features/desk.md`, `docs/features/learning.md` — the machinery the surface sits on.
+
+### The second revision (the owner's correction, v0.6.18/0.6.19)
+
+The shell's first shape (a second projects rail, a bespoke composer, the work
+in the pane) was replaced on the owner's word:
+
+- **The composer is the conversation's own element**, moved into the surface's
+  column and home again when the route leaves — never a second one per surface.
+- **The list column is the app's work column**, with two new tenants: the
+  desk's deliverables and learning's lessons. Only the objects change.
+- **The centre is the artifact** (the deliverable's cards and its thread; the
+  lesson's section and its thread); **the right pane is its properties and
+  settings**, in the pane's card/facts/ghost idiom, and exists only while an
+  artifact is open.
+- The welcome is the conversation's `.empty` component; no new type styles.
+
+The criteria above still hold (rails → the column's objects; threads; chips →
+the pane's settings; the empty states; the whole-control audit). The pins moved
+with the layout: `PWS the desk composer is the conversation's own`, `PWS the
+composer comes home to the conversation`, `PWS the desk composer makes a brief
+when nothing is open`, and the `LEARN`/`DESK` cases re-pointed at the column
+and the centre. The harness is 1080 checks across 134 cases.

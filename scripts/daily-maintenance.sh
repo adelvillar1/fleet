@@ -30,6 +30,9 @@
 #      hygiene.md;
 #   6. the plan-worktree sweep — dry-run by default: --live stays the
 #      owner's explicit act, which is the sweep's own rule;
+#   8. the build lanes — /tmp's gate and lane target dirs, kept while warm
+#      and cleaned whole when cold; the drive's own good-citizen rule
+#      (2026-11-09: 80 GiB of lanes on a drive with 1.6 GiB free).
 #   7. the orphan naming — untracked, non-ignored TOP-LEVEL entries are
 #      named in the log and never deleted: a stray directory is a
 #      question for the owner, not a file a script may remove.
@@ -92,6 +95,39 @@ say "— repo hygiene —"
 #    --live stays the owner's explicit act (the sweep's own rule).
 say "— plan worktrees —"
 "$REPO/scripts/plan-worktree.sh" sweep --dry-run >>"$LOG" 2>&1 || say "the worktree sweep failed; tomorrow retries"
+
+# 8. the build lanes outside the repo — the release gate and the lane
+#    builds keep their own target dirs in /tmp so a gate can never trample
+#    the working tree's build. Nothing swept them: on 2026-11-09 the gate's
+#    lane held 66 GiB and three others 13 GiB more, while the drive sat at
+#    1.6 GiB free. A lane is a CACHE: kept while it is warm (a release week
+#    reuses it, and a cold rebuild is ten minutes), cleaned whole once its
+#    newest file is older than FLEET_LANE_KEEP_DAYS (default 3). A running
+#    cargo owns its lane; the sweep skips it and says so.
+say "— build lanes —"
+for lane in /private/tmp/fleet-*-target; do
+    [ -d "$lane" ] || continue
+    case "$lane" in */fleet-gate-target|*/fleet-*-target) ;; *) continue ;; esac
+    if pgrep -f "CARGO_TARGET_DIR=$lane" >/dev/null 2>&1; then
+        say "  lane busy, skipped: $lane"
+        continue
+    fi
+    if [ -n "$(find "$lane" -type f -mtime -"${LANE_DAYS:-3}" 2>/dev/null | head -1)" ]; then
+        say "  lane warm, kept: $lane ($(du -sh "$lane" 2>/dev/null | cut -f1))"
+        continue
+    fi
+    before=$(du -sk "$lane" 2>/dev/null | cut -f1)
+    ( cd "$REPO" && CARGO_TARGET_DIR="$lane" cargo clean --manifest-path Cargo.toml ) \
+        >>"$LOG" 2>&1 && say "  lane cleaned: $lane (${before:-?}K)" \
+        || say "  lane clean failed: $lane; tomorrow retries"
+done
+# The gate's own worktree, when it outlived its run: git owns the removal,
+# and a worktree git no longer lists is a directory nobody owns.
+if [ -d /private/tmp/fleet-release-gate ] &&
+   ! git -C "$REPO" worktree list --porcelain 2>/dev/null | grep -q 'fleet-release-gate'; then
+    git -C "$REPO" worktree prune >>"$LOG" 2>&1
+    say "  a stale release-gate worktree is present: /private/tmp/fleet-release-gate (named, not removed)"
+fi
 
 # 7. the orphan naming — read-only, always.
 orphans=$(git ls-files --others --exclude-standard 2>/dev/null | cut -d/ -f1 | sort -u | tr '\n' ' ')
