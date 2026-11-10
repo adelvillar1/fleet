@@ -12,6 +12,19 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.6.26 — 2026-11-10
+
+Experimentation over refusal (the owner's rule 8).
+
+- **The sandbox-experiment gate**: a destructive-flagged bash command
+  in a git repo runs in an isolated clone first — the working tree
+  carried in (tracked diff applied, untracked copied) — and the
+  outcome (status + diff) rides the tool result. The real repo is
+  untouched until the ordinary approval gate: the owner approves the
+  outcome, not the guess. Bounded (repo size, timeout, output); a
+  skipped experiment names itself; `experiments.destructive` (default
+  on) is the off-switch.
+
 ## v0.6.25 — 2026-11-10
 
 The grounded-selection arc lands its measured half.
