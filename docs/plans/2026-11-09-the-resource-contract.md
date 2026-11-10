@@ -86,6 +86,36 @@ from its own outcomes, on the machinery this repo already runs:
   budgets for *work* calibrate. A floor that history could lower is not a
   safety floor.
 
+## The environment, and the risk the owner takes (the closing frame)
+
+Responsible execution is not a constant: it is a function of the machine and of
+what a bad day costs the person using it. A constrained laptop needs tighter
+upkeep than a build box with a terabyte spare, and code that hardcodes one
+answer is wrong on the other machine.
+
+So the contract's numbers derive from two inputs, one measured and one
+declared:
+
+- **The environment, learned.** The volume's size and standing free space, the
+  fill rate (GiB/day, from the footprint rows), memory and swap pressure, and
+  whether the machine is a laptop (constrained) or a server (roomy). The fill
+  rate is what sets the *cadence*: a machine losing 2 GiB a day at 120 GiB free
+  does not need the same upkeep interval as one at 25 GiB free. The profile is
+  re-derived as rows land — that is the learning, and it is arithmetic.
+- **The risk appetite, declared.** Only the owner knows what a full disk costs
+  them this week. One setting — `steady` (keep a wide reserve, refuse early),
+  `balanced`, or `tight` (accept a narrow reserve for throughput) — plus the
+  option to name the floor outright. Never inferred from history.
+
+The declared budgets become derived, not fixed: the reserve is the tighter of
+the environment's floor and the owner's appetite; the upkeep cadence follows
+the fill rate; per-run budgets follow the appetite. The constants in the
+footprint script today are **priors for a fresh machine**, and the first
+recorded profile and the first declared appetite replace them.
+
+This is also the answer to the earlier question of whose numbers they are: not
+mine, and not the code's — the machine's, bounded by the owner's tolerance.
+
 ## Acceptance criteria
 
 - [ ] C1 — A `Contract` with pure `admit(facts, estimate)` and
@@ -116,6 +146,16 @@ from its own outcomes, on the machinery this repo already runs:
 - [ ] C8 — The admitted estimate for a work class is the median of its last ten
       settlements, with the declared constant as the prior until three exist;
       a test with a deliberately wrong prior corrects after the settles land.
+- [ ] C10 — An environment profile (volume size, standing free space, fill
+      rate, memory pressure, laptop or server) is derived from the footprint
+      rows, and a declared risk appetite (`steady`/`balanced`/`tight`, or an
+      explicit reserve) bounds it; the reserve, the cadence and the per-run
+      budgets derive from the two, so no number in this contract is a code
+      constant once a profile exists.
+- [ ] C11 — `fleet doctor` and `fleet footprint` name the profile and the
+      appetite beside the numbers they produced ("reserve 35 GiB: laptop,
+      steady, filling 1.8 GiB/day"), so a refusal reads as a decision, not an
+      oracle.
 - [ ] C9 — The resource judge's verdicts are graded by the subsequent outcome
       (a `runaway` on work that then completed cleanly counts against it; an
       `expected` before a breach counts against it), and that grading is
