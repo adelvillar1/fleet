@@ -12,6 +12,58 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.6.23 — 2026-11-10
+
+Two live-surface defects, found by the owner's own eyes on the
+delivered face.
+
+- **The router page stopped blanking mid-run** (KI-510). The live
+  decision card's facts edit had orphaned its rows array; the paint
+  threw on the first `routed` event and the board died after clearing.
+  Idle read fine — blank exactly while work was being routed. The
+  rows append to their list again, pinned by the harness case that
+  paints a routed event and asserts the facts, the execution head,
+  and the walk.
+- **The workspace-history pane names what it lost, and the act**
+  (KI-511). The Docker reset removed every registered project's Store
+  volume; the read named it, the pane didn't. It now renders a
+  "stores lost to the Docker reset" card — each project, its cause,
+  the script noise trimmed — and each line carries a **re-register**
+  button: the bridge re-imports the folder (the history restarts
+  empty), drops the rail cache, and names the outcome.
+
+## v0.6.22 — 2026-11-10
+
+The failsafe: the chain restores fleet to working order, never refuses
+(the failsafe-restore plan, phases A through D).
+
+- **The health loop** — the app probes the critical services on a beat
+  (layerfs's worker port, each vendored lane's presence, docker's
+  daemon, the API's key), `/api/state` carries the verdicts, and the
+  face paints a card naming every down service beside its repair
+  verb. A transition announces itself; the face repaints without
+  waiting for its poll.
+- **Degradation over refusal** — a delegation whose LayerFS workspace
+  cannot open runs on the main session's model and route with the
+  plain launch folder; a child whose route cannot be prepared rides
+  the parent's route; a routing config that cannot load degrades the
+  run to the compiled-in declared order. Every degradation is named
+  in the row, the result, and the transcript — never silent, never a
+  refusal.
+- **The repair note** — a run whose provisioned substrate is named
+  down carries the repair on its first request: the service, the
+  cause, and the verb, logged as `SystemNote` so the request stays
+  reconstructable. The main session repairs through its own bash and
+  the standing approval gate; an exhausted chain names every
+  candidate's cause and its repair — and no connectivity with no
+  local model configured is named as the one unrecoverable failure.
+- **The local tail and `fleet recover`** — routing.json's
+  `local_tail: "provider/model"` puts a configured local model behind
+  the deepseek tail as the chain's last rung; `fleet recover`
+  restores every settings file whose current form is broken from its
+  last-known-good stamp (every settings write stamps one) and names
+  the probes' fresh verdicts.
+
 ## v0.6.21 — 2026-11-10
 
 Fleet stops being a good citizen and starts being a responsible one: work is
@@ -86,58 +138,6 @@ uploaded: the release was tagged while a co-tenant's commit landed on the
 branch, the assets build refused to run off-tag, and an empty release held
 `releases/latest` until it was marked a prerelease. v0.6.19 carries the
 section below, and the changelog keeps 0.6.18 as the record.
-
-## v0.6.23 — 2026-11-10
-
-Two live-surface defects, found by the owner's own eyes on the
-delivered face.
-
-- **The router page stopped blanking mid-run** (KI-510). The live
-  decision card's facts edit had orphaned its rows array; the paint
-  threw on the first `routed` event and the board died after clearing.
-  Idle read fine — blank exactly while work was being routed. The
-  rows append to their list again, pinned by the harness case that
-  paints a routed event and asserts the facts, the execution head,
-  and the walk.
-- **The workspace-history pane names what it lost, and the act**
-  (KI-511). The Docker reset removed every registered project's Store
-  volume; the read named it, the pane didn't. It now renders a
-  "stores lost to the Docker reset" card — each project, its cause,
-  the script noise trimmed — and each line carries a **re-register**
-  button: the bridge re-imports the folder (the history restarts
-  empty), drops the rail cache, and names the outcome.
-
-## v0.6.22 — 2026-11-10
-
-The failsafe: the chain restores fleet to working order, never refuses
-(the failsafe-restore plan, phases A through D).
-
-- **The health loop** — the app probes the critical services on a beat
-  (layerfs's worker port, each vendored lane's presence, docker's
-  daemon, the API's key), `/api/state` carries the verdicts, and the
-  face paints a card naming every down service beside its repair
-  verb. A transition announces itself; the face repaints without
-  waiting for its poll.
-- **Degradation over refusal** — a delegation whose LayerFS workspace
-  cannot open runs on the main session's model and route with the
-  plain launch folder; a child whose route cannot be prepared rides
-  the parent's route; a routing config that cannot load degrades the
-  run to the compiled-in declared order. Every degradation is named
-  in the row, the result, and the transcript — never silent, never a
-  refusal.
-- **The repair note** — a run whose provisioned substrate is named
-  down carries the repair on its first request: the service, the
-  cause, and the verb, logged as `SystemNote` so the request stays
-  reconstructable. The main session repairs through its own bash and
-  the standing approval gate; an exhausted chain names every
-  candidate's cause and its repair — and no connectivity with no
-  local model configured is named as the one unrecoverable failure.
-- **The local tail and `fleet recover`** — routing.json's
-  `local_tail: "provider/model"` puts a configured local model behind
-  the deepseek tail as the chain's last rung; `fleet recover`
-  restores every settings file whose current form is broken from its
-  last-known-good stamp (every settings write stamps one) and names
-  the probes' fresh verdicts.
 
 ## v0.6.18 — 2026-11-09
 
