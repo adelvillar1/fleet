@@ -882,6 +882,7 @@ fn spawn_agent(config: AgentConfig) -> thread::JoinHandle<()> {
                             max_turns: DEFAULT_MAX_TURNS,
                             capped: false,
                             health_note: false,
+                            lane_prose: false,
                             // The re-route's seed: the same resolved id
                             // this preparation carries.
                             session_id: Some(prepared.session_id.clone()),

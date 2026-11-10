@@ -38,6 +38,7 @@ pub mod filelock;
 pub mod fileops;
 pub mod footprint;
 pub mod fusion;
+pub mod generate;
 pub mod graph;
 pub mod gui;
 pub mod health;

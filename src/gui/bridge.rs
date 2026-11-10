@@ -13303,6 +13303,7 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
                             max_turns: turn_budget,
                             capped: false,
                             health_note: true,
+                            lane_prose: true,
                             // The run's resolved `{session}` value, so a
                             // mid-run re-route re-seeds the same id.
                             session_id: Some(prepared.session_id.clone()),

@@ -3330,6 +3330,7 @@ async fn drive(
     let options = AgentOptions {
         capped: false,
         health_note: true,
+        lane_prose: true,
         goal: None,
         model,
         max_turns,

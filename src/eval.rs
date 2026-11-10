@@ -1376,6 +1376,7 @@ async fn drive_over(
     let options = AgentOptions {
         capped: false,
         health_note: false,
+        lane_prose: false,
         session_id: None,
         goal: None,
         model: "test-model".to_string(),

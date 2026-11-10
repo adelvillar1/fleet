@@ -512,6 +512,14 @@ pub struct AgentOptions {
     /// corpus rides fixtures, and a test's premise never rides the
     /// machine's substrate.
     pub health_note: bool,
+    /// Whether the hosted small-model prose leg may run — the Phase 4
+    /// seams (the compaction fold through blend1's `generate`, and the
+    /// end-of-run title/summary act). The main session's surfaces set
+    /// it — the same actor the `health_note` doc names — and children,
+    /// eval runs, and tests leave it off: a test's premise never rides
+    /// the machine's lanes, and a lane that cannot answer is a named
+    /// fallback to today's path, never a failure.
+    pub lane_prose: bool,
     /// The run's resolved `{session}` value — `Prepared.session_id` — so
     /// a mid-run re-route re-seeds the same id and the conversation's
     /// gateway affinity bucket survives the provider switch. `None` for
@@ -689,6 +697,7 @@ impl Default for AgentOptions {
             max_turns: DEFAULT_MAX_TURNS,
             capped: false,
             health_note: false,
+            lane_prose: false,
             session_id: None,
             identity: None,
             ui_tx: None,
@@ -4281,44 +4290,101 @@ impl<'a> Agent<'a> {
         ));
         // No tools: a compaction request has nothing to execute, and a
         // declaration on it would invite a call with no context to run in.
-        let request = ChatRequest {
-            model: &self.options.model,
-            messages: &request_messages,
-            tools: Vec::new(),
-            max_tokens: None,
-        };
-        // The deltas are transport, not content: the summary arrives whole
-        // in the response, and streaming it to the progress sink would
-        // put a second model's prose in the middle of the run's output.
-        let client = self.dialer();
-        let response = match client.chat_stream(&request, |_| {}).await {
-            Ok(response) => response,
-            Err(error) => {
-                // The fold is an auxiliary call: its failure must not
-                // kill a healthy run. The conversation keeps its
-                // context, the failure is named on one line, and the
-                // latch holds so a failing fold is not retried every
-                // turn. The run then either finishes inside the
-                // window's headroom or dies at the API's own length
-                // refusal, which names the real limit — a more honest
-                // death than an auxiliary call's transport error.
-                let _ = writeln!(
-                    self.progress,
-                    "\u{2014} compaction failed: {error}; the run continues un-compacted"
+        // The grounded-selection plan's Phase 4: on a main-surface run
+        // (`lane_prose`), the fold is first asked of blend1's hosted
+        // small-model text leg — a fold is summarization, the one task a
+        // 1.7B does as well as the flagship at a fraction of the spend —
+        // with this routed request as the named fallback when the lane
+        // cannot answer. The lane's tokens are the lane's own spend
+        // (blend1 reports usage on its side) and never enter
+        // `self.usage`, which estimates the routed window.
+        let mut summary = String::new();
+        let mut via_lane = false;
+        if self.options.lane_prose {
+            // The injected spec wins (the production surfaces seed the
+            // registry into `lane_specs`; a test injects its mock);
+            // none means the lane is not part of this run — today's
+            // path folds it.
+            let spec = self
+                .options
+                .lane_specs
+                .as_ref()
+                .and_then(|specs| specs.get(crate::generate::BLEND1_LANE).cloned());
+            if let Some(spec) = spec {
+                // The transcript rides role-named prose (the lane reads
+                // prose); the instruction is the system prompt — the
+                // same words the routed request would carry.
+                let transcript = crate::lane_client::ask_prompt(
+                    &request_messages[1..request_messages.len() - 1],
                 );
-                let _ = self.progress.flush();
-                self.compaction_latch = true;
-                return Ok(());
+                match crate::generate::text(
+                    &spec,
+                    &transcript,
+                    Some(compaction::COMPACTION_INSTRUCTION),
+                    4096,
+                )
+                .await
+                {
+                    Ok(answer) => {
+                        summary = answer.text;
+                        via_lane = true;
+                        let _ = writeln!(
+                            self.progress,
+                            "\u{2014} fold served by the hosted small model ({})",
+                            answer.model
+                        );
+                        let _ = self.progress.flush();
+                    }
+                    Err(error) => {
+                        let _ = writeln!(
+                            self.progress,
+                            "\u{2014} the small-model fold was unavailable ({error}); folding through the routed path"
+                        );
+                        let _ = self.progress.flush();
+                    }
+                }
             }
-        };
-        self.usage.prompt_tokens += response.usage.prompt_tokens;
-        self.usage.completion_tokens += response.usage.completion_tokens;
-        let summary = response
-            .choices
-            .into_iter()
-            .next()
-            .and_then(|choice| choice.message.content)
-            .unwrap_or_default();
+        }
+        if !via_lane {
+            let request = ChatRequest {
+                model: &self.options.model,
+                messages: &request_messages,
+                tools: Vec::new(),
+                max_tokens: None,
+            };
+            // The deltas are transport, not content: the summary arrives whole
+            // in the response, and streaming it to the progress sink would
+            // put a second model's prose in the middle of the run's output.
+            let client = self.dialer();
+            let response = match client.chat_stream(&request, |_| {}).await {
+                Ok(response) => response,
+                Err(error) => {
+                    // The fold is an auxiliary call: its failure must not
+                    // kill a healthy run. The conversation keeps its
+                    // context, the failure is named on one line, and the
+                    // latch holds so a failing fold is not retried every
+                    // turn. The run then either finishes inside the
+                    // window's headroom or dies at the API's own length
+                    // refusal, which names the real limit — a more honest
+                    // death than an auxiliary call's transport error.
+                    let _ = writeln!(
+                        self.progress,
+                        "\u{2014} compaction failed: {error}; the run continues un-compacted"
+                    );
+                    let _ = self.progress.flush();
+                    self.compaction_latch = true;
+                    return Ok(());
+                }
+            };
+            self.usage.prompt_tokens += response.usage.prompt_tokens;
+            self.usage.completion_tokens += response.usage.completion_tokens;
+            summary = response
+                .choices
+                .into_iter()
+                .next()
+                .and_then(|choice| choice.message.content)
+                .unwrap_or_default();
+        }
         // An empty summary would replace the conversation with nothing.
         // The fold is skipped rather than performed: the run keeps its
         // context and its next request, and the log records no compaction
@@ -10185,6 +10251,7 @@ mod tests {
             max_turns: 3,
             capped: false,
             health_note: false,
+            lane_prose: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -10237,6 +10304,7 @@ mod tests {
             max_turns: 3,
             capped: false,
             health_note: false,
+            lane_prose: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -10544,6 +10612,7 @@ mod tests {
             max_turns: 3,
             capped: false,
             health_note: false,
+            lane_prose: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -10638,6 +10707,7 @@ mod tests {
             max_turns: 1,
             capped: false,
             health_note: false,
+            lane_prose: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -10733,6 +10803,283 @@ mod tests {
         // And the fold was a real model call served by the mock.
         let logged = std::fs::read_to_string(&m.requests).unwrap_or_default();
         assert_eq!(logged.lines().count(), 1, "{logged}");
+    }
+
+    /// A scripted blend1: mock-mcp answering initialize, tools/list
+    /// (the `generate` tool declared), and tools/call with the leg's
+    /// own result JSON.
+    fn lane_mock(leg_json: &str) -> (std::process::Child, std::path::PathBuf, std::path::PathBuf) {
+        let scratch = std::env::temp_dir().join(format!(
+            "fleet-lane-mock-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&scratch).expect("the scratch");
+        let entries = [
+            serde_json::json!({ "reply": {
+                "jsonrpc": "2.0", "id": "$echo",
+                "result": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": { "tools": { "listChanged": false } },
+                    "serverInfo": { "name": "mock-blend1", "version": "0.0.0" },
+                },
+            }}),
+            serde_json::json!({ "reply": {
+                "jsonrpc": "2.0", "id": "$echo",
+                "result": { "tools": [ { "name": "generate", "inputSchema": {} } ] },
+            }}),
+            serde_json::json!({ "reply": {
+                "jsonrpc": "2.0", "id": "$echo",
+                "result": { "content": [ { "type": "text", "text": leg_json } ], "isError": false },
+            }}),
+        ];
+        let script = entries
+            .iter()
+            .map(|entry| format!("{entry}\n"))
+            .collect::<String>();
+        std::fs::write(scratch.join("script.jsonl"), script).unwrap();
+        let bin = crate::eval::mock_mcp_binary()
+            .unwrap_or_else(|| panic!("the mock-mcp binary was not found"));
+        let child = std::process::Command::new(bin)
+            .arg(scratch.join("script.jsonl"))
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("spawn the mock-mcp child");
+        (child, scratch.join("script.jsonl"), scratch)
+    }
+
+    fn blend1_spec(script: &std::path::Path) -> crate::mcp::ServerSpec {
+        crate::mcp::ServerSpec {
+            program: crate::eval::mock_mcp_binary()
+                .expect("the mock-mcp binary")
+                .to_string_lossy()
+                .into_owned(),
+            args: vec![script.to_string_lossy().into_owned()],
+            env: Vec::new(),
+            passthrough: Vec::new(),
+            cwd: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_lane_fold_serves_the_summary_and_skips_the_routed_request() {
+        // Phase 4's C10: on a prose-enabled run, the fold is asked of
+        // blend1's generate leg first; the routed fold request never
+        // happens, the summary is the lane's text, and the progress
+        // line names the model that served.
+        let m = fold_mock("unused: the routed fold never fires");
+        let (mut lane_child, script, lane_scratch) =
+            lane_mock(r#"{"status":"ok","model":"lfm3-1.7b","text":"LANE FOLD SUMMARY"}"#);
+        let home = scratch("fold-lane");
+        let mut session = crate::session::Session::create(&home, "m").unwrap();
+        let client = Client::new(format!("http://127.0.0.1:{}", m.port), "test-key");
+        let options = AgentOptions {
+            session_id: None,
+            goal: None,
+            model: "m".to_string(),
+            identity: None,
+            max_turns: 1,
+            capped: false,
+            health_note: false,
+            lane_prose: true,
+            ui_tx: None,
+            lane_specs: Some(
+                [(
+                    crate::generate::BLEND1_LANE.to_string(),
+                    blend1_spec(&script),
+                )]
+                .into_iter()
+                .collect(),
+            ),
+            calib: None,
+            skills: Vec::new(),
+            role_overlay: None,
+            memory: None,
+            scope: None,
+            improve_home: None,
+            goal_home: None,
+            goal_session: None,
+            route_home: None,
+            gui_prompt: None,
+            compact_now: true,
+            checkpoints: None,
+            file_access: FileAccess::Unrestricted,
+            plan_mode: false,
+            resource_judge: None,
+        };
+        let progress: &'static mut Vec<u8> = Box::leak(Box::new(Vec::new()));
+        let mut agent = Agent::new(
+            &client,
+            options,
+            &mut session,
+            Box::new(ApproveAll),
+            &mut *progress,
+        )
+        .unwrap();
+        for index in 0..30 {
+            agent
+                .push_message(Message {
+                    role: Role::Assistant,
+                    content: None,
+                    tool_calls: vec![call(
+                        &format!("f{index}"),
+                        "read_file",
+                        r#"{"path":"plan.md"}"#,
+                    )],
+                    tool_call_id: None,
+                    images: Vec::new(),
+                })
+                .unwrap();
+            agent
+                .push_message(Message::tool_result(
+                    format!("f{index}"),
+                    format!("output {index}"),
+                ))
+                .unwrap();
+        }
+        agent.maybe_compact("system", "the task").await.unwrap();
+        drop(agent); // release the progress borrow before reading it
+        let text = String::from_utf8_lossy(progress).into_owned();
+        assert!(
+            text.contains("fold served by the hosted small model (lfm3-1.7b)"),
+            "{text}"
+        );
+        let records = crate::session::replay(&session_path_of(&home)).unwrap();
+        let compaction = records
+            .iter()
+            .find_map(|record| match record {
+                Record::Compaction { summary, .. } => Some(summary.clone()),
+                _ => None,
+            })
+            .expect("the fold compacted");
+        assert!(
+            compaction.contains("LANE FOLD SUMMARY"),
+            "the lane's summary is the fold's summary: {compaction}"
+        );
+        // The routed fold request never fired: the API mock saw zero
+        // requests — the run's own request never came either, because
+        // maybe_compact was driven directly.
+        let logged = std::fs::read_to_string(&m.requests).unwrap_or_default();
+        assert_eq!(
+            logged.lines().count(),
+            0,
+            "the routed fold must not fire when the lane serves: {logged}"
+        );
+        let _ = std::fs::remove_dir_all(&home);
+        let _ = lane_child.kill();
+        let _ = lane_child.wait();
+        let _ = std::fs::remove_dir_all(&lane_scratch);
+    }
+
+    #[tokio::test]
+    async fn a_failed_lane_fold_falls_back_to_the_routed_path_named() {
+        // The named fallback: the leg answers with its own error shape,
+        // the progress line says so, and the routed fold request fires —
+        // the run keeps its fold either way.
+        let m = fold_mock("the routed summary of the folded work");
+        let (mut lane_child, script, lane_scratch) = lane_mock(
+            r#"{"status":"error","error":"Liquid API HTTP 503: warming","model":"lfm3-1.7b"}"#,
+        );
+        let home = scratch("fold-lane-fallback");
+        let mut session = crate::session::Session::create(&home, "m").unwrap();
+        let client = Client::new(format!("http://127.0.0.1:{}", m.port), "test-key");
+        let options = AgentOptions {
+            session_id: None,
+            goal: None,
+            model: "m".to_string(),
+            identity: None,
+            max_turns: 1,
+            capped: false,
+            health_note: false,
+            lane_prose: true,
+            ui_tx: None,
+            lane_specs: Some(
+                [(
+                    crate::generate::BLEND1_LANE.to_string(),
+                    blend1_spec(&script),
+                )]
+                .into_iter()
+                .collect(),
+            ),
+            calib: None,
+            skills: Vec::new(),
+            role_overlay: None,
+            memory: None,
+            scope: None,
+            improve_home: None,
+            goal_home: None,
+            goal_session: None,
+            route_home: None,
+            gui_prompt: None,
+            compact_now: true,
+            checkpoints: None,
+            file_access: FileAccess::Unrestricted,
+            plan_mode: false,
+            resource_judge: None,
+        };
+        let progress: &'static mut Vec<u8> = Box::leak(Box::new(Vec::new()));
+        let mut agent = Agent::new(
+            &client,
+            options,
+            &mut session,
+            Box::new(ApproveAll),
+            &mut *progress,
+        )
+        .unwrap();
+        for index in 0..30 {
+            agent
+                .push_message(Message {
+                    role: Role::Assistant,
+                    content: None,
+                    tool_calls: vec![call(
+                        &format!("f{index}"),
+                        "read_file",
+                        r#"{"path":"plan.md"}"#,
+                    )],
+                    tool_call_id: None,
+                    images: Vec::new(),
+                })
+                .unwrap();
+            agent
+                .push_message(Message::tool_result(
+                    format!("f{index}"),
+                    format!("output {index}"),
+                ))
+                .unwrap();
+        }
+        agent.maybe_compact("system", "the task").await.unwrap();
+        drop(agent); // release the progress borrow before reading it
+        let text = String::from_utf8_lossy(progress).into_owned();
+        assert!(
+            text.contains("the small-model fold was unavailable"),
+            "{text}"
+        );
+        assert!(text.contains("folding through the routed path"), "{text}");
+        let records = crate::session::replay(&session_path_of(&home)).unwrap();
+        let compaction = records
+            .iter()
+            .find_map(|record| match record {
+                Record::Compaction { summary, .. } => Some(summary.clone()),
+                _ => None,
+            })
+            .expect("the fold compacted");
+        assert!(
+            compaction.contains("the routed summary"),
+            "the routed fold served: {compaction}"
+        );
+        // Exactly one routed request: the fold. The run request never
+        // came (maybe_compact driven directly).
+        let logged = std::fs::read_to_string(&m.requests).unwrap_or_default();
+        assert_eq!(logged.lines().count(), 1, "{logged}");
+        let _ = std::fs::remove_dir_all(&home);
+        let _ = lane_child.kill();
+        let _ = lane_child.wait();
+        let _ = std::fs::remove_dir_all(&lane_scratch);
     }
 
     #[test]
@@ -10900,6 +11247,7 @@ mod tests {
             max_turns: 1,
             capped: false,
             health_note: false,
+            lane_prose: false,
             ui_tx: None,
             lane_specs: None,
             calib: Some(stream.clone()),
@@ -10975,6 +11323,7 @@ mod tests {
             max_turns: 1,
             capped: false,
             health_note: false,
+            lane_prose: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -11397,6 +11746,7 @@ mod tests {
             max_turns: 1,
             capped: false,
             health_note: false,
+            lane_prose: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -11547,6 +11897,7 @@ mod tests {
             max_turns: 1,
             capped: false,
             health_note: false,
+            lane_prose: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -11606,6 +11957,7 @@ mod tests {
             max_turns: 1,
             capped: false,
             health_note: false,
+            lane_prose: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -12037,6 +12389,7 @@ mod tests {
             max_turns: 1,
             capped: false,
             health_note: false,
+            lane_prose: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -12179,6 +12532,7 @@ mod tests {
                 max_turns: 1,
                 capped: false,
                 health_note: false,
+                lane_prose: false,
                 ui_tx: None,
                 lane_specs: None,
                 calib: None,
@@ -12332,6 +12686,7 @@ mod tests {
             max_turns: 1,
             capped: false,
             health_note: false,
+            lane_prose: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -12396,6 +12751,7 @@ mod tests {
             max_turns: 1,
             capped: false,
             health_note: false,
+            lane_prose: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -12485,6 +12841,7 @@ mod tests {
             AgentOptions {
                 capped: false,
                 health_note: false,
+                lane_prose: false,
                 goal_home: None,
                 goal_session: None,
                 model: "m".to_string(),
@@ -12533,6 +12890,7 @@ mod tests {
             let options = AgentOptions {
                 capped: false,
                 health_note: false,
+                lane_prose: false,
                 goal_home: None,
                 goal_session: None,
                 session_id: None,
@@ -12562,6 +12920,7 @@ mod tests {
             let options = AgentOptions {
                 capped: false,
                 health_note: false,
+                lane_prose: false,
                 goal_home: None,
                 goal_session: None,
                 goal: Some("ship the picker before Thursday".to_string()),
@@ -12614,6 +12973,7 @@ mod tests {
                 max_turns: 1,
                 capped: false,
                 health_note: false,
+                lane_prose: false,
                 ui_tx: None,
                 lane_specs: None,
                 calib: None,
@@ -12693,6 +13053,7 @@ You are auditing a change. Read the diff before you judge it.
             max_turns: 1,
             capped: false,
             health_note: false,
+            lane_prose: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -12745,6 +13106,7 @@ You are auditing a change. Read the diff before you judge it.
             max_turns: 1,
             capped: false,
             health_note: false,
+            lane_prose: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -12815,6 +13177,7 @@ You are auditing a change. Read the diff before you judge it.
             max_turns: 1,
             capped: false,
             health_note: false,
+            lane_prose: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -12858,6 +13221,7 @@ You are auditing a change. Read the diff before you judge it.
             max_turns: 1,
             capped: false,
             health_note: false,
+            lane_prose: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -12915,6 +13279,7 @@ You are auditing a change. Read the diff before you judge it.
             max_turns: 1,
             capped: false,
             health_note: false,
+            lane_prose: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -12972,6 +13337,7 @@ You are auditing a change. Read the diff before you judge it.
             max_turns: 1,
             capped: false,
             health_note: false,
+            lane_prose: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -13104,6 +13470,7 @@ You are auditing a change. Read the diff before you judge it.
             max_turns: 1,
             capped: false,
             health_note: false,
+            lane_prose: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -13179,6 +13546,7 @@ You are auditing a change. Read the diff before you judge it.
             max_turns: 1,
             capped: false,
             health_note: false,
+            lane_prose: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -13294,6 +13662,7 @@ You are auditing a change. Read the diff before you judge it.
             max_turns: 1,
             capped: false,
             health_note: false,
+            lane_prose: false,
             ui_tx: None,
             lane_specs: None,
             calib: Some(stream.clone()),
@@ -13436,6 +13805,7 @@ You are auditing a change. Read the diff before you judge it.
             max_turns: 1,
             capped: false,
             health_note: false,
+            lane_prose: false,
             ui_tx: None,
             lane_specs: None,
             calib: Some(stream.clone()),
@@ -13526,6 +13896,7 @@ You are auditing a change. Read the diff before you judge it.
             max_turns: 1,
             capped: false,
             health_note: false,
+            lane_prose: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -14127,6 +14498,7 @@ You are auditing a change. Read the diff before you judge it.
             max_turns: 1,
             capped: false,
             health_note: false,
+            lane_prose: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -14191,6 +14563,7 @@ You are auditing a change. Read the diff before you judge it.
             max_turns: 1,
             capped: false,
             health_note: false,
+            lane_prose: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -14265,6 +14638,7 @@ You are auditing a change. Read the diff before you judge it.
             max_turns: 1,
             capped: false,
             health_note: false,
+            lane_prose: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -14327,6 +14701,7 @@ You are auditing a change. Read the diff before you judge it.
             max_turns: 1,
             capped: false,
             health_note: false,
+            lane_prose: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -14529,6 +14904,7 @@ You are auditing a change. Read the diff before you judge it.
             max_turns: 1,
             capped: false,
             health_note: false,
+            lane_prose: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -14937,6 +15313,7 @@ You are auditing a change. Read the diff before you judge it.
             max_turns: 1,
             capped: false,
             health_note: false,
+            lane_prose: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -15886,6 +16263,7 @@ signature verified`, exit 0\n";
         let scheduled = AgentOptions {
             capped: false,
             health_note: false,
+            lane_prose: false,
             goal_home: None,
             goal_session: None,
             route_home: Some(std::path::PathBuf::from("/tmp/fleet-home")),
@@ -15899,6 +16277,7 @@ signature verified`, exit 0\n";
         let interactive = AgentOptions {
             capped: false,
             health_note: false,
+            lane_prose: false,
             improve_home: Some(std::path::PathBuf::from("/tmp/fleet-home")),
             goal_home: None,
             goal_session: None,

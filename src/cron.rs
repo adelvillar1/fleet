@@ -1553,6 +1553,7 @@ pub async fn execute(
         max_turns: DEFAULT_MAX_TURNS,
         capped: false,
         health_note: false,
+        lane_prose: false,
         identity: crate::home::read_soul(home),
         ui_tx: None,
         lane_specs,
