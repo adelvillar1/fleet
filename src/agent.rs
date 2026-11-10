@@ -1677,6 +1677,11 @@ pub struct Agent<'a> {
     /// prompt, whose byte-stability is what the provider-side prefix
     /// cache keys on.
     pending_curated: Option<String>,
+    /// The health loop's repair note (the failsafe plan's C4), taken by
+    /// the first request after the probe named a service down — a tail
+    /// message the model sees, logged as `SystemNote` so the request
+    /// stays reconstructable (hard rule 5).
+    pending_health: Option<String>,
     /// The images this run's first message carries — the owner's pasted
     /// screenshot, handed in by `run_with_images`. Taken by the first
     /// message and never again: the log keeps the task's words, which
@@ -1956,6 +1961,7 @@ impl<'a> Agent<'a> {
             curate_text: None,
             steered_once: false,
             pending_curated: None,
+            pending_health: None,
             first_images: Vec::new(),
             improve_home,
             tool_calls_run: 0,
@@ -2962,6 +2968,23 @@ impl<'a> Agent<'a> {
                 std::thread::sleep(std::time::Duration::from_millis(200));
             }
         });
+        // The failsafe's use-time check (the failsafe plan's C4): the
+        // fast probes cost milliseconds when the substrate is absent,
+        // and when a service is named down the note rides the first
+        // request — the main session repairs instead of refusing.
+        if self.pending_health.is_none() {
+            if let Ok(home) = crate::home::fleet_home(
+                std::env::var("FLEET_HOME").ok().as_deref(),
+                std::env::var("HOME").ok().as_deref(),
+            ) {
+                let report = crate::health::probe(&home, true);
+                if !report.down().is_empty() {
+                    let note = crate::health::repair_note(&report);
+                    self.pending_health = Some(note.clone());
+                    let _ = self.record(&crate::session::Record::SystemNote { text: note });
+                }
+            }
+        }
         let outcome = self.run_task(task).await;
         alive.store(false, std::sync::atomic::Ordering::Relaxed);
         let _ = watcher.join();
@@ -3255,6 +3278,13 @@ impl<'a> Agent<'a> {
             // plan's C2 delivery rule). The `curated` record in the log
             // is what keeps it reconstructable.
             if let Some(note) = self.pending_curated.take() {
+                request_messages.push(Message::text(Role::System, &note));
+            }
+            // The health note rides the same tail (the failsafe plan's
+            // C4): turn-scoped, request-scoped, never the system
+            // prompt — and the `SystemNote` record keeps it
+            // reconstructable.
+            if let Some(note) = self.pending_health.take() {
                 request_messages.push(Message::text(Role::System, &note));
             }
             // The declarations are dynamic now: the four built-ins, the

@@ -4533,6 +4533,122 @@ async fn a_child_routes_through_prepare_child_and_a_broken_config_never_refuses_
     );
 }
 
+/// The failsafe plan's C4 and C6: a run whose substrate is named down
+/// carries the repair note on its first request and in its log — and
+/// the model's bash attempt at the repair lands as a tool result, the
+/// attempt and its outcome both reconstructable (hard rule 5).
+#[tokio::test]
+async fn a_down_service_rides_the_repair_note_and_the_models_bash_attempt_is_logged() {
+    let _ambient = AMBIENT_LOCK.lock().unwrap();
+    // Turn one: the model answers the note with a bash probe of fleet
+    // itself. Turn two: the final words.
+    let mock = MockApi::start(vec![
+        stream(vec![
+            tool_call_delta(
+                0,
+                "call-1",
+                "bash",
+                r#"{\"command\":\"echo the repair would run here\"}"#,
+            ),
+            finish_frame("tool_calls"),
+        ]),
+        stream(vec![
+            content_delta("noted and repaired as far as the sandbox allows"),
+            finish_frame("stop"),
+            usage_frame(10, 5),
+        ]),
+    ]);
+    // The scratch home whose substrate provisioning names a dead port:
+    // the probe's one down service, deterministically.
+    let scratch = temp_home("health-note");
+    let home = scratch.join("fleet-home");
+    let layerfs_home = home.join("layerfs-home");
+    std::fs::create_dir_all(layerfs_home.join("worker")).unwrap();
+    std::fs::create_dir_all(layerfs_home.join("bundle")).unwrap();
+    std::fs::write(
+        home.join("config.json"),
+        serde_json::json!({
+            "layerfs": {
+                "home": layerfs_home.display().to_string(),
+                "bundle": layerfs_home.join("bundle").display().to_string(),
+                "image": "sha256:test"
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        layerfs_home.join("worker").join("endpoint.json"),
+        serde_json::json!({ "home": layerfs_home.display().to_string(), "port": 1 }).to_string(),
+    )
+    .unwrap();
+    std::fs::create_dir_all(home.join("sessions")).unwrap();
+    let _guard = AmbientKey::set("FLEET_HOME", home.to_str().unwrap());
+    let client = Client::new(mock.url(), "test-key");
+    let mut session = crate::session::Session::create(&home, "test-model").unwrap();
+    let options = AgentOptions {
+        session_id: None,
+        goal: None,
+        model: "test-model".to_string(),
+        identity: None,
+        max_turns: 4,
+        capped: true,
+        ui_tx: None,
+        lane_specs: None,
+        calib: None,
+        resource_judge: None,
+        skills: Vec::new(),
+        role_overlay: None,
+        memory: None,
+        scope: None,
+        improve_home: None,
+        goal_home: None,
+        goal_session: None,
+        route_home: None,
+        gui_prompt: None,
+        compact_now: false,
+        checkpoints: None,
+        file_access: FileAccess::Unrestricted,
+        plan_mode: false,
+    };
+    let log_path = session.path().to_path_buf();
+    let mut progress = Vec::new();
+    let mut agent = Agent::new(
+        &client,
+        options,
+        &mut session,
+        Box::new(ApproveAll),
+        &mut progress,
+    )
+    .unwrap();
+    let report = agent.run("check fleet's health").await.unwrap();
+    assert_eq!(report.turns, 2, "the probe turn and the answer turn");
+    // The log carries the SystemNote, the tool attempt, and its
+    // outcome — reconstructable from the log alone (hard rule 5).
+    let records = fleet::session::replay(&log_path).unwrap();
+    let has_note = records.iter().any(|r| {
+        matches!(r, crate::session::Record::SystemNote { text }
+            if text.contains("fleet's health probes name these services down")
+                && text.contains("fleet install"))
+    });
+    assert!(has_note, "the repair note is in the log");
+    let has_attempt = records
+        .iter()
+        .any(|r| matches!(r, crate::session::Record::ToolResult { name, .. } if name == "bash"));
+    assert!(has_attempt, "the model's bash attempt is in the log");
+    // The first request carried the note as its tail system message.
+    let bodies = mock.bodies();
+    let first = bodies
+        .first()
+        .expect("the mock recorded the run's requests");
+    let first_text = serde_json::to_string(&first).unwrap();
+    assert!(
+        first_text.contains("fleet install")
+            && first_text.contains("fleet's health probes name these services down"),
+        "the note rode the first request's messages"
+    );
+}
+
 /// A single stdout line past the cap fails the wait with a typed protocol
 /// error instead of growing the reader's buffer without bound.
 #[tokio::test]

@@ -231,6 +231,22 @@ impl HealthReport {
     }
 }
 
+/// The repair note's sentence (the failsafe plan's C4): every down
+/// service, its cause, and its repair verb — the word the main session
+/// acts on. The closing line carries the ruling: never refuse the work
+/// over a down service — degrade and repair instead.
+pub fn repair_note(report: &HealthReport) -> String {
+    let lines: Vec<String> = report
+        .down()
+        .iter()
+        .map(|s| format!("- {} — {}; repair: {}", s.name, s.note, s.repair))
+        .collect();
+    format!(
+        "fleet's health probes name these services down:\n{}\nRepair what is          repairable (the commands above run through your own bash tool and the          standing approval gate) when the current task allows — and never refuse          the task over a down service: degrade and repair instead.",
+        lines.join("\n")
+    )
+}
+
 /// Where the loop's latest report lives — the server's handle to the
 /// bridge's shared slot.
 pub type SharedReport = std::sync::Arc<std::sync::Mutex<Option<HealthReport>>>;

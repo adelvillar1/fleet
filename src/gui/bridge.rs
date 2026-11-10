@@ -7446,6 +7446,7 @@ fn cards_from_records(records: &[session::Record]) -> (Vec<Value>, usize) {
             | session::Record::ToolResolution { .. }
             | session::Record::Declarations { .. }
             | session::Record::Curated { .. }
+            | session::Record::SystemNote { .. }
             | session::Record::Routed { .. }
             | session::Record::Resume { .. }
             // The turn's typed failure is the log's own diagnosis

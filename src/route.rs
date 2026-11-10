@@ -3619,7 +3619,50 @@ impl Router {
             }
         }
         Err(last_error.unwrap_or_else(|| {
-            ClientError::Network("no usable roster candidate remained".to_string())
+            // An exhausted walk with no attempt recorded names what it
+            // skipped, each with its cause and the repair the owner or
+            // the main session can act on (the failsafe plan's C5).
+            let state = lock(&self.state);
+            let causes: Vec<String> = state
+                .attempts
+                .iter()
+                .filter(|attempt| attempt.outcome == "skipped")
+                .map(|attempt| {
+                    let repair = match attempt.class.as_deref() {
+                        Some("no-key") => match self
+                            .resolved
+                            .iter()
+                            .find(|entry| entry.id() == attempt.provider)
+                        {
+                            Some(entry) => {
+                                format!("set ${}", entry.candidate.key_env)
+                            }
+                            None => "set the key".to_string(),
+                        },
+                        Some("disabled") => "enable the provider in the routing config".to_string(),
+                        Some("calibration") => {
+                            "the calibration's own cell passed it over; nothing to repair"
+                                .to_string()
+                        }
+                        _ => crate::health::repair_for(attempt.class.as_deref().unwrap_or(""))
+                            .to_string(),
+                    };
+                    format!(
+                        "{}: {} — repair: {}",
+                        attempt.provider,
+                        attempt.class.as_deref().unwrap_or("unknown"),
+                        repair
+                    )
+                })
+                .collect();
+            if causes.is_empty() {
+                ClientError::Network("no usable roster candidate remained".to_string())
+            } else {
+                ClientError::Network(format!(
+                    "no usable roster candidate remained ({})",
+                    causes.join("; ")
+                ))
+            }
         }))
     }
 
@@ -5693,6 +5736,54 @@ mod tests {
             "id": "x", "headers": { "x-a": "{session}" }
         }))
         .expect("the well-formed map passes the gate");
+    }
+
+    /// The failsafe plan's C5: an exhausted walk names every skipped
+    /// candidate with its cause and the repair the main session or the
+    /// owner can act on — never the bare "no candidate" sentence.
+    #[tokio::test]
+    async fn an_exhausted_walk_names_each_cause_and_its_repair() {
+        let mut candidate = default_roster()
+            .into_iter()
+            .find(|c| c.id == "deepseek")
+            .unwrap();
+        candidate.key_required = true;
+        let resolved = resolve(std::slice::from_ref(&candidate), &HashMap::new());
+        assert!(
+            resolved[0].key.is_none(),
+            "the test home carries no deepseek key"
+        );
+        let decision = RouteDecision {
+            provider: "deepseek".to_string(),
+            model: "deepseek-model".to_string(),
+            how: How::Fallback,
+            workload: Some("standard_code".to_string()),
+            verdict: None,
+            execution: None,
+            reason: "test".to_string(),
+            judged_from: crate::route::JudgedFrom::None,
+            start_index: 0,
+            order: vec![("deepseek".to_string(), "deepseek-model".to_string())],
+        };
+        let router = Router::new(resolved, decision);
+        let message = crate::api::Message::text(crate::api::Role::User, "hi");
+        let request = crate::api::ChatRequest {
+            model: "deepseek-model",
+            messages: std::slice::from_ref(&message),
+            tools: Vec::new(),
+            max_tokens: None,
+        };
+        let outcome = router.chat_stream(&request, &mut |_| {}).await;
+        let error = outcome.expect_err("a keyless walk is exhausted");
+        let text = error.to_string();
+        assert!(
+            text.contains("no usable roster candidate remained"),
+            "the exhaustion still names itself: {text}"
+        );
+        assert!(
+            text.contains("deepseek: no-key") && text.contains("set $DEEPSEEK_API_KEY"),
+            "the walk names the cause and its repair: {text}"
+        );
     }
 
     #[tokio::test]

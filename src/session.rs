@@ -532,6 +532,16 @@ pub enum Record {
     /// record, not the message list, is what keeps the curation
     /// reconstructable (hard rule 5). Bookkeeping, like `memory`: it
     /// replays to no message.
+    /// The health loop's repair note (the failsafe plan's C4): a
+    /// service is down, the note names it, the cause, and the repair
+    /// verb — carried on the named request as a tail message so the
+    /// model sees it, and kept reconstructable by this record alone
+    /// (hard rule 5). Bookkeeping, like `curated`: it replays to no
+    /// message.
+    SystemNote {
+        /// The note's own words.
+        text: String,
+    },
     Curated {
         /// The turn whose request carried the note at its tail.
         turn: u64,
@@ -1504,6 +1514,7 @@ pub fn conversation(records: &[Record]) -> Conversation {
             | Record::Skills { .. }
             | Record::Memory { .. }
             | Record::Curated { .. }
+            | Record::SystemNote { .. }
             | Record::Goal { .. }
             | Record::Tasks { .. }
             | Record::GoalDone { .. }
