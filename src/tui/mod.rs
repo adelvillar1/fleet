@@ -992,6 +992,7 @@ fn spawn_agent(config: AgentConfig) -> thread::JoinHandle<()> {
                             &home,
                             &path,
                             user_home.as_deref(),
+                            true,
                         ),
                         None => Vec::new(),
                     }

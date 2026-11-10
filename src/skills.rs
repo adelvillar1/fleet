@@ -1492,6 +1492,7 @@ pub fn draft_session(
     home: &Path,
     session_path: &Path,
     user_home: Option<&str>,
+    lane_prose: bool,
 ) -> Vec<PathBuf> {
     let Ok(records) = crate::session::replay(session_path) else {
         return Vec::new();
@@ -1513,6 +1514,45 @@ pub fn draft_session(
         let lesson = match live.iter().find(|skill| skill.name == lesson.name) {
             Some(existing) => lesson.into_update(existing),
             None => lesson,
+        };
+        // Grounded-selection C11: the lane drafts the body from the
+        // same facts the rules used — name, description, evidence, and
+        // the rule-drafted body as the anchor — while the rule-built
+        // body stays the fallback. The name, description, and evidence
+        // are never touched, so the proposal's frontmatter is
+        // byte-identical either way, and the slice-12 gate reads the
+        // same file shape whatever drafted the body.
+        let drafted_body = if lane_prose {
+            crate::generate::narrate_sync(
+                home,
+                "You draft a skill body for fleet's skill library: markdown,                  no frontmatter, teaching the recovery procedure the evidence \
+                 shows the session needed. Stay grounded in the evidence; keep \
+                 it under 30 lines; start with one sentence naming the trigger.",
+                &format!(
+                    "skill name: {}\ndescription: {}\nevidence: {}\n\nThe rule-drafted body for reference:\n{}",
+                    lesson.name, lesson.description, lesson.evidence, lesson.body
+                ),
+                    1024,
+                    |body| {
+                        let trimmed = body.trim();
+                        if trimmed.is_empty() {
+                            return Err("the drafted body is empty".to_string());
+                        }
+                        if trimmed.starts_with("---") {
+                            return Err("the drafted body carries frontmatter".to_string());
+                        }
+                        if trimmed.lines().count() > 120 {
+                            return Err("the drafted body is unbounded".to_string());
+                        }
+                        Ok(())
+                    },
+                )
+        } else {
+            None
+        };
+        let lesson = Lesson {
+            body: drafted_body.unwrap_or(lesson.body),
+            ..lesson
         };
         if let Some(path) = file_proposal(home, &lesson, &session_id) {
             filed.push(path);
@@ -2861,7 +2901,13 @@ mod tests {
             assistant(vec![tool_call("c2", "bash", "{}")]),
             result("c2", "bash", "exit 0"),
         ];
-        let filed = draft_session(&canon(&home), &home, &session_log(&home, &records), None);
+        let filed = draft_session(
+            &canon(&home),
+            &home,
+            &session_log(&home, &records),
+            None,
+            false,
+        );
         assert_eq!(filed.len(), 1, "{filed:?}");
         let text = std::fs::read_to_string(&filed[0]).unwrap();
         assert!(text.contains("kind: update"), "{text}");
@@ -2901,7 +2947,13 @@ mod tests {
             assistant(vec![tool_call("c2", "read_file", "{}")]),
             result("c2", "read_file", "the text"),
         ];
-        let filed = draft_session(&canon(&home), &home, &session_log(&home, &records), None);
+        let filed = draft_session(
+            &canon(&home),
+            &home,
+            &session_log(&home, &records),
+            None,
+            false,
+        );
         assert_eq!(filed.len(), 1, "{filed:?}");
         assert!(filed[0].starts_with(proposals_dir(&home)), "{filed:?}");
         assert_eq!(filed[0].file_name().unwrap(), "read-file-recovery.md");
@@ -2926,7 +2978,7 @@ mod tests {
             .unwrap()
             .to_string_lossy()
             .into_owned();
-        let second = draft_session(&canon(&home), &home, &second_log, None);
+        let second = draft_session(&canon(&home), &home, &second_log, None, false);
         assert_eq!(second.len(), 1, "{second:?}");
         let draft = std::fs::read_to_string(filed[0].clone()).unwrap();
         assert!(draft.contains("## Further evidence"), "{draft}");
@@ -2969,7 +3021,7 @@ mod tests {
             result("c4", "grep", "the same call"),
         ];
         let log = session_log(&home, &records);
-        let filed = draft_session(&canon(&home), &home, &log, None);
+        let filed = draft_session(&canon(&home), &home, &log, None, false);
         assert_eq!(filed.len(), 1, "{filed:?}");
         let draft = std::fs::read_to_string(&filed[0]).expect("the draft reads back");
         assert!(draft.contains("procedure-read-file-grep"), "{draft}");

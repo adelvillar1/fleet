@@ -13455,7 +13455,7 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
                 user_home.as_deref(),
             ) {
                 Some(canonical) => {
-                    crate::skills::draft_session(&canonical, &home, &path, user_home.as_deref())
+                    crate::skills::draft_session(&canonical, &home, &path, user_home.as_deref(), true)
                 }
                 None => Vec::new(),
             };

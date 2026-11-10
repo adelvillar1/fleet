@@ -1098,8 +1098,13 @@ fn draft_lessons(home: &std::path::Path, session_path: &std::path::Path) {
     if let Some(canonical) =
         fleet::skills::resolve_skills_dir(skills_dir.as_deref(), user_home.as_deref())
     {
-        let filed =
-            fleet::skills::draft_session(&canonical, home, session_path, user_home.as_deref());
+        let filed = fleet::skills::draft_session(
+            &canonical,
+            home,
+            session_path,
+            user_home.as_deref(),
+            true,
+        );
         if !filed.is_empty() {
             eprintln!(
                 "fleet: skills: drafted {} proposal(s) awaiting the gate in {}",
