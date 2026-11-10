@@ -142,6 +142,114 @@ pub fn blend1_spec(home: &std::path::Path) -> Option<crate::mcp::ServerSpec> {
     lanes::spec_for(BLEND1_LANE).ok()
 }
 
+// ── the prose stores ─────────────────────────────────────────────────────
+// The sidecars the end-of-run act writes and the archive renders. One
+// home per fact: the titles store's readers and writer live in the gui
+// bridge (the face's own surface), imported here; the summaries store
+// (`sessions-summaries.json`) is new, owned beside the titles store's
+// shape.
+
+pub(crate) use crate::gui::bridge::{load_titles, save_titles, SUMMARIES_FILE};
+
+/// The stored lane summaries: the same id-keyed map shape as the titles
+/// store, read for the archive listing.
+pub fn load_summaries(home: &std::path::Path) -> std::collections::HashMap<String, String> {
+    let text = match std::fs::read_to_string(home.join(SUMMARIES_FILE)) {
+        Ok(text) => text,
+        Err(_) => return std::collections::HashMap::new(),
+    };
+    serde_json::from_str(&text).unwrap_or_default()
+}
+
+fn save_summaries(home: &std::path::Path, summaries: &std::collections::HashMap<String, String>) {
+    let path = home.join(SUMMARIES_FILE);
+    if summaries.is_empty() {
+        let _ = std::fs::remove_file(&path);
+        return;
+    }
+    let Ok(text) = serde_json::to_string_pretty(summaries) else {
+        return;
+    };
+    let temp = path.with_extension(format!("{}.tmp", std::process::id()));
+    if std::fs::write(&temp, text).is_err() {
+        return;
+    }
+    let _ = std::fs::rename(&temp, &path);
+}
+
+/// The end-of-run prose act (Phase 4's C10): a finished main-surface run
+/// asks the small model for the session's title and one-sentence archive
+/// summary, writing both sidecars. The owner's own title always wins
+/// (an existing `sessions-titles.json` entry is never overwritten); the
+/// failure path is a named progress line and an unchanged archive —
+/// the ladder and the head-and-tail summary keep serving. Never fails
+/// the run: every error is swallowed into the progress line.
+pub async fn end_of_run_prose(
+    spec: &crate::mcp::ServerSpec,
+    home: &std::path::Path,
+    session_id: &str,
+    task: &str,
+    final_message: Option<&str>,
+    progress: &mut dyn std::io::Write,
+) {
+    let seed: String = task.chars().take(800).collect();
+    // The title: the owner's own title wins, so an existing entry means
+    // one lane call (the summary) instead of two.
+    let titles = load_titles(home);
+    if !titles.contains_key(session_id) {
+        match text(
+            spec,
+            &format!("The session's work: {seed}"),
+            Some(
+                "You name work sessions. Answer with the name only — at most six                  words, no quotes, no period, no explanation.",
+            ),
+            1024,
+        )
+        .await
+        {
+            Ok(answer) => {
+                let mut titles = load_titles(home);
+                titles.insert(session_id.to_string(), answer.text);
+                save_titles(home, &titles);
+            }
+            Err(error) => {
+                let _ = writeln!(
+                    progress,
+                    "\u{2014} the lane title was not written ({error}); the ladder keeps serving"
+                );
+            }
+        }
+    }
+    match text(
+        spec,
+        &format!(
+            "The session's task: {seed}\n\nHow it ended: {}",
+            final_message
+                .map(|message| message.chars().take(500).collect::<String>())
+                .unwrap_or_else(|| "no final message".to_string())
+        ),
+        Some(
+            "Summarize this work session in one sentence for an archive card.              State what was done and how it ended. Facts only, no preamble.",
+        ),
+        1024,
+    )
+    .await
+    {
+        Ok(answer) => {
+            let mut summaries = load_summaries(home);
+            summaries.insert(session_id.to_string(), answer.text);
+            save_summaries(home, &summaries);
+        }
+        Err(error) => {
+            let _ = writeln!(
+                progress,
+                "\u{2014} the lane summary was not written ({error}); the head-and-tail summary keeps serving"
+            );
+        }
+    }
+    let _ = progress.flush();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -188,5 +296,171 @@ mod tests {
         assert_eq!(arguments["model"], TEXT_MODEL);
         assert_eq!(arguments["max_tokens"], 4096);
         assert_eq!(arguments["system"], "summarize");
+    }
+}
+
+#[cfg(test)]
+mod prose_tests {
+    use super::*;
+
+    /// A scripted blend1 (the fold tests' harness shape, local here):
+    /// two generate calls scripted — title then summary.
+    fn lane_mock(
+        answers: &[&str],
+    ) -> (std::process::Child, std::path::PathBuf, std::path::PathBuf) {
+        // Nanos alone collide when two tests start inside the same
+        // microsecond (measured flake): a process-wide counter makes
+        // the directory unique per call.
+        static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let scratch = std::env::temp_dir().join(format!(
+            "fleet-prose-mock-{}-{}-{seq}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&scratch).expect("the scratch");
+        let mut entries = vec![
+            serde_json::json!({ "reply": {
+                "jsonrpc": "2.0", "id": "$echo",
+                "result": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": { "tools": { "listChanged": false } },
+                    "serverInfo": { "name": "mock-blend1", "version": "0.0.0" },
+                },
+            }}),
+            serde_json::json!({ "reply": {
+                "jsonrpc": "2.0", "id": "$echo",
+                "result": { "tools": [ { "name": "generate", "inputSchema": {} } ] },
+            }}),
+        ];
+        for answer in answers {
+            entries.push(serde_json::json!({ "reply": {
+                "jsonrpc": "2.0", "id": "$echo",
+                "result": { "content": [ { "type": "text", "text": answer } ], "isError": false },
+            }}));
+        }
+        let script = entries
+            .iter()
+            .map(|entry| format!("{entry}\n"))
+            .collect::<String>();
+        std::fs::write(scratch.join("script.jsonl"), script).unwrap();
+        let bin = crate::eval::mock_mcp_binary().expect("the mock-mcp binary");
+        let child = std::process::Command::new(bin)
+            .arg(scratch.join("script.jsonl"))
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("spawn the mock-mcp child");
+        (child, scratch.join("script.jsonl"), scratch)
+    }
+
+    fn spec(script: &std::path::Path) -> crate::mcp::ServerSpec {
+        crate::mcp::ServerSpec {
+            program: crate::eval::mock_mcp_binary()
+                .expect("the mock-mcp binary")
+                .to_string_lossy()
+                .into_owned(),
+            args: vec![script.to_string_lossy().into_owned()],
+            env: Vec::new(),
+            passthrough: Vec::new(),
+            cwd: None,
+        }
+    }
+
+    fn notes_home(name: &str) -> std::path::PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("fleet-prose-home-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("sessions")).unwrap();
+        dir
+    }
+
+    #[tokio::test]
+    async fn the_prose_act_writes_title_and_summary_sidecars() {
+        // Each lane call spawns a fresh mock child that re-reads the
+        // script from its first entry — one answer must serve both the
+        // title arm and the summary arm. It reads as both.
+        let (mut child, script, scratch) = lane_mock(&[
+            r#"{"status":"ok","model":"lfm3-1.7b","text":"Fixed the streaming parser and swept the caches"}"#,
+        ]);
+        let home = notes_home("writes");
+        let id = "20261110T120000Z-prose1";
+        std::fs::write(home.join("sessions").join(format!("{id}.jsonl")), "").unwrap();
+        let mut progress: Vec<u8> = Vec::new();
+        end_of_run_prose(
+            &spec(&script),
+            &home,
+            id,
+            "fix the streaming tool-call parser",
+            Some("done: the parser is pinned and the caches swept"),
+            &mut progress,
+        )
+        .await;
+        let titles = load_titles(&home);
+        assert_eq!(
+            titles.get(id).map(String::as_str),
+            Some("Fixed the streaming parser and swept the caches")
+        );
+        let summaries = load_summaries(&home);
+        if !summaries.contains_key(id) {
+            panic!(
+                "no summary; progress was: {}",
+                String::from_utf8_lossy(&progress)
+            );
+        }
+        assert_eq!(
+            summaries.get(id).map(String::as_str),
+            Some("Fixed the streaming parser and swept the caches")
+        );
+        // The bridge's reader agrees — one store, two readers.
+        let from_bridge = crate::gui::bridge::load_titles(&home);
+        assert_eq!(
+            from_bridge.get(id).map(String::as_str),
+            Some("Fixed the streaming parser and swept the caches")
+        );
+        let _ = std::fs::remove_dir_all(&home);
+        let _ = child.kill();
+        let _ = child.wait();
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    #[tokio::test]
+    async fn the_owners_title_wins_and_a_failed_leg_falls_back_named() {
+        // An existing title entry: only the summary call is scripted.
+        // Then the summary leg fails — named on progress, the archive
+        // keeps its heuristic, nothing dies.
+        let (mut child, script, scratch) = lane_mock(&[
+            r#"{"status":"error","error":"Liquid API HTTP 503: warming","model":"lfm3-1.7b"}"#,
+        ]);
+        let home = notes_home("owner-wins");
+        let id = "20261110T120000Z-prose2";
+        std::fs::write(home.join("sessions").join(format!("{id}.jsonl")), "").unwrap();
+        {
+            let mut titles = load_titles(&home);
+            titles.insert(id.to_string(), "the owner named it".to_string());
+            save_titles(&home, &titles);
+        }
+        let mut progress: Vec<u8> = Vec::new();
+        end_of_run_prose(&spec(&script), &home, id, "the task", None, &mut progress).await;
+        assert_eq!(
+            load_titles(&home).get(id).map(String::as_str),
+            Some("the owner named it"),
+            "the owner's title is never overwritten"
+        );
+        let text = String::from_utf8_lossy(&progress);
+        assert!(text.contains("the lane summary was not written"), "{text}");
+        assert!(
+            load_summaries(&home).is_empty(),
+            "no summary was written: {:?}",
+            load_summaries(&home)
+        );
+        let _ = std::fs::remove_dir_all(&home);
+        let _ = child.kill();
+        let _ = child.wait();
+        let _ = std::fs::remove_dir_all(&scratch);
     }
 }

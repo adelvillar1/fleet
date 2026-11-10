@@ -2960,6 +2960,49 @@ impl<'a> Agent<'a> {
     }
 
     pub async fn run(&mut self, task: &str) -> Result<RunReport, AgentError> {
+        let report = self.run_inner(task).await?;
+        // Phase 4's end-of-run prose act (grounded-selection C10): the
+        // finished main-surface run asks the small model for its title
+        // and archive summary. Never fails the run — every error inside
+        // is a named progress line and an unchanged archive. Sessions
+        // born with a kind (scheduled, probe, subagent) are the
+        // machine's own traffic and never spend on prose.
+        if self.options.lane_prose && self.session.kind().is_none() {
+            if let Some(spec) = self
+                .options
+                .lane_specs
+                .as_ref()
+                .and_then(|specs| specs.get(crate::generate::BLEND1_LANE).cloned())
+            {
+                let home = self
+                    .session
+                    .path()
+                    .parent()
+                    .and_then(std::path::Path::parent)
+                    .map(|home| home.to_path_buf());
+                let id = self
+                    .session
+                    .path()
+                    .file_stem()
+                    .and_then(|stem| stem.to_str())
+                    .map(|id| id.to_string());
+                if let (Some(home), Some(id)) = (home, id) {
+                    crate::generate::end_of_run_prose(
+                        &spec,
+                        &home,
+                        &id,
+                        task,
+                        report.final_message.as_deref(),
+                        &mut self.progress,
+                    )
+                    .await;
+                }
+            }
+        }
+        Ok(report)
+    }
+
+    async fn run_inner(&mut self, task: &str) -> Result<RunReport, AgentError> {
         // The turn boundary already reads the control file, but a child
         // command can run for minutes. The watcher turns the owner's
         // stop into a flag the bash poll sees, so the stop lands during
@@ -10809,8 +10852,12 @@ mod tests {
     /// (the `generate` tool declared), and tools/call with the leg's
     /// own result JSON.
     fn lane_mock(leg_json: &str) -> (std::process::Child, std::path::PathBuf, std::path::PathBuf) {
+        // Nanos alone collide when two tests start inside the same
+        // microsecond (measured flake): a counter makes it unique.
+        static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let scratch = std::env::temp_dir().join(format!(
-            "fleet-lane-mock-{}-{}",
+            "fleet-lane-mock-{}-{}-{seq}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)

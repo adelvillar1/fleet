@@ -6160,6 +6160,12 @@ fn folder_name(path: &std::path::Path) -> String {
 /// The sidecar each session's owner-set title is stored in: the
 /// workdirs' pattern, one file beside the other fleet-owned sidecars.
 const TITLES_FILE: &str = "sessions-titles.json";
+/// The end-of-run prose act's second sidecar (grounded-selection C10):
+/// the session's one-sentence archive summary, authored by the hosted
+/// small model. The listing prefers it over the head-and-tail
+/// first_text when present; the heuristic keeps serving when the act
+/// never ran for a session.
+pub(crate) const SUMMARIES_FILE: &str = "sessions-summaries.json";
 
 /// The sidecar naming the sessions the owner archived — the one end a
 /// session can come to, and the owner's own verb: the loop never ends
@@ -6186,7 +6192,7 @@ fn probes_path(home: &std::path::Path) -> PathBuf {
     home.join(PROBES_FILE)
 }
 
-fn load_titles(home: &std::path::Path) -> std::collections::HashMap<String, String> {
+pub(crate) fn load_titles(home: &std::path::Path) -> std::collections::HashMap<String, String> {
     let text = match std::fs::read_to_string(titles_path(home)) {
         Ok(text) => text,
         Err(_) => return std::collections::HashMap::new(),
@@ -6199,7 +6205,10 @@ fn load_titles(home: &std::path::Path) -> std::collections::HashMap<String, Stri
         .collect()
 }
 
-fn save_titles(home: &std::path::Path, titles: &std::collections::HashMap<String, String>) {
+pub(crate) fn save_titles(
+    home: &std::path::Path,
+    titles: &std::collections::HashMap<String, String>,
+) {
     let path = titles_path(home);
     if titles.is_empty() {
         let _ = std::fs::remove_file(&path);
@@ -8763,6 +8772,7 @@ fn sessions_read(
     kind: Option<&str>,
 ) -> Value {
     let titles = load_titles(home);
+    let summaries = crate::generate::load_summaries(home);
     let archived = load_archived(home);
     let probes = load_probes(home);
     let entries = match session::list(home) {
@@ -8819,6 +8829,11 @@ fn sessions_read(
                 "id": entry.id,
                 "title": title,
                 "title_from": title_from,
+                // The end-of-run prose act's summary when the lane wrote
+                // one; the face renders it over the head-and-tail
+                // first_text. Absent for sessions that ended before the
+                // act existed — the heuristic keeps serving.
+                "lane_summary": summaries.get(&entry.id),
                 // The model that actually served (KI-073's end record),
                 // or null while the run is in flight — never the start
                 // record's pre-route stamp, which is a default, not a
