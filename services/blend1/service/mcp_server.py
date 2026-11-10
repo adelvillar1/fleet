@@ -313,7 +313,56 @@ SEED_TOOL = {
     },
 }
 
-TOOLS = (ASK_TOOL, WEB_TOOL, DOCTOR_TOOL, SEARCH_TOOL, REFRESH_TOOL, SEED_TOOL)
+GENERATE_TOOL = {
+    "name": "generate",
+    "description": (
+        "The plain text leg: one chat completion on Liquid's hosted text "
+        "models (lfm2.5-24b-a2b, lfm3-1.7b — probed 2026-11-10), no "
+        "router, no facts template, no validation gate. For bounded prose "
+        "and form-fills a small model authors: summaries, titles, "
+        "narration, structured re-authoring behind the caller's own "
+        "validation. The caller owns the text's purpose; the leg moves "
+        "tokens and reports usage."
+    ),
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "prompt": {
+                "type": "string",
+                "description": "The user-side content of the completion.",
+            },
+            "system": {
+                "type": "string",
+                "description": (
+                    "Optional system prompt (the role and the rules the "
+                    "text must follow)."
+                ),
+            },
+            "model": {
+                "type": "string",
+                "enum": ["lfm2.5-24b-a2b", "lfm3-1.7b"],
+                "default": "lfm3-1.7b",
+                "description": (
+                    "The text model (default lfm3-1.7b — the small leg; "
+                    "lfm2.5-24b-a2b when the caller needs the larger "
+                    "model's synthesis quality)."
+                ),
+            },
+            "max_tokens": {
+                "type": "integer",
+                "description": (
+                    "Completion budget (16384 default and ceiling; "
+                    "clamped to a 1024 floor — both text models reason, "
+                    "and a budget below the reasoning floor cannot "
+                    "answer)."
+                ),
+            },
+        },
+        "required": ["prompt"],
+    },
+}
+
+TOOLS = (ASK_TOOL, WEB_TOOL, DOCTOR_TOOL, SEARCH_TOOL, REFRESH_TOOL, SEED_TOOL, GENERATE_TOOL)
 
 
 def _add_core_paths() -> None:
@@ -569,6 +618,56 @@ def main() -> None:
                 respond(
                     req_id,
                     {"content": [{"type": "text", "text": json.dumps(report, default=str)}]},
+                )
+                continue
+
+            if tool_name == "generate":
+                prompt = arguments.get("prompt")
+                if not isinstance(prompt, str) or not prompt.strip():
+                    error(req_id, -32602, "`prompt` must be a non-empty string.")
+                    continue
+                system = arguments.get("system")
+                if system is not None and (
+                    not isinstance(system, str) or not system.strip()
+                ):
+                    error(req_id, -32602, "`system` must be a non-empty string when given.")
+                    continue
+                model = arguments.get("model") or "lfm3-1.7b"
+                if model not in ("lfm2.5-24b-a2b", "lfm3-1.7b"):
+                    error(
+                        req_id,
+                        -32602,
+                        "`model` must be one of lfm2.5-24b-a2b, lfm3-1.7b (the probed text legs).",
+                    )
+                    continue
+                max_tokens = arguments.get("max_tokens")
+                if max_tokens is not None and (
+                    isinstance(max_tokens, bool)
+                    or not isinstance(max_tokens, int)
+                    or max_tokens < 1
+                    or max_tokens > 16384
+                ):
+                    error(req_id, -32602, "`max_tokens` must be an integer in 1..=16384.")
+                    continue
+                try:
+                    # Per-call import, the corpus pattern. The leg's own
+                    # fail-open is its RETURN value: a missing key or a
+                    # rejected request comes back as a named error result,
+                    # never an exception and never an empty answer.
+                    from blend1 import lanes
+
+                    result = lanes.generate_text(
+                        prompt,
+                        system=system,
+                        model=model,
+                        max_tokens=max_tokens,
+                    )
+                except Exception as e:
+                    error(req_id, -32603, f"{type(e).__name__}: {e}")
+                    continue
+                respond(
+                    req_id,
+                    {"content": [{"type": "text", "text": json.dumps(result, default=str)}]},
                 )
                 continue
 

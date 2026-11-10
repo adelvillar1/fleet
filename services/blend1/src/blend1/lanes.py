@@ -312,6 +312,103 @@ def generate_lane(
     }
 
 
+# The plain text leg's model allowlist — probed live on api.liquid.ai
+# 2026-11-10 (GET /v1/chat/models): lfm2.5-24b-a2b (the synthesis lane's
+# proven model) and lfm3-1.7b (the small text model, probed answering the
+# same hour). Vision/audio/omni are served too but are not text legs.
+GENERATE_TEXT_MODELS = ("lfm2.5-24b-a2b", "lfm3-1.7b")
+
+# Both text models reason: reasoning tokens consume the completion budget,
+# and a cap below the reasoning floor returns content=null with
+# finish_reason=length (measured live 2026-11-10: 64 tokens died entirely
+# inside lfm3-1.7b's reasoning). The leg clamps the completion budget to
+# this floor — a server-side bound like WEB_MAX_URLS; the caller's smaller
+# number never reaches the wire.
+GENERATE_TEXT_FLOOR_TOKENS = 1024
+
+
+def generate_text(
+    prompt: str,
+    *,
+    system: str | None = None,
+    model: str = GENERATE_MODEL,
+    max_tokens: int | None = None,
+) -> dict:
+    """The plain text leg: one chat completion on Liquid's own API, no
+    router, no facts template, no validation gate — the seam the
+    grounded-selection plan's prose phases (C10/C11) ride. The caller
+    owns what the text is for; this leg only moves tokens.
+
+    `model` is allow-listed to the probed text models so a caller cannot
+    spend against an unprobe id by typo. `max_tokens` defaults to the
+    lane's 16K cap; a smaller value bounds a fold or a title.
+    """
+    if model not in GENERATE_TEXT_MODELS:
+        return {
+            "status": "error",
+            "error": f"model `{model}` is not a probed text leg; "
+            f"serve one of {', '.join(GENERATE_TEXT_MODELS)}",
+            "model": model,
+        }
+    api_key = os.environ.get("LIQUID_API_KEY")
+    if not api_key:
+        return {
+            "status": "error",
+            "error": "generate lane is not configured: set LIQUID_API_KEY "
+            "(the same key the d1 lane uses) in ~/.config/blend1/env",
+            "model": model,
+        }
+    messages = []
+    if system:
+        messages.append({"role": "system", "content": system})
+    messages.append({"role": "user", "content": prompt})
+    try:
+        data = _openai_chat(
+            GENERATE_BASE,
+            messages,
+            model,
+            api_key,
+            GENERATE_TIMEOUT_S,
+            max(
+                max_tokens if max_tokens and max_tokens > 0 else 0,
+                GENERATE_TEXT_FLOOR_TOKENS,
+            ),
+        )
+    except urllib.error.HTTPError as e:
+        body = ""
+        with contextlib.suppress(Exception):
+            body = e.read().decode("utf-8", "replace")[:200]
+        if e.code in (401, 403):
+            return {
+                "status": "error",
+                "error": f"Liquid API rejected the key (HTTP {e.code}): {body}",
+                "model": model,
+            }
+        return {"status": "error", "error": f"Liquid API HTTP {e.code}: {body}", "model": model}
+    except (urllib.error.URLError, OSError, TimeoutError) as e:
+        return {"status": "error", "error": f"Liquid API unreachable: {e}", "model": model}
+
+    choice = (data.get("choices") or [{}])[0]
+    text = (choice.get("message") or {}).get("content") or ""
+    usage = data.get("usage") or {}
+    if not text:
+        return {
+            "status": "error",
+            "error": f"{model} returned no content (finish_reason="
+            f"{choice.get('finish_reason')}, reasoning_tokens="
+            f"{(usage.get('completion_tokens_details') or {}).get('reasoning_tokens')})",
+            "model": model,
+            "usage": usage,
+        }
+    return {
+        "status": "ok",
+        "model": data.get("model") or model,
+        "text": text,
+        "usage": usage,
+        "cost_usd": usage.get("cost"),
+    }
+
+
 # ── voice lane: gen1 speak (optional) ────────────────────────────────────────
 
 
