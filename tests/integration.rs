@@ -11926,10 +11926,15 @@ async fn a_layerfs_child_walks_the_coherence_sequence() {
     let argv =
         std::env::temp_dir().join(format!("fleet-layerfs-it-argv-seam-{}", std::process::id()));
     let _ = std::fs::remove_file(&argv);
+    // KI-516: the lock is held across the run AND the assertions — the
+    // argv log is pid-keyed, so a parallel layerfs test's stub could
+    // rewrite it in the window between this test's lock release and its
+    // read of the log. The coherence sequence was reading another
+    // test's traffic.
+    let _lock = AMBIENT_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     {
-        let _lock = AMBIENT_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let _bin = AmbientKey::set("FLEET_LAYERFS_BIN", shared_layerfs_stub().to_str().unwrap());
         fleet::layerfs_tools::set_project_for_test("shop");
         let _mode = AmbientKey::set("FLEET_STUB_MODE", "happy");

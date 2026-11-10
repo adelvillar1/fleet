@@ -39,9 +39,9 @@ def test_the_key_is_the_absolute_path_so_the_cwd_cannot_poison_it(tmp_path):
 
     here = os.getcwd()
     try:
-        items_from_here, _, _, _ = corpus._derive([absolute])
+        items_from_here, _, _, _, _ = corpus._derive([absolute])
         os.chdir(tmp_path)
-        items_from_there, _, _, _ = corpus._derive([absolute])
+        items_from_there, _, _, _, _ = corpus._derive([absolute])
     finally:
         os.chdir(here)
 
@@ -59,7 +59,7 @@ def test_a_source_that_does_not_exist_is_named_not_skipped(tmp_path):
     present.write_text("## Only\n\ntext\n", encoding="utf-8")
     absent = str(tmp_path / "gone.md")
 
-    files, missing = corpus._source_files([str(present), absent])
+    files, missing, _ = corpus._source_files([str(present), absent])
     assert [path.name for path in files] == ["here.md"], files
     assert missing == [absent], f"the absent source is named: {missing}"
 
@@ -84,7 +84,7 @@ def test_a_repeated_heading_dedupes_at_derive_and_counts_what_it_dropped(tmp_pat
         encoding="utf-8",
     )
     resolved = str(source.resolve())
-    items, _, _, dropped = corpus._derive([str(source.resolve())])
+    items, _, _, _, dropped = corpus._derive([str(source.resolve())])
     assert [item["key"] for item in items] == [
         f"{resolved}#(preamble)",
         f"{resolved}#Notes",
@@ -93,7 +93,7 @@ def test_a_repeated_heading_dedupes_at_derive_and_counts_what_it_dropped(tmp_pat
     # A doc that repeats nothing drops nothing.
     plain = tmp_path / "plain.md"
     plain.write_text("## Only\n\ntext\n", encoding="utf-8")
-    _, _, _, dropped = corpus._derive([str(plain.resolve())])
+    _, _, _, _, dropped = corpus._derive([str(plain.resolve())])
     assert dropped == 0, dropped
 
 
