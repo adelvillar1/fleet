@@ -246,10 +246,14 @@ checkbox order — never reorder after gating.
   confidence, margin, and eventual outcome, and a `fleet judge` run over a
   day's rows grades selection decisions with the result readable from
   `fleet calib`.
-- [ ] C10: Compaction folds, conversation titles, and session-archive
+- [x] C10: Compaction folds, conversation titles, and session-archive
   summaries each render through the hosted small-model lane with today's path
   as the named fallback, and the per-call cost delta versus the flagship path
   is reported in `docs/features/generation.md`.
+  (Landed 2026-11-10 across three commits — the blend1 `generate` tool
+  `e0bbcc9`, the fold leg `f84a896`, the prose act and listing; both lane
+  models probed live, the 1024-token reasoning floor measured, 4
+  lane-driving tests over mock-mcp, gate green 2,345 passed.)
 - [ ] C11: tool_advisor prose, improve proposal prose, skill-drafter bodies,
   anomaly/doctor narration, and delegate briefs render through the hosted
   lane while tests prove their deterministic inputs are byte-identical to
@@ -544,3 +548,10 @@ Whole-program gate (every code increment): `cargo fmt --all --check`,
   end, 2,337 passed); docs = `docs/features/selection.md` §baseline. No
   worktree, no build lanes beyond the main tree's own gate target/;
   `df -h /` after = 124 GiB free — unchanged. Net disk cost: zero.
+- **Phase 4 (C10), 2026-11-10:** the blend1 `generate` tool + fleet's
+  `src/generate.rs` (fold leg, end-of-run prose act) + the face's
+  `lane_summary` listing field + `docs/features/generation.md`. No
+  worktree (the main tree's own gate ran); one scratch pytest venv in
+  /tmp for the blend1 suite, deleted after (its own note: nanos-collision
+  fix landed in the test harness). `df -h /` after = 124 GiB free.
+  Net disk cost: zero.
