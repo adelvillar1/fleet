@@ -223,7 +223,7 @@ fn unlabel(call: &ToolCall) -> ToolCall {
 /// The `None` case is not "safe", it is "unknown" — [`Gate::is_destructive`]
 /// decides which of the two a caller should treat it as, and it treats
 /// unknown as destructive.
-fn bash_command(call: &ToolCall) -> Option<String> {
+pub(crate) fn bash_command(call: &ToolCall) -> Option<String> {
     let call = &unlabel(call);
     if call.function.name != BASH_TOOL {
         return None;

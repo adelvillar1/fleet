@@ -4857,6 +4857,57 @@ impl<'a> Agent<'a> {
                 ))));
                 continue;
             }
+            // Grounded-selection C12: the destructive head adds
+            // detections the substring list misses — measured 2026-11-10
+            // at 1/1 recall with 76/77 safe precision where the list
+            // false-flagged 58 of 77. The list stays the fast path (a
+            // listed command is destructive already; no head spend); the
+            // head judges only unlisted bash calls, and its `yes`
+            // annotates the call so the ordinary gate asks. A dead lane
+            // or an unavailable head changes nothing — today's behavior.
+            if call.function.name == "bash" && !crate::approvals::Gate::is_destructive(call) {
+                if let Some(command) = crate::approvals::bash_command(call) {
+                    let arguments = serde_json::json!({
+                        "task_spec": {
+                            "id": "destructive_probe",
+                            "heads": [{
+                                "id": "destructive",
+                                "kind": "choice",
+                                "labels": ["yes", "no"],
+                                "descriptions": {
+                                    "yes": "The command could destroy work that is not trivially recoverable: removing tracked files as part of dropping them, forced history rewrites, data loss beyond temp files and locks.",
+                                    "no": "Temp-file and lock cleanup, reads, builds, process control, bounded writes — everything recoverable.",
+                                },
+                            }],
+                        },
+                        "text": command,
+                    });
+                    let outcome = self.lanes.call("sys1", "classify", &arguments).await;
+                    if let Some(flagged) = outcome
+                        .text
+                        .parse::<serde_json::Value>()
+                        .ok()
+                        .and_then(|value| {
+                            value
+                                .get("answers")?
+                                .get("destructive")?
+                                .get("label")?
+                                .as_str()
+                                .map(str::to_string)
+                        })
+                        .map(|label| label == "yes")
+                    {
+                        if flagged {
+                            let _ = writeln!(
+                                self.progress,
+                                "\u{2192} the destructive head flags this command; the gate will ask"
+                            );
+                            let _ = self.progress.flush();
+                            self.approver.annotate(call, true);
+                        }
+                    }
+                }
+            }
             prepared.push(Some(self.prepare_call_checked(call).await?));
         }
         // The resolution ledger: one row per call, computed after the
@@ -11064,6 +11115,27 @@ mod tests {
     /// A scripted blend1: mock-mcp answering initialize, tools/list
     /// (the `generate` tool declared), and tools/call with the leg's
     /// own result JSON.
+    /// Approves everything and records the destructive annotations —
+    /// the C12 test's evidence that a head-flagged command reached the
+    /// gate as destructive.
+    struct RecordingApprover {
+        annotations: std::rc::Rc<std::cell::RefCell<Vec<(String, bool)>>>,
+    }
+
+    impl Approver for RecordingApprover {
+        fn approve(&mut self, _call: &ToolCall) -> bool {
+            true
+        }
+        fn annotate(&mut self, call: &ToolCall, destructive: bool) {
+            self.annotations
+                .borrow_mut()
+                .push((call.function.name.clone(), destructive));
+        }
+        fn latched(&self) -> bool {
+            false
+        }
+    }
+
     fn lane_mock(leg_json: &str) -> (std::process::Child, std::path::PathBuf, std::path::PathBuf) {
         lane_mock_as("generate", leg_json)
     }
@@ -11330,6 +11402,92 @@ mod tests {
         let _ = gen1_child.kill();
         let _ = gen1_child.wait();
         let _ = std::fs::remove_dir_all(&gen1_scratch);
+        let _ = sys1_child.kill();
+        let _ = sys1_child.wait();
+        let _ = std::fs::remove_dir_all(&sys1_scratch);
+    }
+
+    #[tokio::test]
+    async fn a_head_flagged_bash_command_reaches_the_gate_as_destructive() {
+        // Grounded-selection C12: the destructive head adds detections
+        // the substring list misses. The command below deletes a TRACKED
+        // source file — destructive-in-spirit, invisible to the list —
+        // and the head's yes annotates it, so the gate sees it as
+        // destructive. The list-flagged fast path spends nothing.
+        let m = fold_mock("unused");
+        let (mut sys1_child, sys1_script, sys1_scratch) = lane_mock_as(
+            "classify",
+            r#"{"task":"destructive_probe","verdict":"pass","answers":{"destructive":{"label":"yes","confidence":0.91}}}"#,
+        );
+        let home = scratch("c12-head");
+        let mut session = crate::session::Session::create(&home, "m").unwrap();
+        let client = Client::new(format!("http://127.0.0.1:{}", m.port), "test-key");
+        let annotations = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let options = AgentOptions {
+            session_id: None,
+            goal: None,
+            model: "m".to_string(),
+            identity: None,
+            max_turns: 1,
+            capped: false,
+            health_note: false,
+            lane_prose: false,
+            ui_tx: None,
+            lane_specs: Some(
+                [("sys1".to_string(), blend1_spec(&sys1_script))]
+                    .into_iter()
+                    .collect(),
+            ),
+            calib: None,
+            skills: Vec::new(),
+            role_overlay: None,
+            memory: None,
+            scope: None,
+            improve_home: None,
+            goal_home: None,
+            goal_session: None,
+            route_home: None,
+            gui_prompt: None,
+            compact_now: false,
+            checkpoints: None,
+            file_access: FileAccess::Unrestricted,
+            plan_mode: false,
+            resource_judge: None,
+        };
+        let progress: &'static mut Vec<u8> = Box::leak(Box::new(Vec::new()));
+        let mut agent = Agent::new(
+            &client,
+            options,
+            &mut session,
+            Box::new(RecordingApprover {
+                annotations: std::rc::Rc::clone(&annotations),
+            }),
+            &mut *progress,
+        )
+        .unwrap();
+        // A command outside the DESTRUCTIVE substring list.
+        agent
+            .execute_call(&call(
+                "d1",
+                "bash",
+                r#"{"command":"git rm --cached src/secret_key material && commit the removal"}"#,
+            ))
+            .await
+            .unwrap();
+        drop(agent);
+        let text = String::from_utf8_lossy(progress);
+        assert!(
+            text.contains("the destructive head flags this command"),
+            "{text}"
+        );
+        let recorded = annotations.borrow();
+        assert!(
+            recorded
+                .iter()
+                .any(|(name, destructive)| name == "bash" && *destructive),
+            "{recorded:?}"
+        );
+        let _ = std::fs::remove_dir_all(&home);
         let _ = sys1_child.kill();
         let _ = sys1_child.wait();
         let _ = std::fs::remove_dir_all(&sys1_scratch);

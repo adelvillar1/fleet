@@ -270,9 +270,15 @@ checkbox order — never reorder after gating.
   authorship stay with the routed model per this plan's own
   out-of-scope (small models never author turns); their batch reports
   stay deterministic. Gate green 2,346.)
-- [ ] C12: Destructive detection runs the head first with the substring list
+- [x] C12: Destructive detection runs the head first with the substring list
   as fast path, and a pinned test carrying a command outside `DESTRUCTIVE`
   that the head judges destructive still reaches the approval gate.
+  (Landed 2026-11-10: the per-seam measurement passed — the head 1/1
+  recall, 76/77 safe precision, the list 0/1 and 69/77 on the same 78
+  hand-labeled commands — then the pre-pass landed in `execute_calls`
+  with the list as the zero-spend fast path and an inline `task_spec`.
+  The order is list-first (a listed command never spends); the head adds
+  the detections the list cannot see. Test over mock-mcp.)
 - [ ] C13: Mention-kind, silent-stop, and memory-shape classification each
   run through a head with the word list as fallback, pinned by one test per
   seam that fails when the head call is removed.
@@ -578,6 +584,12 @@ Whole-program gate (every code increment): `cargo fmt --all --check`,
 - **Phase 6 (C17 + C19), 2026-11-10:** the images param on sys1's
   classify tool + the vision_qc pass + the form-filler. No worktree, no
   build lanes; `df -h /` = 124 GiB free. Net disk cost: zero.
+
+- **The C12 per-seam gate (2026-11-10):** the destructive head is sharp
+  where tool selection was dull — same vendor, different task. The
+  remaining Phase 5 seams (C13-C16) stay open behind their own
+  measurements; C13's ground truth is the corpus's own shape labels,
+  C14-C16 need small labeled fixtures before their gates can run.
 
 ## Cleanup ledger (C20)
 

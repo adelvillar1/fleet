@@ -51,6 +51,32 @@ specs, lane tools counted at the known-spec mean since their schemas are
 not compiled in. Re-run the command after each phase; the plan's criteria
 compare against this table.
 
+## The destructive head (C12, measured 2026-11-10)
+
+The measurement (`scripts/c12-destructive-measure.py`): 78 real bash
+commands from the archive — every command the substring list flags (59)
+plus a stride sample of unflagged ones — hand-labeled on one rule
+(destructive = destroys work that is not trivially recoverable). One
+command in the set is destructive; the rest are temp-file, lock, and
+probe cleanup.
+
+| classifier | destructive recall | safe precision | false flags |
+|---|---|---|---|
+| **GLiDE yes/no head** | **1/1** | **76/77** | **1** |
+| fleet's `DESTRUCTIVE` list | 0/1 | 69/77 | 8 |
+
+The head catches the one destructive command (a tracked script removed
+and the removal pushed) that the list cannot see — `git rm --cached`
+carries no marker — and false-flags one safe command where the list
+flags eight. The label distribution is extreme (1 destructive / 77 safe)
+and the labels are one rater's; the honest claim is narrower than the
+table looks: **the head adds detections at comparable-or-better
+precision on real traffic**, which is the per-seam gate C12 needed.
+Landed as the pre-pass in `execute_calls`: the list stays the fast path
+(a listed command never spends), an unlisted bash command asks the head
+through an inline `task_spec`, and a `yes` annotates the call so the
+ordinary gate asks. A dead lane changes nothing.
+
 ## Head-to-head (C1, measured 2026-11-10)
 
 The command:
