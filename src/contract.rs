@@ -200,6 +200,13 @@ pub struct Oversight {
     since_reading: u64,
     /// How many times this run has asked the judge.
     pub asks: u64,
+    /// The floor this run was granted by a yes at a breach, when one was
+    /// given. `Some` means the owner said continue: the run may write down to
+    /// that floor, and it is asked again only when a reading falls below it —
+    /// so a grant buys one more run's budget of room, not a licence on the
+    /// disk. The number is `reserve − budget`, which derives the grant from a
+    /// figure the owner already settled rather than inventing a second one.
+    pub past_reserve: Option<u64>,
 }
 
 impl Oversight {
@@ -214,6 +221,7 @@ impl Oversight {
             appetite: reading.appetite,
             since_reading: 0,
             asks: 0,
+            past_reserve: None,
         }
     }
 
@@ -231,10 +239,16 @@ impl Oversight {
     /// Grade one reading. The reserve breach is checked first and always: a
     /// machine at its floor has no room for a judgment to be wrong about.
     pub fn measure(&self, now: &Readout) -> Standing {
-        if now.available_kib < self.reserve_kib {
+        // The floor this run is held to: the declared reserve, lowered to the
+        // one the owner granted by a yes at a breach. A run permitted past the
+        // reserve is not asked again until it reaches the floor it was
+        // granted — otherwise every reading past the line would prompt, which
+        // is a nag rather than a pause.
+        let floor = self.past_reserve.unwrap_or(self.reserve_kib);
+        if now.available_kib < floor {
             return Standing::Encroached {
                 available_kib: now.available_kib,
-                reserve_kib: self.reserve_kib,
+                reserve_kib: floor,
             };
         }
         let settlement: Settlement = footprint::settle(
@@ -249,6 +263,16 @@ impl Oversight {
             };
         }
         Standing::Inside
+    }
+
+    /// Record the owner's yes at a breach: this run may keep working for one
+    /// more of its own budgets below the reserve, and it is asked again after
+    /// that. A no is not recorded — the caller stops — and the grant does not
+    /// compound: a second yes moves the floor by another budget, and no further,
+    /// so a run cannot talk its way to the edge of the disk one pause at a time.
+    pub fn granted_past_reserve(&mut self) {
+        let floor = self.past_reserve.unwrap_or(self.reserve_kib);
+        self.past_reserve = Some(floor.saturating_sub(self.budget_kib));
     }
 
     /// Apply the judge's answer. A curtailment leaves the ending to the caller
@@ -470,6 +494,53 @@ mod tests {
             9 * GIB,
         );
         assert_eq!(state.budget_kib, 2 * GIB);
+    }
+
+    #[test]
+    fn a_breach_pauses_and_a_yes_buys_one_more_budget_of_room() {
+        // The owner's 2026-11-10 ruling: a deterministic breach is a pause, not
+        // a stop. The breach itself is unchanged — arithmetic still decides it.
+        let mut state = live(116, 18, 2);
+        let breach = state.measure(&Readout::new(17 * GIB, 460 * GIB));
+        assert_eq!(
+            breach,
+            Standing::Encroached {
+                available_kib: 17 * GIB,
+                reserve_kib: 18 * GIB
+            }
+        );
+        // The owner says continue: the run may work one more of its own budgets
+        // below the reserve — 18 - 2 = 16 GiB — and is asked again after that.
+        state.granted_past_reserve();
+        assert_eq!(state.past_reserve, Some(16 * GIB));
+        // The grant lowers the FLOOR; it does not excuse the budget. At 17 GiB
+        // the reserve no longer trips, but the run has settled 99 GiB against a
+        // 2 GiB budget, so the overage arm is what speaks — an ask, not a pause.
+        // The point of the grant is that the BREACH prompt does not repeat on
+        // every reading; it is not a blanket permission.
+        assert!(
+            matches!(
+                state.measure(&Readout::new(17 * GIB, 460 * GIB)),
+                Standing::Overage { .. }
+            ),
+            "above the granted floor the breach arm stays quiet; the budget still grades"
+        );
+        // Below the granted floor, the pause comes back — with the GRANTED
+        // floor named, so the prompt describes the line in force.
+        let again = state.measure(&Readout::new(15 * GIB, 460 * GIB));
+        assert_eq!(
+            again,
+            Standing::Encroached {
+                available_kib: 15 * GIB,
+                reserve_kib: 16 * GIB
+            }
+        );
+        // A second yes moves it by another budget and no further: the grant
+        // never compounds to a licence on the disk.
+        state.granted_past_reserve();
+        assert_eq!(state.past_reserve, Some(14 * GIB));
+        // And a run that never breached has no grant at all.
+        assert_eq!(live(116, 18, 2).past_reserve, None);
     }
 
     #[test]

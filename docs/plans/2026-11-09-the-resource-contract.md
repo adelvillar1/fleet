@@ -149,8 +149,10 @@ declared, because the environment has already been telling us.
       runaway and keeping the diagnosis window on a failure.
 - [x] C3 — A run admits before its first turn while working in a folder, and
       measures at turn boundaries (cheap: `statvfs` + `ps`); a breach mid-run
-      stops the run with the numbers in the transcript, not after the disk is
-      full.
+      **pauses** the run with the numbers in the transcript, not after the disk
+      is full. (The original criterion said "stops"; the owner's 2026-11-10
+      ruling made a deterministic breach a pause for a yes — see the risks
+      below. A no, or no one present to answer, ends the run.)
 - [x] C4 — The abnormal reading calls sys1 exactly once per reading with the
       facts and the run's recent tool calls; `runaway` curtails, `expected`
       raises that run's budget; a refused answer is `expected` and records it.
@@ -233,8 +235,14 @@ each step lands with its own test, and only the sys1 arm needs the model:
 ## Risks
 
 - **A false curtail is worse than a slow run.** The sys1 arm exists for that;
-  a deterministic breach still stops, but the budget is per-run and raised by a
-  judged `expected`, so the second identical shape does not pay twice.
+  the budget is per-run and raised by a judged `expected`, so the second
+  identical shape does not pay twice.
+- **A deterministic breach pauses, and the owner answers.** The owner's
+  2026-11-10 ruling: *"deterministic breach is a pause."* The run holds, the
+  numbers go to the approval seat, and it continues only on a yes — a no, or no
+  one present (an unattended job, a headless batch), ends it. A yes buys one
+  run's budget of room below the reserve and never compounds, so a run cannot
+  talk its way to the edge of the disk one pause at a time.
 - **Self-measurement during a heavy run is a moving target.** The report names
   the reading's own interval, and the process ceiling counts descendants —
   never the measuring process's ancestors.

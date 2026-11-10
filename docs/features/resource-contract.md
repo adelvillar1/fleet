@@ -13,7 +13,9 @@ Every unit of work — a release gate, a release assets cut, a lane bootstrap, a
 1. **Measure.** Free space from `statvfs`, the process tree from `ps`, and the reserve derived from the environment's own history.
 2. **Admit or refuse.** The work declares an estimate; if the headroom above the reserve does not exceed it, the work is refused *before it starts*, with both numbers named. Deterministic: "6 GiB of room, 8 GiB of work" needs no judgment.
 3. **Work.**
-4. **Settle and curtail.** Re-measure. A delta past the work's declared budget is an overage; a delta past the *reserve* stops immediately, because a machine at its floor has no margin for a judgment to be wrong about.
+4. **Settle and curtail.** Re-measure. A delta past the work's declared budget is an overage; a delta past the *reserve* is a **breach**, which pauses the run and puts the numbers in front of the owner. No judge is asked — a breach is arithmetic — and the run continues only on a yes. A no, or nobody there to answer, ends it.
+
+**A yes at a breach buys one run's budget of room, not a licence on the disk.** The run may keep working down to `reserve − budget`, is asked again only if it goes below *that*, and a second yes moves the floor by another budget and no further. The grant lowers the floor; it never excuses the budget, so the overage arm still grades the work.
 
 ## The numbers, and whose they are
 
@@ -35,6 +37,8 @@ Every unit of work — a release gate, a release assets cut, a lane bootstrap, a
 ## Where the judgment goes
 
 One question has no arithmetic answer: *"this run grew 4 GiB — is that the work, or a runaway?"* That is sys1's, and the plan's rule is that it fires **only on an abnormal reading**, never per turn. `runaway` curtails, `expected` raises that run's recorded budget so the identical shape does not ask twice, and a lane that does not answer is read as `expected` and records itself as `judge-unavailable` — never a silent stop on a hiccup.
+
+The breach pause is the owner's own question, so it goes to the **approval seat**, not to sys1: the console prints the clause and takes `y`, the TUI seat and the browser seat show it as the prompt's summary. An approver that cannot ask — an unattended job, a headless batch — answers **no**, because a machine at its floor cannot wait for an answer that will never come.
 
 ## The recursion
 

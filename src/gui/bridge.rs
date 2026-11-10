@@ -12724,6 +12724,52 @@ impl Approver for GuiApprover {
     fn latched(&self) -> bool {
         self.always || self.gate.mode() == approvals::Mode::Yes
     }
+
+    /// The breach pause, at the owner's seat. It deliberately does NOT consult
+    /// the remembered rules or the mode: there is no call to remember, and
+    /// `--yes` is consent for tool calls, not standing consent for a run to
+    /// keep writing past the reserve. The clause becomes the prompt's summary,
+    /// so the seat shows the numbers rather than a bare warning, and the wait
+    /// polls so a stop written mid-pause ends it the way it ends a tool prompt.
+    fn permit_past_reserve(&mut self, clause: &str) -> bool {
+        if self.stop_pending() {
+            self.stop_seen = true;
+            return false;
+        }
+        let (responder, decision) = std::sync::mpsc::channel();
+        let request = ApprovalRequest {
+            verdict: None,
+            call: crate::api::ToolCall {
+                id: "resource-contract".to_string(),
+                kind: "function".to_string(),
+                function: crate::api::FunctionCall {
+                    name: "resource-contract".to_string(),
+                    arguments: String::new(),
+                },
+            },
+            summary: clause.to_string(),
+            responder,
+        };
+        if self.requests.send(request).is_err() {
+            return false;
+        }
+        loop {
+            if self.stop_pending() {
+                self.stop_seen = true;
+                return false;
+            }
+            match decision.try_recv() {
+                Ok(crate::agent::Approval::Once) | Ok(crate::agent::Approval::Always) => {
+                    return true
+                }
+                Ok(crate::agent::Approval::Denied) => return false,
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => return false,
+            }
+        }
+    }
 }
 
 /// Remove the control beside a session's log when a run ends. The agent

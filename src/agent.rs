@@ -1136,6 +1136,24 @@ pub trait Approver {
     /// default ignores it, which is correct for an approver that asks
     /// every call anyway.
     fn annotate(&mut self, _call: &ToolCall, _destructive: bool) {}
+
+    /// The resource contract breached its reserve: may this run keep going?
+    ///
+    /// This is a **different question** from `approve`, and it is asked of
+    /// the owner rather than of a tool call, because the owner's 2026-11-10
+    /// ruling made a deterministic breach a *pause*: the run holds where it
+    /// is until somebody with authority says continue. The default is
+    /// `false` — a run with no one present (an unattended job, a headless
+    /// batch, a test) stops, because a machine at its floor cannot wait for
+    /// an answer that will never come. An interactive surface overrides it
+    /// and asks for real.
+    ///
+    /// `clause` is the sentence the contract derived — the numbers, the
+    /// reserve, and what produced it — so the prompt shows a fact rather
+    /// than a warning.
+    fn permit_past_reserve(&mut self, _clause: &str) -> bool {
+        false
+    }
 }
 
 /// Approves everything (`--yes`).
@@ -1215,6 +1233,22 @@ impl Approver for ConsoleApprover {
 
     fn latched(&self) -> bool {
         self.always
+    }
+
+    /// The breach pause, on the console: the clause is printed, and the run
+    /// continues only on an explicit yes. End of input is a no, the same rule
+    /// the tool prompt keeps — an unanswerable question must not read as
+    /// consent when the machine is the thing at risk.
+    fn permit_past_reserve(&mut self, clause: &str) -> bool {
+        eprintln!("fleet: {clause}");
+        eprint!("fleet: continue anyway? [y/N] ");
+        let _ = std::io::stderr().flush();
+        let mut line = String::new();
+        if self.input.read_line(&mut line).unwrap_or(0) == 0 {
+            eprintln!();
+            return false;
+        }
+        matches!(line.trim().to_ascii_lowercase().as_str(), "y" | "yes")
     }
 }
 
@@ -1304,6 +1338,34 @@ impl Approver for TuiApprover {
 
     fn latched(&self) -> bool {
         self.always
+    }
+
+    /// The breach pause, at the seat: the clause becomes the prompt's summary,
+    /// and the run continues only on `Once`/`Always`. A denial, a dropped
+    /// responder or a UI that went away stops the run — the default's own
+    /// answer, arrived at the same way.
+    fn permit_past_reserve(&mut self, clause: &str) -> bool {
+        let (responder, decision) = std::sync::mpsc::channel();
+        // The pause is not a tool call: the synthetic shape carries the
+        // clause so the seat renders the numbers it is asked about, and no
+        // tool is named because nothing is about to run.
+        let request = ApprovalRequest {
+            verdict: None,
+            call: ToolCall {
+                id: "resource-contract".to_string(),
+                kind: "function".to_string(),
+                function: crate::api::FunctionCall {
+                    name: "resource-contract".to_string(),
+                    arguments: String::new(),
+                },
+            },
+            summary: clause.to_string(),
+            responder,
+        };
+        if self.requests.send(request).is_err() {
+            return false;
+        }
+        matches!(decision.recv(), Ok(Approval::Once) | Ok(Approval::Always))
     }
 }
 
@@ -3660,22 +3722,69 @@ impl<'a> Agent<'a> {
         let reserve_kib = oversight.reserve_kib;
         let reserve_source = oversight.reserve_source;
         let appetite = oversight.appetite;
+        let budget_kib = oversight.budget_kib;
         match standing {
             crate::contract::Standing::Inside => Ok(()),
-            // The reserve itself is gone: no judgment is worth the wait, and
-            // the run stops with the numbers that stopped it.
+            // The reserve itself is gone. Deterministic, so no judge is asked —
+            // and the owner's 2026-11-10 ruling makes it a PAUSE, not a stop:
+            // the run holds here, puts the numbers in front of the owner, and
+            // continues only on a yes. A no (or nobody there to answer) ends it
+            // with the same recorded shape.
             crate::contract::Standing::Encroached {
                 available_kib,
                 reserve_kib: breached,
             } => {
                 let clause = oversight.stop_clause(&now, settled_kib, "at the reserve");
-                self.stop_for_contract(
-                    &clause,
-                    settled_kib,
-                    available_kib,
-                    breached,
-                    "reserve breached",
-                )
+                let _ = writeln!(self.progress, "\u{2192} paused: {clause}");
+                let _ = self.progress.flush();
+                if self.approver.permit_past_reserve(&clause) {
+                    // The yes is recorded, not merely acted on: the run may
+                    // work one more budget below the reserve, and the row says
+                    // the owner granted it.
+                    let raised = match self.oversight.as_mut() {
+                        Some(state) => {
+                            state.granted_past_reserve();
+                            state.budget_kib
+                        }
+                        None => budget_kib,
+                    };
+                    let reading = crate::footprint::Reading {
+                        lines: Vec::new(),
+                        volume_kib,
+                        available_kib: now.available_kib,
+                        reserve_kib,
+                        reserve_source,
+                        appetite,
+                        standing_free: None,
+                        fill_gib_per_day: 0.0,
+                        records: 0,
+                    };
+                    self.land_contract_row(
+                        &class,
+                        raised,
+                        &reading,
+                        baseline_kib,
+                        settled_kib,
+                        settled_kib,
+                        crate::calib::FOOTPRINT_EXPECTED,
+                        "owner-permitted",
+                        &clause,
+                    );
+                    let _ = writeln!(
+                        self.progress,
+                        "\u{2192} the owner permitted this run past the reserve; it is paused again at the next budget"
+                    );
+                    let _ = self.progress.flush();
+                    Ok(())
+                } else {
+                    self.stop_for_contract(
+                        &clause,
+                        settled_kib,
+                        available_kib,
+                        breached,
+                        "reserve breached, not permitted",
+                    )
+                }
             }
             crate::contract::Standing::Overage {
                 settled_kib,
@@ -9870,6 +9979,35 @@ static TEST_DESIGN_CONTEXT: std::sync::Mutex<Option<(std::path::PathBuf, String)
 #[cfg(test)]
 static TEST_DESK_CONTEXT: std::sync::Mutex<Option<(std::path::PathBuf, String)>> =
     std::sync::Mutex::new(None);
+
+#[cfg(test)]
+mod reserve_pause_tests {
+    use super::*;
+
+    /// A run with nobody present cannot wait for an answer that will never
+    /// come, so every approver whose seat is not there answers NO to the
+    /// breach pause. That default is the whole safety property of the owner's
+    /// "a deterministic breach is a pause" ruling: the pause is for a person,
+    /// and a machine at its floor must not hang on one.
+    #[test]
+    fn an_approver_with_nobody_present_denies_the_breach_pause() {
+        let clause = "the resource contract stopped this run at the reserve: 3.00 GiB settled";
+        // The unattended job gate: a declared-unattended fire has no owner.
+        // Its `approve` already denies tool calls; the pause must deny too
+        // rather than inheriting `ApproveAll`'s semantics by accident.
+        let mut denier = DenyAll;
+        assert!(!denier.permit_past_reserve(clause));
+        // The default trait method is the deny, and `ApproveAll` deliberately
+        // does NOT override it: `--yes` is consent for tool calls, not
+        // standing consent for a run to keep writing past the reserve. A run
+        // whose only authority is `--yes` stops at the floor.
+        let mut yes = ApproveAll;
+        assert!(
+            !yes.permit_past_reserve(clause),
+            "`--yes` must not answer a resource pause on the owner's behalf"
+        );
+    }
+}
 
 #[cfg(test)]
 mod tests {
