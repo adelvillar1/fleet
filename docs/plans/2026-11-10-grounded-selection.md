@@ -630,6 +630,40 @@ Whole-program gate (every code increment): `cargo fmt --all --check`,
   resolved/build, defensible prose but not this corpus's convention.
   The tables stay; mention-kind and silent-stop keep their own gates.
 
+## Rejections (recorded 2026-11-10, on measurement)
+
+The arc's exploration closed these with data, per the fail-fast
+discipline. Each stands re-openable only on new evidence:
+
+- **C2, C3, C7 — selection replacement** (catalog-as-choice injection,
+  skill classification, the multi-head pass): eight question shapes,
+  three vendors, two framings; the best head reaches 56.7% top-1
+  against the model's own 99.1%. The root cause is the meta-failure:
+  the recorded choice depends on conversation state no intent-only
+  question carries. The criteria stay open as the re-openable record;
+  they are not claimed.
+- **C8 — speculative pre-warm as designed**: it fed off head
+  selection. A verifier-shaped variant (pre-checking the model's own
+  emitted call) survives only if the C4 re-open lands.
+- **Score fan-out at catalog size**: the 27-head collapse is measured
+  (all heads → score=5.0); per-item separate calls cost 27
+  requests/turn for a worse ranking.
+- **LFM3 as selector or re-ranker**: 20.2-30.3% measured; its role is
+  prose and form-fills (C10/C19, landed).
+- **Cross-vendor score transplant**: identical to control on both
+  mixes.
+- **Hard narrowing on invented taxonomies**: conditioning dominates it
+  in every measured pair.
+- **The canonical framing for selection**: described criteria diffuse
+  the distribution on similar options (top-3 −12pp, both vendors).
+- **d1 for selection**: 28.6%; it keeps vision_qc and blend1's routing.
+- **The declaration-tax "fix"**: rejected by the code's own history —
+  the native surface fits its measured bound; the 8k mean is honest.
+
+The live re-open: **C4's verify+repair leg** on the verifier evidence
+(glide AUC 0.983, 60/60 corruption rejection; drex 0.883/96.7%) — the
+owner's decision, the basis on file.
+
 ## Cleanup ledger (C20)
 
 - **Activation (2026-11-10, before Phase 0):** `df -h /` before = 124 GiB
