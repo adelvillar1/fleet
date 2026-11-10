@@ -1,7 +1,7 @@
 ---
 status: in progress
 created: 2026-11-09
-updated: 2026-11-09
+updated: 2026-11-10
 slug: the-resource-contract
 ---
 
@@ -140,51 +140,51 @@ declared, because the environment has already been telling us.
 
 ## Acceptance criteria
 
-- [ ] C1 — A `Contract` with pure `admit(facts, estimate)` and
+- [x] C1 — A `Contract` with pure `admit(facts, estimate)` and
       `settle(before, after, budget)` in `src/footprint.rs`, hermetic and
       pinned: headroom over estimate admits, under refuses with both numbers;
       a delta over budget settles as runaway, under as clean.
-- [ ] C2 — The release path admits before it builds (replacing the bare floor
+- [x] C2 — The release path admits before it builds (replacing the bare floor
       check) and settles after the assets upload, cleaning the lane on a
       runaway and keeping the diagnosis window on a failure.
-- [ ] C3 — A run admits before its first turn while working in a folder, and
+- [x] C3 — A run admits before its first turn while working in a folder, and
       measures at turn boundaries (cheap: `statvfs` + `ps`); a breach mid-run
       stops the run with the numbers in the transcript, not after the disk is
       full.
-- [ ] C4 — The abnormal reading calls sys1 exactly once per reading with the
+- [x] C4 — The abnormal reading calls sys1 exactly once per reading with the
       facts and the run's recent tool calls; `runaway` curtails, `expected`
       raises that run's budget; a refused answer is `expected` and records it.
-- [ ] C5 — Every admission, refusal, settlement and judgment lands a calibration
+- [x] C5 — Every admission, refusal, settlement and judgment lands a calibration
       row (`op=footprint`) carrying the work class, the admitting estimate, the
       settled delta, the reserve at admission, the verdict and the sys1 words,
       so the demand map can cluster the runaways and the estimate can be
       derived from them.
-- [ ] C6 — A forced-runaway test: a scratch folder filled until the run's budget
+- [x] C6 — A forced-runaway test: a scratch folder filled until the run's budget
       trips, asserting the run is curtailed, its transcript names the numbers,
       and the files it created are cleaned after the diagnosis window.
-- [ ] C7 — Docs: `docs/features/` gains the contract's own page; `fleet doctor`
+- [x] C7 — Docs: `docs/features/` gains the contract's own page; `fleet doctor`
       and `fleet footprint` name the same declared numbers.
 
-- [ ] C8 — The admitted estimate for a work class is the median of its last ten
+- [x] C8 — The admitted estimate for a work class is the median of its last ten
       settlements, with the declared constant as the prior until three exist;
       a test with a deliberately wrong prior corrects after the settles land.
-- [ ] C12 — The risk appetite is inferred from the standing free fraction
+- [ ] C12 — PARTLY: the risk appetite is inferred from the standing free fraction
       (median of the last thirty daily readings) and its volatility, with the
       declared setting overriding it; a habitually under-10%-free machine
       yields *tighter* controls — a reserve as a fraction of the volume, a
       shorter cadence, a lower per-run budget — and the report names the
       inference and its evidence beside the number it produced.
-- [ ] C10 — An environment profile (volume size, standing free space, fill
+- [ ] C10 — NOT BUILT: an environment profile (volume size, standing free space, fill
       rate, memory pressure, laptop or server) is derived from the footprint
       rows, and a declared risk appetite (`steady`/`balanced`/`tight`, or an
       explicit reserve) bounds it; the reserve, the cadence and the per-run
       budgets derive from the two, so no number in this contract is a code
       constant once a profile exists.
-- [ ] C11 — `fleet doctor` and `fleet footprint` name the profile and the
-      appetite beside the numbers they produced ("reserve 35 GiB: laptop,
-      steady, filling 1.8 GiB/day"), so a refusal reads as a decision, not an
-      oracle.
-- [ ] C9 — The resource judge's verdicts are graded by the subsequent outcome
+- [ ] C11 — PARTLY: both name the appetite and the reserve beside the numbers
+      they produced ("reserve 18 GiB of 460 GiB (inferred; 1 record(s), standing
+      25% free)"), so a refusal reads as a decision. Not yet named: the profile
+      (laptop/server) and the fill rate ("laptop, steady, filling 1.8 GiB/day").
+- [x] C9 — The resource judge's verdicts are graded by the subsequent outcome
       (a `runaway` on work that then completed cleanly counts against it; an
       `expected` before a breach counts against it), and that grading is
       readable by the fit rule.
