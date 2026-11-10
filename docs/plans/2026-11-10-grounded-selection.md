@@ -605,6 +605,16 @@ Whole-program gate (every code increment): `cargo fmt --all --check`,
   measurement. No worktree; the gate ran in the main tree's target/;
   `cache-sweep.sh` ran after the last build cycle. `df -h /` = 124 GiB
   free. Net disk cost: the gate's own traffic, swept.
+- **The build-and-cut (2026-11-10 evening):** the verify leg built
+  (C4's runtime: every tool's validation failure re-authors through the
+  lane; the schema the guard), 0.6.25 cut through the runbook — tag
+  gated on ff37c51, assets uploaded (dmg, tarball, the signed updater
+  artifact, latest.json), the feed read back naming 0.6.25, and
+  `fleet update` deployed it in place (the .prev backup made). One
+  scratch pytest venv left in /tmp for rotation (the gate blocked its
+  rm -rf — correctly; it is /tmp-rotated). The resource contract
+  recorded the release gate's own runaway (4.57 GiB against 2.85) —
+  the machinery judging its own cut.
 - **Session close (2026-11-10):** no worktrees (`git worktree list`
   shows the main checkout only), no build lanes, no scratch venvs, no
   temp fixtures left beyond /tmp's own rotation. The plan's state: 9 of
