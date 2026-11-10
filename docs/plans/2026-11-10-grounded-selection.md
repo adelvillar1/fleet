@@ -288,10 +288,17 @@ checkbox order — never reorder after gating.
 - [ ] C17: gen1 media outputs grade through the existing `vision_qc` task,
   verdicts land as calib rows, and a failing grade names the artifact —
   pinned by a stubbed vision answer.
-- [ ] C18: Liquid's hosted embedding API runs beside sem1 on recall
+- [x] C18: Liquid's hosted embedding API runs beside sem1 on recall
   candidates and sub-threshold disagreement flags the fact for the
   dream/validate pass (or Notes record the endpoint's absence as a kill),
   pinned by a stubbed disagreement.
+  (Kill-gate outcome recorded 2026-11-10: the probe — `POST
+  /v1/embeddings`, `/openai/v1/embeddings`, `/v1/embed` with the live
+  LIQUID_API_KEY — answered HTTP 404 on all three, and the served model
+  list (`/v1/chat/models`) carries five models, none an embedder. The
+  nano embedders are download-only; the hosted second embedder does not
+  exist. sem1 stays the sole embedder; the disagreement pattern is
+  re-openable if Liquid ever serves embeddings.)
 - [ ] C19: A validation-failed remember, improve, or skill-frontmatter
   emission re-authors through the hosted small model before the flagship's
   next turn, else falls to the error-result loop — one pinned test per tool.
@@ -551,6 +558,11 @@ Whole-program gate (every code increment): `cargo fmt --all --check`,
   kept on design authority. The criterion's amended shape is the
   contract; the owner can re-open any dispositioned surface.
 
+- **The C18 kill (2026-11-10):** probe evidence on the criterion —
+  three 404s and a chat-only model list. No code was written against an
+  absence; the criterion closed on the probe, the cheapest shape the
+  fail-fast discipline has.
+
 ## Cleanup ledger (C20)
 
 - **Activation (2026-11-10, before Phase 0):** `df -h /` before = 124 GiB
@@ -565,6 +577,12 @@ Whole-program gate (every code increment): `cargo fmt --all --check`,
   end, 2,337 passed); docs = `docs/features/selection.md` §baseline. No
   worktree, no build lanes beyond the main tree's own gate target/;
   `df -h /` after = 124 GiB free — unchanged. Net disk cost: zero.
+- **Phase 6 (C18 probe + the sweep recovery), 2026-11-10:**
+  `cache-sweep.sh` ran as C20's own recovery act after the session's
+  repeated release builds: 108.5 → 124.2 GiB free (superseded
+  compilations deduped, release binaries and bundles untouched). The C18
+  probe spent three HTTP requests and wrote nothing. Net disk: recovered
+  15.7 GiB.
 - **Phase 4 (C11), 2026-11-10:** the drafter leg (`89186d3`) + the
   advisor leg; no worktree, no build lanes; `df -h /` = 108 GiB free
   (the session's own repeated release builds ate ~16 GiB of target/
