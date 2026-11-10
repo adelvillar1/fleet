@@ -1552,6 +1552,7 @@ pub async fn execute(
         model: model.clone(),
         max_turns: DEFAULT_MAX_TURNS,
         capped: false,
+        health_note: false,
         identity: crate::home::read_soul(home),
         ui_tx: None,
         lane_specs,

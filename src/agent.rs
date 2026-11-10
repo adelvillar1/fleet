@@ -505,6 +505,13 @@ pub struct AgentOptions {
     /// ruling: context health is the long-run bound, not a turn
     /// count). The turn counter is bookkeeping either way.
     pub capped: bool,
+    /// Whether the run-time health note may ride the first request
+    /// (the failsafe plan's C4). The main session's surfaces set it —
+    /// the actor the failsafe ruling names — and children, eval runs,
+    /// and tests leave it off: a child's parent repairs, a graded
+    /// corpus rides fixtures, and a test's premise never rides the
+    /// machine's substrate.
+    pub health_note: bool,
     /// The run's resolved `{session}` value — `Prepared.session_id` — so
     /// a mid-run re-route re-seeds the same id and the conversation's
     /// gateway affinity bucket survives the provider switch. `None` for
@@ -681,6 +688,7 @@ impl Default for AgentOptions {
             model: crate::route::AUTO_MODEL.to_string(),
             max_turns: DEFAULT_MAX_TURNS,
             capped: false,
+            health_note: false,
             session_id: None,
             identity: None,
             ui_tx: None,
@@ -2977,11 +2985,11 @@ impl<'a> Agent<'a> {
                 std::env::var("FLEET_HOME").ok().as_deref(),
                 std::env::var("HOME").ok().as_deref(),
             ) {
-                let report = crate::health::probe(&home, true);
-                if !report.down().is_empty() {
-                    let note = crate::health::repair_note(&report);
-                    self.pending_health = Some(note.clone());
-                    let _ = self.record(&crate::session::Record::SystemNote { text: note });
+                if self.options.health_note {
+                    if let Some(note) = crate::health::repair_note_for_run(&home) {
+                        self.pending_health = Some(note.clone());
+                        let _ = self.record(&crate::session::Record::SystemNote { text: note });
+                    }
                 }
             }
         }
@@ -10176,6 +10184,7 @@ mod tests {
             identity: None,
             max_turns: 3,
             capped: false,
+            health_note: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -10227,6 +10236,7 @@ mod tests {
             identity: None,
             max_turns: 3,
             capped: false,
+            health_note: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -10533,6 +10543,7 @@ mod tests {
             identity: None,
             max_turns: 3,
             capped: false,
+            health_note: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -10626,6 +10637,7 @@ mod tests {
             identity: None,
             max_turns: 1,
             capped: false,
+            health_note: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -10887,6 +10899,7 @@ mod tests {
             identity: None,
             max_turns: 1,
             capped: false,
+            health_note: false,
             ui_tx: None,
             lane_specs: None,
             calib: Some(stream.clone()),
@@ -10961,6 +10974,7 @@ mod tests {
             identity: None,
             max_turns: 1,
             capped: false,
+            health_note: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -11382,6 +11396,7 @@ mod tests {
             identity: None,
             max_turns: 1,
             capped: false,
+            health_note: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -11531,6 +11546,7 @@ mod tests {
             identity: None,
             max_turns: 1,
             capped: false,
+            health_note: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -11589,6 +11605,7 @@ mod tests {
             identity: None,
             max_turns: 1,
             capped: false,
+            health_note: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -12019,6 +12036,7 @@ mod tests {
             identity: None,
             max_turns: 1,
             capped: false,
+            health_note: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -12160,6 +12178,7 @@ mod tests {
                 identity: None,
                 max_turns: 1,
                 capped: false,
+                health_note: false,
                 ui_tx: None,
                 lane_specs: None,
                 calib: None,
@@ -12312,6 +12331,7 @@ mod tests {
             identity: None,
             max_turns: 1,
             capped: false,
+            health_note: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -12375,6 +12395,7 @@ mod tests {
             identity: None,
             max_turns: 1,
             capped: false,
+            health_note: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -12463,6 +12484,7 @@ mod tests {
             &run_client,
             AgentOptions {
                 capped: false,
+                health_note: false,
                 goal_home: None,
                 goal_session: None,
                 model: "m".to_string(),
@@ -12510,6 +12532,7 @@ mod tests {
             let mut progress = Vec::new();
             let options = AgentOptions {
                 capped: false,
+                health_note: false,
                 goal_home: None,
                 goal_session: None,
                 session_id: None,
@@ -12538,6 +12561,7 @@ mod tests {
             let mut progress = Vec::new();
             let options = AgentOptions {
                 capped: false,
+                health_note: false,
                 goal_home: None,
                 goal_session: None,
                 goal: Some("ship the picker before Thursday".to_string()),
@@ -12589,6 +12613,7 @@ mod tests {
                 identity: Some(identity.to_string()),
                 max_turns: 1,
                 capped: false,
+                health_note: false,
                 ui_tx: None,
                 lane_specs: None,
                 calib: None,
@@ -12667,6 +12692,7 @@ You are auditing a change. Read the diff before you judge it.
             identity: None,
             max_turns: 1,
             capped: false,
+            health_note: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -12718,6 +12744,7 @@ You are auditing a change. Read the diff before you judge it.
             identity: None,
             max_turns: 1,
             capped: false,
+            health_note: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -12787,6 +12814,7 @@ You are auditing a change. Read the diff before you judge it.
             identity: None,
             max_turns: 1,
             capped: false,
+            health_note: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -12829,6 +12857,7 @@ You are auditing a change. Read the diff before you judge it.
             identity: None,
             max_turns: 1,
             capped: false,
+            health_note: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -12885,6 +12914,7 @@ You are auditing a change. Read the diff before you judge it.
             identity: None,
             max_turns: 1,
             capped: false,
+            health_note: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -12941,6 +12971,7 @@ You are auditing a change. Read the diff before you judge it.
             identity: Some("You are the owner's own voice.".to_string()),
             max_turns: 1,
             capped: false,
+            health_note: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -13072,6 +13103,7 @@ You are auditing a change. Read the diff before you judge it.
             identity: None,
             max_turns: 1,
             capped: false,
+            health_note: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -13146,6 +13178,7 @@ You are auditing a change. Read the diff before you judge it.
             identity: None,
             max_turns: 1,
             capped: false,
+            health_note: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -13260,6 +13293,7 @@ You are auditing a change. Read the diff before you judge it.
             identity: None,
             max_turns: 1,
             capped: false,
+            health_note: false,
             ui_tx: None,
             lane_specs: None,
             calib: Some(stream.clone()),
@@ -13401,6 +13435,7 @@ You are auditing a change. Read the diff before you judge it.
             identity: None,
             max_turns: 1,
             capped: false,
+            health_note: false,
             ui_tx: None,
             lane_specs: None,
             calib: Some(stream.clone()),
@@ -13490,6 +13525,7 @@ You are auditing a change. Read the diff before you judge it.
             identity: None,
             max_turns: 1,
             capped: false,
+            health_note: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -14090,6 +14126,7 @@ You are auditing a change. Read the diff before you judge it.
             identity: None,
             max_turns: 1,
             capped: false,
+            health_note: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -14153,6 +14190,7 @@ You are auditing a change. Read the diff before you judge it.
             identity: None,
             max_turns: 1,
             capped: false,
+            health_note: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -14226,6 +14264,7 @@ You are auditing a change. Read the diff before you judge it.
             identity: None,
             max_turns: 1,
             capped: false,
+            health_note: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -14287,6 +14326,7 @@ You are auditing a change. Read the diff before you judge it.
             identity: None,
             max_turns: 1,
             capped: false,
+            health_note: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -14488,6 +14528,7 @@ You are auditing a change. Read the diff before you judge it.
             identity: None,
             max_turns: 1,
             capped: false,
+            health_note: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -14895,6 +14936,7 @@ You are auditing a change. Read the diff before you judge it.
             identity: None,
             max_turns: 1,
             capped: false,
+            health_note: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -15843,6 +15885,7 @@ signature verified`, exit 0\n";
         // child.
         let scheduled = AgentOptions {
             capped: false,
+            health_note: false,
             goal_home: None,
             goal_session: None,
             route_home: Some(std::path::PathBuf::from("/tmp/fleet-home")),
@@ -15855,6 +15898,7 @@ signature verified`, exit 0\n";
 
         let interactive = AgentOptions {
             capped: false,
+            health_note: false,
             improve_home: Some(std::path::PathBuf::from("/tmp/fleet-home")),
             goal_home: None,
             goal_session: None,

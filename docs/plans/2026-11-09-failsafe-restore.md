@@ -1,7 +1,7 @@
 ---
-status: active
+status: completed
 created: 2026-11-09
-updated: 2026-11-09
+updated: 2026-11-10
 slug: failsafe-restore
 ---
 
@@ -123,15 +123,15 @@ High-level steps:
 
 ## Acceptance criteria
 
-- [ ] C0 — `GET /api/state` carries a `services` block refreshed by a server-side probe loop, and the face paints a card naming every down service beside its repair verb; the harness proves it with a dead port.
-- [ ] C1 — a delegation whose LayerFS workspace cannot open runs to completion on the main session's model and route with the plain launch folder, its row and result naming the degradation.
-- [ ] C2 — a child whose `prepare_child` fails runs on the main session's model and route with the degradation named in its result, so no child is refused for a route-preparation error.
-- [ ] C3 — a main-session route whose preparation fails degrades to the compiled-in declared order with the degradation named in the decision row, and the run proceeds.
-- [ ] C4 — when the loop or a use-time failure names a service down, the session carries a logged note naming the service, the cause, and the repair verb, and the model sees it in its conversation.
-- [ ] C5 — an exhausted routing chain fails by name carrying each candidate's cause and, for a repairable cause, its repair verb.
-- [ ] C6 — with a dead substrate under a scratch home and a yes-mode approval, a run's repair note leads the main session to attempt the mapped repair through its own bash tool, and the log carries the attempt and its outcome.
-- [ ] C7 — a change that breaks a subsystem (a malformed routing.json, a failing applied improvement) is reverted by `fleet recover` to that layer's last known good, and the health probes re-probe green in a scratch home.
-- [ ] C8 — a configured local model sits as the roster's final candidate behind the deepseek tail and serves when connectivity is gone; with no local model configured and no connectivity, the failure text names that state as the one unrecoverable failure.
+- [x] C0 — `GET /api/state` carries a `services` block refreshed by a server-side probe loop, and the face paints a card naming every down service beside its repair verb; the harness proves it with a dead port.
+- [x] C1 — a delegation whose LayerFS workspace cannot open runs to completion on the main session's model and route with the plain launch folder, its row and result naming the degradation.
+- [x] C2 — a child whose `prepare_child` fails runs on the main session's model and route with the degradation named in its result, so no child is refused for a route-preparation error.
+- [x] C3 — a main-session route whose preparation fails degrades to the compiled-in declared order with the degradation named in the decision row, and the run proceeds.
+- [x] C4 — when the loop or a use-time failure names a service down, the session carries a logged note naming the service, the cause, and the repair verb, and the model sees it in its conversation.
+- [x] C5 — an exhausted routing chain fails by name carrying each candidate's cause and, for a repairable cause, its repair verb.
+- [x] C6 — with a dead substrate under a scratch home and a yes-mode approval, a run's repair note leads the main session to attempt the mapped repair through its own bash tool, and the log carries the attempt and its outcome.
+- [x] C7 — a change that breaks a subsystem (a malformed routing.json, a failing applied improvement) is reverted by `fleet recover` to that layer's last known good, and the health probes re-probe green in a scratch home.
+- [x] C8 — a configured local model sits as the roster's final candidate behind the deepseek tail and serves when connectivity is gone; with no local model configured and no connectivity, the failure text names that state as the one unrecoverable failure.
 
 ## Files to be touched
 

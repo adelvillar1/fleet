@@ -2268,6 +2268,7 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
         // its parent's budget would spend turns on a run whose own
         // answer is already written.
         capped: true,
+        health_note: false,
         session_id: None,
         goal: None,
         model: child_route.model,

@@ -248,3 +248,16 @@ so its requests are already inside the parent's decision row's
   command it ran) before reporting that claim as fact. The verification
   is the parent's, by design: a mechanism that "verified" would be the
   child grading its own homework.
+
+## The failsafe's degradation (the failsafe-restore plan's C1/C2, 0.6.22)
+
+A child is never refused for infrastructure. A workspace that cannot
+open (the substrate down — KI-493's shape) clears the opt-in for that
+run: the child runs on the main session's model and route with the
+plain launch folder, isolation traded for availability. A route that
+cannot be prepared rides the parent's route. A routing config that
+cannot load degrades the run to the compiled-in declared order. Every
+degradation is named — the row's `degraded` cell, the result's render,
+and the transcript — never silent, never a refusal. Pinned by
+`a_dead_substrate_degrades_the_child_instead_of_refusing_it` and
+`a_child_routes_through_prepare_child_and_a_broken_config_never_refuses_it`.

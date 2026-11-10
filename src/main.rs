@@ -182,6 +182,7 @@ fn dispatch_sync(args: &[String]) -> ExitCode {
         Ok(Command::Vault(options)) => vault_command(&options),
         Ok(Command::Remember(options)) => remember_command(&options),
         Ok(Command::Doctor(options)) => doctor_command(&options),
+        Ok(Command::Recover) => recover_command(),
         Ok(Command::Footprint(options)) => footprint_command(&options),
         Ok(Command::Ki(options)) => ki_command(&options),
         Ok(Command::Install(options)) => install_command(&options),
@@ -3311,6 +3312,7 @@ async fn drive(
     };
     let options = AgentOptions {
         capped: false,
+        health_note: true,
         goal: None,
         model,
         max_turns,
@@ -4861,6 +4863,47 @@ fn day_number(at: &str) -> Option<f64> {
 /// "may this build start" instead of re-deriving the reserve in shell. The
 /// ambiguous case — a run inside its bound and idle — is a sys1 judgment,
 /// never this function's.
+/// The failsafe plan's C7: restore what is broken from its
+/// last-known-good stamp, then name the probes' fresh verdicts. The
+/// main session's one command for "bring fleet back to working
+/// order"; the repair note quotes it.
+fn recover_command() -> ExitCode {
+    let home = match fleet::home::fleet_home(
+        std::env::var("FLEET_HOME").ok().as_deref(),
+        std::env::var("HOME").ok().as_deref(),
+    ) {
+        Ok(home) => home,
+        Err(error) => {
+            eprintln!("fleet: no fleet home to recover: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let restored = fleet::settings::recover(&home);
+    if restored.is_empty() {
+        println!("recover: no settings file needed restoring");
+    } else {
+        println!("recover: restored {}", restored.join(", "));
+    }
+    let report = fleet::health::probe(&home, false);
+    for service in &report.services {
+        let verdict = if service.up { "ok  " } else { "FAIL" };
+        let note = if service.up {
+            String::new()
+        } else {
+            format!(
+                " \u{2014} {} \u{00b7} repair: {}",
+                service.note, service.repair
+            )
+        };
+        println!("{:12} {}{}", service.name, verdict, note);
+    }
+    if report.down().is_empty() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
+}
+
 fn footprint_command(options: &fleet::cli::FootprintOptions) -> ExitCode {
     let volume = options
         .path

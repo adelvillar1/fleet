@@ -108,6 +108,12 @@ pub enum Command {
     /// awareness the owner asked for (2026-11-09): deterministic for the
     /// bounds, a sys1 judgment for the ambiguous.
     Footprint(FootprintOptions),
+    /// The recovery mode (the failsafe plan's C7): restore every
+    /// settings file whose current form is broken from its
+    /// last-known-good stamp, then name the health probes' fresh
+    /// verdicts — the main session's one command for "bring fleet
+    /// back".
+    Recover,
     /// The ledger's run-time append: one hand-filed row under the next
     /// id, the id derived from the table while the ledger's own lock is
     /// held — the path a scheduled run files through instead of editing
@@ -1075,6 +1081,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "vault" => parse_vault(rest),
         "remember" => parse_remember(rest),
         "doctor" => parse_doctor(rest),
+        "recover" => no_flags(rest, Command::Recover),
         "footprint" => parse_footprint(rest),
         "ki" => parse_ki(rest),
         "install" => parse_install(rest),

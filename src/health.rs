@@ -247,6 +247,24 @@ pub fn repair_note(report: &HealthReport) -> String {
     )
 }
 
+/// The run-time half of the probe (the failsafe plan's C4): what THIS
+/// run depends on, only when it was provisioned. An unprovisioned
+/// substrate is not a down service — nothing opted into it — so it
+/// names nothing; a provisioned one whose worker does not answer is
+/// the note. The loop's full report stays the face's vocabulary; the
+/// run path's is narrower by design.
+pub fn repair_note_for_run(home: &Path) -> Option<String> {
+    if crate::layerfs_tools::read_machine_at(home).is_err() {
+        return None;
+    }
+    let report = probe(home, true);
+    if report.down().is_empty() {
+        None
+    } else {
+        Some(repair_note(&report))
+    }
+}
+
 /// Where the loop's latest report lives — the server's handle to the
 /// bridge's shared slot.
 pub type SharedReport = std::sync::Arc<std::sync::Mutex<Option<HealthReport>>>;
@@ -255,7 +273,7 @@ pub type SharedReport = std::sync::Arc<std::sync::Mutex<Option<HealthReport>>>;
 /// other pass, the shared slot updated in place. Returns whether the
 /// pass transitioned, so the caller (which sees the beat) can name it.
 pub fn probe_once(home: &Path, pass: u64, slot: &SharedReport) -> bool {
-    let report = probe(home, pass % SLOW_EVERY_NTH_PASS != 0);
+    let report = probe(home, !pass.is_multiple_of(SLOW_EVERY_NTH_PASS));
     let transitioned = {
         let guard = slot.lock().expect("health slot");
         match guard.as_ref() {

@@ -576,6 +576,21 @@ pub(crate) fn write_atomic(path: &Path, text: &str) -> Result<(), String> {
         fs::create_dir_all(parent)
             .map_err(|error| format!("{} cannot be created: {error}", parent.display()))?;
     }
+    // The last-known-good stamp (the failsafe plan's C7): the file as
+    // it stands before this write is the working state, so it is the
+    // state `fleet recover` can restore. Beside the home, never a
+    // second copy elsewhere.
+    if path.exists() {
+        if let (Some(parent), Some(name)) = (path.parent(), path.file_name()) {
+            let recover = parent.join("recover");
+            if fs::create_dir_all(&recover).is_ok() {
+                let _ = fs::copy(
+                    path,
+                    recover.join(format!("{}.prev", name.to_string_lossy())),
+                );
+            }
+        }
+    }
     let temp = path.with_extension(format!("{}.tmp", std::process::id()));
     fs::write(&temp, text)
         .map_err(|error| format!("{} cannot be written: {error}", temp.display()))?;
@@ -775,6 +790,47 @@ fn read_env_file(path: &Path) -> BTreeMap<String, String> {
 
 #[cfg(test)]
 mod tests {
+    /// The failsafe plan's C7: every settings write stamps the prior
+    /// file beside the home, and `recover` restores a file whose
+    /// current form is broken from that stamp — the revert that fixes.
+    #[test]
+    fn a_write_stamps_the_prior_file_and_recover_restores_it() {
+        let dir = std::env::temp_dir().join(format!("fleet-recover-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // A valid routing file, then a settings write that stamps it.
+        let path = dir.join("routing.json");
+        std::fs::write(&path, r#"{"workloads":[]}"#).unwrap();
+        write_atomic(
+            &path,
+            r#"{"workloads":[{"workload":"quick","candidates":["x/y"]}]}"#,
+        )
+        .unwrap();
+        let stamp = dir.join("recover").join("routing.json.prev");
+        assert!(stamp.exists(), "the write stamped the prior file");
+        let stamped = std::fs::read_to_string(&stamp).unwrap();
+        assert_eq!(
+            stamped, r#"{"workloads":[]}"#,
+            "the stamp is the prior form"
+        );
+        // The file breaks; recover restores the stamp.
+        std::fs::write(&path, "not json at all {").unwrap();
+        let restored = recover(&dir);
+        assert_eq!(restored, vec!["routing.json".to_string()]);
+        let healed = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            serde_json::from_str::<serde_json::Value>(&healed).is_ok(),
+            "the restored form parses: {healed}"
+        );
+        // A healthy file is left alone, and a missing file with a
+        // stamp comes back.
+        let restored_again = recover(&dir);
+        assert!(restored_again.is_empty(), "nothing broken, nothing touched");
+        std::fs::remove_file(&path).unwrap();
+        let restored_missing = recover(&dir);
+        assert_eq!(restored_missing, vec!["routing.json".to_string()]);
+    }
+
     #[test]
     fn the_child_bound_is_the_setting_and_runs_turn_cap_is_retired() {
         // C3: the cap moved to the delegation scope. The write lands the
@@ -1132,6 +1188,36 @@ use palette::{ACCENT, BOLD, DIM, RESET, TEXT, WARN};
 /// current value, where that value came from, and the sentence saying
 /// what it does. A value from the environment is marked, because a file
 /// write would not take effect until the env var is unset.
+/// The failsafe plan's C7: restore every settings file whose current
+/// form is broken from its last-known-good stamp, and answer with the
+/// names of what was restored. A file that parses is left alone —
+/// recover is the revert that fixes, not a rollback of every change.
+/// The three files are the settings writer's own; the caller (the CLI
+/// verb, the main session's bash) prints the result beside a fresh
+/// probe.
+pub fn recover(home: &Path) -> Vec<String> {
+    let mut restored = Vec::new();
+    let recover = home.join("recover");
+    for name in ["config.json", "routing.json", "fleet.env"] {
+        let path = home.join(name);
+        let stamp = recover.join(format!("{name}.prev"));
+        let broken = match fs::read_to_string(&path) {
+            // A missing file with a stamp is the writer's own loss:
+            // restore it.
+            Err(_) => stamp.exists(),
+            Ok(text) => {
+                // fleet.env is line grammar, always readable; the two
+                // JSON files are malformed or not.
+                name.ends_with(".json") && serde_json::from_str::<serde_json::Value>(&text).is_err()
+            }
+        };
+        if broken && fs::copy(&stamp, &path).is_ok() {
+            restored.push(name.to_string());
+        }
+    }
+    restored
+}
+
 pub fn render(home: &Path) -> String {
     render_with(home, &ambient_value)
 }

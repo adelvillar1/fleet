@@ -414,6 +414,7 @@ async fn run_on_capped(
         identity: None,
         max_turns,
         capped: true,
+        health_note: false,
         ui_tx: None,
         lane_specs: None,
         calib: None,
@@ -454,6 +455,7 @@ async fn run_on(
     let client = Client::new(mock.url(), "test-key");
     let options = AgentOptions {
         capped: false,
+        health_note: false,
         session_id: None,
         goal: None,
         model: "test-model".to_string(),
@@ -498,6 +500,7 @@ async fn run_on_compacting(
         identity: None,
         max_turns: 5,
         capped: false,
+        health_note: false,
         ui_tx: None,
         lane_specs: None,
         calib: None,
@@ -535,6 +538,7 @@ async fn run_on_probe(
         identity: None,
         max_turns: 5,
         capped: false,
+        health_note: false,
         ui_tx: None,
         lane_specs: None,
         calib: None,
@@ -576,6 +580,7 @@ async fn run_with_lanes(
         identity: None,
         max_turns: 5,
         capped: false,
+        health_note: false,
         ui_tx: None,
         lane_specs,
         calib: None,
@@ -1394,6 +1399,7 @@ async fn a_disabled_tool_is_undeclared_and_its_call_names_the_rule() {
         identity: None,
         max_turns: 5,
         capped: false,
+        health_note: false,
         ui_tx: None,
         lane_specs: None,
         calib: None,
@@ -1579,6 +1585,7 @@ async fn run_in_folder(
     let client = Client::new(mock.url(), "test-key");
     let options = AgentOptions {
         capped: false,
+        health_note: false,
         session_id: None,
         goal: None,
         model: "test-model".to_string(),
@@ -2112,6 +2119,7 @@ async fn mcp_resources_and_prompts_are_listed_and_read() {
         identity: None,
         max_turns: 6,
         capped: false,
+        health_note: false,
         ui_tx: None,
         lane_specs: Some(lane_specs(&fake)),
         calib: None,
@@ -2264,6 +2272,7 @@ async fn send_file_emits_one_artifact_and_refuses_a_path_outside_the_folder() {
             identity: None,
             max_turns: 4,
             capped: false,
+            health_note: false,
             ui_tx: Some(ui_tx.clone()),
             lane_specs: None,
             calib: None,
@@ -2970,6 +2979,7 @@ async fn a_runs_thinking_is_logged_once_and_heard_before_the_answer() {
         identity: None,
         max_turns: 3,
         capped: false,
+        health_note: false,
         ui_tx: Some(ui_tx.clone()),
         lane_specs: None,
         calib: None,
@@ -3074,6 +3084,7 @@ async fn ui_events_arrive_in_order_and_beside_the_log() {
         identity: None,
         max_turns: 5,
         capped: false,
+        health_note: false,
         ui_tx: Some(ui_tx.clone()),
         lane_specs: None,
         calib: None,
@@ -3181,6 +3192,7 @@ async fn a_closed_ui_channel_does_not_break_the_run() {
         identity: None,
         max_turns: 5,
         capped: false,
+        health_note: false,
         ui_tx: Some(ui_tx),
         lane_specs: None,
         calib: None,
@@ -3236,6 +3248,7 @@ async fn a_denied_call_reports_its_result_event() {
         identity: None,
         max_turns: 5,
         capped: false,
+        health_note: false,
         ui_tx: Some(ui_tx.clone()),
         lane_specs: None,
         calib: None,
@@ -3316,6 +3329,7 @@ async fn a_failed_run_reports_a_failure_event() {
         identity: None,
         max_turns: 5,
         capped: false,
+        health_note: false,
         ui_tx: Some(ui_tx.clone()),
         lane_specs: None,
         calib: None,
@@ -4298,7 +4312,14 @@ impl Drop for AmbientKey {
 /// answer, so the old path refused the child at 0 turns.
 #[tokio::test]
 async fn a_dead_substrate_degrades_the_child_instead_of_refusing_it() {
-    let _ambient = AMBIENT_LOCK.lock().unwrap();
+    {
+        // The lock scopes the env setup; the AmbientKey holds the
+        // restore, the guard does not cross an await.
+        let lock = AMBIENT_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        drop(lock);
+    }
     // The child streams: the script is SSE frames, not a document.
     let mock = MockApi::start(vec![stream(vec![
         content_delta("the child's answer"),
@@ -4404,7 +4425,14 @@ async fn a_dead_substrate_degrades_the_child_instead_of_refusing_it() {
 /// parent's route, never a refusal.
 #[tokio::test]
 async fn a_child_routes_through_prepare_child_and_a_broken_config_never_refuses_it() {
-    let _ambient = AMBIENT_LOCK.lock().unwrap();
+    {
+        // The lock scopes the env setup; the AmbientKey holds the
+        // restore, the guard does not cross an await.
+        let lock = AMBIENT_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        drop(lock);
+    }
     // The child's own turns are the only calls: the route judgment is
     // served from the route cache or the fallback, never the mock.
     let mock = MockApi::start(vec![stream(vec![
@@ -4539,7 +4567,14 @@ async fn a_child_routes_through_prepare_child_and_a_broken_config_never_refuses_
 /// attempt and its outcome both reconstructable (hard rule 5).
 #[tokio::test]
 async fn a_down_service_rides_the_repair_note_and_the_models_bash_attempt_is_logged() {
-    let _ambient = AMBIENT_LOCK.lock().unwrap();
+    {
+        // The lock scopes the env setup; the AmbientKey holds the
+        // restore, the guard does not cross an await.
+        let lock = AMBIENT_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        drop(lock);
+    }
     // Turn one: the model answers the note with a bash probe of fleet
     // itself. Turn two: the final words.
     let mock = MockApi::start(vec![
@@ -4593,6 +4628,7 @@ async fn a_down_service_rides_the_repair_note_and_the_models_bash_attempt_is_log
         identity: None,
         max_turns: 4,
         capped: true,
+        health_note: true,
         ui_tx: None,
         lane_specs: None,
         calib: None,
@@ -4808,6 +4844,20 @@ async fn two_spawned_calls_share_one_server() {
 /// answers — with the lane's tools in the model's tool set from then on.
 #[tokio::test]
 async fn a_full_run_calls_the_real_sem1_lane_through_the_mock_api() {
+    // The world is pinned: a scratch FLEET_HOME with no provisioning,
+    // so the run-time health note has nothing to name and this test's
+    // message counts ride the fixture alone.
+    {
+        let lock = AMBIENT_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        drop(lock);
+    }
+    let _world = {
+        let scratch = temp_home("world-pin");
+        std::fs::create_dir_all(&scratch).unwrap();
+        AmbientKey::set("FLEET_HOME", scratch.to_str().unwrap())
+    };
     if !python3_available() {
         eprintln!("python3 is not on PATH; skipping the real-lane agent run");
         return;
@@ -5155,6 +5205,7 @@ async fn a_lane_joining_is_visible_and_its_child_is_closed() {
             identity: None,
             max_turns: 5,
             capped: false,
+            health_note: false,
             ui_tx: Some(ui_tx.clone()),
             lane_specs: Some(lane_specs(&fake)),
             calib: None,
@@ -5693,6 +5744,7 @@ async fn a_failed_head_fails_over_to_the_next_candidate() {
         identity: None,
         max_turns: 5,
         capped: false,
+        health_note: false,
         ui_tx: None,
         lane_specs: None,
         calib: None,
@@ -5816,6 +5868,7 @@ async fn a_committed_quota_failure_unlocks_the_walk() {
         identity: None,
         max_turns: 5,
         capped: false,
+        health_note: false,
         ui_tx: None,
         lane_specs: None,
         calib: None,
@@ -6340,6 +6393,7 @@ async fn a_composed_judgment_answers_through_the_blend1_lane() {
         identity: None,
         max_turns: 3,
         capped: false,
+        health_note: false,
         ui_tx: None,
         lane_specs: None,
         calib: Some(prepared.calib.clone()),
@@ -6475,6 +6529,7 @@ async fn a_lane_that_refuses_advances_the_walk_by_name() {
         identity: None,
         max_turns: 3,
         capped: false,
+        health_note: false,
         ui_tx: None,
         lane_specs: None,
         calib: Some(prepared.calib.clone()),
@@ -6632,6 +6687,7 @@ async fn a_named_role_rides_the_childs_prompt_and_narrows_its_tools() {
         identity: None,
         max_turns: 5,
         capped: false,
+        health_note: false,
         ui_tx: None,
         lane_specs: None,
         calib: None,
@@ -6723,6 +6779,7 @@ async fn an_unknown_role_is_refused_by_name_and_the_child_never_runs() {
         identity: None,
         max_turns: 5,
         capped: false,
+        health_note: false,
         ui_tx: None,
         lane_specs: None,
         calib: None,
@@ -6850,6 +6907,7 @@ async fn a_completed_run_records_its_screenings_and_its_turn_row() {
         identity: None,
         max_turns: 5,
         capped: false,
+        health_note: false,
         ui_tx: None,
         lane_specs: None,
         calib: Some(stream.clone()),
@@ -6928,6 +6986,7 @@ async fn a_failed_run_records_a_turn_row_with_the_failure_named() {
         identity: None,
         max_turns: 5,
         capped: false,
+        health_note: false,
         ui_tx: None,
         lane_specs: None,
         calib: Some(stream.clone()),
@@ -6997,6 +7056,7 @@ async fn a_turn_cap_records_max_turns_as_a_partial_ending() {
         // The capped loop is the delegation branch's contract; this
         // test drives it directly (the calib row's partial ending).
         capped: true,
+        health_note: false,
         ui_tx: None,
         lane_specs: None,
         calib: Some(stream.clone()),
@@ -7060,6 +7120,7 @@ async fn a_run_without_a_stream_records_nothing() {
             identity: None,
             max_turns: 5,
             capped: false,
+            health_note: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -7220,6 +7281,7 @@ async fn a_graded_failure_moves_the_failed_provider_down_its_chain() {
         identity: None,
         max_turns: 5,
         capped: false,
+        health_note: false,
         ui_tx: None,
         lane_specs: None,
         calib: Some(prepared.calib.clone()),
@@ -7339,6 +7401,7 @@ async fn run_with_skills(
         identity: None,
         max_turns: 5,
         capped: false,
+        health_note: false,
         ui_tx: None,
         lane_specs: None,
         calib: None,
@@ -8204,6 +8267,7 @@ async fn run_with_memory(
         identity: None,
         max_turns: 5,
         capped: false,
+        health_note: false,
         ui_tx: None,
         lane_specs: None,
         calib,
@@ -8779,6 +8843,7 @@ async fn run_with_improve(
         identity: None,
         max_turns: 5,
         capped: false,
+        health_note: false,
         ui_tx: None,
         lane_specs: None,
         calib: None,
@@ -9244,6 +9309,7 @@ async fn a_subagents_builtins_work_in_the_parents_folder() {
             identity: None,
             max_turns: 6,
             capped: false,
+            health_note: false,
             ui_tx: None,
             lane_specs: None,
             calib: None,
@@ -9324,6 +9390,7 @@ async fn a_chat_with_no_folder_cannot_touch_the_filesystem() {
         identity: None,
         max_turns: 4,
         capped: false,
+        health_note: false,
         ui_tx: None,
         lane_specs: None,
         calib: None,
@@ -9589,6 +9656,7 @@ async fn a_child_runs_on_the_routed_model_the_parent_runs_on() {
         identity: None,
         max_turns: 5,
         capped: false,
+        health_note: false,
         ui_tx: None,
         lane_specs: None,
         calib: None,
@@ -10076,6 +10144,7 @@ async fn run_capturing(
     let client = Client::new(mock.url(), "test-key");
     let options = AgentOptions {
         capped: false,
+        health_note: false,
         session_id: None,
         goal: None,
         model: "test-model".to_string(),
@@ -10522,6 +10591,20 @@ async fn one_compaction_per_crossing_and_the_tool_loop_survives_it() {
 
 #[tokio::test]
 async fn a_compacted_session_resumes_from_disk_and_continues_coherently() {
+    // The world is pinned: a scratch FLEET_HOME with no provisioning,
+    // so the run-time health note has nothing to name and this test's
+    // message counts ride the fixture alone.
+    {
+        let lock = AMBIENT_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        drop(lock);
+    }
+    let _world = {
+        let scratch = temp_home("world-pin");
+        std::fs::create_dir_all(&scratch).unwrap();
+        AmbientKey::set("FLEET_HOME", scratch.to_str().unwrap())
+    };
     // The resumed run's first request carries the summary the earlier run
     // logged, and its turns continue the log's own numbering.
     let home = temp_home("compaction-resume");
@@ -11139,6 +11222,7 @@ async fn a_registry_server_declares_from_the_first_request() {
         identity: None,
         max_turns: 5,
         capped: false,
+        health_note: false,
         ui_tx: None,
         lane_specs: None,
         calib: None,
@@ -11255,6 +11339,7 @@ async fn a_run_completes_over_a_registry_whose_server_is_unkeyed() {
         identity: None,
         max_turns: 5,
         capped: false,
+        health_note: false,
         ui_tx: None,
         lane_specs: None,
         calib: None,
@@ -11395,6 +11480,7 @@ async fn a_disabled_server_is_absent_from_the_declarations() {
         identity: None,
         max_turns: 5,
         capped: false,
+        health_note: false,
         ui_tx: None,
         lane_specs: None,
         calib: None,
@@ -11531,6 +11617,7 @@ async fn what_the_model_saw_is_the_request_itself() {
         identity: None,
         max_turns: 5,
         capped: false,
+        health_note: false,
         ui_tx: None,
         lane_specs: None,
         calib: None,
@@ -11776,6 +11863,7 @@ async fn a_layerfs_child_walks_the_coherence_sequence() {
         identity: None,
         max_turns: 9,
         capped: false,
+        health_note: false,
         ui_tx: None,
         lane_specs: None,
         calib: None,
@@ -11936,6 +12024,7 @@ async fn without_the_knob_the_delegation_never_touches_the_driver() {
         identity: None,
         max_turns: 8,
         capped: false,
+        health_note: false,
         ui_tx: None,
         lane_specs: None,
         calib: None,
@@ -12025,6 +12114,7 @@ async fn a_same_file_collision_is_a_conflict_the_parent_reads() {
         identity: None,
         max_turns: 8,
         capped: false,
+        health_note: false,
         ui_tx: None,
         lane_specs: None,
         calib: None,
@@ -12391,6 +12481,7 @@ async fn a_layerfs_live_coherence_findings_and_the_command_cadence() {
         identity: None,
         max_turns: 9,
         capped: false,
+        health_note: false,
         ui_tx: None,
         lane_specs: None,
         calib: None,
@@ -12529,6 +12620,7 @@ async fn a_settled_delegation_applies_the_merge_home() {
         identity: None,
         max_turns: 8,
         capped: false,
+        health_note: false,
         ui_tx: None,
         lane_specs: None,
         calib: None,
@@ -12994,6 +13086,20 @@ async fn the_reference_relay_carries_sealed_frames() {
 /// `curated` record names the turn, the shape, and the facts.
 #[tokio::test]
 async fn a_drifted_steer_recurates_memory_at_the_message_tail_and_the_prompt_holds() {
+    // The world is pinned: a scratch FLEET_HOME with no provisioning,
+    // so the run-time health note has nothing to name and this test's
+    // message counts ride the fixture alone.
+    {
+        let lock = AMBIENT_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        drop(lock);
+    }
+    let _world = {
+        let scratch = temp_home("world-pin");
+        std::fs::create_dir_all(&scratch).unwrap();
+        AmbientKey::set("FLEET_HOME", scratch.to_str().unwrap())
+    };
     let mock = MockApi::start(vec![
         tool_call_stream(
             "c1",
@@ -13208,6 +13314,7 @@ async fn a_design_run_emits_a_frame() {
         identity: None,
         max_turns: 4,
         capped: false,
+        health_note: false,
         ui_tx: None,
         lane_specs: None,
         calib: None,
@@ -13289,6 +13396,7 @@ async fn the_frame_tool_refuses_a_board_it_cannot_find() {
         identity: None,
         max_turns: 4,
         capped: false,
+        health_note: false,
         ui_tx: None,
         lane_specs: None,
         calib: None,

@@ -1375,6 +1375,7 @@ async fn drive_over(
     let client = Client::new(mock.url(), "test-key");
     let options = AgentOptions {
         capped: false,
+        health_note: false,
         session_id: None,
         goal: None,
         model: "test-model".to_string(),

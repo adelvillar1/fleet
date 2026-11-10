@@ -881,6 +881,7 @@ fn spawn_agent(config: AgentConfig) -> thread::JoinHandle<()> {
                             model: model.clone(),
                             max_turns: DEFAULT_MAX_TURNS,
                             capped: false,
+                            health_note: false,
                             // The re-route's seed: the same resolved id
                             // this preparation carries.
                             session_id: Some(prepared.session_id.clone()),

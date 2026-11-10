@@ -337,3 +337,19 @@ secondaries from the enabled models only. A workload whose name is
 outside the router's judged set (`JUDGED_WORKLOADS` — the six the
 sys1 `route` judgment answers) is marked **unjudged** on its card: it
 serves by a pin or as the default workload, never by judgment.
+
+## The failsafe's chain (the failsafe-restore plan's C5/C8, 0.6.22)
+
+Every order ends on the deepseek tail as before; routing.json's
+`local_tail: "provider/model"` — the owner's own act to configure a
+local runtime — appends the roster's final rung behind it, so the
+chain's last resort survives no connectivity. An exhausted walk names
+every skipped candidate with its cause and its repair
+(`deepseek: no-key — repair: set $DEEPSEEK_API_KEY`), and a walk whose
+every attempt network-failed says plainly that no connectivity with no
+local model configured is fleet's one unrecoverable failure. A routing
+config that cannot load degrades the run to the compiled-in declared
+order, named on the decision row's reason — never a silent swallow of
+a config typo. Pinned by `the_local_model_is_the_chains_final_rung`,
+`an_exhausted_walk_names_each_cause_and_its_repair`, and
+`a_connectivity_gone_walk_names_the_unrecoverable_state`.

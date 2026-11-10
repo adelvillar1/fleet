@@ -721,6 +721,14 @@ pub struct Gates {
     /// no default workload targets it, so it serves only as the
     /// failover tail.
     pub allow_api_models: bool,
+    /// The local model's rung (the failsafe plan's C8): a
+    /// `provider/model` string naming a roster candidate whose runtime
+    /// answers without connectivity — the owner's own act to set up.
+    /// It sits AFTER the deepseek tail as the chain's final rung, so
+    /// the last resort survives no connectivity. `None` — no local
+    /// model configured — is the one unrecoverable state, named in
+    /// the exhausted walk's failure text.
+    pub local_tail: Option<&'static str>,
 }
 
 impl Default for Gates {
@@ -729,6 +737,7 @@ impl Default for Gates {
             min_confidence: 0.6,
             default_workload: "standard_code",
             allow_api_models: true,
+            local_tail: None,
         }
     }
 }
@@ -1231,6 +1240,8 @@ struct GatesEntry {
     default_workload: Option<String>,
     #[serde(default)]
     allow_api_models: Option<bool>,
+    #[serde(default)]
+    local_tail: Option<String>,
 }
 
 /// The preference table and gates: the compiled-in defaults, with
@@ -1285,6 +1296,9 @@ fn load_routing(home: &Path) -> Result<(Vec<Preference>, Gates), ConfigError> {
         }
         if let Some(value) = entry.allow_api_models {
             gates.allow_api_models = value;
+        }
+        if let Some(value) = &entry.local_tail {
+            gates.local_tail = Some(leak_str(value));
         }
     }
     Ok((preferences, gates))
@@ -2472,7 +2486,84 @@ pub fn with_tail(
         TAIL_PROVIDER.to_string(),
         entry.candidate.model().to_string(),
     ));
+    // The local model's rung (the failsafe plan's C8): behind the
+    // reserve, the chain's last resort survives no connectivity —
+    // when the owner configured one and the roster carries it.
+    if let Some(local) = gates.local_tail {
+        if let Some((provider, model)) = local.split_once('/') {
+            if let Some(entry) = resolved.iter().find(|entry| entry.id() == provider) {
+                if entry.candidate.enabled
+                    && admissible(resolved, provider, gates)
+                    && !order.iter().any(|(p, _)| p == provider)
+                {
+                    order.push((provider.to_string(), model.to_string()));
+                }
+            }
+        }
+    }
     order
+}
+
+/// The failsafe plan's C8: a configured local model sits as the
+/// roster's final rung behind the deepseek tail; with none configured,
+/// the chain ends at the reserve.
+#[test]
+fn the_local_model_is_the_chains_final_rung_when_configured() {
+    let roster = default_roster();
+    let resolved: Vec<Resolved> = roster
+        .into_iter()
+        .map(|candidate| Resolved {
+            candidate,
+            key: None,
+        })
+        .collect();
+    let mut gates = Gates::default();
+    // No local model configured: the chain ends at the reserve.
+    let plain = with_tail(
+        vec![("stepfun".to_string(), "step-3.7-flash".to_string())],
+        &resolved,
+        &gates,
+    );
+    assert_eq!(plain.last().map(|(p, _)| p.as_str()), Some(TAIL_PROVIDER));
+    // A local rung naming a roster candidate: the chain ends at it.
+    let local_provider = resolved
+        .iter()
+        .find(|entry| entry.candidate.kind == CandidateKind::Http)
+        .map(|entry| entry.id().to_string())
+        .expect("the compiled-in roster carries an HTTP candidate");
+    let local_model = resolved
+        .iter()
+        .find(|entry| entry.id() == local_provider)
+        .map(|entry| entry.candidate.model().to_string())
+        .unwrap();
+    gates.local_tail = Some(format!("{local_provider}/{local_model}").leak());
+    let tailed = with_tail(
+        vec![("stepfun".to_string(), "step-3.7-flash".to_string())],
+        &resolved,
+        &gates,
+    );
+    assert_eq!(
+        tailed.last().map(|(p, _)| p.as_str()),
+        Some(local_provider.as_str()),
+        "the local rung is the chain's last"
+    );
+    assert!(
+        tailed.iter().any(|(p, _)| p == TAIL_PROVIDER),
+        "the reserve still rides before the local rung"
+    );
+    // A local rung naming a provider the roster does not carry is
+    // skipped, not fatal.
+    gates.local_tail = Some("nowhere/nothing");
+    let skipped = with_tail(
+        vec![("stepfun".to_string(), "step-3.7-flash".to_string())],
+        &resolved,
+        &gates,
+    );
+    assert_eq!(
+        skipped.last().map(|(p, _)| p.as_str()),
+        Some(TAIL_PROVIDER),
+        "an unknown local rung leaves the chain at the reserve"
+    );
 }
 
 /// [`with_tail`] for a route built without a resolved roster — the
@@ -3618,7 +3709,7 @@ impl Router {
                 }
             }
         }
-        Err(last_error.unwrap_or_else(|| {
+        let exhausted = last_error.unwrap_or_else(|| {
             // An exhausted walk with no attempt recorded names what it
             // skipped, each with its cause and the repair the owner or
             // the main session can act on (the failsafe plan's C5).
@@ -3628,7 +3719,7 @@ impl Router {
                 .iter()
                 .filter(|attempt| attempt.outcome == "skipped")
                 .map(|attempt| {
-                    let repair = match attempt.class.as_deref() {
+                    let repair = match attempt.class {
                         Some("no-key") => match self
                             .resolved
                             .iter()
@@ -3644,26 +3735,47 @@ impl Router {
                             "the calibration's own cell passed it over; nothing to repair"
                                 .to_string()
                         }
-                        _ => crate::health::repair_for(attempt.class.as_deref().unwrap_or(""))
-                            .to_string(),
+                        _ => crate::health::repair_for(attempt.class.unwrap_or("")).to_string(),
                     };
                     format!(
                         "{}: {} — repair: {}",
                         attempt.provider,
-                        attempt.class.as_deref().unwrap_or("unknown"),
+                        attempt.class.unwrap_or("unknown"),
                         repair
                     )
                 })
                 .collect();
+            let connectivity_gone = state.attempts.iter().any(|attempt| {
+                attempt.class == Some("network") || attempt.class == Some("timeout")
+            });
+            let unrecoverable = connectivity_gone;
+            let suffix = if unrecoverable {
+                " \u{b7} no connectivity: with no local model configured this is fleet's \
+                 one unrecoverable failure (the failsafe plan's C8)"
+            } else {
+                ""
+            };
             if causes.is_empty() {
-                ClientError::Network("no usable roster candidate remained".to_string())
+                ClientError::Network(format!("no usable roster candidate remained{suffix}"))
             } else {
                 ClientError::Network(format!(
-                    "no usable roster candidate remained ({})",
+                    "no usable roster candidate remained ({}){suffix}",
                     causes.join("; ")
                 ))
             }
-        }))
+        });
+        // The connectivity verdict rides the real failure too (the
+        // failsafe plan's C8): every attempt network-failed and no
+        // local rung served — the one unrecoverable state, named
+        // where the owner and the main session read it.
+        let network_gone = matches!(failure_class(&exhausted), "network" | "timeout");
+        if network_gone {
+            return Err(ClientError::Network(format!(
+                "{exhausted} \u{b7} no connectivity: with no local model configured \
+                 this is fleet's one unrecoverable failure (the failsafe plan's C8)"
+            )));
+        }
+        Err(exhausted)
     }
 
     /// One candidate's attempt: build the request with the position's
@@ -5736,6 +5848,51 @@ mod tests {
             "id": "x", "headers": { "x-a": "{session}" }
         }))
         .expect("the well-formed map passes the gate");
+    }
+
+    /// The failsafe plan's C8's second half: a walk whose every
+    /// attempt network-failed names the one unrecoverable state in
+    /// its failure text.
+    #[tokio::test]
+    async fn a_connectivity_gone_walk_names_the_unrecoverable_state() {
+        let mut candidate = default_roster()
+            .into_iter()
+            .find(|c| c.id == "deepseek")
+            .unwrap();
+        candidate.key_required = false;
+        candidate.base_url = "http://127.0.0.1:1/v1".to_string();
+        let resolved = resolve(std::slice::from_ref(&candidate), &HashMap::new());
+        let decision = RouteDecision {
+            provider: "deepseek".to_string(),
+            model: "deepseek-model".to_string(),
+            how: How::Fallback,
+            workload: Some("standard_code".to_string()),
+            verdict: None,
+            execution: None,
+            reason: "test".to_string(),
+            judged_from: crate::route::JudgedFrom::None,
+            start_index: 0,
+            order: vec![("deepseek".to_string(), "deepseek-model".to_string())],
+        };
+        let router = Router::new(resolved, decision);
+        let message = crate::api::Message::text(crate::api::Role::User, "hi");
+        let request = crate::api::ChatRequest {
+            model: "deepseek-model",
+            messages: std::slice::from_ref(&message),
+            tools: Vec::new(),
+            max_tokens: None,
+        };
+        let outcome = router.chat_stream(&request, &mut |_| {}).await;
+        let error = outcome.expect_err("a dead endpoint fails the walk");
+        let text = error.to_string();
+        assert!(
+            text.contains("no connectivity"),
+            "the walk names the unrecoverable state: {text}"
+        );
+        assert!(
+            text.contains("one unrecoverable failure"),
+            "the text names what it is: {text}"
+        );
     }
 
     /// The failsafe plan's C5: an exhausted walk names every skipped

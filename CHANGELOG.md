@@ -87,6 +87,38 @@ branch, the assets build refused to run off-tag, and an empty release held
 `releases/latest` until it was marked a prerelease. v0.6.19 carries the
 section below, and the changelog keeps 0.6.18 as the record.
 
+## v0.6.22 — 2026-11-10
+
+The failsafe: the chain restores fleet to working order, never refuses
+(the failsafe-restore plan, phases A through D).
+
+- **The health loop** — the app probes the critical services on a beat
+  (layerfs's worker port, each vendored lane's presence, docker's
+  daemon, the API's key), `/api/state` carries the verdicts, and the
+  face paints a card naming every down service beside its repair
+  verb. A transition announces itself; the face repaints without
+  waiting for its poll.
+- **Degradation over refusal** — a delegation whose LayerFS workspace
+  cannot open runs on the main session's model and route with the
+  plain launch folder; a child whose route cannot be prepared rides
+  the parent's route; a routing config that cannot load degrades the
+  run to the compiled-in declared order. Every degradation is named
+  in the row, the result, and the transcript — never silent, never a
+  refusal.
+- **The repair note** — a run whose provisioned substrate is named
+  down carries the repair on its first request: the service, the
+  cause, and the verb, logged as `SystemNote` so the request stays
+  reconstructable. The main session repairs through its own bash and
+  the standing approval gate; an exhausted chain names every
+  candidate's cause and its repair — and no connectivity with no
+  local model configured is named as the one unrecoverable failure.
+- **The local tail and `fleet recover`** — routing.json's
+  `local_tail: "provider/model"` puts a configured local model behind
+  the deepseek tail as the chain's last rung; `fleet recover`
+  restores every settings file whose current form is broken from its
+  last-known-good stamp (every settings write stamps one) and names
+  the probes' fresh verdicts.
+
 ## v0.6.18 — 2026-11-09
 
 One composer, the app's list column, the artifact in the centre, its
