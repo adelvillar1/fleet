@@ -51,7 +51,50 @@ specs, lane tools counted at the known-spec mean since their schemas are
 not compiled in. Re-run the command after each phase; the plan's criteria
 compare against this table.
 
-## Head-to-head (C1)
+## Head-to-head (C1, measured 2026-11-10)
 
-Pending — the offline replay grades GLiDE, d1, and Drex against the
-recorded choices. Results land here with the kill-gate decision.
+The command:
+
+```sh
+python3 scripts/selection-headtohead.py --sample 120 --providers glide,drex,liquid
+```
+
+120 recorded selection turns (deterministic stride over the archive in name
+order), each asked of every head over that session's own declared catalog
+(mean 27 options). Ground truth: the recorded choice, when the call resolved
+`exact`/`alias` and its result did not fail. The head sees the intent alone —
+the owner's last message plus the assistant's step so far — a deliberately
+harder task than the model's context-full baseline.
+
+| head | answered | top-1 | top-3 hit | accuracy | margin AUC | errors |
+|---|---|---|---|---|---|---|
+| drex | 120 | 68 | 75.8% | 56.7% | 0.756 | 0 |
+| glide | 119 | 61 | 76.5% | 51.3% | 0.787 | 1 |
+| liquid | 119 | 34 | 55.5% | 28.6% | 0.568 | 1 |
+
+**The kill gate fires.** The plan's rule: a head must beat baseline
+selection to carry a runtime phase. Baseline selection accuracy is 99.1%
+(C0: 0.9% wrong-tool with full context); the best head reproduces 56.7%
+of recorded choices from intent alone, and its top-3 — the number C2's
+injection actually needs — is 76.5%. Injection as specified would leave
+roughly one turn in four without the tool the model wanted, regressing the
+wrong-tool rate far past the baseline's 0.9%. **Phases 1, 2, and 3 (the
+head-consuming selection phases) do not proceed.** This is the gate doing
+its job: one day of measurement, no runtime change, and the honest answer.
+
+What the data still says, recorded for any future pivot:
+
+- **The heads are calibrated even where they are not sharp.** Glide's
+  margin AUC is 0.787 — its top-minus-second probability separates its own
+  right answers from its wrong ones. Drex carries the best top-1; glide
+  the best calibration. A verifier role (C4's shape: score the emitted
+  call, not pick the tool) is the role this data supports, not selection.
+- **Liquid d1 is the wrong head for tool selection** (28.6% top-1, AUC
+  0.568 — barely better than chance at ranking). Its strength elsewhere
+  (vision_qc, needs_generation) is untouched by this result.
+- **Phase 5's heads are different tasks** — destructive yes/no, shape
+  classification, silent-stop — none of which this replay measured. The
+  plan gates each of those seams on its own pinned test (the head must
+  beat the word list), so they proceed only as fast as their own
+  measurements prove them.
+- Phases 4 and 6 were built independent of head sharpness and proceed.

@@ -211,10 +211,14 @@ checkbox order — never reorder after gating.
   0.9% (235/26,556), malformed-argument 0.1% (28), repair 54.2% (496/915),
   declaration tax 8,028 est. tokens/request of ~70.2k prompt; gate green
   2,337 passed.)
-- [ ] C1: An offline replay grades GLiDE, d1, and Drex heads on recorded
+- [x] C1: An offline replay grades GLiDE, d1, and Drex heads on recorded
   selection turns, reports top-1 accuracy and margin AUC per head against C0's
   baseline, and names the primary head (or records the kill-gate outcome that
   stops the head-consuming phases).
+  (Landed 2026-11-10: 120 turns, 3 heads — drex 56.7% top-1 / 0.756 AUC,
+  glide 51.3% / 0.787, liquid 28.6% / 0.568. **Kill gate fires**: no head
+  beats the 99.1% baseline; Phases 1-3 stop, 4 and 6 proceed. Full table
+  and reasoning in docs/features/selection.md §head-to-head.)
 - [ ] C2: On the designated session kind, the turn's tool set comes from a
   top-k choice-head injection instead of the full declaration set, with
   measured tokens/request below C0's baseline and wrong-tool rate no worse
@@ -516,6 +520,15 @@ Whole-program gate (every code increment): `cargo fmt --all --check`,
 - dev-decisions plan-gate caps were raised this session (section 2000→4000
   chars; a plan-state budget sized for a 20-criterion plan) — D-001's
   truncation-reporting half remains open in that skill's ledger.
+
+- **The C1 kill-gate outcome (2026-11-10):** no head beats baseline
+  selection (best: drex 56.7% top-1 vs the model's 99.1%). The
+  head-consuming selection phases (1, 2, 3) stop per the gate; Phase 4
+  (prose) and Phase 6 (hosted capabilities) proceed as designed. Phase 5's
+  seams are different head tasks, each gated on its own pinned test. The
+  plan continues; the criteria C2-C9 stay open and unclaimed unless the
+  owner re-opens them with new evidence (the heads' calibration — glide
+  AUC 0.787 — is the recorded lead for a pivot).
 
 ## Cleanup ledger (C20)
 
