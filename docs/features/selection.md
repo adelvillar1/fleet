@@ -1,19 +1,17 @@
 # Selection — the decision-head seam
 
-The grounded-selection plan's feature doc. One home for the seam's contract,
-the measured baseline every criterion compares against, and the head-to-head
-results. Status mirrors `docs/plans/2026-11-10-grounded-selection.md`.
+The grounded-selection plan's feature doc: the seam's contract, the
+measured baseline, every question shape tried (wins and failures), and
+what each taught about asking. Status mirrors
+`docs/plans/2026-11-10-grounded-selection.md`.
 
 ## Baseline (C0, measured 2026-11-10)
-
-The command:
 
 ```sh
 cargo run --bin fleet -- tools audit --all
 ```
 
-The numbers, over the whole archive — 764 session logs played, 0 skipped
-(2 non-log entries in the sessions dir are not logs):
+Over the whole archive — 764 session logs played, 0 skipped:
 
 | Number | Value | Denominator |
 |---|---|---|
@@ -21,75 +19,142 @@ The numbers, over the whole archive — 764 session logs played, 0 skipped
 | Failures (error/denied results) | 915 (3.4%) | calls |
 | **Wrong-tool rate** | **0.9%** (235) | calls — refused resolutions |
 | **Malformed-argument rate** | **0.1%** (28) | calls — `error[validation]` |
-| **Repair-turn rate** (recovery after a failure) | **54.2%** (496) | failures |
-| **Mean declaration tokens per request** | **8,028 est.** (chars/4; lane tools at the known-spec mean) | 9,321 requests declaring a tool set |
-| Mean declared tools per request | 27.3 | same |
-| Mean prompt tokens per request | 70,167 | 9,413 API-answered requests |
-| Resolutions | exact 20,584 · refused 235 · retrieved 2 | resolutions recorded |
+| **Repair-turn rate** (recovery) | **54.2%** (496) | failures |
+| **Mean declaration tokens/request** | **8,028 est.** (chars/4) | 9,321 requests |
+| Mean declared tools/request | 27.3 | same |
+| Mean prompt tokens/request | 70,167 | 9,413 requests |
+| Resolutions | exact 20,584 · refused 235 · retrieved 2 | recorded |
 
-Reading the numbers:
+The declaration tax is ~11% of every request. `retrieved` resolutions
+are 2 of 20,821 — the deferred-tools machinery almost never runs.
+Re-run after each phase; the criteria compare against this table.
 
-- **The declaration tax is real and measured**: ~8.0k of ~70.2k prompt
-  tokens per request — ~11% of every request is tool definitions, before
-  the conversation. C2's injection attacks this number directly.
-- **The model rarely names a wrong tool** (0.9%) and almost never
-  malforms arguments (0.1%) — the emitted call is not the weak link.
-  Selection quality beyond "the name parses" is what C1's head-to-head
-  grades: whether a calibrated head can match the recorded choice.
-- **Half of failures repair** (54.2%) — the other half died on the first
-  error. C4's verify+repair leg targets that half: a head verdict before
-  execution costs a forward pass instead of a flagship turn.
-- **`retrieved` resolutions are 2 of 20,821** — `tool_search`'s two-stage
-  selection almost never runs in practice. The deferred-tools machinery
-  exists; the catalog-as-choice injection (C2) is where selection
-  actually happens.
+## Head-to-head (C1, measured 2026-11-10) — the kill gate
 
-Method notes: the aggregate reads the logs alone — no model, no lane, no
-network. Subagent logs are included (children's calls are real calls).
-Declaration tokens are an estimate by design: chars/4 over the compiled
-specs, lane tools counted at the known-spec mean since their schemas are
-not compiled in. Re-run the command after each phase; the plan's criteria
-compare against this table.
+```sh
+python3 scripts/selection-headtohead.py --sample 120 --providers glide,drex,liquid
+```
 
-## The composite replays (2026-11-10, the owner's stacked-calls question)
+120 recorded selection turns, each asked of every head over that
+session's own declared catalog. Ground truth: the recorded choice when
+the call resolved `exact`/`alias` and did not fail. The head sees the
+intent alone — deliberately harder than the model's context-full task.
 
-The owner asked: what if the question is broken into multiple atomic
-sys1 calls instead of one pass? Three shapes measured on the same 120
-turns (`scripts/c-composite-measure.py`, `scripts/c-atomic-measure.py`):
+| head | answered | top-1 | top-3 hit | accuracy | margin AUC | errors |
+|---|---|---|---|---|---|---|
+| drex | 120 | 68 | 75.8% | 56.7% | 0.756 | 0 |
+| glide | 119 | 61 | 76.5% | 51.3% | 0.787 | 1 |
+| liquid | 119 | 34 | 55.5% | 28.6% | 0.568 | 1 |
+
+**The kill gate fired.** No head approaches the model's own 99.1%
+name-accuracy; C2's injection would leave one turn in four without the
+wanted tool in its top-3. **Phases 1-3 (C2-C9) stopped.** What the data
+keeps: the heads are calibrated (glide margin AUC 0.787), liquid d1 is
+the wrong head for selection (28.6%, AUC 0.568), and Phase 5's seams
+are different tasks with their own gates.
+
+## The failure review: every miss, and what it taught about asking
+
+Ten shapes measured across three vendors on the same 120 turns. Each
+failure, its score, and its lesson:
+
+**1. A1/A2c — taxonomy narrowing** (45.0% / 42.5% top-1; failed
+identically on drex at 44.9%). Asked "which class?" then "which tool in
+class?". Failed because the taxonomy was invented and uncalibrated —
+and hard narrowing makes a pass-1 miss unrecoverable. **Lesson:
+condition, never hard-narrow; a narrowing error compounds,
+conditioning keeps the option set alive.**
+
+**2. B — noul fan-out over every tool** (49.2% top-1, top-3 collapsed
+to 62.5%). Asked "does each tool serve the intent?" independently.
+Failed because tool candidates are mutually competitive — choosing one
+is not-choosing the others — and independent judgments cannot express
+that. **Lesson: decompose only properties that are genuinely
+independent.**
+
+**3. Score fan-out** (1.7% top-1 — below random). Asked 27 ordinal
+grades in one request. The diagnostic showed all 27 heads collapse to
+score=5.0 with identical confidence — a wire artifact, not an answer.
+**Lessons: diagnose below-random results before believing them; the
+documented examples carry 2-3 heads per call, and 27 score heads sits
+outside the practical envelope; the vendor's "score each item
+separately" means separate calls.**
+
+**4. LFM3-in-the-middle** (re-rank 30.3%, weed 20.2%). Asked the small
+generative model to rank and to shortlist. Failed: its selection
+judgment is weak — its own vendor caveat ("not recommended for agentic
+coding") is real. **Lesson: role-assign by measured strength, not by
+availability.**
+
+**5. Cross-vendor verification** (identical to control on both mixes).
+Glide's noul on drex's shortlist and the reverse. Failed: noul
+calibrations do not transfer across vendors on this task. **Lesson:
+compose within a vendor's calibration; cross-vendor ensembles need an
+arbitrating call, not a transplanted score.**
+
+**6. Canonical framing** (52.5%/54.2% top-1 — no gain; top-3 dropped
+~12pp on both vendors). The vendor's own routing recipe applied:
+described criteria on every label, an explicit `no_tool` escape route,
+structured state, native margin. Failed to gain because tool options
+are too semantically similar for descriptions to separate — the
+descriptions diffuse the distribution
+(`scripts/c-canonical-measure.py`). **Lesson: descriptions help when
+the destinations are distinct; on similar options they add plausible
+competitors.**
+
+**7. The meta-failure — selection-from-intent itself.** Eight shapes,
+three vendors, two framings; nothing approaches the model's own 99.1%.
+The root cause is not any question's wording: **the recorded choice
+depended on conversation state — tool results, prior calls, the
+model's plan — that no intent-only question carries. The task was
+under-determined from the start.** Lesson, and the review's first
+rule: **before measuring shapes, test whether the answer exists in the
+information the question carries.**
+
+**What worked, and its shared shape:**
+
+- weed-then-verify product (54.6% glide top-1) — comparative x
+  independent signals multiplied
+- the conditioned pipeline (55.5% / 79.0% — the best glide family) —
+  soft conditioning + verification
+- the destructive head (1/1 recall, 76/77 precision) — one independent
+  property, one question
+
+Every winner asks a question whose answer is IN the supplied
+information, judges an independent property, and (when composed)
+multiplies with a comparative signal from the same vendor. Every loser
+violates one of those three. The runtime question that passes all
+three — "is this emitted call right?" — is the verifier measurement
+still unrun.
+
+## The composite replays (2026-11-10)
+
+The owner's stacked-calls question: break the selection into multiple
+atomic sys1 calls. Shapes measured
+(`scripts/c-composite-measure.py`, `scripts/c-atomic-measure.py`,
+`scripts/c-score-measure.py`, `scripts/c-lfm3-measure.py`):
 
 | shape | top-1 | top-3 |
 |---|---|---|
-| flat single pass — glide (C1's baseline) | 51.3% | 76.5% |
-| flat — drex (C1's best) | **56.7%** | 75.8% |
-| A1 classify→decide (glide) | 45.0% | 45.8% |
-| B atomic fan-out — one request, N yes/no heads (glide) | 49.2% | 62.5% |
-| A2c clean top-2-class union (glide) | 42.5% | 63.3% |
-| A1 on drex (cross-vendor confirmation) | 44.9% | 45.8% |
+| flat — drex (best single) | **56.7%** | 75.8% |
+| flat — glide | 51.3% | 76.5% |
+| weed-then-verify product — glide | 54.6% | 78.2% |
+| conditioned pipeline — glide | 55.5% | **79.0%** |
+| B noul fan-out — glide | 49.2% | 62.5% |
+| A1 classify→decide — glide / drex | 45.0% / 44.9% | 45.8% |
+| A2c top-2-class union — glide | 42.5% | 63.3% |
+| L1 LFM3 re-rank — glide weed | 30.3% | 35.3% |
+| L2 LFM3 schema-aware weed | 20.2% | 22.7% |
+| score fan-out — glide (wire artifact) | 1.7% | 2.5% |
 
-None beat the flat pass — and A1's failure replicates across vendors
-(drex: 44.9% top-1, 46% class hit; its A2 carried the same leak and is
-discarded like glide's). The why is the useful part: **a decomposition
-cuts at the question's independence structure**. TTESS's 45-minute-form
-pipeline (five domain chunks in parallel, an aggregator, TypeSafe
-predicate decisions, Fastino extraction, deterministic guards) composes
-well because domains are structurally independent. Tool selection's
-candidates are *mutually competitive* — choosing one is not-choosing the
-others — so per-tool independent judgments (B) lose exactly the
-information the ranking needs (its top-3 collapses to 62.5%), and a
-hand-invented taxonomy (A1/A2c) loses at the narrow. The first A2 run
-was contaminated by a ground-truth leak in the harness and discarded;
-A2c is the clean re-run.
-
-The shapes that measured sharp are the ones where the decomposed
-question IS independent: destructive-or-not (C12, landed), rendered-vs-
-brief (C17, landed), this-emission-valid (C19, landed), and the verifier
-framing of C4 — which is where the C2-C9 re-open lives.
+Cross-vendor verification (drex-weed × glide-verify and the reverse)
+measured identical to control: the noul calibrations do not transfer.
 
 ## Weed-then-verify (the owner's shape, 2026-11-10)
 
-One flat pass weeds the catalog to its top-5; one batched noul request
-verifies each survivor independently; the re-rank combines the signals.
-Both vendors (`scripts/c-weed-measure.py`):
+One flat pass weeds to top-5; one batched noul request verifies each
+survivor; the re-rank combines the signals
+(`scripts/c-weed-measure.py`, weed×verify provider-choosable):
 
 | variant | glide top-1 / top-3 | drex top-1 / top-3 |
 |---|---|---|
@@ -98,90 +163,46 @@ Both vendors (`scripts/c-weed-measure.py`):
 | **flat × noul product** | **54.6%** / 78.2% | 53.0% / **79.5%** |
 | flat alone, same subsets | 52.1% / 78.2% | 53.0% / 76.9% |
 
-The consistent finding across both vendors: **the noul verification pass
-improves the top-3 ordering (+2.5pp) even where it does not improve
-top-1, and multiplied with the flat probability — never alone — it
-nudges top-1 on glide.** The noul-only re-rank actively hurts top-1: a
-relevance score is not a choice score. The two signals compose because
-they measure different things — the flat pass is comparative (competing
-candidates), the noul pass is independent (does this one serve the
-intent). That is ensemble-by-disagreement in miniature, and it is the
-measured basis for the verifier pivot: in the runtime, the model's
-emission plays the flat pass and the head's verification composes with
-it — the product decides act or repair. Per-run gains are 2-3 turns
-(within noise individually); the cross-vendor consistency is the
-evidence.
+The noul pass improves the top-3 ordering (+2.5pp) on both vendors even
+where it does not improve top-1; multiplied with the flat probability —
+never alone — it nudges glide's top-1. The two signals compose because
+they measure different things: the flat pass is comparative, the noul
+pass independent. Per-run gains are 2-3 turns (within noise
+individually); the cross-vendor consistency is the evidence.
 
-## The composite replays (2026-11-10, the owner's stacked-calls question)
+## The conditioned pipeline (the owner's second shape, 2026-11-10)
 
-The measurement (`scripts/c12-destructive-measure.py`): 78 real bash
-commands from the archive — every command the substring list flags (59)
-plus a stride sample of unflagged ones — hand-labeled on one rule
-(destructive = destroys work that is not trivially recoverable). One
-command in the set is destructive; the rest are temp-file, lock, and
-probe cleanup.
+Shape-condition the question, keep the full catalog visible, verify the
+winner (`scripts/c-conditioned-measure.py`): Q2 shape-conditioned
+choice 49.6% / 78.2%; **P (Q2 × Q3 noul verification): 55.5% top-1 /
+79.0% top-3 — the best glide family measured.** Three independently
+designed compositions land in the same band (54.5-55.5% / 78-80%):
+the composed family genuinely refines the flat pass, and its value is
+the verification signal — exactly what the verifier measurement tests
+at the emission.
+
+## The destructive head (C12, measured 2026-11-10)
+
+`scripts/c12-destructive-measure.py`: 78 real bash commands from the
+archive — every substring-list flag (59) plus a stride sample of
+unflagged ones — hand-labeled on one rule. One command destructive; the
+rest temp-file, lock, and probe cleanup.
 
 | classifier | destructive recall | safe precision | false flags |
 |---|---|---|---|
 | **GLiDE yes/no head** | **1/1** | **76/77** | **1** |
 | fleet's `DESTRUCTIVE` list | 0/1 | 69/77 | 8 |
 
-The head catches the one destructive command (a tracked script removed
-and the removal pushed) that the list cannot see — `git rm --cached`
-carries no marker — and false-flags one safe command where the list
-flags eight. The label distribution is extreme (1 destructive / 77 safe)
-and the labels are one rater's; the honest claim is narrower than the
-table looks: **the head adds detections at comparable-or-better
-precision on real traffic**, which is the per-seam gate C12 needed.
-Landed as the pre-pass in `execute_calls`: the list stays the fast path
-(a listed command never spends), an unlisted bash command asks the head
-through an inline `task_spec`, and a `yes` annotates the call so the
-ordinary gate asks. A dead lane changes nothing.
+The head catches the tracked-file removal the list cannot see and
+false-flags once where the list flags eight. Landed as the pre-pass in
+`execute_calls`: the list stays the zero-spend fast path, an unlisted
+bash command asks the head through an inline `task_spec`, and a `yes`
+annotates the call so the ordinary gate asks. A dead lane changes
+nothing.
 
-## Head-to-head (C1, measured 2026-11-10)
+## Head-to-head notes
 
-The command:
-
-```sh
-python3 scripts/selection-headtohead.py --sample 120 --providers glide,drex,liquid
-```
-
-120 recorded selection turns (deterministic stride over the archive in name
-order), each asked of every head over that session's own declared catalog
-(mean 27 options). Ground truth: the recorded choice, when the call resolved
-`exact`/`alias` and its result did not fail. The head sees the intent alone —
-the owner's last message plus the assistant's step so far — a deliberately
-harder task than the model's context-full baseline.
-
-| head | answered | top-1 | top-3 hit | accuracy | margin AUC | errors |
-|---|---|---|---|---|---|---|
-| drex | 120 | 68 | 75.8% | 56.7% | 0.756 | 0 |
-| glide | 119 | 61 | 76.5% | 51.3% | 0.787 | 1 |
-| liquid | 119 | 34 | 55.5% | 28.6% | 0.568 | 1 |
-
-**The kill gate fires.** The plan's rule: a head must beat baseline
-selection to carry a runtime phase. Baseline selection accuracy is 99.1%
-(C0: 0.9% wrong-tool with full context); the best head reproduces 56.7%
-of recorded choices from intent alone, and its top-3 — the number C2's
-injection actually needs — is 76.5%. Injection as specified would leave
-roughly one turn in four without the tool the model wanted, regressing the
-wrong-tool rate far past the baseline's 0.9%. **Phases 1, 2, and 3 (the
-head-consuming selection phases) do not proceed.** This is the gate doing
-its job: one day of measurement, no runtime change, and the honest answer.
-
-What the data still says, recorded for any future pivot:
-
-- **The heads are calibrated even where they are not sharp.** Glide's
-  margin AUC is 0.787 — its top-minus-second probability separates its own
-  right answers from its wrong ones. Drex carries the best top-1; glide
-  the best calibration. A verifier role (C4's shape: score the emitted
-  call, not pick the tool) is the role this data supports, not selection.
-- **Liquid d1 is the wrong head for tool selection** (28.6% top-1, AUC
-  0.568 — barely better than chance at ranking). Its strength elsewhere
-  (vision_qc, needs_generation) is untouched by this result.
-- **Phase 5's heads are different tasks** — destructive yes/no, shape
-  classification, silent-stop — none of which this replay measured. The
-  plan gates each of those seams on its own pinned test (the head must
-  beat the word list), so they proceed only as fast as their own
-  measurements prove them.
-- Phases 4 and 6 were built independent of head sharpness and proceed.
+The measurement reads the logs alone where it can; the replay harness
+(`scripts/selection-headtohead.py`) is the shared turn loader for every
+shape on this page — same 120 turns, same ground truth, deterministic
+stride — so every scoreboard above compares like with like.
