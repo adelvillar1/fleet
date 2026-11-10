@@ -427,6 +427,24 @@ mod prose_tests {
         dir
     }
 
+    #[test]
+    fn narrate_with_a_dead_spec_is_none_and_the_caller_falls_back() {
+        // C11's fallback contract at the helper's own seam: a lane that
+        // cannot spawn narrates nothing — the caller's today-text is
+        // the answer, byte-identical by construction. (A home-based
+        // "no lane" cannot be assumed on a machine whose bundled copy
+        // resolves — the dead spec is the hermetic shape.)
+        let spec = crate::mcp::ServerSpec {
+            program: "/nonexistent/fleet-no-such-lane-bin".to_string(),
+            args: Vec::new(),
+            env: Vec::new(),
+            passthrough: Vec::new(),
+            cwd: None,
+        };
+        let narrated = narrate_with_spec(&spec, "system", "facts", 1024, |_| Ok(()));
+        assert!(narrated.is_none());
+    }
+
     #[tokio::test]
     async fn the_prose_act_writes_title_and_summary_sidecars() {
         // Each lane call spawns a fresh mock child that re-reads the

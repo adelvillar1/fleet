@@ -1092,6 +1092,18 @@ fn report_walk(prepared: &route::Prepared) {
 /// live tree only when a gate says so. Best-effort throughout: an
 /// unreadable log or an unwritable proposals directory drafts nothing
 /// and fails nothing.
+/// Every backtick-quoted name in a prose text — the advisor narration's
+/// grounding check.
+fn backticked_names(text: &str) -> Vec<String> {
+    text.split('`')
+        .skip(1)
+        .step_by(2)
+        .map(str::trim)
+        .filter(|name| !name.is_empty() && !name.contains(' '))
+        .map(str::to_string)
+        .collect()
+}
+
 fn draft_lessons(home: &std::path::Path, session_path: &std::path::Path) {
     let user_home = std::env::var("HOME").ok();
     let skills_dir = std::env::var("FLEET_SKILLS_DIR").ok();
@@ -1534,7 +1546,41 @@ async fn tools_command(options: &cli::ToolsOptions) -> ExitCode {
     match &options.action {
         cli::ToolsAction::Advise { .. } => {
             let advice = fleet::tool_advisor::advise(&scan);
-            print!("{}", fleet::tool_advisor::render_advice(&advice, &scan));
+            // Grounded-selection C11: the card is the deterministic
+            // input; the lane narrates it into one grounded paragraph —
+            // every backticked name validated against the known tools —
+            // and the card itself is the named fallback.
+            let card = fleet::tool_advisor::render_advice(&advice, &scan);
+            let known: std::collections::BTreeSet<String> = fleet::tools::known_tool_names()
+                .into_iter()
+                .map(str::to_string)
+                .collect();
+            let narrated = fleet::generate::narrate_sync(
+                &home,
+                "You narrate fleet's tool-advice card for the owner: one short \
+                 paragraph naming the tools and the actions the card carries, \
+                 grounded in it. Never invent a tool name; never add advice the \
+                 card does not carry.",
+                &card,
+                1024,
+                |text| {
+                    let trimmed = text.trim();
+                    if trimmed.is_empty() {
+                        return Err("the narration is empty".to_string());
+                    }
+                    if trimmed.lines().count() > 40 {
+                        return Err("the narration is unbounded".to_string());
+                    }
+                    for name in backticked_names(trimmed) {
+                        if !known.contains(&name) && !name.starts_with("mcp__") {
+                            return Err(format!("the narration names an unknown tool `{name}`"));
+                        }
+                    }
+                    Ok(())
+                },
+            )
+            .unwrap_or(card);
+            println!("{narrated}");
         }
         _ => print!("{}", fleet::tool_advisor::render_scan(&scan)),
     }
