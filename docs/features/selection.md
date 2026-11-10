@@ -82,7 +82,34 @@ question IS independent: destructive-or-not (C12, landed), rendered-vs-
 brief (C17, landed), this-emission-valid (C19, landed), and the verifier
 framing of C4 — which is where the C2-C9 re-open lives.
 
-## The destructive head (C12, measured 2026-11-10)
+## Weed-then-verify (the owner's shape, 2026-11-10)
+
+One flat pass weeds the catalog to its top-5; one batched noul request
+verifies each survivor independently; the re-rank combines the signals.
+Both vendors (`scripts/c-weed-measure.py`):
+
+| variant | glide top-1 / top-3 | drex top-1 / top-3 |
+|---|---|---|
+| the weed's own pick | 52.1% / — | 53.0% / — |
+| noul-only re-rank | 35.3% / **79.8%** | 51.3% / **79.5%** |
+| **flat × noul product** | **54.6%** / 78.2% | 53.0% / **79.5%** |
+| flat alone, same subsets | 52.1% / 78.2% | 53.0% / 76.9% |
+
+The consistent finding across both vendors: **the noul verification pass
+improves the top-3 ordering (+2.5pp) even where it does not improve
+top-1, and multiplied with the flat probability — never alone — it
+nudges top-1 on glide.** The noul-only re-rank actively hurts top-1: a
+relevance score is not a choice score. The two signals compose because
+they measure different things — the flat pass is comparative (competing
+candidates), the noul pass is independent (does this one serve the
+intent). That is ensemble-by-disagreement in miniature, and it is the
+measured basis for the verifier pivot: in the runtime, the model's
+emission plays the flat pass and the head's verification composes with
+it — the product decides act or repair. Per-run gains are 2-3 turns
+(within noise individually); the cross-vendor consistency is the
+evidence.
+
+## The composite replays (2026-11-10, the owner's stacked-calls question)
 
 The measurement (`scripts/c12-destructive-measure.py`): 78 real bash
 commands from the archive — every command the substring list flags (59)
