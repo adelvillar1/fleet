@@ -725,6 +725,12 @@ pub struct DelegatedRunRow {
     /// The turns the child ran.
     #[serde(default)]
     pub turns: u64,
+    /// The degradation the child ran under (the failsafe plan's
+    /// C1/C2): the workspace that did not open, the route that could
+    /// not be prepared — the child ran anyway, and the row says what
+    /// it gave up. Absent on the ordinary run.
+    #[serde(default)]
+    pub degraded: Option<String>,
     /// What the delegation spent, in USD — the child's own spend, not
     /// the beat's.
     #[serde(default)]
@@ -4499,6 +4505,7 @@ mod tests {
         // word the writer put there — a row the reader could not join
         // would land and be invisible (the KI-164 class).
         let row = DelegatedRunRow {
+            degraded: None,
             ts: "2026-10-15T09:00:00Z".to_string(),
             session: "20261015T090000Z-abcdef".to_string(),
             brief_shape: "task+approach+context+done".to_string(),

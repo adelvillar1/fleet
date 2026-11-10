@@ -1354,6 +1354,12 @@ pub struct SubagentResult {
     /// the block renders only when there is one, so the result is
     /// byte-identical to the one it always was (the plan's C3).
     pub workspace: Option<crate::layerfs_tools::WorkspaceReport>,
+    /// The degradation this run ran under (the failsafe plan's C1/C2):
+    /// the workspace could not open, or the child's route could not be
+    /// prepared — the child ran anyway, on the main session's model and
+    /// route, and this names what it gave up. `None` for every run that
+    /// needed no degradation, which is the ordinary one.
+    pub degraded: Option<String>,
 }
 
 /// What one delegated run reports about the angle between the approach
@@ -1399,6 +1405,7 @@ impl SubagentResult {
             delta: DeltaReport::default(),
             goal: String::new(),
             workspace: None,
+            degraded: None,
         }
     }
 
@@ -1435,6 +1442,12 @@ impl SubagentResult {
         }
         if !self.log.as_os_str().is_empty() {
             text.push_str(&format!(" \u{b7} log {}", self.log.display()));
+        }
+        // The degradation, named where the parent reads (the failsafe
+        // plan's C1/C2): the child ran anyway, and the parent sees
+        // what it gave up.
+        if let Some(degraded) = &self.degraded {
+            text.push_str(&format!(" \u{b7} degraded: {degraded}"));
         }
         text.push('\n');
         // The workspace facts, when this child worked in one: the
@@ -2040,14 +2053,27 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
     // hands the child the same client, which is the shape every test
     // double has always had. A route that cannot be prepared is a named
     // refusal, the way a parent's would have failed its startup.
+    // The degradation this run ran under, if any — named in the row
+    // and the result, never silent (the failsafe plan's C1/C2).
+    let mut degraded: Option<String> = None;
     let own_route = match (home.as_deref(), client.router().is_some()) {
         (Some(home), true) => {
             match crate::route::prepare_child(home, &message, &lane_specs, pin.as_deref()).await {
                 Ok(prepared) => Some(prepared),
+                // A route that cannot be prepared is not a work
+                // refusal (the failsafe plan's C2): the child rides
+                // the main session's model and route, and the
+                // degradation rides the row and the result.
                 Err(error) => {
-                    return SubagentResult::refused(format!(
-                        "the child's route could not be prepared: {error}"
-                    ))
+                    eprintln!(
+                        "fleet: the child's route could not be prepared ({error}); \
+                         it runs on the main session's model and route"
+                    );
+                    degraded = Some(format!(
+                        "the route could not be prepared ({error}); \
+                         the child runs on the main session's model and route"
+                    ));
+                    None
                 }
             }
         }
@@ -2205,50 +2231,32 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
             .await;
             match opened {
                 Ok(Ok(handle)) => Some(handle),
+                // A workspace that cannot open is not a work refusal
+                // (the failsafe plan's C1): the child runs without it
+                // — the plain launch folder, no branch isolation — on
+                // the main session's model and route, and the
+                // degradation rides the row and the result.
                 Ok(Err(error)) => {
-                    let result = SubagentResult {
-                        summary: String::new(),
-                        goal: goal.clone(),
-                        session: session.clone(),
-                        log: log.clone(),
-                        turns: 0,
-                        outcome: Outcome::Failed,
-                        reason: Some(format!("the delegated workspace could not open: {error}")),
-                        delta: DeltaReport {
-                            own: None,
-                            children: Vec::new(),
-                            offered: brief.offers_an_approach(),
-                        },
-                        workspace: None,
-                    };
-                    land_delegation_row(
-                        stream.as_ref(),
-                        delegation_row(
-                            &brief,
-                            &recorded_scope,
-                            child_route.provider.as_deref(),
-                            &result,
-                            &chain,
-                            started.elapsed().as_millis() as u64,
-                        ),
+                    eprintln!(
+                        "fleet: the delegated workspace could not open ({error}); \
+                         the child runs without it, on the launch folder"
                     );
-                    emit(
-                        &ui_tx,
-                        UiEvent::Subagent {
-                            goal: label.clone(),
-                            session: result.session.clone(),
-                            stage: SubagentStage::Done {
-                                outcome: Outcome::Failed.label().to_string(),
-                                turns: 0,
-                            },
-                        },
-                    );
-                    return result;
+                    degraded = Some(format!(
+                        "the workspace could not open ({error}); \
+                         the child runs on the launch folder without the LayerFS isolation"
+                    ));
+                    None
                 }
                 Err(join_error) => {
-                    return SubagentResult::refused(format!(
-                        "the delegated workspace could not be awaited: {join_error}"
+                    eprintln!(
+                        "fleet: the delegated workspace could not be awaited ({join_error}); \
+                         the child runs without it, on the launch folder"
+                    );
+                    degraded = Some(format!(
+                        "the workspace could not be awaited ({join_error}); \
+                         the child runs on the launch folder without the LayerFS isolation"
                     ));
+                    None
                 }
             }
         }
@@ -2326,6 +2334,7 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
                         offered: brief.offers_an_approach(),
                     },
                     workspace: None,
+                    degraded: degraded.clone(),
                 };
                 // A handle that opened must be settled even though
                 // the loop never ran: nothing worth keeping, so its
@@ -2383,6 +2392,7 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
     let records = crate::session::replay(&log).unwrap_or_default();
     let mut result = match outcome {
         Ok(report) => SubagentResult {
+            degraded: degraded.take(),
             summary: report.final_message.unwrap_or_default(),
             session,
             log,
@@ -2401,6 +2411,7 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
             workspace: None,
         },
         Err(error) => SubagentResult {
+            degraded: degraded.take(),
             summary: String::new(),
             session,
             log,
@@ -2569,6 +2580,7 @@ fn delegation_row(
         provider: provider.unwrap_or_default().to_string(),
         outcome: result.outcome.label().to_string(),
         turns: result.turns,
+        degraded: result.degraded.clone(),
         // The crate prices no model tokens — there is no price table
         // anywhere in it — so the spend is zero rather than invented,
         // and the judge's prompt reads `unpriced` instead of printing a
@@ -2911,6 +2923,7 @@ mod tests {
     #[test]
     fn the_recorded_preview_carries_the_goal() {
         let result = SubagentResult {
+            degraded: None,
             summary: "the child's words".to_string(),
             session: "s-1".to_string(),
             log: std::path::PathBuf::from("/tmp/s-1.jsonl"),
@@ -2926,6 +2939,7 @@ mod tests {
         assert!(text.contains("session s-1"), "{text}");
         // No goal — an older result — renders exactly as it did.
         let plain = SubagentResult {
+            degraded: None,
             goal: String::new(),
             ..result
         };
@@ -3179,6 +3193,7 @@ mod tests {
     #[test]
     fn a_result_renders_its_outcome_its_turns_and_its_log() {
         let result = SubagentResult {
+            degraded: None,
             summary: "found three call sites".to_string(),
             session: "20261014T000000Z-abcdef".to_string(),
             log: PathBuf::from("/tmp/sessions/20261014T000000Z-abcdef.jsonl"),
@@ -3201,6 +3216,7 @@ mod tests {
         assert!(text.ends_with("found three call sites"), "{text}");
         // One turn is not "1 turns".
         let one = SubagentResult {
+            degraded: None,
             turns: 1,
             ..result.clone()
         };
@@ -3210,6 +3226,7 @@ mod tests {
     #[test]
     fn a_failure_renders_its_reason_and_never_returns_silence() {
         let failed = SubagentResult {
+            degraded: None,
             summary: "checked two of five files".to_string(),
             session: "child-1".to_string(),
             log: PathBuf::from("/tmp/sessions/child-1.jsonl"),
@@ -3225,6 +3242,7 @@ mod tests {
         assert!(text.contains("checked two of five files"), "{text}");
         // No words at all still says so, and still names the log.
         let silent = SubagentResult {
+            degraded: None,
             summary: String::new(),
             ..failed.clone()
         };
@@ -3333,6 +3351,7 @@ mod tests {
             request_id: None,
         }));
         let result = SubagentResult {
+            degraded: None,
             summary: String::new(),
             session: "child-1".to_string(),
             log: PathBuf::from("/tmp/child-1.jsonl"),
@@ -3829,6 +3848,7 @@ mod tests {
         // exactly as `run` reads it off the log.
         let middle = Delta::parse("--- DELTA ---\nstatus: followed\n--- END DELTA ---").unwrap();
         let result = SubagentResult {
+            degraded: None,
             summary: "the middle node's answer".to_string(),
             session: "middle-1".to_string(),
             log: PathBuf::from("/tmp/middle-1.jsonl"),
@@ -3874,6 +3894,7 @@ mod tests {
         )
         .unwrap();
         let result = SubagentResult {
+            degraded: None,
             // A child that wrote a novel.
             summary: "x".repeat(tools::MAX_TOOL_OUTPUT * 2),
             session: "child-1".to_string(),
@@ -3903,6 +3924,7 @@ mod tests {
         assert!(outcome.output.len() > tools::MAX_TOOL_OUTPUT);
         // A result with no delta is bounded exactly as it always was.
         let plain = SubagentResult {
+            degraded: None,
             delta: DeltaReport::default(),
             goal: String::new(),
             ..result.clone()
@@ -3920,6 +3942,7 @@ mod tests {
     #[test]
     fn a_result_with_no_delta_names_the_absence_when_one_was_asked_for() {
         let offered = SubagentResult {
+            degraded: None,
             summary: "I did the work".to_string(),
             session: "child-1".to_string(),
             log: PathBuf::from("/tmp/child-1.jsonl"),
@@ -3942,6 +3965,7 @@ mod tests {
         // A brief that offered no approach asks for no delta, and the
         // rendered result is exactly the one this module always sent.
         let plain = SubagentResult {
+            degraded: None,
             delta: DeltaReport::default(),
             goal: String::new(),
             ..offered.clone()
@@ -4067,6 +4091,7 @@ console.log(JSON.stringify({
             notes: vec!["main moved while the child worked — kept for resolution".to_string()],
         };
         let result = SubagentResult {
+            degraded: None,
             summary: "the work".to_string(),
             session: "child-1".to_string(),
             log: PathBuf::from("/tmp/child-1.jsonl"),
@@ -4109,6 +4134,7 @@ console.log(JSON.stringify({
         // No workspace, no block, no ids: the default run's result and
         // row read exactly as they always did (the plan's C3).
         let plain = SubagentResult {
+            degraded: None,
             workspace: None,
             ..result
         };
@@ -4263,6 +4289,7 @@ console.log(JSON.stringify({
         };
         let scope = Scope::child(Some(vec!["bash".to_string()]), 1);
         let result = SubagentResult {
+            degraded: None,
             summary: "the child counted three files".to_string(),
             session: "child-1".to_string(),
             log: PathBuf::from("/tmp/sessions/child-1.jsonl"),

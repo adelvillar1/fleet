@@ -89,6 +89,7 @@ fn delegation_row(
     outcome: &str,
 ) -> DelegationRow {
     DelegationRow {
+        degraded: None,
         ts: "2026-10-14T12:00:00Z".to_string(),
         session: session.to_string(),
         brief_shape: brief_shape.to_string(),

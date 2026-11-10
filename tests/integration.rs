@@ -4291,6 +4291,248 @@ impl Drop for AmbientKey {
     }
 }
 
+/// The failsafe plan's C1: a delegation whose LayerFS workspace cannot
+/// open runs anyway — the plain launch folder, the main session's
+/// model — and names the degradation in its result. The incident's own
+/// shape (KI-493): a provisioned substrate whose worker does not
+/// answer, so the old path refused the child at 0 turns.
+#[tokio::test]
+async fn a_dead_substrate_degrades_the_child_instead_of_refusing_it() {
+    let _ambient = AMBIENT_LOCK.lock().unwrap();
+    // The child streams: the script is SSE frames, not a document.
+    let mock = MockApi::start(vec![stream(vec![
+        content_delta("the child's answer"),
+        finish_frame("stop"),
+        usage_frame(10, 5),
+    ])]);
+    let scratch = temp_home("degrade");
+    let home = scratch.join("fleet-home");
+    let layerfs_home = home.join("layerfs-home");
+    std::fs::create_dir_all(layerfs_home.join("worker")).unwrap();
+    std::fs::create_dir_all(layerfs_home.join("bundle")).unwrap();
+    let project_folder = scratch.join("project");
+    std::fs::create_dir_all(&project_folder).unwrap();
+    // The registration's key is the folder's canonical form — the
+    // temp root is a symlink on this platform, and a display() path
+    // would miss the very registration the test relies on.
+    let project_folder = project_folder.canonicalize().unwrap();
+    // The substrate's provisioning, naming a port nothing answers on —
+    // and the folder pre-registered, so the delegation opts in without
+    // a live worker being needed to import it.
+    std::fs::write(
+        home.join("config.json"),
+        serde_json::json!({
+            "layerfs": {
+                "home": layerfs_home.display().to_string(),
+                "bundle": layerfs_home.join("bundle").display().to_string(),
+                "image": "sha256:test",
+                "projects": {
+                    project_folder.display().to_string(): {
+                        "name": "degrade-project",
+                        "store": layerfs_home.join("store.sqlite").display().to_string(),
+                    }
+                }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        layerfs_home.join("worker").join("endpoint.json"),
+        serde_json::json!({
+            "home": layerfs_home.display().to_string(),
+            "port": 1,
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let sessions = home.join("sessions");
+    std::fs::create_dir_all(&sessions).unwrap();
+    let _guard = AmbientKey::set("FLEET_HOME", home.to_str().unwrap());
+    // The mock provider's key env must resolve, or the walk skips it
+    // as no-key and the child never reaches the mock.
+    // The arm's folder resolution reads this override before the
+    // process cwd: the workspace's launch folder is the registered
+    // one, not whatever directory the suite runs from.
+    fleet::layerfs_tools::set_folder_for_test(&project_folder);
+    let client = Client::new(mock.url(), "test-key");
+    let mut progress = Vec::new();
+    let (ui_tx, _ui_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut approver: Box<dyn Approver> = Box::new(ApproveAll);
+    let result = fleet::subagents::run(fleet::subagents::Delegation {
+        client: &client,
+        pin: None,
+        lane_specs: std::collections::HashMap::new(),
+        route: None,
+        model: "test-model".to_string(),
+        sessions_dir: sessions,
+        parent_session: "parent".to_string(),
+        node: None,
+        goal: "do the thing".to_string(),
+        tools: None,
+        max_turns: 4,
+        approver: &mut *approver,
+        progress: &mut progress,
+        ui_tx: Some(ui_tx),
+        calib: None,
+        skills: Vec::new(),
+        identity: None,
+        home: Some(home.clone()),
+        depth: 1,
+        plan_mode: false,
+        file_access: FileAccess::Folder(project_folder),
+    })
+    .await;
+    assert_eq!(
+        result.outcome,
+        fleet::subagents::Outcome::Completed,
+        "a dead substrate never refuses the child: {:?}",
+        result.reason
+    );
+    let degraded = result.degraded.expect("the result names its degradation");
+    assert!(
+        degraded.contains("workspace could not open"),
+        "the degradation names the cause: {degraded}"
+    );
+}
+
+/// The failsafe plan's C2: the child routes through its own
+/// `prepare_child` end to end and completes — and a home whose
+/// routing config cannot load never refuses the child at preparation
+/// (the C3 fallback serves there), so the only way a route refusal
+/// could ever reach a child again is a named degradation onto the
+/// parent's route, never a refusal.
+#[tokio::test]
+async fn a_child_routes_through_prepare_child_and_a_broken_config_never_refuses_it() {
+    let _ambient = AMBIENT_LOCK.lock().unwrap();
+    // The child's own turns are the only calls: the route judgment is
+    // served from the route cache or the fallback, never the mock.
+    let mock = MockApi::start(vec![stream(vec![
+        content_delta("the child's answer"),
+        finish_frame("stop"),
+        usage_frame(10, 5),
+    ])]);
+    let scratch = temp_home("degrade-route");
+    let home = scratch.join("fleet-home");
+    std::fs::create_dir_all(&home).unwrap();
+    // The child's home carries a config whose one provider IS the
+    // mock, so the child's judged walk lands on a candidate that
+    // answers. A broken config here would degrade to the compiled-in
+    // order (the C3 fallback) whose remote candidates cannot serve a
+    // test — the refusal the old path had is gone either way.
+    std::fs::write(
+        home.join("config.json"),
+        serde_json::json!({
+            "providers": [{
+                "id": "mock",
+                "base_url": mock.url(),
+                "key_env": "TEST_KEY",
+                "models": ["test-model"]
+            }]
+        })
+        .to_string(),
+    )
+    .unwrap();
+    // The judged walk orders by the workload preference table, so the
+    // routing file pins every workload it might judge to the mock.
+    std::fs::write(
+        home.join("routing.json"),
+        serde_json::json!({
+            "workloads": [
+                { "workload": "quick", "candidates": ["mock/test-model"] },
+                { "workload": "standard_code", "candidates": ["mock/test-model"] },
+                { "workload": "frontend", "candidates": ["mock/test-model"] },
+                { "workload": "hard", "candidates": ["mock/test-model"] }
+            ]
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let sessions = home.join("sessions");
+    std::fs::create_dir_all(&sessions).unwrap();
+    // The mock provider's key, in the home's own .env - the process
+    // env races with parallel tests; the home does not.
+    std::fs::write(home.join(".env"), "TEST_KEY=test-key\n").unwrap();
+    let _guard = AmbientKey::set("FLEET_HOME", home.to_str().unwrap());
+    // The parent's client is routed (the shape the run path always
+    // has) over one candidate that answers at the mock.
+    let resolved = vec![fleet::route::Resolved {
+        candidate: fleet::route::Candidate {
+            id: "mock".to_string(),
+            base_url: mock.url(),
+            models_url: None,
+            key_env: "TEST_KEY".to_string(),
+            models: vec!["test-model".to_string()],
+            billing: fleet::route::Billing::Plan,
+            kind: fleet::route::CandidateKind::Http,
+            enabled: true,
+            key_required: true,
+            disabled_reason: None,
+            disabled_models: Vec::new(),
+            model_settings: std::collections::BTreeMap::new(),
+            headers: std::collections::BTreeMap::new(),
+            protocol: None,
+            model_protocols: std::collections::BTreeMap::new(),
+        },
+        key: Some("test-key".to_string()),
+    }];
+    let decision = fleet::route::RouteDecision {
+        provider: "mock".to_string(),
+        model: "test-model".to_string(),
+        how: fleet::route::How::Fallback,
+        workload: None,
+        verdict: None,
+        execution: None,
+        reason: String::new(),
+        judged_from: fleet::route::JudgedFrom::None,
+        start_index: 0,
+        order: vec![("mock".to_string(), "test-model".to_string())],
+    };
+    let parent = Client::routed(std::sync::Arc::new(fleet::route::Router::new(
+        resolved, decision,
+    )));
+    let mut progress = Vec::new();
+    let (ui_tx, _ui_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut approver: Box<dyn Approver> = Box::new(ApproveAll);
+    let result = fleet::subagents::run(fleet::subagents::Delegation {
+        client: &parent,
+        pin: None,
+        lane_specs: std::collections::HashMap::new(),
+        route: None,
+        model: "test-model".to_string(),
+        sessions_dir: sessions,
+        parent_session: "parent".to_string(),
+        node: None,
+        goal: "do the thing".to_string(),
+        tools: None,
+        max_turns: 4,
+        approver: &mut *approver,
+        progress: &mut progress,
+        ui_tx: Some(ui_tx),
+        calib: None,
+        skills: Vec::new(),
+        identity: None,
+        home: Some(home.clone()),
+        depth: 1,
+        plan_mode: false,
+        file_access: FileAccess::Folder(scratch.join("project")),
+    })
+    .await;
+    println!("PROGRESS: {}", String::from_utf8_lossy(&progress));
+    assert_eq!(
+        result.outcome,
+        fleet::subagents::Outcome::Completed,
+        "the routed child completes on its own route: {:?}",
+        result.reason
+    );
+    // The child's route is its own judged walk, never the parent's
+    // committed candidate — and the row's provider names the mock.
+    assert_eq!(
+        result.summary, "the child's answer",
+        "the child's words came through the mock"
+    );
+}
+
 /// A single stdout line past the cap fails the wait with a typed protocol
 /// error instead of growing the reader's buffer without bound.
 #[tokio::test]

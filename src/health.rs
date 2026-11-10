@@ -12,6 +12,8 @@
 //! server; a lane's full health probe stays where it was, on demand.
 
 use std::path::Path;
+#[cfg(test)]
+use std::path::PathBuf;
 use std::time::Duration;
 
 /// How often the server's loop probes the fast tier.
@@ -101,10 +103,7 @@ fn layerfs_probe(home: &Path) -> ServiceHealth {
         .and_then(|v| v.get("port").and_then(|p| p.as_u64()))
         .map(|p| p as u16);
     let Some(port) = port else {
-        return ServiceHealth::down(
-            "layerfs",
-            "the endpoint file names no port — install again",
-        );
+        return ServiceHealth::down("layerfs", "the endpoint file names no port — install again");
     };
     if crate::net::listening("127.0.0.1", port, CONNECT_TIMEOUT) {
         ServiceHealth::up("layerfs")
@@ -135,7 +134,10 @@ fn api_probe(home: &Path) -> ServiceHealth {
         .filter(|k| !k.trim().is_empty());
     match from_home {
         Some(_) => ServiceHealth::up("api"),
-        None => ServiceHealth::down("api", "no DEEPSEEK_API_KEY in the environment or the home's .env"),
+        None => ServiceHealth::down(
+            "api",
+            "no DEEPSEEK_API_KEY in the environment or the home's .env",
+        ),
     }
 }
 
@@ -221,11 +223,8 @@ impl HealthReport {
     /// itself (a slow pass carries two lines a fast pass omits) is
     /// never read as a transition.
     pub fn transitioned_from(&self, previous: &HealthReport) -> bool {
-        let before: std::collections::HashMap<&str, bool> = previous
-            .services
-            .iter()
-            .map(|s| (s.name, s.up))
-            .collect();
+        let before: std::collections::HashMap<&str, bool> =
+            previous.services.iter().map(|s| (s.name, s.up)).collect();
         self.services
             .iter()
             .any(|s| before.get(s.name).map(|up| *up != s.up).unwrap_or(false))
@@ -260,7 +259,10 @@ pub(crate) fn write_endpoint(home: &Path, port: u16) -> PathBuf {
     let endpoint = dir.join("endpoint.json");
     std::fs::write(
         &endpoint,
-        format!(r#"{{"home":"{}/layerfs-home","port":{port}}}"#, home.display()),
+        format!(
+            r#"{{"home":"{}/layerfs-home","port":{port}}}"#,
+            home.display()
+        ),
     )
     .expect("endpoint write");
     endpoint

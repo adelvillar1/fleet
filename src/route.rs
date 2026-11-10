@@ -3137,6 +3137,12 @@ struct RouterState {
     /// row rather than flattened away (the owner's ruling on the
     /// blend1 adapter).
     lane_note: Option<String>,
+    /// The config degradation this route prepared under (the failsafe
+    /// plan's C3): the routing config could not load, the walk
+    /// proceeds on the compiled-in declared order, and the reason
+    /// rides the decision row so no reader mistakes it for a judged
+    /// order.
+    degraded: Option<String>,
     /// The named refusal a lane candidate's failure left on the row:
     /// the lane's own words, so a reader sees WHY the composed leg
     /// advanced rather than inferring it from a bare class.
@@ -3205,6 +3211,12 @@ impl Router {
     /// The pin this route was prepared under, when the run has one.
     pub fn pin(&self) -> Option<&str> {
         self.pin.as_deref()
+    }
+
+    /// Names the config degradation the preparation fell back from —
+    /// the run proceeds, the row remembers (the failsafe plan's C3).
+    pub fn note_degraded(&self, note: String) {
+        lock(&self.state).degraded = Some(note);
     }
 
     /// A router over `resolved` whose walk passes over the calibration's
@@ -3293,6 +3305,7 @@ impl Router {
                 calibration_clauses: Vec::new(),
                 lane_note: None,
                 lane_failure: None,
+                degraded: None,
             }),
             calibration_skips,
             pin,
@@ -3395,6 +3408,14 @@ impl Router {
         // words, so the row says why the walk advanced.
         if let Some(failure) = &state.lane_failure {
             reason.push_str(&format!("; {failure}"));
+        }
+        // The config degradation's clause (the failsafe plan's C3):
+        // the row names the compiled-in fallback beside the walk it
+        // describes, so a degraded order is never read as judged.
+        if let Some(note) = &state.degraded {
+            reason.push_str(&format!(
+                " \u{b7} the routing config could not load ({note}); the order is the compiled-in one"
+            ));
         }
         // The reserve served as the tail — every routed candidate before
         // it failed — and the row says so, rather than reading like a
@@ -3813,7 +3834,27 @@ async fn prepare_walk(
     session_seed: Option<&str>,
     carries_image: bool,
 ) -> Result<Prepared, ConfigError> {
-    let mut roster = load_roster(home)?;
+    // The config refusal is not a run refusal (the failsafe plan's
+    // C3): a routing config that cannot load degrades to the
+    // compiled-in declared order, loudly — named on stderr and on the
+    // decision row's reason, never a silent swallow of a config typo.
+    let mut degraded_config: Option<String> = None;
+    let mut roster = match load_roster(home) {
+        Ok(roster) => roster,
+        Err(error) => {
+            eprintln!(
+                "fleet: the routing config could not load ({error}); \
+                 the run proceeds on the compiled-in declared order"
+            );
+            degraded_config = Some(error.to_string());
+            Roster {
+                candidates: default_roster(),
+                pin: None,
+                preferences: default_preferences(),
+                gates: Gates::default(),
+            }
+        }
+    };
     if let Some(pin) = pin {
         roster.pin = Some(pin.to_string());
     }
@@ -3982,6 +4023,9 @@ async fn prepare_walk(
         &session_id,
         &trace_id,
     ));
+    if let Some(note) = degraded_config {
+        router.note_degraded(note);
+    }
     Ok(Prepared {
         router,
         decision,
@@ -4318,6 +4362,69 @@ fn plain(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // --- the config degradation (the failsafe plan's C3) ---
+
+    /// A broken routing config is not a run refusal: `prepare` proceeds
+    /// on the compiled-in declared order, the degradation is named on
+    /// the decision row's reason, and the pin still applies.
+    #[tokio::test]
+    async fn a_broken_routing_config_degrades_to_the_compiled_in_order_and_names_it() {
+        let home = std::env::temp_dir().join(format!("fleet-route-degrade-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::write(home.join("config.json"), "not json at all {").unwrap();
+        let prepared = prepare(&home, &HashMap::new(), "the task", &HashMap::new(), None)
+            .await
+            .expect("a broken config degrades, never refuses");
+        let row = prepared.router.row("the task", 0);
+        assert!(
+            row.reason.contains("could not load"),
+            "the row names the degradation: {:?}",
+            row.reason
+        );
+        assert!(
+            row.reason.contains("compiled-in"),
+            "the row names the fallback order: {:?}",
+            row.reason
+        );
+        // The compiled-in roster resolved: the walk has candidates and
+        // every order ends on the failover tail.
+        assert!(!prepared.router.resolved().is_empty());
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// The degraded run renders what it gave up (the failsafe plan's
+    /// C1/C2): the parent's tool_result names the degradation beside
+    /// the outcome.
+    #[test]
+    fn a_degraded_result_names_what_it_gave_up_in_its_render() {
+        let result = crate::subagents::SubagentResult {
+            summary: "the child's words".to_string(),
+            session: "child".to_string(),
+            log: std::path::PathBuf::from("/tmp/child.jsonl"),
+            turns: 1,
+            outcome: crate::subagents::Outcome::Completed,
+            reason: None,
+            goal: "the goal".to_string(),
+            delta: Default::default(),
+            workspace: None,
+            degraded: Some(
+                "the workspace could not open (connect refused); the child runs on the \
+                 launch folder without the LayerFS isolation"
+                    .to_string(),
+            ),
+        };
+        let rendered = result.render();
+        assert!(
+            rendered.contains("degraded: the workspace could not open"),
+            "the render names the degradation: {rendered}"
+        );
+        assert!(
+            rendered.contains("subagent completed"),
+            "the outcome still reads normally: {rendered}"
+        );
+    }
 
     // --- the context windows ---
 

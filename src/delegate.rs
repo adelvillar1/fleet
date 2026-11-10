@@ -354,6 +354,7 @@ pub async fn rerun(
             crate::calib::record_delegation(
                 &calib,
                 crate::calib::DelegatedRunRow {
+                    degraded: None,
                     ts: crate::calib::stamp(),
                     session: outcome.session.clone(),
                     brief_shape: brief.shape(),

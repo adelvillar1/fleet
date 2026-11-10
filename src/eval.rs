@@ -4989,6 +4989,7 @@ async fn delta_replan(_mock_bin: PathBuf) -> ScenarioOutcome {
     let mut parent = deviated(DeltaReason::Infeasible, false, "restructured first");
     parent.children = vec![child.clone()];
     let result = crate::subagents::SubagentResult {
+        degraded: None,
         goal: String::new(),
         summary: "restructured first".to_string(),
         session: "sess-mid".to_string(),
