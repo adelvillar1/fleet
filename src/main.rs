@@ -1446,7 +1446,24 @@ async fn tools_command(options: &cli::ToolsOptions) -> ExitCode {
         eprintln!("fleet: no home directory known; set FLEET_HOME or HOME");
         return ExitCode::from(2);
     };
-    if let cli::ToolsAction::Audit { session } = &options.action {
+    if let cli::ToolsAction::Audit { session, all } = &options.action {
+        if *all {
+            let paths: Vec<std::path::PathBuf> = fleet::session::list(&home)
+                .map(|list| list.into_iter().map(|summary| summary.path).collect())
+                .unwrap_or_default();
+            if paths.is_empty() {
+                eprintln!(
+                    "fleet: no sessions in {}",
+                    fleet::home::sessions_dir(&home).display()
+                );
+                return ExitCode::from(2);
+            }
+            print!(
+                "{}",
+                fleet::tool_audit::render_aggregate(&fleet::tool_audit::aggregate(&paths))
+            );
+            return ExitCode::SUCCESS;
+        }
         let path = match session {
             Some(id) => fleet::home::sessions_dir(&home).join(format!("{id}.jsonl")),
             None => match fleet::session::list(&home)

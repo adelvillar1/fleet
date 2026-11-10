@@ -204,9 +204,13 @@ These are the contract. Each one is a verifiable assertion. The work is "done"
 when every box is checked. **Order is identity**: criteria are C0, C1, … in
 checkbox order — never reorder after gating.
 
-- [ ] C0: A baseline report naming today's wrong-tool rate, malformed-argument
+- [x] C0: A baseline report naming today's wrong-tool rate, malformed-argument
   rate, repair-turn rate, and mean declaration tokens per request is written
   to `docs/features/selection.md` with the measurement commands that produced it.
+  (Landed 2026-11-10: `fleet tools audit --all` over 764 logs — wrong-tool
+  0.9% (235/26,556), malformed-argument 0.1% (28), repair 54.2% (496/915),
+  declaration tax 8,028 est. tokens/request of ~70.2k prompt; gate green
+  2,337 passed.)
 - [ ] C1: An offline replay grades GLiDE, d1, and Drex heads on recorded
   selection turns, reports top-1 accuracy and margin AUC per head against C0's
   baseline, and names the primary head (or records the kill-gate outcome that
@@ -522,3 +526,8 @@ Whole-program gate (every code increment): `cargo fmt --all --check`,
   `cache-sweep.sh --dry-run` clean — nothing to sweep (target/ 5.5 GiB;
   the 0.6.22/0.6.23 session's own sweep already ran). After = same 124 GiB
   free; net disk cost of activation: zero.
+- **Phase 0 (C0), 2026-11-10:** code increment = the `--all` aggregate in
+  `src/tool_audit.rs` + `src/cli.rs` + `src/main.rs` (gate green end to
+  end, 2,337 passed); docs = `docs/features/selection.md` §baseline. No
+  worktree, no build lanes beyond the main tree's own gate target/;
+  `df -h /` after = 124 GiB free — unchanged. Net disk cost: zero.

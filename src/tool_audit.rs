@@ -27,6 +27,10 @@ pub struct Audit {
     /// Of the calls that failed, the share followed by a later success
     /// of the same tool. `None` when nothing failed.
     pub recovery: Option<f64>,
+    /// The recovered and failed counts behind `recovery`, carried so an
+    /// aggregate can sum rates instead of re-deriving them from shares.
+    pub recovered: usize,
+    pub failures: usize,
     /// Resolutions by method.
     pub methods: BTreeMap<String, usize>,
     /// Resolutions by tier.
@@ -35,6 +39,21 @@ pub struct Audit {
     /// supplied at least half the arguments, `default` when the schema
     /// defaults carried it. C1's grounding, read as one number.
     pub argument_source: BTreeMap<String, usize>,
+    /// `Declarations` records seen — the requests whose tool set the log
+    /// named. The grounded-selection baseline's denominator for the
+    /// declaration tax.
+    pub decl_requests: usize,
+    /// Sum of declared tool names across those requests.
+    pub decl_names_sum: usize,
+    /// Sum of estimated declaration tokens (chars/4, the house
+    /// convention) across those requests. Lane tools, whose schemas are
+    /// not compiled in, count at the known specs' mean so a
+    /// lane-heavy session is not silently undercounted.
+    pub decl_tokens_sum: u64,
+    /// `Usage` records seen — the requests the API answered.
+    pub usage_requests: usize,
+    pub prompt_tokens_sum: u64,
+    pub completion_tokens_sum: u64,
 }
 
 impl Audit {
@@ -104,6 +123,20 @@ pub fn audit(path: &Path) -> Result<Audit, String> {
                         .or_insert(0) += 1;
                 }
             }
+            Record::Declarations { names, .. } => {
+                audit.decl_requests += 1;
+                audit.decl_names_sum += names.len();
+                audit.decl_tokens_sum += declaration_tokens(names);
+            }
+            Record::Usage {
+                prompt_tokens,
+                completion_tokens,
+                ..
+            } => {
+                audit.usage_requests += 1;
+                audit.prompt_tokens_sum += prompt_tokens;
+                audit.completion_tokens_sum += completion_tokens;
+            }
             _ => {}
         }
     }
@@ -145,6 +178,8 @@ pub fn audit(path: &Path) -> Result<Audit, String> {
     }
     if !failures.is_empty() {
         audit.recovery = Some(recovered as f64 / failures.len() as f64);
+        audit.recovered = recovered;
+        audit.failures = failures.len();
     }
     // Redundant: the same name and arguments twice in the session.
     let mut seen: HashMap<(String, String), usize> = HashMap::new();
@@ -172,6 +207,157 @@ fn class_of(output: &str) -> &str {
         return "denied";
     }
     "error"
+}
+
+/// Estimated declaration tokens for one request's name set: chars/4 per
+/// compiled spec, with names whose schema is not compiled in (the lane
+/// tools) counted at the known specs' mean. The grounded-selection
+/// baseline's fourth number; the estimate's shape is stated in the
+/// render so a reader knows what it is.
+fn declaration_tokens(names: &[String]) -> u64 {
+    let table = spec_char_table();
+    let known: Vec<usize> = table.values().copied().collect();
+    let mean = if known.is_empty() {
+        0.0
+    } else {
+        known.iter().sum::<usize>() as f64 / known.len() as f64
+    };
+    names
+        .iter()
+        .map(|name| {
+            let chars = table
+                .get(name.as_str())
+                .copied()
+                .unwrap_or(mean.max(1.0) as usize);
+            (chars as u64).div_ceil(4)
+        })
+        .sum()
+}
+
+/// Compiled schema sizes, in chars, by tool name — the built-ins and
+/// the free-function specials. Lane tools are absent by construction.
+fn spec_char_table() -> HashMap<&'static str, usize> {
+    let mut table = HashMap::new();
+    for tool in crate::tools::ALL_TOOLS.iter() {
+        let chars = serde_json::to_string(&tool.spec())
+            .map(|json| json.len())
+            .unwrap_or(0);
+        table.insert(tool.name(), chars);
+    }
+    for (name, spec) in [
+        ("remember", crate::tools::remember_spec()),
+        ("improve", crate::tools::improve_spec()),
+        ("process", crate::tools::process_spec()),
+        ("tool_search", crate::tools::tool_search_spec()),
+    ] {
+        let chars = serde_json::to_string(&spec)
+            .map(|json| json.len())
+            .unwrap_or(0);
+        table.insert(name, chars);
+    }
+    table
+}
+
+/// The archive's tool numbers: every session's audit summed. The
+/// grounded-selection baseline reads its four rates from here — one
+/// command, re-runnable after each phase, the number every later
+/// criterion compares against.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Aggregate {
+    pub sessions: usize,
+    /// Logs that failed to replay (torn beyond tolerance), named by
+    /// count only — a measurement must not die on one bad file.
+    pub skipped: usize,
+    pub calls: usize,
+    pub errors: usize,
+    pub classes: BTreeMap<String, usize>,
+    pub methods: BTreeMap<String, usize>,
+    pub recovered: usize,
+    pub failures: usize,
+    pub decl_requests: usize,
+    pub decl_names_sum: usize,
+    pub decl_tokens_sum: u64,
+    pub usage_requests: usize,
+    pub prompt_tokens_sum: u64,
+    pub completion_tokens_sum: u64,
+}
+
+impl Aggregate {
+    /// Calls whose resolution was `refused` — the model named a tool
+    /// that does not exist (or an unresolvable name).
+    pub fn wrong_tool_rate(&self) -> Option<f64> {
+        let refused = self.methods.get("refused").copied().unwrap_or(0);
+        rate(refused, self.calls)
+    }
+    /// Calls that failed schema or JSON validation.
+    pub fn malformed_argument_rate(&self) -> Option<f64> {
+        let validation = self.classes.get("validation").copied().unwrap_or(0);
+        rate(validation, self.calls)
+    }
+    /// Of the failed calls, the share followed by a later success of
+    /// the same tool — the repair-turn rate the plan's baseline names.
+    pub fn repair_rate(&self) -> Option<f64> {
+        rate(self.recovered, self.failures)
+    }
+    /// Mean estimated declaration tokens per request that declared a
+    /// tool set.
+    pub fn mean_decl_tokens(&self) -> Option<u64> {
+        if self.decl_requests == 0 {
+            return None;
+        }
+        Some(self.decl_tokens_sum / self.decl_requests as u64)
+    }
+    /// Mean declared tool names per request that declared a tool set.
+    pub fn mean_decl_names(&self) -> Option<f64> {
+        if self.decl_requests == 0 {
+            return None;
+        }
+        Some(self.decl_names_sum as f64 / self.decl_requests as f64)
+    }
+    /// Mean prompt tokens per API-answered request.
+    pub fn mean_prompt_tokens(&self) -> Option<u64> {
+        if self.usage_requests == 0 {
+            return None;
+        }
+        Some(self.prompt_tokens_sum / self.usage_requests as u64)
+    }
+}
+
+fn rate(part: usize, whole: usize) -> Option<f64> {
+    if whole == 0 {
+        return None;
+    }
+    Some(part as f64 / whole as f64)
+}
+
+/// Audit every log in `paths`, merging into one archive-wide number.
+pub fn aggregate(paths: &[std::path::PathBuf]) -> Aggregate {
+    let mut aggregate = Aggregate::default();
+    for path in paths {
+        match audit(path) {
+            Ok(one) => {
+                aggregate.sessions += 1;
+                aggregate.calls += one.calls;
+                aggregate.errors += one.errors;
+                for (class, count) in &one.classes {
+                    *aggregate.classes.entry(class.clone()).or_insert(0) += count;
+                }
+                for (method, count) in &one.methods {
+                    *aggregate.methods.entry(method.clone()).or_insert(0) += count;
+                }
+                aggregate.recovered += one.recovered;
+                aggregate.failures += one.failures;
+                aggregate.decl_requests += one.decl_requests;
+                aggregate.decl_names_sum += one.decl_names_sum;
+                aggregate.decl_tokens_sum += one.decl_tokens_sum;
+                aggregate.usage_requests += one.usage_requests;
+                aggregate.prompt_tokens_sum += one.prompt_tokens_sum;
+                aggregate.completion_tokens_sum += one.completion_tokens_sum;
+            }
+            Err(_) => aggregate.skipped += 1,
+        }
+    }
+    aggregate
 }
 
 /// The audit as a card.
@@ -265,6 +451,80 @@ pub fn render(session: &str, audit: &Audit) -> String {
     if !tiers.is_empty() {
         out.push_str(&format!("  tiers: {}\n", tiers.join(" \u{b7} ")));
     }
+    out
+}
+
+/// The archive-wide card the grounded-selection baseline reads. Every
+/// rate prints with its denominator — a share without its denominator
+/// reads as precision it does not have (tool-surface C2's rule).
+pub fn render_aggregate(aggregate: &Aggregate) -> String {
+    let mut out = format!(
+        "fleet tools audit \u{2014} all sessions: {} log(s){}\n",
+        aggregate.sessions,
+        if aggregate.skipped > 0 {
+            format!(" ({} skipped: unplayable)", aggregate.skipped)
+        } else {
+            String::new()
+        }
+    );
+    let pct = |part: usize, whole: usize| {
+        rate(part, whole)
+            .map(|share| format!("{:.1}% ({})", share * 100.0, part))
+            .unwrap_or_else(|| "n/a".to_string())
+    };
+    out.push_str(&format!(
+        "  calls: {} \u{b7} failures: {} \u{b7} recovery after a failure: {}\n",
+        aggregate.calls,
+        aggregate.failures,
+        pct(aggregate.recovered, aggregate.failures),
+    ));
+    out.push_str(&format!(
+        "  wrong tool (refused resolutions): {} \u{b7} malformed arguments (error[validation]): {}\n",
+        pct(
+            aggregate.methods.get("refused").copied().unwrap_or(0),
+            aggregate.calls
+        ),
+        pct(
+            aggregate.classes.get("validation").copied().unwrap_or(0),
+            aggregate.calls
+        ),
+    ));
+    if aggregate.decl_requests > 0 {
+        out.push_str(&format!(
+            "  declarations per request: {:.1} tool(s) \u{b7} est. {} tokens (chars/4; lane tools at the known-spec mean)\n",
+            aggregate.mean_decl_names().unwrap_or(0.0),
+            aggregate.mean_decl_tokens().unwrap_or(0),
+        ));
+    }
+    if aggregate.usage_requests > 0 {
+        out.push_str(&format!(
+            "  usage per request: {} prompt \u{b7} {} completion tokens ({} requests)\n",
+            aggregate.mean_prompt_tokens().unwrap_or(0),
+            aggregate.completion_tokens_sum / aggregate.usage_requests.max(1) as u64,
+            aggregate.usage_requests,
+        ));
+    }
+    if !aggregate.classes.is_empty() {
+        let classes: Vec<String> = aggregate
+            .classes
+            .iter()
+            .map(|(class, count)| format!("{class} {count}"))
+            .collect();
+        out.push_str(&format!("  error classes: {}\n", classes.join(" \u{b7} ")));
+    }
+    let methods: Vec<String> = aggregate
+        .methods
+        .iter()
+        .map(|(method, count)| format!("{method} {count}"))
+        .collect();
+    out.push_str(&format!(
+        "  resolutions: {}\n",
+        if methods.is_empty() {
+            "none recorded".to_string()
+        } else {
+            methods.join(" \u{b7} ")
+        }
+    ));
     out
 }
 
@@ -523,6 +783,170 @@ mod tests {
         let empty = Session::create(&scratch("empty"), "test-model").unwrap();
         let blank = render("empty", &audit(empty.path()).unwrap());
         assert!(blank.contains("no tool calls"), "{blank}");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn the_aggregate_sums_sessions_and_carries_every_rate() {
+        // The grounded-selection baseline's shape: two sessions merged,
+        // the four rates readable with their denominators, the
+        // declaration and usage sums carried from the records.
+        let home = scratch("aggregate");
+        let mut session = Session::create(&home, "test-model").unwrap();
+        session
+            .record(&Record::Declarations {
+                names: vec![
+                    "read_file".into(),
+                    "edit".into(),
+                    "mcp__sys1__sys1_classify".into(),
+                ],
+                tier: "core".into(),
+                withheld: Vec::new(),
+            })
+            .unwrap();
+        session
+            .record(&Record::Usage {
+                turn: 1,
+                prompt_tokens: 4000,
+                completion_tokens: 200,
+            })
+            .unwrap();
+        session
+            .record(&Record::Assistant {
+                content: None,
+                tool_calls: vec![
+                    call("a1", "read_file", r#"{"path":"a"}"#),
+                    call("a2", "ghost", "{}"),
+                ],
+                persona: None,
+            })
+            .unwrap();
+        session
+            .record(&Record::ToolResolution {
+                call_id: "a2".into(),
+                requested: "ghost".into(),
+                resolved: String::new(),
+                method: "refused".into(),
+                reason: "error: unknown tool `ghost`".into(),
+                catalog: 20,
+                tier: "core".into(),
+                argument_sources: std::collections::BTreeMap::new(),
+            })
+            .unwrap();
+        session
+            .record(&Record::ToolResult {
+                call_id: "a2".into(),
+                name: "ghost".into(),
+                output: "error[validation]: unknown tool `ghost`".into(),
+                truncated: false,
+                approved: true,
+            })
+            .unwrap();
+        let mut second = Session::create(&home, "test-model").unwrap();
+        second
+            .record(&Record::Usage {
+                turn: 1,
+                prompt_tokens: 2000,
+                completion_tokens: 100,
+            })
+            .unwrap();
+        second
+            .record(&Record::Assistant {
+                content: None,
+                tool_calls: vec![call("b1", "bash", r#"{"command":"ls"}"#)],
+                persona: None,
+            })
+            .unwrap();
+        second
+            .record(&Record::ToolResult {
+                call_id: "b1".into(),
+                name: "bash".into(),
+                output: "a\nb\n".into(),
+                truncated: false,
+                approved: true,
+            })
+            .unwrap();
+        let paths: Vec<std::path::PathBuf> = crate::session::list(&home)
+            .unwrap()
+            .into_iter()
+            .map(|s| s.path)
+            .collect();
+        assert_eq!(paths.len(), 2);
+        let aggregate = aggregate(&paths);
+        assert_eq!(aggregate.sessions, 2);
+        assert_eq!(aggregate.calls, 3);
+        assert_eq!(aggregate.failures, 1);
+        assert_eq!(aggregate.methods["refused"], 1);
+        assert_eq!(aggregate.classes["validation"], 1);
+        assert_eq!(
+            aggregate.wrong_tool_rate(),
+            Some(1.0 / 3.0),
+            "one refused call of three"
+        );
+        assert_eq!(aggregate.malformed_argument_rate(), Some(1.0 / 3.0));
+        assert_eq!(
+            aggregate.repair_rate(),
+            Some(0.0),
+            "the one failure recovered never"
+        );
+        assert_eq!(aggregate.decl_requests, 1);
+        assert_eq!(aggregate.decl_names_sum, 3);
+        assert!(
+            aggregate.decl_tokens_sum > 0,
+            "the three schemas render to tokens"
+        );
+        assert_eq!(aggregate.usage_requests, 2);
+        assert_eq!(aggregate.prompt_tokens_sum, 6000);
+        assert_eq!(aggregate.mean_prompt_tokens(), Some(3000));
+        let card = render_aggregate(&aggregate);
+        assert!(card.contains("all sessions: 2 log(s)"), "{card}");
+        assert!(
+            card.contains("wrong tool (refused resolutions): 33.3% (1)"),
+            "{card}"
+        );
+        assert!(
+            card.contains("malformed arguments (error[validation]): 33.3% (1)"),
+            "{card}"
+        );
+        assert!(
+            card.contains("declarations per request: 3.0 tool(s)"),
+            "{card}"
+        );
+        assert!(card.contains("usage per request: 3000 prompt"), "{card}");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn the_aggregate_counts_skipped_logs_without_dying() {
+        // One unplayable file must not take the measurement down: it is
+        // a named skip, and the rest of the archive still reads.
+        let home = scratch("aggregate-skip");
+        let mut session = Session::create(&home, "test-model").unwrap();
+        session
+            .record(&Record::Assistant {
+                content: None,
+                tool_calls: vec![call("k1", "bash", r#"{"command":"ls"}"#)],
+                persona: None,
+            })
+            .unwrap();
+        let torn = home.join("torn.jsonl");
+        // A torn *trailing* record is tolerated (KI-213) — the skip
+        // path needs a mid-file break, the shape that is corruption
+        // rather than an interrupted write.
+        std::fs::write(
+            &torn,
+            "{\"torn\"\n{\"v\":1,\"model\":\"m\",\"created\":\"t\"}\n",
+        )
+        .unwrap();
+        let paths = vec![session.path().to_path_buf(), torn];
+        let aggregate = aggregate(&paths);
+        assert_eq!(aggregate.sessions, 1, "the good log still reads");
+        assert_eq!(aggregate.skipped, 1, "the torn log is a named skip");
+        assert_eq!(aggregate.calls, 1);
+        assert!(
+            render_aggregate(&aggregate).contains("1 skipped"),
+            "the skip is named"
+        );
         let _ = std::fs::remove_dir_all(&home);
     }
 }

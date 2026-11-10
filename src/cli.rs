@@ -649,7 +649,9 @@ pub enum ToolsAction {
     Advise { sessions: usize },
     /// Measure one session's tool calls: validity, error classes,
     /// truncation, redundancy, recovery, and resolutions by method.
-    Audit { session: Option<String> },
+    /// `--all` aggregates every log in the archive instead — the
+    /// grounded-selection baseline's measurement command.
+    Audit { session: Option<String>, all: bool },
     /// Disable one tool by name; a protected tool needs `--force`.
     Disable { name: String, force: bool },
     /// Re-enable one tool by name.
@@ -825,7 +827,9 @@ usage:
                                 names and bash work a native tool covers;
                                 advise turns the counts into build, fix,
                                 adopt and retire suggestions; audit measures
-                                one session's calls and resolutions
+                                one session's calls and resolutions, or the
+                                whole archive with --all (the grounded-
+                                selection baseline's measurement)
   fleet providers                list the routing roster and per-provider state
   fleet calib [--day <date>] [--calibration]
                                 the calibration stream: one day's rows by op;
@@ -1926,12 +1930,19 @@ fn parse_tools(args: &[String]) -> Result<Command, String> {
             },
         })),
         "audit" => {
-            if rest.len() > 1 {
+            let all = rest.iter().any(|flag| flag == "--all");
+            let positional: Vec<&String> =
+                rest.iter().filter(|flag| !flag.starts_with("--")).collect();
+            if !positional.is_empty() && all {
+                return Err("audit takes either --all or one session id, not both".to_string());
+            }
+            if positional.len() > 1 {
                 return Err("audit takes one optional session id".to_string());
             }
             Ok(Command::Tools(ToolsOptions {
                 action: ToolsAction::Audit {
-                    session: rest.first().cloned(),
+                    session: positional.first().map(|id| (*id).clone()),
+                    all,
                 },
             }))
         }
@@ -4495,17 +4506,31 @@ mod tests {
         assert_eq!(
             parse(&args(&["tools", "audit"])).unwrap(),
             Command::Tools(ToolsOptions {
-                action: ToolsAction::Audit { session: None }
+                action: ToolsAction::Audit {
+                    session: None,
+                    all: false
+                }
             })
         );
         assert_eq!(
             parse(&args(&["tools", "audit", "abc"])).unwrap(),
             Command::Tools(ToolsOptions {
                 action: ToolsAction::Audit {
-                    session: Some("abc".into())
+                    session: Some("abc".into()),
+                    all: false
                 }
             })
         );
+        assert_eq!(
+            parse(&args(&["tools", "audit", "--all"])).unwrap(),
+            Command::Tools(ToolsOptions {
+                action: ToolsAction::Audit {
+                    session: None,
+                    all: true
+                }
+            })
+        );
+        assert!(parse(&args(&["tools", "audit", "--all", "abc"])).is_err());
         assert!(parse(&args(&["tools", "advise", "--sessions", "0"])).is_err());
         assert!(parse(&args(&["tools", "nope"])).is_err());
         assert_eq!(
