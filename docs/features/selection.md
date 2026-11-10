@@ -51,6 +51,37 @@ specs, lane tools counted at the known-spec mean since their schemas are
 not compiled in. Re-run the command after each phase; the plan's criteria
 compare against this table.
 
+## The composite replays (2026-11-10, the owner's stacked-calls question)
+
+The owner asked: what if the question is broken into multiple atomic
+sys1 calls instead of one pass? Three shapes measured on the same 120
+turns (`scripts/c-composite-measure.py`, `scripts/c-atomic-measure.py`):
+
+| shape | top-1 | top-3 |
+|---|---|---|
+| flat single pass — glide (C1's baseline) | 51.3% | 76.5% |
+| flat — drex (C1's best) | **56.7%** | 75.8% |
+| A1 classify→decide (glide) | 45.0% | 45.8% |
+| B atomic fan-out — one request, N yes/no heads (glide) | 49.2% | 62.5% |
+| A2c clean top-2-class union (glide) | 42.5% | 63.3% |
+
+None beat the flat pass. The why is the useful part: **a decomposition
+cuts at the question's independence structure**. TTESS's 45-minute-form
+pipeline (five domain chunks in parallel, an aggregator, TypeSafe
+predicate decisions, Fastino extraction, deterministic guards) composes
+well because domains are structurally independent. Tool selection's
+candidates are *mutually competitive* — choosing one is not-choosing the
+others — so per-tool independent judgments (B) lose exactly the
+information the ranking needs (its top-3 collapses to 62.5%), and a
+hand-invented taxonomy (A1/A2c) loses at the narrow. The first A2 run
+was contaminated by a ground-truth leak in the harness and discarded;
+A2c is the clean re-run.
+
+The shapes that measured sharp are the ones where the decomposed
+question IS independent: destructive-or-not (C12, landed), rendered-vs-
+brief (C17, landed), this-emission-valid (C19, landed), and the verifier
+framing of C4 — which is where the C2-C9 re-open lives.
+
 ## The destructive head (C12, measured 2026-11-10)
 
 The measurement (`scripts/c12-destructive-measure.py`): 78 real bash
