@@ -1,5 +1,5 @@
 ---
-status: draft
+status: in progress
 created: 2026-11-09
 updated: 2026-11-09
 slug: the-resource-contract

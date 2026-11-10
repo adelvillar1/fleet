@@ -4754,6 +4754,43 @@ fn footprint_command() -> ExitCode {
         failed |= !line.ok();
         println!("{}", fleet::footprint::render(&line));
     }
+    // The environment's own line: the standing free share over its history
+    // (the median, so one good day after a cleanup does not read as room),
+    // the appetite it implies, and the reserve that follows from it — the
+    // numbers the admission uses, named with their source (2026-11-09).
+    if let Ok(home) = fleet_home() {
+        let history =
+            std::fs::read_to_string(home.join("footprint-history.jsonl")).unwrap_or_default();
+        let mut env = fleet::footprint::Env::default();
+        let mut volume_kib = 0u64;
+        for line in history.lines() {
+            let doc: serde_json::Value = match serde_json::from_str(line) {
+                Ok(doc) => doc,
+                Err(_) => continue,
+            };
+            let volume = doc.get("volume_kib").and_then(|v| v.as_u64()).unwrap_or(0);
+            let free = doc.get("free_kib").and_then(|v| v.as_u64()).unwrap_or(0);
+            if volume == 0 {
+                continue;
+            }
+            volume_kib = volume;
+            env.free_fractions.push(free as f64 / volume as f64);
+        }
+        let appetite = fleet::footprint::appetite(&env);
+        let (reserve, source) = fleet::footprint::reserve_kib(volume_kib, &env, None);
+        let share = env.standing_free().map(|s| format!("{:.0}%", s * 100.0));
+        println!(
+            "environment  {} \u{2014} reserve {} GiB of {} GiB ({}; {} record(s){})",
+            appetite.word(),
+            reserve / 1024 / 1024,
+            volume_kib / 1024 / 1024,
+            source,
+            env.free_fractions.len(),
+            share
+                .map(|s| format!(", standing {s} free"))
+                .unwrap_or_default(),
+        );
+    }
     println!("disk         the budget table is scripts/footprint.sh (stores against their declared budgets)");
     if failed {
         return ExitCode::from(1);

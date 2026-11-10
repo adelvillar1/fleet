@@ -80,6 +80,16 @@ if [ "$MODE" = "json" ] || [ "$MODE" = "record" ]; then
     "$([ "$over" -eq 1 ] && echo true || echo false)" > "$out"
   if [ "$MODE" = "record" ]; then
     mv "$out" "$HOME_DIR/footprint.json"
+    # The series the appetite is inferred from (2026-11-09): one line per
+    # record, capped to the last 90 — the standing free share is a history,
+    # and one good day after a cleanup must not read as a roomy machine.
+    vol_kib=$(df -k "$REPO" | awk 'NR==2 {print $2}')
+    free_kib=$(df -k "$REPO" | awk 'NR==2 {print $4}')
+    printf '{"at":"%s","volume_kib":%s,"free_kib":%s}\n' \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${vol_kib:-0}" "${free_kib:-0}" \
+      >> "$HOME_DIR/footprint-history.jsonl"
+    tail -n 90 "$HOME_DIR/footprint-history.jsonl" > "$HOME_DIR/footprint-history.tmp" \
+      && mv "$HOME_DIR/footprint-history.tmp" "$HOME_DIR/footprint-history.jsonl"
   else
     cat "$out"
     rm -f "$out"
