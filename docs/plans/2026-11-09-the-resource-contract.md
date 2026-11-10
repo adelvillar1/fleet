@@ -56,6 +56,36 @@ when a crash is otherwise likely:
 - A refusal to answer is `expected` for the interval and lands a row: never a
   silent stop on a lane hiccup.
 
+## The recursive loop (the owner's shape, 2026-11-09)
+
+Measurement alone is an instrument. *"We can measure and calibrate — recursive
+learning is the shape we need"* means the contract's own numbers are learned
+from its own outcomes, on the machinery this repo already runs:
+
+- **One row per unit of work**, in the calibration stream (`op=footprint`): the
+  work class (`release-gate`, `release-assets`, `run:<folder>`, `lane-bootstrap`),
+  the estimate that admitted it, the settled delta, the reserve at admission,
+  the verdict (admitted, refused, curtailed, expected), and the sys1 judgment's
+  own words when one fired.
+- **The estimate is history, not a constant.** A work class's admitted cost is
+  the median of its last N settles (N = 10); the declared constant is the prior
+  until three settlements exist. A release build that keeps settling at 5 GiB
+  stops being budgeted at 8 — that self-correction is the recursion, and it is
+  arithmetic over rows, not a model.
+- **The judge is graded by what happened next.** A `runaway` verdict followed by
+  a clean completion (the work finished, no reserve breached) counts against
+  the judge; an `expected` followed by a crash counts against it. That grading
+  is read by the same fit rule the router trusts — the discipline of
+  `fleet judge --agree/--disagree`, applied to the resource judge itself.
+- **Learning lands as a change, through the gate.** The demand-map beat clusters
+  the rows; `fleet improve` can propose a structural correction (a cap, an
+  estimate floor) and applies it only through the existing gate. Nothing drifts
+  silently.
+- **The safety floors never learn.** The reserve (20 GiB free, the memory
+  ceiling) is the owner's declaration and stays fixed; only estimates and
+  budgets for *work* calibrate. A floor that history could lower is not a
+  safety floor.
+
 ## Acceptance criteria
 
 - [ ] C1 — A `Contract` with pure `admit(facts, estimate)` and
@@ -73,12 +103,23 @@ when a crash is otherwise likely:
       facts and the run's recent tool calls; `runaway` curtails, `expected`
       raises that run's budget; a refused answer is `expected` and records it.
 - [ ] C5 — Every admission, refusal, settlement and judgment lands a calibration
-      row (`op=footprint`) so the demand map can cluster the runaways.
+      row (`op=footprint`) carrying the work class, the admitting estimate, the
+      settled delta, the reserve at admission, the verdict and the sys1 words,
+      so the demand map can cluster the runaways and the estimate can be
+      derived from them.
 - [ ] C6 — A forced-runaway test: a scratch folder filled until the run's budget
       trips, asserting the run is curtailed, its transcript names the numbers,
       and the files it created are cleaned after the diagnosis window.
 - [ ] C7 — Docs: `docs/features/` gains the contract's own page; `fleet doctor`
       and `fleet footprint` name the same declared numbers.
+
+- [ ] C8 — The admitted estimate for a work class is the median of its last ten
+      settlements, with the declared constant as the prior until three exist;
+      a test with a deliberately wrong prior corrects after the settles land.
+- [ ] C9 — The resource judge's verdicts are graded by the subsequent outcome
+      (a `runaway` on work that then completed cleanly counts against it; an
+      `expected` before a breach counts against it), and that grading is
+      readable by the fit rule.
 
 ## Not in scope
 
