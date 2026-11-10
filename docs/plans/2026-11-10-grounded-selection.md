@@ -282,15 +282,32 @@ checkbox order — never reorder after gating.
 - [ ] C13: Mention-kind, silent-stop, and memory-shape classification each
   run through a head with the word list as fallback, pinned by one test per
   seam that fails when the head call is removed.
+  (The shape half's per-seam gate KILLED the conversion 2026-11-10: the
+  head scores 62% top-1 against the corpus's own 40-fact labels
+  (`scripts/c13-shape-measure.py`) — the misses cluster on state-sync
+  records the head reads as resolved/build, semantically defensible but
+  not the corpus's convention. The keyword tables stay; the head is
+  re-openable only with a labeled set that fixes the convention.
+  Mention-kind and silent-stop keep their own gates open — both need
+  small hand-labeled fixtures before they can run.)
 - [ ] C14: Skill merge/duplicate curation and the lesson coverage gate judge
   through heads with token overlap as the equal-confidence tie-break, pinned
   by a known-duplicate skill pair and a coverage-straddling lesson pair.
+  (Open behind its fixture: the gate needs ~10 hand-labeled skill pairs
+  and two lesson pairs before it can run — the owner's call is what
+  makes a pair a duplicate.)
 - [ ] C15: Top-N recall candidates receive a score-head rerank over the
   six-channel ranking, and on a labeled fixture set the rerank's accuracy is
   reported against the channel weights (rerank stays only if it wins).
+  (Open behind its fixture: a labeled relevance set — ~50
+  instruction-to-fact pairs — is the gate's input; building it is the
+  next session's first Phase 5 act.)
 - [ ] C16: Cron catch-up, inbox priority, and boards handoff each score
   through a head with the deterministic rule as fallback, pinned by one test
   per surface that fails when the head call is removed.
+  (Open behind its fixture: the three surfaces need their real rows
+  sampled and hand-labeled — worth/before-not-after/ready — before the
+  gate can run.)
 - [x] C17: gen1 media outputs grade through the existing `vision_qc` task,
   verdicts land as calib rows, and a failing grade names the artifact —
   pinned by a stubbed vision answer.
@@ -590,6 +607,10 @@ Whole-program gate (every code increment): `cargo fmt --all --check`,
   remaining Phase 5 seams (C13-C16) stay open behind their own
   measurements; C13's ground truth is the corpus's own shape labels,
   C14-C16 need small labeled fixtures before their gates can run.
+- **The C13 shape half's kill (2026-11-10):** 62% top-1 against the
+  corpus's own labels — the head reads state-sync records as
+  resolved/build, defensible prose but not this corpus's convention.
+  The tables stay; mention-kind and silent-stop keep their own gates.
 
 ## Cleanup ledger (C20)
 
