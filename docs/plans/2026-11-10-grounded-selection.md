@@ -601,6 +601,17 @@ Whole-program gate (every code increment): `cargo fmt --all --check`,
 - **Phase 6 (C17 + C19), 2026-11-10:** the images param on sys1's
   classify tool + the vision_qc pass + the form-filler. No worktree, no
   build lanes; `df -h /` = 124 GiB free. Net disk cost: zero.
+- **Phase 5 (C12 + C13), 2026-11-10:** the destructive head + the shape
+  measurement. No worktree; the gate ran in the main tree's target/;
+  `cache-sweep.sh` ran after the last build cycle. `df -h /` = 124 GiB
+  free. Net disk cost: the gate's own traffic, swept.
+- **Session close (2026-11-10):** no worktrees (`git worktree list`
+  shows the main checkout only), no build lanes, no scratch venvs, no
+  temp fixtures left beyond /tmp's own rotation. The plan's state: 9 of
+  21 criteria ticked with evidence, 2 kill-gates recorded (C1's over
+  phases 1-3, C18's on the probe), C13's shape half measured and killed,
+  C14-C16 open behind named fixtures, C20's ledger carried through
+  every phase.
 
 - **The C12 per-seam gate (2026-11-10):** the destructive head is sharp
   where tool selection was dull — same vendor, different task. The
