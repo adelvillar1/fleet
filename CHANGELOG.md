@@ -12,6 +12,39 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.6.25 — 2026-11-10
+
+The grounded-selection arc lands its measured half.
+
+- **The hosted generation seam** (`src/generate.rs`, blend1's
+  `generate` tool): compaction folds, conversation titles, and archive
+  summaries ride the hosted small model (LFM3-1.7B, probed) with
+  today's paths as named fallbacks; the face renders `lane_summary`.
+  Skill-proposal bodies and the tools-advise card narrate through the
+  same lane; deterministic inputs stay byte-identical.
+- **The repair leg for every tool** (`prepare_call_checked`): a
+  validation-failed call — any tool — gets one re-author through the
+  hosted lane before the error-result loop, behind the tool's own
+  schema as the guard. Measured basis: the verifier's 0.983 separation
+  AUC with 60/60 corruption rejection.
+- **The destructive head joins the gate**: an unlisted bash command
+  asks a yes/no head through an inline `task_spec`; a `yes` annotates
+  the call so the ordinary gate asks. Measured 1/1 destructive recall
+  with 76/77 safe precision where the list catches 0/1.
+- **Vision QC**: gen1's rendered images grade through sys1's
+  liquid-only `vision_qc` task, verdicts as calib rows naming the
+  artifact.
+- **`fleet tools audit --all`**: the archive-wide measurement — the
+  baseline the selection program's criteria compare against.
+- **KI-515 closed** (the blend1 corpus tests read the 5-value
+  contract); **KI-516 refined** (the coherence test's lock window
+  closed; the flood diagnosed — the override scoping is the recorded
+  fix).
+- **The rejections recorded**: selection replacement (eight shapes
+  measured, the meta-failure named), score fan-out at catalog size,
+  LFM3 as selector, cross-vendor score transplant, hard narrowing —
+  each with its measurement in `docs/features/selection.md`.
+
 ## v0.6.24 — 2026-11-10
 
 The auto-update channel's supply gets a guard.
