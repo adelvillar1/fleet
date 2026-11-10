@@ -64,8 +64,11 @@ turns (`scripts/c-composite-measure.py`, `scripts/c-atomic-measure.py`):
 | A1 classify→decide (glide) | 45.0% | 45.8% |
 | B atomic fan-out — one request, N yes/no heads (glide) | 49.2% | 62.5% |
 | A2c clean top-2-class union (glide) | 42.5% | 63.3% |
+| A1 on drex (cross-vendor confirmation) | 44.9% | 45.8% |
 
-None beat the flat pass. The why is the useful part: **a decomposition
+None beat the flat pass — and A1's failure replicates across vendors
+(drex: 44.9% top-1, 46% class hit; its A2 carried the same leak and is
+discarded like glide's). The why is the useful part: **a decomposition
 cuts at the question's independence structure**. TTESS's 45-minute-form
 pipeline (five domain chunks in parallel, an aggregator, TypeSafe
 predicate decisions, Fastino extraction, deterministic guards) composes
