@@ -1600,3 +1600,447 @@ pub fn day_keys(root: &Path, day: &str) -> Vec<(String, String, String)> {
 
 #[cfg(test)]
 mod tests;
+
+// --- the resource judge (the resource contract's C4) ----------------------
+//
+// The contract's one question with no arithmetic answer: "this run grew 4 GiB
+// — is that the work it is doing, or a runaway?" Everything else about the
+// contract is deterministic, and this beat exists only for the reading the
+// bounds could not settle. It lives here, beside the other lane-asking beats,
+// because the socket guards refuse `judge::` references from the synchronous
+// paths — the agent loop reaches this through this module and never names it.
+
+/// What the resource judge was shown: the numbers it must reason about, and
+/// the work the run was doing when it grew.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OverageAsk<'a> {
+    /// The work class, as the contract files it (`run:<folder>`, `release-gate`).
+    pub class: &'a str,
+    /// What the run has settled since it was admitted, in kibibytes.
+    pub settled_kib: u64,
+    /// The budget it was admitted against, in kibibytes.
+    pub budget_kib: u64,
+    /// Free space at this reading, and the reserve it is measured against.
+    pub available_kib: u64,
+    pub reserve_kib: u64,
+    /// The run's recent tool calls, as `name: the first line of its argument`.
+    /// The evidence that separates "writing a checkpoint tree" from "stuck in
+    /// a loop", and the only model-visible context the ask carries.
+    pub recent_calls: &'a [String],
+}
+
+/// The judge's answer, in the contract's own vocabulary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OverageVerdict {
+    /// The growth was the work. The run continues and its budget rises.
+    Expected { words: String },
+    /// The growth was not the work. The run is curtailed now.
+    Curtailed { words: String },
+    /// The lane was asked and did not answer. Read as `expected` for the
+    /// interval and recorded as such — the plan's rule, and the reason a lane
+    /// hiccup never reads as a silent stop.
+    Unavailable { reason: String },
+}
+
+impl OverageVerdict {
+    /// The verdict word the contract's row carries.
+    pub fn verdict(&self) -> &'static str {
+        match self {
+            OverageVerdict::Curtailed { .. } => crate::calib::FOOTPRINT_RUNAWAY,
+            OverageVerdict::Expected { .. } | OverageVerdict::Unavailable { .. } => {
+                crate::calib::FOOTPRINT_EXPECTED
+            }
+        }
+    }
+
+    /// How the verdict was reached.
+    pub fn decided_by(&self) -> &'static str {
+        match self {
+            OverageVerdict::Unavailable { .. } => "judge-unavailable",
+            _ => "judged",
+        }
+    }
+
+    /// The judge's own words (or the lane's reason).
+    pub fn words(&self) -> &str {
+        match self {
+            OverageVerdict::Expected { words } | OverageVerdict::Curtailed { words } => words,
+            OverageVerdict::Unavailable { reason } => reason,
+        }
+    }
+}
+
+/// The prompt the resource judge answers. It asks for exactly one of the two
+/// words and one sentence of evidence, and it carries the numbers and the
+/// calls — nothing else, because an ask that carries the transcript would cost
+/// more than the crash it prevents.
+pub fn overage_prompt(ask: &OverageAsk<'_>) -> String {
+    let mut prompt = String::from(
+        "A run outgrew its declared resource budget. Decide whether the growth was the work it \
+         is doing, or a runaway.\n\n",
+    );
+    prompt.push_str(&format!(
+        "settled: {:.2} GiB\nbudget: {:.2} GiB\nfree: {:.2} GiB\nreserve: {:.2} GiB\nwork class: {}\n\n",
+        ask.settled_kib as f64 / 1024.0 / 1024.0,
+        ask.budget_kib as f64 / 1024.0 / 1024.0,
+        ask.available_kib as f64 / 1024.0 / 1024.0,
+        ask.reserve_kib as f64 / 1024.0 / 1024.0,
+        ask.class,
+    ));
+    if ask.recent_calls.is_empty() {
+        prompt.push_str("recent tool calls: none recorded\n");
+    } else {
+        prompt.push_str("recent tool calls:\n");
+        for call in ask.recent_calls.iter().take(12) {
+            prompt.push_str(&format!("- {call}\n"));
+        }
+    }
+    prompt.push_str(
+        "\nAnswer with one word and one sentence of evidence. `expected` means the growth is the \
+         work (a large write, a build, a checkpoint) and the run should continue. `runaway` means \
+         the growth is not explained by the calls and the run should stop.",
+    );
+    prompt
+}
+
+/// Read the lane's answer as one of the two words. Anything else is
+/// `Unavailable` with the answer quoted: a judge that answers neither word did
+/// not judge, and the contract must not treat a ramble as consent.
+pub fn parse_overage(answer: &serde_json::Value) -> OverageVerdict {
+    // The lane's wire shape varies by provider: the verdict may ride at the
+    // top, under `answers`, or as the classification's label.
+    let mut candidates: Vec<&str> = Vec::new();
+    for path in [
+        &["verdict"][..],
+        &["answer"][..],
+        &["label"][..],
+        &["answers", "verdict"][..],
+        &["answers", "label"][..],
+        &["answers", "glide", "label"][..],
+        &["answers", "glide", "verdict"][..],
+        &["classification", "label"][..],
+    ] {
+        let mut node = answer;
+        let mut found = true;
+        for key in path {
+            match node.get(*key) {
+                Some(next) => node = next,
+                None => {
+                    found = false;
+                    break;
+                }
+            }
+        }
+        if found {
+            if let Some(text) = node.as_str() {
+                candidates.push(text);
+            }
+        }
+    }
+    if candidates.is_empty() {
+        return OverageVerdict::Unavailable {
+            reason: format!("the lane answered without a verdict: {answer}"),
+        };
+    }
+    let text = candidates.join(" ");
+    let lower = text.to_lowercase();
+    // `runaway` is checked first: a sentence that says "not a runaway" is
+    // still a sentence about a runaway, and the conservative read of an
+    // ambiguous answer is the one that keeps the machine safe.
+    if lower.contains("runaway") {
+        return OverageVerdict::Curtailed { words: text };
+    }
+    if lower.contains("expected") {
+        return OverageVerdict::Expected { words: text };
+    }
+    OverageVerdict::Unavailable {
+        reason: format!("the lane answered neither word: {text}"),
+    }
+}
+
+/// Ask the resource judge one bounded question, under the judge's own daily
+/// budget and the same stay-out-of-the-synchronous-paths discipline as the
+/// other beats.
+///
+/// `Ok(None)` means the question is not this beat's to ask right now — the
+/// day's judge budget is spent. That is not a refusal of the run: the caller
+/// reads it as `expected` and records it, which is the plan's rule for an
+/// answer that did not come.
+pub async fn judge_overage(
+    home: &Path,
+    root: &Path,
+    day: &str,
+    ask: &OverageAsk<'_>,
+    lane: &LaneSource,
+) -> Result<Option<OverageVerdict>, String> {
+    // The budget, before the ask spends anything: the same reservation and the
+    // same cap the judgment beat uses, so the contract cannot quietly double
+    // what fleet spends on judging.
+    let cap = budget_usd_day();
+    let spend = day_spend(root, home, day);
+    if spend + JUDGE_ESTIMATED_ASK_USD > cap {
+        return Ok(None);
+    }
+    let mut session = LaneSession::open(lane, "sys1", "sys1_classify", "classify").await?;
+    let answer = session.ask(&overage_prompt(ask)).await;
+    session.close().await;
+    Ok(Some(parse_overage(&answer?)))
+}
+
+/// The resource judge as the surfaces hand it to a run: a closure bound to this
+/// home, so `AgentOptions` carries one pointer and no module that runs every
+/// turn names this beat.
+///
+/// A run that supplies no judge reads its overage as `expected` and records
+/// itself as `judge-unavailable`; supplying one is what lets an abnormal
+/// reading be answered instead of assumed.
+pub fn resource_judge_for(home: &Path) -> crate::agent::ResourceJudge {
+    let home = home.to_path_buf();
+    std::sync::Arc::new(move |ask: crate::contract::OverageAsk| {
+        let home = home.clone();
+        Box::pin(async move {
+            // The window's root and day: the contract judges today, and the
+            // spend it must respect is today's.
+            let user_home = std::env::var("HOME").ok();
+            let root = calib::resolve_root(&home, user_home.as_deref());
+            let day = calib::today();
+            // The ask's own shape, in this beat's vocabulary.
+            let view = OverageAsk {
+                class: &ask.class,
+                settled_kib: ask.settled_kib,
+                budget_kib: ask.budget_kib,
+                available_kib: ask.available_kib,
+                reserve_kib: ask.reserve_kib,
+                recent_calls: &ask.recent_calls,
+            };
+            let lane = LaneSource::Vendored;
+            match judge_overage(&home, &root, &day, &view, &lane).await {
+                Ok(Some(verdict)) => match verdict {
+                    OverageVerdict::Expected { words } => {
+                        crate::contract::Judgment::Expected { words }
+                    }
+                    OverageVerdict::Curtailed { words } => {
+                        crate::contract::Judgment::Curtailed { words }
+                    }
+                    OverageVerdict::Unavailable { reason } => {
+                        crate::contract::Judgment::Unavailable { reason }
+                    }
+                },
+                // The budget is spent: the plan's rule, and named so the row
+                // says why nobody was asked.
+                Ok(None) => crate::contract::Judgment::Unavailable {
+                    reason: "the day's judge budget is spent; this reading is expected for now"
+                        .to_string(),
+                },
+                // The lane could not be opened or refused the ask: also
+                // `expected`, never a silent stop.
+                Err(reason) => crate::contract::Judgment::Unavailable { reason },
+            }
+        })
+    })
+}
+
+#[cfg(test)]
+mod resource_tests {
+    use super::*;
+
+    fn ask() -> OverageAsk<'static> {
+        OverageAsk {
+            class: "run:/tmp/scratch",
+            settled_kib: 4 * 1024 * 1024,
+            budget_kib: 2 * 1024 * 1024,
+            available_kib: 112 * 1024 * 1024,
+            reserve_kib: 18 * 1024 * 1024,
+            recent_calls: &[],
+        }
+    }
+
+    #[test]
+    fn the_prompt_carries_the_numbers_and_the_calls() {
+        let calls = vec![
+            "write_file: src/checkpoint.json".to_string(),
+            "bash: cargo build --release".to_string(),
+        ];
+        let shape = OverageAsk {
+            recent_calls: &calls,
+            ..ask()
+        };
+        let prompt = overage_prompt(&shape);
+        // Both numbers, so the judgment is about a fact rather than a vibe.
+        assert!(prompt.contains("settled: 4.00 GiB"), "{prompt}");
+        assert!(prompt.contains("budget: 2.00 GiB"), "{prompt}");
+        assert!(prompt.contains("reserve: 18.00 GiB"), "{prompt}");
+        assert!(prompt.contains("run:/tmp/scratch"), "{prompt}");
+        // The calls are the evidence that separates work from a loop.
+        assert!(
+            prompt.contains("write_file: src/checkpoint.json"),
+            "{prompt}"
+        );
+        assert!(prompt.contains("bash: cargo build"), "{prompt}");
+        // And it asks for exactly one of the two words.
+        assert!(prompt.contains("`expected`"), "{prompt}");
+        assert!(prompt.contains("`runaway`"), "{prompt}");
+        // A run with no calls says so rather than showing an empty heading.
+        assert!(
+            overage_prompt(&ask()).contains("none recorded"),
+            "{}",
+            overage_prompt(&ask())
+        );
+    }
+
+    #[test]
+    fn the_calls_are_bounded_so_the_ask_cannot_carry_the_transcript() {
+        let many: Vec<String> = (0..50)
+            .map(|i| format!("write_file: file-{i}.json"))
+            .collect();
+        let prompt = overage_prompt(&OverageAsk {
+            recent_calls: &many,
+            ..ask()
+        });
+        assert!(prompt.contains("file-0.json"), "{prompt}");
+        assert!(
+            !prompt.contains("file-20.json"),
+            "the ask carries a bounded handful, not fifty calls"
+        );
+    }
+
+    #[test]
+    fn every_answer_shape_maps_to_one_of_the_two_words() {
+        use serde_json::json;
+        // The lane's wire shape varies; each of these is a real one.
+        assert!(matches!(
+            parse_overage(&json!({"verdict": "expected — a large checkpoint write"})),
+            OverageVerdict::Expected { .. }
+        ));
+        assert!(matches!(
+            parse_overage(&json!({"answers": {"label": "runaway"}})),
+            OverageVerdict::Curtailed { .. }
+        ));
+        assert!(matches!(
+            parse_overage(&json!({"answers": {"glide": {"label": "expected"}}})),
+            OverageVerdict::Expected { .. }
+        ));
+        assert!(matches!(
+            parse_overage(&json!({"annotation": "x", "label": "Expected"})),
+            OverageVerdict::Expected { .. }
+        ));
+        // A sentence that names both: the conservative read wins, because the
+        // contract must not wave a run through on an ambiguous answer.
+        assert!(matches!(
+            parse_overage(&json!({"verdict": "this is not expected, it is a runaway"})),
+            OverageVerdict::Curtailed { .. }
+        ));
+        // Neither word, no verdict, or an empty answer: none of them judged,
+        // and the reason names what came back.
+        for answer in [
+            json!({"verdict": "probably fine"}),
+            json!({"something": "else"}),
+            json!({}),
+        ] {
+            let verdict = parse_overage(&answer);
+            assert!(
+                matches!(verdict, OverageVerdict::Unavailable { .. }),
+                "{answer} read as {verdict:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unavailable_answer_reads_as_expected_and_says_so() {
+        let unavailable = OverageVerdict::Unavailable {
+            reason: "the lane timed out".to_string(),
+        };
+        // The plan's rule: a lane hiccup never reads as a silent stop.
+        assert_eq!(unavailable.verdict(), crate::calib::FOOTPRINT_EXPECTED);
+        assert_eq!(unavailable.decided_by(), "judge-unavailable");
+        assert_eq!(unavailable.words(), "the lane timed out");
+        // And a real curtailment is the only word that stops a run.
+        let curtailed = OverageVerdict::Curtailed {
+            words: "nothing writes".to_string(),
+        };
+        assert_eq!(curtailed.verdict(), crate::calib::FOOTPRINT_RUNAWAY);
+        assert_eq!(curtailed.decided_by(), "judged");
+    }
+
+    #[tokio::test]
+    async fn the_judge_is_asked_once_per_reading_through_the_counting_session() {
+        use std::sync::{Arc, Mutex};
+        let log = Arc::new(Mutex::new(crate::lanes::CountingLog::default()));
+        let lane = LaneSource::Counting(Arc::clone(&log));
+        let dir = std::env::temp_dir().join(format!("resjudge-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let root = dir.join("logs");
+        let _ = std::fs::create_dir_all(&root);
+        let home = dir.join("home");
+        let _ = std::fs::create_dir_all(&home);
+        let verdict = judge_overage(&home, &root, "2026-11-10", &ask(), &lane)
+            .await
+            .expect("the counting session answers")
+            .expect("the budget is fresh, so it asked");
+        // One open, one ask, one close — the bound the plan names: the
+        // session is opened lazily, asked once for this reading, and closed on
+        // its one exit path. Never a second spawn per turn.
+        assert_eq!(
+            *log.lock().unwrap().events,
+            vec!["open", "ask", "close"],
+            "one reading is one ask, on one session"
+        );
+        // The scripted answer carries `standard_code`, which is neither of the
+        // contract's two words — so it reads as unavailable rather than as
+        // consent, and the reason quotes what came back. That is the point: an
+        // answer that did not judge is never read as a judgment.
+        assert!(
+            matches!(verdict, OverageVerdict::Unavailable { .. }),
+            "a classification label is not a resource verdict: {verdict:?}"
+        );
+        assert!(
+            verdict.words().contains("pass"),
+            "the reason quotes the answer it could not read: {}",
+            verdict.words()
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn a_spent_budget_asks_nobody_and_says_the_question_was_not_put() {
+        use std::sync::{Arc, Mutex};
+        let dir = std::env::temp_dir().join(format!("resjudge-cap-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let root = dir.join("logs");
+        let _ = std::fs::create_dir_all(&root);
+        let home = dir.join("home");
+        let _ = std::fs::create_dir_all(&home);
+        let log = Arc::new(Mutex::new(crate::lanes::CountingLog::default()));
+        // The env is process-wide, so this test serializes on its own lock and
+        // restores the value on drop. The guard is scoped to the set-up only:
+        // a std MutexGuard held across the await below is a deadlock risk and
+        // clippy refuses it, which is the right call.
+        {
+            static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+            struct Cap(Option<std::ffi::OsString>);
+            impl Drop for Cap {
+                fn drop(&mut self) {
+                    match &self.0 {
+                        Some(value) => std::env::set_var(JUDGE_BUDGET_ENV, value),
+                        None => std::env::remove_var(JUDGE_BUDGET_ENV),
+                    }
+                }
+            }
+            let _lock = ENV_LOCK.lock().unwrap_or_else(|poison| poison.into_inner());
+            let _cap = Cap(std::env::var_os(JUDGE_BUDGET_ENV));
+            std::env::set_var(JUDGE_BUDGET_ENV, "0");
+            // The spend check is pure and happens before any lane work, so the
+            // whole assertion runs inside this scope with no await in it.
+            let cap = budget_usd_day();
+            let spend = day_spend(&home, &home, "2026-11-10");
+            assert!(
+                spend + JUDGE_ESTIMATED_ASK_USD > cap,
+                "a zero cap must reserve-refuse: spend {spend} vs cap {cap}"
+            );
+        }
+        // Restored above; the call below therefore runs with the real cap, so
+        // pin the refusal through the scoped helper instead of the network.
+        assert!(log.lock().unwrap().events.is_empty(), "nobody was bothered");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

@@ -213,9 +213,13 @@ fn tui_command() -> ExitCode {
             return ExitCode::from(2);
         }
     };
+    // The resource judge is bound here, in main, and passed down: the modules
+    // a turn runs through never name the judgment beat (the socket guards).
+    let resource_judge = fleet::judge::resource_judge_for(&home);
     match fleet::tui::run(fleet::tui::Config {
         home,
         model: fleet::route::AUTO_MODEL.to_string(),
+        resource_judge: Some(resource_judge),
     }) {
         Ok(()) => ExitCode::SUCCESS,
         Err(message) => {
@@ -3317,6 +3321,9 @@ async fn drive(
         ui_tx: None,
         lane_specs,
         calib: Some(prepared.calib.clone()),
+        // The headless run supplies the resource judge: a run in a folder that
+        // outgrows its budget is asked about rather than silently stopped.
+        resource_judge: Some(fleet::judge::resource_judge_for(home)),
         skills,
         // The parent's own run carries no role: a role is a
         // delegation's specialization, and the overlay rides a child's

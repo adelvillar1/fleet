@@ -143,6 +143,29 @@ impl Judgment {
     }
 }
 
+/// What the resource judge is shown, when an overage asks it: the numbers it
+/// must reason about, and the work the run was doing when it grew.
+///
+/// The shape lives here rather than in the beat's module so the agent can carry
+/// an ask to an injected capability without naming the beat — and so the number
+/// of fields the judge sees is one decision in one place.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OverageAsk {
+    /// The work class, as the contract files it.
+    pub class: String,
+    /// What the run has settled since it was admitted, in kibibytes.
+    pub settled_kib: u64,
+    /// The budget it was admitted against, in kibibytes.
+    pub budget_kib: u64,
+    /// Free space at this reading, and the reserve it is measured against.
+    pub available_kib: u64,
+    pub reserve_kib: u64,
+    /// The run's recent tool calls, as `name: the first argument's first line`.
+    /// The evidence that separates "writing a checkpoint tree" from "stuck in a
+    /// loop", and the only context the ask carries beyond the numbers.
+    pub recent_calls: Vec<String>,
+}
+
 /// Where one measurement landed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Standing {

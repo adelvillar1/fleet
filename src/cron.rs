@@ -1578,6 +1578,7 @@ pub async fn execute(
         checkpoints: None,
         file_access: FileAccess::Unrestricted,
         plan_mode: false,
+        resource_judge: None,
     };
     let gate = Gate::for_job(job);
     // The log's identity is read before the agent borrows the session

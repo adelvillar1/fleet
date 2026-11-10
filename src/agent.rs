@@ -463,8 +463,32 @@ fn workspace_key(access: &FileAccess) -> Option<String> {
     Some(root.file_name()?.to_string_lossy().to_string())
 }
 
+/// The resource judge, as the agent reaches it: one bounded ask that takes the
+/// numbers and the run's recent tool calls and answers with the contract's own
+/// vocabulary.
+///
+/// It is a **declared capability**, supplied by the caller, for a structural
+/// reason rather than tidiness: the judgment beat spends a lane ask, and the
+/// socket guards keep every lane-spending beat unreachable from the path that
+/// runs on every turn. A pointer the caller injects keeps this module from
+/// naming that beat at all, so the guard's intent (the turn loop cannot start a
+/// lane by itself) and its mechanism agree instead of the code routing around a
+/// textual rule.
+pub type ResourceJudge = std::sync::Arc<
+    dyn Fn(
+            crate::contract::OverageAsk,
+        )
+            -> std::pin::Pin<Box<dyn std::future::Future<Output = crate::contract::Judgment> + Send>>
+        + Send
+        + Sync,
+>;
+
 /// Options for one run.
-#[derive(Debug, Clone)]
+///
+/// `Clone` and a hand-written `Debug`: the resource judge is a boxed closure,
+/// which is neither, and a debug print of a run's options has no business
+/// rendering one anyway.
+#[derive(Clone)]
 pub struct AgentOptions {
     /// The session's standing objective when one is set: the owner's
     /// `/goal`, carried into every run of that session. It rides the
@@ -537,6 +561,11 @@ pub struct AgentOptions {
     /// the silent path — a test that does not care about the stream, or a
     /// surface that has none.
     pub calib: Option<crate::calib::Stream>,
+    /// The resource judge this run asks when its reading is abnormal. `None` is
+    /// a run whose overage is read as `expected` without an ask — a test, a
+    /// surface that supplies no judge, and the ordinary run that never has an
+    /// abnormal reading.
+    pub resource_judge: Option<ResourceJudge>,
     /// The skills this run declares. The list rides the system prompt as
     /// name+description pairs and `use_skill` fetches a body on demand,
     /// so an empty list is the run this crate has always had: the same
@@ -602,6 +631,17 @@ pub struct AgentOptions {
     pub gui_prompt: Option<String>,
 }
 
+impl std::fmt::Debug for AgentOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AgentOptions")
+            .field("model", &self.model)
+            .field("max_turns", &self.max_turns)
+            .field("capped", &self.capped)
+            .field("plan_mode", &self.plan_mode)
+            .finish_non_exhaustive()
+    }
+}
+
 impl AgentOptions {
     /// Seed the MCP registry's enabled servers into `lane_specs`, so the
     /// run pre-joins them before its first request (the registry plan's
@@ -657,6 +697,7 @@ impl Default for AgentOptions {
             checkpoints: None,
             file_access: FileAccess::Unrestricted,
             plan_mode: false,
+            resource_judge: None,
         }
     }
 }
@@ -3641,7 +3682,11 @@ impl<'a> Agent<'a> {
                 budget_kib,
             } => {
                 // An abnormal reading: one bounded ask, on this reading only.
-                let judgment = self.judge_oversight(settled_kib, budget_kib, &now);
+                // It needs facts the oversight borrow cannot hold, so they are
+                // copied out first — class, numbers, and the run's own calls.
+                let judgment = self
+                    .judge_oversight(settled_kib, budget_kib, &now, &class, reserve_kib)
+                    .await;
                 let verdict = judgment.verdict();
                 let decided_by = judgment.decided_by();
                 let words = judgment.words().to_string();
@@ -3728,17 +3773,57 @@ impl<'a> Agent<'a> {
     /// budget. Until it does, an overage reads as `expected` — the plan's own
     /// rule for a lane that did not answer — and records itself as
     /// `judge-unavailable`, so the row never claims a judgment nobody made.
-    fn judge_oversight(
-        &mut self,
-        _settled_kib: u64,
-        _budget_kib: u64,
-        _now: &crate::contract::Readout,
+    async fn judge_oversight(
+        &self,
+        settled_kib: u64,
+        budget_kib: u64,
+        now: &crate::contract::Readout,
+        class: &str,
+        reserve_kib: u64,
     ) -> crate::contract::Judgment {
-        crate::contract::Judgment::Unavailable {
-            reason:
-                "the resource judge lands in the next increment; this reading is expected for now"
-                    .to_string(),
+        let Some(judge) = self.options.resource_judge.as_ref() else {
+            // No judge supplied: the plan's rule for an answer that did not
+            // come — expected, and the row says nobody was asked.
+            return crate::contract::Judgment::Unavailable {
+                reason: "no resource judge is configured for this run".to_string(),
+            };
+        };
+        let ask = crate::contract::OverageAsk {
+            class: class.to_string(),
+            settled_kib,
+            budget_kib,
+            available_kib: now.available_kib,
+            reserve_kib,
+            recent_calls: self.recent_call_lines(),
+        };
+        judge(ask).await
+    }
+
+    /// The run's recent tool calls, as `name: the first line of its argument` —
+    /// the evidence the resource judge reads to tell "writing a checkpoint
+    /// tree" from "stuck in a loop". Bounded to the last handful, because an
+    /// ask that carries the transcript costs more than the crash it prevents.
+    fn recent_call_lines(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        'outer: for message in self.messages.iter().rev() {
+            for call in message.tool_calls.iter().rev() {
+                let first: String = call
+                    .function
+                    .arguments
+                    .lines()
+                    .next()
+                    .unwrap_or_default()
+                    .chars()
+                    .take(120)
+                    .collect();
+                out.push(format!("{}: {first}", call.function.name));
+                if out.len() >= 12 {
+                    break 'outer;
+                }
+            }
         }
+        out.reverse();
+        out
     }
 
     /// Land one contract row on the calibration stream, when this run has one.
@@ -9939,6 +10024,7 @@ mod tests {
             checkpoints: None,
             file_access: FileAccess::Unrestricted,
             plan_mode: false,
+            resource_judge: None,
         };
         let progress: &'static mut Vec<u8> = Box::leak(Box::new(Vec::new()));
         let mut agent = Agent::new(
@@ -9989,6 +10075,7 @@ mod tests {
             checkpoints: None,
             file_access: FileAccess::Unrestricted,
             plan_mode: false,
+            resource_judge: None,
         }
     }
 
@@ -10294,6 +10381,7 @@ mod tests {
             checkpoints: None,
             file_access: FileAccess::Unrestricted,
             plan_mode: false,
+            resource_judge: None,
         };
         let progress: &'static mut Vec<u8> = Box::leak(Box::new(Vec::new()));
         let path = session.path().to_path_buf();
@@ -10386,6 +10474,7 @@ mod tests {
             checkpoints: None,
             file_access: FileAccess::Unrestricted,
             plan_mode: false,
+            resource_judge: None,
         };
         let mut progress = Vec::new();
         let mut agent = Agent::new(
@@ -10646,6 +10735,7 @@ mod tests {
             checkpoints: None,
             file_access: FileAccess::Unrestricted,
             plan_mode: false,
+            resource_judge: None,
         };
         let progress: &'static mut Vec<u8> = Box::leak(Box::new(Vec::new()));
         let mut agent = Agent::new(
@@ -10719,6 +10809,7 @@ mod tests {
             checkpoints: None,
             file_access: FileAccess::Unrestricted,
             plan_mode: false,
+            resource_judge: None,
         };
         let mut progress = Vec::new();
         let mut agent = Agent::new(
@@ -11139,6 +11230,7 @@ mod tests {
             checkpoints: None,
             file_access: FileAccess::Unrestricted,
             plan_mode: false,
+            resource_judge: None,
         };
         let mut progress = Vec::new();
         let agent = Agent::new(
@@ -11287,6 +11379,7 @@ mod tests {
             checkpoints: None,
             file_access: FileAccess::Unrestricted,
             plan_mode: false,
+            resource_judge: None,
         };
         let mut progress = Vec::new();
         let mut agent = Agent::new(
@@ -11344,6 +11437,7 @@ mod tests {
             checkpoints: None,
             file_access: FileAccess::Unrestricted,
             plan_mode: false,
+            resource_judge: None,
         };
         let mut progress = Vec::new();
         let mut agent = Agent::new(
@@ -11773,6 +11867,7 @@ mod tests {
             checkpoints: None,
             file_access: FileAccess::Unrestricted,
             plan_mode: false,
+            resource_judge: None,
         };
         let agent = Agent::new(
             client,
@@ -11913,6 +12008,7 @@ mod tests {
                 checkpoints: None,
                 file_access: FileAccess::Unrestricted,
                 plan_mode: false,
+                resource_judge: None,
             };
             let agent = Agent::new(
                 client,
@@ -12064,6 +12160,7 @@ mod tests {
             checkpoints: None,
             file_access: FileAccess::Unrestricted,
             plan_mode: false,
+            resource_judge: None,
         };
         let mut progress = Vec::new();
         // The machine's sweep state stays outside — the agent_over
@@ -12126,6 +12223,7 @@ mod tests {
             checkpoints: None,
             file_access: FileAccess::Unrestricted,
             plan_mode: false,
+            resource_judge: None,
         };
         let mut progress = Vec::new();
         let agent = Agent::new(
@@ -12339,6 +12437,7 @@ mod tests {
                 checkpoints: None,
                 file_access: FileAccess::Unrestricted,
                 plan_mode: false,
+                resource_judge: None,
             };
             Agent::new(
                 client,
@@ -12416,6 +12515,7 @@ You are auditing a change. Read the diff before you judge it.
             checkpoints: None,
             file_access: FileAccess::Unrestricted,
             plan_mode: false,
+            resource_judge: None,
         };
         let mut progress = Vec::new();
         let agent = Agent::new(
@@ -12466,6 +12566,7 @@ You are auditing a change. Read the diff before you judge it.
             checkpoints: None,
             file_access: FileAccess::Unrestricted,
             plan_mode: false,
+            resource_judge: None,
         };
         let mut progress = Vec::new();
         // The machine's sweep state stays outside — the agent_over
@@ -12534,6 +12635,7 @@ You are auditing a change. Read the diff before you judge it.
             checkpoints: None,
             file_access: FileAccess::Unrestricted,
             plan_mode: false,
+            resource_judge: None,
         };
         let mut progress = Vec::new();
         let agent = Agent::new(
@@ -12575,6 +12677,7 @@ You are auditing a change. Read the diff before you judge it.
             checkpoints: None,
             file_access: FileAccess::Unrestricted,
             plan_mode: false,
+            resource_judge: None,
         };
         let mut progress = Vec::new();
         // The machine's sweep state stays outside — the agent_over
@@ -12630,6 +12733,7 @@ You are auditing a change. Read the diff before you judge it.
             checkpoints: None,
             file_access: FileAccess::Folder(folder.clone()),
             plan_mode: false,
+            resource_judge: None,
         };
         let mut progress = Vec::new();
         let agent = Agent::new(
@@ -12685,6 +12789,7 @@ You are auditing a change. Read the diff before you judge it.
             checkpoints: None,
             file_access: FileAccess::Unrestricted,
             plan_mode: false,
+            resource_judge: None,
         };
         let mut progress = Vec::new();
         let agent = Agent::new(
@@ -12815,6 +12920,7 @@ You are auditing a change. Read the diff before you judge it.
             checkpoints: Some(store.clone()),
             file_access: FileAccess::Folder(folder.clone()),
             plan_mode: false,
+            resource_judge: None,
         };
         let mut progress = Vec::new();
         let agent = Agent::new(
@@ -12888,6 +12994,7 @@ You are auditing a change. Read the diff before you judge it.
             checkpoints: Some(store.clone()),
             file_access: FileAccess::None,
             plan_mode: false,
+            resource_judge: None,
         };
         let mut progress = Vec::new();
         let mut agent = Agent::new(
@@ -13001,6 +13108,7 @@ You are auditing a change. Read the diff before you judge it.
             checkpoints: None,
             file_access: FileAccess::Unrestricted,
             plan_mode: false,
+            resource_judge: None,
         };
         let progress: &'static mut Vec<u8> = Box::leak(Box::new(Vec::new()));
         let mut agent = Agent::new(
@@ -13141,6 +13249,7 @@ You are auditing a change. Read the diff before you judge it.
             checkpoints: None,
             file_access: FileAccess::Unrestricted,
             plan_mode: false,
+            resource_judge: None,
         };
         let progress: &'static mut Vec<u8> = Box::leak(Box::new(Vec::new()));
         let mut agent = Agent::new(
@@ -13229,6 +13338,7 @@ You are auditing a change. Read the diff before you judge it.
             checkpoints: None,
             file_access: FileAccess::Unrestricted,
             plan_mode: false,
+            resource_judge: None,
         };
         let progress: &'static mut Vec<u8> = Box::leak(Box::new(Vec::new()));
         let mut agent = Agent::new(
@@ -13828,6 +13938,7 @@ You are auditing a change. Read the diff before you judge it.
             checkpoints: None,
             file_access: FileAccess::Unrestricted,
             plan_mode: false,
+            resource_judge: None,
         };
         let mut progress = Vec::new();
         let mut agent = Agent::new(
@@ -13890,6 +14001,7 @@ You are auditing a change. Read the diff before you judge it.
             checkpoints: None,
             file_access: FileAccess::Unrestricted,
             plan_mode: false,
+            resource_judge: None,
         };
         let progress: &'static mut Vec<u8> = Box::leak(Box::new(Vec::new()));
         let mut agent = Agent::new(
@@ -13962,6 +14074,7 @@ You are auditing a change. Read the diff before you judge it.
             checkpoints: None,
             file_access: FileAccess::Unrestricted,
             plan_mode: false,
+            resource_judge: None,
         };
         let mut progress = Vec::new();
         let mut agent = Agent::new(
@@ -14022,6 +14135,7 @@ You are auditing a change. Read the diff before you judge it.
             checkpoints: None,
             file_access: FileAccess::Unrestricted,
             plan_mode: false,
+            resource_judge: None,
         };
         let mut plain_session = crate::session::Session::create(&home, "m").unwrap();
         let mut plain_progress = Vec::new();
@@ -14222,6 +14336,7 @@ You are auditing a change. Read the diff before you judge it.
             checkpoints: None,
             file_access: FileAccess::Unrestricted,
             plan_mode: false,
+            resource_judge: None,
         };
         let progress: &'static mut Vec<u8> = Box::leak(Box::new(Vec::new()));
         Agent::new(client, options, session, Box::new(ApproveAll), progress).unwrap()
@@ -14628,6 +14743,7 @@ You are auditing a change. Read the diff before you judge it.
             checkpoints: None,
             file_access: FileAccess::Unrestricted,
             plan_mode: false,
+            resource_judge: None,
         };
         Agent::new(client, options, session, approver, progress).unwrap()
     }

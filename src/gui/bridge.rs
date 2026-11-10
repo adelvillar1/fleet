@@ -13122,6 +13122,11 @@ fn spawn_agent(inputs: AgentInputs) -> thread::JoinHandle<()> {
                             ui_tx: Some(ui_tx.clone()),
                             lane_specs,
                             calib: Some(prepared.calib.clone()),
+                            // The face supplies the resource judge: it has the
+                            // home the lane resolves through, so a run that
+                            // outgrows its budget can be asked about rather
+                            // than silently stopped.
+                            resource_judge: Some(crate::judge::resource_judge_for(&home)),
                             skills: declared_skills(),
                             role_overlay,
                             memory,

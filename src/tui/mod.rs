@@ -53,6 +53,11 @@ pub struct Config {
     pub home: PathBuf,
     /// The model to run.
     pub model: String,
+    /// The resource judge the surfaces hand a run, when one is supplied. It is
+    /// passed in rather than built here: the judgment beat spends a lane ask,
+    /// and the socket guards keep the modules a turn runs through from naming
+    /// it at all.
+    pub resource_judge: Option<crate::agent::ResourceJudge>,
 }
 
 /// One instruction from the interface to the agent thread.
@@ -81,6 +86,8 @@ struct AgentConfig {
     status_tx: UnboundedSender<StatusUpdate>,
     approval_tx: UnboundedSender<ApprovalRequest>,
     command_rx: UnboundedReceiver<Command>,
+    /// The resource judge, passed through from `Config` unchanged.
+    resource_judge: Option<crate::agent::ResourceJudge>,
 }
 
 /// Restores the terminal when the TUI ends, including on a panic, so the
@@ -138,6 +145,7 @@ pub fn run(config: Config) -> Result<(), String> {
         status_tx,
         approval_tx,
         command_rx,
+        resource_judge: config.resource_judge.clone(),
     });
 
     let mut app = App::new(&config.model, "");
@@ -681,6 +689,7 @@ fn spawn_agent(config: AgentConfig) -> thread::JoinHandle<()> {
             status_tx: _status_tx,
             approval_tx,
             command_rx,
+            resource_judge,
         } = config;
         // The scheduled consolidation cycle: one pass now, then one
         // every hour for the life of the process — the timer the live
@@ -879,6 +888,10 @@ fn spawn_agent(config: AgentConfig) -> thread::JoinHandle<()> {
                             ui_tx: Some(ui_tx.clone()),
                             lane_specs,
                             calib: Some(prepared.calib.clone()),
+                            // The TUI supplies the resource judge for the same
+                            // reason the face does: a run that outgrows its
+                            // budget is asked about, not silently stopped.
+                            resource_judge: resource_judge.clone(),
                             skills: skills.clone(),
                             role_overlay: None,
                             memory,

@@ -2297,6 +2297,7 @@ pub async fn run(delegation: Delegation<'_>) -> SubagentResult {
             None => file_access,
         },
         plan_mode,
+        resource_judge: None,
     };
     let gate = InheritedApprover {
         inner: approver,
