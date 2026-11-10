@@ -151,9 +151,19 @@ fn lanes_probe() -> ServiceHealth {
             format!("the services root is unavailable: {error}"),
         ),
         Ok(root) => {
+            // The presence marker is the lane's MCP entry — the file the
+            // launch spec actually runs — not a manifest stamp: the
+            // newer lanes (browser) carry no VENDOR.json, and a marker
+            // the runtime does not read names healthy cores down.
             let missing: Vec<&str> = crate::lanes::LANES
                 .iter()
-                .filter(|lane| !root.join(lane.name).join("VENDOR.json").exists())
+                .filter(|lane| {
+                    !root
+                        .join(lane.name)
+                        .join("service")
+                        .join("mcp_server.py")
+                        .exists()
+                })
                 .map(|lane| lane.name)
                 .collect();
             if missing.is_empty() {
