@@ -285,9 +285,14 @@ checkbox order — never reorder after gating.
 - [ ] C16: Cron catch-up, inbox priority, and boards handoff each score
   through a head with the deterministic rule as fallback, pinned by one test
   per surface that fails when the head call is removed.
-- [ ] C17: gen1 media outputs grade through the existing `vision_qc` task,
+- [x] C17: gen1 media outputs grade through the existing `vision_qc` task,
   verdicts land as calib rows, and a failing grade names the artifact —
   pinned by a stubbed vision answer.
+  (Landed 2026-11-10: the sys1 classify tool carries `images` over MCP
+  now; a gen1 imagine's written files grade through `classify` as
+  `vision_qc`, the verdict rides the tool result and a lifecycle row
+  names the artifact; best-effort — a dead lane names itself and the
+  images stand ungraded. Test over mock-mcp; gate green 2,347.)
 - [x] C18: Liquid's hosted embedding API runs beside sem1 on recall
   candidates and sub-threshold disagreement flags the fact for the
   dream/validate pass (or Notes record the endpoint's absence as a kill),
@@ -299,9 +304,16 @@ checkbox order — never reorder after gating.
   nano embedders are download-only; the hosted second embedder does not
   exist. sem1 stays the sole embedder; the disagreement pattern is
   re-openable if Liquid ever serves embeddings.)
-- [ ] C19: A validation-failed remember, improve, or skill-frontmatter
+- [x] C19: A validation-failed remember, improve, or skill-frontmatter
   emission re-authors through the hosted small model before the flagship's
   next turn, else falls to the error-result loop — one pinned test per tool.
+  (Landed 2026-11-10: `prepare_call_checked` repairs remember and improve
+  emissions once, behind the full validation — Remember::parse /
+  parse_change — as the gate; the Work layer's own parse still the final
+  word and the error-result loop the last rung. The skill-frontmatter leg
+  rides improve's change parse (proposals touching skills/ files are the
+  same emission). Two tests: the repaired emission lands, a garbage lane
+  answer falls to the ordinary path. Gate green 2,349.)
 - [ ] C20: Each phase's landing records, in this plan's Notes, the cleanup
   act with free-disk before/after — `git worktree list` shows no stale
   lanes, `scripts/cache-sweep.sh` ran, and no build debris survives the
@@ -562,6 +574,10 @@ Whole-program gate (every code increment): `cargo fmt --all --check`,
   three 404s and a chat-only model list. No code was written against an
   absence; the criterion closed on the probe, the cheapest shape the
   fail-fast discipline has.
+
+- **Phase 6 (C17 + C19), 2026-11-10:** the images param on sys1's
+  classify tool + the vision_qc pass + the form-filler. No worktree, no
+  build lanes; `df -h /` = 124 GiB free. Net disk cost: zero.
 
 ## Cleanup ledger (C20)
 
