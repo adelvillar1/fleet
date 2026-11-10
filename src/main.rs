@@ -4713,6 +4713,17 @@ fn footprint_facts(home: Option<&std::path::Path>) -> (Option<f64>, f64, Option<
 /// `df` on PATH reports a broken machine when the PATH is merely narrow.
 #[cfg(unix)]
 fn free_kib(path: &std::path::Path) -> Option<u64> {
+    volume_facts(path).map(|(available, _total)| available)
+}
+
+/// The volume's free space and its total size, in kibibytes, from one
+/// `statvfs`. Both come from the same call because the reserve is a *fraction
+/// of the volume*: reading the size from somewhere else — the history, which
+/// names the machine's usual volume — sizes the floor against one disk while
+/// measuring the other, which is how a 2 GiB scratch volume got a 460 GiB
+/// disk's reserve and a real refusal read as no-headroom.
+#[cfg(unix)]
+fn volume_facts(path: &std::path::Path) -> Option<(u64, u64)> {
     use std::os::unix::ffi::OsStrExt;
     let path = std::ffi::CString::new(path.as_os_str().as_bytes()).ok()?;
     // SAFETY: `path` is a valid NUL-terminated name and `stats` a valid
@@ -4722,11 +4733,18 @@ fn free_kib(path: &std::path::Path) -> Option<u64> {
     if rc != 0 {
         return None;
     }
-    Some((stats.f_bavail as u64).saturating_mul(stats.f_frsize as u64) / 1024)
+    let available = (stats.f_bavail as u64).saturating_mul(stats.f_frsize as u64) / 1024;
+    let total = (stats.f_blocks as u64).saturating_mul(stats.f_frsize as u64) / 1024;
+    Some((available, total))
 }
 
 #[cfg(not(unix))]
 fn free_kib(_path: &std::path::Path) -> Option<u64> {
+    None
+}
+
+#[cfg(not(unix))]
+fn volume_facts(_path: &std::path::Path) -> Option<(u64, u64)> {
     None
 }
 
@@ -4864,13 +4882,133 @@ fn footprint_command(options: &fleet::cli::FootprintOptions) -> ExitCode {
         Ok(home) => read_env(&home),
         Err(_) => (fleet::footprint::Env::default(), 0),
     };
-    let (volume_kib, available_kib) = match (history_volume, available) {
-        (history, Some(free)) if history > 0 => (history, free),
-        (history, Some(free)) => (history.max(free), free),
-        (history, None) => (history, 0),
+    // The volume measured here, not the one the history remembers: the reserve
+    // is a fraction of the disk the work will actually fill.
+    let (available_kib, volume_kib) = match volume_facts(&volume) {
+        // The measured total wins outright: a scratch volume carrying the
+        // machine's usual size would get a reserve nine hundred times its own
+        // capacity. History supplies the size only when nothing was measured.
+        Some((free, total)) if total > 0 => (free, total),
+        Some((free, _)) => (free, history_volume),
+        None => (0, history_volume),
     };
     let reading =
         fleet::footprint::Reading::new(lines, volume_kib, available_kib, &env, declared_appetite());
+    // The contract's own reads over its history: the learned estimate (C8),
+    // the settlement of a finished unit (C2), and the row that records it
+    // (C5). All three need the class, which the CLI already refused to omit.
+    let window = contract_rows();
+    if options.estimate {
+        let class = options.class.as_deref().unwrap_or_default();
+        let (estimate, source) = fleet::calib::estimate_for(class, &window);
+        let doc = serde_json::json!({
+            "measured": fleet::calib::stamp(),
+            "work_class": class,
+            "estimate_kib": estimate,
+            "source": source,
+            "settlements": window
+                .iter()
+                .filter(|row| row.class == class
+                    && (row.verdict == fleet::calib::FOOTPRINT_CLEAN
+                        || row.verdict == fleet::calib::FOOTPRINT_RUNAWAY
+                        || row.verdict == fleet::calib::FOOTPRINT_EXPECTED))
+                .count(),
+        });
+        println!("{doc}");
+        return ExitCode::SUCCESS;
+    }
+    if let Some(before_kib) = options.settle_from {
+        let class = options.class.as_deref().unwrap_or_default();
+        // The budget the work declared is the estimate that admitted it: the
+        // learned one, so a class pays for its own history and not a constant.
+        let (budget_kib, source) = fleet::calib::estimate_for(class, &window);
+        let admission = reading.admission(class);
+        let settlement = fleet::footprint::settle(before_kib, reading.available_kib, budget_kib);
+        let verdict = if settlement.runaway {
+            fleet::calib::FOOTPRINT_RUNAWAY
+        } else {
+            fleet::calib::FOOTPRINT_CLEAN
+        };
+        let row = fleet::calib::FootprintRow {
+            ts: fleet::calib::stamp(),
+            class: class.to_string(),
+            estimate_kib: budget_kib,
+            reserve_kib: reading.reserve_kib,
+            reserve_source: reading.reserve_source.to_string(),
+            available_kib: before_kib,
+            headroom_kib: admission.headroom_kib,
+            settled_kib: settlement.delta_kib,
+            verdict: verdict.to_string(),
+            decided_by: "bounds".to_string(),
+            judge_words: String::new(),
+        };
+        let recorded = record_contract_row(row.clone());
+        let doc = serde_json::json!({
+            "measured": row.ts,
+            "work_class": class,
+            "verdict": verdict,
+            "settled_kib": settlement.delta_kib,
+            "delta_gib": settlement.delta_kib as f64 / 1024.0 / 1024.0,
+            "budget_kib": budget_kib,
+            "budget_source": source,
+            "before_kib": before_kib,
+            "after_kib": reading.available_kib,
+            "reserve_kib": reading.reserve_kib,
+            "runaway": settlement.runaway,
+            "recorded": recorded.is_ok(),
+            "record_error": recorded.err().unwrap_or_default(),
+        });
+        println!("{doc}");
+        // A runaway is a refusal: the caller stops, keeps the diagnosis
+        // window, and cleans what the work made. Non-zero is how it hears.
+        return if settlement.runaway {
+            ExitCode::from(1)
+        } else {
+            ExitCode::SUCCESS
+        };
+    }
+    if options.record {
+        let class = options.class.as_deref().unwrap_or_default();
+        let (budget_kib, source) = fleet::calib::estimate_for(class, &window);
+        let admission = reading.admission(class);
+        let verdict = if admission.ok {
+            fleet::calib::FOOTPRINT_ADMITTED
+        } else {
+            fleet::calib::FOOTPRINT_REFUSED
+        };
+        let row = fleet::calib::FootprintRow {
+            ts: fleet::calib::stamp(),
+            class: class.to_string(),
+            estimate_kib: budget_kib,
+            reserve_kib: reading.reserve_kib,
+            reserve_source: reading.reserve_source.to_string(),
+            available_kib: reading.available_kib,
+            headroom_kib: admission.headroom_kib,
+            settled_kib: 0,
+            verdict: verdict.to_string(),
+            decided_by: "bounds".to_string(),
+            judge_words: String::new(),
+        };
+        let recorded = record_contract_row(row);
+        let doc = serde_json::json!({
+            "measured": fleet::calib::stamp(),
+            "work_class": class,
+            "verdict": verdict,
+            "estimate_kib": budget_kib,
+            "estimate_source": source,
+            "headroom_kib": admission.headroom_kib,
+            "reserve_kib": reading.reserve_kib,
+            "admitted": admission.ok,
+            "recorded": recorded.is_ok(),
+            "record_error": recorded.err().unwrap_or_default(),
+        });
+        println!("{doc}");
+        return if admission.ok {
+            ExitCode::SUCCESS
+        } else {
+            ExitCode::from(1)
+        };
+    }
     if options.json {
         let doc = reading.to_json(options.class.as_deref());
         println!("{doc}");
@@ -4922,6 +5060,35 @@ fn footprint_command(options: &fleet::cli::FootprintOptions) -> ExitCode {
         return ExitCode::from(1);
     }
     ExitCode::SUCCESS
+}
+
+/// The contract's own rows over the last [`FOOTPRINT_WINDOW_DAYS`]: what C8
+/// reads to turn a class's settlements into its estimate, and what C9 grades a
+/// judged verdict against. An unreadable stream is an empty history, never an
+/// error — a first build on a fresh machine has nothing to learn from yet.
+fn contract_rows() -> Vec<fleet::calib::FootprintRow> {
+    let Ok(home) = fleet_home() else {
+        return Vec::new();
+    };
+    let user_home = std::env::var("HOME").ok();
+    let root = fleet::calib::resolve_root(&home, user_home.as_deref());
+    fleet::calib::footprint_window(&root, fleet::calib::FOOTPRINT_WINDOW_DAYS)
+}
+
+/// Land one contract row on the calibration stream. The stream is advisory by
+/// construction (a full queue drops the row and counts it), so the caller is
+/// told whether the row landed rather than left to assume it did — a contract
+/// whose own ledger silently drops its rows is measuring nothing.
+fn record_contract_row(row: fleet::calib::FootprintRow) -> Result<(), String> {
+    let home = fleet_home()?;
+    let user_home = std::env::var("HOME").ok();
+    let root = fleet::calib::resolve_root(&home, user_home.as_deref());
+    let stream = fleet::calib::Stream::open(&root);
+    fleet::calib::record_footprint(&stream, row);
+    // The last handle's drop drains the queue before the process exits; an
+    // explicit flush makes the wait visible rather than incidental.
+    stream.flush();
+    Ok(())
 }
 
 /// The owner's declared risk appetite, when `fleet settings` carries one. It

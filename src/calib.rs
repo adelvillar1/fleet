@@ -639,11 +639,34 @@ pub struct FootprintRow {
 }
 
 /// The verdict words a [`FootprintRow`] carries. `admitted` is the row a
-/// start lands; the other three are endings.
+/// start lands; the rest are endings, and `clean` is the ordinary one — work
+/// that settled inside its budget. `expected` is deliberately not `clean`:
+/// it is the judge's word for growth that *happened* and was the work, and
+/// C9 grades it against the outcome that followed.
 pub const FOOTPRINT_ADMITTED: &str = "admitted";
 pub const FOOTPRINT_REFUSED: &str = "refused";
+pub const FOOTPRINT_CLEAN: &str = "clean";
 pub const FOOTPRINT_RUNAWAY: &str = "runaway";
 pub const FOOTPRINT_EXPECTED: &str = "expected";
+
+/// Every verdict word, in the order a reader counts them.
+pub const FOOTPRINT_VERDICTS: [&str; 5] = [
+    FOOTPRINT_ADMITTED,
+    FOOTPRINT_REFUSED,
+    FOOTPRINT_CLEAN,
+    FOOTPRINT_RUNAWAY,
+    FOOTPRINT_EXPECTED,
+];
+
+/// The verdicts that measured a real passage of work — the ones C8 may learn
+/// from. `admitted` is a start whose delta is a later row's, and `refused`
+/// took nothing at all.
+fn measured(verdict: &str) -> bool {
+    matches!(
+        verdict,
+        FOOTPRINT_CLEAN | FOOTPRINT_RUNAWAY | FOOTPRINT_EXPECTED
+    )
+}
 
 /// One delegated run, as the orchestrator records it the moment a
 /// subagent stops. The row the beat reads and the row the parent chain
@@ -966,13 +989,23 @@ fn median(mut values: Vec<u64>) -> Option<u64> {
 }
 
 /// The settlements a [`FootprintRow`] read carries: only rows that actually
-/// measured a passage of work. A refusal took nothing (its delta is zero and
-/// teaching it would drive every estimate to zero), and an `admitted` row is
-/// the start of a passage whose ending is a later row.
+/// measured a passage of work. A refusal took nothing, an `admitted` row is the
+/// start of a passage whose ending is a later row, and a delta of exactly zero
+/// measured nothing at all — the free space did not move, so there is no cost
+/// there to learn. A zero that taught would drive the class's estimate to
+/// nothing, and an estimate of zero admits a unit of work on any headroom
+/// whatever.
+///
+/// Note what this does *not* protect, and must not: the estimate may learn
+/// DOWNWARD, and C8 requires that it does — a class that keeps settling at
+/// 5 GiB stops being budgeted at 8. What bounds the machine is the reserve,
+/// which never learns at all (the plan's rule); the estimate only decides how
+/// much work the headroom above that reserve may host.
 fn settled_of<'a>(rows: &'a [FootprintRow], class: &'a str) -> impl Iterator<Item = u64> + 'a {
     rows.iter()
         .filter(move |row| row.class == class)
-        .filter(|row| row.verdict == FOOTPRINT_RUNAWAY || row.verdict == FOOTPRINT_EXPECTED)
+        .filter(|row| measured(&row.verdict))
+        .filter(|row| row.settled_kib > 0)
         .map(|row| row.settled_kib)
 }
 
@@ -998,10 +1031,8 @@ pub fn estimate_for(class: &str, rows: &[FootprintRow]) -> (u64, &'static str) {
         return (prior, "prior");
     }
     match median(recent) {
-        // A learned estimate of zero would admit nothing forever; the prior is
-        // the floor a settled history may not undercut.
-        Some(value) if value > 0 => (value, "settled"),
-        _ => (prior, "prior"),
+        Some(learned) => (learned, "settled"),
+        None => (prior, "prior"),
     }
 }
 
@@ -1039,7 +1070,7 @@ impl JudgeGrade {
 fn grading_verdict(next: &FootprintRow) -> Option<bool> {
     match next.verdict.as_str() {
         FOOTPRINT_RUNAWAY => Some(true),
-        FOOTPRINT_EXPECTED | FOOTPRINT_ADMITTED => Some(false),
+        FOOTPRINT_CLEAN => Some(false),
         _ => None,
     }
 }
@@ -4711,13 +4742,13 @@ mod tests {
         let prior = crate::footprint::ESTIMATE_RELEASE_GATE_KIB;
         // Two settlements: still the prior, and the source says so.
         let mut rows = vec![
-            fp(gate, FOOTPRINT_EXPECTED, 5 * 1024 * 1024, "bounds"),
+            fp(gate, FOOTPRINT_CLEAN, 5 * 1024 * 1024, "bounds"),
             fp(gate, FOOTPRINT_RUNAWAY, 6 * 1024 * 1024, "bounds"),
         ];
         assert_eq!(estimate_for(gate, &rows), (prior, "prior"));
         // A third: the median of the three now speaks, and it is not the prior
         // — the deliberately wrong prior corrects itself after the settles.
-        rows.push(fp(gate, FOOTPRINT_EXPECTED, 4 * 1024 * 1024, "bounds"));
+        rows.push(fp(gate, FOOTPRINT_CLEAN, 4 * 1024 * 1024, "bounds"));
         assert_eq!(
             estimate_for(gate, &rows),
             (5 * 1024 * 1024, "settled"),
@@ -4732,7 +4763,7 @@ mod tests {
         // Another class's settlements do not leak into this one's estimate.
         rows.push(fp(
             "release-assets",
-            FOOTPRINT_EXPECTED,
+            FOOTPRINT_CLEAN,
             900 * 1024 * 1024,
             "bounds",
         ));
@@ -4742,7 +4773,7 @@ mod tests {
         // have given 6 GiB, so the dropped oldest reading is exactly what the
         // window removes from the number.
         let many: Vec<FootprintRow> = (1..=11)
-            .map(|i| fp(gate, FOOTPRINT_EXPECTED, i * 1024 * 1024, "bounds"))
+            .map(|i| fp(gate, FOOTPRINT_CLEAN, i * 1024 * 1024, "bounds"))
             .collect();
         assert_eq!(
             estimate_for(gate, &many),
@@ -4753,6 +4784,23 @@ mod tests {
             estimate_for("run:/tmp/scratch", &[]),
             (crate::footprint::RUN_BUDGET_KIB, "prior")
         );
+        // A delta of exactly zero measured nothing and must not teach: a
+        // budget of zero would admit work on any headroom whatever. The
+        // estimate keeps the prior rather than collapsing to nothing.
+        let frozen: Vec<FootprintRow> = (0..4)
+            .map(|_| fp(gate, FOOTPRINT_CLEAN, 0, "bounds"))
+            .collect();
+        assert_eq!(estimate_for(gate, &frozen), (prior, "prior"));
+        // And it may learn DOWNWARD: a class settling at 5 GiB stops being
+        // budgeted at 8. That correction is C8's own criterion.
+        let cheaper: Vec<FootprintRow> = (0..4)
+            .map(|_| fp(gate, FOOTPRINT_CLEAN, 5 * 1024 * 1024, "bounds"))
+            .collect();
+        assert_eq!(
+            estimate_for(gate, &cheaper),
+            (5 * 1024 * 1024, "settled"),
+            "the 8 GiB prior must correct down to what the class keeps costing"
+        );
     }
 
     #[test]
@@ -4762,12 +4810,12 @@ mod tests {
         let rows = vec![
             fp(gate, FOOTPRINT_RUNAWAY, 9 * 1024 * 1024, "judged"),
             fp(gate, FOOTPRINT_RUNAWAY, 9 * 1024 * 1024, "bounds"),
-            // The judge said `expected`, and the next passage came in clean: right.
+            // The judge said `expected`, and the next passage stayed clean: right.
             fp(gate, FOOTPRINT_EXPECTED, 4 * 1024 * 1024, "judged"),
-            fp(gate, FOOTPRINT_EXPECTED, 4 * 1024 * 1024, "bounds"),
+            fp(gate, FOOTPRINT_CLEAN, 4 * 1024 * 1024, "bounds"),
             // A `runaway` the next clean passage contradicts: wrong.
             fp(gate, FOOTPRINT_RUNAWAY, 7 * 1024 * 1024, "judged"),
-            fp(gate, FOOTPRINT_EXPECTED, 3 * 1024 * 1024, "bounds"),
+            fp(gate, FOOTPRINT_CLEAN, 3 * 1024 * 1024, "bounds"),
         ];
         let grades = grade_judgments(&rows);
         assert_eq!(grades.len(), 1);
@@ -4784,7 +4832,7 @@ mod tests {
         assert_eq!(grades[0].agreed + grades[0].disagreed, 0);
         assert_eq!(grades[0].rate(), None, "zero judged outcomes is not 0%");
         // Nothing judged at all: no class to grade, and no invented rate.
-        assert!(grade_judgments(&[fp(gate, FOOTPRINT_EXPECTED, 1, "bounds")]).is_empty());
+        assert!(grade_judgments(&[fp(gate, FOOTPRINT_CLEAN, 1, "bounds")]).is_empty());
     }
 
     #[test]

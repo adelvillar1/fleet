@@ -53,9 +53,45 @@ free_gib() {
   df -k "$1" 2>/dev/null | awk 'NR==2 {print int($4 / 1024 / 1024)}'
 }
 
-# Bound the gate's lane and refuse a build that cannot finish. Both numbers
-# are named when they are the reason, so a refusal is actionable.
+# The contract's reading, from the binary that owns the arithmetic — never
+# re-derived in shell (2026-11-09, the resource contract's C2). `fleet
+# footprint --json --class <work>` answers the reserve, where it came from, and
+# the estimate/admission for that work class; the floor below is only the
+# fallback for a tree with no binary to ask yet (the first cut after a clean).
+#
+# The binary during a `tag` cut is the working tree's release build (if any);
+# during an `assets` cut it is the one being packaged. Either way its absence
+# is a NAMED degradation and the declared floor stands in — never silence.
+# A binary that EXISTS is not a binary that ANSWERS: the release build on this
+# tree predates the footprint verb until the first cut after this change, and a
+# stale one answers an unknown-option error. So each candidate is asked, and
+# the first that returns a document wins — a stale binary falls through to the
+# debug build instead of silently skipping the contract.
+contract_binary() {
+  for candidate in "$REPO_ROOT/target/release/fleet" "$REPO_ROOT/target/debug/fleet"; do
+    [ -x "$candidate" ] || continue
+    if "$candidate" footprint --json --class "$1" --path "$REPO_ROOT" >/dev/null 2>&1; then
+      echo "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Print the contract's JSON for a work class, or nothing when no binary on the
+# tree can answer. That absence is a named skip, not a refusal: the declared
+# floor below still bounds the build.
+contract_reading() {
+  bin=$(contract_binary "$1") ||
+    { echo "== contract: no binary on this tree answers the footprint verb — the declared floor stands in" >&2; return 1; }
+  "$bin" footprint --json --class "$1" --path "$REPO_ROOT" 2>/dev/null
+}
+
+# Bound the gate's lane and refuse a build that cannot finish. The refusal is
+# the contract's, not a hardcoded number: headroom above the reserve against
+# the class's estimate. Both numbers are named when they are the reason.
 preflight_disk() {
+  class="$1"
   if [ -d "$RELEASE_TARGET" ]; then
     lane_gib=$(du -sm "$RELEASE_TARGET" 2>/dev/null | cut -f1)
     lane_gib=$(( ${lane_gib:-0} / 1024 ))
@@ -67,10 +103,62 @@ preflight_disk() {
   fi
   free=$(free_gib "$REPO_ROOT")
   [ -n "${free:-}" ] || die "the volume's free space could not be read (df -k)"
+  # The contract's verdict, when the binary can give one. NOTE: the binary
+  # exits non-zero when it REFUSES, and a refusal is the case this function
+  # exists for — so the document is kept whatever the exit status and only an
+  # empty answer falls through. Capturing with `|| reading=""` threw the
+  # refusal away and let the build proceed on the bare floor (found by driving
+  # the refusal arm against a 2 GiB volume, 2026-11-10).
+  reading=$(contract_reading "$class")
+  case "$reading" in
+    {*) ;;
+    *) reading="" ;;
+  esac
+  if [ -n "$reading" ]; then
+    reserve_gib=$(printf '%s' "$reading" | python3 -c 'import json,sys;print(int(json.load(sys.stdin)["reserve_kib"]//1048576))')
+    headroom_gib=$(printf '%s' "$reading" | python3 -c 'import json,sys;print(int(json.load(sys.stdin)["headroom_kib"]//1048576))')
+    estimate_gib=$(printf '%s' "$reading" | python3 -c 'import json,sys;print(int(json.load(sys.stdin)["estimate_kib"]//1048576))')
+    admitted=$(printf '%s' "$reading" | python3 -c 'import json,sys;print("yes" if json.load(sys.stdin)["admitted"] else "no")')
+    source=$(printf '%s' "$reading" | python3 -c 'import json,sys;print(json.load(sys.stdin)["reserve_source"])')
+    appetite=$(printf '%s' "$reading" | python3 -c 'import json,sys;print(json.load(sys.stdin)["appetite"])')
+    [ "$free" -ge "$DISK_FLOOR_GIB" ] ||
+      die "only ${free} GiB free on this volume (declared floor ${DISK_FLOOR_GIB}) — a build here dies mid-link. Run scripts/daily-maintenance.sh, or clean $RELEASE_TARGET and the other /private/tmp/fleet-*-target lanes."
+    [ "$admitted" = "yes" ] ||
+      die "the contract refuses this $class: ${headroom_gib} GiB of headroom above the ${reserve_gib} GiB reserve (${appetite}, ${source}) against a ${estimate_gib} GiB estimate. Free space or raise the appetite; nothing was built."
+    echo "== disk: ${free} GiB free; contract admits $class — ${headroom_gib} GiB headroom above a ${reserve_gib} GiB reserve (${appetite}, ${source}) for a ${estimate_gib} GiB estimate"
+    return 0
+  fi
   [ "$free" -ge "$DISK_FLOOR_GIB" ] ||
     die "only ${free} GiB free on this volume (floor ${DISK_FLOOR_GIB}) — a build here dies mid-link. Run scripts/daily-maintenance.sh, or clean $RELEASE_TARGET and the other /private/tmp/fleet-*-target lanes."
   echo "== disk: ${free} GiB free (floor ${DISK_FLOOR_GIB}); the gate lane is capped at ${LANE_MAX_GIB} GiB"
 }
+
+# Settle the work that just finished: the delta against the budget it declared,
+# as the binary's own arithmetic and its own row (C2/C5). A runaway is named
+# and returns non-zero so the caller stops; a clean settle is a line.
+settle_work() {
+  class="$1"
+  before_kib="$2"
+  bin=$(contract_binary "$class") || { echo "== settle: no binary on this tree answers `footprint` — nothing recorded"; return 0; }
+  # A runaway exits non-zero by design, so the status is kept beside the
+  # document rather than used to discard it: a settle that threw its own
+  # refusal away would record nothing exactly when the number mattered.
+  out=$("$bin" footprint --json --class "$class" --path "$REPO_ROOT" --settle "$before_kib" 2>&1)
+  rc=$?
+  [ -n "$out" ] || { echo "== settle: the binary answered nothing — nothing recorded"; return 0; }
+  printf '%s' "$out" | python3 -c 'import json,sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    print("== settle: the binary answered without a document"); raise SystemExit(0)
+print("== settle %s: %.2f GiB settled, verdict %s (budget %.2f GiB from the %s)" % (
+    d.get("work_class"), d.get("delta_gib", 0),
+    d.get("verdict"), d.get("budget_kib", 0) / 1048576.0, d.get("budget_source")))
+if d.get("runaway"):
+    print("== settle: RUNAWAY — it outgrew its declared budget; the diagnosis window keeps its artifacts")'
+  return $rc
+}
+
 
 command -v gh >/dev/null 2>&1 || die "gh is not on PATH — it creates the release"
 command -v python3 >/dev/null 2>&1 || die "python3 is not on PATH — the ledger and the plan checker need it"
@@ -105,7 +193,9 @@ if [ "$MODE" = "tag" ]; then
   fi
 
   if [ "$SKIP_GATE" -ne 1 ]; then
-    preflight_disk
+    # The free space the gate starts from: the settle measures against it.
+    GATE_BEFORE_KIB=$(df -k "$REPO_ROOT" 2>/dev/null | awk 'NR==2 {print $4}')
+    preflight_disk release-gate
     echo "== gate: detached worktree of HEAD =="
     git worktree remove --force "$RELEASE_WORKTREE" >/dev/null 2>&1 || true
     git worktree add --detach "$RELEASE_WORKTREE" HEAD >/dev/null ||
@@ -138,6 +228,11 @@ if [ "$MODE" = "tag" ]; then
     git worktree remove --force "$RELEASE_WORKTREE" >/dev/null 2>&1 || true
     [ "$GATE_RC" = "0" ] || die "the gate is red on HEAD $HEAD_SHA — nothing is tagged"
     echo "== gate green on $HEAD_SHA =="
+    # The settle: what the gate actually took, against the budget that admitted
+    # it. A runaway does not un-tag the release (the gate finished; the release
+    # is green), but it is named, and the row is what C8 learns from.
+    settle_work release-gate "${GATE_BEFORE_KIB:-0}" ||
+      echo "== settle: the gate outgrew its budget — recorded; the cut continues (see the row)"
   else
     echo "== gate SKIPPED (--skip-gate) =="
   fi
@@ -198,7 +293,8 @@ if [ ! -f "$KEYFILE" ]; then
 fi
 export TAURI_SIGNING_PRIVATE_KEY="$KEYFILE" TAURI_SIGNING_PRIVATE_KEY_PASSWORD=""
 
-preflight_disk
+ASSETS_BEFORE_KIB=$(df -k "$REPO_ROOT" 2>/dev/null | awk 'NR==2 {print $4}')
+preflight_disk release-assets
 echo "== building the $TAG binaries (release) =="
 cargo build --release > /tmp/release-build.log 2>&1 ||
   { echo "cargo build failed — /tmp/release-build.log"; exit 1; }
@@ -376,6 +472,13 @@ if served != published:
     sys.exit("the served artifact's sha256 is not the feed's signature")
 print("the published feed names %s; the cli row serves the raw binary, sha256 %s" % (feed["version"], served[:12]))
 PYEOF
+# The settle for the assets cut belongs HERE, after the publication read-back
+# and before the lane is released — the lane's own gigabytes are part of what
+# the cut took, so measuring before cleaning it would flatter the number. The
+# settle is the work unit's ending: what it took, against what admitted it.
+
+settle_work release-assets "${ASSETS_BEFORE_KIB:-0}" ||
+  echo "== settle: the assets cut outgrew its declared budget (recorded above)"
 
 # The cut is finished, so the lane that built it is finished too: a gate lane
 # is a detached worktree's private target dir, and the working tree never

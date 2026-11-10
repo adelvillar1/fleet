@@ -464,6 +464,16 @@ pub struct FootprintOptions {
     /// The volume whose free space and reserve are read; absent is the
     /// current directory's, which is the repo during a cut.
     pub path: Option<String>,
+    /// Settle a finished unit of work: the free space it started with, in
+    /// kibibytes, so the delta can be measured against the class's estimate.
+    /// Requires `--class`.
+    pub settle_from: Option<u64>,
+    /// Ask only what the class's history says it costs (C8): the learned
+    /// estimate and the source that produced it, as one document.
+    pub estimate: bool,
+    /// Record the reading's admission for the class on the calibration stream
+    /// (C5). A record that cannot land is named, never silent.
+    pub record: bool,
 }
 
 /// Options for `fleet ki append`: one hand-filed ledger row. The five
@@ -2445,12 +2455,34 @@ fn parse_footprint(args: &[String]) -> Result<Command, String> {
                 let value = take_value(args, &mut index, arg)?;
                 options.path = Some(value);
             }
+            "--settle" => {
+                let value = take_value(args, &mut index, arg)?;
+                let parsed = value.parse::<u64>().map_err(|_| {
+                    format!("`{value}` is not a kibibyte count; use --settle <kib>")
+                })?;
+                options.settle_from = Some(parsed);
+            }
+            "--estimate" => options.estimate = true,
+            "--record" => options.record = true,
             _ if arg.starts_with('-') && arg != "-" => {
                 return Err(format!("unknown footprint option `{arg}`"));
             }
             _ => return Err(format!("`{arg}` takes no value here; see `fleet help`")),
         }
         index += 1;
+    }
+    if (options.settle_from.is_some() || options.record || options.estimate)
+        && options.class.is_none()
+    {
+        return Err(
+            "--settle, --record and --estimate all describe one work class; add --class <name>"
+                .to_string(),
+        );
+    }
+    if options.estimate && options.settle_from.is_some() {
+        return Err(
+            "--estimate asks the history and --settle records a settlement; pick one".to_string(),
+        );
     }
     Ok(Command::Footprint(options))
 }
@@ -3738,6 +3770,7 @@ mod tests {
                 json: true,
                 class: Some("release-gate".to_string()),
                 path: Some("/tmp/fleet-gate-target".to_string()),
+                ..FootprintOptions::default()
             })
         );
         // A class nobody declares is refused by name, listing the ones that
