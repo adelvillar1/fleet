@@ -122,5 +122,8 @@ in its own words and the handoff says ask, don't assume.
 
 - **C10 next**, because C11 and C12 both read the profile it derives.
 - The owner's numbers, whenever they are given — one edit each, three places.
-- Whether a deterministic breach hard-stops or pauses for a yes. It hard-stops
-  today, which is the plan's default; the alternative is the owner's call.
+- ~~Whether a deterministic breach hard-stops or pauses for a yes~~ — settled
+  2026-11-10: *"deterministic breach is a pause."* It pauses now, the default is
+  no wherever nobody is present, `--yes` is not consent, and a yes buys one
+  budget of room without compounding (`9e1f11b`).
+- The numbers are settled too (*"leave them like that"*, `40ddf9e`).
