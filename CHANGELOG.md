@@ -29,6 +29,11 @@ The auto-update channel's supply gets a guard.
 - **The changelog's sections are in descending version order** — a
   section anchored below parallel cuts had put 0.6.22 under 0.6.19 and
   made the release script refuse its own notes.
+- **The release gate caught what two green working trees had hidden**:
+  the health tests shared one temp home keyed by process id, so a
+  parallel test's fixture-delete raced another's probe. Each test owns
+  its labeled home now; the gate's detached worktree is why the race
+  surfaced at all.
 
 ## v0.6.23 — 2026-11-10
 

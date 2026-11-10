@@ -417,8 +417,12 @@ pub(crate) fn write_endpoint(home: &Path, port: u16) -> PathBuf {
 mod tests {
     use super::*;
 
-    fn scratch() -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("fleet-health-{}", std::process::id()));
+    fn scratch(label: &str) -> PathBuf {
+        // The label is part of the path: tests run in parallel in one
+        // process, and a shared path lets one test's fixture-delete
+        // race another's probe (the release gate's find — a green
+        // working tree had hidden it twice by scheduling luck).
+        let dir = std::env::temp_dir().join(format!("fleet-health-{}-{label}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("scratch home");
         dir
@@ -469,7 +473,7 @@ mod tests {
 
     #[test]
     fn a_closed_endpoint_port_reads_down_with_the_repair_named() {
-        let home = scratch();
+        let home = scratch("closed-port");
         // Port 1 on loopback is never listening.
         write_endpoint(&home, 1);
         let report = probe(&home, true);
@@ -488,7 +492,7 @@ mod tests {
 
     #[test]
     fn a_home_without_a_provisioned_substrate_names_the_absence() {
-        let home = scratch();
+        let home = scratch("absent-substrate");
         let report = probe(&home, true);
         let layerfs = report
             .services
@@ -501,7 +505,7 @@ mod tests {
 
     #[test]
     fn the_api_line_reads_the_standing_chain() {
-        let home = scratch();
+        let home = scratch("api-chain");
         let report = probe(&home, true);
         let api = report
             .services
@@ -523,7 +527,7 @@ mod tests {
 
     #[test]
     fn fast_only_skips_the_slow_tier_and_the_full_pass_carries_it() {
-        let home = scratch();
+        let home = scratch("fast-tier");
         let fast = probe(&home, true);
         assert!(
             fast.services.iter().all(|s| s.name != "docker"),
@@ -535,8 +539,8 @@ mod tests {
 
     #[test]
     fn a_transition_is_any_change_in_upness() {
-        let mut a = probe(&scratch(), true);
-        let b = probe(&scratch(), true);
+        let mut a = probe(&scratch("full-tier"), true);
+        let b = probe(&scratch("transition-a"), true);
         assert!(!a.transitioned_from(&b));
         if let Some(s) = a.services.iter_mut().find(|s| s.name == "layerfs") {
             s.up = !s.up;
@@ -544,15 +548,15 @@ mod tests {
         assert!(a.transitioned_from(&b));
         // The stamp alone is not a transition — a fresh pair, only
         // the day changed.
-        let mut c = probe(&scratch(), true);
-        let d = probe(&scratch(), true);
+        let mut c = probe(&scratch("transition-b"), true);
+        let d = probe(&scratch("transition-c"), true);
         c.stamp = "another-day".into();
         assert!(!c.transitioned_from(&d));
     }
 
     #[test]
     fn the_loop_slot_updates_and_reports_transitions_once() {
-        let home = scratch();
+        let home = scratch("transition-d");
         write_endpoint(&home, 1);
         let slot: SharedReport = std::sync::Arc::new(std::sync::Mutex::new(None));
         let first = probe_once(&home, 0, &slot);
