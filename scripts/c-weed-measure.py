@@ -32,7 +32,9 @@ K = 5
 
 
 def main() -> int:
-    provider = sys.argv[1] if len(sys.argv) > 1 else "glide"
+    args = sys.argv[1:]
+    provider = args[0] if args else "glide"
+    verify_provider = args[1] if len(args) > 1 else provider
     candidates = load_candidates(120)
     print(f"{len(candidates)} turn(s), provider {provider}: flat weed to top-{K}, noul verify, re-rank",
           file=sys.stderr)
@@ -80,7 +82,7 @@ def main() -> int:
             heads=heads,
             description="For each shortlisted tool, judge independently whether the intent requires it.",
         )
-        a2 = classify(provider=provider, task=task2, text=candidate["query"])
+        a2 = classify(provider=verify_provider, task=task2, text=candidate["query"])
         noul = {}
         for i, tool in enumerate(top5):
             slot = a2.head(f"v_{i}", provider) or {}
@@ -100,7 +102,7 @@ def main() -> int:
             print(f"  [{index + 1}/{len(candidates)}] noul5 {score['noul5']['top1']}/{n}",
                   file=sys.stderr)
     print()
-    print(f"weed-then-verify — {n} turn(s), {provider} (flat single-pass: 51.3% top-1 / 76.5% top-3)")
+    print(f"weed-then-verify — {n} turn(s), weed={provider} verify={verify_provider} (flat single-pass: 51.3% top-1 / 76.5% top-3)")
     for variant, label in (
         ("flat1base", "flat top-1 (the weed's own pick)"),
         ("flat5", "flat ordering of the top-5 (control)"),
