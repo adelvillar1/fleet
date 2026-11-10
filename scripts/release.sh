@@ -233,6 +233,11 @@ if [ "$MODE" = "tag" ]; then
     # is green), but it is named, and the row is what C8 learns from.
     settle_work release-gate "${GATE_BEFORE_KIB:-0}" ||
       echo "== settle: the gate outgrew its budget — recorded; the cut continues (see the row)"
+    # The lane is debris once the gate is green and the tag pushed
+    # (KI-514): 12 GiB from one morning of cuts accumulated in /tmp
+    # because the settle recorded the spend and released nothing.
+    # cache-sweep.sh --gate-lane is the standing recovery.
+    rm -rf "$RELEASE_TARGET"
   else
     echo "== gate SKIPPED (--skip-gate) =="
   fi
@@ -477,6 +482,7 @@ PYEOF
 # the cut took, so measuring before cleaning it would flatter the number. The
 # settle is the work unit's ending: what it took, against what admitted it.
 
+rm -rf "$RELEASE_TARGET"
 settle_work release-assets "${ASSETS_BEFORE_KIB:-0}" ||
   echo "== settle: the assets cut outgrew its declared budget (recorded above)"
 

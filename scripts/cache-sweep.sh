@@ -33,6 +33,10 @@
 #   scripts/cache-sweep.sh --all           every ~/Projects/*/target
 #   scripts/cache-sweep.sh --target <dir>  one target directory
 #   scripts/cache-sweep.sh --dry-run       report, delete nothing
+#   scripts/cache-sweep.sh --gate-lane     the release gate's cargo lane
+#                                          (/tmp/fleet-gate-target) and the
+#                                          cut's own logs — debris once the
+#                                          cut is complete (KI-514)
 #
 # Prints one line per target directory and one total, in the terms that
 # matter: the volume's free space before and after.
@@ -57,12 +61,14 @@ THRESHOLD_GB="${FLEET_SWEEP_THRESHOLD_GB:-15}"
 KEEP_ARTIFACTS="${FLEET_KEEP_ARTIFACTS:-2}"
 DRY=0
 ALL=0
+GATE_LANE=0
 ONLY=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --dry-run) DRY=1 ;;
         --all) ALL=1 ;;
         --target) shift; ONLY="${1:-}"; [ -z "$ONLY" ] && { echo "cache-sweep: --target needs a path" >&2; exit 2; } ;;
+        --gate-lane) GATE_LANE=1 ;;
         -h|--help) sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "cache-sweep: unknown option $1" >&2; exit 2 ;;
     esac
@@ -187,6 +193,48 @@ human() { awk -v kb="$1" 'BEGIN { if (kb >= 1048576) printf "%.1f GiB", kb/10485
 cargo_bin="$(command -v cargo 2>/dev/null || true)"
 [ -z "$cargo_bin" ] && [ -x "$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo" ] \
     && cargo_bin="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo"
+
+# The release gate's lane (KI-514): release.sh pins the gate's
+# CARGO_TARGET_DIR to /tmp/fleet-gate-target, the worktree dies with the cut,
+# and the lane survived — 12 GiB from one morning of cuts, named by the
+# resource contract's curtail step. A lane is debris when no cargo or rustc
+# is in flight and its newest file is past LANE_IDLE_MIN (10): a live cut
+# rebuilds it constantly, so an idle lane is a finished one. The cut's own
+# logs (gate-*, cut-*) ride the same rule — the record lives in the release
+# and the ledger, not in /tmp.
+sweep_gate_lane() {
+    lane="/private/tmp/fleet-gate-target"
+    [ -d "$lane" ] || { echo "gate-lane: absent — nothing to sweep"; return; }
+    if pgrep -x cargo >/dev/null 2>&1 || pgrep -x rustc >/dev/null 2>&1; then
+        echo "gate-lane: a build is in flight — declining (the sweep never deletes under cargo)"
+        return
+    fi
+    newest=$(find "$lane" -type f -newermt "-${LANE_IDLE_MIN:-10} minutes" 2>/dev/null | head -1)
+    if [ -n "$newest" ]; then
+        echo "gate-lane: written within the last ${LANE_IDLE_MIN:-10} minutes — declining (a cut may be running)"
+        return
+    fi
+    before_kb="$(du -sk "$lane" 2>/dev/null | awk '{print $1}')"
+    if [ "$DRY" -eq 1 ]; then
+        echo "gate-lane: $(human "$before_kb") would go (dry run)"
+        return
+    fi
+    rm -rf "$lane"
+    echo "gate-lane: $(human "$before_kb") dropped"
+    logs=0
+    for pattern in /private/tmp/gate-*.log /private/tmp/gate-*.txt /private/tmp/gate-*.exit \
+                   /private/tmp/cut-*.log /private/tmp/fleet-3099.log /private/tmp/fleet-footprint.log; do
+        [ -e "$pattern" ] || continue
+        [ "$DRY" -eq 1 ] || rm -f "$pattern"
+        logs=$((logs + 1))
+    done
+    [ "$logs" -gt 0 ] && echo "gate-lane: $logs cut log(s) dropped with it"
+}
+
+if [ "$GATE_LANE" -eq 1 ]; then
+    sweep_gate_lane
+    exit 0
+fi
 
 swept_any=0
 dedupe_freed_kb=0
