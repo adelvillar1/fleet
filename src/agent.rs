@@ -6122,28 +6122,45 @@ impl<'a> Agent<'a> {
     /// straight through; a failed repair runs the ordinary path too,
     /// which is the error-result loop the plan keeps as the last rung.
     async fn prepare_call_checked(&mut self, call: &ToolCall) -> Result<Prepared, AgentError> {
+        // Grounded-selection C4's runtime leg: the repair attempt is
+        // not remember/improve's privilege — every tool's validation
+        // failure gets one re-author through the hosted lane before the
+        // error-result loop. The verifier's measured basis (0.983 AUC)
+        // is the corruption screen; the guard is the schema itself: a
+        // schema-valid call is never re-authored, because the heads are
+        // conservative acceptors and a re-authored good call would
+        // drift.
         let is_remember = call.function.name == tools::REMEMBER_TOOL;
         let is_improve = call.function.name == tools::IMPROVE_TOOL;
-        if !(is_remember || is_improve) {
-            return self.prepare_call(call);
-        }
         let parsed = serde_json::from_str::<serde_json::Value>(&call.function.arguments);
         let schema_error: Option<String> = match &parsed {
             Err(error) => Some(error.to_string()),
-            Ok(value) => match (is_remember, value) {
-                (true, value) => crate::memory::Remember::parse(value)
+            Ok(value) => match (is_remember, is_improve, value) {
+                (true, _, value) => crate::memory::Remember::parse(value)
                     .err()
                     .map(|error| error.to_string()),
-                (false, value) => crate::improve::parse_change(value)
+                (_, true, value) => crate::improve::parse_change(value)
                     .err()
                     .map(|error| error.to_string()),
+                (_, _, value) => match tools::resolve_name(&call.function.name) {
+                    Some((tool, _)) => tools::validate(tool, value)
+                        .err()
+                        .map(|error| error.to_string()),
+                    None => None,
+                },
             },
         };
-        eprintln!(
-            "fleet-debug: checked {} parsed_ok={} schema_error={schema_error:?}",
-            call.function.name,
-            parsed.is_ok()
-        );
+        if let Some(calib) = &self.options.calib {
+            if let Some(reason) = &schema_error {
+                crate::calib::record_lifecycle(
+                    calib,
+                    "repair_leg",
+                    &call.function.name,
+                    "validation-failed",
+                    reason,
+                );
+            }
+        }
         if parsed.is_ok() && schema_error.is_none() {
             return self.prepare_call(call);
         }
@@ -6152,17 +6169,25 @@ impl<'a> Agent<'a> {
             .map(|error| error.to_string())
             .or(schema_error)
             .unwrap_or_else(|| "unknown validation failure".to_string());
-        let validate = |text: &str| {
+        let tool_name = call.function.name.clone();
+        let validate = move |text: &str| {
             let value: serde_json::Value =
                 serde_json::from_str(text).map_err(|error| error.to_string())?;
             if is_remember {
                 crate::memory::Remember::parse(&value)
                     .map(|_| ())
                     .map_err(|error| error.to_string())
-            } else {
+            } else if is_improve {
                 crate::improve::parse_change(&value)
                     .map(|_| ())
                     .map_err(|error| error.to_string())
+            } else {
+                match tools::resolve_name(&tool_name) {
+                    Some((tool, _)) => {
+                        tools::validate(tool, &value).map_err(|error| error.to_string())
+                    }
+                    None => Ok(()),
+                }
             }
         };
         match self
@@ -11583,6 +11608,91 @@ mod tests {
         assert!(
             text.contains("remember re-authored by the small-model leg"),
             "{text}"
+        );
+        let _ = std::fs::remove_dir_all(&home);
+        let _ = lane_child.kill();
+        let _ = lane_child.wait();
+        let _ = std::fs::remove_dir_all(&lane_scratch);
+    }
+
+    #[tokio::test]
+    async fn a_bash_call_that_fails_its_schema_gets_the_repair_leg() {
+        // C4's runtime leg generalized: ANY tool's validation failure
+        // gets one re-author through the hosted lane before the
+        // error-result loop. The guard is the schema itself — a
+        // schema-valid call never reaches this path.
+        let m = fold_mock("unused");
+        let (mut lane_child, script, lane_scratch) = lane_mock(
+            r#"{"status":"ok","model":"lfm3-1.7b","text":"{\"command\":\"echo repaired-by-the-leg\"}"}"#,
+        );
+        let home = scratch("reform-bash");
+        let mut session = crate::session::Session::create(&home, "m").unwrap();
+        let client = Client::new(format!("http://127.0.0.1:{}", m.port), "test-key");
+        let options = AgentOptions {
+            session_id: None,
+            goal: None,
+            model: "m".to_string(),
+            identity: None,
+            max_turns: 1,
+            capped: false,
+            health_note: false,
+            lane_prose: true,
+            ui_tx: None,
+            lane_specs: Some(
+                [(
+                    crate::generate::BLEND1_LANE.to_string(),
+                    blend1_spec(&script),
+                )]
+                .into_iter()
+                .collect(),
+            ),
+            calib: None,
+            skills: Vec::new(),
+            role_overlay: None,
+            memory: None,
+            scope: None,
+            improve_home: None,
+            goal_home: None,
+            goal_session: None,
+            route_home: None,
+            gui_prompt: None,
+            compact_now: false,
+            checkpoints: None,
+            file_access: FileAccess::Unrestricted,
+            plan_mode: false,
+            resource_judge: None,
+        };
+        let progress: &'static mut Vec<u8> = Box::leak(Box::new(Vec::new()));
+        let mut agent = Agent::new(
+            &client,
+            options,
+            &mut session,
+            Box::new(ApproveAll),
+            &mut *progress,
+        )
+        .unwrap();
+        agent
+            .execute_call(&call(
+                "b1",
+                "bash",
+                r#"{"cmd":"missing the command field"}"#,
+            ))
+            .await
+            .unwrap();
+        drop(agent);
+        let records = crate::session::replay(&session_path_of(&home)).unwrap();
+        let output = records
+            .iter()
+            .find_map(|record| match record {
+                Record::ToolResult {
+                    call_id, output, ..
+                } if call_id == "b1" => Some(output.clone()),
+                _ => None,
+            })
+            .expect("the call's result");
+        assert!(
+            output.contains("repaired-by-the-leg"),
+            "the repaired bash call executed: {output}"
         );
         let _ = std::fs::remove_dir_all(&home);
         let _ = lane_child.kill();
