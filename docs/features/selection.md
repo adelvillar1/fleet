@@ -57,11 +57,16 @@ are different tasks with their own gates.
 
 **FIX** — broken, with an evidence-backed repair in reach:
 
-- **The declaration tax** — 8,028 tokens (~11%) ride every request, and
-  `retrieved` resolutions are 2 of 20,821: the deferral machinery exists
-  and never fires. Tighten the per-workload declaration budget with the
-  existing tiering; the gate is C0's own numbers (wrong-tool must not
-  rise). No selection head needed.
+- ~~**The declaration tax**~~ — **REJECTED as a fix, corrected
+  2026-11-10**: the bound's own history (agent.rs:200-206) pins the
+  native surface at 10,711 tokens against the 10,800 bound — six
+  crossings caught by `the_native_surface_fits_its_own_bounds`. The
+  8,028 mean is the complete surface fitting its bound, not waste; the
+  deferral machinery engages on overflow and `tool_search` covers the
+  deferred (2 fires in 20,821 = the model rarely needs them — the
+  machinery working as designed). Tightening the cap would break the
+  native surface's fit and raise wrong-tool. The tax is the honest cost
+  of a complete surface.
 - **KI-515** — the three stale blend1 corpus tests (unpack 4 of a
   5-value contract): update them; mechanical.
 - **KI-516** — the layerfs coherence test's schedule flake: its own
