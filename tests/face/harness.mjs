@@ -848,6 +848,13 @@ function boot(options) {
           { type: 'web', url: asked, title: 'the page', blocks: [], links: [] }),
       });
     }
+    if (pathOnly === '/api/workspace-history/re-register' && method === 'POST') {
+      return Promise.resolve({
+        status: 200,
+        json: () => Promise.resolve(documents['workspace-re-register'] ||
+          { type: 'workspace-re-register', registered: true, name: 'fleet' }),
+      });
+    }
     if (pathOnly === '/api/workspace-history') {
       return Promise.resolve({
         status: 200,
@@ -1657,6 +1664,76 @@ async function theHealthCardNamesWhatIsDownAndTheRepair() {
   check('C0 the transition lands as a notice on the transcript',
     /fleet health/.test(noticeText) && /service down/.test(noticeText),
     noticeText.slice(0, 200));
+}
+
+async function aRoutedEventPaintsTheLiveDecisionWithItsFacts() {
+  const page = boot({
+    hash: '#/router',
+    documents: {
+      state: (asked) => ({ ...emptyState(asked), session: asked }),
+    },
+  });
+  await flush();
+  page.open();
+  await flush();
+  page.push({
+    type: 'routed', provider: 'stepfun', model: 'step-3.7-flash', how: 'judged',
+    workload: 'standard_code', verdict: 'pass', judged_from: 'fresh',
+    reason: 'sys1 judged the brief', order: [
+      { provider: 'stepfun', model: 'step-3.7-flash' },
+      { provider: 'deepseek', model: 'deepseek-flash' },
+    ],
+    execution: { label: 'sequential', confidence: 0.91 },
+  });
+  await flush();
+  const board = page.text('router-board');
+  check('KI-510 the live decision names its model', /step-3\.7-flash/.test(board), board.slice(0, 300));
+  check('KI-510 the facts carry the workload row', /workload/.test(board) &&
+    /standard_code/.test(board), board.slice(0, 300));
+  check('KI-510 the facts carry the verdict and the source', /verdict/.test(board) &&
+    /judged from/.test(board) && /fresh/.test(board), board.slice(0, 300));
+  check('KI-510 the execution head rides its own row', /execution/.test(board) &&
+    /sequential/.test(board) && /0\.91/.test(board), board.slice(0, 400));
+  check('KI-510 the walk renders both candidates', /deepseek-flash/.test(board), board.slice(0, 500));
+}
+
+async function theHistoryPaneNamesLostStoresAndReRegisters() {
+  const page = boot({
+    hash: '#/workspace-history',
+    documents: {
+      state: (asked) => ({ ...emptyState(asked), session: asked }),
+      'workspace-history-rail': {
+        type: 'workspace-history-rail',
+        window_days: 42,
+        projects: [],
+        refused: [],
+        refused_projects: [{
+          name: 'fleet',
+          folder: '/Users/x/Projects/fleet',
+          refused: ['the project\u2019s LayerFS Store volume is missing (a Docker reset removes it) ' +
+            '\u2014 re-register the folder; its history restarts empty \u2014 the script said: LayerFSError'],
+        }],
+      },
+    },
+  });
+  await flush();
+  page.open();
+  await flush();
+  const board = page.text('workspace-history-board');
+  check('KI-511 the pane names the lost stores', /stores lost to the Docker reset/.test(board),
+    board.slice(0, 300));
+  check('KI-511 the project and its cause are named', /fleet/.test(board) &&
+    /Store volume is missing/.test(board), board.slice(0, 500));
+  check('KI-511 the script noise is trimmed from the line',
+    !/the script said/.test(board), board.slice(0, 500));
+  const buttons = page.rows('.foot-btn').filter((b) => /re-register/.test(b.textContent));
+  check('KI-511 the act has its control', buttons.length === 1, String(buttons.length));
+  buttons[0].click();
+  await flush();
+  const posted = page.calls.filter((c) =>
+    String(c.url).startsWith('/api/workspace-history/re-register') && c.method === 'POST');
+  check('KI-511 the press posts the folder', posted.length === 1 &&
+    /Projects\/fleet/.test(String(posted[0].body)), JSON.stringify(posted));
 }
 
 async function aReopenedConversationSeedsItsHealth() {
@@ -11910,6 +11987,8 @@ const cases = [
   ['KI-485 a log cut off at a tool call does not replay as running', anInterruptedToolCallReplaysAsInterrupted],
   ['KI-485 a finished run settles its orphaned tool calls', aFinishedRunSettlesItsOrphanedToolCalls],
   ['C0 the health card names what is down and the repair', theHealthCardNamesWhatIsDownAndTheRepair],
+  ['KI-510 a routed event paints the live decision with its facts', aRoutedEventPaintsTheLiveDecisionWithItsFacts],
+  ['KI-511 the history pane names lost stores and re-registers', theHistoryPaneNamesLostStoresAndReRegisters],
 ];
 
 for (const [name, run] of cases) {

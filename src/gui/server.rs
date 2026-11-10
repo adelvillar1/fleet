@@ -648,6 +648,21 @@ async fn serve_connection(
         // The chat's working folder, changed from the run bar without a
         // run. It applies to the next run and lands in the transcript as
         // one line; a run in flight already carries its own root.
+        // The workspace-history section's re-register act (KI-511): a
+        // project whose Store died with the Docker reset re-imports its
+        // folder — the history restarts empty — and the answer names
+        // what happened, so the card's button never presses into
+        // silence.
+        ("POST", "/api/workspace-history/re-register") => {
+            let body = match read_body(&mut stream, &request, rest).await {
+                Ok(body) => body,
+                Err(message) => return write_reply(&mut stream, bad_request(&message)).await,
+            };
+            match bridge.reregister_project(&body).await {
+                Ok(document) => write_reply(&mut stream, api(200, document)).await,
+                Err(message) => write_reply(&mut stream, bad_request(&message)).await,
+            }
+        }
         ("POST", "/api/folder") => {
             let body = match read_body(&mut stream, &request, rest).await {
                 Ok(body) => body,

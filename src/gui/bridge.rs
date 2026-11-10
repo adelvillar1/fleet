@@ -1785,6 +1785,65 @@ impl Bridge {
         landed
     }
 
+    /// The re-register act (the Docker-reset recovery, KI-511): a
+    /// project whose Store volume died re-imports its folder — the
+    /// history restarts empty, and the registration's fresh tree is
+    /// what the next delegation forks from. The rail cache is dropped
+    /// so the pane reads the new state, and the outcome is named:
+    /// registered, over-bound, or refused, never silence.
+    pub async fn reregister_project(&self, body: &str) -> Result<Value, String> {
+        let arguments: serde_json::Value = serde_json::from_str(body)
+            .map_err(|error| format!("the re-register is not a JSON object: {error}"))?;
+        let folder = arguments
+            .get("folder")
+            .and_then(serde_json::Value::as_str)
+            .filter(|f| !f.trim().is_empty())
+            .ok_or_else(|| "the re-register names the folder".to_string())?
+            .to_string();
+        let home = self.home.clone();
+        let asked = folder.clone();
+        let outcome = tokio::task::spawn_blocking(move || {
+            crate::layerfs_tools::read_machine_at(&home)
+                .map_err(crate::layerfs_tools::RegisterError::Failed)
+                .and_then(|machine| {
+                    crate::layerfs_tools::register(&machine, std::path::Path::new(&asked))
+                })
+        })
+        .await
+        .map_err(|error| format!("the re-register could not be awaited: {error}"))?;
+        {
+            let mut cached = self
+                .workspace_rail
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            *cached = None;
+        }
+        Ok(match outcome {
+            Ok(crate::layerfs_tools::RegistrationOutcome::Registered {
+                registration,
+                skipped,
+            }) => json!({
+                "type": "workspace-re-register",
+                "folder": folder,
+                "registered": true,
+                "name": registration.name,
+                "skipped": skipped,
+            }),
+            Ok(other) => json!({
+                "type": "workspace-re-register",
+                "folder": folder,
+                "registered": false,
+                "note": format!("the folder was not registered: {other:?}"),
+            }),
+            Err(error) => json!({
+                "type": "workspace-re-register",
+                "folder": folder,
+                "registered": false,
+                "refused": error.to_string(),
+            }),
+        })
+    }
+
     /// One project's full view, by its registered folder's path — the
     /// control tower's and the second brain's project identity. The
     /// rail section's own read. Uncached: the section is the thing

@@ -5960,7 +5960,12 @@
     body.appendChild(what);
     if (route.reason) body.appendChild(node('p', 'decision-reason', route.reason));
     var facts = node('dl', 'facts');
-    [
+    // The rows are a list beside the element that carries them: the
+    // judgment-beats edit orphaned this array (its rows never appended)
+    // and the loop below then iterated the <dl> itself — a TypeError
+    // that blanked the whole board the moment a routed event existed
+    // (KI-510's find).
+    var rows = [
       ['workload', route.workload || 'none judged'],
       ['verdict', route.verdict || '\u2014'],
       ['judged from', route.judged_from || 'none']
@@ -5970,12 +5975,12 @@
     // A workload-only answer adds no row — the absence is not a dash
     // nobody reads.
     if (route.execution) {
-      facts.push(['execution', route.execution.label +
+      rows.push(['execution', route.execution.label +
         (typeof route.execution.confidence === 'number'
           ? ' \u00b7 ' + route.execution.confidence.toFixed(2)
           : '')]);
     }
-    facts.forEach(function (pair) {
+    rows.forEach(function (pair) {
       var wrap = node('div', 'fact');
       wrap.appendChild(node('dt', null, pair[0]));
       wrap.appendChild(node('dd', null, pair[1]));
@@ -16327,6 +16332,52 @@
       return;
     }
     paintWorkspaceRail(rail);
+    // The Docker reset's named losses (KI-511): every project whose
+    // Store volume died, each with its cause and the act — re-register
+    // re-imports the folder, the history restarts empty, and the next
+    // delegation forks from the fresh tree. A refusal that names an
+    // act carries the act's own control.
+    if ((rail.refused_projects || []).length) {
+      el.workspaceHistoryBoard.appendChild(surfaceHead('Knowledge', 'Workspace history',
+        'The machine\u2019s registered projects, the ones with recent work at hand.', null));
+      var lost = boardCard(12, 'stores lost to the Docker reset', 'the read\u2019s named refusals');
+      lost.appendChild(node('p', 'board-empty',
+        'A Docker reset removed the Store volumes the registrations named. Each project below ' +
+        'is still registered but has no Store to read; re-registering re-imports the folder as it ' +
+        'stands \u2014 the history restarts empty, and the next delegation forks from the fresh tree.'));
+      rail.refused_projects.forEach(function (project) {
+        var line = node('div', 'svc-line');
+        var name = node('strong', null, project.name || project.folder);
+        line.appendChild(name);
+        line.appendChild(document.createTextNode(
+          ' \u00b7 ' + project.folder +
+          (project.refused && project.refused.length
+            ? ' \u00b7 ' + String(project.refused[0]).split(' \u2014 the script said')[0]
+            : '')));
+        var act = node('button', 'foot-btn', 're-register');
+        act.type = 'button';
+        act.addEventListener('click', function () {
+          act.disabled = true;
+          act.textContent = 're-registering\u2026';
+          fetch('/api/workspace-history/re-register', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ folder: project.folder })
+          })
+            .then(function (reply) { return reply.json(); })
+            .then(function (doc) {
+              act.textContent = doc && doc.registered
+                ? 're-registered as ' + (doc.name || 'the project')
+                : 'refused \u00b7 ' + ((doc && (doc.refused || doc.note)) || 'the read did not land');
+            })
+            .catch(function () { act.textContent = 'refused \u00b7 the read did not land'; })
+            .finally(function () { readWorkspaceHistory(true); });
+        });
+        line.appendChild(act);
+        lost.appendChild(line);
+      });
+      el.workspaceHistoryBoard.appendChild(lost);
+    }
     if (!(rail.projects || []).length) {
       el.workspaceHistoryBoard.appendChild(surfaceHead('Knowledge', 'Workspace history',
         'The machine\u2019s registered projects, the ones with recent work at hand.', null));

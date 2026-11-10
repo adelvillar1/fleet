@@ -87,6 +87,26 @@ branch, the assets build refused to run off-tag, and an empty release held
 `releases/latest` until it was marked a prerelease. v0.6.19 carries the
 section below, and the changelog keeps 0.6.18 as the record.
 
+## v0.6.23 — 2026-11-10
+
+Two live-surface defects, found by the owner's own eyes on the
+delivered face.
+
+- **The router page stopped blanking mid-run** (KI-510). The live
+  decision card's facts edit had orphaned its rows array; the paint
+  threw on the first `routed` event and the board died after clearing.
+  Idle read fine — blank exactly while work was being routed. The
+  rows append to their list again, pinned by the harness case that
+  paints a routed event and asserts the facts, the execution head,
+  and the walk.
+- **The workspace-history pane names what it lost, and the act**
+  (KI-511). The Docker reset removed every registered project's Store
+  volume; the read named it, the pane didn't. It now renders a
+  "stores lost to the Docker reset" card — each project, its cause,
+  the script noise trimmed — and each line carries a **re-register**
+  button: the bridge re-imports the folder (the history restarts
+  empty), drops the rail cache, and names the outcome.
+
 ## v0.6.22 — 2026-11-10
 
 The failsafe: the chain restores fleet to working order, never refuses
