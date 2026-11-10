@@ -12,6 +12,56 @@ bumps the third segment as its own release commit, the three declarations
 lock move together, a section lands in this file, and the running app
 answers `GET /api/version` so the owner asks the face what it is.
 
+## v0.6.21 — 2026-11-10
+
+Fleet stops being a good citizen and starts being a responsible one: work is
+admitted against the room that exists, settled against what it declared, and
+curtailed when it outgrows either.
+
+- **`fleet footprint`** reports what this process tree holds right now — memory
+  and process count against declared ceilings — plus the environment line: the
+  appetite the volume's own history implies and the reserve that follows from
+  it, named with its source (`roomy — reserve 18 GiB of 460 GiB (inferred; 1
+  record(s), standing 25% free)`). `--json` publishes the same facts as one
+  document for a script to read.
+- **The contract's four beats.** `--class <work>` adds that class's estimate,
+  headroom and admission; `--estimate` reports what the class's own settlements
+  say it costs; `--record` lands the admission; `--settle <before_kib>` records
+  the settlement and exits non-zero on a runaway. An estimate exactly equal to
+  the headroom is refused: work costing exactly what is spare eats the reserve.
+- **A run in a folder is governed.** It admits before its first turn, measures
+  at the turn boundary every fifth turn, and stops with the numbers in the
+  transcript rather than after the disk is full. A file-less chat is untouched.
+- **A deterministic breach is a pause**, the owner's ruling: the run holds and
+  puts the numbers in front of you, continuing only on a yes. Nobody present —
+  an unattended job, a headless batch — answers no, and `--yes` is not standing
+  consent for this. A yes buys one more run's budget of room below the reserve
+  and never compounds; it lowers the floor, it does not excuse the budget.
+- **The abnormal reading asks sys1 once**, bounded by the same daily cap the
+  routing judge keeps. `runaway` curtails and raises nothing; `expected` raises
+  that run's budget so the identical shape does not ask twice; a lane that did
+  not answer reads as `expected` and records itself, never a silent stop.
+- **The estimates learn.** A work class's admitted cost is the median of its
+  last ten settlements once three exist, and a judged verdict is graded by the
+  outcome that followed it. A settlement of exactly zero measured nothing and
+  teaches nothing.
+- **`fleet doctor` grades the disk against the same reserve** the report
+  derives, so the two surfaces cannot disagree about the number that decides a
+  refusal: `disk ok 107 GiB free (reserve 18 GiB)`.
+- **`scripts/release.sh` asks the contract** in both modes instead of a
+  hardcoded floor — admitting before the build and settling after the work,
+  through the binary rather than a re-derived shell number, with the declared
+  floor as the named fallback when no binary on the tree answers.
+- The numbers — 2 GiB memory, 80 processes, 20 GiB floor, reserve share tight
+  12% / balanced 8% / roomy 4%, the per-class estimates — are the owner's,
+  settled 2026-11-10.
+
+Three defects were found by driving the arms rather than reading them, all
+fixed in this release: `release.sh` discarded its own refusal (a shell idiom
+that threw the JSON away exactly when the verdict was `refused`), the reserve
+was sized from the history's disk rather than the one measured, and a
+zero-delta settlement taught a zero estimate.
+
 ## v0.6.20 — 2026-11-09
 
 The build caches get a floor, a cap and a line in `fleet doctor`.
