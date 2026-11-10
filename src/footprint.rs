@@ -281,9 +281,9 @@ pub const CLASS_LANE_BOOTSTRAP: &str = "lane-bootstrap";
 pub const CLASS_RUN: &str = "run";
 
 /// The declared estimate for a work class, before any of its own settlements
-/// exist — the prior C8 replaces once three settles have landed. These are
-/// **proposals** until the owner confirms them (the plan's own warning): they
-/// live here and nowhere else, so confirming them is one edit.
+/// exist — the prior C8 replaces once three settles have landed. The numbers
+/// are the owner's, settled 2026-11-10 (*"leave them like that"*): they live
+/// here and nowhere else, so changing one is one edit in one place.
 pub const ESTIMATE_RELEASE_GATE_KIB: u64 = 8 * 1024 * 1024;
 pub const ESTIMATE_RELEASE_ASSETS_KIB: u64 = 8 * 1024 * 1024;
 pub const ESTIMATE_LANE_BOOTSTRAP_KIB: u64 = 2 * 1024 * 1024;

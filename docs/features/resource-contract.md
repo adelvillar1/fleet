@@ -27,7 +27,7 @@ Every unit of work — a release gate, a release assets cut, a lane bootstrap, a
 | A run's own budget | 2 GiB | `RUN_BUDGET_KIB` |
 | Store budgets | target 20 GiB, one lane 20, lanes 24, `~/.fleet` 12 | `scripts/footprint.sh` |
 
-**These are proposals until the owner confirms them on this machine** — they are declared in exactly those places so confirming them is one edit each. Two rules keep them honest:
+**These are the owner's numbers, settled 2026-11-10** (*"leave them like that"*). They are declared in exactly those places, so changing one is one edit in one place. Two rules keep them honest:
 
 - **The reserve never learns.** Only estimates and per-work budgets calibrate. A floor that history could lower is not a floor.
 - **A tight machine tightens fleet, never loosens it.** The appetite is inferred from the standing free fraction (the median of the recorded history, so one good day after a cleanup does not read as roomy). A machine that habitually sits under 10% free is evidence of *no margin*, so fleet raises the reserve share, shortens its cadence and refuses earlier.

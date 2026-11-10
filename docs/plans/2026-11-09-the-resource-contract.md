@@ -238,6 +238,10 @@ each step lands with its own test, and only the sys1 arm needs the model:
 - **Self-measurement during a heavy run is a moving target.** The report names
   the reading's own interval, and the process ceiling counts descendants —
   never the measuring process's ancestors.
-- **The numbers are the owner's.** Defaults are declared in one place; the
-  first task is to confirm them on this machine (2 GiB / 80 processes / 20 GiB
-  free floor are proposals, not facts).
+- **The numbers are the owner's, and they have been settled.** Defaults are
+  declared in one place. The owner's 2026-11-10 ruling: *"leave them like
+  that"* — the declared numbers stand as written (2 GiB / 80 processes / 20 GiB
+  floor, reserve share tight 12% / balanced 8% / roomy 4%, the per-class
+  estimates). They are no longer proposals awaiting confirmation; they are the
+  contract's numbers, and a change to one is the owner's edit in the one place
+  it is declared.

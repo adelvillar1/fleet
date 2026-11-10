@@ -86,12 +86,12 @@ of duplicate compiles; the two-copy rule), KI-505 (no store had a budget).
 
 ## The numbers, and whose they are
 
-- **Reserve fractions, ceilings, budgets are proposals.** Tight 12% / balanced
-  8% / roomy 4%; 2 GiB memory; 80 processes; 20 GiB free floor; lane 20 GiB.
-  They live in exactly three places — `src/footprint.rs` (constants),
-  `scripts/footprint.sh` (budgets), `src/doctor.rs` (`DISK_FLOOR_GIB`) — and the
-  owner has **not** confirmed the numbers. Confirm them on the machine before
-  C3/C4 lock them in.
+- **Reserve fractions, ceilings, budgets are settled** (the owner's 2026-11-10
+  ruling: *"leave them like that"*). Tight 12% / balanced 8% / roomy 4%; 2 GiB
+  memory; 80 processes; 20 GiB free floor; lane 20 GiB. They live in exactly
+  three places — `src/footprint.rs` (constants), `scripts/footprint.sh`
+  (budgets), `src/doctor.rs` (`DISK_FLOOR_GIB`) — and C3/C4 locked them in as
+  declared rather than waiting on confirmation.
 - **Never learn a safety floor downward.** Only estimates and per-work budgets
   calibrate. A floor that history can lower is not a floor.
 - **Keep two artifacts per crate per profile, not one.** Measured: a plain
@@ -183,7 +183,8 @@ The plan's build order is the authority; the seams are:
 
 ## Open decisions the owner must make (ask, don't assume)
 
-- The reserve fractions and ceilings (proposal above) — theirs, per machine.
+- ~~The reserve fractions and ceilings~~ — settled 2026-11-10: *"leave them
+  like that."* No longer an open decision.
 - On a deterministic breach: hard-stop the run, or pause it for a yes?
 
 ## The one-line state of the world
