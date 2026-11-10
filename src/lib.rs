@@ -32,6 +32,7 @@ pub mod doctor;
 pub mod documents;
 pub mod dream;
 pub mod eval;
+pub mod experiments;
 pub mod explain;
 pub mod extract;
 pub mod filelock;

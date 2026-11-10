@@ -5201,6 +5201,43 @@ impl<'a> Agent<'a> {
         if self.is_disabled(&call.function.name) {
             return Ok(settled(self.disabled_note(&call.function.name)));
         }
+        // Grounded-selection's rule 8 — experimentation over refusal:
+        // a destructive-flagged bash call in a git repo runs in an
+        // isolated clone first, and the outcome rides the tool result.
+        // The real repo is untouched until the ordinary approval gate;
+        // the owner approves the outcome, not the guess. A skipped
+        // experiment (no git, over size, clone failure) names itself and
+        // the ordinary path answers exactly as before.
+        if call.function.name == "bash"
+            && crate::approvals::Gate::is_destructive(call)
+            && self
+                .options
+                .improve_home
+                .as_deref()
+                .map(crate::experiments::enabled)
+                .unwrap_or(false)
+        {
+            if let Some(command) = crate::approvals::bash_command(call) {
+                let repo = std::env::current_dir().unwrap_or_default();
+                if repo.join(".git").exists() {
+                    match crate::experiments::run_bash(&command, &repo) {
+                        Ok(mut experiment) => {
+                            // The clone is removed on drop; the report
+                            // (status + diff) is the artifact that rides.
+                            let report = std::mem::take(&mut experiment.report);
+                            return Ok(settled(report));
+                        }
+                        Err(reason) => {
+                            let _ = writeln!(
+                                self.progress,
+                                "\u{2192} the destructive experiment was skipped ({reason}); the ordinary gate answers"
+                            );
+                            let _ = self.progress.flush();
+                        }
+                    }
+                }
+            }
+        }
         let approved = self.approver.approve(call);
         // The screening verdict, recorded after the decision: the gate's
         // own answer, one row per call, never inside the decision itself.
