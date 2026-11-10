@@ -182,7 +182,7 @@ fn dispatch_sync(args: &[String]) -> ExitCode {
         Ok(Command::Vault(options)) => vault_command(&options),
         Ok(Command::Remember(options)) => remember_command(&options),
         Ok(Command::Doctor(options)) => doctor_command(&options),
-        Ok(Command::Footprint) => footprint_command(),
+        Ok(Command::Footprint(options)) => footprint_command(&options),
         Ok(Command::Ki(options)) => ki_command(&options),
         Ok(Command::Install(options)) => install_command(&options),
         Ok(Command::Reload(options)) => reload_command(&options),
@@ -4730,12 +4730,109 @@ fn free_kib(_path: &std::path::Path) -> Option<u64> {
     None
 }
 
+/// The environment's history: one `footprint-history.jsonl` line per
+/// `scripts/footprint.sh --record`, read into the [`Env`] the appetite is
+/// inferred from. A line that does not parse is skipped rather than guessed
+/// at, and a record with no volume is not a reading of zero.
+fn read_env(home: &std::path::Path) -> (fleet::footprint::Env, u64) {
+    let history = std::fs::read_to_string(home.join("footprint-history.jsonl")).unwrap_or_default();
+    let mut env = fleet::footprint::Env::default();
+    let mut volume_kib = 0u64;
+    let mut samples: Vec<(String, u64, u64)> = Vec::new();
+    for line in history.lines() {
+        let doc: serde_json::Value = match serde_json::from_str(line) {
+            Ok(doc) => doc,
+            Err(_) => continue,
+        };
+        let volume = doc.get("volume_kib").and_then(|v| v.as_u64()).unwrap_or(0);
+        let free = doc.get("free_kib").and_then(|v| v.as_u64()).unwrap_or(0);
+        if volume == 0 {
+            continue;
+        }
+        volume_kib = volume;
+        env.free_fractions.push(free as f64 / volume as f64);
+        samples.push((
+            doc.get("at")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            volume,
+            free,
+        ));
+    }
+    env.fill_gib_per_day = fill_rate_gib_per_day(&samples);
+    (env, volume_kib)
+}
+
+/// The volume's fill rate from the history, GiB per day. Zero when the history
+/// cannot answer: it needs at least two records on different days, and a series
+/// that is not filling reports zero rather than a negative rate the caller
+/// would have to remember to clamp.
+fn fill_rate_gib_per_day(samples: &[(String, u64, u64)]) -> f64 {
+    let parsed: Vec<(f64, f64)> = samples
+        .iter()
+        .filter_map(|(at, _volume, free)| {
+            let days = day_number(at)?;
+            Some((days, *free as f64 / 1024.0 / 1024.0))
+        })
+        .collect();
+    let (Some(first), Some(last)) = (parsed.first(), parsed.last()) else {
+        return 0.0;
+    };
+    let span = last.0 - first.0;
+    if span <= 0.0 {
+        return 0.0;
+    }
+    let per_day = (first.1 - last.1) / span;
+    if per_day > 0.0 {
+        per_day
+    } else {
+        0.0
+    }
+}
+
+/// One record's UTC timestamp as a day ordinal, so a fill rate is a span in
+/// days rather than a count of records. `None` for a stamp that does not open
+/// with `YYYY-MM-DD`.
+fn day_number(at: &str) -> Option<f64> {
+    let date = at.get(..10)?;
+    let mut parts = date.split('-');
+    let year: i64 = parts.next()?.parse().ok()?;
+    let month: i64 = parts.next()?.parse().ok()?;
+    let day: i64 = parts.next()?.parse().ok()?;
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return None;
+    }
+    // Days from the civil epoch (Howard Hinnant's algorithm) — exact for every
+    // date the history can hold, and no dependency for one subtraction.
+    let y = if month <= 2 { year - 1 } else { year };
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = y - era * 400;
+    let mp = (month + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    Some((era * 146097 + doe - 719468) as f64)
+}
+
 /// `fleet footprint` — the resource awareness the owner asked for
-/// (2026-11-09): what this process tree holds right now (memory, processes),
-/// each graded deterministically against a declared ceiling. The disk side is
-/// `scripts/footprint.sh`'s budget table; the ambiguous case — a run inside
-/// its bound and idle — is a sys1 judgment, never this function's.
-fn footprint_command() -> ExitCode {
+/// (2026-11-09): what this process tree holds right now (memory, processes)
+/// and what the volume has left, each graded deterministically against a
+/// declared ceiling, with the reserve the environment's own history implies.
+///
+/// Two shapes, one reading: the table the owner reads, and — under `--json` —
+/// the document a script reads. `--class <name>` adds that work class's
+/// admission to either, which is how `scripts/release.sh` asks the binary
+/// "may this build start" instead of re-deriving the reserve in shell. The
+/// ambiguous case — a run inside its bound and idle — is a sys1 judgment,
+/// never this function's.
+fn footprint_command(options: &fleet::cli::FootprintOptions) -> ExitCode {
+    let volume = options
+        .path
+        .as_ref()
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::current_dir().ok())
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    let available = free_kib(&volume);
     let text = match std::process::Command::new("ps")
         .args(["-o", "pid=,ppid=,rss=", "-ax"])
         .output()
@@ -4744,51 +4841,80 @@ fn footprint_command() -> ExitCode {
         _ => String::new(),
     };
     if text.is_empty() {
-        println!("footprint    FAIL  the process table could not be read (ps)");
+        // The tree could not be read: the disk half is still a real reading,
+        // so a `--json` caller gets it and a plain caller is told what is
+        // missing rather than handed a silently short table.
+        if options.json {
+            let doc = serde_json::json!({
+                "measured": fleet::calib::stamp(),
+                "ok": false,
+                "error": "the process table could not be read (ps)",
+                "available_kib": available,
+            });
+            println!("{doc}");
+        } else {
+            println!("footprint    FAIL  the process table could not be read (ps)");
+        }
         return ExitCode::from(1);
     }
     let procs = fleet::footprint::parse_ps(&text);
     let tree = fleet::footprint::tree_of(std::process::id(), &procs);
-    let mut failed = false;
-    for line in fleet::footprint::evaluate_tree(&tree) {
-        failed |= !line.ok();
-        println!("{}", fleet::footprint::render(&line));
+    let lines = fleet::footprint::evaluate_tree(&tree);
+    let (env, history_volume) = match fleet_home() {
+        Ok(home) => read_env(&home),
+        Err(_) => (fleet::footprint::Env::default(), 0),
+    };
+    let (volume_kib, available_kib) = match (history_volume, available) {
+        (history, Some(free)) if history > 0 => (history, free),
+        (history, Some(free)) => (history.max(free), free),
+        (history, None) => (history, 0),
+    };
+    let reading =
+        fleet::footprint::Reading::new(lines, volume_kib, available_kib, &env, declared_appetite());
+    if options.json {
+        let doc = reading.to_json(options.class.as_deref());
+        println!("{doc}");
+        let ok = reading.ok()
+            && options
+                .class
+                .as_deref()
+                .map(|class| reading.admission(class).ok)
+                .unwrap_or(true);
+        return if ok {
+            ExitCode::SUCCESS
+        } else {
+            ExitCode::from(1)
+        };
     }
-    // The environment's own line: the standing free share over its history
-    // (the median, so one good day after a cleanup does not read as room),
-    // the appetite it implies, and the reserve that follows from it — the
-    // numbers the admission uses, named with their source (2026-11-09).
-    if let Ok(home) = fleet_home() {
-        let history =
-            std::fs::read_to_string(home.join("footprint-history.jsonl")).unwrap_or_default();
-        let mut env = fleet::footprint::Env::default();
-        let mut volume_kib = 0u64;
-        for line in history.lines() {
-            let doc: serde_json::Value = match serde_json::from_str(line) {
-                Ok(doc) => doc,
-                Err(_) => continue,
-            };
-            let volume = doc.get("volume_kib").and_then(|v| v.as_u64()).unwrap_or(0);
-            let free = doc.get("free_kib").and_then(|v| v.as_u64()).unwrap_or(0);
-            if volume == 0 {
-                continue;
-            }
-            volume_kib = volume;
-            env.free_fractions.push(free as f64 / volume as f64);
+    let mut failed = false;
+    for line in &reading.lines {
+        failed |= !line.ok();
+        println!("{}", fleet::footprint::render(line));
+    }
+    let share = reading.standing_free.map(|s| format!("{:.0}%", s * 100.0));
+    println!(
+        "environment  {} \u{2014} reserve {} GiB of {} GiB ({}; {} record(s){})",
+        reading.appetite.word(),
+        reading.reserve_kib / 1024 / 1024,
+        reading.volume_kib / 1024 / 1024,
+        reading.reserve_source,
+        reading.records,
+        share
+            .map(|s| format!(", standing {s} free"))
+            .unwrap_or_default(),
+    );
+    if let Some(class) = options.class.as_deref() {
+        let admission = reading.admission(class);
+        if !admission.ok {
+            failed = true;
         }
-        let appetite = fleet::footprint::appetite(&env);
-        let (reserve, source) = fleet::footprint::reserve_kib(volume_kib, &env, None);
-        let share = env.standing_free().map(|s| format!("{:.0}%", s * 100.0));
         println!(
-            "environment  {} \u{2014} reserve {} GiB of {} GiB ({}; {} record(s){})",
-            appetite.word(),
-            reserve / 1024 / 1024,
-            volume_kib / 1024 / 1024,
-            source,
-            env.free_fractions.len(),
-            share
-                .map(|s| format!(", standing {s} free"))
-                .unwrap_or_default(),
+            "{:12} {}  {} needs {} GiB, {} GiB of headroom above the reserve",
+            class,
+            if admission.ok { "ok  " } else { "FAIL" },
+            class,
+            admission.needed_kib / 1024 / 1024,
+            admission.headroom_kib / 1024 / 1024,
         );
     }
     println!("disk         the budget table is scripts/footprint.sh (stores against their declared budgets)");
@@ -4796,6 +4922,21 @@ fn footprint_command() -> ExitCode {
         return ExitCode::from(1);
     }
     ExitCode::SUCCESS
+}
+
+/// The owner's declared risk appetite, when `fleet settings` carries one. It
+/// wins over the inferred appetite everywhere the reserve is derived — which is
+/// the whole point of declaring it (the plan's closing frame).
+fn declared_appetite() -> Option<fleet::footprint::Appetite> {
+    let home = fleet_home().ok()?;
+    let config = std::fs::read_to_string(home.join("config.json")).ok()?;
+    let doc: serde_json::Value = serde_json::from_str(&config).ok()?;
+    match doc.get("appetite").and_then(|v| v.as_str())? {
+        "tight" => Some(fleet::footprint::Appetite::Tight),
+        "balanced" => Some(fleet::footprint::Appetite::Balanced),
+        "roomy" => Some(fleet::footprint::Appetite::Roomy),
+        _ => None,
+    }
 }
 
 fn shell_probe() -> Result<&'static str, String> {

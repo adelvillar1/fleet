@@ -594,6 +594,57 @@ pub struct LearnCheckRow {
     pub held: bool,
 }
 
+/// One unit of work's passage through the contract, as the calibration stream
+/// records it (the plan's C5): what class the work was, what estimate admitted
+/// it, the reserve in force at admission, what it actually took, and the
+/// verdict the bounds — or the judge — reached.
+///
+/// The row is the recursion's substrate: the demand map clusters runaways by
+/// class, C8 derives next time's estimate from the settled deltas, and C9
+/// grades the judge's verdicts against the outcome that followed them. Every
+/// beat lands the same shape, so a reader never has to know which beat wrote
+/// it — only which fields that beat filled.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FootprintRow {
+    pub ts: String,
+    /// The work class: `release-gate`, `release-assets`, `lane-bootstrap`, or
+    /// `run:<folder>` for a conversation working in a granted folder.
+    pub class: String,
+    /// The estimate that admitted the work, in kibibytes — the class's prior
+    /// or the median its own settlements produced (C8).
+    pub estimate_kib: u64,
+    /// The reserve in force when the work was admitted, in kibibytes.
+    pub reserve_kib: u64,
+    /// `declared` or `inferred` — which input produced the reserve.
+    pub reserve_source: String,
+    /// The free space the admission saw, in kibibytes.
+    pub available_kib: u64,
+    /// The headroom above the reserve at admission, in kibibytes. A refusal
+    /// records what it had, which is less than what it needed.
+    pub headroom_kib: u64,
+    /// What the work actually took, in kibibytes: free before minus free
+    /// after. Zero on a refusal, which took nothing.
+    pub settled_kib: u64,
+    /// The verdict: `admitted` (it started), `refused` (it never started),
+    /// `runaway` (it outgrew its budget and was curtailed), or `expected`
+    /// (it outgrew it and the judge said the growth was the work).
+    pub verdict: String,
+    /// How the verdict was reached: `bounds` for arithmetic, `judged` when
+    /// sys1 was asked, `judge-unavailable` when it was asked and did not
+    /// answer (which reads as `expected` and records itself, never a silent
+    /// stop).
+    pub decided_by: String,
+    /// The judge's own words, when one fired — empty otherwise.
+    pub judge_words: String,
+}
+
+/// The verdict words a [`FootprintRow`] carries. `admitted` is the row a
+/// start lands; the other three are endings.
+pub const FOOTPRINT_ADMITTED: &str = "admitted";
+pub const FOOTPRINT_REFUSED: &str = "refused";
+pub const FOOTPRINT_RUNAWAY: &str = "runaway";
+pub const FOOTPRINT_EXPECTED: &str = "expected";
+
 /// One delegated run, as the orchestrator records it the moment a
 /// subagent stops. The row the beat reads and the row the parent chain
 /// joins on.
@@ -741,6 +792,7 @@ pub enum Row {
     Demand(DemandRow),
     LearnProbe(LearnProbeRow),
     LearnCheck(LearnCheckRow),
+    Footprint(FootprintRow),
 }
 
 impl Row {
@@ -766,6 +818,7 @@ impl Row {
             Row::Demand(_) => OP_DEMAND,
             Row::LearnProbe(_) => OP_LEARN_PROBE,
             Row::LearnCheck(_) => OP_LEARN_CHECK,
+            Row::Footprint(_) => OP_FOOTPRINT,
         }
     }
 
@@ -791,9 +844,15 @@ impl Row {
             Row::Demand(row) => &row.ts,
             Row::LearnProbe(row) => &row.ts,
             Row::LearnCheck(row) => &row.ts,
+            Row::Footprint(row) => &row.ts,
         }
     }
 }
+
+/// The footprint op: one unit of work's admission, refusal, settlement, or
+/// judgment (the resource contract, 2026-11-09). The class rides inside the
+/// row, so the demand map clusters runaways per work class off this one op.
+pub const OP_FOOTPRINT: &str = "footprint";
 
 /// The lifecycle op: one disable, enable, or sweep decision.
 pub const OP_LIFECYCLE: &str = "lifecycle";
@@ -872,6 +931,204 @@ pub fn record_embed_timing(stream: &Stream, kind: &str, ms: u128, facts: Option<
         facts,
     }));
 }
+
+// ---- the resource contract's rows, and what they teach -------------------
+
+/// Record one unit of work's passage through the contract. The row is stamped
+/// here, with the stream's clock, the way every other row is — a work class's
+/// settlement lands in the day it settled in.
+pub fn record_footprint(stream: &Stream, row: FootprintRow) {
+    stream.record(Row::Footprint(row));
+}
+
+/// How many settlements C8 needs before a class's own history replaces its
+/// declared prior. Below this the median would be one or two samples, which is
+/// noise wearing the word "learned".
+pub const SETTLE_FLOOR: usize = 3;
+
+/// How many of a class's recent settlements the estimate reads. Ten is the
+/// plan's number: long enough to carry a week of release cuts, short enough
+/// that a machine that changed shape is not still paying for last month.
+pub const SETTLE_WINDOW: usize = 10;
+
+/// The median of a slice of numbers, or `None` for an empty one.
+fn median(mut values: Vec<u64>) -> Option<u64> {
+    if values.is_empty() {
+        return None;
+    }
+    values.sort_unstable();
+    let mid = values.len() / 2;
+    Some(if values.len().is_multiple_of(2) {
+        (values[mid - 1] + values[mid]) / 2
+    } else {
+        values[mid]
+    })
+}
+
+/// The settlements a [`FootprintRow`] read carries: only rows that actually
+/// measured a passage of work. A refusal took nothing (its delta is zero and
+/// teaching it would drive every estimate to zero), and an `admitted` row is
+/// the start of a passage whose ending is a later row.
+fn settled_of<'a>(rows: &'a [FootprintRow], class: &'a str) -> impl Iterator<Item = u64> + 'a {
+    rows.iter()
+        .filter(move |row| row.class == class)
+        .filter(|row| row.verdict == FOOTPRINT_RUNAWAY || row.verdict == FOOTPRINT_EXPECTED)
+        .map(|row| row.settled_kib)
+}
+
+/// C8: the estimate a work class should be admitted against, and where the
+/// number came from. The median of the class's last [`SETTLE_WINDOW`]
+/// settlements once it has [`SETTLE_FLOOR`] of them, the declared prior before
+/// that — so a class pays for its own history and not for a constant someone
+/// guessed once.
+///
+/// A class with no history and no prior keeps the run budget: work whose cost
+/// nobody has declared is still admitted against *some* bound, and the run
+/// budget is the contract's floor for that.
+pub fn estimate_for(class: &str, rows: &[FootprintRow]) -> (u64, &'static str) {
+    let prior = crate::footprint::estimate_kib(class).unwrap_or(crate::footprint::RUN_BUDGET_KIB);
+    let settlements: Vec<u64> = settled_of(rows, class).collect();
+    let recent: Vec<u64> = settlements
+        .iter()
+        .rev()
+        .take(SETTLE_WINDOW)
+        .copied()
+        .collect();
+    if recent.len() < SETTLE_FLOOR {
+        return (prior, "prior");
+    }
+    match median(recent) {
+        // A learned estimate of zero would admit nothing forever; the prior is
+        // the floor a settled history may not undercut.
+        Some(value) if value > 0 => (value, "settled"),
+        _ => (prior, "prior"),
+    }
+}
+
+/// C9: one judged verdict, graded by what happened next — the outcome-evidence
+/// pattern `delegate.rs` already applies to delegations.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JudgeGrade {
+    /// The class whose verdict was graded.
+    pub class: String,
+    /// How many judged verdicts this class carried.
+    pub judged: usize,
+    /// The verdicts the following outcome agreed with.
+    pub agreed: usize,
+    /// The verdicts it disagreed with.
+    pub disagreed: usize,
+}
+
+impl JudgeGrade {
+    /// The agreement rate, or `None` when nothing was judged — a class with no
+    /// judged verdicts has no rate, and zero is not the same fact.
+    pub fn rate(&self) -> Option<f64> {
+        let total = self.agreed + self.disagreed;
+        (total > 0).then(|| self.agreed as f64 / total as f64)
+    }
+}
+
+/// What actually followed a judged verdict: the next row for the same class.
+///
+/// `runaway` claims the growth was NOT the work; it is right when the class
+/// ended as a runaway again (the growth kept happening) and wrong when the
+/// next passage came in clean. `expected` claims the opposite; it is right
+/// when the next passage stayed inside its budget and wrong when a later
+/// passage ran away. Grading against the next row is what keeps the judge
+/// honest without a human reading every call.
+fn grading_verdict(next: &FootprintRow) -> Option<bool> {
+    match next.verdict.as_str() {
+        FOOTPRINT_RUNAWAY => Some(true),
+        FOOTPRINT_EXPECTED | FOOTPRINT_ADMITTED => Some(false),
+        _ => None,
+    }
+}
+
+/// C9's graded summary, one entry per class that carried a judged verdict.
+pub fn grade_judgments(rows: &[FootprintRow]) -> Vec<JudgeGrade> {
+    let mut order: Vec<String> = Vec::new();
+    for row in rows {
+        if row.decided_by == "judged" && !order.contains(&row.class) {
+            order.push(row.class.clone());
+        }
+    }
+    let mut out = Vec::new();
+    for class in order {
+        let mut grade = JudgeGrade {
+            class: class.clone(),
+            judged: 0,
+            agreed: 0,
+            disagreed: 0,
+        };
+        let indices: Vec<usize> = rows
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| row.class == class && row.decided_by == "judged")
+            .map(|(index, _)| index)
+            .collect();
+        for index in indices {
+            grade.judged += 1;
+            let judged = &rows[index];
+            // The next row for the same class after this one: the outcome.
+            let Some(next) = rows
+                .iter()
+                .skip(index + 1)
+                .find(|row| row.class == class && row.verdict != FOOTPRINT_ADMITTED)
+            else {
+                // No outcome yet: a verdict nobody could confirm is neither
+                // agreement nor disagreement. It stays in `judged` and out of
+                // the rate's denominator, which is why the rate is an Option.
+                continue;
+            };
+            let Some(went_wrong) = grading_verdict(next) else {
+                continue;
+            };
+            let claimed_runaway = judged.verdict == FOOTPRINT_RUNAWAY;
+            if claimed_runaway == went_wrong {
+                grade.agreed += 1;
+            } else {
+                grade.disagreed += 1;
+            }
+        }
+        out.push(grade);
+    }
+    out
+}
+
+/// Every `footprint` row in the stream's recent day files, oldest first — the
+/// read C8 and C9 grade over. It walks the day files raw (the JSONL is the
+/// system of record; the typed reader does not carry the contract's fields),
+/// and it is bounded by days rather than rows: a release week's gates and a
+/// month of runs are what the estimate needs, not the last 512 rows.
+pub fn footprint_window(root: &Path, days_back: usize) -> Vec<FootprintRow> {
+    let mut day_files: Vec<PathBuf> = Vec::new();
+    collect_day_files(root, &mut day_files);
+    day_files.sort();
+    let skip = day_files.len().saturating_sub(days_back);
+    let mut out = Vec::new();
+    for path in day_files.iter().skip(skip) {
+        let Ok(text) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        for line in text.lines() {
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+                continue;
+            };
+            if value.get("op").and_then(|op| op.as_str()) != Some(OP_FOOTPRINT) {
+                continue;
+            }
+            if let Ok(row) = serde_json::from_value::<FootprintRow>(value) {
+                out.push(row);
+            }
+        }
+    }
+    out
+}
+
+/// How many days back the contract's readers reach: a class's estimate needs a
+/// week of settlements to have ten of them, and the judge's grading needs the
+/// outcome after a verdict, so the window is generous and the rows are cheap.
+pub const FOOTPRINT_WINDOW_DAYS: usize = 30;
 
 /// One embedder kind's measured tail (KI-249): the row count and the
 /// median/p95/max of the recorded durations. The bounds are set from
@@ -1108,7 +1365,7 @@ pub const OP_DELEGATION: &str = "delegation";
 /// calib` groups them. The three the reads used to drop — `verify`,
 /// `embed_timing`, `lifecycle` — ride their own row shapes; the face's
 /// rail carries them beside the rest (the calibration revamp, 2026-10-30).
-pub const OPS: [&str; 18] = [
+pub const OPS: [&str; 19] = [
     OP_ROUTE,
     OP_TOOL_SCREEN,
     OP_TURN,
@@ -1127,6 +1384,7 @@ pub const OPS: [&str; 18] = [
     OP_DEMAND,
     OP_LEARN_PROBE,
     OP_LEARN_CHECK,
+    OP_FOOTPRINT,
 ];
 
 /// The verdict a `propose` row carries when the change landed: the gate
@@ -4388,6 +4646,148 @@ mod tests {
     }
 
     #[test]
+    fn a_footprint_row_lands_with_its_op_and_reads_back_whole() {
+        let root = scratch("footprint-row");
+        let stream = Stream::open(&root);
+        record_footprint(
+            &stream,
+            FootprintRow {
+                ts: stamp(),
+                class: crate::footprint::CLASS_RELEASE_GATE.to_string(),
+                estimate_kib: 8 * 1024 * 1024,
+                reserve_kib: 18 * 1024 * 1024,
+                reserve_source: "inferred".to_string(),
+                available_kib: 116 * 1024 * 1024,
+                headroom_kib: 98 * 1024 * 1024,
+                settled_kib: 5 * 1024 * 1024,
+                verdict: FOOTPRINT_EXPECTED.to_string(),
+                decided_by: "bounds".to_string(),
+                judge_words: String::new(),
+            },
+        );
+        drop(stream);
+        // The raw line carries the op tag the reader joins on...
+        let text = std::fs::read_to_string(day_path(&root, &today())).unwrap();
+        let value: serde_json::Value = serde_json::from_str(text.lines().next().unwrap()).unwrap();
+        assert_eq!(value["op"], OP_FOOTPRINT);
+        assert_eq!(value["class"], crate::footprint::CLASS_RELEASE_GATE);
+        assert_eq!(value["settled_kib"], 5 * 1024 * 1024);
+        // ...and the typed read comes back whole: every field survives the
+        // round trip, which is what C8 and C9 read.
+        let window = footprint_window(&root, FOOTPRINT_WINDOW_DAYS);
+        assert_eq!(window.len(), 1, "{window:?}");
+        assert_eq!(window[0].class, crate::footprint::CLASS_RELEASE_GATE);
+        assert_eq!(window[0].estimate_kib, 8 * 1024 * 1024);
+        assert_eq!(window[0].reserve_kib, 18 * 1024 * 1024);
+        assert_eq!(window[0].reserve_source, "inferred");
+        assert_eq!(window[0].available_kib, 116 * 1024 * 1024);
+        assert_eq!(window[0].headroom_kib, 98 * 1024 * 1024);
+        assert_eq!(window[0].settled_kib, 5 * 1024 * 1024);
+        assert_eq!(window[0].verdict, FOOTPRINT_EXPECTED);
+        assert_eq!(window[0].decided_by, "bounds");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A footprint row for the estimate and grading tests.
+    fn fp(class: &str, verdict: &str, settled_kib: u64, decided_by: &str) -> FootprintRow {
+        FootprintRow {
+            ts: "2026-11-10T00:00:00Z".to_string(),
+            class: class.to_string(),
+            estimate_kib: 8 * 1024 * 1024,
+            reserve_kib: 18 * 1024 * 1024,
+            reserve_source: "inferred".to_string(),
+            available_kib: 116 * 1024 * 1024,
+            headroom_kib: 98 * 1024 * 1024,
+            settled_kib,
+            verdict: verdict.to_string(),
+            decided_by: decided_by.to_string(),
+            judge_words: String::new(),
+        }
+    }
+
+    #[test]
+    fn the_estimate_is_the_prior_until_three_settles_then_its_median() {
+        let gate = crate::footprint::CLASS_RELEASE_GATE;
+        let prior = crate::footprint::ESTIMATE_RELEASE_GATE_KIB;
+        // Two settlements: still the prior, and the source says so.
+        let mut rows = vec![
+            fp(gate, FOOTPRINT_EXPECTED, 5 * 1024 * 1024, "bounds"),
+            fp(gate, FOOTPRINT_RUNAWAY, 6 * 1024 * 1024, "bounds"),
+        ];
+        assert_eq!(estimate_for(gate, &rows), (prior, "prior"));
+        // A third: the median of the three now speaks, and it is not the prior
+        // — the deliberately wrong prior corrects itself after the settles.
+        rows.push(fp(gate, FOOTPRINT_EXPECTED, 4 * 1024 * 1024, "bounds"));
+        assert_eq!(
+            estimate_for(gate, &rows),
+            (5 * 1024 * 1024, "settled"),
+            "the median of 5, 6, 4 is 5 GiB, and the 8 GiB prior is gone"
+        );
+        // A refusal took nothing and must never teach a smaller estimate.
+        rows.push(fp(gate, FOOTPRINT_REFUSED, 0, "bounds"));
+        assert_eq!(estimate_for(gate, &rows), (5 * 1024 * 1024, "settled"));
+        // Nor does an `admitted` row, which is a start whose ending is later.
+        rows.push(fp(gate, FOOTPRINT_ADMITTED, 0, "bounds"));
+        assert_eq!(estimate_for(gate, &rows), (5 * 1024 * 1024, "settled"));
+        // Another class's settlements do not leak into this one's estimate.
+        rows.push(fp(
+            "release-assets",
+            FOOTPRINT_EXPECTED,
+            900 * 1024 * 1024,
+            "bounds",
+        ));
+        assert_eq!(estimate_for(gate, &rows), (5 * 1024 * 1024, "settled"));
+        // The window is the last ten: eleven settlements 1..=11 GiB, so the
+        // window keeps 11 down to 2. Its median is 6.5 GiB; all eleven would
+        // have given 6 GiB, so the dropped oldest reading is exactly what the
+        // window removes from the number.
+        let many: Vec<FootprintRow> = (1..=11)
+            .map(|i| fp(gate, FOOTPRINT_EXPECTED, i * 1024 * 1024, "bounds"))
+            .collect();
+        assert_eq!(
+            estimate_for(gate, &many),
+            (6 * 1024 * 1024 + 512 * 1024, "settled")
+        );
+        // A class with no history and no prior keeps the run budget.
+        assert_eq!(
+            estimate_for("run:/tmp/scratch", &[]),
+            (crate::footprint::RUN_BUDGET_KIB, "prior")
+        );
+    }
+
+    #[test]
+    fn a_judged_verdict_is_graded_by_the_outcome_that_followed_it() {
+        let gate = crate::footprint::CLASS_RELEASE_GATE;
+        // The judge said `runaway`, and the next passage ran away again: right.
+        let rows = vec![
+            fp(gate, FOOTPRINT_RUNAWAY, 9 * 1024 * 1024, "judged"),
+            fp(gate, FOOTPRINT_RUNAWAY, 9 * 1024 * 1024, "bounds"),
+            // The judge said `expected`, and the next passage came in clean: right.
+            fp(gate, FOOTPRINT_EXPECTED, 4 * 1024 * 1024, "judged"),
+            fp(gate, FOOTPRINT_EXPECTED, 4 * 1024 * 1024, "bounds"),
+            // A `runaway` the next clean passage contradicts: wrong.
+            fp(gate, FOOTPRINT_RUNAWAY, 7 * 1024 * 1024, "judged"),
+            fp(gate, FOOTPRINT_EXPECTED, 3 * 1024 * 1024, "bounds"),
+        ];
+        let grades = grade_judgments(&rows);
+        assert_eq!(grades.len(), 1);
+        assert_eq!(grades[0].class, gate);
+        assert_eq!(grades[0].judged, 3);
+        assert_eq!(grades[0].agreed, 2);
+        assert_eq!(grades[0].disagreed, 1);
+        assert_eq!(grades[0].rate(), Some(2.0 / 3.0));
+        // A judged verdict with no outcome after it is counted as judged and
+        // left out of the rate — a verdict nobody could confirm is not a win.
+        let pending = vec![fp(gate, FOOTPRINT_RUNAWAY, 9 * 1024 * 1024, "judged")];
+        let grades = grade_judgments(&pending);
+        assert_eq!(grades[0].judged, 1);
+        assert_eq!(grades[0].agreed + grades[0].disagreed, 0);
+        assert_eq!(grades[0].rate(), None, "zero judged outcomes is not 0%");
+        // Nothing judged at all: no class to grade, and no invented rate.
+        assert!(grade_judgments(&[fp(gate, FOOTPRINT_EXPECTED, 1, "bounds")]).is_empty());
+    }
+
+    #[test]
     fn a_row_lands_in_the_day_its_own_stamp_names() {
         let root = scratch("own-day");
         let stream = Stream::open(&root);
@@ -4721,8 +5121,9 @@ mod tests {
         assert_eq!(rows[0].gate[0].detail, "the_ranker");
         let _ = std::fs::remove_dir_all(&root);
         // The op list names propose beside the rest, the delegation op
-        // beside that, and the three the reads used to drop — verify,
-        // embed timing, lifecycle — at the tail.
+        // beside that, the three the reads used to drop — verify, embed
+        // timing, lifecycle — and the resource contract's own op at the
+        // tail, where a new op lands.
         assert_eq!(
             OPS,
             [
@@ -4743,7 +5144,8 @@ mod tests {
                 "validate",
                 "demand",
                 "learn_probe",
-                "learn_check"
+                "learn_check",
+                "footprint"
             ]
         );
     }

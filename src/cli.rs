@@ -107,7 +107,7 @@ pub enum Command {
     /// declared disk budgets — graded against its ceilings. The resource
     /// awareness the owner asked for (2026-11-09): deterministic for the
     /// bounds, a sys1 judgment for the ambiguous.
-    Footprint,
+    Footprint(FootprintOptions),
     /// The ledger's run-time append: one hand-filed row under the next
     /// id, the id derived from the table while the ledger's own lock is
     /// held — the path a scheduled run files through instead of editing
@@ -448,6 +448,22 @@ pub struct DoctorOptions {
     /// Read the ledger's open action items back instead of running the
     /// boot checks. Mutually exclusive with `diagnose`.
     pub open: bool,
+}
+
+/// Options for `fleet footprint`. The bare command prints the human table;
+/// `--json` publishes the same facts as one document for a script to read,
+/// and `--class <name>` asks the admission for one work class — the two flags
+/// together are what `scripts/release.sh` consumes before it builds anything.
+#[derive(Debug, PartialEq, Eq, Default)]
+pub struct FootprintOptions {
+    /// Print the reading as one JSON document instead of the table.
+    pub json: bool,
+    /// Ask for one work class's admission (`release-gate`, `release-assets`,
+    /// `lane-bootstrap`, `run`), which adds its estimate, headroom and verdict.
+    pub class: Option<String>,
+    /// The volume whose free space and reserve are read; absent is the
+    /// current directory's, which is the repo during a cut.
+    pub path: Option<String>,
 }
 
 /// Options for `fleet ki append`: one hand-filed ledger row. The five
@@ -1049,15 +1065,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "vault" => parse_vault(rest),
         "remember" => parse_remember(rest),
         "doctor" => parse_doctor(rest),
-        "footprint" => {
-            if !rest.is_empty() {
-                return Err(format!(
-                    "footprint takes no arguments (got {})",
-                    rest.join(" ")
-                ));
-            }
-            Ok(Command::Footprint)
-        }
+        "footprint" => parse_footprint(rest),
         "ki" => parse_ki(rest),
         "install" => parse_install(rest),
         "reload" => parse_reload(rest),
@@ -2404,6 +2412,49 @@ fn parse_remember(args: &[String]) -> Result<Command, String> {
     }))
 }
 
+/// `fleet footprint`: the bare command prints the reading as the table the
+/// owner reads; `--json` publishes the same facts as one document, and
+/// `--class <name>` asks for that work class's admission so a script can
+/// decide "may this build start" from the binary rather than re-deriving the
+/// reserve itself. `--path` names the volume to read.
+fn parse_footprint(args: &[String]) -> Result<Command, String> {
+    let mut options = FootprintOptions::default();
+    let mut index = 0;
+    while index < args.len() {
+        let arg = args[index].as_str();
+        match arg {
+            "--help" | "-h" => return Ok(Command::Help),
+            "--json" => options.json = true,
+            "--class" => {
+                let value = take_value(args, &mut index, arg)?;
+                let known = [
+                    crate::footprint::CLASS_RELEASE_GATE,
+                    crate::footprint::CLASS_RELEASE_ASSETS,
+                    crate::footprint::CLASS_LANE_BOOTSTRAP,
+                    crate::footprint::CLASS_RUN,
+                ];
+                if !known.contains(&value.as_str()) {
+                    return Err(format!(
+                        "`{value}` is not a work class — one of {}",
+                        known.join(", ")
+                    ));
+                }
+                options.class = Some(value);
+            }
+            "--path" => {
+                let value = take_value(args, &mut index, arg)?;
+                options.path = Some(value);
+            }
+            _ if arg.starts_with('-') && arg != "-" => {
+                return Err(format!("unknown footprint option `{arg}`"));
+            }
+            _ => return Err(format!("`{arg}` takes no value here; see `fleet help`")),
+        }
+        index += 1;
+    }
+    Ok(Command::Footprint(options))
+}
+
 /// `fleet doctor`: the bare command runs the boot checks; `--diagnose
 /// <session>` classifies one session's failure and drafts an
 /// evidence-cited recap; `--open` reads the ledger's open action items
@@ -3663,6 +3714,40 @@ mod tests {
         assert!(parse(&args(&["devices", "--revoke"])).is_err());
         assert!(parse(&args(&["devices", "--revoke", "a", "--revoke", "b"])).is_err());
         assert!(parse(&args(&["devices", "stray"])).is_err());
+    }
+
+    #[test]
+    fn footprint_takes_its_json_and_class_and_refuses_a_stranger() {
+        // The bare command is the table the owner reads.
+        assert_eq!(
+            parse(&args(&["footprint"])).unwrap(),
+            Command::Footprint(FootprintOptions::default())
+        );
+        // The release path's shape: the document, one work class, one volume.
+        assert_eq!(
+            parse(&args(&[
+                "footprint",
+                "--json",
+                "--class",
+                "release-gate",
+                "--path",
+                "/tmp/fleet-gate-target"
+            ]))
+            .unwrap(),
+            Command::Footprint(FootprintOptions {
+                json: true,
+                class: Some("release-gate".to_string()),
+                path: Some("/tmp/fleet-gate-target".to_string()),
+            })
+        );
+        // A class nobody declares is refused by name, listing the ones that
+        // exist — a mistyped class must not answer with a different prior.
+        let refused = parse(&args(&["footprint", "--class", "release_gate"])).unwrap_err();
+        assert!(refused.contains("not a work class"), "{refused}");
+        assert!(refused.contains("release-gate"), "{refused}");
+        assert!(parse(&args(&["footprint", "--class"])).is_err());
+        assert!(parse(&args(&["footprint", "--json", "stray"])).is_err());
+        assert!(parse(&args(&["footprint", "--nope"])).is_err());
     }
 
     #[test]
