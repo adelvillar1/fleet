@@ -116,6 +116,28 @@ recorded profile and the first declared appetite replace them.
 This is also the answer to the earlier question of whose numbers they are: not
 mine, and not the code's — the machine's, bounded by the owner's tolerance.
 
+### The appetite is inferred too — and a tight machine tightens fleet
+
+The owner's correction (2026-11-09): the risk appetite does not have to be
+declared, because the environment has already been telling us.
+
+- **The signal is the standing free fraction**, not a moment's free space: the
+  median of the last thirty daily readings (as a share of the volume) and the
+  volatility around it — how often it dips near the floor, and how fast it
+  climbs back. A machine that habitually sits under 10% free has an owner who
+  tolerates risk, and that is a fact about the *environment's reality*.
+- **The direction is the counterintuitive part, and it is the rule**: a
+  habitually full machine makes fleet **tighter**, never looser. The owner's
+  tolerance is not a budget grant — it is evidence that there is no margin to
+  absorb a runaway. So an inferred `tight environment` raises the reserve as a
+  *fraction of the volume* (not an absolute that a smaller disk would wave
+  through), shortens the upkeep cadence, lowers the per-run budget, and refuses
+  earlier. A roomy machine is the one that gets the looser numbers.
+- **The inference is named with its evidence**: `reserve 42 GiB: laptop, 9% free
+  for 30 days, filling 1.2 GiB/day — inferred tight; say "steady" to override`.
+  The declared setting wins where it exists, and the report says which of the
+  two produced the number.
+
 ## Acceptance criteria
 
 - [ ] C1 — A `Contract` with pure `admit(facts, estimate)` and
@@ -146,6 +168,12 @@ mine, and not the code's — the machine's, bounded by the owner's tolerance.
 - [ ] C8 — The admitted estimate for a work class is the median of its last ten
       settlements, with the declared constant as the prior until three exist;
       a test with a deliberately wrong prior corrects after the settles land.
+- [ ] C12 — The risk appetite is inferred from the standing free fraction
+      (median of the last thirty daily readings) and its volatility, with the
+      declared setting overriding it; a habitually under-10%-free machine
+      yields *tighter* controls — a reserve as a fraction of the volume, a
+      shorter cadence, a lower per-run budget — and the report names the
+      inference and its evidence beside the number it produced.
 - [ ] C10 — An environment profile (volume size, standing free space, fill
       rate, memory pressure, laptop or server) is derived from the footprint
       rows, and a declared risk appetite (`steady`/`balanced`/`tight`, or an
