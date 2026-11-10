@@ -113,6 +113,31 @@ are different tasks with their own gates.
   only a verifier-shaped variant (pre-checking the model's own emitted
   call) survives, and only if the verifier lands.
 
+## The verifier measurement (2026-11-10) — the re-open evidence
+
+The corrupted-call corpus: 60 recorded successful calls, each corrupted
+two ways (argument-level: dropped field, swapped values, mistyped
+type; name-level: a plausible wrong tool), the original as ground truth
+by construction. The noul question: "is this call correct for the
+intent?" (`scripts/c-verifier-measure.py`):
+
+| vendor | separation AUC | corrupted rejected at 0.5 | original accepted at 0.5 |
+|---|---|---|---|
+| **glide** | **0.983** | **60/60 (100%)** | 41.7% |
+| drex | 0.883 | 58/60 (96.7%) | 45.0% |
+
+**The verification signal is real and cross-vendor consistent**: the
+heads separate originals from corruptions near-perfectly, and catch
+every corrupted call at the 0.5 threshold. The asymmetry is the design
+instruction: the heads are conservative acceptors (they reject 55-58%
+of good calls too), so the verdict **composes with the model's own
+choice rather than gating it** — the weed-then-verify lesson at the
+emission. The runtime shape this earns: every emitted call verified;
+noul-below-threshold triggers the repair leg (C19's form-filler and the
+head-rename path already exist); the model's signal stands otherwise.
+**C4's re-open is evidence-backed**: the verify+repair leg builds on
+this measured basis.
+
 ## The failure review: every miss, and what it taught about asking
 
 Ten shapes measured across three vendors on the same 120 turns. Each

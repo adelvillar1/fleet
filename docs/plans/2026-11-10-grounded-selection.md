@@ -618,6 +618,13 @@ Whole-program gate (every code increment): `cargo fmt --all --check`,
   remaining Phase 5 seams (C13-C16) stay open behind their own
   measurements; C13's ground truth is the corpus's own shape labels,
   C14-C16 need small labeled fixtures before their gates can run.
+- **The C4 re-open evidence (2026-11-10):** the verifier measurement
+  (docs/features/selection.md §verifier) — glide separates originals
+  from corrupted calls at AUC 0.983 and rejects 60/60 corrupted calls
+  at the threshold; drex confirms (0.883, 96.7%). The owner decides the
+  re-open; the measured basis is on file. The composed design (verify
+  composes with the model's signal, never gates alone) follows the
+  weed-then-verify lesson.
 - **The C13 shape half's kill (2026-11-10):** 62% top-1 against the
   corpus's own labels — the head reads state-sync records as
   resolved/build, defensible prose but not this corpus's convention.
