@@ -118,6 +118,14 @@ def main() -> None:
                                         "a registered task. `task` is ignored then."
                                     ),
                                 },
+                                "images": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                    "description": (
+                                        "Optional image payloads (data URLs) for vision-capable providers "
+                                        "(liquid); text-only wires ignore them. The vision_qc task's own seam."
+                                    ),
+                                },
                             },
                             "required": ["text"],
                         },
@@ -245,8 +253,23 @@ def main() -> None:
                 error(req_id, -32602, "`text` must be a non-empty string.")
                 continue
 
+            images = arguments.get("images")
+            if images is not None and (
+                not isinstance(images, list)
+                or not all(isinstance(item, str) and item for item in images)
+            ):
+                error(req_id, -32602, "`images` must be a list of non-empty strings (data URLs).")
+                continue
+
             try:
-                result = classify(provider=provider, task=task, text=text, cfg=cfg, log=False)
+                result = classify(
+                    provider=provider,
+                    task=task,
+                    text=text,
+                    cfg=cfg,
+                    log=False,
+                    images=images,
+                )
             except Exception as exc:  # pragma: no cover — transport boundary
                 error(req_id, -32603, str(exc))
                 continue

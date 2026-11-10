@@ -256,6 +256,15 @@ pub fn decode_data_uri(uri: &str) -> Option<(String, Vec<u8>)> {
 /// Write an imagine answer's images under `dir`, returning one
 /// `(path, bytes, mime)` line per image. The model never sees base64.
 pub fn write_images(dir: &Path, text: &str) -> Result<String, String> {
+    write_images_with_paths(dir, text).map(|(shaped, _)| shaped)
+}
+
+/// The shaped text plus the files it named — the vision-QC pass reads
+/// the artifacts it grades.
+pub fn write_images_with_paths(
+    dir: &Path,
+    text: &str,
+) -> Result<(String, Vec<std::path::PathBuf>), String> {
     let answer: Value = serde_json::from_str(text).map_err(|_| {
         "the image lane answered with text that is not the imagine shape".to_string()
     })?;
@@ -273,6 +282,7 @@ pub fn write_images(dir: &Path, text: &str) -> Result<String, String> {
         .ok_or_else(|| "the image lane answered with no images array".to_string())?;
     std::fs::create_dir_all(dir).map_err(|error| format!("{}: {error}", dir.display()))?;
     let mut lines = Vec::new();
+    let mut paths = Vec::new();
     for (index, image) in images.iter().enumerate() {
         let uri = image
             .as_str()
@@ -292,6 +302,7 @@ pub fn write_images(dir: &Path, text: &str) -> Result<String, String> {
         };
         let path = dir.join(format!("image-{index}.{extension}"));
         std::fs::write(&path, &bytes).map_err(|error| format!("{}: {error}", path.display()))?;
+        paths.push(path.clone());
         lines.push(format!(
             "image {index}: {} ({} bytes, {mime}) \u{2014} provider {provider}, model {model}",
             path.display(),
@@ -301,7 +312,7 @@ pub fn write_images(dir: &Path, text: &str) -> Result<String, String> {
     if lines.is_empty() {
         return Err("the image lane answered with zero images".to_string());
     }
-    Ok(lines.join("\n"))
+    Ok((lines.join("\n"), paths))
 }
 
 use std::path::Path;

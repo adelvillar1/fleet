@@ -5886,11 +5886,27 @@ impl<'a> Agent<'a> {
         if call.function.name == format!("{}gen1__imagine", tools::MCP_NAMESPACE) {
             // The short name: the roster's lookup strips the lane's own
             // prefix, so `gen1_imagine` is called as `imagine`.
+            let brief = parse_arguments(&call.function.arguments)
+                .get("prompt")
+                .and_then(|prompt| prompt.as_str())
+                .unwrap_or("the imagine call named no prompt")
+                .to_string();
             let (outcome_text, truncated) = self.call_lane(call, "gen1", "imagine").await?;
-            let shaped =
-                crate::capabilities::write_images(std::path::Path::new("generated"), &outcome_text);
+            let shaped = crate::capabilities::write_images_with_paths(
+                std::path::Path::new("generated"),
+                &outcome_text,
+            );
             return Ok(match shaped {
-                Ok(text) => (text, truncated),
+                Ok((text, paths)) => {
+                    // Grounded-selection C17: the rendered images grade
+                    // through sys1's existing liquid-only vision_qc
+                    // task, best-effort — a verdict lands as a calib row
+                    // naming the artifact and rides the tool result; a
+                    // dead lane names itself and the images stand
+                    // ungraded.
+                    self.vision_qc(&brief, &paths).await;
+                    (text, truncated)
+                }
                 Err(reason) => (format!("error: {reason}"), truncated),
             });
         }
@@ -6045,6 +6061,90 @@ impl<'a> Agent<'a> {
         }
         self.note_withdrawal(&lane, &outcome.withdrawn)?;
         Ok((outcome.text, outcome.truncated))
+    }
+
+    /// Grounded-selection C17: grade rendered gen1 images through
+    /// sys1's liquid-only `vision_qc` task. Best-effort by contract —
+    /// every failure is a progress line, never a tool error — and the
+    /// verdict lands as a calib row naming the artifact when this run
+    /// carries a stream.
+    async fn vision_qc(&mut self, brief: &str, images: &[std::path::PathBuf]) {
+        for path in images {
+            let bytes = match std::fs::read(path) {
+                Ok(bytes) => bytes,
+                Err(error) => {
+                    let _ = writeln!(
+                        self.progress,
+                        "\u{2192} vision qc skipped: {} could not be read ({error})",
+                        path.display()
+                    );
+                    continue;
+                }
+            };
+            if bytes.len() > 5 * 1024 * 1024 {
+                let _ = writeln!(
+                    self.progress,
+                    "\u{2192} vision qc skipped: {} is past the 5 MiB grading cap",
+                    path.display()
+                );
+                continue;
+            }
+            let data_url = format!(
+                "data:image/png;base64,{}",
+                crate::mcp::encode_base64(&bytes)
+            );
+            let arguments = serde_json::json!({
+                "text": brief,
+                "task": "vision_qc",
+                "images": [data_url],
+            });
+            // The roster namespaces at join by stripping the lane's own
+            // prefix, so sys1's `sys1_classify` is called as `classify` —
+            // the same seam the curation judge uses.
+            let outcome = self.lanes.call("sys1", "classify", &arguments).await;
+            let verdict = outcome
+                .text
+                .parse::<serde_json::Value>()
+                .ok()
+                .and_then(|value| {
+                    value
+                        .get("answers")
+                        .and_then(|answers| answers.get("matches_brief"))
+                        .cloned()
+                });
+            let Some(verdict) = verdict else {
+                let _ = writeln!(
+                    self.progress,
+                    "\u{2192} vision qc unavailable for {} (the sys1 lane did not answer: {:?})",
+                    path.display(),
+                    outcome.text.chars().take(300).collect::<String>()
+                );
+                continue;
+            };
+            let grade = verdict
+                .get("label")
+                .and_then(|label| label.as_str())
+                .unwrap_or("unreadable");
+            let reason = verdict
+                .get("confidence")
+                .map(|confidence| format!("confidence {confidence}"))
+                .unwrap_or_else(|| "no confidence carried".to_string());
+            let _ = writeln!(
+                self.progress,
+                "\u{2192} vision qc: {grade} ({reason}) \u{2014} {}",
+                path.display()
+            );
+            let _ = self.progress.flush();
+            if let Some(calib) = &self.options.calib {
+                crate::calib::record_lifecycle(
+                    calib,
+                    "vision_qc",
+                    &path.display().to_string(),
+                    grade,
+                    &reason,
+                );
+            }
+        }
     }
 
     async fn call_lane(
@@ -10852,6 +10952,13 @@ mod tests {
     /// (the `generate` tool declared), and tools/call with the leg's
     /// own result JSON.
     fn lane_mock(leg_json: &str) -> (std::process::Child, std::path::PathBuf, std::path::PathBuf) {
+        lane_mock_as("generate", leg_json)
+    }
+
+    fn lane_mock_as(
+        tool: &str,
+        leg_json: &str,
+    ) -> (std::process::Child, std::path::PathBuf, std::path::PathBuf) {
         // Nanos alone collide when two tests start inside the same
         // microsecond (measured flake): a counter makes it unique.
         static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -10876,7 +10983,7 @@ mod tests {
             }}),
             serde_json::json!({ "reply": {
                 "jsonrpc": "2.0", "id": "$echo",
-                "result": { "tools": [ { "name": "generate", "inputSchema": {} } ] },
+                "result": { "tools": [ { "name": tool, "inputSchema": {} } ] },
             }}),
             serde_json::json!({ "reply": {
                 "jsonrpc": "2.0", "id": "$echo",
@@ -11021,6 +11128,98 @@ mod tests {
         let _ = lane_child.kill();
         let _ = lane_child.wait();
         let _ = std::fs::remove_dir_all(&lane_scratch);
+    }
+
+    #[tokio::test]
+    async fn a_gen1_imagine_grades_through_vision_qc_and_lands_a_row() {
+        // Grounded-selection C17: the rendered images grade through
+        // sys1's liquid-only vision_qc task — the verdict rides the
+        // progress line, the calib row names the artifact, and a dead
+        // sys1 lane would name itself without failing the tool result.
+        let m = fold_mock("unused");
+        let (mut gen1_child, gen1_script, gen1_scratch) = lane_mock_as(
+            "imagine",
+            r#"{"provider":"gen1","model":"m","images":["data:image/png;base64,iVBORw0KGgo="]}"#,
+        );
+        let (mut sys1_child, sys1_script, sys1_scratch) = lane_mock_as(
+            "sys1_classify",
+            r#"{"task":"vision_qc","verdict":"pass","answers":{"matches_brief":{"label":"yes","confidence":0.9}}}"#,
+        );
+        let home = scratch("vision-qc");
+        let mut session = crate::session::Session::create(&home, "m").unwrap();
+        let client = Client::new(format!("http://127.0.0.1:{}", m.port), "test-key");
+        let calib_root = scratch("vision-qc-calib");
+        let options = AgentOptions {
+            session_id: None,
+            goal: None,
+            model: "m".to_string(),
+            identity: None,
+            max_turns: 1,
+            capped: false,
+            health_note: false,
+            lane_prose: false,
+            ui_tx: None,
+            lane_specs: Some(
+                [
+                    ("gen1".to_string(), blend1_spec(&gen1_script)),
+                    ("sys1".to_string(), blend1_spec(&sys1_script)),
+                ]
+                .into_iter()
+                .collect(),
+            ),
+            calib: Some(crate::calib::Stream::open(&calib_root)),
+            skills: Vec::new(),
+            role_overlay: None,
+            memory: None,
+            scope: None,
+            improve_home: None,
+            goal_home: None,
+            goal_session: None,
+            route_home: None,
+            gui_prompt: None,
+            compact_now: false,
+            checkpoints: None,
+            file_access: FileAccess::Unrestricted,
+            plan_mode: false,
+            resource_judge: None,
+        };
+        let progress: &'static mut Vec<u8> = Box::leak(Box::new(Vec::new()));
+        let mut agent = Agent::new(
+            &client,
+            options,
+            &mut session,
+            Box::new(ApproveAll),
+            &mut *progress,
+        )
+        .unwrap();
+        agent
+            .execute_call(&call(
+                "v1",
+                "mcp__gen1__imagine",
+                r#"{"prompt":"a hero image for the release notes with brand hex #0066cc at 1200x630"}"#,
+            ))
+            .await
+            .unwrap();
+        drop(agent);
+        let text = String::from_utf8_lossy(progress);
+        assert!(text.contains("vision qc: yes"), "{text}");
+        // The calib row names the artifact.
+        let rows =
+            crate::calib::read_day(&calib_root, &crate::calib::today(), crate::calib::READ_CAP);
+        let qc = rows
+            .iter()
+            .find(|row| row.op == "lifecycle" && row.kind == "vision_qc")
+            .expect("the vision_qc row landed");
+        assert!(qc.name.contains("generated/image-0.png"), "{}", qc.name);
+        assert_eq!(qc.action, "yes");
+        let _ = std::fs::remove_dir_all(&home);
+        let _ = std::fs::remove_dir_all(&calib_root);
+        let _ = gen1_child.kill();
+        let _ = gen1_child.wait();
+        let _ = std::fs::remove_dir_all(&gen1_scratch);
+        let _ = sys1_child.kill();
+        let _ = sys1_child.wait();
+        let _ = std::fs::remove_dir_all(&sys1_scratch);
     }
 
     #[tokio::test]
