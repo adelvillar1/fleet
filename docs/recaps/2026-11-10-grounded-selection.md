@@ -55,6 +55,32 @@ No worktrees, no build lanes, no scratch venvs (one pytest venv, used
 and deleted), the sweep run twice (124 GiB free at close, release
 binaries untouched), every phase's disk cost recorded in the plan.
 
+## The fix-and-improve pass (evening, same day)
+
+- **KI-515 closed** — the blend1 corpus tests read the 5-value
+  contract; the suite runs 26 green.
+- **KI-516 refined** — the lock now holds across the assertions (the
+  suite-window repair), and the standalone failure's flood is named:
+  the agent's recall/context reads route through the armed layerfs
+  override; the real fix is scoping the override to the workspace
+  tools.
+- **The verifier measurement landed** — the arc's decisive number:
+  glide separates originals from corrupted calls at **AUC 0.983** and
+  rejects **60/60** corruptions at the threshold; drex confirms
+  (0.883 / 96.7%). C4's re-open evidence is on file; the composed
+  design (verify composes with the model's signal, never gates alone)
+  follows the weed-then-verify lesson.
+- **The composite exploration closed** — ten shapes measured (the
+  failure review in docs/features/selection.md names each miss and its
+  lesson); the winner family (comparative x independent, same vendor,
+  answer-in-the-question) is the reproduced 54.5-55.5% / 78-80% band.
+- **The rejections recorded formally** on the plan: nine shapes with
+  their measurements; the criteria stay open as the re-openable record.
+- **One fix rejected by the code's own history**: the declaration-tax
+  "fix" — the native surface fits its measured bound (10,711 of
+  10,800); the 8k mean is honest cost, not waste. The ledger corrected
+  itself.
+
 ## Open
 
 - **C2-C9** — killed by C1's gate; the owner re-opens with new evidence
