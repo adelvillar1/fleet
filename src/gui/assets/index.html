@@ -142,6 +142,10 @@
        until a read or the stream finds the server gone; its reload
        advice is the zombie's one-way door back to a live face. -->
   <div class="conn-down" id="conn-down" role="alert" hidden></div>
+  <!-- The health loop's card (the failsafe plan's phase A): every
+       down service, its cause, and the repair verb, painted from
+       /api/state's services block and refreshed by health events. -->
+  <div class="svc-down" id="svc-down" role="alert" hidden></div>
 
   <header class="topbar">
     <div class="topbar-left">

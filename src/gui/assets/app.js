@@ -1084,6 +1084,7 @@
     folderReset: document.getElementById('folder-reset'),
     folderPopInput: document.getElementById('folder-pop-input'),
     connDown: document.getElementById('conn-down'),
+    svcDown: document.getElementById('svc-down'),
     attach: document.getElementById('attach'),
     paste: document.getElementById('paste'),
     composerSteer: document.getElementById('composer-steer'),
@@ -1525,6 +1526,34 @@
   function connectionUp() {
     if (el.connDown) el.connDown.hidden = true;
     paintTabCue();
+  }
+
+  // The health card (the failsafe plan's phase A): one line per down
+  // service — the cause, and the repair verb the main session acts
+  // on. An all-clear pass hides the card; a pass that has not
+  // happened yet (services null) leaves it hidden too.
+  function paintServices() {
+    if (!el.svcDown) return;
+    var down = face.services && face.services.services
+      ? face.services.services.filter(function (s) { return !s.up; })
+      : [];
+    if (!down.length) {
+      el.svcDown.hidden = true;
+      el.svcDown.textContent = '';
+      return;
+    }
+    el.svcDown.hidden = false;
+    el.svcDown.innerHTML = '';
+    down.forEach(function (s) {
+      var line = document.createElement('div');
+      line.className = 'svc-line';
+      var name = document.createElement('strong');
+      name.textContent = s.name;
+      line.appendChild(name);
+      line.appendChild(document.createTextNode(
+        ' \u00b7 ' + (s.note || 'down') + ' \u00b7 repair: ' + (s.repair || 'fleet doctor names it')));
+      el.svcDown.appendChild(line);
+    });
   }
 
   // The stream's own heartbeat proves the page's live half. The
@@ -3127,6 +3156,20 @@
           : null;
         stripFold(event);
         paintRunbar();
+        break;
+      case 'health':
+        // The loop's transition (the failsafe plan's phase A): the
+        // card repaints from the event's verdicts and the sentence
+        // lands as a notice — the repair word visible where the
+        // owner works, without waiting for the state poll.
+        if (event.services && event.services.length) {
+          face.services = {
+            services: event.services,
+            stamp: face.services ? face.services.stamp : ''
+          };
+        }
+        paintServices();
+        notice('fleet health', event.text || '');
         break;
       case 'rewound':
         stripFold(event);
@@ -9475,6 +9518,11 @@
     face.model = state.model || '';
     face.workspace = state.workspace || '';
     face.folder = state.folder || null;
+    // The health loop's latest pass (the failsafe plan's phase A):
+    // the card paints what is down; `null` until the first pass
+    // lands and the card stays hidden.
+    face.services = state.services || null;
+    paintServices();
     face.budget = Number(state.budget) || 0;
     face.budgetModel = state.budget_model || '';
     face.budgetDeclared = state.budget_declared !== false;

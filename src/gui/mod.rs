@@ -144,6 +144,10 @@ pub async fn serve_with(
     // that creates the debris — not a verb the owner has to remember
     // (KI-478: 68 GB of it, pruned by hand once).
     crate::checkpoints::spawn_reclaim(home.join("checkpoints"));
+    // The health loop (the failsafe plan's phase A): the same duty
+    // shape as the reclaim — a background beat this process owns, so
+    // "what is down" is known and painted before something needs it.
+    bridge.start_health_loop();
     let (server, _port) = match prebound {
         Some(listener) => server::Server::bind_on(listener, Arc::clone(&bridge)).await?,
         None => server::Server::bind(&options.host, options.port, Arc::clone(&bridge)).await?,

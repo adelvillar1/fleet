@@ -320,6 +320,10 @@ pub struct Bridge {
     pub state: Arc<Mutex<GuiState>>,
     rules: Arc<Mutex<approvals::Rules>>,
     events: broadcast::Sender<Value>,
+    /// The health loop's latest pass (the failsafe plan's phase A):
+    /// what is down, what it costs, and the repair. The loop writes
+    /// it, `/api/state` reads it, and the face paints its card.
+    health: crate::health::SharedReport,
     /// The welcome's one bounded read: the run archive, the corpus
     /// summary, the skill count, and the graph's next node, cached for
     /// half a minute so a reload is not a second walk of the machine.
@@ -439,6 +443,7 @@ impl Bridge {
             state,
             rules,
             events,
+            health: Arc::new(Mutex::new(None)),
             home_cache: Arc::new(Mutex::new(None)),
             channels: Mutex::new(None),
             remote: Mutex::new(None),
@@ -557,6 +562,80 @@ impl Bridge {
     /// two agree because they are the same log.
     pub fn subscribe(&self) -> broadcast::Receiver<Value> {
         self.events.subscribe()
+    }
+
+    /// The state document's `services` block: the loop's latest pass,
+    /// or `null` until the first one lands.
+    fn services_value(&self) -> Value {
+        let guard = self.health.lock().expect("health slot");
+        guard
+            .as_ref()
+            .map(|report| serde_json::to_value(report).unwrap_or(Value::Null))
+            .unwrap_or(Value::Null)
+    }
+
+    /// The health loop (the failsafe plan's phase A): one pass per
+    /// interval, the slow tier every other pass, a transition named on
+    /// the event stream so an open face repaints without waiting for
+    /// its poll. The probes are blocking IO — a connect, a process
+    /// spawn — so a pass runs on the blocking pool, never a runtime
+    /// worker (KI-017's rule). Started once, from the launch path;
+    /// a test's short-lived server carries no loop.
+    pub fn start_health_loop(self: &std::sync::Arc<Self>) {
+        let home = self.home.clone();
+        let slot = std::sync::Arc::clone(&self.health);
+        let bridge = std::sync::Arc::clone(self);
+        tokio::task::spawn(async move {
+            let mut ticker = tokio::time::interval(crate::health::FAST_INTERVAL);
+            let mut pass: u64 = 0;
+            loop {
+                ticker.tick().await;
+                pass += 1;
+                let task_slot = std::sync::Arc::clone(&slot);
+                let task_home = home.clone();
+                let transitioned = tokio::task::spawn_blocking(move || {
+                    crate::health::probe_once(&task_home, pass, &task_slot)
+                })
+                .await
+                .unwrap_or(false);
+                if transitioned {
+                    let guard = slot.lock().expect("health slot");
+                    if let Some(report) = guard.as_ref() {
+                        // One event for the transition: the services'
+                        // verdicts and the repair sentence in it —
+                        // the word the main session acts on (C4).
+                        let _ = bridge.note_health_transition(report);
+                    }
+                }
+            }
+        });
+    }
+
+    /// A transition's one sentence on the transcript: what changed and
+    /// the repair verb — the word the main session acts on (the
+    /// failsafe plan's C4). Returns the sentence so a test can pin it.
+    fn note_health_transition(&self, report: &crate::health::HealthReport) -> String {
+        let down = report.down();
+        let sentence = if down.is_empty() {
+            "fleet's services are back: every probed service answers.".to_string()
+        } else {
+            let lines: Vec<String> = down
+                .iter()
+                .map(|s| format!("- {} — {}; repair: {}", s.name, s.note, s.repair))
+                .collect();
+            format!(
+                "fleet's health loop names a service down:\n{}\nRepair it when the \
+                 current task allows; never refuse the task over a down service — \
+                 degrade and repair instead.",
+                lines.join("\n")
+            )
+        };
+        let _ = self.events.send(json!({
+            "type": "health",
+            "text": sentence,
+            "services": serde_json::to_value(&report.services).unwrap_or_default(),
+        }));
+        sentence
     }
 
     /// The launch session's id: the default a request that names no
@@ -934,6 +1013,7 @@ impl Bridge {
                 "plugins": self.plugins_value(),
                 "proposals": self.proposals_value(),
                 "built_ins": built_ins_value(&self.home),
+                "services": self.services_value(),
                 "attached": false,
             });
         };
@@ -967,6 +1047,7 @@ impl Bridge {
             "context": context,
             "folds": folds,
             "turn_budget": crate::route::run_config(&self.home).max_turns,
+            "services": self.services_value(),
             "gate": {
                 "name": "sys1",
                 "informs_failover": gate.informs_failover,

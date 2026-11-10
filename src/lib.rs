@@ -39,6 +39,7 @@ pub mod fileops;
 pub mod footprint;
 pub mod fusion;
 pub mod graph;
+pub mod health;
 pub mod gui;
 pub mod home;
 pub mod hybrid;

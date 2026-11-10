@@ -1609,6 +1609,56 @@ async function theWorkingLineReadsTheHealthNotTheTurn() {
 // The context-health plan's C4: a reopened conversation seeds its health
 // from the state read, and the floor names itself when nothing declared
 // a window (C0).
+async function theHealthCardNamesWhatIsDownAndTheRepair() {
+  const page = boot({
+    hash: '#/sessions/health-card',
+    documents: {
+      state: (asked) => ({
+        ...emptyState(asked),
+        session: asked,
+        services: {
+          stamp: '2026-11-09',
+          services: [
+            { name: 'layerfs', up: false,
+              note: 'the worker does not answer on port 49473',
+              repair: 'fleet install (re-provisions the worker and re-records the endpoint)' },
+            { name: 'api', up: true, note: '', repair: '' },
+          ],
+        },
+      }),
+    },
+  });
+  await flush();
+  page.open();
+  await flush();
+  const card = page.text('svc-down');
+  check('C0 the card names the down service', /layerfs/.test(card) &&
+    /port 49473/.test(card), card);
+  check('C0 the card names the repair verb', /fleet install/.test(card), card);
+  check('C0 the up service is absent from the card', !/\bapi\b/.test(card), card);
+  // The transition event repaints without a state poll: an all-clear
+  // pass hides the card.
+  page.push({ type: 'health', text: "fleet's services are back: every probed service answers.",
+    services: [{ name: 'layerfs', up: true, note: '', repair: '' }] });
+  await flush();
+  const hidden = page.el('svc-down').hidden;
+  check('C0 an all-clear transition hides the card', hidden === true, String(hidden));
+  // And a down transition repaints it and lands the sentence.
+  page.push({ type: 'health', text: "fleet's health loop names a service down:\n- docker — down; repair: start Docker Desktop",
+    services: [{ name: 'docker', up: false, note: 'down', repair: 'start Docker Desktop' }] });
+  await flush();
+  const again = page.text('svc-down');
+  check('C0 a down transition repaints the card', /docker/.test(again) &&
+    /start Docker Desktop/.test(again), again);
+  const stream = page.rows('.stream')[0];
+  const noticeText = stream && stream.children.length
+    ? stream.children[stream.children.length - 1].textContent
+    : '';
+  check('C0 the transition lands as a notice on the transcript',
+    /fleet health/.test(noticeText) && /service down/.test(noticeText),
+    noticeText.slice(0, 200));
+}
+
 async function aReopenedConversationSeedsItsHealth() {
   const page = boot({
     hash: '#/sessions/resumed-1',
@@ -11859,6 +11909,7 @@ const cases = [
   ['C6 a failed check paints the refusal', aFailedCheckPaintsTheRefusal],
   ['KI-485 a log cut off at a tool call does not replay as running', anInterruptedToolCallReplaysAsInterrupted],
   ['KI-485 a finished run settles its orphaned tool calls', aFinishedRunSettlesItsOrphanedToolCalls],
+  ['C0 the health card names what is down and the repair', theHealthCardNamesWhatIsDownAndTheRepair],
 ];
 
 for (const [name, run] of cases) {
