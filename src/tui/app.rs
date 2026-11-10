@@ -3093,6 +3093,7 @@ fn entry_of(record: &Record) -> Option<Entry> {
         // and a plan rides the assistant message beside it.
         Record::Rewind { .. }
         | Record::Plan { .. }
+        | Record::ContractStop { .. }
         | Record::Resume { .. }
         // Bookkeeping: a refused pin is named in the log, and the
         // run keeps the route it had.

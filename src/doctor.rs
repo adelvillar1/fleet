@@ -133,6 +133,16 @@ pub const DISK_FLOOR_GIB: u64 = 20;
 
 /// The disk line from the volume's own answer, in kibibytes.
 pub fn evaluate_disk(free_kib: Option<u64>) -> Check {
+    evaluate_disk_against(free_kib, None)
+}
+
+/// The disk line with the contract's reserve beside it, when the caller could
+/// read one. The floor is the fallback the report has always used; the reserve
+/// is what the same reading derives, and naming both is what keeps the doctor
+/// and `fleet footprint` from disagreeing about the number that decides a
+/// refusal (the plan's C7).
+pub fn evaluate_disk_against(free_kib: Option<u64>, reserve_kib: Option<u64>) -> Check {
+    let reserve = reserve_kib.map(|kib| kib / 1024 / 1024);
     match free_kib {
         None => Check {
             name: "disk",
@@ -141,14 +151,20 @@ pub fn evaluate_disk(free_kib: Option<u64>) -> Check {
         },
         Some(kib) => {
             let gib = kib / 1024 / 1024;
+            // The bar is the reserve when one was derived, the declared floor
+            // otherwise: one number decides, and which one it is says so.
+            let (bar, source) = match reserve {
+                Some(reserve) => (reserve, format!("reserve {reserve} GiB")),
+                None => (DISK_FLOOR_GIB, format!("floor {DISK_FLOOR_GIB} GiB")),
+            };
             Check {
                 name: "disk",
-                ok: gib >= DISK_FLOOR_GIB,
-                detail: if gib >= DISK_FLOOR_GIB {
-                    format!("{gib} GiB free (floor {DISK_FLOOR_GIB} GiB)")
+                ok: gib >= bar,
+                detail: if gib >= bar {
+                    format!("{gib} GiB free ({source})")
                 } else {
                     format!(
-                        "{gib} GiB free, under the {DISK_FLOOR_GIB} GiB floor \u{2014} below 5 GiB a build dies mid-link; the build lanes under /private/tmp and ~/.fleet/checkpoints are the usual holders (scripts/daily-maintenance.sh reclaims them)"
+                        "{gib} GiB free, under the {source} \u{2014} a build here dies mid-link; the build lanes under /private/tmp and ~/.fleet/checkpoints are the usual holders (scripts/daily-maintenance.sh reclaims them)"
                     )
                 },
             }
@@ -2136,7 +2152,7 @@ mod tests {
         let tight = evaluate_disk(Some(16 * 1024 * 100));
         assert!(!tight.ok);
         assert!(
-            tight.detail.contains("under the 20 GiB floor"),
+            tight.detail.contains("under the floor 20 GiB"),
             "{}",
             tight.detail
         );
@@ -2149,6 +2165,40 @@ mod tests {
             "{}",
             unread.detail
         );
+    }
+
+    #[test]
+    fn the_disk_line_grades_against_the_reserve_the_footprint_report_derives() {
+        // The plan's C7: one number decides, and the doctor names the same one
+        // `fleet footprint` reports. A 460 GiB volume roomy at 4% derives an
+        // 18.4 GiB reserve — above the declared 20 GiB floor's spirit but below
+        // it in fact, so the line must say RESERVE and grade against that.
+        let reserve_kib = 18 * 1024 * 1024;
+        let roomy = evaluate_disk_against(Some(121 * 1024 * 1024), Some(reserve_kib));
+        assert!(roomy.ok);
+        assert!(roomy.detail.contains("reserve 18 GiB"), "{}", roomy.detail);
+        assert!(
+            !roomy.detail.contains("floor"),
+            "the reserve decides, so the floor is not named as the bar: {}",
+            roomy.detail
+        );
+        // 19 GiB free against an 18 GiB reserve: inside, where the declared
+        // 20 GiB floor would have failed it — the reserve is the higher
+        // authority when one was derived and it is lower.
+        let inside = evaluate_disk_against(Some(19 * 1024 * 1024), Some(reserve_kib));
+        assert!(inside.ok, "{}", inside.detail);
+        // 17 GiB free: under the reserve, and the detail says which bar.
+        let under = evaluate_disk_against(Some(17 * 1024 * 1024), Some(reserve_kib));
+        assert!(!under.ok);
+        assert!(
+            under.detail.contains("under the reserve 18 GiB"),
+            "{}",
+            under.detail
+        );
+        // No reserve derived (a fresh home): the declared floor stands in, and
+        // the detail says floor rather than reserving the word.
+        let floor = evaluate_disk_against(Some(121 * 1024 * 1024), None);
+        assert!(floor.detail.contains("floor 20 GiB"), "{}", floor.detail);
     }
 
     #[test]

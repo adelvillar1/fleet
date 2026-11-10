@@ -22,6 +22,7 @@ pub mod checkpoints;
 pub mod cli;
 pub mod clipboard;
 pub mod compaction;
+pub mod contract;
 pub mod cron;
 pub mod deck;
 pub mod delegate;

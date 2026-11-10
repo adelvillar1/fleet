@@ -7360,6 +7360,7 @@ fn cards_from_records(records: &[session::Record]) -> (Vec<Value>, usize) {
         match record {
             session::Record::Start { .. }
             | session::Record::End { .. }
+            | session::Record::ContractStop { .. }
             | session::Record::PinRefused { .. }
             | session::Record::ToolResolution { .. }
             | session::Record::Declarations { .. }

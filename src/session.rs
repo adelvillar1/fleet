@@ -347,6 +347,21 @@ pub enum Record {
         asked: String,
         reason: String,
     },
+    /// The resource contract ended this run, with the numbers that did it:
+    /// the slide against the budget, the free space against the reserve, and
+    /// what produced the reserve. Bookkeeping like `start` and `end` — it
+    /// replays to no message — and it is what makes the run's ending
+    /// reconstructable rather than a bare stop (hard rule 5, the resource
+    /// contract's C3).
+    ContractStop {
+        class: String,
+        settled_kib: u64,
+        budget_kib: u64,
+        available_kib: u64,
+        reserve_kib: u64,
+        reserve_source: String,
+        why: String,
+    },
     /// The tools one lane brought into a run, recorded the moment the
     /// lane joined. The tool declarations are dynamic now — a lane's
     /// tools enter the model's tool set mid-run — so this record is what
@@ -1420,6 +1435,7 @@ pub fn conversation(records: &[Record]) -> Conversation {
             Record::Rewind { .. }
             | Record::Plan { .. }
             | Record::Reasoning { .. }
+            | Record::ContractStop { .. }
             | Record::Resume { .. } => {}
             // Bookkeeping: which channel the peer arrived on replays to
             // no message. A persona's join and leave are the same kind

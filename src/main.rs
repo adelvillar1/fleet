@@ -4135,7 +4135,18 @@ fn doctor_checks() -> ExitCode {
     let volume = home
         .clone()
         .unwrap_or_else(|| std::path::PathBuf::from(if cfg!(windows) { "C:\\" } else { "/" }));
-    let disk_check = doctor::evaluate_disk(free_kib(&volume));
+    // The reserve the same reading derives, so this line and `fleet footprint`
+    // name one number (the plan's C7). A home with no history yet derives
+    // nothing, and the declared floor stands in — named as the floor.
+    let reserve_kib = match fleet_home() {
+        Ok(home) => {
+            let env = read_env(&home).0;
+            volume_facts(&volume)
+                .map(|(_, total)| fleet::footprint::reserve_kib(total, &env, declared_appetite()).0)
+        }
+        Err(_) => None,
+    };
+    let disk_check = doctor::evaluate_disk_against(free_kib(&volume), reserve_kib);
     failed |= !disk_check.ok;
     println!("{}", doctor::render(&disk_check));
 

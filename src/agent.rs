@@ -1469,6 +1469,12 @@ pub struct Agent<'a> {
     improve_home: Option<std::path::PathBuf>,
     /// The calibration stream this run records to, when it has one.
     calib: Option<crate::calib::Stream>,
+    /// The run's live resource oversight, when the contract governs it. `None`
+    /// is a run with no working folder (nothing to admit it against), a child
+    /// whose budget its parent owns, and every test that does not care — and
+    /// that run is byte for byte the run this crate has always been: one
+    /// branch, no reading, no row.
+    oversight: Option<crate::contract::Oversight>,
     /// One turn number per message in `messages`: the turn of the request
     /// that first carried it. A compaction record names a turn range, so
     /// the range has to be a fact about the conversation rather than a
@@ -1823,6 +1829,7 @@ impl<'a> Agent<'a> {
             memory,
             scope: speaker_scope,
             calib,
+            oversight: None,
             message_turns: turns,
             next_turn,
             compaction_latch: false,
@@ -3092,6 +3099,13 @@ impl<'a> Agent<'a> {
         // `src/subagents.rs`'s inheritance is the technical bound.
         // The delegation branch's runs are bounded by their cap; the
         // main session is not. The counter is bookkeeping either way.
+        // The resource contract's admission (2026-11-09, C3): before the
+        // first turn, and only when this run works in a folder — a chat with
+        // no folder writes into no volume fleet chose, so there is nothing to
+        // admit it against. A refusal ends the run before a token is spent,
+        // naming both numbers; an admission starts the oversight the turn
+        // boundary measures against.
+        self.admit_work()?;
         while !self.options.capped || self.turns < self.options.max_turns as u64 {
             self.turns += 1;
             self.emit(UiEvent::Turn(self.turns));
@@ -3420,6 +3434,12 @@ impl<'a> Agent<'a> {
             // place by the time that request is assembled.
             let boundary = self.prompt_for_turn(memory_block.as_deref(), &system_prompt);
             self.maybe_compact(&boundary, task).await?;
+            // Between turns: the resource reading, at its own cadence. It runs
+            // after the context check and before the next request, so a stop
+            // it decides lands where the conversation already is — the numbers
+            // are in this turn's tool results, and nothing half-written is
+            // abandoned mid-request.
+            self.settle_work().await?;
         }
 
         // The loop fell through — only a CAPPED run can: the main
@@ -3445,6 +3465,317 @@ impl<'a> Agent<'a> {
             compactions: self.compactions,
             turn_curve: self.turn_curve.clone(),
         })
+    }
+
+    /// The resource contract's two beats for this run (the plan's C3).
+    ///
+    /// **Admission** happens once, before the first turn, and only when the
+    /// run works in a folder. It reads the volume (one `statvfs`), the reserve
+    /// the environment's history implies, and admits the run against its own
+    /// budget. A refusal is not a warning: it ends the run here, naming the
+    /// numbers, because a build or a run that begins below the floor is the
+    /// pattern the owner rejected.
+    ///
+    /// **Settling** happens at the turn boundary on a cadence, because a
+    /// full reading forks `ps` and measuring every turn costs more than it
+    /// saves. A breach of the reserve stops deterministically; an overage asks
+    /// the judge once, and the judge's answer either raises this run's budget
+    /// or ends it.
+    ///
+    /// A run the contract does not govern pays one `if` at admission and
+    /// nothing at the boundary.
+    fn admit_work(&mut self) -> Result<(), AgentError> {
+        let folder = match &self.options.file_access {
+            FileAccess::Folder(root) => Some(root.clone()),
+            _ => None,
+        };
+        let work =
+            crate::contract::Work::for_run(folder.as_deref(), crate::footprint::RUN_BUDGET_KIB);
+        if !work.governed() {
+            return Ok(());
+        }
+        let Some(root) = folder else {
+            return Ok(());
+        };
+        let Some(readout) = crate::contract::reading_of(&root) else {
+            // The volume could not be read. That is a named degradation, not a
+            // refusal: the run proceeds ungoverned and says so, because the
+            // alternative is refusing work the owner asked for over a
+            // filesystem the app could not measure.
+            let _ = writeln!(
+                self.progress,
+                "\u{2192} the resource contract could not read this volume; the run proceeds ungoverned"
+            );
+            let _ = self.progress.flush();
+            return Ok(());
+        };
+        let env = match self.options.improve_home.as_deref() {
+            Some(home) => crate::contract::env_from_history(home),
+            None => crate::contract::Env::default(),
+        };
+        let reading = crate::footprint::Reading::new(
+            Vec::new(),
+            readout.volume_kib,
+            readout.available_kib,
+            &env,
+            None,
+        );
+        let admission = work.admitting(&reading);
+        let budget_kib = work.budget_kib;
+        let class = work.class.clone();
+        if !admission.ok {
+            let clause = format!(
+                "the resource contract refused this run: {:.2} GiB of headroom above a {:.2} GiB reserve ({}, inferred) against a {:.2} GiB budget",
+                admission.headroom_kib as f64 / 1024.0 / 1024.0,
+                reading.reserve_kib as f64 / 1024.0 / 1024.0,
+                reading.appetite.word(),
+                admission.needed_kib as f64 / 1024.0 / 1024.0,
+            );
+            let _ = writeln!(self.progress, "\u{2192} {clause}");
+            let _ = self.progress.flush();
+            self.record(&Record::ContractStop {
+                class: class.clone(),
+                settled_kib: 0,
+                budget_kib,
+                available_kib: readout.available_kib,
+                reserve_kib: reading.reserve_kib,
+                reserve_source: reading.reserve_source.to_string(),
+                why: "refused before its first turn".to_string(),
+            })?;
+            self.land_contract_row(
+                &class,
+                budget_kib,
+                &reading,
+                readout.available_kib,
+                admission.headroom_kib,
+                0,
+                crate::calib::FOOTPRINT_REFUSED,
+                "bounds",
+                "",
+            );
+            return Err(AgentError::Stopped);
+        }
+        // Admitted: start the oversight and land the row that says so. The row
+        // is the admission half of the pair C8's estimate reads.
+        self.land_contract_row(
+            &class,
+            budget_kib,
+            &reading,
+            readout.available_kib,
+            admission.headroom_kib,
+            0,
+            crate::calib::FOOTPRINT_ADMITTED,
+            "bounds",
+            "",
+        );
+        self.oversight = Some(crate::contract::Oversight::start(
+            work,
+            &reading,
+            readout.available_kib,
+            readout.volume_kib,
+        ));
+        let _ = writeln!(
+            self.progress,
+            "\u{2192} resource contract: {:.2} GiB budget, {:.2} GiB of headroom above a {:.2} GiB reserve ({})",
+            budget_kib as f64 / 1024.0 / 1024.0,
+            admission.headroom_kib as f64 / 1024.0 / 1024.0,
+            reading.reserve_kib as f64 / 1024.0 / 1024.0,
+            reading.appetite.word(),
+        );
+        let _ = self.progress.flush();
+        Ok(())
+    }
+
+    /// The turn boundary's reading, on the contract's cadence. A breach stops
+    /// the run deterministically; an overage asks the judge once and either
+    /// raises the budget or curtails. Every ending lands a row.
+    async fn settle_work(&mut self) -> Result<(), AgentError> {
+        // The borrow of `oversight` must not outlive the calls below (they
+        // take `&self` for the log and the row), so this reads what it needs
+        // first and holds only plain values across them.
+        let Some(due) = self.oversight.as_mut().map(|o| o.due()) else {
+            return Ok(());
+        };
+        if !due {
+            return Ok(());
+        }
+        let Some(folder) = self.oversight.as_ref().and_then(|o| o.work.folder.clone()) else {
+            return Ok(());
+        };
+        let Some(now) = crate::contract::reading_of(&folder) else {
+            return Ok(());
+        };
+        let Some(oversight) = self.oversight.as_ref() else {
+            return Ok(());
+        };
+        let standing = oversight.measure(&now);
+        let settled_kib = oversight
+            .baseline
+            .available_kib
+            .saturating_sub(now.available_kib);
+        let class = oversight.work.class.clone();
+        let baseline_kib = oversight.baseline.available_kib;
+        let volume_kib = oversight.baseline.volume_kib;
+        let reserve_kib = oversight.reserve_kib;
+        let reserve_source = oversight.reserve_source;
+        let appetite = oversight.appetite;
+        match standing {
+            crate::contract::Standing::Inside => Ok(()),
+            // The reserve itself is gone: no judgment is worth the wait, and
+            // the run stops with the numbers that stopped it.
+            crate::contract::Standing::Encroached {
+                available_kib,
+                reserve_kib: breached,
+            } => {
+                let clause = oversight.stop_clause(&now, settled_kib, "at the reserve");
+                self.stop_for_contract(
+                    &clause,
+                    settled_kib,
+                    available_kib,
+                    breached,
+                    "reserve breached",
+                )
+            }
+            crate::contract::Standing::Overage {
+                settled_kib,
+                budget_kib,
+            } => {
+                // An abnormal reading: one bounded ask, on this reading only.
+                let judgment = self.judge_oversight(settled_kib, budget_kib, &now);
+                let verdict = judgment.verdict();
+                let decided_by = judgment.decided_by();
+                let words = judgment.words().to_string();
+                let curtail = matches!(judgment, crate::contract::Judgment::Curtailed { .. });
+                let raised = match self.oversight.as_mut() {
+                    Some(state) => {
+                        state.apply(&judgment, settled_kib);
+                        state.budget_kib
+                    }
+                    None => budget_kib,
+                };
+                let reading = crate::footprint::Reading {
+                    lines: Vec::new(),
+                    volume_kib,
+                    available_kib: now.available_kib,
+                    reserve_kib,
+                    reserve_source,
+                    appetite,
+                    standing_free: None,
+                    fill_gib_per_day: 0.0,
+                    records: 0,
+                };
+                self.land_contract_row(
+                    &class,
+                    raised,
+                    &reading,
+                    baseline_kib,
+                    budget_kib,
+                    settled_kib,
+                    verdict,
+                    decided_by,
+                    &words,
+                );
+                if curtail {
+                    let clause = format!(
+                        "the resource contract curtailed this run: {:.2} GiB settled against a {:.2} GiB budget ({})",
+                        settled_kib as f64 / 1024.0 / 1024.0,
+                        budget_kib as f64 / 1024.0 / 1024.0,
+                        words,
+                    );
+                    self.stop_for_contract(
+                        &clause,
+                        settled_kib,
+                        now.available_kib,
+                        reserve_kib,
+                        "curtailed",
+                    )?;
+                }
+                Ok(())
+            }
+        }
+    }
+
+    /// End the run because of the contract, with the numbers recorded and the
+    /// owner's stopped-run shape (the same `Stopped` error an owner's stop
+    /// takes, so every surface that already handles it handles this).
+    fn stop_for_contract(
+        &mut self,
+        clause: &str,
+        settled_kib: u64,
+        available_kib: u64,
+        reserve_kib: u64,
+        why: &str,
+    ) -> Result<(), AgentError> {
+        let _ = writeln!(self.progress, "\u{2192} {clause}");
+        let _ = self.progress.flush();
+        if let Some(oversight) = self.oversight.as_ref() {
+            self.record(&Record::ContractStop {
+                class: oversight.work.class.clone(),
+                settled_kib,
+                budget_kib: oversight.budget_kib,
+                available_kib,
+                reserve_kib,
+                reserve_source: oversight.reserve_source.to_string(),
+                why: why.to_string(),
+            })?;
+        }
+        Err(AgentError::Stopped)
+    }
+
+    /// The bounded ask the overage makes. It is deliberately a stub in this
+    /// increment: the deterministic arm needs no model, and the judge's own
+    /// arm lands in the next increment with its lane client and its
+    /// budget. Until it does, an overage reads as `expected` — the plan's own
+    /// rule for a lane that did not answer — and records itself as
+    /// `judge-unavailable`, so the row never claims a judgment nobody made.
+    fn judge_oversight(
+        &mut self,
+        _settled_kib: u64,
+        _budget_kib: u64,
+        _now: &crate::contract::Readout,
+    ) -> crate::contract::Judgment {
+        crate::contract::Judgment::Unavailable {
+            reason:
+                "the resource judge lands in the next increment; this reading is expected for now"
+                    .to_string(),
+        }
+    }
+
+    /// Land one contract row on the calibration stream, when this run has one.
+    /// A run with no stream (a test, a surface without one) records nothing —
+    /// the same silence every other beat keeps.
+    #[allow(clippy::too_many_arguments)]
+    fn land_contract_row(
+        &self,
+        class: &str,
+        estimate_kib: u64,
+        reading: &crate::footprint::Reading,
+        available_kib: u64,
+        headroom_kib: u64,
+        settled_kib: u64,
+        verdict: &str,
+        decided_by: &str,
+        words: &str,
+    ) {
+        let Some(stream) = self.calib.as_ref() else {
+            return;
+        };
+        crate::calib::record_footprint(
+            stream,
+            crate::calib::FootprintRow {
+                ts: crate::calib::stamp(),
+                class: class.to_string(),
+                estimate_kib,
+                reserve_kib: reading.reserve_kib,
+                reserve_source: reading.reserve_source.to_string(),
+                available_kib,
+                headroom_kib,
+                settled_kib,
+                verdict: verdict.to_string(),
+                decided_by: decided_by.to_string(),
+                judge_words: words.to_string(),
+            },
+        );
     }
 
     /// The window check, run between turns: after the last response landed
