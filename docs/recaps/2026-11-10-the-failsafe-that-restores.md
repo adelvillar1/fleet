@@ -76,9 +76,16 @@ routing), the ledger, the changelog, the three version declarations.
 
 ## Open questions / next steps
 
-- **0.6.22 is committed, not delivered**: the dmg is not rebuilt, the
-  app not installed, the face not relaunched — the delivery is the
-  next session's first act if the owner wants it live.
+- **0.6.22 DELIVERED the same session** (the owner's word):
+  `fleet reload --from target/release/fleet` installed the binary and
+  relaunched the face (pid 93834), the live face answers 0.6.22 with
+  `/api/home` and `/app.js` 200, the served page carries the health
+  card, and `/api/state`'s `services` block reads the real machine —
+  layerfs down with its repair verb painted. The dmg
+  (`fleet_0.6.22_aarch64.dmg`, 13.66 MB) is in the one folder,
+  verified mounting with 0.6.22's app. The updater's signed tarball
+  leg is owner-keyed (`TAURI_SIGNING_PRIVATE_KEY`) and stays the
+  GitHub release's own act.
 - The owner's actual LayerFS repair (`docker pull node@sha256:3d27…`
   + `fleet install`) is still pending their go-ahead; the system now
   names it everywhere it bites.
